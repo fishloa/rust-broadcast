@@ -10,9 +10,9 @@ use crate::error::Error;
 use crate::events::{Action, Event};
 use crate::playout::Source;
 use crate::source::dash::DashSource;
-use crate::source::smooth::SmoothSource;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
+use crate::source::smooth::SmoothSource;
 
 pub(crate) enum Adaptive {
     Hls(Box<HlsSession>),

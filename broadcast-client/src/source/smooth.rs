@@ -5,13 +5,17 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use std::collections::HashMap;
 
-use hls_runtime::client::{MasterSelection, VariantInfo};
 use broadcast_common::Unpackage;
-use transmux::{Fmp4Demux, TrackId, TrackSpec};
+use hls_runtime::client::{MasterSelection, VariantInfo};
 use transmux::dash::rfc6381_track_codec_string;
-use transmux::smooth_fragment::{FragmentState, fragment_state, fragment_track_id, fragment_tfxd, manifest_declares_protection};
-use transmux::smooth_parse::{SmoothManifest, StreamIndex, StreamType, track_spec_from_quality_level};
 use transmux::pipeline::build_init_segment;
+use transmux::smooth_fragment::{
+    FragmentState, fragment_state, fragment_tfxd, fragment_track_id, manifest_declares_protection,
+};
+use transmux::smooth_parse::{
+    SmoothManifest, StreamIndex, StreamType, track_spec_from_quality_level,
+};
+use transmux::{Fmp4Demux, TrackId, TrackSpec};
 use url::Url;
 
 use crate::auth::AuthState;
@@ -127,13 +131,16 @@ impl SmoothSource {
 
     fn fetch_manifest(&mut self, url: Url) {
         let conn = self.conn_alloc.lease().id();
-        self.reqs.insert(conn, Req {
-            kind: ReqKind::Manifest,
-            url: url.clone(),
-            body: Vec::new(),
-            status: None,
-            headers: Vec::new(),
-        });
+        self.reqs.insert(
+            conn,
+            Req {
+                kind: ReqKind::Manifest,
+                url: url.clone(),
+                body: Vec::new(),
+                status: None,
+                headers: Vec::new(),
+            },
+        );
         self.actions.push_back(Action::HttpRequest {
             conn,
             method: "GET".to_string(),
@@ -162,7 +169,9 @@ impl SmoothSource {
 
     pub(crate) fn playout_source(&self) -> Source {
         if self.is_live && !self.ended {
-            Source::Live { target_duration_secs: None }
+            Source::Live {
+                target_duration_secs: None,
+            }
         } else {
             Source::Vod
         }
@@ -204,8 +213,12 @@ impl SmoothSource {
     }
 
     fn schedule_stream(&mut self, i: usize) {
-        if self.streams[i].in_flight { return; }
-        if self.streams[i].next >= self.streams[i].chunks.len() { return; }
+        if self.streams[i].in_flight {
+            return;
+        }
+        if self.streams[i].next >= self.streams[i].chunks.len() {
+            return;
+        }
         let idx = self.streams[i].next;
         let start = self.streams[i].chunks[idx].0;
         self.streams[i].in_flight = true;
@@ -216,15 +229,21 @@ impl SmoothSource {
         let bitrate = quality.bitrate;
         let stream = self.streams[i].stream.clone();
         let url_str = stream.resolve_fragment_url(bitrate, start);
-        let url = self.manifest_url.join(&url_str).unwrap_or_else(|_| self.manifest_url.clone());
+        let url = self
+            .manifest_url
+            .join(&url_str)
+            .unwrap_or_else(|_| self.manifest_url.clone());
         let conn = self.conn_alloc.lease().id();
-        self.reqs.insert(conn, Req {
-            kind: ReqKind::Fragment { stream_idx: i },
-            url: url.clone(),
-            body: Vec::new(),
-            status: None,
-            headers: Vec::new(),
-        });
+        self.reqs.insert(
+            conn,
+            Req {
+                kind: ReqKind::Fragment { stream_idx: i },
+                url: url.clone(),
+                body: Vec::new(),
+                status: None,
+                headers: Vec::new(),
+            },
+        );
         self.actions.push_back(Action::HttpRequest {
             conn,
             method: "GET".to_string(),
@@ -235,12 +254,22 @@ impl SmoothSource {
         });
     }
 
-    pub(crate) fn on_response(&mut self, conn: u32, status: u16, headers: &[(String, String)], _now: u64, _wall: Option<&crate::source::fetch::wall::WallClock>, _auth: &mut AuthState) {
+    pub(crate) fn on_response(
+        &mut self,
+        conn: u32,
+        status: u16,
+        headers: &[(String, String)],
+        _now: u64,
+        _wall: Option<&crate::source::fetch::wall::WallClock>,
+        _auth: &mut AuthState,
+    ) {
         if let Some(req) = self.reqs.get_mut(&conn) {
             req.status = Some(status);
             req.headers = headers.to_vec();
             if REDIRECT_STATUSES.contains(&status) {
-                if let Some(target) = redirect::resolve(&req.url, headers, 0, self.config.max_redirects) {
+                if let Some(target) =
+                    redirect::resolve(&req.url, headers, 0, self.config.max_redirects)
+                {
                     req.url = target.clone();
                     // re-issue
                     self.actions.push_back(Action::HttpRequest {
@@ -262,7 +291,13 @@ impl SmoothSource {
         }
     }
 
-    pub(crate) fn on_closed(&mut self, conn: u32, error: Option<&str>, now: u64, _auth: &mut AuthState) {
+    pub(crate) fn on_closed(
+        &mut self,
+        conn: u32,
+        error: Option<&str>,
+        now: u64,
+        _auth: &mut AuthState,
+    ) {
         let req = match self.reqs.remove(&conn) {
             Some(r) => r,
             None => return,
@@ -273,25 +308,34 @@ impl SmoothSource {
                     self.report_bad_manifest("transport", now);
                 }
                 ReqKind::Fragment { stream_idx: si } => {
-                    if si >= self.streams.len() { return; }
+                    if si >= self.streams.len() {
+                        return;
+                    }
                     let max = self.config.max_segment_failures;
                     self.streams[si].failures += 1;
                     self.streams[si].in_flight = false;
                     if self.streams[si].failures >= max {
                         if self.is_live {
-                            self.events.push_back(Event::Error { kind: ErrorKind::SegmentFetchFailed { status: None }, fatal: false });
+                            self.events.push_back(Event::Error {
+                                kind: ErrorKind::SegmentFetchFailed { status: None },
+                                fatal: false,
+                            });
                             self.events.push_back(Event::Discontinuity);
                             if let Some(idx) = self.streams[si].current_idx {
                                 self.streams[si].next = idx + 1;
                             }
                         } else {
-                            self.events.push_back(Event::Error { kind: ErrorKind::SegmentFetchFailed { status: None }, fatal: true });
+                            self.events.push_back(Event::Error {
+                                kind: ErrorKind::SegmentFetchFailed { status: None },
+                                fatal: true,
+                            });
                             self.fatal = true;
                         }
                     } else {
                         let delay = self.backoff_delay(self.streams[si].failures);
                         self.streams[si].retry_at = Some(now + delay * MICROS_PER_MILLI);
-                        self.actions.push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
+                        self.actions
+                            .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
                     }
                 }
             }
@@ -315,7 +359,12 @@ impl SmoothSource {
                     }
                 };
                 if manifest_declares_protection(&text) {
-                    self.events.push_back(Event::Error { kind: ErrorKind::UnsupportedEncryption { method: "protection".to_string() }, fatal: true });
+                    self.events.push_back(Event::Error {
+                        kind: ErrorKind::UnsupportedEncryption {
+                            method: "protection".to_string(),
+                        },
+                        fatal: true,
+                    });
                     self.fatal = true;
                     return;
                 }
@@ -333,13 +382,20 @@ impl SmoothSource {
                             for si in 0..self.streams.len() {
                                 // find matching stream
                                 let old_stream = self.streams[si].stream.clone();
-                                if let Some(found) = m.streams.iter().find(|s| s.same_stream(&old_stream)) {
+                                if let Some(found) =
+                                    m.streams.iter().find(|s| s.same_stream(&old_stream))
+                                {
                                     self.streams[si].refresh_misses = 0;
                                     // new chunks at/after frontier
                                     let frontier = self.streams[si].frontier;
-                                    let mut new_chunks = found.enumerate_chunks().unwrap_or_default();
+                                    let mut new_chunks =
+                                        found.enumerate_chunks().unwrap_or_default();
                                     // filter
-                                    let mut filtered: Vec<(u64,u64)> = new_chunks.iter().copied().filter(|c| c.0 >= frontier).collect();
+                                    let mut filtered: Vec<(u64, u64)> = new_chunks
+                                        .iter()
+                                        .copied()
+                                        .filter(|c| c.0 >= frontier)
+                                        .collect();
                                     if filtered.is_empty() {
                                         // window moved? if first new start > frontier
                                         if let Some(first) = new_chunks.first() {
@@ -383,20 +439,32 @@ impl SmoothSource {
                 }
             }
             ReqKind::Fragment { stream_idx: si } => {
-                if si >= self.streams.len() { return; }
+                if si >= self.streams.len() {
+                    return;
+                }
                 if !(200..300).contains(&status) {
                     let max = self.config.max_segment_failures;
                     self.streams[si].failures += 1;
                     self.streams[si].in_flight = false;
                     if self.streams[si].failures >= max {
                         if self.is_live {
-                            self.events.push_back(Event::Error { kind: ErrorKind::SegmentFetchFailed { status: Some(status) }, fatal: false });
+                            self.events.push_back(Event::Error {
+                                kind: ErrorKind::SegmentFetchFailed {
+                                    status: Some(status),
+                                },
+                                fatal: false,
+                            });
                             self.events.push_back(Event::Discontinuity);
                             if let Some(idx) = self.streams[si].current_idx {
                                 self.streams[si].next = idx + 1;
                             }
                         } else {
-                            self.events.push_back(Event::Error { kind: ErrorKind::SegmentFetchFailed { status: Some(status) }, fatal: true });
+                            self.events.push_back(Event::Error {
+                                kind: ErrorKind::SegmentFetchFailed {
+                                    status: Some(status),
+                                },
+                                fatal: true,
+                            });
                             self.fatal = true;
                         }
                     } else {
@@ -405,13 +473,19 @@ impl SmoothSource {
                         }
                         let delay = self.backoff_delay(self.streams[si].failures);
                         self.streams[si].retry_at = Some(now + delay * MICROS_PER_MILLI);
-                        self.actions.push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
+                        self.actions
+                            .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
                     }
                     return;
                 }
                 let body = req.body.clone();
                 if fragment_state(&body) == FragmentState::Encrypted {
-                    self.events.push_back(Event::Error { kind: ErrorKind::UnsupportedEncryption { method: "fragment".to_string() }, fatal: true });
+                    self.events.push_back(Event::Error {
+                        kind: ErrorKind::UnsupportedEncryption {
+                            method: "fragment".to_string(),
+                        },
+                        fatal: true,
+                    });
                     self.fatal = true;
                     self.streams[si].in_flight = false;
                     return;
@@ -436,10 +510,18 @@ impl SmoothSource {
                         for (i, s) in self.streams.iter_mut().enumerate() {
                             let tid = s.track_id.unwrap_or(if i == 0 { 1 } else { 2 });
                             let ts = s.timescale as u32;
-                            let spec = track_spec_from_quality_level(TrackId::new(tid), ts, s.stream.stream_type, &s.quality).ok();
+                            let spec = track_spec_from_quality_level(
+                                TrackId::new(tid),
+                                ts,
+                                s.stream.stream_type,
+                                &s.quality,
+                            )
+                            .ok();
                             s.track_spec = spec.clone();
                             if let Some(sp) = spec {
-                                let init = build_init_segment(&[sp.clone()], SYNTHETIC_MOVIE_TIMESCALE).ok();
+                                let init =
+                                    build_init_segment(&[sp.clone()], SYNTHETIC_MOVIE_TIMESCALE)
+                                        .ok();
                                 s.init_bytes = init;
                                 specs.push(sp);
                             }
@@ -449,7 +531,8 @@ impl SmoothSource {
                         self.emit_variants_if_needed();
                         for i in 0..self.streams.len() {
                             if let Some(b) = self.streams[i].first_body.take() {
-                                let start = self.streams[i].chunks.first().map(|c| c.0).unwrap_or(0);
+                                let start =
+                                    self.streams[i].chunks.first().map(|c| c.0).unwrap_or(0);
                                 self.process_fragment(i, b, start);
                             }
                         }
@@ -465,7 +548,9 @@ impl SmoothSource {
     }
 
     fn process_fragment(&mut self, si: usize, body: Vec<u8>, start_time: u64) {
-        if si >= self.streams.len() { return; }
+        if si >= self.streams.len() {
+            return;
+        }
         let init = match self.streams[si].init_bytes.clone() {
             Some(i) => i,
             None => return,
@@ -478,13 +563,21 @@ impl SmoothSource {
         };
         for track in media.tracks {
             let tid = track.spec.track_id;
-            let desired = fragment_tfxd(&body).map(|t| t.fragment_absolute_time).unwrap_or(start_time);
-            if track.samples.is_empty() { continue; }
+            let desired = fragment_tfxd(&body)
+                .map(|t| t.fragment_absolute_time)
+                .unwrap_or(start_time);
+            if track.samples.is_empty() {
+                continue;
+            }
             let first_dts = track.samples[0].dts.unwrap_or(0);
             let offset = desired as i64 - first_dts;
             for mut s in track.samples {
-                if let Some(d) = s.dts { s.dts = Some(d + offset); }
-                if let Some(p) = s.pts { s.pts = Some(p + offset); }
+                if let Some(d) = s.dts {
+                    s.dts = Some(d + offset);
+                }
+                if let Some(p) = s.pts {
+                    s.pts = Some(p + offset);
+                }
                 self.events.push_back(Event::Sample {
                     track: tid,
                     sample: s,
@@ -496,25 +589,44 @@ impl SmoothSource {
 
     fn build_streams(&mut self, m: &SmoothManifest) {
         // select video stream (first video)
-        let video_si = m.streams.iter().find(|s| s.stream_type == StreamType::Video);
-        let audio_si = m.streams.iter().find(|s| s.stream_type == StreamType::Audio);
+        let video_si = m
+            .streams
+            .iter()
+            .find(|s| s.stream_type == StreamType::Video);
+        let audio_si = m
+            .streams
+            .iter()
+            .find(|s| s.stream_type == StreamType::Audio);
         // chosen video variant
         if let Some(vs) = video_si {
-            let variants: Vec<VariantInfo> = vs.qualities.iter().map(|q| {
-                let ts = vs.timescale.unwrap_or(m.timescale);
-                let spec = track_spec_from_quality_level(TrackId::new(1), ts as u32, StreamType::Video, q).ok();
-                let codecs = spec.as_ref().and_then(|s| rfc6381_track_codec_string(s).ok());
-                VariantInfo {
-                    url: String::new(),
-                    bandwidth: q.bitrate as u32,
-                    average_bandwidth: None,
-                    resolution: q.width.zip(q.height),
-                    codecs,
-                    audio_group: None,
-                    subtitles_group: None,
-                }
-            }).collect();
-            self.chosen_video = hls_runtime::client::choose_variant(&variants, &self.config.variant_policy);
+            let variants: Vec<VariantInfo> = vs
+                .qualities
+                .iter()
+                .map(|q| {
+                    let ts = vs.timescale.unwrap_or(m.timescale);
+                    let spec = track_spec_from_quality_level(
+                        TrackId::new(1),
+                        ts as u32,
+                        StreamType::Video,
+                        q,
+                    )
+                    .ok();
+                    let codecs = spec
+                        .as_ref()
+                        .and_then(|s| rfc6381_track_codec_string(s).ok());
+                    VariantInfo {
+                        url: String::new(),
+                        bandwidth: q.bitrate as u32,
+                        average_bandwidth: None,
+                        resolution: q.width.zip(q.height),
+                        codecs,
+                        audio_group: None,
+                        subtitles_group: None,
+                    }
+                })
+                .collect();
+            self.chosen_video =
+                hls_runtime::client::choose_variant(&variants, &self.config.variant_policy);
         }
         // build stream runtime for video
         if let Some(vs) = video_si.cloned() {
@@ -522,7 +634,11 @@ impl SmoothSource {
             let qi = self.chosen_video.min(vs.qualities.len().saturating_sub(1));
             let quality = vs.qualities[qi].clone();
             let chunks = vs.enumerate_chunks().unwrap_or_default();
-            let chunks = if self.is_live { self.live_slice(&chunks, m) } else { chunks };
+            let chunks = if self.is_live {
+                self.live_slice(&chunks, m)
+            } else {
+                chunks
+            };
             self.streams.push(StreamRuntime {
                 stream: vs,
                 timescale: ts,
@@ -550,7 +666,11 @@ impl SmoothSource {
             let qi = 0;
             let quality = as_.qualities[qi].clone();
             let chunks = as_.enumerate_chunks().unwrap_or_default();
-            let chunks = if self.is_live { self.live_slice(&chunks, m) } else { chunks };
+            let chunks = if self.is_live {
+                self.live_slice(&chunks, m)
+            } else {
+                chunks
+            };
             self.streams.push(StreamRuntime {
                 stream: as_,
                 timescale: ts,
@@ -578,8 +698,10 @@ impl SmoothSource {
         self.emit_variants_if_needed();
     }
 
-    fn live_slice(&self, chunks: &[(u64,u64)], m: &SmoothManifest) -> Vec<(u64,u64)> {
-        if chunks.is_empty() { return chunks.to_vec(); }
+    fn live_slice(&self, chunks: &[(u64, u64)], m: &SmoothManifest) -> Vec<(u64, u64)> {
+        if chunks.is_empty() {
+            return chunks.to_vec();
+        }
         // determine join index
         let edge_idx = chunks.len() - 1;
         let mut join_idx = edge_idx.saturating_sub(LIVE_JOIN_FRAGMENTS);
@@ -590,43 +712,71 @@ impl SmoothSource {
                 let window_start = last_start.saturating_sub(dvr);
                 // first chunk with start >= window_start
                 let mut widx = 0;
-                for (i,c) in chunks.iter().enumerate() {
-                    if c.0 >= window_start { widx = i; break; }
+                for (i, c) in chunks.iter().enumerate() {
+                    if c.0 >= window_start {
+                        widx = i;
+                        break;
+                    }
                 }
-                if widx > join_idx { join_idx = widx; }
+                if widx > join_idx {
+                    join_idx = widx;
+                }
             }
         }
         let join_start = chunks[join_idx].0;
         // slice each stream's chunks starting at first >= join_start
         let mut idx = 0;
-        for (i,c) in chunks.iter().enumerate() {
-            if c.0 >= join_start { idx = i; break; }
+        for (i, c) in chunks.iter().enumerate() {
+            if c.0 >= join_start {
+                idx = i;
+                break;
+            }
         }
         chunks[idx..].to_vec()
     }
 
     fn emit_variants_if_needed(&mut self) {
-        if self.variants_emitted { return; }
-        if self.streams.is_empty() { return; }
+        if self.variants_emitted {
+            return;
+        }
+        if self.streams.is_empty() {
+            return;
+        }
         // find first video stream index in self.streams
         // build variants from first stream's stream? We stored qualities? Need access. We'll just emit with empty if not available. But tests check variants. Let's build from first stream's stream_index qualities.
         // We need manifest for qualities. Use self.manifest.
         if let Some(m) = &self.manifest {
-            if let Some(vs) = m.streams.iter().find(|s| s.stream_type == StreamType::Video) {
-                let variants: Vec<VariantInfo> = vs.qualities.iter().map(|q| {
-                    let ts = vs.timescale.unwrap_or(m.timescale);
-                    let spec = track_spec_from_quality_level(TrackId::new(1), ts as u32, StreamType::Video, q).ok();
-                    let codecs = spec.as_ref().and_then(|s| rfc6381_track_codec_string(s).ok());
-                    VariantInfo {
-                        url: String::new(),
-                        bandwidth: q.bitrate as u32,
-                        average_bandwidth: None,
-                        resolution: q.width.zip(q.height),
-                        codecs,
-                        audio_group: None,
-                        subtitles_group: None,
-                    }
-                }).collect();
+            if let Some(vs) = m
+                .streams
+                .iter()
+                .find(|s| s.stream_type == StreamType::Video)
+            {
+                let variants: Vec<VariantInfo> = vs
+                    .qualities
+                    .iter()
+                    .map(|q| {
+                        let ts = vs.timescale.unwrap_or(m.timescale);
+                        let spec = track_spec_from_quality_level(
+                            TrackId::new(1),
+                            ts as u32,
+                            StreamType::Video,
+                            q,
+                        )
+                        .ok();
+                        let codecs = spec
+                            .as_ref()
+                            .and_then(|s| rfc6381_track_codec_string(s).ok());
+                        VariantInfo {
+                            url: String::new(),
+                            bandwidth: q.bitrate as u32,
+                            average_bandwidth: None,
+                            resolution: q.width.zip(q.height),
+                            codecs,
+                            audio_group: None,
+                            subtitles_group: None,
+                        }
+                    })
+                    .collect();
                 let chosen = self.chosen_video.min(variants.len().saturating_sub(1));
                 self.events.push_back(Event::Variants(MasterSelection {
                     variants,
@@ -641,16 +791,29 @@ impl SmoothSource {
     fn report_bad_manifest(&mut self, _reason: &str, now: u64) {
         self.manifest_failures += 1;
         let fatal = self.manifest_failures >= self.config.max_key_failures;
-        self.events.push_back(Event::Error { kind: ErrorKind::SmoothManifest { reason: "smooth_manifest" }, fatal });
-        if fatal { self.fatal = true; }
+        self.events.push_back(Event::Error {
+            kind: ErrorKind::SmoothManifest {
+                reason: "smooth_manifest",
+            },
+            fatal,
+        });
+        if fatal {
+            self.fatal = true;
+        }
         let delay = self.backoff_delay(self.manifest_failures);
         self.refresh_at = Some(now + delay * MICROS_PER_MILLI);
-        self.actions.push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
+        self.actions
+            .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
     }
 
     fn backoff_delay(&self, n: u32) -> u64 {
         let idx = n.saturating_sub(1) as usize;
-        self.config.backoff_ms.get(idx).copied().unwrap_or(self.config.backoff_cap_ms).max(1)
+        self.config
+            .backoff_ms
+            .get(idx)
+            .copied()
+            .unwrap_or(self.config.backoff_cap_ms)
+            .max(1)
     }
 
     fn handle_fragment_failure(&mut self, _req: Req, status: Option<u16>, now: u64) {
@@ -658,17 +821,40 @@ impl SmoothSource {
         let _ = (status, now);
     }
 
-    pub(crate) fn select_variant(&mut self, index: usize, _now: u64, _auth: &mut AuthState) -> Result<(), Error> {
-        if self.ended { return Ok(()); }
+    pub(crate) fn select_variant(
+        &mut self,
+        index: usize,
+        _now: u64,
+        _auth: &mut AuthState,
+    ) -> Result<(), Error> {
+        if self.ended {
+            return Ok(());
+        }
         // validate against variants count
-        let count = self.manifest.as_ref().and_then(|m| m.streams.iter().find(|s| s.stream_type == StreamType::Video).map(|s| s.qualities.len())).unwrap_or(0);
-        if index >= count { return Err(Error::NoSuchVariant(index)); }
+        let count = self
+            .manifest
+            .as_ref()
+            .and_then(|m| {
+                m.streams
+                    .iter()
+                    .find(|s| s.stream_type == StreamType::Video)
+                    .map(|s| s.qualities.len())
+            })
+            .unwrap_or(0);
+        if index >= count {
+            return Err(Error::NoSuchVariant(index));
+        }
         self.chosen_video = index;
         self.pending_variant = Some(index);
         Ok(())
     }
 
-    pub(crate) fn select_audio(&mut self, _choice: Option<usize>, _now: u64, _auth: &mut AuthState) -> Result<(), Error> {
+    pub(crate) fn select_audio(
+        &mut self,
+        _choice: Option<usize>,
+        _now: u64,
+        _auth: &mut AuthState,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
@@ -679,14 +865,25 @@ impl SmoothSource {
     pub(crate) fn set_wall_clock(&mut self, _now_us: u64, _unix_us: u64) {}
 
     fn check_completion(&mut self) {
-        if self.ended || self.fatal { return; }
-        if !self.tracks_announced { return; }
-        let all_done = self.streams.iter().all(|s| !s.in_flight && s.next >= s.chunks.len());
+        if self.ended || self.fatal {
+            return;
+        }
+        if !self.tracks_announced {
+            return;
+        }
+        let all_done = self
+            .streams
+            .iter()
+            .all(|s| !s.in_flight && s.next >= s.chunks.len());
         if all_done {
             if self.is_live {
                 if self.refresh_at.is_none() {
                     // schedule refresh
-                    let last_dur = self.streams.first().and_then(|s| s.chunks.last().map(|c| c.1)).unwrap_or(1_000_000);
+                    let last_dur = self
+                        .streams
+                        .first()
+                        .and_then(|s| s.chunks.last().map(|c| c.1))
+                        .unwrap_or(1_000_000);
                     let half = (last_dur / 2).clamp(500_000, 5_000_000);
                     let now = 0; // we don't store now! problem
                     let _ = (half, now);
