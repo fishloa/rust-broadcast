@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use rcgen::{
@@ -83,6 +83,7 @@ pub struct ServerLog {
 pub struct TlsServer {
     pub addr: SocketAddr,
     pub log: Arc<Mutex<ServerLog>>,
+    logged: Arc<Condvar>,
     stop: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -115,7 +116,8 @@ impl TlsServer {
         let addr = listener.local_addr().unwrap();
         let log = Arc::new(Mutex::new(ServerLog::default()));
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (log2, stop2) = (log.clone(), stop.clone());
+        let logged = Arc::new(Condvar::new());
+        let (log2, stop2, logged2) = (log.clone(), stop.clone(), logged.clone());
         let thread = std::thread::spawn(move || {
             while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
                 let Ok((tcp, _)) = listener.accept() else {
@@ -142,6 +144,7 @@ impl TlsServer {
                 let mut l = log2.lock().unwrap();
                 if failed || head.is_empty() {
                     l.handshake_failures += 1;
+                    logged2.notify_all();
                     continue;
                 }
                 l.requests += 1;
@@ -164,9 +167,24 @@ impl TlsServer {
         Self {
             addr,
             log,
+            logged,
             stop,
             thread: Some(thread),
         }
+    }
+}
+
+impl TlsServer {
+    pub fn log_when(
+        &self,
+        within: std::time::Duration,
+        ready: impl Fn(&ServerLog) -> bool,
+    ) -> MutexGuard<'_, ServerLog> {
+        let (log, _) = self
+            .logged
+            .wait_timeout_while(self.log.lock().unwrap(), within, |l| !ready(l))
+            .unwrap();
+        log
     }
 }
 
