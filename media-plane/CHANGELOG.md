@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-02
+
+### Changed
+- Dependency/epoch bump only (follows transmux); no functional change.
+
 ## [0.8.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)

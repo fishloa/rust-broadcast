@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [12.1.0] - 2026-11-02
+
+### Changed
+- Dependency/epoch bump only (follows dvb-bbframe); no functional change.
+
 ## [12.0.1] - 2026-11-01
 ### Changed
 - The optional `yoke` feature now derives `yoke` 0.8's `Yokeable` (was 0.7). Only users who enable `yoke` and name `yoke` 0.7 types directly need to update their own `yoke` dependency.

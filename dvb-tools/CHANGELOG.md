@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [12.1.0] - 2026-11-02
+
+### Changed
+- Dependency/epoch bump only (follows dvb-si, dvb-t2mi); no functional change.
+
 ## [12.0.1] - 2026-11-01
 
 ### Changed

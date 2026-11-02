@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-02
 ### Fixed
 - A Playlist blocking reload now waits three published Target Durations (never less than 5 s) before answering `503`, instead of a fixed 5 s, so a request for the next segment of a route with 5 to 6 s segments is served rather than shed just before the media arrives (RFC 8216bis section 6.2.5.2, issue #1651). The `503` carries `Retry-After: 1`. Applies to the media, I-frame, audio and subtitle playlists and the TS-HLS playlist.
 

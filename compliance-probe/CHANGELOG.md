@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-02
+
+### Changed
+- Dependency/epoch bump only (follows dvb-conformance, media-doctor, media-plane); no functional change.
+
 ## [0.5.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)

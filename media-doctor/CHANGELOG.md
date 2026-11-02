@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-02
+
+### Changed
+- Dependency/epoch bump only (follows dvb-si, dvb-conformance, transmux); no functional change.
+
 ## [0.12.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)

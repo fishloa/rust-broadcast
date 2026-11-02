@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -788,7 +788,7 @@ dependencies = [
 
 [[package]]
 name = "compliance-probe"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "dash-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "container-probe",
@@ -1192,7 +1192,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvb-bbframe"
-version = "12.0.1"
+version = "12.1.0"
 dependencies = [
  "broadcast-common",
  "criterion",
@@ -1234,7 +1234,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "12.0.1"
+version = "12.1.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -1267,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "12.0.1"
+version = "12.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1329,7 +1329,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "12.0.1"
+version = "12.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1349,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "12.0.1"
+version = "12.1.0"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -1739,7 +1739,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hls-runtime"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "backon",
@@ -2369,7 +2369,7 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -2553,7 +2553,7 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2618,7 +2618,7 @@ dependencies = [
 
 [[package]]
 name = "multimux-cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "clap",
  "multimux",
@@ -3601,7 +3601,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -4080,7 +4080,7 @@ dependencies = [
 
 [[package]]
 name = "srt-runtime"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "aes 0.9.3",
  "aes-kw",
@@ -4599,7 +4599,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -4660,7 +4660,7 @@ dependencies = [
 
 [[package]]
 name = "tshttp-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "serde",

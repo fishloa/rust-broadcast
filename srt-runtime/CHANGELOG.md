@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-02
 ### Added
 - Tests: RFC 3394 AES key wrap (all six section 4 vectors, wrap + unwrap) and RFC 6070 PBKDF2-HMAC-SHA1 vectors, plus SRT KEK derivation checks (low 64 bits of salt, 2048 iterations) against the private transcription paths (#1653).
 - Encryption in the tokio adapter data path: AES-CTR encrypt/decrypt with KM refresh (#1653).
