@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use percent_encoding::percent_decode_str;
 use url::Url;
 
+use crate::ClientIdentityScope;
 use crate::Credentials;
 use crate::Hint;
 use crate::auth::AuthState;
@@ -39,6 +40,7 @@ const SCHEME_RTSPS: &str = "rtsps";
 const SCHEME_UDP: &str = "udp";
 const SCHEME_RTP: &str = "rtp";
 const SCHEME_SRT: &str = "srt";
+const RTSPS_DEFAULT_PORT: u16 = 322;
 const MICROS_PER_MILLI: u64 = 1_000;
 const TS_WAKE_TICK_US: u64 = 1_000_000;
 const FIRST_CONN_ID: u32 = 1;
@@ -71,6 +73,7 @@ pub struct Session {
     adaptive: Option<Adaptive>,
     rtsp: Option<Box<RtspSource>>,
     datagram: Option<Box<Datagram>>,
+    identity: Option<alloc::sync::Arc<crate::ClientIdentity>>,
     redirect_count: u32,
     next_conn: u32,
     live_conn: Option<u32>,
@@ -155,6 +158,7 @@ impl Session {
         } else {
             None
         };
+        let config_identity = config.client_identity.clone().map(alloc::sync::Arc::new);
         let buffer_cfg = config.buffer;
         let start_pending_wait_us = config.start_pending_track_wait_us;
         let start_pending_hard_cap_us = config.start_pending_track_hard_cap_us;
@@ -204,6 +208,7 @@ impl Session {
             adaptive,
             rtsp,
             datagram,
+            identity: config_identity,
             redirect_count: 0,
             next_conn: FIRST_CONN_ID,
             live_conn: None,
@@ -253,10 +258,11 @@ impl Session {
                 self.drain_source();
             }
         }
-        while let Some(action) = self.actions.pop_front() {
+        while let Some(mut action) = self.actions.pop_front() {
             if matches!(action, Action::WakeAt(at) if at <= now_us) {
                 continue;
             }
+            self.attach_identity(&mut action);
             return Some(action);
         }
         None
@@ -334,6 +340,7 @@ impl Session {
                     url: target.to_string(),
                     headers: new_headers,
                     byte_range: None,
+                    identity: None,
                 });
             } else {
                 self.fail_connect(conn);
@@ -384,6 +391,7 @@ impl Session {
                         url: req_url.to_string(),
                         headers: new_headers,
                         byte_range: None,
+                        identity: None,
                     });
                 }
                 crate::auth::AuthDecision::Wait(events) => {
@@ -1073,6 +1081,44 @@ impl Session {
         id
     }
 
+    fn attach_identity(&self, action: &mut Action) {
+        let Some(identity) = &self.identity else {
+            return;
+        };
+        let any = self.config.client_identity_scope == ClientIdentityScope::AnyHttps;
+        let session = self.auth.origin();
+        match action {
+            Action::HttpRequest {
+                url,
+                identity: slot,
+                ..
+            } => {
+                let Ok(target) = Url::parse(url) else {
+                    return;
+                };
+                if target.scheme() == SCHEME_HTTPS && (any || target.origin() == session.origin()) {
+                    *slot = Some(identity.clone());
+                }
+            }
+            Action::TcpConnect {
+                host,
+                port,
+                tls: true,
+                identity: slot,
+                ..
+            } => {
+                let session_port = session.port().unwrap_or(RTSPS_DEFAULT_PORT);
+                let same_host = session
+                    .host_str()
+                    .is_some_and(|h| h.trim_matches(['[', ']']).eq_ignore_ascii_case(host));
+                if any || (same_host && session_port == *port) {
+                    *slot = Some(identity.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn push_srt_shutdown(&mut self) {
         let (Some(d), Some(conn)) = (self.datagram.as_mut(), self.live_conn) else {
             return;
@@ -1226,6 +1272,7 @@ impl Session {
                     url: target.to_string(),
                     headers,
                     byte_range: None,
+                    identity: None,
                 });
             }
             TsAction::Abort => {

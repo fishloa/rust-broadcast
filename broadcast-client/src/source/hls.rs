@@ -978,6 +978,7 @@ impl HlsSource {
             url: req.url.to_string(),
             headers,
             byte_range: req.byte_range.filter(|_| resume.is_none()),
+            identity: None,
         });
         self.actions
             .push_back(Action::WakeAt(now.saturating_add(timeout)));

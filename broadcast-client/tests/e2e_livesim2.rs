@@ -346,6 +346,7 @@ fn play(port: u16, shape: &Shape) -> Observed {
                     url,
                     headers,
                     byte_range,
+                    ..
                 } => pending.push(Pending {
                     conn,
                     method,

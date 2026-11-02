@@ -449,6 +449,7 @@ impl DashSim {
                     url,
                     headers,
                     byte_range,
+                    ..
                 } => self.dispatch(conn, method, url, headers, byte_range),
                 Action::Close { conn } => {
                     self.pending.retain(|p| p.conn != conn);

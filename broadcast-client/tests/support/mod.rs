@@ -10,6 +10,7 @@ pub mod replay;
 pub mod rtsp_host;
 pub mod srt_peer;
 pub mod srt_sim;
+pub mod tls_pki;
 pub mod truth;
 pub mod ts_host;
 pub mod ts_pmt;
