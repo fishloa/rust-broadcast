@@ -89,6 +89,23 @@ fn invalid_key_length(what: &'static str) -> Error {
 }
 
 // ---------------------------------------------------------------------------
+// RFC 8018 PBKDF2 (HMAC-SHA1) — lowest-level entry point.
+// ---------------------------------------------------------------------------
+
+/// Run PBKDF2-HMAC-SHA1 (RFC 8018 §5.2 with the HMAC-SHA-1 PRF of
+/// Appendix B.1.1) with a caller-supplied salt and iteration count. This is
+/// the lowest-level `srt-runtime` function that performs PBKDF2-HMAC-SHA1;
+/// [`derive_kek`] is a thin wrapper that fixes the salt to `LSB(64, Salt)`
+/// and the iteration count to [`PBKDF2_ITERATIONS`].
+///
+/// `output`'s length determines `dkLen`; any non-negative length up to
+/// `(2^32 - 1) * 20` is accepted by the underlying primitive.
+pub fn pbkdf2_hmac_sha1(password: &[u8], salt: &[u8], iterations: u32, output: &mut [u8]) {
+    pbkdf2::<Hmac<Sha1>>(password, salt, iterations, output)
+        .expect("HMAC-SHA1 accepts any key length, so PBKDF2 cannot fail here");
+}
+
+// ---------------------------------------------------------------------------
 // §6.1.4/§6.2.1/§6.3.1 — KEK derivation (passphrase path).
 // ---------------------------------------------------------------------------
 
@@ -121,8 +138,7 @@ pub fn derive_kek(
     // big-endian-wire Salt.
     let pbkdf2_salt = &salt[SALT_LEN - PBKDF2_SALT_LEN..];
     let mut kek = Zeroizing::new(vec![0u8; klen]);
-    pbkdf2::<Hmac<Sha1>>(passphrase, pbkdf2_salt, PBKDF2_ITERATIONS, &mut kek[..])
-        .expect("HMAC-SHA1 accepts any key length, so PBKDF2 cannot fail here");
+    pbkdf2_hmac_sha1(passphrase, pbkdf2_salt, PBKDF2_ITERATIONS, &mut kek[..]);
     Ok(kek)
 }
 
