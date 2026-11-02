@@ -2,8 +2,10 @@
 
 _Released 2026-11-02._
 
+Patch release: version bump only, following `transmux`.
+
 ### Changed
-- Dependency/epoch bump only (follows transmux); no functional change.
+- Builds against `transmux` 0.29 (was 0.28); no functional change in this crate.
 
 ---
 

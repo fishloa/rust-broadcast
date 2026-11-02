@@ -2,8 +2,10 @@
 
 _Released 2026-11-02._
 
+Patch release: version bump only, following `dvb-conformance`, `media-doctor` and `media-plane`.
+
 ### Changed
-- Dependency/epoch bump only (follows dvb-conformance, media-doctor, media-plane); no functional change.
+- Builds against `dvb-conformance` 12.1, `media-doctor` 0.13 and `media-plane` 0.9 (were 12.0.1, 0.12 and 0.8); no functional change in this crate.
 
 ---
 

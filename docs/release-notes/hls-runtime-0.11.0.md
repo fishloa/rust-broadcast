@@ -2,6 +2,8 @@
 
 _Released 2026-11-02._
 
+Minor release: caption and target-duration helpers for blocking reloads and caption discovery (issue #1428, #1651, #1460).
+
 ### Added
 - `HlsOrigin::published_target_duration()`: the `EXT-X-TARGETDURATION` the origin's Media Playlists carry (frozen value once published, otherwise the largest of its own, its longest segment and its siblings'), so an adapter can bound a blocking reload by three Target Durations (RFC 8216bis section 6.2.5.2, issue #1651).
 - `HlsOrigin::set_declared_closed_caption_languages` hands the BCP 47 language the stream declares for each caption stream to the master playlist; a `CLOSED-CAPTIONS` rendition takes it as `LANGUAGE` unless a `ClosedCaptionDecl` names one, and carries none when the stream declares none (issue #1428, Apple authoring spec 4.4).

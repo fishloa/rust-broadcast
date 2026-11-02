@@ -2,8 +2,10 @@
 
 _Released 2026-11-02._
 
+Lockstep release with `dvb-si` 12.1.0; no functional change in this crate.
+
 ### Changed
-- Dependency/epoch bump only (follows dvb-bbframe); no functional change.
+- Builds against `dvb-bbframe` 12.1 and `dvb-si` 12.1 (were 12.0.1); no functional change in this crate.
 
 ---
 

@@ -2,8 +2,10 @@
 
 _Released 2026-11-02._
 
+Patch release: version bump only, following `multimux`.
+
 ### Changed
-- Dependency/epoch bump only (follows multimux); no functional change.
+- Builds against `multimux` 0.15 (was 0.14); no functional change in this crate.
 
 ---
 
