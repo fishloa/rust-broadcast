@@ -206,34 +206,7 @@ impl SmoothSource {
                 match req.kind {
                     ReqKind::Manifest => self.report_bad_manifest("inactivity", now),
                     ReqKind::Fragment { stream_idx: si } => {
-                        if si < self.streams.len() {
-                            self.streams[si].failures += 1;
-                            self.streams[si].in_flight = false;
-                            let max = self.config.max_segment_failures;
-                            if self.streams[si].failures >= max {
-                                if self.is_live {
-                                    self.events.push_back(Event::Error {
-                                        kind: ErrorKind::SegmentFetchFailed { status: None },
-                                        fatal: false,
-                                    });
-                                    self.events.push_back(Event::Discontinuity);
-                                    if let Some(idx) = self.streams[si].current_idx {
-                                        self.streams[si].next = idx + 1;
-                                    }
-                                } else {
-                                    self.events.push_back(Event::Error {
-                                        kind: ErrorKind::SegmentFetchFailed { status: None },
-                                        fatal: true,
-                                    });
-                                    self.fatal = true;
-                                }
-                            } else {
-                                let delay = self.backoff_delay(self.streams[si].failures);
-                                self.streams[si].retry_at = Some(now + delay * MICROS_PER_MILLI);
-                                self.actions
-                                    .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
-                            }
-                        }
+                        self.fragment_failed(si, None, now);
                     }
                 }
             }
@@ -456,35 +429,7 @@ impl SmoothSource {
                     self.report_bad_manifest("transport", now);
                 }
                 ReqKind::Fragment { stream_idx: si } => {
-                    if si >= self.streams.len() {
-                        return;
-                    }
-                    let max = self.config.max_segment_failures;
-                    self.streams[si].failures += 1;
-                    self.streams[si].in_flight = false;
-                    if self.streams[si].failures >= max {
-                        if self.is_live {
-                            self.events.push_back(Event::Error {
-                                kind: ErrorKind::SegmentFetchFailed { status: None },
-                                fatal: false,
-                            });
-                            self.events.push_back(Event::Discontinuity);
-                            if let Some(idx) = self.streams[si].current_idx {
-                                self.streams[si].next = idx + 1;
-                            }
-                        } else {
-                            self.events.push_back(Event::Error {
-                                kind: ErrorKind::SegmentFetchFailed { status: None },
-                                fatal: true,
-                            });
-                            self.fatal = true;
-                        }
-                    } else {
-                        let delay = self.backoff_delay(self.streams[si].failures);
-                        self.streams[si].retry_at = Some(now + delay * MICROS_PER_MILLI);
-                        self.actions
-                            .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
-                    }
+                    self.fragment_failed(si, None, now);
                 }
             }
             return;
@@ -590,39 +535,7 @@ impl SmoothSource {
                     return;
                 }
                 if !(200..300).contains(&status) {
-                    let max = self.config.max_segment_failures;
-                    self.streams[si].failures += 1;
-                    self.streams[si].in_flight = false;
-                    if self.streams[si].failures >= max {
-                        if self.is_live {
-                            self.events.push_back(Event::Error {
-                                kind: ErrorKind::SegmentFetchFailed {
-                                    status: Some(status),
-                                },
-                                fatal: false,
-                            });
-                            self.events.push_back(Event::Discontinuity);
-                            if let Some(idx) = self.streams[si].current_idx {
-                                self.streams[si].next = idx + 1;
-                            }
-                        } else {
-                            self.events.push_back(Event::Error {
-                                kind: ErrorKind::SegmentFetchFailed {
-                                    status: Some(status),
-                                },
-                                fatal: true,
-                            });
-                            self.fatal = true;
-                        }
-                    } else {
-                        if (status == 404 || status == 410) && self.is_live {
-                            self.fetch_manifest(self.manifest_url.clone());
-                        }
-                        let delay = self.backoff_delay(self.streams[si].failures);
-                        self.streams[si].retry_at = Some(now + delay * MICROS_PER_MILLI);
-                        self.actions
-                            .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
-                    }
+                    self.fragment_failed(si, Some(status), now);
                     return;
                 }
                 let body = req.body.clone();
@@ -935,6 +848,43 @@ impl SmoothSource {
         }
     }
 
+    fn fragment_failed(&mut self, si: usize, status: Option<u16>, now: u64) {
+        if si >= self.streams.len() {
+            return;
+        }
+        let max = self.config.max_segment_failures;
+        self.streams[si].failures += 1;
+        self.streams[si].in_flight = false;
+        if self.streams[si].failures >= max {
+            if self.is_live {
+                self.events.push_back(Event::Error {
+                    kind: ErrorKind::SegmentFetchFailed { status },
+                    fatal: false,
+                });
+                self.events.push_back(Event::Discontinuity);
+                if let Some(idx) = self.streams[si].current_idx {
+                    self.streams[si].next = idx + 1;
+                }
+            } else {
+                self.events.push_back(Event::Error {
+                    kind: ErrorKind::SegmentFetchFailed { status },
+                    fatal: true,
+                });
+                self.fatal = true;
+            }
+        } else {
+            if let Some(st) = status {
+                if (st == 404 || st == 410) && self.is_live {
+                    self.fetch_manifest(self.manifest_url.clone());
+                }
+            }
+            let delay = self.backoff_delay(self.streams[si].failures);
+            self.streams[si].retry_at = Some(now + delay * MICROS_PER_MILLI);
+            self.actions
+                .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
+        }
+    }
+
     fn report_bad_manifest(&mut self, _reason: &str, now: u64) {
         self.manifest_failures += 1;
         let fatal = self.manifest_failures >= self.config.max_key_failures;
@@ -1062,5 +1012,3 @@ impl SmoothSource {
         }
     }
 }
-
-// Need add `now` field. We'll patch struct and poll.
