@@ -151,7 +151,8 @@ impl SmoothSource {
             identity: None,
         });
         self.actions.push_back(Action::WakeAt(
-            self.now + self.config.segment_inactivity_timeout_us.max(1),
+            self.now
+                .saturating_add(self.config.segment_inactivity_timeout_us.max(1)),
         ));
     }
 
@@ -183,6 +184,9 @@ impl SmoothSource {
 
     pub(crate) fn poll(&mut self, now: u64, _auth: &mut AuthState) {
         self.now = now;
+        if self.fatal || self.ended {
+            return;
+        }
         // inactivity timeout handling
         let timeout = self.config.segment_inactivity_timeout_us;
         let mut stalled: Vec<u32> = Vec::new();
@@ -197,6 +201,9 @@ impl SmoothSource {
             }
         }
         for conn in stalled {
+            if self.fatal || self.ended {
+                break;
+            }
             if let Some(req) = self.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
                 self.events.push_back(Event::Status(Status::RequestStalled {
@@ -210,6 +217,9 @@ impl SmoothSource {
                     }
                 }
             }
+        }
+        if self.fatal || self.ended {
+            return;
         }
         // retry timers
         for i in 0..self.streams.len() {
@@ -290,7 +300,8 @@ impl SmoothSource {
             identity: None,
         });
         self.actions.push_back(Action::WakeAt(
-            self.now + self.config.segment_inactivity_timeout_us.max(1),
+            self.now
+                .saturating_add(self.config.segment_inactivity_timeout_us.max(1)),
         ));
     }
 
@@ -331,7 +342,7 @@ impl SmoothSource {
                         identity: None,
                     });
                     self.actions.push_back(Action::WakeAt(
-                        now + self.config.segment_inactivity_timeout_us.max(1),
+                        now.saturating_add(self.config.segment_inactivity_timeout_us.max(1)),
                     ));
                 }
                 None => {
@@ -363,7 +374,7 @@ impl SmoothSource {
                         identity: None,
                     });
                     self.actions.push_back(Action::WakeAt(
-                        now + self.config.segment_inactivity_timeout_us.max(1),
+                        now.saturating_add(self.config.segment_inactivity_timeout_us.max(1)),
                     ));
                 }
                 AuthDecision::ReplayStale => {
@@ -383,12 +394,27 @@ impl SmoothSource {
                         identity: None,
                     });
                     self.actions.push_back(Action::WakeAt(
-                        now + self.config.segment_inactivity_timeout_us.max(1),
+                        now.saturating_add(self.config.segment_inactivity_timeout_us.max(1)),
                     ));
                 }
                 AuthDecision::Wait(events) => {
                     self.events.extend(events);
                     self.parked.push(req);
+                }
+            }
+            return;
+        }
+        if !(200..300).contains(&status) {
+            self.actions.push_back(Action::Close { conn });
+            match req.kind {
+                ReqKind::Manifest => {
+                    if status == 404 || status == 410 {
+                        self.events.push_back(Event::Status(Status::NotFound));
+                    }
+                    self.report_bad_manifest("fetch_failed", now);
+                }
+                ReqKind::Fragment { stream_idx: si } => {
+                    self.fragment_failed(si, Some(status), now);
                 }
             }
             return;
@@ -879,9 +905,11 @@ impl SmoothSource {
                 }
             }
             let delay = self.backoff_delay(self.streams[si].failures);
-            self.streams[si].retry_at = Some(now + delay * MICROS_PER_MILLI);
-            self.actions
-                .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
+            self.streams[si].retry_at =
+                Some(now.saturating_add(delay.saturating_mul(MICROS_PER_MILLI)));
+            self.actions.push_back(Action::WakeAt(
+                now.saturating_add(delay.saturating_mul(MICROS_PER_MILLI)),
+            ));
         }
     }
 
@@ -898,9 +926,10 @@ impl SmoothSource {
             self.fatal = true;
         }
         let delay = self.backoff_delay(self.manifest_failures);
-        self.refresh_at = Some(now + delay * MICROS_PER_MILLI);
-        self.actions
-            .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
+        self.refresh_at = Some(now.saturating_add(delay.saturating_mul(MICROS_PER_MILLI)));
+        self.actions.push_back(Action::WakeAt(
+            now.saturating_add(delay.saturating_mul(MICROS_PER_MILLI)),
+        ));
     }
 
     fn backoff_delay(&self, n: u32) -> u64 {
@@ -971,7 +1000,7 @@ impl SmoothSource {
                 identity: None,
             });
             self.actions.push_back(Action::WakeAt(
-                now + self.config.segment_inactivity_timeout_us.max(1),
+                now.saturating_add(self.config.segment_inactivity_timeout_us.max(1)),
             ));
         }
         if !auth.is_waiting() {
@@ -1001,7 +1030,7 @@ impl SmoothSource {
                         .and_then(|s| s.chunks.last().map(|c| c.1))
                         .unwrap_or(1_000_000);
                     let half = (last_dur / 2).clamp(500_000, 5_000_000);
-                    let t = self.now + half;
+                    let t = self.now.saturating_add(half);
                     self.refresh_at = Some(t);
                     self.actions.push_back(Action::WakeAt(t));
                 }

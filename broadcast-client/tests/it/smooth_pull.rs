@@ -576,3 +576,54 @@ fn smooth_fragment_inactivity_reports_request_stalled() {
     );
     assert!(h.samples() > 0, "the retried fragment is delivered");
 }
+
+#[test]
+fn smooth_emits_nothing_after_a_fatal_error() {
+    let mut cfg = smooth_config();
+    cfg.max_segment_failures = 1;
+    let mut h = Host::new(manifest_url(), cfg);
+    h.ok(manifest_url(), body("smooth/av/Manifest"));
+    route_fragments(&mut h);
+    // fatal on the video fragment
+    h.route(
+        "http://origin.test/QualityLevels(64528)/Fragments(video=0)",
+        vec![hls_host::Reply::TransportError],
+    );
+    // an in-flight hanging request on audio
+    h.route(
+        "http://origin.test/QualityLevels(98429)/Fragments(audio=0)",
+        vec![hls_host::Reply::Hang],
+    );
+    h.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Error { fatal: true, .. }))
+        },
+        10_000,
+    );
+    assert!(
+        h.events
+            .iter()
+            .any(|e| matches!(e, Event::Error { fatal: true, .. }))
+    );
+    let before = h.events.len();
+    // advance past the inactivity timeout
+    h.now += 20_000_000;
+    h.collect();
+    assert_eq!(h.events.len(), before, "events emitted after a fatal error");
+    assert!(
+        !h.events
+            .iter()
+            .any(|e| matches!(e, Event::Status(Status::RequestStalled { .. })))
+    );
+}
+
+#[test]
+fn smooth_closes_connection_on_non_2xx_response() {
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.route(manifest_url(), vec![hls_host::Reply::Status(404)]);
+    h.run_until(|_| false, 10);
+    // drive one step cycle
+    let _ = h.step();
+    assert!(!h.closes.is_empty(), "answered connection was not closed");
+}
