@@ -19,17 +19,17 @@ fuzz_target!(|data: &[u8]| {
 
         // If the fuzzed packet happens to carry a header extension, also
         // exercise the RFC 8285 dispatch (issue #655) on it.
-        if let Some(ext) = &pkt.extension {
-            if let Ok(elements) = parse_extensions(ext) {
-                match &elements {
-                    ExtensionElements::OneByte(e) => {
-                        let _ = e.try_to_bytes().unwrap();
-                    }
-                    ExtensionElements::TwoByte(e) => {
-                        let _ = e.try_to_bytes().unwrap();
-                    }
-                    _ => {}
+        if let Some(ext) = &pkt.extension
+            && let Ok(elements) = parse_extensions(ext)
+        {
+            match &elements {
+                ExtensionElements::OneByte(e) => {
+                    let _ = e.try_to_bytes().unwrap();
                 }
+                ExtensionElements::TwoByte(e) => {
+                    let _ = e.try_to_bytes().unwrap();
+                }
+                _ => {}
             }
         }
     }

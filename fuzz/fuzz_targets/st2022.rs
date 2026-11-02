@@ -11,7 +11,8 @@ fuzz_target!(|data: &[u8]| {
         let reserialized = header.try_to_bytes().unwrap();
         if let Ok(reparsed) = PayloadHeader::parse(&reserialized) {
             assert_eq!(
-                reserialized, reparsed.try_to_bytes().unwrap(),
+                reserialized,
+                reparsed.try_to_bytes().unwrap(),
                 "PayloadHeader roundtrip mismatch"
             );
         }

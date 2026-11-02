@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use broadcast_client::{
-    Action, ClientIdentity, Config, Credentials, DashClockPolicy, Event, Hint, Session, SrtEntropySeed, TrackId,
+    Action, ClientIdentity, Config, Credentials, DashClockPolicy, Event, Hint, Session,
+    SrtEntropySeed, TrackId,
 };
 use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
@@ -926,7 +927,7 @@ fn seed_datagram(rtp: bool, seq: u16, ssrc: u8, cursor: &mut usize) -> Vec<u8> {
 
 fn srt_like(chunk: &[u8], pick: u8) -> Vec<u8> {
     let mut d = vec![0u8; SRT_HEADER_BYTES];
-    if pick % 2 == 0 {
+    if pick.is_multiple_of(2) {
         d[0] = SRT_CONTROL_BIT;
         d[1] = chunk.get(1).copied().unwrap_or(0) % SRT_CONTROL_TYPES;
     }

@@ -17,7 +17,11 @@ macro_rules! assert_canonical {
         let n = v
             .serialize_into(&mut out)
             .unwrap_or_else(|e| panic!("{}: serialize of parsed value failed: {e}", $what));
-        assert_eq!(n, len, "{}: serialized_len disagrees with bytes written", $what);
+        assert_eq!(
+            n, len,
+            "{}: serialized_len disagrees with bytes written",
+            $what
+        );
         let $b: &[u8] = &out;
         let again = ($reparse).unwrap_or_else(|e| panic!("{}: re-parse failed: {e}", $what));
         assert_eq!(again, v, "{}: re-parse differs", $what);

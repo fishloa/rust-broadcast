@@ -21,7 +21,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let num_sources = (data[0] % 4) as usize + 1;
     let max_queued = (data[1] % 32) as usize + 1;
-    let policy = if data[2] % 2 == 0 {
+    let policy = if data[2].is_multiple_of(2) {
         MergePolicy::FirstArrival
     } else {
         MergePolicy::Failover {

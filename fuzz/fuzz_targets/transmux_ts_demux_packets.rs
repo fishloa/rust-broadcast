@@ -13,7 +13,10 @@ const SYNC_BYTE: u8 = 0x47;
 fn assert_config_serializes(cfg: &CodecConfig) {
     macro_rules! ok {
         ($b:expr) => {
-            assert!($b.try_to_bytes().is_ok(), "demuxer emitted an unserializable config")
+            assert!(
+                $b.try_to_bytes().is_ok(),
+                "demuxer emitted an unserializable config"
+            )
         };
     }
     match cfg {

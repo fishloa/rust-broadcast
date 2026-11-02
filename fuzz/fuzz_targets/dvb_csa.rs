@@ -27,5 +27,9 @@ fuzz_target!(|data: &[u8]| {
     dvb_csa::descramble(&cw, &mut descrambled);
 
     // Round-trip invariant: descramble(scramble(x)) == x
-    assert_eq!(payload, &descrambled[..payload.len()], "DVB-CSA round-trip mismatch");
+    assert_eq!(
+        payload,
+        &descrambled[..payload.len()],
+        "DVB-CSA round-trip mismatch"
+    );
 });
