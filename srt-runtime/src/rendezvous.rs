@@ -1270,7 +1270,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "crypto"))]
 mod crypto_echo_tests {
     use super::super::*;
     #[cfg(feature = "crypto")]
