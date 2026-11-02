@@ -516,7 +516,7 @@ async fn an_accept_error_does_not_kill_the_listener() {
                 let fail_first = Arc::clone(&fail_first);
                 Box::pin(async move {
                     if fail_first
-                        .fetch_update(
+                        .try_update(
                             std::sync::atomic::Ordering::SeqCst,
                             std::sync::atomic::Ordering::SeqCst,
                             |n| if n > 0 { Some(n - 1) } else { None },

@@ -96,7 +96,7 @@ runs:
     - name: Restore the pinned private fixtures from the cache
       if: inputs.mode != 'checkout' && steps.decide.outputs.enabled == 'true'
       id: cache
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         path: private-fixtures
         key: private-fixtures-v3-${{ steps.pin.outputs.sha }}
@@ -127,7 +127,7 @@ runs:
 
     - name: Save the pinned private fixtures to the cache
       if: inputs.mode == 'prepare' && steps.decide.outputs.enabled == 'true' && steps.cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       with:
         path: private-fixtures
         key: private-fixtures-v3-${{ steps.pin.outputs.sha }}

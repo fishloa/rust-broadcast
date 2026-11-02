@@ -20,7 +20,7 @@ env:
 jobs:
   publish:
     name: publish rmt-flute to crates.io
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # crates.io publish is gated: pauses for manual approval by a
     # required reviewer before any cargo publish can run. See the
     # 'crates-io' environment (repo Settings -> Environments).
