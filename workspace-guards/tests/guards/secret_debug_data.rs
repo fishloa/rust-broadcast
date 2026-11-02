@@ -5,6 +5,15 @@ use crate::secret_debug::Crate;
 
 pub const TABLE: &[Crate] = &[
     Crate {
+        name: "broadcast-client",
+        allow: &[(
+            "source/hls.rs",
+            "BodyLimits",
+            "`key` is the byte cap on an HLS key fetch, not key material",
+        )],
+        ct_compare: false,
+    },
+    Crate {
         name: "broadcast-auth",
         allow: &[],
         ct_compare: true,

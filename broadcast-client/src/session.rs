@@ -24,6 +24,7 @@ use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
 use crate::source::rtsp::RtspSource;
+use crate::source::srt::Notice;
 use crate::source::ts_http::TsHttpSource;
 use crate::source::ts_http_hold::{HoldLimits, StreamKind};
 use crate::timeline::JumpDetector;
@@ -37,6 +38,7 @@ const SCHEME_RTSP: &str = "rtsp";
 const SCHEME_RTSPS: &str = "rtsps";
 const SCHEME_UDP: &str = "udp";
 const SCHEME_RTP: &str = "rtp";
+const SCHEME_SRT: &str = "srt";
 const MICROS_PER_MILLI: u64 = 1_000;
 const TS_WAKE_TICK_US: u64 = 1_000_000;
 const FIRST_CONN_ID: u32 = 1;
@@ -107,17 +109,20 @@ impl Session {
         let is_http_scheme = scheme == SCHEME_HTTP || scheme == SCHEME_HTTPS;
         let is_udp_scheme = scheme == SCHEME_UDP;
         let is_rtp_scheme = scheme == SCHEME_RTP;
+        let is_srt_scheme = scheme == SCHEME_SRT;
         let rtsp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtsp);
         let http_allowed = !matches!(
             config.kind,
-            SourceKind::Rtsp | SourceKind::Udp | SourceKind::Rtp
+            SourceKind::Rtsp | SourceKind::Udp | SourceKind::Rtp | SourceKind::Srt
         );
         let udp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Udp);
         let rtp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtp);
+        let srt_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Srt);
         if !((is_rtsp_scheme && rtsp_allowed)
             || (is_http_scheme && http_allowed)
             || (is_udp_scheme && udp_allowed)
-            || (is_rtp_scheme && rtp_allowed))
+            || (is_rtp_scheme && rtp_allowed)
+            || (is_srt_scheme && srt_allowed))
         {
             return Err(Error::UnsupportedScheme(scheme.to_string()));
         }
@@ -145,6 +150,8 @@ impl Session {
                 &config.udp,
                 is_rtp_scheme,
             )?))
+        } else if is_srt_scheme {
+            Some(Box::new(Datagram::srt(&parsed, &config.srt)?))
         } else {
             None
         };
@@ -238,6 +245,7 @@ impl Session {
                 if let Some(d) = self.datagram.as_mut() {
                     let released = d.poll(now_us);
                     self.feed_released(released, now_us);
+                    self.datagram_effects(now_us);
                 }
                 if !self.auth.is_waiting() {
                     self.source.poll_timeout(now_us);
@@ -449,6 +457,7 @@ impl Session {
             self.now_us = now_us;
             let released = d.on_datagram(bytes, now_us);
             self.feed_released(released, now_us);
+            self.datagram_effects(now_us);
             return;
         }
         if self.refused_conns.contains(&conn) {
@@ -539,6 +548,10 @@ impl Session {
             self.live_conn = Some(conn);
             self.source.on_response(200, &[], self.now_us);
             self.drain_source();
+            if let Some(d) = self.datagram.as_mut() {
+                d.on_connected(self.now_us);
+            }
+            self.datagram_effects(self.now_us);
         }
     }
 
@@ -549,6 +562,33 @@ impl Session {
             .as_ref()
             .map(|d| d.stats())
             .unwrap_or_default()
+    }
+
+    fn datagram_effects(&mut self, now_us: u64) {
+        let Some(d) = self.datagram.as_mut() else {
+            return;
+        };
+        let effects = d.take_effects();
+        let Some(conn) = self.live_conn else {
+            return;
+        };
+        for bytes in effects.sends {
+            self.actions.push_back(Action::Send { conn, bytes });
+        }
+        if let Some(notice) = effects.notices.into_iter().next() {
+            let (kind, clean) = match notice {
+                Notice::Rejected(reason) => (Some(ErrorKind::SrtRejected { reason }), false),
+                Notice::HandshakeTimedOut => (Some(ErrorKind::SrtHandshakeTimeout), false),
+                Notice::PeerIdle => (None, false),
+                Notice::PeerShutdown => (None, true),
+            };
+            if let Some(kind) = kind {
+                self.events.push_back(Event::Error { kind, fatal: false });
+            }
+            self.actions.push_back(Action::Close { conn });
+            let error = (!clean).then(|| "srt link lost".to_string());
+            self.on_closed(conn, error, now_us);
+        }
     }
 
     fn feed_released(&mut self, released: crate::source::datagram::Released, now_us: u64) {
@@ -852,6 +892,7 @@ impl Session {
                 order.push(conn);
             }
         }
+        self.push_srt_shutdown();
         let mut live: Vec<u32> = self.known_conns.keys().copied().collect();
         live.extend(self.refused_conns.iter().copied());
         if let Some(h) = self.adaptive.as_ref() {
@@ -1032,6 +1073,15 @@ impl Session {
         id
     }
 
+    fn push_srt_shutdown(&mut self) {
+        let (Some(d), Some(conn)) = (self.datagram.as_mut(), self.live_conn) else {
+            return;
+        };
+        if let Some(bytes) = d.shutdown_datagram(self.now_us) {
+            self.actions.push_back(Action::Send { conn, bytes });
+        }
+    }
+
     fn close_refused_conns(&mut self) {
         let mut conns: Vec<u32> = self.refused_conns.drain().collect();
         conns.sort_unstable();
@@ -1117,7 +1167,10 @@ impl Session {
         if self.closed || self.auth.is_waiting() {
             return;
         }
-        let datagram = self.datagram.as_ref().and_then(|d| d.next_deadline_us());
+        let datagram = self
+            .datagram
+            .as_ref()
+            .and_then(|d| d.next_deadline_us(self.now_us));
         let Some(deadline) = self
             .source
             .next_deadline_us()
@@ -1178,6 +1231,7 @@ impl Session {
             TsAction::Abort => {
                 let mut conns: Vec<u32> = self.known_conns.keys().copied().collect();
                 conns.sort_unstable();
+                self.push_srt_shutdown();
                 for conn in conns {
                     self.actions.push_back(Action::Close { conn });
                 }
