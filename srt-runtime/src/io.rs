@@ -97,6 +97,7 @@ use crate::packet::{
 use crate::tsbpd::{TickOutcome, TsbpdScheduler};
 
 #[cfg(feature = "crypto")]
+#[cfg(feature = "crypto")]
 use crate::km_refresh::{KeyParity, KmRefreshEvent};
 
 // ===========================================================================
@@ -139,6 +140,7 @@ pub struct IoConfig {
     pub write: Duration,
     /// KM Refresh thresholds (crypto feature / key rotation). Default the
     /// spec-recommended `2^25` / `4000` values. Lower for testing.
+    #[cfg(feature = "crypto")]
     pub km_refresh_thresholds: crate::km_refresh::KmRefreshThresholds,
 }
 
@@ -150,6 +152,7 @@ impl Default for IoConfig {
             handshake: Duration::from_secs(5),
             read_idle: Duration::from_secs(5),
             write: Duration::from_secs(5),
+            #[cfg(feature = "crypto")]
             km_refresh_thresholds: crate::km_refresh::KmRefreshThresholds::RECOMMENDED,
         }
     }
@@ -192,22 +195,9 @@ impl IoConfig {
     }
 
     /// Set the KM Refresh thresholds (key rotation packet counts).
+    #[cfg(feature = "crypto")]
     #[must_use]
     pub fn with_km_refresh_thresholds(mut self, t: crate::km_refresh::KmRefreshThresholds) -> Self {
-        self.km_refresh_thresholds = t;
-        self
-    }
-
-    /// Alias for [`Self::with_km_refresh_thresholds`].
-    #[must_use]
-    pub fn with_km_refresh(mut self, t: crate::km_refresh::KmRefreshThresholds) -> Self {
-        self.km_refresh_thresholds = t;
-        self
-    }
-
-    /// Alias for [`Self::with_km_refresh_thresholds`].
-    #[must_use]
-    pub fn with_refresh_thresholds(mut self, t: crate::km_refresh::KmRefreshThresholds) -> Self {
         self.km_refresh_thresholds = t;
         self
     }
