@@ -70,7 +70,9 @@ impl Rig {
         let (out, events) = self.client.handle_data(bytes).expect("client");
         self.events.extend(events);
         if !out.is_empty() {
-            self.peer.on_bytes(&out).expect("peer reads the client reply");
+            self.peer
+                .on_bytes(&out)
+                .expect("peer reads the client reply");
         }
     }
 
@@ -167,10 +169,14 @@ fn the_command_sequence_is_connect_create_stream_play_without_the_publish_preamb
         s,
         Seen::Command { name, stream_id, .. } if name == "play" && *stream_id == PLAY_STREAM_ID
     )));
-    assert!(rig.peer.seen.contains(&Seen::UserControl(UserControl::SetBufferLength {
-        stream_id: PLAY_STREAM_ID,
-        buffer_ms: rtmp_runtime::client::DEFAULT_PLAY_BUFFER_MS,
-    })));
+    assert!(
+        rig.peer
+            .seen
+            .contains(&Seen::UserControl(UserControl::SetBufferLength {
+                stream_id: PLAY_STREAM_ID,
+                buffer_ms: rtmp_runtime::client::DEFAULT_PLAY_BUFFER_MS,
+            }))
+    );
     let order: Vec<&str> = rig
         .events
         .iter()
@@ -193,7 +199,11 @@ fn a_publish_mode_session_still_sends_the_publish_preamble_and_never_plays() {
     let names = rig.peer.commands();
     assert_eq!(names[..3], ["connect", "releaseStream", "FCPublish"]);
     assert!(!names.contains(&"play"));
-    assert!(!rig.events.iter().any(|e| matches!(e, ClientEvent::Playing { .. })));
+    assert!(
+        !rig.events
+            .iter()
+            .any(|e| matches!(e, ClientEvent::Playing { .. }))
+    );
 }
 
 #[test]
@@ -202,7 +212,10 @@ fn media_is_an_flv_stream_that_demuxes_to_the_samples_of_the_source_capture() {
     rig.handshake_and_play();
     play_all(&mut rig);
     let flv = rig.flv();
-    assert!(flv.starts_with(b"FLV"), "the first chunk carries the file header");
+    assert!(
+        flv.starts_with(b"FLV"),
+        "the first chunk carries the file header"
+    );
     assert_matches_direct(&flv);
 }
 
@@ -254,7 +267,10 @@ fn an_acknowledgement_is_sent_each_time_the_peer_window_is_crossed_with_the_tota
     cfg.window_ack_size = SMALL_WINDOW;
     let mut rig = Rig::new(play_config(STREAM), cfg);
     rig.handshake_and_play();
-    assert!(rig.peer.acks().is_empty(), "no ack before the window is crossed");
+    assert!(
+        rig.peer.acks().is_empty(),
+        "no ack before the window is crossed"
+    );
     let mut total_from_peer = 0u64;
     for (tag_type, ts, body) in fixture_tags() {
         let bytes = rig.peer.media(tag_type, ts, &body).unwrap();
@@ -262,10 +278,19 @@ fn an_acknowledgement_is_sent_each_time_the_peer_window_is_crossed_with_the_tota
         rig.deliver(&bytes);
     }
     let acks = rig.peer.acks();
-    assert!(acks.len() >= 2, "the fixture crosses the window repeatedly: {acks:?}");
-    assert!(acks.windows(2).all(|w| w[1] > w[0]), "sequence numbers grow: {acks:?}");
+    assert!(
+        acks.len() >= 2,
+        "the fixture crosses the window repeatedly: {acks:?}"
+    );
+    assert!(
+        acks.windows(2).all(|w| w[1] > w[0]),
+        "sequence numbers grow: {acks:?}"
+    );
     let last = u64::from(*acks.last().unwrap());
-    assert!(last <= total_from_peer + 4096, "an ack never claims bytes that were not sent");
+    assert!(
+        last <= total_from_peer + 4096,
+        "an ack never claims bytes that were not sent"
+    );
     assert!(
         last + u64::from(SMALL_WINDOW) + 8192 >= total_from_peer,
         "the last ack is within a window of the total"
@@ -331,7 +356,11 @@ fn a_missing_stream_is_an_error_event_and_no_playing() {
         errors[0],
         ClientEvent::Error { code, .. } if code == "NetStream.Play.StreamNotFound"
     ));
-    assert!(!rig.events.iter().any(|e| matches!(e, ClientEvent::Playing { .. })));
+    assert!(
+        !rig.events
+            .iter()
+            .any(|e| matches!(e, ClientEvent::Playing { .. }))
+    );
 }
 
 #[test]
@@ -351,7 +380,10 @@ fn an_informational_status_is_not_an_error() {
     let mut rig = Rig::new(play_config(STREAM), peer_config());
     rig.handshake_and_play();
     let before = rig.events.len();
-    let bytes = rig.peer.on_status("status", "NetStream.Data.Start").unwrap();
+    let bytes = rig
+        .peer
+        .on_status("status", "NetStream.Data.Start")
+        .unwrap();
     rig.deliver(&bytes);
     assert_eq!(rig.events.len(), before);
 }
@@ -416,11 +448,19 @@ fn media_before_the_play_command_is_not_delivered() {
     let first = client.start();
     let reply = peer.on_bytes(&first).unwrap();
     let (_, events) = client.handle_data(&reply).unwrap();
-    assert!(events.iter().all(|e| !matches!(e, ClientEvent::Media { .. })));
+    assert!(
+        events
+            .iter()
+            .all(|e| !matches!(e, ClientEvent::Media { .. }))
+    );
     let (tag_type, ts, body) = fixture_tags().remove(0);
     let bytes = peer.media(tag_type, ts, &body).unwrap();
     let (_, events) = client.handle_data(&bytes).unwrap();
-    assert!(events.iter().all(|e| !matches!(e, ClientEvent::Media { .. })));
+    assert!(
+        events
+            .iter()
+            .all(|e| !matches!(e, ClientEvent::Media { .. }))
+    );
 }
 
 #[test]
@@ -470,8 +510,7 @@ fn playing_reports_whether_the_server_marked_the_stream_recorded() {
         rig.handshake_and_play();
         assert!(
             rig.events
-                .iter()
-                .any(|e| *e == ClientEvent::Playing { recorded }),
+                .contains(&ClientEvent::Playing { recorded }),
             "recorded={recorded}: {:?}",
             rig.events
         );
