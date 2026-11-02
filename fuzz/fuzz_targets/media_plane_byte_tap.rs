@@ -33,9 +33,15 @@ fuzz_target!(|data: &[u8]| {
         }
         if rec[0] % 2 == 0 {
             let payload = rec.get(1..).unwrap_or(&[]);
-            tap.record(Bytes::copy_from_slice(payload), Timestamp::from_nanos(recorded));
+            tap.record(
+                Bytes::copy_from_slice(payload),
+                Timestamp::from_nanos(recorded),
+            );
             recorded += 1;
-            assert!(tap.len() <= capacity, "ByteTap ring exceeded its constructed bound");
+            assert!(
+                tap.len() <= capacity,
+                "ByteTap ring exceeded its constructed bound"
+            );
         } else {
             match tap.poll() {
                 Some(TapItem::Data(_, _)) => observed += 1,

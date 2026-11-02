@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use dash_runtime::client::{
-    Action, DashClient, DashConfig, PullLimits, Error, Failure, FailureClass, Output, ResourceId,
+    Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -26,17 +26,50 @@ const MPDS: [&[u8]; 2] = [
     include_bytes!("../../fixtures/dash/ondemand-sidx/ondemand.mpd"),
 ];
 const FILES: [(&str, &[u8]); 11] = [
-    ("init-stream0.m4s", include_bytes!("../../fixtures/dash/init-stream0.m4s")),
-    ("init-stream1.m4s", include_bytes!("../../fixtures/dash/init-stream1.m4s")),
-    ("chunk-stream0-00001.m4s", include_bytes!("../../fixtures/dash/chunk-stream0-00001.m4s")),
-    ("chunk-stream0-00002.m4s", include_bytes!("../../fixtures/dash/chunk-stream0-00002.m4s")),
-    ("chunk-stream0-00003.m4s", include_bytes!("../../fixtures/dash/chunk-stream0-00003.m4s")),
-    ("chunk-stream1-00001.m4s", include_bytes!("../../fixtures/dash/chunk-stream1-00001.m4s")),
-    ("chunk-stream1-00002.m4s", include_bytes!("../../fixtures/dash/chunk-stream1-00002.m4s")),
-    ("chunk-stream1-00003.m4s", include_bytes!("../../fixtures/dash/chunk-stream1-00003.m4s")),
-    ("chunk-stream1-00004.m4s", include_bytes!("../../fixtures/dash/chunk-stream1-00004.m4s")),
-    ("v_dashinit.mp4", include_bytes!("../../fixtures/dash/ondemand-sidx/v_dashinit.mp4")),
-    ("a_dashinit.mp4", include_bytes!("../../fixtures/dash/ondemand-sidx/a_dashinit.mp4")),
+    (
+        "init-stream0.m4s",
+        include_bytes!("../../fixtures/dash/init-stream0.m4s"),
+    ),
+    (
+        "init-stream1.m4s",
+        include_bytes!("../../fixtures/dash/init-stream1.m4s"),
+    ),
+    (
+        "chunk-stream0-00001.m4s",
+        include_bytes!("../../fixtures/dash/chunk-stream0-00001.m4s"),
+    ),
+    (
+        "chunk-stream0-00002.m4s",
+        include_bytes!("../../fixtures/dash/chunk-stream0-00002.m4s"),
+    ),
+    (
+        "chunk-stream0-00003.m4s",
+        include_bytes!("../../fixtures/dash/chunk-stream0-00003.m4s"),
+    ),
+    (
+        "chunk-stream1-00001.m4s",
+        include_bytes!("../../fixtures/dash/chunk-stream1-00001.m4s"),
+    ),
+    (
+        "chunk-stream1-00002.m4s",
+        include_bytes!("../../fixtures/dash/chunk-stream1-00002.m4s"),
+    ),
+    (
+        "chunk-stream1-00003.m4s",
+        include_bytes!("../../fixtures/dash/chunk-stream1-00003.m4s"),
+    ),
+    (
+        "chunk-stream1-00004.m4s",
+        include_bytes!("../../fixtures/dash/chunk-stream1-00004.m4s"),
+    ),
+    (
+        "v_dashinit.mp4",
+        include_bytes!("../../fixtures/dash/ondemand-sidx/v_dashinit.mp4"),
+    ),
+    (
+        "a_dashinit.mp4",
+        include_bytes!("../../fixtures/dash/ondemand-sidx/a_dashinit.mp4"),
+    ),
 ];
 
 fn real_body(url: &str, range: Option<(u64, u64)>) -> Option<Vec<u8>> {
@@ -84,7 +117,7 @@ fn answer(real: Option<Vec<u8>>, mode: u8, aux: u8, rest: &mut &[u8]) -> Answer 
         8 => Answer::Fail(Failure::Status(404)),
         9 => Answer::Fail(Failure::Status(503)),
         10 => Answer::Fail(Failure::Transport),
-        _ => Answer::Fail(if aux % 2 == 0 {
+        _ => Answer::Fail(if aux.is_multiple_of(2) {
             Failure::Timeout
         } else {
             Failure::TooLarge
@@ -125,7 +158,10 @@ fuzz_target!(|data: &[u8]| {
     let mut client = DashClient::new(url, dash, cfg);
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut terminal = false;
-    let mut chunks = rest.chunks_exact(CHUNK).map(|c| (c[0], c[1])).collect::<Vec<_>>();
+    let mut chunks = rest
+        .chunks_exact(CHUNK)
+        .map(|c| (c[0], c[1]))
+        .collect::<Vec<_>>();
     chunks.reverse();
     let mut tail_data: &[u8] = rest;
     let mut now = 0u64;
@@ -140,7 +176,10 @@ fuzz_target!(|data: &[u8]| {
             .iter()
             .filter(|a| matches!(a, Action::FetchSegment { .. }))
             .count();
-        assert!(segments <= window, "{segments} segment requests, window {window}");
+        assert!(
+            segments <= window,
+            "{segments} segment requests, window {window}"
+        );
         while let Some(o) = client.next_output() {
             assert!(!terminal, "an output after a terminal output");
             match o {

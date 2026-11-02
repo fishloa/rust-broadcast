@@ -253,6 +253,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "rtmp_client_session"
+path = "fuzz_targets/rtmp_client_session.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "rtmp_server_session"
 path = "fuzz_targets/rtmp_server_session.rs"
 test = false

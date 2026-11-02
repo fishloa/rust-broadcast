@@ -16,11 +16,7 @@ fuzz_target!(|data: &[u8]| {
                 1 => client.on_response(404, &[], now),
                 6 => {
                     let len = u64::from(chunk.get(1).copied().unwrap_or(0)) * 188;
-                    client.on_response(
-                        200,
-                        &[("Content-Length".to_string(), len.to_string())],
-                        now,
-                    )
+                    client.on_response(200, &[("Content-Length".to_string(), len.to_string())], now)
                 }
                 2 => client.on_eof(now),
                 3 => client.on_error(now),
@@ -28,8 +24,8 @@ fuzz_target!(|data: &[u8]| {
                 _ => client.poll_timeout(now),
             }
         }
-        while let Some(_) = client.poll() {}
-        while let Some(_) = client.poll_event() {}
+        while client.poll().is_some() {}
+        while client.poll_event().is_some() {}
         let _ = client.next_deadline();
     }
 
@@ -53,8 +49,8 @@ fuzz_target!(|data: &[u8]| {
             4 => policy.poll_timeout(now),
             _ => policy.on_bytes(chunk.len(), now, tag & 0x80 != 0),
         }
-        while let Some(_) = policy.poll() {}
-        while let Some(_) = policy.poll_event() {}
+        while policy.poll().is_some() {}
+        while policy.poll_event().is_some() {}
         let _ = policy.next_deadline();
     }
 });

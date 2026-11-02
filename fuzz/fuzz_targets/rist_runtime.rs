@@ -13,7 +13,8 @@ fuzz_target!(|data: &[u8]| {
         let reserialized = nack.try_to_bytes().unwrap();
         if let Ok(reparsed) = rist_runtime::GenericNack::parse(&reserialized) {
             assert_eq!(
-                reserialized, reparsed.try_to_bytes().unwrap(),
+                reserialized,
+                reparsed.try_to_bytes().unwrap(),
                 "GenericNack roundtrip mismatch"
             );
         }
@@ -24,7 +25,8 @@ fuzz_target!(|data: &[u8]| {
         let reserialized = nack.try_to_bytes().unwrap();
         if let Ok(reparsed) = rist_runtime::RangeNack::parse(&reserialized) {
             assert_eq!(
-                reserialized, reparsed.try_to_bytes().unwrap(),
+                reserialized,
+                reparsed.try_to_bytes().unwrap(),
                 "RangeNack roundtrip mismatch"
             );
         }
@@ -34,7 +36,11 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(echo) = rist_runtime::RttEcho::parse(data) {
         let reserialized = echo.try_to_bytes().unwrap();
         if let Ok(reparsed) = rist_runtime::RttEcho::parse(&reserialized) {
-            assert_eq!(reserialized, reparsed.try_to_bytes().unwrap(), "RttEcho roundtrip mismatch");
+            assert_eq!(
+                reserialized,
+                reparsed.try_to_bytes().unwrap(),
+                "RttEcho roundtrip mismatch"
+            );
         }
     }
 });
