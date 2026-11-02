@@ -230,6 +230,8 @@ pub mod slice_header;
 #[cfg(feature = "std")]
 pub mod smooth;
 #[cfg(feature = "std")]
+pub mod smooth_fragment;
+#[cfg(feature = "std")]
 pub mod smooth_parse;
 pub mod splice;
 pub mod sps;

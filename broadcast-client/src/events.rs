@@ -20,8 +20,10 @@ use dash_runtime::timing::clock::ClockSource;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
     /// Auto-detect from the URL: a `udp://` URL is UDP, an `rtp://` URL is RTP, an `rtsp://` or
-    /// `rtsps://` URL is RTSP, a `.m3u8`/`.m3u` path
-    /// is HLS, a `.mpd` path (ASCII case-insensitive) is DASH, anything else TS-over-HTTP.
+    /// `rtsps://` URL is RTSP, an `rtmp://` or `rtmps://` URL is RTMP, an `srt://` URL is SRT, a
+    /// `.m3u8`/`.m3u` path is HLS, a `.mpd` path (ASCII case-insensitive) is DASH, a path whose
+    /// last segment is `Manifest` (ASCII case-insensitive) is Smooth Streaming, anything else
+    /// TS-over-HTTP.
     Auto,
     /// TS-over-HTTP.
     TsHttp,
@@ -37,6 +39,10 @@ pub enum SourceKind {
     Rtp,
     /// MPEG-TS over SRT as the caller (`srt://host:port`), on `srt-runtime`.
     Srt,
+    /// Microsoft Smooth Streaming (MS-SSTR) pull of a client manifest, static and live.
+    Smooth,
+    /// RTMP play (`rtmp://` and `rtmps://`) on `rtmp-runtime`'s client.
+    Rtmp,
 }
 
 impl SourceKind {
@@ -52,6 +58,8 @@ impl SourceKind {
             Self::Udp => "udp",
             Self::Rtp => "rtp",
             Self::Srt => "srt",
+            Self::Smooth => "smooth",
+            Self::Rtmp => "rtmp",
         }
     }
 }
@@ -458,6 +466,24 @@ pub enum ErrorKind {
     /// The SRT handshake did not finish inside `SrtConfig::handshake_timeout_ms`. Non-fatal: the
     /// connect-failure backoff follows.
     SrtHandshakeTimeout,
+    /// A Smooth Streaming client manifest could not be read as XML, broke a size or structure
+    /// bound or is not a manifest (`reason` is a stable token). Non-fatal and reported once per
+    /// reason until a good manifest arrives; the session keeps the last good manifest and
+    /// retries. After [`Config::max_key_failures`] consecutive bad manifests with no good one
+    /// between, one fatal error of this kind follows.
+    SmoothManifest {
+        /// The stable reason token.
+        reason: &'static str,
+    },
+    /// The RTMP server answered `connect`, `createStream` or `play` with an error status. Non-fatal:
+    /// the connection is closed and the connect-failure backoff follows. `code` is the status code
+    /// the server sent (`NetStream.Play.Failed`, `NetConnection.Connect.Rejected`, ...), stripped of
+    /// control characters and capped at [`MAX_SERVER_REFUSED_REASON_BYTES`]. A missing stream
+    /// (`NetStream.Play.StreamNotFound`) is [`Status::NotFound`] instead.
+    RtmpStatus {
+        /// The server's status code.
+        code: String,
+    },
 }
 
 impl ErrorKind {
@@ -487,6 +513,8 @@ impl ErrorKind {
             Self::PendingTrackUnresolved { .. } => "pending_track_unresolved",
             Self::SrtRejected { .. } => "srt_rejected",
             Self::SrtHandshakeTimeout => "srt_handshake_timeout",
+            Self::SmoothManifest { .. } => "smooth_manifest",
+            Self::RtmpStatus { .. } => "rtmp_status",
         }
     }
 }

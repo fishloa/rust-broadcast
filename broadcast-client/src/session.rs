@@ -24,7 +24,9 @@ use crate::source::datagram::Datagram;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
+use crate::source::rtmp::{RTMPS_DEFAULT_PORT, RtmpSource, SCHEME_RTMP, SCHEME_RTMPS};
 use crate::source::rtsp::RtspSource;
+use crate::source::smooth::SmoothSource;
 use crate::source::srt::Notice;
 use crate::source::ts_http::TsHttpSource;
 use crate::source::ts_http_hold::{HoldLimits, StreamKind};
@@ -41,6 +43,7 @@ const SCHEME_UDP: &str = "udp";
 const SCHEME_RTP: &str = "rtp";
 const SCHEME_SRT: &str = "srt";
 const RTSPS_DEFAULT_PORT: u16 = 322;
+const HTTPS_DEFAULT_PORT: u16 = 443;
 const MICROS_PER_MILLI: u64 = 1_000;
 const TS_WAKE_TICK_US: u64 = 1_000_000;
 const FIRST_CONN_ID: u32 = 1;
@@ -73,6 +76,7 @@ pub struct Session {
     adaptive: Option<Adaptive>,
     rtsp: Option<Box<RtspSource>>,
     datagram: Option<Box<Datagram>>,
+    rtmp: Option<Box<RtmpSource>>,
     identity: Option<alloc::sync::Arc<crate::ClientIdentity>>,
     redirect_count: u32,
     next_conn: u32,
@@ -113,10 +117,16 @@ impl Session {
         let is_udp_scheme = scheme == SCHEME_UDP;
         let is_rtp_scheme = scheme == SCHEME_RTP;
         let is_srt_scheme = scheme == SCHEME_SRT;
+        let is_rtmp_scheme = scheme == SCHEME_RTMP || scheme == SCHEME_RTMPS;
         let rtsp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtsp);
+        let rtmp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtmp);
         let http_allowed = !matches!(
             config.kind,
-            SourceKind::Rtsp | SourceKind::Udp | SourceKind::Rtp | SourceKind::Srt
+            SourceKind::Rtsp
+                | SourceKind::Udp
+                | SourceKind::Rtp
+                | SourceKind::Srt
+                | SourceKind::Rtmp
         );
         let udp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Udp);
         let rtp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtp);
@@ -125,7 +135,8 @@ impl Session {
             || (is_http_scheme && http_allowed)
             || (is_udp_scheme && udp_allowed)
             || (is_rtp_scheme && rtp_allowed)
-            || (is_srt_scheme && srt_allowed))
+            || (is_srt_scheme && srt_allowed)
+            || (is_rtmp_scheme && rtmp_allowed))
         {
             return Err(Error::UnsupportedScheme(scheme.to_string()));
         }
@@ -142,6 +153,12 @@ impl Session {
             && match config.kind {
                 SourceKind::Dash => true,
                 SourceKind::Auto => has_mpd_extension(&parsed),
+                _ => false,
+            };
+        let use_smooth = is_http_scheme
+            && match config.kind {
+                SourceKind::Smooth => true,
+                SourceKind::Auto => is_smooth_manifest(&parsed),
                 _ => false,
             };
         headers::validate(&config.extra_headers)?;
@@ -180,6 +197,17 @@ impl Session {
                 &config,
                 ConnAlloc::new(),
             ))))
+        } else if use_smooth {
+            Some(Adaptive::Smooth(Box::new(SmoothSource::new(
+                &parsed,
+                &config,
+                ConnAlloc::new(),
+            ))))
+        } else {
+            None
+        };
+        let rtmp = if is_rtmp_scheme {
+            Some(Box::new(RtmpSource::new(&parsed, &config.ts_http, now_us)?))
         } else {
             None
         };
@@ -194,7 +222,7 @@ impl Session {
         if let Some(r) = rtsp.as_mut() {
             r.on_credentials(now_us, &auth);
         }
-        if use_hls || use_dash {
+        if use_hls || use_dash || use_smooth {
             playout.engage(Source::Live {
                 target_duration_secs: None,
             });
@@ -208,6 +236,7 @@ impl Session {
             adaptive,
             rtsp,
             datagram,
+            rtmp,
             identity: config_identity,
             redirect_count: 0,
             next_conn: FIRST_CONN_ID,
@@ -243,6 +272,9 @@ impl Session {
             if let Some(r) = self.rtsp.as_mut() {
                 r.poll(now_us, &self.auth);
                 self.flush_rtsp();
+            } else if let Some(r) = self.rtmp.as_mut() {
+                r.poll(now_us);
+                self.flush_rtmp();
             } else if let Some(h) = self.adaptive.as_mut() {
                 h.poll(now_us, &mut self.auth);
                 self.flush_adaptive();
@@ -273,7 +305,7 @@ impl Session {
         if self.closed && self.events.is_empty() {
             return None;
         }
-        if !self.closed && self.adaptive.is_none() && self.rtsp.is_none() {
+        if !self.closed && self.adaptive.is_none() && self.rtsp.is_none() && self.rtmp.is_none() {
             self.drain_source();
         }
         self.events.pop_front()
@@ -287,7 +319,7 @@ impl Session {
         headers: &[(String, String)],
         now_us: u64,
     ) {
-        if self.closed || self.rtsp.is_some() || self.datagram.is_some() {
+        if self.closed || self.rtsp.is_some() || self.datagram.is_some() || self.rtmp.is_some() {
             return;
         }
         self.now_us = now_us;
@@ -452,6 +484,19 @@ impl Session {
             }
             return;
         }
+        if let Some(r) = self.rtmp.as_mut() {
+            self.now_us = now_us;
+            r.on_data(conn, bytes, now_us);
+            self.flush_rtmp();
+            if !bytes.is_empty() {
+                self.buffer.on_chunk(now_us, bytes.len(), None);
+                let evs = self.buffer.drain();
+                for e in evs {
+                    self.events.push_back(e);
+                }
+            }
+            return;
+        }
         if let Some(h) = self.adaptive.as_mut() {
             self.now_us = now_us;
             h.on_data(conn, bytes, now_us, &mut self.auth);
@@ -505,6 +550,12 @@ impl Session {
             self.flush_rtsp();
             return;
         }
+        if let Some(r) = self.rtmp.as_mut() {
+            self.now_us = now_us;
+            r.on_closed(conn, error.as_deref(), now_us);
+            self.flush_rtmp();
+            return;
+        }
         if let Some(h) = self.adaptive.as_mut() {
             self.now_us = now_us;
             h.on_closed(conn, error.as_deref(), now_us, &mut self.auth);
@@ -550,6 +601,11 @@ impl Session {
         if let Some(r) = self.rtsp.as_mut() {
             r.on_connected(conn, self.now_us);
             self.flush_rtsp();
+            return;
+        }
+        if let Some(r) = self.rtmp.as_mut() {
+            r.on_connected(conn, self.now_us);
+            self.flush_rtmp();
             return;
         }
         if self.datagram.is_some() && self.known_conns.contains_key(&conn) {
@@ -711,6 +767,11 @@ impl Session {
             self.flush_rtsp();
             return;
         }
+        if let Some(r) = self.rtmp.as_mut() {
+            r.reconnect(now_us);
+            self.flush_rtmp();
+            return;
+        }
         if let Some(h) = self.adaptive.as_mut() {
             h.reconnect(now_us, &mut self.auth);
             self.flush_adaptive();
@@ -789,7 +850,7 @@ impl Session {
         if self.closed {
             return;
         }
-        if self.adaptive.is_some() || self.rtsp.is_some() {
+        if self.adaptive.is_some() || self.rtsp.is_some() || self.rtmp.is_some() {
             self.buffer.set_rendered(Some(tracks));
             self.jump.set_rendered(Some(tracks));
             self.playout.set_rendered(Some(tracks));
@@ -915,6 +976,17 @@ impl Session {
             r.close();
             self.actions.extend(r.take_actions());
         }
+        let rtmp_conn = self.rtmp.as_mut().and_then(|r| {
+            let conn = r.conn();
+            r.take_actions();
+            r.close();
+            conn
+        });
+        if let Some(conn) = rtmp_conn
+            && !seen.contains(&conn)
+        {
+            self.actions.push_back(Action::Close { conn });
+        }
         self.known_conns.clear();
         self.refused_conns.clear();
         self.conn_auth.clear();
@@ -924,6 +996,21 @@ impl Session {
 
     fn flush_rtsp(&mut self) {
         if let Some(r) = self.rtsp.as_mut() {
+            r.sync_wake(self.now_us);
+            self.actions.extend(r.take_actions());
+            let events = r.take_events();
+            for e in events {
+                self.screen_passthrough(e);
+            }
+            let evs = self.buffer.drain();
+            for e in evs {
+                self.events.push_back(e);
+            }
+        }
+    }
+
+    fn flush_rtmp(&mut self) {
+        if let Some(r) = self.rtmp.as_mut() {
             r.sync_wake(self.now_us);
             self.actions.extend(r.take_actions());
             let events = r.take_events();
@@ -1107,7 +1194,11 @@ impl Session {
                 identity: slot,
                 ..
             } => {
-                let session_port = session.port().unwrap_or(RTSPS_DEFAULT_PORT);
+                let session_port = session.port().unwrap_or(match session.scheme() {
+                    SCHEME_RTMPS => RTMPS_DEFAULT_PORT,
+                    SCHEME_HTTPS => HTTPS_DEFAULT_PORT,
+                    _ => RTSPS_DEFAULT_PORT,
+                });
                 let same_host = session
                     .host_str()
                     .is_some_and(|h| h.trim_matches(['[', ']']).eq_ignore_ascii_case(host));
@@ -1345,6 +1436,23 @@ fn has_playlist_extension(url: &Url) -> bool {
     std::path::Path::new(url.path())
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("m3u"))
+}
+
+fn is_smooth_manifest(url: &Url) -> bool {
+    let seg = url.path().rsplit('/').next().unwrap_or("");
+    if !seg.eq_ignore_ascii_case("Manifest") {
+        return false;
+    }
+    if let Some(q) = url.query() {
+        for pair in q.split('&') {
+            if let Some((k, _)) = pair.split_once('=')
+                && k.eq_ignore_ascii_case("format")
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 impl core::fmt::Debug for Session {

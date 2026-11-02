@@ -12,10 +12,12 @@ use crate::playout::Source;
 use crate::source::dash::DashSource;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
+use crate::source::smooth::SmoothSource;
 
 pub(crate) enum Adaptive {
     Hls(Box<HlsSession>),
     Dash(Box<DashSource>),
+    Smooth(Box<SmoothSource>),
 }
 
 impl Adaptive {
@@ -23,6 +25,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.playout_source(),
             Self::Dash(s) => s.playout_source(),
+            Self::Smooth(s) => s.playout_source(),
         }
     }
 
@@ -30,6 +33,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.take_actions(),
             Self::Dash(s) => s.take_actions(),
+            Self::Smooth(s) => s.take_actions(),
         }
     }
 
@@ -37,6 +41,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.take_events(),
             Self::Dash(s) => s.take_events(),
+            Self::Smooth(s) => s.take_events(),
         }
     }
 
@@ -44,6 +49,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.conns(),
             Self::Dash(s) => s.conns(),
+            Self::Smooth(s) => s.conns(),
         }
     }
 
@@ -51,6 +57,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.poll(now, auth),
             Self::Dash(s) => s.poll(now, auth),
+            Self::Smooth(s) => s.poll(now, auth),
         }
     }
 
@@ -66,6 +73,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.on_response(conn, status, headers, now, wall, auth),
             Self::Dash(s) => s.on_response(conn, status, headers, now, wall, auth),
+            Self::Smooth(s) => s.on_response(conn, status, headers, now, wall, auth),
         }
     }
 
@@ -73,6 +81,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.on_data(conn, bytes, now, auth),
             Self::Dash(s) => s.on_data(conn, bytes, now, auth),
+            Self::Smooth(s) => s.on_data(conn, bytes, now, auth),
         }
     }
 
@@ -86,6 +95,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.on_closed(conn, error, now, auth),
             Self::Dash(s) => s.on_closed(conn, error, now, auth),
+            Self::Smooth(s) => s.on_closed(conn, error, now, auth),
         }
     }
 
@@ -93,6 +103,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.resume(now, auth),
             Self::Dash(s) => s.resume(now, auth),
+            Self::Smooth(s) => s.resume(now, auth),
         }
     }
 
@@ -100,6 +111,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.reconnect(now, auth),
             Self::Dash(s) => s.reconnect(now, auth),
+            Self::Smooth(s) => s.reconnect(now, auth),
         }
     }
 
@@ -107,6 +119,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.is_ended(),
             Self::Dash(s) => s.is_ended(),
+            Self::Smooth(s) => s.is_ended(),
         }
     }
 
@@ -119,6 +132,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.select_variant(index, now, auth),
             Self::Dash(s) => s.select_variant(index, now, auth),
+            Self::Smooth(s) => s.select_variant(index, now, auth),
         }
     }
 
@@ -131,6 +145,7 @@ impl Adaptive {
         match self {
             Self::Hls(s) => s.select_audio(choice, now, auth),
             Self::Dash(s) => s.select_audio(choice, now, auth),
+            Self::Smooth(s) => s.select_audio(choice, now, auth),
         }
     }
 
@@ -139,8 +154,10 @@ impl Adaptive {
     }
 
     pub(crate) fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
-        if let Self::Dash(s) = self {
-            s.set_wall_clock(now_us, unix_us);
+        match self {
+            Self::Dash(s) => s.set_wall_clock(now_us, unix_us),
+            Self::Smooth(s) => s.set_wall_clock(now_us, unix_us),
+            _ => {}
         }
     }
 }

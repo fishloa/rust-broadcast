@@ -7,6 +7,8 @@ pub mod fmp4_split;
 pub mod hls_host;
 pub mod renditions;
 pub mod replay;
+pub mod rtmp_host;
+pub mod rtmp_wire;
 pub mod rtsp_host;
 pub mod srt_peer;
 pub mod srt_sim;
