@@ -4,9 +4,7 @@ use std::time::Duration;
 
 use broadcast_client::{Config, Error, ErrorKind, Event, Session, Status};
 
-use crate::support::rtmp_host::{
-    PeerConfig, RtmpHost, SEC, URL, direct, peer_config, rtmp_config,
-};
+use crate::support::rtmp_host::{PeerConfig, RtmpHost, SEC, URL, direct, peer_config, rtmp_config};
 use crate::support::rtmp_wire::{PeerServer, Serve, WireHost};
 
 fn statuses(events: &[Event]) -> Vec<Status> {
@@ -29,7 +27,9 @@ fn rtmp_pull_matches_direct_flv_demux() {
     let server = PeerServer::start(pcfg, vec![Serve::All], None);
     let mut host = WireHost::open(URL, cfg, server.addr.port(), None);
     host.run_until(Duration::from_secs(10), |h| {
-        h.events.iter().any(|e| matches!(e, Event::Status(Status::Ended)))
+        h.events
+            .iter()
+            .any(|e| matches!(e, Event::Status(Status::Ended)))
     });
     let samples = host.samples();
     assert!(samples.len() > 50, "the fixture carries real media");
@@ -40,7 +40,12 @@ fn rtmp_pull_matches_direct_flv_demux() {
             .filter(|(id, _)| *id == track.spec.track_id.value())
             .map(|(_, s)| s)
             .collect();
-        assert_eq!(got.len(), track.samples.len(), "track {}", track.spec.track_id);
+        assert_eq!(
+            got.len(),
+            track.samples.len(),
+            "track {}",
+            track.spec.track_id
+        );
         for (a, b) in got.iter().zip(track.samples.iter()) {
             assert_eq!(a.data, b.data);
             assert_eq!(a.dts, b.dts);
@@ -56,7 +61,10 @@ use rtmp_runtime::amf0::Amf0Value;
 
 fn connect_and_play(h: &mut RtmpHost) {
     h.collect();
-    assert!(h.peer.as_ref().is_some_and(|p| p.is_playing()), "play was accepted");
+    assert!(
+        h.peer.as_ref().is_some_and(|p| p.is_playing()),
+        "play was accepted"
+    );
 }
 
 fn assert_samples_equal_direct(samples: &[(u32, transmux::Sample)]) {
@@ -75,7 +83,12 @@ fn assert_samples_equal_direct_with(samples: &[(u32, transmux::Sample)], held: u
             .filter(|(id, _)| *id == track.spec.track_id.value())
             .map(|(_, s)| s)
             .collect();
-        assert_eq!(got.len(), track.samples.len() - held, "track {}", track.spec.track_id);
+        assert_eq!(
+            got.len(),
+            track.samples.len() - held,
+            "track {}",
+            track.spec.track_id
+        );
         for (a, b) in got.iter().zip(track.samples.iter()) {
             assert_eq!(a.data, b.data);
             assert_eq!(a.dts, b.dts);
@@ -128,7 +141,10 @@ fn rtmp_url_without_stream_is_invalid() {
         "rtmp://origin.test/live/?token=x",
     ] {
         assert!(
-            matches!(Session::open(bad, rtmp_config(), 0), Err(Error::InvalidUrl(_))),
+            matches!(
+                Session::open(bad, rtmp_config(), 0),
+                Err(Error::InvalidUrl(_))
+            ),
             "{bad}"
         );
     }
@@ -210,7 +226,11 @@ fn rtmps_requests_tls_and_carries_identity() {
 
 #[test]
 fn rtmp_stream_not_found_reports_not_found_and_backs_off() {
-    let mut h = RtmpHost::new("rtmp://origin.test/live/missing", rtmp_config(), peer_config());
+    let mut h = RtmpHost::new(
+        "rtmp://origin.test/live/missing",
+        rtmp_config(),
+        peer_config(),
+    );
     h.collect();
     let st = statuses(&h.events);
     assert!(st.contains(&Status::NotFound), "{st:?}");
@@ -259,13 +279,20 @@ fn rtmp_recorded_stream_eof_ends_without_retry() {
     let eof = h.peer.as_mut().unwrap().stream_eof().unwrap();
     h.send_to_session(&eof);
     assert_eq!(
-        statuses(&h.events).iter().filter(|s| **s == Status::Ended).count(),
+        statuses(&h.events)
+            .iter()
+            .filter(|s| **s == Status::Ended)
+            .count(),
         1
     );
     assert_eq!(h.closes.len(), 1);
     let connects = h.connects.len();
     h.advance_to(120 * SEC);
-    assert_eq!(h.connects.len(), connects, "an ended presentation is not retried");
+    assert_eq!(
+        h.connects.len(),
+        connects,
+        "an ended presentation is not retried"
+    );
     assert_complete_samples_equal_direct(&h.samples());
 }
 
@@ -306,7 +333,10 @@ fn rtmp_live_stream_eof_reconnects_with_discontinuity() {
         .nth(first_connection.len())
         .map(|(i, _)| i)
         .unwrap();
-    assert!(disc[0] < first_new_sample, "before the first sample of the new connection");
+    assert!(
+        disc[0] < first_new_sample,
+        "before the first sample of the new connection"
+    );
 }
 
 #[test]
@@ -343,7 +373,10 @@ fn rtmp_server_disconnect_reconnects_with_discontinuity() {
         .nth(first_connection.len())
         .map(|(i, _)| i)
         .unwrap();
-    assert!(disc[0] < first_new_sample, "before the first sample of the new connection");
+    assert!(
+        disc[0] < first_new_sample,
+        "before the first sample of the new connection"
+    );
     let last_old_sample = h
         .events
         .iter()
@@ -352,7 +385,10 @@ fn rtmp_server_disconnect_reconnects_with_discontinuity() {
         .nth(first_connection.len() - 1)
         .map(|(i, _)| i)
         .unwrap();
-    assert!(last_old_sample < disc[0], "after the last sample of the old one");
+    assert!(
+        last_old_sample < disc[0],
+        "after the last sample of the old one"
+    );
 }
 
 #[test]
@@ -371,10 +407,21 @@ fn rtmp_tracks_announced_before_first_sample() {
     assert_eq!(tracks.len(), 2, "video then audio track announcements");
     assert_eq!(tracks[0].len(), 1);
     let d = direct();
-    let want: Vec<String> = d.tracks.iter().map(|t| format!("{:?}", t.spec.config)).collect();
-    let got: Vec<String> = tracks[1].iter().map(|t| format!("{:?}", t.config)).collect();
+    let want: Vec<String> = d
+        .tracks
+        .iter()
+        .map(|t| format!("{:?}", t.spec.config))
+        .collect();
+    let got: Vec<String> = tracks[1]
+        .iter()
+        .map(|t| format!("{:?}", t.config))
+        .collect();
     assert_eq!(got, want);
-    let audio_id = tracks[1].iter().find(|t| t.config.audio_sample_rate().is_some()).unwrap().track_id;
+    let audio_id = tracks[1]
+        .iter()
+        .find(|t| t.config.audio_sample_rate().is_some())
+        .unwrap()
+        .track_id;
     let announced_audio_at = h
         .events
         .iter()
@@ -385,7 +432,10 @@ fn rtmp_tracks_announced_before_first_sample() {
         .iter()
         .position(|e| matches!(e, Event::Sample { track, .. } if *track == audio_id))
         .unwrap();
-    assert!(announced_audio_at < first_audio_at, "a track is announced before its first sample");
+    assert!(
+        announced_audio_at < first_audio_at,
+        "a track is announced before its first sample"
+    );
 }
 
 fn host() -> RtmpHost {

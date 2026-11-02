@@ -49,7 +49,6 @@ pub(crate) const FLV_PREV_TAG_SIZE_LEN: usize = 4;
 /// Largest value the FLV tag's 24-bit `DataSize` field can encode.
 pub(crate) const FLV_MAX_DATA_SIZE: usize = 0x00FF_FFFF;
 
-
 /// Builds the FLV byte stream of one RTMP session: the first tag is prefixed with the 13-byte
 /// FLV file header, every tag carries its own header and `PreviousTagSize`, so concatenating
 /// every returned chunk in order yields a valid FLV stream.
@@ -202,4 +201,3 @@ pub(crate) fn flv_tag(tag_type: u8, timestamp: u32, payload: &[u8]) -> Result<Ve
     v.extend_from_slice(&prev_tag_size.to_be_bytes());
     Ok(v)
 }
-

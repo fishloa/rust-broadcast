@@ -24,7 +24,7 @@ use crate::source::datagram::Datagram;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
-use crate::source::rtmp::{RtmpSource, SCHEME_RTMP, SCHEME_RTMPS, RTMPS_DEFAULT_PORT};
+use crate::source::rtmp::{RTMPS_DEFAULT_PORT, RtmpSource, SCHEME_RTMP, SCHEME_RTMPS};
 use crate::source::rtsp::RtspSource;
 use crate::source::srt::Notice;
 use crate::source::ts_http::TsHttpSource;
@@ -121,7 +121,11 @@ impl Session {
         let rtmp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtmp);
         let http_allowed = !matches!(
             config.kind,
-            SourceKind::Rtsp | SourceKind::Udp | SourceKind::Rtp | SourceKind::Srt | SourceKind::Rtmp
+            SourceKind::Rtsp
+                | SourceKind::Udp
+                | SourceKind::Rtp
+                | SourceKind::Srt
+                | SourceKind::Rtmp
         );
         let udp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Udp);
         let rtp_allowed = matches!(config.kind, SourceKind::Auto | SourceKind::Rtp);

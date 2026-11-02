@@ -46,7 +46,11 @@ impl Default for PeerConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Seen {
-    Command { name: String, args: Vec<Amf0Value>, stream_id: u32 },
+    Command {
+        name: String,
+        args: Vec<Amf0Value>,
+        stream_id: u32,
+    },
     UserControl(UserControl),
     Acknowledgement(u32),
     WindowAckSize(u32),
@@ -287,7 +291,12 @@ impl PlayPeer {
         Ok(self.counted(out))
     }
 
-    fn send_on_status(&mut self, level: &str, code: &str, out: &mut Vec<u8>) -> Result<(), RtmpError> {
+    fn send_on_status(
+        &mut self,
+        level: &str,
+        code: &str,
+        out: &mut Vec<u8>,
+    ) -> Result<(), RtmpError> {
         let info = Amf0Value::Object(vec![
             ("level".to_string(), Amf0Value::String(level.to_string())),
             ("code".to_string(), Amf0Value::String(code.to_string())),
@@ -296,7 +305,13 @@ impl PlayPeer {
                 Amf0Value::String(format!("{code} on {}", self.config.stream_name)),
             ),
         ]);
-        self.send_command("onStatus", 0.0, vec![Amf0Value::Null, info], PLAY_STREAM_ID, out)
+        self.send_command(
+            "onStatus",
+            0.0,
+            vec![Amf0Value::Null, info],
+            PLAY_STREAM_ID,
+            out,
+        )
     }
 
     pub fn set_chunk_size(&mut self, n: u32) -> Result<Vec<u8>, RtmpError> {
@@ -308,7 +323,9 @@ impl PlayPeer {
     }
 
     pub fn ping(&mut self, ts: u32) -> Result<Vec<u8>, RtmpError> {
-        let bytes = self.writer.write(&UserControl::PingRequest(ts).to_message())?;
+        let bytes = self
+            .writer
+            .write(&UserControl::PingRequest(ts).to_message())?;
         Ok(self.counted(bytes))
     }
 
@@ -319,7 +336,12 @@ impl PlayPeer {
         Ok(self.counted(bytes))
     }
 
-    pub fn media(&mut self, tag_type: u8, timestamp: u32, payload: &[u8]) -> Result<Vec<u8>, RtmpError> {
+    pub fn media(
+        &mut self,
+        tag_type: u8,
+        timestamp: u32,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, RtmpError> {
         let csid = match tag_type {
             msg_type::AUDIO => AUDIO_CSID,
             msg_type::VIDEO => VIDEO_CSID,

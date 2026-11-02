@@ -3,13 +3,12 @@
 //! policy timers and reconnects.
 
 use broadcast_client::{
-    Action, Config, Error, ErrorKind, Event, Session, SourceKind, Status, StarveKind,
+    Action, Config, Error, ErrorKind, Event, Session, SourceKind, StarveKind, Status,
 };
 use rtmp_runtime::message::UserControl;
 
 use crate::support::rtmp_host::{
-    MS, PeerConfig, RtmpHost, SEC, Seen, URL, direct, fixture_tags, peer_config,
-    rtmp_config,
+    MS, PeerConfig, RtmpHost, SEC, Seen, URL, direct, fixture_tags, peer_config, rtmp_config,
 };
 
 fn statuses(events: &[Event]) -> Vec<Status> {
@@ -28,7 +27,10 @@ fn host() -> RtmpHost {
 
 fn connect_and_play(h: &mut RtmpHost) {
     h.collect();
-    assert!(h.peer.as_ref().is_some_and(|p| p.is_playing()), "play was accepted");
+    assert!(
+        h.peer.as_ref().is_some_and(|p| p.is_playing()),
+        "play was accepted"
+    );
 }
 
 fn assert_samples_equal_direct(samples: &[(u32, transmux::Sample)]) {
@@ -84,12 +86,20 @@ fn rtmps_connects_with_tls_on_443_and_a_port_in_the_url_wins() {
     let mut s = Session::open("rtmps://origin.test/live/cam1", Config::default(), 0).unwrap();
     assert!(matches!(
         s.poll(0),
-        Some(Action::TcpConnect { port: 443, tls: true, .. })
+        Some(Action::TcpConnect {
+            port: 443,
+            tls: true,
+            ..
+        })
     ));
     let mut s = Session::open("rtmp://origin.test:1936/live/cam1", Config::default(), 0).unwrap();
     assert!(matches!(
         s.poll(0),
-        Some(Action::TcpConnect { port: 1936, tls: false, .. })
+        Some(Action::TcpConnect {
+            port: 1936,
+            tls: false,
+            ..
+        })
     ));
 }
 
@@ -110,7 +120,10 @@ fn an_rtmp_url_needs_an_app_and_a_stream_and_a_matching_kind() {
         "rtmp://origin.test/live/?token=x",
     ] {
         assert!(
-            matches!(Session::open(bad, rtmp_config(), 0), Err(Error::InvalidUrl(_))),
+            matches!(
+                Session::open(bad, rtmp_config(), 0),
+                Err(Error::InvalidUrl(_))
+            ),
             "{bad}"
         );
     }
@@ -187,10 +200,21 @@ fn the_samples_equal_the_direct_flv_demux_of_the_source_capture() {
     );
     assert_eq!(tracks[0].len(), 1);
     let d = direct();
-    let want: Vec<String> = d.tracks.iter().map(|t| format!("{:?}", t.spec.config)).collect();
-    let got: Vec<String> = tracks[1].iter().map(|t| format!("{:?}", t.config)).collect();
+    let want: Vec<String> = d
+        .tracks
+        .iter()
+        .map(|t| format!("{:?}", t.spec.config))
+        .collect();
+    let got: Vec<String> = tracks[1]
+        .iter()
+        .map(|t| format!("{:?}", t.config))
+        .collect();
     assert_eq!(got, want);
-    let audio_id = tracks[1].iter().find(|t| t.config.audio_sample_rate().is_some()).unwrap().track_id;
+    let audio_id = tracks[1]
+        .iter()
+        .find(|t| t.config.audio_sample_rate().is_some())
+        .unwrap()
+        .track_id;
     let announced_audio_at = h
         .events
         .iter()
@@ -201,7 +225,10 @@ fn the_samples_equal_the_direct_flv_demux_of_the_source_capture() {
         .iter()
         .position(|e| matches!(e, Event::Sample { track, .. } if *track == audio_id))
         .unwrap();
-    assert!(announced_audio_at < first_audio_at, "a track is announced before its first sample");
+    assert!(
+        announced_audio_at < first_audio_at,
+        "a track is announced before its first sample"
+    );
 }
 
 #[test]
@@ -225,7 +252,13 @@ fn establishing_precedes_tracks_and_live_comes_with_the_first_sample() {
     assert_eq!(kinds[1], "tracks");
     assert_eq!(kinds[2], "live");
     assert_eq!(kinds[3], "sample");
-    assert_eq!(statuses(&h.events).iter().filter(|s| **s == Status::Live).count(), 1);
+    assert_eq!(
+        statuses(&h.events)
+            .iter()
+            .filter(|s| **s == Status::Live)
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -277,7 +310,12 @@ fn a_status_code_is_stripped_of_control_characters_and_capped() {
     let mut h = host();
     connect_and_play(&mut h);
     let hostile = format!("NetStream\u{7}.\u{1b}[31m{}", "x".repeat(1_000));
-    let bytes = h.peer.as_mut().unwrap().on_status("error", &hostile).unwrap();
+    let bytes = h
+        .peer
+        .as_mut()
+        .unwrap()
+        .on_status("error", &hostile)
+        .unwrap();
     h.send_to_session(&bytes);
     let code = h
         .events
@@ -292,7 +330,10 @@ fn a_status_code_is_stripped_of_control_characters_and_capped() {
         .expect("error");
     assert!(code.chars().all(|c| !c.is_control()));
     assert!(code.starts_with("NetStream.[31m"));
-    assert_eq!(code.len(), broadcast_client::MAX_SERVER_REFUSED_REASON_BYTES);
+    assert_eq!(
+        code.len(),
+        broadcast_client::MAX_SERVER_REFUSED_REASON_BYTES
+    );
 }
 
 #[test]
@@ -402,7 +443,10 @@ fn a_server_that_closes_after_playing_is_reconnected_and_replays_with_a_disconti
         .nth(first_connection.len())
         .map(|(i, _)| i)
         .unwrap();
-    assert!(disc[0] < first_new_sample, "before the first sample of the new connection");
+    assert!(
+        disc[0] < first_new_sample,
+        "before the first sample of the new connection"
+    );
     let last_old_sample = h
         .events
         .iter()
@@ -411,7 +455,10 @@ fn a_server_that_closes_after_playing_is_reconnected_and_replays_with_a_disconti
         .nth(first_connection.len() - 1)
         .map(|(i, _)| i)
         .unwrap();
-    assert!(last_old_sample < disc[0], "after the last sample of the old one");
+    assert!(
+        last_old_sample < disc[0],
+        "after the last sample of the old one"
+    );
 }
 
 #[test]
@@ -435,13 +482,20 @@ fn a_recorded_stream_that_ends_is_ended_and_not_retried() {
     let eof = h.peer.as_mut().unwrap().stream_eof().unwrap();
     h.send_to_session(&eof);
     assert_eq!(
-        statuses(&h.events).iter().filter(|s| **s == Status::Ended).count(),
+        statuses(&h.events)
+            .iter()
+            .filter(|s| **s == Status::Ended)
+            .count(),
         1
     );
     assert_eq!(h.closes.len(), 1);
     let connects = h.connects.len();
     h.advance_to(120 * SEC);
-    assert_eq!(h.connects.len(), connects, "an ended presentation is not retried");
+    assert_eq!(
+        h.connects.len(),
+        connects,
+        "an ended presentation is not retried"
+    );
     assert_complete_samples_equal_direct(&h.samples());
 }
 
@@ -472,7 +526,11 @@ fn a_connection_that_ended_quickly_waits_out_the_minimum_reconnect_interval() {
     h.now = 300 * MS;
     let before = h.connects.len();
     h.peer_closes(None);
-    assert_eq!(h.connects.len(), before, "not before 1 s after the connection opened");
+    assert_eq!(
+        h.connects.len(),
+        before,
+        "not before 1 s after the connection opened"
+    );
     h.advance_to(SEC - 1);
     assert_eq!(h.connects.len(), before);
     h.advance_to(SEC);
@@ -487,11 +545,22 @@ fn silence_after_playing_notifies_then_reconnects() {
     h.now = 0;
     h.advance_to(5 * SEC);
     let st = statuses(&h.events);
-    assert!(st.iter().any(|s| matches!(s, Status::Stalled { .. })), "{st:?}");
-    assert!(h.events.iter().any(|e| matches!(e, Event::Starved(StarveKind::NoData))));
+    assert!(
+        st.iter().any(|s| matches!(s, Status::Stalled { .. })),
+        "{st:?}"
+    );
+    assert!(
+        h.events
+            .iter()
+            .any(|e| matches!(e, Event::Starved(StarveKind::NoData)))
+    );
     let before = h.connects.len();
     h.advance_to(30 * SEC - 1);
-    assert_eq!(h.connects.len(), before, "not before the stall reconnect threshold");
+    assert_eq!(
+        h.connects.len(),
+        before,
+        "not before the stall reconnect threshold"
+    );
     h.advance_to(30 * SEC);
     assert_eq!(h.closes.len(), 1, "stalled out: closed");
     assert_eq!(h.connects.len(), before + 1);
@@ -541,5 +610,8 @@ fn caller_reconnect_restarts_the_connection() {
     h.collect();
     assert_eq!(h.closes.len(), 1);
     assert_eq!(h.connects.len(), before + 1);
-    assert!(h.peer.as_ref().unwrap().is_playing(), "the new connection plays");
+    assert!(
+        h.peer.as_ref().unwrap().is_playing(),
+        "the new connection plays"
+    );
 }

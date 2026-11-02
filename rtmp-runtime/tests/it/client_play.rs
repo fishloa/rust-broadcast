@@ -509,8 +509,7 @@ fn playing_reports_whether_the_server_marked_the_stream_recorded() {
         let mut rig = Rig::new(play_config(STREAM), cfg);
         rig.handshake_and_play();
         assert!(
-            rig.events
-                .contains(&ClientEvent::Playing { recorded }),
+            rig.events.contains(&ClientEvent::Playing { recorded }),
             "recorded={recorded}: {:?}",
             rig.events
         );
