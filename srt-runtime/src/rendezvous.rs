@@ -1269,3 +1269,134 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod crypto_echo_tests {
+    use super::super::*;
+    #[cfg(feature = "crypto")]
+    use crate::handshake_sm::CryptoConfig;
+
+    #[cfg(feature = "crypto")]
+    #[test]
+    fn rendezvous_initiator_rejects_a_tampered_km_echo() {
+        use crate::packet::{ControlPacket, EncryptionField};
+
+        const PEER_A_SOCKET_ID: u32 = 0x1111_1111;
+        const PEER_B_SOCKET_ID: u32 = 0x2222_2222;
+        const PEER_A_COOKIE: u32 = 0xAAAA_0002;
+        const PEER_B_COOKIE: u32 = 0x1111_0001;
+
+        let passphrase = b"passphrase".to_vec();
+        let crypto = CryptoConfig {
+            passphrase: passphrase.clone(),
+            salt: [0x11u8; 16],
+            sek: vec![0x22u8; 16],
+        };
+        let config_a = HandshakeConfig {
+            encryption_field: EncryptionField::Aes128,
+            crypto: Some(crypto.clone()),
+            ..HandshakeConfig::default()
+        };
+        let config_b = HandshakeConfig {
+            encryption_field: EncryptionField::Aes128,
+            crypto: Some(crypto),
+            ..HandshakeConfig::default()
+        };
+
+        // Untampered run must complete.
+        {
+            let mut a = RendezvousHandshake::new(PEER_A_SOCKET_ID, PEER_A_COOKIE, config_a.clone());
+            let mut b = RendezvousHandshake::new(PEER_B_SOCKET_ID, PEER_B_COOKIE, config_b.clone());
+            let mut to_a = vec![b.start().expect("b start")];
+            let mut to_b = vec![a.start().expect("a start")];
+            for _ in 0..20 {
+                if a.state() == RendezvousHandshakeState::Connected
+                    && b.state() == RendezvousHandshakeState::Connected
+                {
+                    break;
+                }
+                let mut next_to_a = Vec::new();
+                let mut next_to_b = Vec::new();
+                for msg in to_a.drain(..) {
+                    let pkt = ControlPacket::parse(&msg).expect("valid");
+                    for out in a.feed(&pkt).expect("a.feed") {
+                        if let HandshakeOutput::Send(bytes) = out {
+                            next_to_b.push(bytes);
+                        }
+                    }
+                }
+                for msg in to_b.drain(..) {
+                    let pkt = ControlPacket::parse(&msg).expect("valid");
+                    for out in b.feed(&pkt).expect("b.feed") {
+                        if let HandshakeOutput::Send(bytes) = out {
+                            next_to_a.push(bytes);
+                        }
+                    }
+                }
+                to_a = next_to_a;
+                to_b = next_to_b;
+                if to_a.is_empty() && to_b.is_empty() {
+                    break;
+                }
+            }
+            assert_eq!(a.state(), RendezvousHandshakeState::Connected);
+            assert_eq!(b.state(), RendezvousHandshakeState::Connected);
+        }
+
+        // Tampered run: flip a byte in the Responder's key-material echo.
+        let mut a = RendezvousHandshake::new(PEER_A_SOCKET_ID, PEER_A_COOKIE, config_a);
+        let mut b = RendezvousHandshake::new(PEER_B_SOCKET_ID, PEER_B_COOKIE, config_b);
+        let mut to_a = vec![b.start().expect("b start")];
+        let mut to_b = vec![a.start().expect("a start")];
+        let mut tampered = false;
+        let mut rejected = false;
+        for _ in 0..20 {
+            if rejected {
+                break;
+            }
+            if a.state() == RendezvousHandshakeState::Connected
+                && b.state() == RendezvousHandshakeState::Connected
+            {
+                break;
+            }
+            let mut next_to_a = Vec::new();
+            let mut next_to_b = Vec::new();
+            for msg in to_a.drain(..) {
+                let pkt = ControlPacket::parse(&msg).expect("valid");
+                for out in a.feed(&pkt).expect("a.feed") {
+                    if let HandshakeOutput::Send(bytes) = out {
+                        next_to_b.push(bytes);
+                    }
+                }
+            }
+            for msg in to_b.drain(..) {
+                let mut msg = msg;
+                if !tampered && msg.windows(2).any(|w| w == [0, 4]) {
+                    if let Some(last) = msg.last_mut() {
+                        *last ^= 0xFF;
+                    }
+                    tampered = true;
+                }
+                let pkt = ControlPacket::parse(&msg).expect("valid");
+                for out in b.feed(&pkt).expect("b.feed") {
+                    match out {
+                        HandshakeOutput::Send(bytes) => next_to_a.push(bytes),
+                        HandshakeOutput::Rejected(reason) => {
+                            assert_eq!(reason, RejectionReason::BadSecret);
+                            rejected = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            to_a = next_to_a;
+            to_b = next_to_b;
+            if to_a.is_empty() && to_b.is_empty() {
+                break;
+            }
+        }
+        assert!(tampered, "never found a key-material echo to tamper");
+        assert!(rejected, "initiator did not reject the tampered echo");
+        assert_eq!(b.state(), RendezvousHandshakeState::Rejected);
+    }
+}
