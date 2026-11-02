@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 - `Action::HttpRequest` and `Action::TcpConnect` gained an `identity: Option<Arc<ClientIdentity>>` field for client certificates (issue #1461), so every struct literal must add the field.
 
+### Changed
+- The `live_loop` example is now `session_loop`: its name collided with `buffering-runtime`'s `live_loop`, and cargo warned about the clashing output file in a workspace build.
+
 ## [0.1.0] - 2026-11-01
 ### Added
 

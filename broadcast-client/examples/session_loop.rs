@@ -24,5 +24,5 @@ fn main() {
             samples += 1;
         }
     }
-    println!("live_loop: opens={opens} samples={samples} events={events}");
+    println!("session_loop: opens={opens} samples={samples} events={events}");
 }

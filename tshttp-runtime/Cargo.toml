@@ -32,7 +32,7 @@ std = ["broadcast-common/std", "transmux/std", "serde?/std"]
 serde = ["dep:serde", "broadcast-common/serde", "transmux/serde"]
 
 [[example]]
-name = "live_loop"
+name = "tshttp_loop"
 
 [[example]]
 name = "stall_demo"

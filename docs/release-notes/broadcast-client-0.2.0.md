@@ -13,6 +13,9 @@ Minor release: UDP, RTP, SRT, Smooth Streaming and RTMP sources plus client cert
 - RTMP play source: `rtmp://` and `rtmps://` URLs (`SourceKind::Rtmp`, picked by `Auto`) play over a TCP connection the host opens, on `rtmp-runtime`'s sans-IO client in play mode (issue #1460), with FLV tags demuxed by `transmux::StreamingFlvDemux`; start, stall, backoff and reconnect follow the TS-over-HTTP policy.
 
 
+### Changed
+- The `live_loop` example is now `session_loop`: its name collided with `buffering-runtime`'s `live_loop`, and cargo warned about the clashing output file in a workspace build.
+
 ### Breaking
 - `Action::HttpRequest` and `Action::TcpConnect` gained an `identity: Option<Arc<ClientIdentity>>` field for client certificates (issue #1461), so every struct literal must add the field.
 

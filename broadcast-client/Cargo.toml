@@ -67,7 +67,7 @@ serde = ["dep:serde", "serde/std", "broadcast-common/serde", "transmux/serde", "
 __test-seams = []
 
 [[example]]
-name = "live_loop"
+name = "session_loop"
 
 [[example]]
 name = "auth_wait"
