@@ -219,8 +219,9 @@ impl WireHost {
         }
         let ca = self.server_ca.as_ref().expect("a server CA for TLS");
         let cfg: Arc<ClientConfig> = client_config(ca, identity);
-        let tls_conn = rustls::ClientConnection::new(cfg, ServerName::try_from(TLS_SERVER_NAME).unwrap())
-            .map_err(|e| e.to_string())?;
+        let tls_conn =
+            rustls::ClientConnection::new(cfg, ServerName::try_from(TLS_SERVER_NAME).unwrap())
+                .map_err(|e| e.to_string())?;
         let mut stream = Box::new(StreamOwned::new(tls_conn, tcp));
         stream
             .conn
@@ -264,10 +265,8 @@ impl WireHost {
                         self.close_with_error(conn, "write failed");
                     }
                 }
-                Action::Close { conn } => {
-                    if self.conn.as_ref().is_some_and(|(c, _)| *c == conn) {
-                        self.conn = None;
-                    }
+                Action::Close { conn } if self.conn.as_ref().is_some_and(|(c, _)| *c == conn) => {
+                    self.conn = None;
                 }
                 _ => {}
             }
