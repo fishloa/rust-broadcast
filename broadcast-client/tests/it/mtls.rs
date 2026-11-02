@@ -12,6 +12,7 @@ const FAST_BPS: u64 = 100_000_000;
 const STEP_US: u64 = 1_000;
 const CHUNK: usize = 7 * TS_PACKET;
 const HANDLE: u64 = 0xC0FFEE;
+const HANDSHAKE_LOG_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nhttps://cdn.example/s0.ts\n";
 
 fn cfg(f: impl FnOnce(&mut Config)) -> Config {
@@ -340,7 +341,12 @@ fn without_an_identity_the_handshake_fails_and_the_session_backs_off() {
             .any(|e| matches!(e, Event::Status(Status::Reconnecting { .. })))
     );
     assert!(!out.events.iter().any(|e| matches!(e, Event::Sample { .. })));
-    assert!(server.log.lock().unwrap().handshake_failures >= 1);
+    assert!(
+        server
+            .log_when(HANDSHAKE_LOG_WAIT, |l| l.handshake_failures >= 1)
+            .handshake_failures
+            >= 1
+    );
 }
 
 #[test]
@@ -355,7 +361,7 @@ fn a_certificate_from_the_wrong_ca_is_refused() {
     let out = drive(&server, &server_ca, config, 1, 1_000_000);
     assert_eq!(out.offered, 1);
     assert!(!out.events.iter().any(|e| matches!(e, Event::Sample { .. })));
-    let log = server.log.lock().unwrap();
+    let log = server.log_when(HANDSHAKE_LOG_WAIT, |l| l.handshake_failures >= 1);
     assert_eq!(log.requests, 0);
     assert!(log.handshake_failures >= 1);
 }
