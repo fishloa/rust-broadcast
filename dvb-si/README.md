@@ -206,7 +206,7 @@ list_services`), and the [`dvb-tools`](https://crates.io/crates/dvb-tools) CLI
 | a table that spans several sections | `collect::SectionSetCollector` (`.nit()`, `.bat()`, `.sdt()`, `.eit()`, `.table::<T>()`) | `collect::EitCollector` for EIT schedules (spans table_ids) |
 | a programme guide to query | `epg::EpgStore` (`now_and_next`, `schedule`) | feature `chrono` |
 | a descriptor loop (`DescriptorLoop`) | `.iter()` → `AnyDescriptor` | unknown tags surface as `AnyDescriptor::Unknown`, never panic |
-| private / regional descriptors | `descriptors::DescriptorRegistry` + `.iter_with(&reg)` | PDS-scoped: NorDig LCN, EACEM LCN, AVS2/AVS3, China captions, your own |
+| private / regional descriptors | `descriptors::DescriptorRegistry` + `.iter_with(&reg)` | PDS-/registration-scoped: NorDig LCN, EACEM LCN, AVS2/AVS3, China captions, ATSC captions (0x86, via `with_atsc_caption_service`), your own |
 | private extension descriptors (0x7F) | `descriptors::ExtensionRegistry` + `.iter_with_extensions` | |
 | an AIT | `tables::ait::AitSection` + `descriptors::ait::parse_ait_loop` | the AIT has its own descriptor namespace |
 | a DSM-CC carousel | `carousel::{Dsi, Dii, DownloadDataBlock, ModuleReassembler}` → `carousel::CarouselFs` | `flate2` feature for compressed modules |

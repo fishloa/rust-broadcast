@@ -2,13 +2,13 @@
 
 Generic sans-IO client session for live media: auth, redirects, reconnect/retry and buffering
 decisions over a TS-over-HTTP source (`tshttp-runtime`), an HLS source (`hls-runtime`), a DASH
-source (`dash-runtime`), a Smooth Streaming source (`transmux`'s MS-SSTR parser), an RTSP source (`rtsp-runtime`) and UDP/RTP TS sources. The host performs only transport I/O (HTTP requests, a TCP
+source (`dash-runtime`), a Smooth Streaming source (`transmux`'s MS-SSTR parser), an RTMP play source (`rtmp-runtime`), an RTSP source (`rtsp-runtime`), an SRT caller source (`srt-runtime`) and UDP/RTP TS sources. The host performs only transport I/O (HTTP requests, a TCP
 connection for RTSP, a datagram socket for UDP and RTP); time is a caller-supplied monotonic `now_us`.
 
 ## Sources
 
 `Config::kind` selects the source; `SourceKind::Auto` picks UDP for a `udp://` URL, RTP for an `rtp://` URL, RTSP for an `rtsp://` or `rtsps://` URL,
-HLS for a `.m3u8`/`.m3u` URL path, DASH for a `.mpd` URL path and Smooth Streaming for a path whose last segment is `Manifest` (all ASCII case-insensitive) and
+HLS for a `.m3u8`/`.m3u` URL path, DASH for a `.mpd` URL path, Smooth Streaming for a path whose last segment is `Manifest`, RTMP for an `rtmp://` or `rtmps://` URL, SRT for an `srt://` URL (all ASCII case-insensitive) and
 TS-over-HTTP otherwise. An explicit kind wins over the extension (`SourceKind::Dash` plays an MPD served
 from any path; DASH is HTTP-only, so `rtsp://` with `SourceKind::Dash` is `Error::UnsupportedScheme`).
 
