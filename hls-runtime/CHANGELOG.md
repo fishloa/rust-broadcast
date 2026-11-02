@@ -14,6 +14,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `HlsOrigin::set_detected_closed_captions(Vec::new())` now means the video was scanned and carries no captions: the master playlist states `CLOSED-CAPTIONS=NONE` on every `EXT-X-STREAM-INF` (RFC 8216bis section 4.4.6.2). Until the first call the master claims nothing, as before; a later non-empty call replaces `NONE` with the caption group (issue #1428).
 - `client::choose_variant(&[VariantInfo], &VariantPolicy) -> usize`, the variant-selection rule the client applies to a master playlist, made public so another adaptive source (the Smooth Streaming source of `broadcast-client`) picks a quality level by the same policy (issue #1460).
 
+### Changed
+- Builds against `transmux` 0.29 (was 0.28) and `media-plane` 0.9 (was 0.8); no functional change beyond the additions above.
+
 ## [0.10.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)

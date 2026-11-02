@@ -5,7 +5,7 @@
 ## [12.1.0] - 2026-11-02
 
 ### Changed
-- Dependency/epoch bump only (follows dvb-bbframe); no functional change.
+- Builds against `dvb-bbframe` 12.1 and `dvb-si` 12.1 (were 12.0.1); no functional change in this crate.
 
 ## [12.0.1] - 2026-11-01
 ### Changed

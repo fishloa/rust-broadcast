@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.0] - 2026-11-02
 
 ### Changed
-- Dependency/epoch bump only (follows transmux); no functional change.
+- Builds against `transmux` 0.29 (was 0.28); no functional change in this crate.
 
 ## [0.8.0] - 2026-11-01
 

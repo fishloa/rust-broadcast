@@ -5,7 +5,7 @@
 ## [0.13.0] - 2026-11-02
 
 ### Changed
-- Dependency/epoch bump only (follows dvb-si, dvb-conformance, transmux); no functional change.
+- Builds against `dvb-si` 12.1, `dvb-conformance` 12.1 and `transmux` 0.29 (were 12.0.1 and 0.28); no functional change in this crate.
 
 ## [0.12.0] - 2026-11-01
 

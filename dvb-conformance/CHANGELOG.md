@@ -5,7 +5,7 @@
 ## [12.1.0] - 2026-11-02
 
 ### Changed
-- Dependency/epoch bump only (follows dvb-si); no functional change.
+- Builds against `dvb-si` 12.1 (was 12.0.1); no functional change in this crate.
 
 ## [12.0.1] - 2026-11-01
 

@@ -7,7 +7,7 @@ All notable changes to dash-runtime will be documented in this file.
 ## [0.2.0] - 2026-11-02
 
 ### Changed
-- Dependency/epoch bump only (follows transmux); no functional change.
+- Builds against `transmux` 0.29 (was 0.28); no functional change in this crate.
 
 ## [0.1.0] - 2026-11-01
 ### Changed
