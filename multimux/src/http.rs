@@ -33,6 +33,19 @@ use crate::route::ProgramServing;
 /// call site may wait longer than this.
 pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// RFC 8216bis section 6.2.5.2: a Server "that cannot provide the requested
+/// Playlist after blocking for more than three Target Durations SHOULD return
+/// Service Unavailable".
+pub(crate) const BLOCKING_RELOAD_TARGET_DURATIONS: u32 = 3;
+
+/// How long a Playlist blocking reload waits on `origin`: three of its
+/// published Target Durations, never less than [`BLOCKING_RELOAD_TIMEOUT`]
+/// (which also covers the time before the first segment fixes a target).
+pub(crate) fn playlist_reload_timeout(origin: &hls_runtime::server::HlsOrigin) -> Duration {
+    (origin.published_target_duration() * BLOCKING_RELOAD_TARGET_DURATIONS)
+        .max(BLOCKING_RELOAD_TIMEOUT)
+}
+
 /// Resolves `route`'s single-program-route [`ProgramServing`] bundle
 /// ([`crate::route::SPTS_PROGRAM_ID`]) against its registry, handling the
 /// three-way [`crate::route::ProgramResolution`] the same way at every
@@ -221,6 +234,25 @@ pub(crate) fn playlist_not_found_status(timed_out: bool) -> StatusCode {
         StatusCode::NOT_FOUND
     }
 }
+
+/// [`into_response`] for a Playlist: a wait the engine gave up on answers `503`
+/// with `Retry-After`, an absent Playlist `404`.
+pub(crate) fn into_playlist_response<B>(
+    resp: EgressResponse<B>,
+    timed_out: bool,
+    render_ready: impl FnOnce(B) -> Response,
+) -> Response {
+    let mut response = into_response(resp, playlist_not_found_status(timed_out), render_ready);
+    if response.status() == StatusCode::SERVICE_UNAVAILABLE {
+        response.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            HeaderValue::from_static(PLAYLIST_RETRY_AFTER_SECS),
+        );
+    }
+    response
+}
+
+const PLAYLIST_RETRY_AFTER_SECS: &str = "1";
 
 /// Turn one [`EgressResponse`] into an HTTP [`Response`] — the one place in
 /// this crate that does so. `render_ready` supplies the content-type/body

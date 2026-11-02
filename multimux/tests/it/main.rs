@@ -2,6 +2,7 @@
 mod accept_lifecycle;
 mod admin_api;
 mod audio_renditions;
+mod blocking_reload_deadline;
 mod closed_captions;
 mod dash_pull_route;
 mod dash_sliding_window;

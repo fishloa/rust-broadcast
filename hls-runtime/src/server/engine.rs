@@ -2819,6 +2819,24 @@ impl HlsOrigin {
         self.target_duration_violations.load(Ordering::Relaxed)
     }
 
+    /// The `EXT-X-TARGETDURATION` this origin's Media Playlists carry (or will
+    /// carry): the frozen value once published, otherwise the largest of its
+    /// own, its longest segment so far and its sibling renditions'. Unlike a
+    /// render it never freezes the value. RFC 8216bis section 6.2.5.2 measures
+    /// a blocking reload's patience in these.
+    pub fn published_target_duration(&self) -> Duration {
+        let frozen = *locked(&self.frozen_target_duration_secs);
+        let secs = frozen.unwrap_or_else(|| {
+            let sibling = locked(&self.rendition_siblings)
+                .iter()
+                .filter_map(|s| s.origin.upgrade())
+                .map(|o| o.target_duration_candidate_secs())
+                .fold(0.0, f64::max);
+            self.target_duration_candidate_secs().max(sibling)
+        });
+        Duration::from_secs(secs.ceil().clamp(0.0, f64::from(u32::MAX)) as u64)
+    }
+
     /// Raise this origin's `PART-TARGET` to `ms` when that exceeds the
     /// configured part target. An audio rendition whose frames do not divide
     /// the part target needs a Part Target Duration of a whole number of
@@ -4679,6 +4697,23 @@ mod tests {
     }
 
     // --- misc: target-duration MUST, abuse bound, bad request -------------
+
+    #[test]
+    fn published_target_duration_matches_the_rendered_playlist() {
+        let (_trunk, origin, writer) = make_origin(); // configured target 4.0
+        assert_eq!(origin.published_target_duration(), Duration::from_secs(4));
+        seg(&writer, 1, 7.5, false);
+        let _ = resolve_now(
+            &origin,
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+        );
+        assert_eq!(origin.published_target_duration(), Duration::from_secs(8));
+        seg(&writer, 2, 20.0, false);
+        assert_eq!(origin.published_target_duration(), Duration::from_secs(8));
+    }
 
     #[test]
     fn target_duration_is_max_of_configured_and_actual_segment_duration() {

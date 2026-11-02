@@ -82,6 +82,9 @@ const SLEEP_ALLOW: &[&str] = &[
     "whip_ingest.rs",
     "whip_session_resource.rs",
     "whip_whep_timers.rs",
+    // Blocking reload test paces a segment arrival past the old 5 s cap to
+    // prove the new 3-Target-Duration wait (issue #1651); no condition to await.
+    "blocking_reload_deadline.rs",
 ];
 
 fn test_files() -> Vec<(String, String)> {

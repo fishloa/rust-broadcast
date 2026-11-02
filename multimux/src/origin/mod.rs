@@ -3481,6 +3481,7 @@ mod tests {
         let limits = HttpLimits {
             max_concurrent_requests: BOUND,
             queue_timeout: std::time::Duration::from_millis(50),
+            request_timeout: std::time::Duration::from_secs(20),
             ..HttpLimits::default()
         };
         let app = router(Arc::new(AppState::new(streams).with_limits(limits)));
@@ -3581,6 +3582,7 @@ mod tests {
         let limits = HttpLimits {
             max_concurrent_requests: BOUND,
             queue_timeout: std::time::Duration::from_millis(50),
+            request_timeout: std::time::Duration::from_secs(20),
             ..HttpLimits::default()
         };
         let app = router(Arc::new(AppState::new(streams).with_limits(limits)));
@@ -3606,8 +3608,8 @@ mod tests {
         let mut ok = 0usize;
         for h in floods {
             // Bounded so a regression fails rather than hangs (a parked
-            // reload still completes by the LL-HLS cap, so 10 s is generous).
-            let resp = tokio::time::timeout(std::time::Duration::from_secs(10), h)
+            // reload still completes by the LL-HLS cap, so 20 s is generous).
+            let resp = tokio::time::timeout(std::time::Duration::from_secs(20), h)
                 .await
                 .expect("every reload request must complete within the guard")
                 .expect("join")
