@@ -50,7 +50,7 @@ impl ConnAlloc {
         loop {
             let candidate = self
                 .next
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                     Some(c.checked_add(1).unwrap_or(FIRST_CONN_ID))
                 })
                 .unwrap_or(FIRST_CONN_ID);

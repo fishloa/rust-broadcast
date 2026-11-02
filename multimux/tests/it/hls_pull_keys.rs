@@ -227,7 +227,7 @@ async fn handler(State(shared): State<Arc<Shared>>, uri: Uri, headers: HeaderMap
     }
     let failing = res
         .fail_first
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
         .is_ok();
     if failing {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();

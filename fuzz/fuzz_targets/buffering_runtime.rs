@@ -3,9 +3,9 @@
 use libfuzzer_sys::fuzz_target;
 use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, StallMemorySnapshot};
 
-/// Arbitrary operation stream against the controller: must never panic, the
-/// target stays inside `[min_us, max_us]` (the hard cap), and the event
-/// protocol holds (no Resume without a Pause, no Pause while paused).
+// Arbitrary operation stream against the controller: must never panic, the
+// target stays inside `[min_us, max_us]` (the hard cap), and the event
+// protocol holds (no Resume without a Pause, no Pause while paused).
 fuzz_target!(|data: &[u8]| {
     let cfg = ControllerConfig::default();
     let (min, max) = (cfg.policy.min_us, cfg.policy.max_us);
