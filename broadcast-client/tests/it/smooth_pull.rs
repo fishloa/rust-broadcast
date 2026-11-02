@@ -50,21 +50,15 @@ fn smooth_manifest_url_is_selected_case_insensitively() {
     let mut c = Config::default();
     c.kind = SourceKind::Auto;
     let mut s = Session::open("http://h/x/Manifest", c, 0).unwrap();
-    let a = s.poll(0).unwrap();
-    match a {
-        broadcast_client::Action::HttpRequest { url, .. } => assert_eq!(url, "http://h/x/Manifest"),
-        _ => panic!("not http"),
-    }
+    assert!(matches!(s.select_variant(0), Err(broadcast_client::Error::NoSuchVariant(_))));
 }
 
 #[test]
 fn smooth_manifest_format_query_is_not_smooth() {
     let mut c = Config::default();
     c.kind = SourceKind::Auto;
-    // format query => ts-http, still opens
-    let s = Session::open("http://h/x/Manifest?format=mpd-time-csf", c, 0);
-    assert!(s.is_ok());
-    // not adaptive smooth: select_variant errors NotHls? We just check no crash
+    let mut s = Session::open("http://h/x/Manifest?format=mpd-time-csf", c, 0).unwrap();
+    assert!(matches!(s.select_variant(0), Err(broadcast_client::Error::NotHls)));
 }
 
 #[test]
@@ -114,7 +108,7 @@ fn smooth_fragment_url_substitutes_bitrate_and_start_time() {
     h.run_until(|evs| evs.iter().any(|e| matches!(e, Event::Status(Status::Ended))), 10_000);
     // check seen requests include fragment url with bitrate
     let seen_urls: Vec<String> = h.seen.iter().map(|s| s.url.clone()).collect();
-    assert!(seen_urls.iter().any(|u| u.contains("QualityLevels(64528)/Fragments(video=0)")));
+    assert!(seen_urls.iter().any(|u| u == "http://origin.test/QualityLevels(64528)/Fragments(video=10000000)"));
 }
 
 #[test]
@@ -122,6 +116,8 @@ fn smooth_timeline_repeat_r_expands_to_r_plus_one_chunks() {
     // manifest with r=1 on first c => 2 chunks same duration
     let base = String::from_utf8(body("smooth/av/Manifest")).unwrap();
     let base = base.replace(r#"<c n="0" d="10000000" />"#, r#"<c n="0" d="10000000" r="1" />"#);
+    let base = base.replace(r#"<c n="1" d="10000000" />"#, "");
+    let base = base.replace(r#"<c n="2" d="10000000" />"#, "");
     // remove second and third c to avoid duplicates? keep
     let mut h = Host::new(manifest_url(), smooth_config());
     h.ok(manifest_url(), base.into_bytes());
@@ -131,8 +127,8 @@ fn smooth_timeline_repeat_r_expands_to_r_plus_one_chunks() {
     h.ok("http://origin.test/QualityLevels(98429)/Fragments(audio=0)", body("smooth/av/QualityLevels(98429)/Fragments(audio=0)"));
     h.run_until(|evs| evs.iter().any(|e| matches!(e, Event::Status(Status::Ended))), 10_000);
     // at least 2 video samples groups
-    let vid_samples = h.events.iter().filter(|e| matches!(e, Event::Sample { track, .. } if track.value()==1)).count();
-    assert!(vid_samples >= 2);
+    let has_second = h.seen.iter().any(|s| s.url.contains("video=10000000"));
+    assert!(has_second, "expected a second chunk at video=10000000");
 }
 
 #[test]
@@ -183,6 +179,6 @@ fn smooth_samples_are_placed_at_tfxd_time() {
     route_av(&mut h);
     h.run_until(|evs| evs.iter().any(|e| matches!(e, Event::Status(Status::Ended))), 10_000);
     // ensure samples emitted
-    let n = h.events.iter().filter(|e| matches!(e, Event::Sample { .. })).count();
-    assert!(n > 0);
+    let has_late = h.events.iter().any(|e| matches!(e, Event::Sample { sample, .. } if sample.dts == Some(10_000_000)));
+    assert!(has_late, "expected a sample at tfxd time 10000000");
 }

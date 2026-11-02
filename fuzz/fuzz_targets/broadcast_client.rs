@@ -9,16 +9,18 @@ use broadcast_client::{
 use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
 
-const URLS: [&str; 4] = [
+const URLS: [&str; 5] = [
     "http://example/live.ts",
     "http://example/live.m3u8",
     "http://example/master.m3u8",
     "http://example/encrypted.m3u8",
+    "http://example/Manifest",
 ];
 const ORIGIN_PREFIX: &str = "http://example/";
 const CHUNK_BYTES: usize = 32;
 const HLS_MASTER_SEED: &[u8] = b"#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"En\",LANGUAGE=\"en\",DEFAULT=YES,AUTOSELECT=YES,URI=\"audio/en.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"De\",LANGUAGE=\"de\",AUTOSELECT=YES,URI=\"http://cdn/audio/de.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"Mux\",DEFAULT=NO\n#EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO=\"a\"\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900000,AUDIO=\"a\"\nhigh.m3u8\n";
 const HLS_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
+const SMOOTH_MANIFEST_SEED: &[u8] = b"<SmoothStreamingMedia MajorVersion=\"2\" MinorVersion=\"0\" Duration=\"10000000\"><StreamIndex Type=\"video\" QualityLevels=\"1\" Chunks=\"1\" Url=\"QualityLevels({bitrate})/Fragments(video={start time})\"><QualityLevel Index=\"0\" Bitrate=\"1000\" FourCC=\"H264\" MaxWidth=\"320\" MaxHeight=\"240\" CodecPrivateData=\"00000001674d400deca0a0fd80880000030008000003019078a14cb00000000168ebe3cb20\" /><c n=\"0\" d=\"10000000\" /></StreamIndex></SmoothStreamingMedia>";
 const HLS_ENC_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x000102030405060708090A0B0C0D0E0F\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
 const HLS_CROSS_ORIGIN_KEY_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-KEY:METHOD=AES-128,URI=\"http://keys.other/key.bin\",IV=0x000102030405060708090A0B0C0D0E0F\n#EXTINF:2.0,\nseg0.ts\n";
 const KEY: [u8; 16] = [0x42; 16];
@@ -520,6 +522,9 @@ fn body_for(url: &str, encrypted: bool, chunk: &[u8]) -> Vec<u8> {
             (true, _) => HLS_ENC_SEED.to_vec(),
             (false, _) => HLS_SEED.to_vec(),
         };
+    }
+    if url.ends_with("Manifest") {
+        return SMOOTH_MANIFEST_SEED.to_vec();
     }
     if encrypted {
         encrypted_segment().to_vec()
