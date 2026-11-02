@@ -761,11 +761,6 @@ impl SrtSocket {
     /// Runs the sans-IO [`crate::rendezvous::RendezvousHandshake`] over a UDP
     /// socket bound to `local_addr` (its port must be the one the peer targets).
     ///
-    /// # Encryption
-    /// The Rendezvous handshake engine does not negotiate Key Material, so a
-    /// `crypto`-enabled [`HandshakeConfig`] is refused here with
-    /// [`Error::EncryptionUnsupported`] (rendezvous-only restriction).
-    ///
     /// # Errors
     /// [`Error::Rejected`] carries the peer's [`RejectionReason`];
     /// [`Error::HandshakeTimedOut`] means the peer never completed the
@@ -785,7 +780,6 @@ impl SrtSocket {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        refuse_rendezvous_crypto(&config)?;
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let socket = bounded(io.connect, "bind", async {
             UdpSocket::bind(local_addr)
@@ -2847,18 +2841,6 @@ fn build_encryption_rejection(
         extensions: HandshakeExtensions(&[]),
     };
     handshake_sm::build_bytes(hp_out)
-}
-
-/// Refuses a [`HandshakeConfig`] that asks for payload encryption on the
-/// Rendezvous path, which does not negotiate Key Material.
-fn refuse_rendezvous_crypto(config: &HandshakeConfig) -> Result<()> {
-    #[cfg(feature = "crypto")]
-    if config.crypto.is_some() {
-        return Err(Error::EncryptionUnsupported);
-    }
-    #[cfg(not(feature = "crypto"))]
-    let _ = config;
-    Ok(())
 }
 
 /// Runs `fut` for at most `limit`; expiry is `Error::Io { kind: TimedOut, context }`.

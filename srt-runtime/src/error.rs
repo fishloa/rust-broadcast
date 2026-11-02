@@ -144,10 +144,6 @@ pub enum Error {
         /// Which budget ran out.
         stage: &'static str,
     },
-    /// Payload encryption was requested of an adapter whose data path does not
-    /// encrypt (refused up front rather than silently sending plaintext).
-    #[error("payload encryption is not supported by this adapter")]
-    EncryptionUnsupported,
     /// A handshake step failed; `source` is the underlying parse / engine
     /// error and `stage` names where it happened.
     #[error("handshake failed during {stage}: {source}")]
