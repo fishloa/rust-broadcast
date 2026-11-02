@@ -19,9 +19,9 @@ use transmux::smooth_parse::{
 use transmux::{Fmp4Demux, TrackId, TrackSpec};
 use url::Url;
 
-use crate::auth::AuthState;
+use crate::auth::{AuthDecision, AuthState};
 use crate::error::Error;
-use crate::events::{Action, Config, ErrorKind, Event, Status};
+use crate::events::{Action, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
@@ -44,6 +44,11 @@ struct Req {
     body: Vec<u8>,
     status: Option<u16>,
     headers: Vec<(String, String)>,
+    started_us: u64,
+    last_activity_us: u64,
+    authed: bool,
+    redirects: u32,
+    stale_replayed: bool,
 }
 
 struct StreamRuntime {
@@ -87,6 +92,7 @@ pub(crate) struct SmoothSource {
     refresh_at: Option<u64>,
     manifest_failures: u32,
     variants_emitted: bool,
+    parked: Vec<Req>,
 }
 
 impl SmoothSource {
@@ -112,6 +118,7 @@ impl SmoothSource {
             refresh_at: None,
             manifest_failures: 0,
             variants_emitted: false,
+            parked: Vec::new(),
         };
         src.events.push_back(Event::Status(Status::Establishing));
         src.fetch_manifest(url.clone());
@@ -128,6 +135,11 @@ impl SmoothSource {
                 body: Vec::new(),
                 status: None,
                 headers: Vec::new(),
+                started_us: self.now,
+                last_activity_us: self.now,
+                authed: false,
+                redirects: 0,
+                stale_replayed: false,
             },
         );
         self.actions.push_back(Action::HttpRequest {
@@ -138,6 +150,9 @@ impl SmoothSource {
             byte_range: None,
             identity: None,
         });
+        self.actions.push_back(Action::WakeAt(
+            self.now + self.config.segment_inactivity_timeout_us.max(1),
+        ));
     }
 
     pub(crate) fn take_actions(&mut self) -> VecDeque<Action> {
@@ -168,6 +183,61 @@ impl SmoothSource {
 
     pub(crate) fn poll(&mut self, now: u64, _auth: &mut AuthState) {
         self.now = now;
+        // inactivity timeout handling
+        let timeout = self.config.segment_inactivity_timeout_us;
+        let mut stalled: Vec<u32> = Vec::new();
+        for (conn, req) in &self.reqs {
+            let last = if req.last_activity_us == 0 {
+                req.started_us
+            } else {
+                req.last_activity_us
+            };
+            if now.saturating_sub(last) >= timeout {
+                stalled.push(*conn);
+            }
+        }
+        for conn in stalled {
+            if let Some(req) = self.reqs.remove(&conn) {
+                self.actions.push_back(Action::Close { conn });
+                self.events.push_back(Event::Status(Status::RequestStalled {
+                    resume: ResumeMode::Full,
+                }));
+                // retry like transport failure
+                match req.kind {
+                    ReqKind::Manifest => self.report_bad_manifest("inactivity", now),
+                    ReqKind::Fragment { stream_idx: si } => {
+                        if si < self.streams.len() {
+                            self.streams[si].failures += 1;
+                            self.streams[si].in_flight = false;
+                            let max = self.config.max_segment_failures;
+                            if self.streams[si].failures >= max {
+                                if self.is_live {
+                                    self.events.push_back(Event::Error {
+                                        kind: ErrorKind::SegmentFetchFailed { status: None },
+                                        fatal: false,
+                                    });
+                                    self.events.push_back(Event::Discontinuity);
+                                    if let Some(idx) = self.streams[si].current_idx {
+                                        self.streams[si].next = idx + 1;
+                                    }
+                                } else {
+                                    self.events.push_back(Event::Error {
+                                        kind: ErrorKind::SegmentFetchFailed { status: None },
+                                        fatal: true,
+                                    });
+                                    self.fatal = true;
+                                }
+                            } else {
+                                let delay = self.backoff_delay(self.streams[si].failures);
+                                self.streams[si].retry_at = Some(now + delay * MICROS_PER_MILLI);
+                                self.actions
+                                    .push_back(Action::WakeAt(now + delay * MICROS_PER_MILLI));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // retry timers
         for i in 0..self.streams.len() {
             if let Some(t) = self.streams[i].retry_at {
@@ -231,6 +301,11 @@ impl SmoothSource {
                 body: Vec::new(),
                 status: None,
                 headers: Vec::new(),
+                started_us: self.now,
+                last_activity_us: self.now,
+                authed: false,
+                redirects: 0,
+                stale_replayed: false,
             },
         );
         self.actions.push_back(Action::HttpRequest {
@@ -241,6 +316,9 @@ impl SmoothSource {
             byte_range: None,
             identity: None,
         });
+        self.actions.push_back(Action::WakeAt(
+            self.now + self.config.segment_inactivity_timeout_us.max(1),
+        ));
     }
 
     pub(crate) fn on_response(
@@ -248,35 +326,116 @@ impl SmoothSource {
         conn: u32,
         status: u16,
         headers: &[(String, String)],
-        _now: u64,
+        now: u64,
         _wall: Option<&crate::source::fetch::wall::WallClock>,
-        _auth: &mut AuthState,
+        auth: &mut AuthState,
     ) {
-        if let Some(req) = self.reqs.get_mut(&conn) {
-            req.status = Some(status);
-            req.headers = headers.to_vec();
-            if REDIRECT_STATUSES.contains(&status) {
-                if let Some(target) =
-                    redirect::resolve(&req.url, headers, 0, self.config.max_redirects)
-                {
-                    req.url = target.clone();
-                    // re-issue
+        let Some(mut req) = self.reqs.remove(&conn) else {
+            return;
+        };
+        auth.receive_cookies(&req.url, headers, now);
+        if REDIRECT_STATUSES.contains(&status) {
+            self.actions.push_back(Action::Close { conn });
+            match redirect::resolve(&req.url, headers, req.redirects, self.config.max_redirects) {
+                Some(target) => {
+                    req.redirects = req.redirects.saturating_add(1);
+                    req.url = target;
+                    if matches!(req.kind, ReqKind::Manifest) {
+                        self.manifest_url = req.url.clone();
+                    }
+                    let url_str = req.url.to_string();
+                    let h = auth.request_headers(&req.url, now);
+                    let new_conn = self.conn_alloc.lease().id();
+                    req.started_us = now;
+                    req.last_activity_us = now;
+                    self.reqs.insert(new_conn, req);
                     self.actions.push_back(Action::HttpRequest {
-                        conn,
+                        conn: new_conn,
                         method: "GET".to_string(),
-                        url: target.to_string(),
-                        headers: Vec::new(),
+                        url: url_str,
+                        headers: h,
                         byte_range: None,
                         identity: None,
                     });
+                    self.actions.push_back(Action::WakeAt(
+                        now + self.config.segment_inactivity_timeout_us.max(1),
+                    ));
+                }
+                None => {
+                    if matches!(req.kind, ReqKind::Manifest) {
+                        self.report_bad_manifest("redirect", now);
+                    }
                 }
             }
+            return;
         }
+        if (status == 401 || status == 407) && req.url.origin() == auth.origin().origin() {
+            self.actions.push_back(Action::Close { conn });
+            let url_str = req.url.to_string();
+            let url_clone = req.url.clone();
+            match auth.handle_unauthorized(status, headers, req.authed, req.stale_replayed) {
+                AuthDecision::Replay => {
+                    req.authed = true;
+                    let h = auth.request_headers(&url_clone, now);
+                    let new_conn = self.conn_alloc.lease().id();
+                    req.started_us = now;
+                    req.last_activity_us = now;
+                    self.reqs.insert(new_conn, req);
+                    self.actions.push_back(Action::HttpRequest {
+                        conn: new_conn,
+                        method: "GET".to_string(),
+                        url: url_str,
+                        headers: h,
+                        byte_range: None,
+                        identity: None,
+                    });
+                    self.actions.push_back(Action::WakeAt(
+                        now + self.config.segment_inactivity_timeout_us.max(1),
+                    ));
+                }
+                AuthDecision::ReplayStale => {
+                    req.authed = true;
+                    req.stale_replayed = true;
+                    let h = auth.request_headers(&url_clone, now);
+                    let new_conn = self.conn_alloc.lease().id();
+                    req.started_us = now;
+                    req.last_activity_us = now;
+                    self.reqs.insert(new_conn, req);
+                    self.actions.push_back(Action::HttpRequest {
+                        conn: new_conn,
+                        method: "GET".to_string(),
+                        url: url_str,
+                        headers: h,
+                        byte_range: None,
+                        identity: None,
+                    });
+                    self.actions.push_back(Action::WakeAt(
+                        now + self.config.segment_inactivity_timeout_us.max(1),
+                    ));
+                }
+                AuthDecision::Wait(events) => {
+                    self.events.extend(events);
+                    self.parked.push(req);
+                }
+            }
+            return;
+        }
+        req.status = Some(status);
+        req.headers = headers.to_vec();
+        if req.started_us == 0 {
+            req.started_us = now;
+        }
+        req.last_activity_us = now;
+        self.reqs.insert(conn, req);
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], _now: u64, _auth: &mut AuthState) {
+    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, _auth: &mut AuthState) {
         if let Some(req) = self.reqs.get_mut(&conn) {
             req.body.extend_from_slice(bytes);
+            req.last_activity_us = now;
+            if req.started_us == 0 {
+                req.started_us = now;
+            }
         }
     }
 
@@ -843,7 +1002,32 @@ impl SmoothSource {
 
     pub(crate) fn reconnect(&mut self, _now: u64, _auth: &mut AuthState) {}
 
-    pub(crate) fn resume(&mut self, _now: u64, _auth: &mut AuthState) {}
+    pub(crate) fn resume(&mut self, now: u64, auth: &mut AuthState) {
+        let parked = core::mem::take(&mut self.parked);
+        for req in parked {
+            let url_str = req.url.to_string();
+            let h = auth.request_headers(&req.url, now);
+            let new_conn = self.conn_alloc.lease().id();
+            let mut req = req;
+            req.started_us = now;
+            req.last_activity_us = now;
+            self.reqs.insert(new_conn, req);
+            self.actions.push_back(Action::HttpRequest {
+                conn: new_conn,
+                method: "GET".to_string(),
+                url: url_str,
+                headers: h,
+                byte_range: None,
+                identity: None,
+            });
+            self.actions.push_back(Action::WakeAt(
+                now + self.config.segment_inactivity_timeout_us.max(1),
+            ));
+        }
+        if !auth.is_waiting() {
+            self.schedule();
+        }
+    }
 
     pub(crate) fn set_wall_clock(&mut self, _now_us: u64, _unix_us: u64) {}
 
@@ -861,15 +1045,15 @@ impl SmoothSource {
         if all_done {
             if self.is_live {
                 if self.refresh_at.is_none() {
-                    // schedule refresh
                     let last_dur = self
                         .streams
                         .first()
                         .and_then(|s| s.chunks.last().map(|c| c.1))
                         .unwrap_or(1_000_000);
                     let half = (last_dur / 2).clamp(500_000, 5_000_000);
-                    let now = 0; // we don't store now! problem
-                    let _ = (half, now);
+                    let t = self.now + half;
+                    self.refresh_at = Some(t);
+                    self.actions.push_back(Action::WakeAt(t));
                 }
             } else {
                 self.events.push_back(Event::Status(Status::Ended));

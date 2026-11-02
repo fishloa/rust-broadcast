@@ -337,3 +337,239 @@ fn smooth_samples_are_placed_at_tfxd_time() {
         .any(|e| matches!(e, Event::Sample { sample, .. } if sample.dts == Some(10_000_000)));
     assert!(has_late, "expected a sample at tfxd time 10000000");
 }
+
+#[test]
+fn smooth_live_join_never_starts_before_the_dvr_window() {
+    let base = String::from_utf8(body("smooth/av/Manifest")).unwrap();
+    let base = base.replace(
+        "Duration=\"30415941\"",
+        "Duration=\"30415941\" IsLive=\"TRUE\" DVRWindowLength=\"15000000\"",
+    );
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.ok(manifest_url(), base.into_bytes());
+    route_fragments(&mut h);
+    h.run_until(
+        |evs| evs.iter().any(|e| matches!(e, Event::Sample { .. })),
+        10_000,
+    );
+    let seen_urls: Vec<String> = h.seen.iter().map(|s| s.url.clone()).collect();
+    assert!(
+        seen_urls.iter().any(|u| u.contains("video=10000000")),
+        "expected join at first chunk inside window"
+    );
+    assert!(
+        !seen_urls.iter().any(|u| u.contains("video=0")),
+        "must not start before DVR window"
+    );
+}
+
+#[test]
+fn smooth_fragment_transport_failure_gives_up_after_max_live() {
+    let mut cfg = smooth_config();
+    cfg.max_segment_failures = 2;
+    let base = String::from_utf8(body("smooth/av/Manifest")).unwrap();
+    let base = base.replace(
+        "Duration=\"30415941\"",
+        "Duration=\"30415941\" IsLive=\"TRUE\"",
+    );
+    let mut h = Host::new(manifest_url(), cfg);
+    h.ok(manifest_url(), base.clone().into_bytes());
+    route_fragments(&mut h);
+    h.route(
+        "http://origin.test/QualityLevels(64528)/Fragments(video=0)",
+        vec![
+            hls_host::Reply::TransportError,
+            hls_host::Reply::TransportError,
+            hls_host::Reply::Ok(body("smooth/av/QualityLevels(64528)/Fragments(video=0)")),
+        ],
+    );
+    // remove the ok route for video=0 already overridden by route above
+    h.run_until(
+        |evs| evs.iter().any(|e| matches!(e, Event::Discontinuity)),
+        10_000,
+    );
+    let has_segf = h.events.iter().any(|e| {
+        matches!(
+            e,
+            Event::Error {
+                kind: ErrorKind::SegmentFetchFailed { .. },
+                fatal: false
+            }
+        )
+    });
+    let has_disc = h.events.iter().any(|e| matches!(e, Event::Discontinuity));
+    assert!(has_segf && has_disc);
+    // max-1: one transport failure then success gives up nothing
+    let mut cfg2 = smooth_config();
+    cfg2.max_segment_failures = 2;
+    let mut h2 = Host::new(manifest_url(), cfg2);
+    h2.ok(manifest_url(), base.clone().into_bytes());
+    route_fragments(&mut h2);
+    h2.route(
+        "http://origin.test/QualityLevels(64528)/Fragments(video=0)",
+        vec![
+            hls_host::Reply::TransportError,
+            hls_host::Reply::Ok(body("smooth/av/QualityLevels(64528)/Fragments(video=0)")),
+        ],
+    );
+    h2.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Status(Status::Ended)))
+        },
+        10_000,
+    );
+    let gave_up = h2.events.iter().any(|e| {
+        matches!(
+            e,
+            Event::Error {
+                kind: ErrorKind::SegmentFetchFailed { .. },
+                ..
+            }
+        )
+    });
+    assert!(!gave_up);
+}
+
+#[test]
+fn smooth_fragment_transport_failure_is_fatal_after_max_static() {
+    let mut cfg = smooth_config();
+    cfg.max_segment_failures = 2;
+    let mut h = Host::new(manifest_url(), cfg);
+    h.ok(manifest_url(), body("smooth/av/Manifest"));
+    route_fragments(&mut h);
+    h.route(
+        "http://origin.test/QualityLevels(64528)/Fragments(video=0)",
+        vec![
+            hls_host::Reply::TransportError,
+            hls_host::Reply::TransportError,
+            hls_host::Reply::Ok(body("smooth/av/QualityLevels(64528)/Fragments(video=0)")),
+        ],
+    );
+    h.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Error { fatal: true, .. }))
+        },
+        10_000,
+    );
+    let fatal = h.events.iter().any(|e| {
+        matches!(
+            e,
+            Event::Error {
+                kind: ErrorKind::SegmentFetchFailed { .. },
+                fatal: true
+            }
+        )
+    });
+    assert!(fatal);
+}
+
+#[test]
+fn smooth_manifest_redirect_and_basic_auth_are_followed() {
+    use broadcast_client::Credentials;
+    let cfg = smooth_config();
+    let mut h = Host::new("http://origin.test/Manifest", cfg.clone());
+    // redirect then 401 then 200
+    h.route(
+        "http://origin.test/Manifest",
+        vec![hls_host::Reply::Redirect(
+            "http://origin.test/moved/Manifest".to_string(),
+        )],
+    );
+    h.route(
+        "http://origin.test/moved/Manifest",
+        vec![
+            hls_host::Reply::Full(
+                401,
+                Vec::new(),
+                vec![(
+                    "WWW-Authenticate".to_string(),
+                    "Basic realm=\"t\"".to_string(),
+                )],
+            ),
+            hls_host::Reply::Ok(body("smooth/av/Manifest")),
+        ],
+    );
+    // fragments under moved base
+    h.ok(
+        "http://origin.test/moved/QualityLevels(64528)/Fragments(video=0)",
+        body("smooth/av/QualityLevels(64528)/Fragments(video=0)"),
+    );
+    let mut session = Session::open("http://origin.test/Manifest", cfg, 0).unwrap();
+    session.set_credentials(Credentials::new("u", "p")).unwrap();
+    // drive manually using host? Host owns session, but we created session separately. Use host instead.
+    let mut h2 = Host::new("http://origin.test/Manifest", smooth_config());
+    h2.route(
+        "http://origin.test/Manifest",
+        vec![hls_host::Reply::Redirect(
+            "http://origin.test/moved/Manifest".to_string(),
+        )],
+    );
+    h2.route(
+        "http://origin.test/moved/Manifest",
+        vec![
+            hls_host::Reply::Full(
+                401,
+                Vec::new(),
+                vec![(
+                    "WWW-Authenticate".to_string(),
+                    "Basic realm=\"t\"".to_string(),
+                )],
+            ),
+            hls_host::Reply::Ok(body("smooth/av/Manifest")),
+        ],
+    );
+    h2.ok(
+        "http://origin.test/moved/QualityLevels(64528)/Fragments(video=0)",
+        body("smooth/av/QualityLevels(64528)/Fragments(video=0)"),
+    );
+    // set credentials on the host's session
+    h2.session
+        .set_credentials(Credentials::new("u", "p"))
+        .unwrap();
+    h2.run_until(
+        |evs| evs.iter().any(|e| matches!(e, Event::Variants(_))),
+        10_000,
+    );
+    let seen_urls: Vec<String> = h2.seen.iter().map(|s| s.url.clone()).collect();
+    assert!(
+        seen_urls
+            .iter()
+            .any(|u| u == "http://origin.test/moved/Manifest")
+    );
+    let has_auth = h2.seen.iter().any(|s| {
+        s.headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v.starts_with("Basic "))
+    });
+    assert!(has_auth);
+}
+
+#[test]
+fn smooth_fragment_inactivity_reports_request_stalled() {
+    let mut cfg = smooth_config();
+    cfg.segment_inactivity_timeout_us = 1000;
+    let mut h = Host::new(manifest_url(), cfg);
+    h.ok(manifest_url(), body("smooth/av/Manifest"));
+    route_fragments(&mut h);
+    h.route(
+        "http://origin.test/QualityLevels(64528)/Fragments(video=0)",
+        vec![
+            hls_host::Reply::Hang,
+            hls_host::Reply::Ok(body("smooth/av/QualityLevels(64528)/Fragments(video=0)")),
+        ],
+    );
+    h.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Status(Status::RequestStalled { .. })))
+        },
+        10_000,
+    );
+    let has_stalled = h
+        .events
+        .iter()
+        .any(|e| matches!(e, Event::Status(Status::RequestStalled { .. })));
+    assert!(has_stalled);
+}
