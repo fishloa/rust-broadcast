@@ -567,9 +567,12 @@ fn smooth_fragment_inactivity_reports_request_stalled() {
         },
         10_000,
     );
-    let has_stalled = h
-        .events
-        .iter()
-        .any(|e| matches!(e, Event::Status(Status::RequestStalled { .. })));
-    assert!(has_stalled);
+    let stalled = "http://origin.test/QualityLevels(64528)/Fragments(video=0)";
+    h.run_until(|_| false, 10_000);
+    assert_eq!(
+        h.hits(stalled),
+        2,
+        "the stalled fragment is requested again, whole"
+    );
+    assert!(h.samples() > 0, "the retried fragment is delivered");
 }
