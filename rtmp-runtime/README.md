@@ -7,9 +7,9 @@ Sans-IO RTMP 1.0 publish engine, both ends: an ingest server that receives a liv
 
 ## What it does / what it does not
 
-**Does:** own the RTMP wire layer and the publish session. That is the handshake, chunk-stream assembly and writing, protocol control messages, AMF0 commands, and the `connect`, `createStream`, `publish` flow. The server hands the received audio, video and data back as **FLV bytes** (feed them to `transmux`'s FLV demuxer); the client takes already-encoded audio, video and metadata to send.
+**Does:** own the RTMP wire layer for both publishing and playing. That is the handshake, chunk-stream assembly and writing, protocol control messages, AMF0 commands, and the `connect`, `createStream`, `publish` flow on the server/publish side, plus a sans-IO client in `ClientMode::Play` that runs `connect` -> `createStream` -> `SetBufferLength` + `play` and reports `ClientEvent::Playing`, `ClientEvent::Media { flv }` (FLV tags, first chunk prefixed with the FLV file header), `ClientEvent::StreamEnded` and `ClientEvent::Error`. The server hands the received audio, video and data back as **FLV bytes** (feed them to `transmux`'s FLV demuxer); the client play mode hands the same FLV bytes back through `ClientEvent::Media`.
 
-**Does not:** play or pull a stream (egress is out of scope on both sides), encode or decode media, run the complex (HMAC) handshake, support RTMPE/RTMPS, or implement AMF3 beyond decoding AMF3-encoded command messages. There are no sockets in the core: you feed bytes in and write the returned bytes out.
+**Does not:** run the complex (HMAC) handshake, support RTMPE/RTMPS, or implement AMF3 beyond decoding AMF3-encoded command messages. There are no sockets in the core: you feed bytes in and write the returned bytes out.
 
 Typical users: a live-ingest origin (`multimux`'s RTMP input and push output), test publishers, capture tooling.
 
@@ -17,7 +17,7 @@ Typical users: a live-ingest origin (`multimux`'s RTMP input and push output), t
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| Adobe RTMP specification 1.0 | 1.0 (vendored `adobe_rtmp_1.0`, transcribed in `docs/rtmp.md`) | §5.2 handshake (simple), §5.3 chunk stream (fmt 0 to 3, 1/2/3-byte csid, extended timestamp), §5.4 protocol control, §6 message format, §7.1 message types, §7.2 command messages for the publish flow | Partial | Publish only; no play, no complex handshake. `docs/rtmp.md` uses its own section numbering |
+| Adobe RTMP specification 1.0 | 1.0 (vendored `adobe_rtmp_1.0`, transcribed in `docs/rtmp.md`) | §5.2 handshake (simple), §5.3 chunk stream (fmt 0 to 3, 1/2/3-byte csid, extended timestamp), §5.4 protocol control, §6 message format, §7.1 message types, §7.2 command messages for the publish and play flows | Partial | Publish and play (client play mode); no complex handshake. `docs/rtmp.md` uses its own section numbering |
 | Adobe AMF0 (referenced as `[AMF0]` by the RTMP spec) | Not separately vendored | Value types and the command set used for ingest | Partial | AMF3 commands (type 17) decode like AMF0; Data-AMF3 (15) and Shared-Object (16/19) are out of scope |
 | Adobe FLV (file format v10.1) | v10.1 (vendored `adobe_flv_f4v_v10_1`) | Server emits FLV tags for audio, video and script data | Full for output | Demux with `transmux` |
 

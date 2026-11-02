@@ -46,6 +46,6 @@ fn main() {
     }
 
     println!(
-        "live_loop: opens={opens} reconnects={reconnects} samples={samples} connected={connected}"
+        "tshttp_loop: opens={opens} reconnects={reconnects} samples={samples} connected={connected}"
     );
 }

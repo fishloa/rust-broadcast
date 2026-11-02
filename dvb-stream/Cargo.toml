@@ -17,8 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-si       = { path = "../dvb-si",   version = "12.0", default-features = false, features = ["ts", "std"] }
-dvb-t2mi     = { path = "../dvb-t2mi", version = "12.0", default-features = false, features = ["ts", "std"] }
+dvb-si       = { path = "../dvb-si",   version = "12.1", default-features = false, features = ["ts", "std"] }
+dvb-t2mi     = { path = "../dvb-t2mi", version = "12.1", default-features = false, features = ["ts", "std"] }
 mpeg-ts      = { path = "../mpeg-ts",  version = "0.6", default-features = false, features = ["std"] }
 # RTP fixed-header decode (RFC 3550 §5.1) to unwrap RTP-encapsulated MPEG-2 TS
 # datagrams (RFC 2250 §2) in `TsDecoder::datagram` rather than hunting for a

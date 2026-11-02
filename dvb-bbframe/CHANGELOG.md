@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [12.1.0] - 2026-11-02
+
+### Changed
+- Lockstep version bump with `dvb-si` 12.1.0 (was 12.0.1); no functional change in this crate.
+
 ## [12.0.1] - 2026-11-01
 ### Changed
 - The optional `yoke` feature now derives `yoke` 0.8's `Yokeable` (was 0.7). Only users who enable `yoke` and name `yoke` 0.7 types directly need to update their own `yoke` dependency.

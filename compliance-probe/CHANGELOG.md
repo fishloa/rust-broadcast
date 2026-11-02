@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-02
+
+### Changed
+- Builds against `dvb-conformance` 12.1, `media-doctor` 0.13 and `media-plane` 0.9 (were 12.0.1, 0.12 and 0.8); no functional change in this crate.
+
 ## [0.5.0] - 2026-11-01
 
 ### Changed (BREAKING: epoch)

@@ -1,6 +1,6 @@
 [package]
 name    = "rtmp-runtime"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 description = "Sans-IO RTMP 1.0 (Adobe Real-Time Messaging Protocol) ingest session engine — a driveable server-side publish state machine over the handshake, chunk stream, AMF0, and message layers; optional tokio socket adapter."
 license      = "MIT OR Apache-2.0"
@@ -43,7 +43,7 @@ name = "capture_publish"
 required-features = ["tokio"]
 
 [dev-dependencies]
-transmux   = { path = "../transmux", version = "0.28", default-features = false, features = ["std"] }
+transmux   = { path = "../transmux", version = "0.29", default-features = false, features = ["std"] }
 serde_json = { workspace = true }
 test-alloc = { path = "../test-alloc" }
 test-fixtures = { path = "../test-fixtures" }

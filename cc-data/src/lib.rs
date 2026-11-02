@@ -19,6 +19,9 @@
 //! 1–6) — and exposes the decoded caption screen / window text. Grounded in
 //! ANSI/CTA-608-E, ANSI/CTA-708-E and 47 CFR §79.102 (see `cc-data/docs/decode/`).
 //!
+//! Caption-detection helpers (issue #1428): `Cea608Decoder::has_caption_text`,
+//! `Cea708Decoder::services_seen` and `Cea608Channel::number` (1 to 4).
+//!
 //! # What it does / what it does not
 //!
 //! Parses and builds `cc_data()` byte-exactly, splits CEA-608 (`cc_type` 0/1)

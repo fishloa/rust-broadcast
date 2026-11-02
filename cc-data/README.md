@@ -112,6 +112,7 @@ Examples: `parse_cc_data`, `build_cc_data`, `decode_cea608`, `decode_cea708`
 - **`Cea708Decoder`** (`decode`): a Caption Channel Packet that spans several
   `cc_data()` access units is kept across calls and decoded when complete; exposes
   the six services' window text.
+- **Caption detection helpers**: `Cea608Decoder::has_caption_text(channel)` reports whether displayable text has been written to a CC1-CC4 channel; `Cea608Channel` is `Copy`/`PartialOrd`/`Ord`/`Hash` with `number()` (1 to 4); `Cea708Decoder::services_seen()` lists service numbers 1 to 63 that received a non-null byte (issue #1428).
 - Both decoders are one-way (bytes to caption state) and panic-free on arbitrary,
   truncated or malformed input (`tests/it/hostility.rs`).
 
