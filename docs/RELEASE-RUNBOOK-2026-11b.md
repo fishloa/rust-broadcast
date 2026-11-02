@@ -18,8 +18,9 @@ PAIRS=docs/release-plan-2026-11b.pairs
 |---|---|
 | Lockstep minor (12.0.1 -> 12.1.0) | `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-conformance`, `dvb-tools` |
 | 0.x breaking (minor) | `srt-runtime` 0.7.0, `transmux` 0.29.0, `broadcast-client` 0.2.0 |
-| 0.x additive (minor) | `cc-data` 0.7.1, `rtmp-runtime` 0.8.1, `hls-runtime` 0.11.0, `multimux` 0.15.0 |
-| Epoch-forced (0.x minor/patch) | `media-doctor` 0.13.0, `media-plane` 0.9.0, `dash-runtime` 0.2.0, `tshttp-runtime` 0.2.0, `compliance-probe` 0.6.0, `multimux-cli` 0.13.0 |
+| 0.x additive (patch) | `cc-data` 0.7.1, `rtmp-runtime` 0.8.1 |
+| 0.x additive, epoch-forced to a minor | `hls-runtime` 0.11.0, `multimux` 0.15.0 |
+| Epoch-forced only (0.x minor) | `media-doctor` 0.13.0, `media-plane` 0.9.0, `dash-runtime` 0.2.0, `tshttp-runtime` 0.2.0, `compliance-probe` 0.6.0, `multimux-cli` 0.13.0 |
 
 Minimum-version requirements that matter at publish time: `transmux` requires `dvb-si` 12.1
 (batch 1 must be live first); `broadcast-client` requires `srt-runtime` 0.7, `rtmp-runtime` 0.8,
