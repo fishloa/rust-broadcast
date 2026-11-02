@@ -20,6 +20,7 @@ use crate::queue::EventQueue;
 use crate::redirect;
 use crate::source::adaptive::Adaptive;
 use crate::source::dash::DashSource;
+use crate::source::smooth::SmoothSource;
 use crate::source::datagram::Datagram;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::wall::WallClock;
@@ -154,6 +155,12 @@ impl Session {
                 SourceKind::Auto => has_mpd_extension(&parsed),
                 _ => false,
             };
+        let use_smooth = is_http_scheme
+            && match config.kind {
+                SourceKind::Smooth => true,
+                SourceKind::Auto => is_smooth_manifest(&parsed),
+                _ => false,
+            };
         headers::validate(&config.extra_headers)?;
         headers::validate_cookies(&config.initial_cookies)?;
         config.validate()?;
@@ -190,6 +197,12 @@ impl Session {
                 &config,
                 ConnAlloc::new(),
             ))))
+        } else if use_smooth {
+            Some(Adaptive::Smooth(Box::new(SmoothSource::new(
+                &parsed,
+                &config,
+                ConnAlloc::new(),
+            ))))
         } else {
             None
         };
@@ -209,7 +222,7 @@ impl Session {
         if let Some(r) = rtsp.as_mut() {
             r.on_credentials(now_us, &auth);
         }
-        if use_hls || use_dash {
+        if use_hls || use_dash || use_smooth {
             playout.engage(Source::Live {
                 target_duration_secs: None,
             });
@@ -1423,6 +1436,23 @@ fn has_playlist_extension(url: &Url) -> bool {
     std::path::Path::new(url.path())
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("m3u8") || e.eq_ignore_ascii_case("m3u"))
+}
+
+fn is_smooth_manifest(url: &Url) -> bool {
+    let seg = url.path().rsplit('/').next().unwrap_or("");
+    if !seg.eq_ignore_ascii_case("Manifest") {
+        return false;
+    }
+    if let Some(q) = url.query() {
+        for pair in q.split('&') {
+            if let Some((k, _)) = pair.split_once('=') {
+                if k.eq_ignore_ascii_case("format") {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 impl core::fmt::Debug for Session {

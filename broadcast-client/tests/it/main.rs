@@ -64,6 +64,7 @@ mod r6_video_kinds;
 mod redirect;
 mod rtmp;
 mod rtmp_pull;
+mod smooth_pull;
 mod rtsp;
 mod rtsp_avsync;
 mod rtsp_chunking;
