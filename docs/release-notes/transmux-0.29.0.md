@@ -1,6 +1,6 @@
 # transmux 0.29.0
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Minor release: caption service discovery from the ATSC `caption_service_descriptor` and Smooth Streaming client helpers (breaking: `DetectedCaption` variants).
 

@@ -1,6 +1,6 @@
 # hls-runtime 0.11.0
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Minor release: caption and target-duration helpers for blocking reloads and caption discovery (issue #1428, #1651, #1460).
 

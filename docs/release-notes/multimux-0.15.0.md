@@ -1,6 +1,6 @@
 # multimux 0.15.0
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Minor release: caption language discovery from the ATSC descriptor and caption detection (issue #1428), plus a blocking-reload fix (issue #1651).
 

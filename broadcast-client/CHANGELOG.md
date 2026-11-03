@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-02
+## [0.2.0] - 2026-11-03
 ### Added
 
 - Client certificates (mutual TLS, #1461): `Config::client_identity` (`ClientIdentity::pem`/`der`/`handle`, key wiped on drop and redacted in `Debug`) and `Config::client_identity_scope` (`ClientIdentityScope::SessionOrigin` default, `AnyHttps`). `Action::HttpRequest` (https URLs) and `Action::TcpConnect` (`tls: true`) carry `identity: Option<Arc<ClientIdentity>>` for the host to present; both actions gained that field. Malformed material fails `Session::open` with `InvalidConfig { field: "client_identity" }`. Verified end to end against a local rustls server that requires client authentication.

@@ -1,6 +1,6 @@
 # broadcast-client 0.2.0
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Minor release: UDP, RTP, SRT, Smooth Streaming and RTMP sources plus client certificates (breaking: `Action` identity field).
 

@@ -1,6 +1,6 @@
 # rtmp-runtime 0.8.1
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Patch release: client play mode for the sans-IO RTMP client (issue #1460).
 

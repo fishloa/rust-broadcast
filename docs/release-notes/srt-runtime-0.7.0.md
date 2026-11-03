@@ -1,6 +1,6 @@
 # srt-runtime 0.7.0
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Minor release: encryption on the tokio data and rendezvous paths, plus public `skip_range` helpers (breaking: `Error::EncryptionUnsupported` removed).
 

@@ -4,7 +4,7 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-02
+## [0.2.0] - 2026-11-03
 
 ### Changed
 - Builds against `transmux` 0.29 (was 0.28); no functional change in this crate.

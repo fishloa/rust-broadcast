@@ -1,6 +1,6 @@
 # dvb-si 12.1.0
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Minor release: `dvb-si` adds the ATSC caption service descriptor (tag 0x86); see below.
 

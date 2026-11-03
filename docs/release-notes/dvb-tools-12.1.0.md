@@ -1,6 +1,6 @@
 # dvb-tools 12.1.0
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Lockstep release with `dvb-si` 12.1.0; no functional change in this crate.
 
