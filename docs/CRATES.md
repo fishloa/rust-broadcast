@@ -121,7 +121,7 @@ change, so the old versions stay live.
 | [`timed-metadata`](#timed-metadata) | Metadata and ad-insertion signalling | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/timed-metadata.svg)](https://crates.io/crates/timed-metadata) | yes | 2 | on crates.io |
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.2.1 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
-| [`transmux`](#transmux) | Containers and adaptive streaming | 0.29.0 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
+| [`transmux`](#transmux) | Containers and adaptive streaming | 0.29.1 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
 | [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.1.0 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
 | [`rtcp-packet`](#rtcp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtcp-packet.svg)](https://crates.io/crates/rtcp-packet) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.8.1 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | no | 1 | on crates.io |
@@ -134,7 +134,7 @@ change, so the old versions stay live.
 | [`dash-runtime`](#dash-runtime) | Live transport protocols | 0.2.0 | — | no | 4 | not on crates.io |
 | [`tshttp-runtime`](#tshttp-runtime) | Live transport protocols | 0.2.0 | — | yes | 4 | not on crates.io |
 | [`hls-runtime`](#hls-runtime) | Live transport protocols | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) | yes | 5 | on crates.io |
-| [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.2.0 | — | no | 6 | not on crates.io |
+| [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.2.1 | — | no | 6 | not on crates.io |
 | [`ssai-runtime`](#ssai-runtime) | Servers, runtimes and tools | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/ssai-runtime.svg)](https://crates.io/crates/ssai-runtime) | yes | 2 | on crates.io |
 | [`dvb-tools`](#dvb-tools) | Servers, runtimes and tools | 12.1.0 | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | no | 3 | on crates.io |
 | [`playout-runtime`](#playout-runtime) | Servers, runtimes and tools | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/playout-runtime.svg)](https://crates.io/crates/playout-runtime) | yes | 3 | on crates.io |
@@ -479,7 +479,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 
 - **Standards:** ISO/IEC 14496-12 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
-- **Version (in-tree):** 0.29.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
+- **Version (in-tree):** 0.29.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`tshttp-runtime`](#tshttp-runtime)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [docs + spec pointer](../transmux/docs/) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
@@ -626,7 +626,7 @@ Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (ts
 
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
 - **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH, RTSP, UDP/RTP and SRT sources.
-- **Version (in-tree):** 0.2.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
+- **Version (in-tree):** 0.2.1 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`transmux`](#transmux), [`tshttp-runtime`](#tshttp-runtime)
 - **Used by (workspace):** none
 - **Links:** [README](../broadcast-client/README.md) · [CHANGELOG](../broadcast-client/CHANGELOG.md) · [docs + spec pointer](../broadcast-client/docs/)

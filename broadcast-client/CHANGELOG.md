@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-03
+### Fixed
+- The `rtmp-runtime` requirement is raised from `0.8` to `0.8.1` (and every other workspace-sibling requirement now names the sibling's full current version). The RTMP pull source uses `rtmp_runtime::client::ClientMode` and the `ClientEvent::Media`/`Playing`/`StreamEnded` variants, which arrived in `rtmp-runtime` 0.8.1; 0.2.0 declared `0.8`, so a lock file holding `rtmp-runtime` 0.8.0 failed to compile `broadcast-client`.
+
 ## [0.2.0] - 2026-11-03
 ### Added
 
