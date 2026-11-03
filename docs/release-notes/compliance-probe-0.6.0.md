@@ -1,6 +1,6 @@
 # compliance-probe 0.6.0
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Patch release: version bump only, following `dvb-conformance`, `media-doctor` and `media-plane`.
 

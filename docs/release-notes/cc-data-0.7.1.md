@@ -1,6 +1,6 @@
 # cc-data 0.7.1
 
-_Released 2026-11-02._
+_Released 2026-11-03._
 
 Patch release: caption-detection helpers used by the caption discovery in `transmux`, `hls-runtime` and `multimux` (issue #1428).
 

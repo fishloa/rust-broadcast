@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [12.1.0] - 2026-11-02
+## [12.1.0] - 2026-11-03
 
 ### Changed
 - Builds against `dvb-si` 12.1 (was 12.0.1); no functional change in this crate.

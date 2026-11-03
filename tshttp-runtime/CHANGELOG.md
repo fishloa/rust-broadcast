@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-02
+## [0.2.0] - 2026-11-03
 
 ### Changed
 - The `live_loop` example is now `tshttp_loop`: its name collided with `buffering-runtime`'s `live_loop`, and cargo warned about the clashing output file in a workspace build.
