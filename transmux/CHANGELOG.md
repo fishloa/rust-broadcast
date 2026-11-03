@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-11-03
+### Fixed
+- The `cc-data` requirement is raised from `0.7` to `0.7.1` (and every other workspace-sibling requirement now names the sibling's full current version). `caption_detect` uses `Cea608Channel`'s `Ord`/`Hash` impls, `Cea608Channel::number`, `Cea608Decoder::has_caption_text` and `Cea708Decoder::services_seen`, which arrived in `cc-data` 0.7.1; 0.29.0 declared `0.7`, so a lock file holding `cc-data` 0.7.0 failed to compile `transmux` with 6 errors.
+
 ## [0.29.0] - 2026-11-03
 ### Added
 - `declared_caption_services(&TrackSpec::es_info_descriptors)` reads the ATSC `caption_service_descriptor` (tag 0x86) from a video track's PMT loop, and `DetectedCaption::declared_language` maps it onto a detected stream: a CEA-708 service by `caption_service_number`, a CEA-608 channel only when every declared 608 entry names the same language (A/65 gives `line21_field` no polarity, so entries cannot be assigned to `CC1` to `CC4` individually). Needs `dvb-si` with `AtscCaptionServiceDescriptor` (issue #1428).

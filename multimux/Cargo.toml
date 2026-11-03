@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # `flv_sequence_header_payloads` / `flv_frame_payloads`, which do not
 # exist in 0.23.0 (verified at the tag). Published multimux 0.8.0 shipped
 # with the understated `"0.23"` bound.
-transmux          = { path = "../transmux",     version = "0.29" }
+transmux          = { path = "../transmux",     version = "0.29.1" }
 # Smooth manifest rendering (`output::smooth`) and the Smooth-pull encryption
 # probe: the single XML dependency of the crates that read or write XML.
 quick-xml         = { workspace = true }
@@ -261,7 +261,7 @@ required-features = ["whip", "whep", "test-hooks"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-transmux = { path = "../transmux", version = "0.29", features = ["sample-aes"] }
+transmux = { path = "../transmux", version = "0.29.1", features = ["sample-aes"] }
 # `test-support`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).
 webrtc-runtime   = { path = "../webrtc-runtime", version = "0.4", default-features = false, features = ["test-support"] }
