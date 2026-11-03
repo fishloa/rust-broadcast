@@ -113,6 +113,13 @@ follow-up if fMP4-sourced ML pipelines need it.
 
 ## Changes
 
+### 0.5.0
+
+- Rebuilt against `transmux` 0.29.0 (and its transitive `broadcast-hls` 0.5,
+  `dvb-si` 12.1, `sdp-types` 0.3). No change to the `demux_ts` output shape;
+  the only value-level difference is that HEVC `codec_string` values now follow
+  the corrected RFC 6381 / ISO/IEC 14496-15 form shipped in transmux 0.28.0.
+
 ### 0.4.0
 
 - Expose transmux's display geometry through `track["display"]` and
