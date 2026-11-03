@@ -20,6 +20,10 @@ Checks:
                        manifest incl. demo/ fuzz/) names the epoch the sibling is
                        at: major for >=1, major.minor for 0.x (a bare "0" spans
                        epochs and fails)
+  sibling floors       no crate of the plan requires a workspace sibling at a lowest
+                       accepted version below that sibling's current version
+                       ([dependencies], [build-dependencies], and [dev-dependencies]
+                       entries that carry a `version`)
   CHANGELOG            `## [ver] - date` present, `## [Unreleased]` empty
   release notes        docs/release-notes/<crate>-<ver>.md (+ v<lockstep>.md)
                        exist, non-empty, no `status: DRAFT` front matter
@@ -173,6 +177,37 @@ def check_epochs(root, ws, pairs):
             elif have != want:
                 bad.append(f"{label}: {table} {dep} {spec['version']} but {dep} is {members[dep]}")
     return (FAIL, short(bad)) if bad else (PASS, f"{n} sibling requirements, all on the sibling's epoch")
+
+
+def req_floor(req: str) -> tuple[int, int, int] | None:
+    r = req.strip().lstrip("^")
+    if not re.fullmatch(r"\d+(\.\d+){0,2}", r):
+        return None
+    nums = [int(x) for x in r.split(".")]
+    return tuple(nums + [0] * (3 - len(nums)))
+
+
+def floor_problems(ws, pairs):
+    members = {c: d["package"]["version"] for c, (_, d) in ws.items()}
+    bad = []
+    n = 0
+    for c, _ in pairs:
+        if c not in ws:
+            continue
+        for table, dep, spec in dep_entries(ws[c][1]):
+            if dep not in members or not isinstance(spec, dict) or "version" not in spec:
+                continue
+            n += 1
+            floor = req_floor(spec["version"])
+            current = req_floor(members[dep])
+            if floor is not None and current is not None and floor < current:
+                bad.append(f"{c}: {table} {dep} requires {spec['version']} but {dep} is {members[dep]}")
+    return n, bad
+
+
+def check_floors(ws, pairs):
+    n, bad = floor_problems(ws, pairs)
+    return (FAIL, short(bad)) if bad else (PASS, f"{n} sibling requirements, none below the sibling's current version")
 
 
 _DATED = r"^## \[{v}\] - \d{{4}}-\d{{2}}-\d{{2}}[ \t]*$"
@@ -345,6 +380,7 @@ def run_checks(
         ("manifest versions", *check_manifest_versions(ws, pairs)),
         ("lockstep five identical", *check_lockstep(ws, pairs)),
         ("epoch-pure siblings", *check_epochs(root, ws, pairs)),
+        ("sibling floors", *check_floors(ws, pairs)),
         ("CHANGELOG cut", *check_changelogs(root, pairs)),
         ("release notes final", *check_notes(root, pairs)),
         ("README snippets", *check_readmes(root, pairs)),
@@ -385,6 +421,8 @@ def main(argv: list[str]) -> int:
     pairs = parse_pairs(args)
     rows = run_checks(root, pairs, skip, package)
     print(render(rows))
+    for line in floor_problems(workspace_manifests(root), pairs)[1]:
+        print(f"FLOOR BELOW SIBLING: {line}")
     failed = [n for n, s, _ in rows if s == FAIL]
     print(f"\n{'FAILED: ' + ', '.join(failed) if failed else 'ALL CHECKS PASS'} ({len(pairs)} crates, root {root})")
     return 1 if failed else 0

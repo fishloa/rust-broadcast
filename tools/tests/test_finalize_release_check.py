@@ -276,3 +276,33 @@ def test_main_exit_code_and_pair_file(tree, capsys):
     (tree / "app" / "README.md").write_text('lib = "0.1"\n')
     assert fc.main(["x", str(pf), "--root", str(tree), "--skip-cargo"]) == 1
     assert "FAILED: README snippets" in capsys.readouterr().out
+
+
+def test_floor_below_sibling_version_fails(tree):
+    fc = _load()
+    p = tree / "lib" / "Cargo.toml"
+    p.write_text(p.read_text().replace('version = "0.26.0"', 'version = "0.26.1"'))
+    PAIRS_UP = [("lib", "0.26.1"), ("app", "0.4.0")]
+    (tree / "docs" / "release-notes" / "lib-0.26.1.md").write_text(NOTE)
+    rows = fc.run_checks(tree, PAIRS_UP, skip_cargo=True)
+    assert "sibling floors" in _fail_set(rows)
+    detail = dict((n, d) for n, _, d in rows)["sibling floors"]
+    assert "app" in detail and "lib" in detail and "0.26" in detail and "0.26.1" in detail
+    assert "epoch-pure siblings" not in _fail_set(rows)
+
+
+def test_floor_equal_to_sibling_version_passes(tree):
+    fc = _load()
+    a = tree / "app" / "Cargo.toml"
+    a.write_text(a.read_text().replace('version = "0.26"', 'version = "0.26.0"'))
+    assert status(fc.run_checks(tree, PAIRS, skip_cargo=True))["sibling floors"] == "PASS"
+
+
+def test_floor_check_covers_dev_and_build_tables(tree):
+    fc = _load()
+    p = tree / "lib" / "Cargo.toml"
+    p.write_text(p.read_text().replace('version = "0.26.0"', 'version = "0.26.2"'))
+    a = tree / "app" / "Cargo.toml"
+    a.write_text(a.read_text().replace('version = "0.26"', 'version = "0.26.2"') + '[dev-dependencies]\nlib = { path = "../lib", version = "0.26.1" }\n')
+    rows = fc.run_checks(tree, [("lib", "0.26.2"), ("app", "0.4.0")], skip_cargo=True)
+    assert "dev-dependencies lib requires 0.26.1" in dict((n, d) for n, _, d in rows)["sibling floors"]
