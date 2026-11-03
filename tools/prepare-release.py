@@ -18,8 +18,9 @@ retyped by hand each time:
 
 1. **Version bump** — sets `version = "X.Y.Z"` in each crate's `Cargo.toml`.
 2. **Sibling dep refs** — updates every OTHER workspace crate that depends on a
-   bumped crate to the new caret version, so no published bucket ends up
-   spanning two epochs (the #858 rule).
+   bumped crate to the sibling's full new major.minor.patch version, so no
+   published bucket ends up spanning two epochs (the #858 rule) and the floor
+   is always the release that has the API.
 2b. **README snippets** — rewrites every README `crate = "x.y"` /
    `crate = { version = "x.y", .. }` dependency snippet for a workspace crate
    to the bump plan's version (`tools/readme_snippets.py`; the dry run lists
@@ -100,14 +101,15 @@ def bump_version(crate: str, new: str, apply: bool) -> str:
 
 
 def caret(version: str) -> str:
-    """The caret-range string a sibling should depend on: always major.minor.
+    """The requirement string a sibling should depend on: the sibling's full
+    major.minor.patch version.
 
-    For 0.x that is the epoch itself. For >=1.0, writing only the major (e.g.
-    "9") would let a dependent that uses an API added in 9.4 publish with a
-    requirement 9.3 satisfies — a broken minimal version. major.minor keeps the
-    same caret epoch while pinning the floor to the release that has the API."""
+    A bare major.minor ("0.7") also accepts the older patches of the epoch, so a
+    dependent that uses an API added in a patch release (cc-data 0.7.1) would
+    publish with a floor the API is missing from. The full version keeps the same
+    caret epoch while pinning the floor to the release that has the API."""
     parts = version.split(".")
-    return f"{parts[0]}.{parts[1]}"
+    return f"{parts[0]}.{parts[1]}.{parts[2]}"
 
 
 def manifests() -> list[Path]:

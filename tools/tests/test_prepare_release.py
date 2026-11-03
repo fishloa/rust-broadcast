@@ -31,7 +31,7 @@ def pr(tmp_path, monkeypatch):
     (tmp_path / "lib" / "Cargo.toml").write_text('[package]\nname = "lib"\nversion = "0.25.0"\nedition = "2021"\n')
     (tmp_path / "app" / "Cargo.toml").write_text(
         '[package]\nname = "app"\nversion = "0.3.0"\nedition = "2021"\n\n'
-        '[dependencies]\nlib = { path = "../lib", version = "0.26" }\n\n'
+        '[dependencies]\nlib = { path = "../lib", version = "0.26.0" }\n\n'
         '[dev-dependencies]\nlib = { path = "../lib", version = "0.25", default-features = false, features = ["cli"] }\n\n'
         '[target.\'cfg(unix)\'.dependencies]\nlib = { path = "../lib", version = "0.25" }\n'
     )
@@ -42,12 +42,12 @@ def pr(tmp_path, monkeypatch):
 
 
 def test_every_table_entry_updated_even_if_first_is_current(pr):
-    # First entry already says 0.26, the later ones say 0.25 -- the old code
+    # First entry already says 0.26.0, the later ones say 0.25 -- the old code
     # looked only at the first match and skipped the file.
     lines = pr.update_sibling_refs("lib", "0.26.0", apply=True)
     assert len(lines) == 2, lines
     text = (pr.ROOT / "app" / "Cargo.toml").read_text()
-    assert text.count('version = "0.26"') == 3
+    assert text.count('version = "0.26.0"') == 3
     assert '"0.25"' not in text
     assert 'features = ["cli"]' in text  # rest of the entry untouched
 
@@ -83,3 +83,15 @@ def test_resolution_check_reports_failure(pr, capsys):
     pr.update_sibling_refs("lib", "0.25.0", apply=True)
     subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=root, check=True, capture_output=True)
     assert pr.verify_resolution(root) == 0
+
+
+def test_caret_is_the_full_version(pr):
+    assert pr.caret("0.7.1") == "0.7.1"
+    assert pr.caret("12.1.0") == "12.1.0"
+    assert pr.caret("0.29.1") == "0.29.1"
+
+
+def test_patch_release_raises_the_dependent_floor(pr):
+    pr.update_sibling_refs("lib", "0.26.3", apply=True)
+    text = (pr.ROOT / "app" / "Cargo.toml").read_text()
+    assert text.count('version = "0.26.3"') == 3
