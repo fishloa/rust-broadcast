@@ -5,8 +5,7 @@
 //! §4.5 "Timestamp-Based Packet Delivery", §4.5.1 "Packet Delivery Time",
 //! §4.5.1.1 "TSBPD Time Base Calculation", §4.6 "Too-Late Packet Drop", and
 //! §4.7 "Drift Management" (for the `Drift` term in the `PktTsbpdTime`
-//! formula). Curated behavioral rules: [`private/specs-verified/rules/srt-tsbpd.md`](
-//! https://github.com/fishloa/rust-broadcast/blob/main/specs/rules/srt-tsbpd.md).
+//! formula). Curated behavioral rules: ``private/specs-verified/rules/srt-tsbpd.md``.
 //!
 //! # Sans-IO contract
 //!

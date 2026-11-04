@@ -21,7 +21,7 @@
 //!
 //! Every tag, its verified clause, Rust type and status — and every allocated
 //! tag with no implementation yet — is listed in the generated
-//! [`private/specs-verified/dvb/dvb-si/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md).
+//! ``private/specs-verified/dvb/dvb-si/COVERAGE.md``.
 
 pub mod aac;
 pub mod aac_additional_info;

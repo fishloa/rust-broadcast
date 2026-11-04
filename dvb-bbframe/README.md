@@ -120,7 +120,7 @@ Transport Error Indicator).
 Depends on `broadcast-common`. Consumed by `dvb-t2mi` (T2-MI inner-TS
 recovery). Lockstep version with `dvb-si`, `dvb-t2mi`,
 `dvb-conformance`, `dvb-tools`. Spec transcriptions:
-[`docs/`](https://github.com/fishloa/rust-broadcast/tree/main/dvb-bbframe/docs).
+``docs/``.
 
 MSRV 1.95.0. Licensed under [MIT](https://github.com/fishloa/rust-broadcast/blob/main/LICENSE-MIT) or
 [Apache-2.0](https://github.com/fishloa/rust-broadcast/blob/main/LICENSE-APACHE), at your option.

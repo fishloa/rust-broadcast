@@ -145,7 +145,7 @@ Depends on `broadcast-common`, and (with `ts`) on `mpeg-ts` and `dvb-bbframe`.
 The full chain: T2-MI here, BBFrame extraction in `dvb-bbframe`, SI in `dvb-si`.
 Wrapped by the `dvb-tools t2mi` subcommand. Lockstep version with `dvb-si`,
 `dvb-bbframe`, `dvb-conformance` and `dvb-tools`.
-Spec transcriptions: [`docs/`](https://github.com/fishloa/rust-broadcast/tree/main/dvb-t2mi/docs).
+Spec transcriptions: ``docs/``.
 
 MSRV 1.95.0. Licensed under [MIT](https://github.com/fishloa/rust-broadcast/blob/main/LICENSE-MIT) or
 [Apache-2.0](https://github.com/fishloa/rust-broadcast/blob/main/LICENSE-APACHE), at your option.

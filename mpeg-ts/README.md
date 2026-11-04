@@ -154,7 +154,7 @@ taken from the wire; there is deliberately no `From<u16>`. `Pid` implements
 
 Depends on `broadcast-common`. Built on by `dvb-si` (tables/descriptors),
 `mpeg-pes`, `dvb-stream`, `dvb-conformance`, `ts-fix`, `media-doctor` and
-`transmux`. Spec citations: [`docs/`](https://github.com/fishloa/rust-broadcast/tree/main/mpeg-ts/docs).
+`transmux`. Spec citations: ``docs/``.
 Users migrating from `dvb-si <= 7.x`: `ts`, `mux`, `resync` and `pid` moved here
 unchanged in name.
 
