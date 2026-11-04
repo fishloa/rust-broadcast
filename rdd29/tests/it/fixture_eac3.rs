@@ -58,7 +58,7 @@ fn wraps_real_eac3_frame_and_parses_back() {
     assert_eq!(
         payload.len(),
         834,
-        "real E-AC-3 frame 0 is 834 bytes (ffprobe-confirmed, see st337/docs/st337-PROVENANCE.md)"
+        "real E-AC-3 frame 0 is 834 bytes (ffprobe-confirmed, see private/specs-verified/smpte/st337/st337-PROVENANCE.md)"
     );
 
     let frame = build_frame(&payload);

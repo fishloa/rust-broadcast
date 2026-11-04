@@ -54,7 +54,7 @@ pub enum Error {
     /// preamble words are out of scope.
     #[error(
         "data_mode {0:?} is not supported by this crate (only Mode16 -- \
-         see docs/st337.md scope decision 2)"
+         see private/specs-verified/smpte/st337/st337.md scope decision 2)"
     )]
     UnsupportedDataMode(DataMode),
     /// `data_type == 31` requires the six-word preamble (`Pe`/`Pf` present);

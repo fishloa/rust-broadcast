@@ -127,7 +127,7 @@ fn all_32_rfc8216bis_section_4_4_tags_are_referenced_in_source() {
     assert!(
         missing.is_empty(),
         "tag(s) from RFC 8216bis §4.4 with no reference anywhere in src/: {missing:?}\n\
-         Either implement parse/render support (see docs/playlist-tags.md for the \
+         Either implement parse/render support (see private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md for the \
          attribute grammar) or, if intentionally unmodeled, add a `#EXT...` string \
          literal reference (e.g. in a doc comment or an ignore-arm) so the decision \
          is visible in source."
