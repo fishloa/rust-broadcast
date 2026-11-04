@@ -58,7 +58,7 @@ const TS: usize = 188;
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
 fn fixtures_ts_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts")
+    test_fixtures::path("ts")
 }
 
 fn read_fixture(name: &str) -> Vec<u8> {

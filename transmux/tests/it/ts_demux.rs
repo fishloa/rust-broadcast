@@ -20,7 +20,7 @@ use transmux::pipeline::CodecConfig;
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts")
+    test_fixtures::path("ts")
 }
 
 fn load_ts() -> Vec<u8> {

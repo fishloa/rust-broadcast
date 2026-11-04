@@ -16,14 +16,10 @@ use dvb_si::text::DvbText;
 
 // ── Fixtures (shared /fixtures/) ─────────────────────────────
 
-const M6_FIXTURE: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/ts/m6-single.ts"
-));
-const TNT_FIXTURE: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
-));
+static M6_FIXTURE: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/m6-single.ts"));
+static TNT_FIXTURE: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("dvb-si/tnt-5w-12732v-isi6-10s.ts"));
 
 const TS_PACKET_SIZE: usize = 188;
 
@@ -66,7 +62,10 @@ fn collect_sections(data: &[u8]) -> Vec<Vec<u8>> {
 fn bench_demux_feed(c: &mut Criterion) {
     let mut group = c.benchmark_group("si_demux_feed");
 
-    let fixtures: &[(&str, &[u8])] = &[("m6-single", M6_FIXTURE), ("tnt-10s", TNT_FIXTURE)];
+    let fixtures: &[(&str, &[u8])] = &[
+        ("m6-single", M6_FIXTURE.as_slice()),
+        ("tnt-10s", TNT_FIXTURE.as_slice()),
+    ];
 
     for (name, data) in fixtures {
         let bytes = (data.len() / TS_PACKET_SIZE * TS_PACKET_SIZE) as u64;
@@ -81,7 +80,7 @@ fn bench_demux_feed(c: &mut Criterion) {
 
 /// `AnyTableSection::parse` dispatch over a section corpus from the m6 fixture.
 fn bench_any_table_section_parse(c: &mut Criterion) {
-    let sections = collect_sections(M6_FIXTURE);
+    let sections = collect_sections(M6_FIXTURE.as_slice());
     // First 200 sections (or all if fewer) — enough variety without huge iterations.
     let corpus: Vec<Vec<u8>> = sections.into_iter().take(200).collect();
     let total_bytes: u64 = corpus.iter().map(|s| s.len() as u64).sum();

@@ -9,7 +9,7 @@ use transmux::{
 };
 
 fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let data = std::fs::read(path).expect("h264_aac.ts fixture must exist");
     let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
     let track = media

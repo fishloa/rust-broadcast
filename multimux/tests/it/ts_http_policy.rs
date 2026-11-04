@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::support::listener;
 
-const FIXTURE: &str = "../hls-runtime/tests/fixtures/ts-hls/index0.ts";
+const FIXTURE: &str = "hls/ts-hls/index0.ts";
 const TS_CHUNK: usize = 7 * 188;
 const TIMED_RING: usize = 4096;
 const RING: usize = 16;

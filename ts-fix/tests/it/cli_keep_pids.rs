@@ -12,10 +12,7 @@ const TS_PACKET_SIZE: usize = 188;
 const PAT_PID: u16 = 0x0000;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("m6-single.ts")
+    test_fixtures::path("ts/m6-single.ts")
 }
 
 /// Independent 13-bit PID extraction from the wire bytes.

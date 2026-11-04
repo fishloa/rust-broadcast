@@ -1,20 +1,15 @@
 //! Regression fixtures for issues #1039 (`pts_adjustment` ignored) and #1040
 //! (`time_signal` cues lose time/kind/id). Both `.bin` fixtures are compiled
 //! by TSDuck's `tstabcomp` (an independent tool) from synthetic XML input --
-//! see `../fixtures/scte35/README.md` for the exact command and the oracle
+//! see `scte35/README.md` for the exact command and the oracle
 //! values read from `tstabcomp --decompile`'s own output, not from this
 //! crate's parser or serializer.
 use broadcast_common::traits::Parse;
 use std::fs;
-use std::path::Path;
 use timed_metadata::event::{EventKind, MediaDuration, MediaTime, TimedEvent};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("scte35")
-        .join(name);
+    let path = test_fixtures::path(&format!("timed-metadata/scte35/{name}"));
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path:?}: {e}"))
 }
 

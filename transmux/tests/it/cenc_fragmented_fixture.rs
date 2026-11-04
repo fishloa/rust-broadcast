@@ -32,14 +32,8 @@ use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
 use transmux::{CodecConfig, Fmp4Demux, Sample};
 
-const CENC_MP4: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/transmux/h264_cenc.mp4"
-);
-const CBCS_MP4: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/transmux/h264_cbcs.mp4"
-);
+const CENC_MP4: &str = "transmux/h264_cenc.mp4";
+const CBCS_MP4: &str = "transmux/h264_cbcs.mp4";
 
 // Key material from `fixtures/transmux/h264_cenc-PROVENANCE.md`: the same
 // 16 bytes serve as both the KID and the AES-128 content key (a fixture
@@ -54,7 +48,7 @@ const KEY: [u8; 16] = [
 const KID: [u8; 16] = KEY;
 
 fn read(path: &str) -> Vec<u8> {
-    std::fs::read(path).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
+    std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
 }
 
 fn keys() -> KeyMap {
@@ -165,7 +159,8 @@ fn cbcs_fragmented_demux_and_decrypt_succeeds() {
 /// ([`Fmp4Demux`]), and assert our own `CencDecryptor` path reproduces the
 /// exact same NAL payloads. Skips cleanly (printing why) if `mp4decrypt`
 /// isn't on `PATH`.
-fn assert_matches_bento4_reference(fixture_path: &str, tag: &str) {
+fn assert_matches_bento4_reference(fixture_rel: &str, tag: &str) {
+    let fixture_path = test_fixtures::path(fixture_rel);
     if !mp4decrypt_available() {
         eprintln!(
             "SKIP cenc_fragmented_fixture::{tag}: mp4decrypt (Bento4) not found on PATH \
@@ -191,13 +186,14 @@ fn assert_matches_bento4_reference(fixture_path: &str, tag: &str) {
     let status = Command::new("mp4decrypt")
         .arg("--key")
         .arg(&key_arg)
-        .arg(fixture_path)
+        .arg(&fixture_path)
         .arg(&out_path)
         .status()
         .expect("spawn mp4decrypt");
     assert!(
         status.success(),
-        "mp4decrypt failed for {fixture_path} (key={key_arg})"
+        "mp4decrypt failed for {} (key={key_arg})",
+        fixture_path.display()
     );
 
     // Reference: demux Bento4's own decrypted output — a plain (avc1, no
@@ -217,7 +213,7 @@ fn assert_matches_bento4_reference(fixture_path: &str, tag: &str) {
     let _ = std::fs::remove_file(&out_path);
 
     // Ours.
-    let file = read(fixture_path);
+    let file = read(fixture_rel);
     let dec = CencDecryptor::from_fmp4(&file).expect("harvest crypto metadata");
     let mut media = dec.demux().expect("demux protected fMP4");
     dec.decrypt(&mut media, &keys()).expect("decrypt");

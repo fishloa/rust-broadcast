@@ -7,12 +7,10 @@
 use container_probe::{
     Confidence, Detail::Ebml, Detail::Isobmff, DocType, Format, IsobmffLayout, Probe,
 };
-use std::fs;
 
 /// Read a workspace-relative fixture.
 fn fixture(rel: &str) -> Vec<u8> {
-    fs::read(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-        .unwrap_or_else(|e| panic!("failed to read fixture {rel}: {e}"))
+    test_fixtures::read(rel.trim_start_matches("fixtures/"))
 }
 
 /// Assert an ISOBMFF file with the given brand. `boxes_walked` is measured and
@@ -206,7 +204,7 @@ fn mxf() {
     //     Identified { format: Mxf, confidence: Confidence(192), detail: None }
     // ```
     assert_mxf("fixtures/mxf/op1a_mpeg2_pcm.mxf");
-    assert_mxf("st377-1/tests/fixtures/synthetic_minimal.mxf");
+    assert_mxf("fixtures/mxf/st377-1/synthetic_minimal.mxf");
 }
 
 // ---------------------------------------------------------------------------

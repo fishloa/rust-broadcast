@@ -344,7 +344,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.25.3] - 2026-10-12
 ### Fixed
 
-- `TsDemux`/`StreamingTsDemux`: field-coded (PAFF) H.264 now yields **one sample per complementary field pair** instead of one per field (#1161). Broadcast PAFF (TF1, M6, Gulli, arte, ...) sends one PES per field; ISO/IEC 14496-15 samples are whole access units, and a per-field sample decodes to half-filled frames. The second field (opposite parity, same `frame_num`, both reference or both non-reference, not an IDR; ITU-T H.264 §3.35-3.37) is merged into the pending first field's sample, which keeps the first field's PTS/DTS (its AUD is dropped, so the sample holds one AUD). An unpaired field, or a second field arriving more than one second after the first (discontinuity), is emitted alone. MBAFF (`field_pic_flag = 0`), progressive and PAFF-free streams are unchanged. The only golden hash that moved is `ts/gulli-opengop.ts`, a real PAFF capture (293 fields -> 147 samples). Verified bit-exact against `ffmpeg` on spec-built TFF/BFF fixtures (`tests/fixtures/paff/`).
+- `TsDemux`/`StreamingTsDemux`: field-coded (PAFF) H.264 now yields **one sample per complementary field pair** instead of one per field (#1161). Broadcast PAFF (TF1, M6, Gulli, arte, ...) sends one PES per field; ISO/IEC 14496-15 samples are whole access units, and a per-field sample decodes to half-filled frames. The second field (opposite parity, same `frame_num`, both reference or both non-reference, not an IDR; ITU-T H.264 §3.35-3.37) is merged into the pending first field's sample, which keeps the first field's PTS/DTS (its AUD is dropped, so the sample holds one AUD). An unpaired field, or a second field arriving more than one second after the first (discontinuity), is emitted alone. MBAFF (`field_pic_flag = 0`), progressive and PAFF-free streams are unchanged. The only golden hash that moved is `ts/gulli-opengop.ts`, a real PAFF capture (293 fields -> 147 samples). Verified bit-exact against `ffmpeg` on spec-built TFF/BFF fixtures (`../fixtures/transmux/paff/`).
 
 ### Added
 
@@ -439,7 +439,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   the version-0 form, no `srat`). Verified end-to-end: our own muxer's output
   is parsed back by MP4Box (which reads the sample entry's rate, 192000, and
   reports 60928 without the fix) and ffprobe, and its decoded PCM is
-  md5-identical to the ffmpeg-made source (`tests/fixtures/audio_srat/`).
+  md5-identical to the ffmpeg-made source (`../fixtures/transmux/audio_srat/`).
 
 - **A parsed audio sample entry re-serializes byte-identically** (#1081, audit
   r05-W31). The writer re-derived `entry_version` as 0-or-1 and zeroed the two
@@ -665,7 +665,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   re-emitted. A child written in the compact form round-trips byte-identically;
   one written with `largesize` also does, because the 8 `largesize` bytes are
   *excluded* from the stored payload (the serializer writes its own). Fixtures:
-  `tests/fixtures/mp4/uuid_boxes/` (real ffmpeg output with real `uuid`
+  `../fixtures/transmux/mp4/uuid_boxes/` (real ffmpeg output with real `uuid`
   children spliced in — see its README for the generator and the `mp4dump`
   verification), consumed by `tests/uuid_child_roundtrip.rs`.
 - **`protect_media_segment` counts a `moof`'s opaque children, refuses a `traf`
@@ -740,7 +740,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   the wrong transcription/claim corrected** (#1080, audit r05-W1/W2). The
   repo's own `private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.4 contradicted §11 on H.264 CBC
   chaining, and `sample_aes/README.md` claimed the E-AC-3 IV was carried across
-  syncframes. `transmux/tests/fixtures/ORACLES.md` now pins both with three
+  syncframes. `transmux/../fixtures/transmux/ORACLES.md` now pins both with three
   independent implementations (a pycryptodome reference, Bento4 `mp4hls`, and
   ffmpeg's decryptor): H.264 chains across a NAL's encrypted blocks with the IV
   reset per NAL; E-AC-3 resets the IV at every syncframe. See the two
@@ -770,7 +770,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   base** (never the previous run's end), continues a run with no `data_offset`
   after the previous run, and bounds every sample range to an `mdat` payload
   with a total cap of the file length. Verified against all nine
-  `tests/fixtures/cenc_frag_layouts/enc_*.mp4` (three base rules × explicit /
+  `../fixtures/transmux/cenc_frag_layouts/enc_*.mp4` (three base rules × explicit /
   implicit multi-trun) for **both** the video and the audio traf
   (`all_layouts_decrypt_to_clear_video_samples`, `all_layouts_decrypt_audio_to_clear`),
   and against the clear variants
@@ -1110,7 +1110,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   are overwhelmingly High profile) was four bytes short of what ffmpeg writes for
   the same stream, and a strict reader mis-parses the record. Verified byte-exact
   against ffmpeg 8.1's own `avcC` for `fixtures/ts/h264/high.ts`, committed as
-  `tests/fixtures/rtp/high-ffmpeg.*` with provenance. A non-High profile still
+  `../fixtures/transmux/rtp/high-ffmpeg.*` with provenance. A non-High profile still
   omits the trailer, as the spec requires: the gate is the record's own
   `{100, 110, 122, 244}` set, not the wider H.264 Table A-1 list the SPS *parser*
   uses, so a profile in the wider list but outside that set is left alone. An SPS
@@ -1397,7 +1397,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   tail is clear (`ac3_encrypt_frame` applies one leader over whatever slice it is
   handed, which skips the later leaders in a multi-syncframe frame). The IV is
   **reset at every syncframe**, per the independent oracle
-  (`transmux/tests/fixtures/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
+  (`transmux/../fixtures/transmux/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
   audio frames and a carried chain 1/9, and Bento4's encryptor is byte-identical
   to the reset reference). Both return `Result`: a payload that is not a clean
   run of syncframes (no sync word, or a truncated / trailing-junk syncframe) is
@@ -1600,7 +1600,7 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
   ffmpeg's `libavformat/hls_sample_aes.c` `decrypt_nal_unit` does: a chained
   stream decodes identically to clear (10/10 frames) while the old per-block
   reset decodes to nothing (0/10). Pinned by the independent fixtures in
-  `transmux/tests/fixtures/sample_aes_h264/` (python reference, Bento4
+  `transmux/../fixtures/transmux/sample_aes_h264/` (python reference, Bento4
   `mp4hls`, ffmpeg) — see `ORACLES.md`. **Output bytes change**, so any
   SAMPLE-AES H.264 output produced by this crate before this fix must be
   re-encrypted. The transcription (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.4/§11) and

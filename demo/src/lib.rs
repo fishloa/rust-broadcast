@@ -982,7 +982,7 @@ mod tests {
 
     fn mp4_fixture(name: &str) -> Vec<u8> {
         let path = format!(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/{}"),
+            test_fixtures::path("mp4/{}"),
             name
         );
         std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {path}: {e}"))

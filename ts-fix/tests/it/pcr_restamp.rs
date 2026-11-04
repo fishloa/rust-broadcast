@@ -17,11 +17,8 @@ const PKT: usize = 188;
 // Shared workspace fixtures live one level up from the crate root (read at
 // runtime via std::fs, so `cargo publish` — which never runs integration tests
 // — is unaffected by the out-of-crate path).
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/france-tnt-pcr.ts");
-const DISC_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/ts/france-pcr-discontinuity.ts"
-);
+const FIXTURE: &str = "france-tnt-pcr.ts";
+const DISC_FIXTURE: &str = "ts/france-pcr-discontinuity.ts";
 
 fn pid(p: &[u8]) -> Pid {
     Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
@@ -84,11 +81,12 @@ fn pcr_and_disc(p: &[u8]) -> Option<(u64, bool)> {
 }
 
 fn load_disc() -> Vec<u8> {
-    std::fs::read(DISC_FIXTURE).unwrap_or_else(|e| panic!("fixture {DISC_FIXTURE}: {e}"))
+    std::fs::read(test_fixtures::path(DISC_FIXTURE))
+        .unwrap_or_else(|e| panic!("fixture {DISC_FIXTURE}: {e}"))
 }
 
 fn load() -> Vec<u8> {
-    std::fs::read(FIXTURE).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"))
+    std::fs::read(test_fixtures::path(FIXTURE)).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"))
 }
 
 /// The PCR PID with the most PCRs, and its (packet_index, pcr_27mhz) series.

@@ -55,9 +55,7 @@ use transmux::{
 };
 
 fn workspace_fixture(rel: &str) -> Vec<u8> {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(rel);
+    let path = test_fixtures::root().join(rel);
     std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 
@@ -144,8 +142,7 @@ struct OracleRow {
 /// generated independently of this crate by
 /// `ffprobe -select_streams v:0 -show_entries packet=pts,dts,duration,size,flags`.
 fn load_fmp4_oracle() -> Vec<OracleRow> {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/mp4/frag/demux-oracle/h264_high.frag.packets.csv");
+    let path = test_fixtures::path("mp4/frag/demux-oracle/h264_high.frag.packets.csv");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read oracle {}: {e}", path.display()));
     let mut rows: Vec<OracleRow> = text

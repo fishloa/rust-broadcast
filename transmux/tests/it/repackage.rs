@@ -21,7 +21,7 @@ use transmux::{
 // ── Fixtures / oracle ───────────────────────────────────────────────────────
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts")
+    test_fixtures::path("ts")
 }
 
 /// The deterministic oracle IR: demux the characterised H.264+AAC TS.

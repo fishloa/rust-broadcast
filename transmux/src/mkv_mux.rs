@@ -1053,7 +1053,7 @@ mod tests {
     /// unsigned and the blocks keep their spacing.
     #[test]
     fn negative_first_pts_does_not_shift_the_cluster() {
-        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mkv/vp9_opus.mkv");
+        let file = test_fixtures::path("mkv/vp9_opus.mkv");
         let Ok(bytes) = std::fs::read(file) else {
             eprintln!("SKIP negative_first_pts_does_not_shift_the_cluster: fixture missing");
             return;
@@ -1199,7 +1199,7 @@ mod tests {
             );
             return;
         }
-        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mkv/vp9_opus.mkv");
+        let file = test_fixtures::path("mkv/vp9_opus.mkv");
         let Ok(bytes) = std::fs::read(file) else {
             eprintln!(
                 "SKIP negative_timeline_and_backward_jump_are_ffprobe_readable: fixture missing"
@@ -1414,7 +1414,7 @@ mod tests {
     /// nothing), which is worse than refusing the input.
     #[test]
     fn cluster_with_an_out_of_range_block_is_rejected() {
-        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mkv/vp9_opus.mkv");
+        let file = test_fixtures::path("mkv/vp9_opus.mkv");
         let Ok(bytes) = std::fs::read(file) else {
             eprintln!("SKIP cluster_with_an_out_of_range_block_is_rejected: fixture missing");
             return;
@@ -1465,7 +1465,7 @@ mod tests {
             eprintln!("SKIP multiple_backward_steps_are_ffprobe_readable: ffprobe not on PATH");
             return;
         }
-        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mkv/vp9_opus.mkv");
+        let file = test_fixtures::path("mkv/vp9_opus.mkv");
         let Ok(bytes) = std::fs::read(file) else {
             eprintln!("SKIP multiple_backward_steps_are_ffprobe_readable: fixture missing");
             return;

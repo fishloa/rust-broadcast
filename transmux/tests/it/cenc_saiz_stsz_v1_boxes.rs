@@ -4,7 +4,7 @@
 //! `mvhd`/`tkhd` wrong size/offsets (#1015, #1016).
 //!
 //! Every fixture here is generated with an independent tool (ffmpeg and/or
-//! GPAC's MP4Box — see `../fixtures/mp4/cenc_boxes/README.md` for the exact
+//! GPAC's MP4Box — see `../fixtures/transmux/mp4/cenc_boxes/README.md` for the exact
 //! commands) and the expected values are recorded from that tool's own
 //! inspector (`MP4Box -diso`), never derived from this crate's own
 //! serializer.
@@ -15,14 +15,8 @@ use transmux::cenc::SampleAuxInfoSizesBox;
 use transmux::init_segment::{MovieHeaderBox, Mp4aSampleEntry, SampleSizeBox, TrackHeaderBox};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = format!(
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/mp4/cenc_boxes/{}"
-        ),
-        name
-    );
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    let path = test_fixtures::path(&format!("transmux/mp4/cenc_boxes/{name}"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// Find the first (full, including its 8-byte header) box of the given

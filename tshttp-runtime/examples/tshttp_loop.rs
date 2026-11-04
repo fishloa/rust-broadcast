@@ -1,6 +1,7 @@
 use tshttp_runtime::{Config, TsHttpClient};
 
-const DATA: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
+static DATA: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
 
 fn main() {
     let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);
@@ -21,7 +22,7 @@ fn main() {
     }
 
     // Feed in 1316-byte chunks.
-    for (i, chunk) in DATA.chunks(1316).enumerate() {
+    for (i, chunk) in DATA.as_slice().chunks(1316).enumerate() {
         let now = (i as u64) * 10;
         client.feed(chunk, now);
         while let Some(e) = client.poll_event() {

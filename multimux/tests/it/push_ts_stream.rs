@@ -19,7 +19,6 @@
 //! packet on every PID; only the PAT/PMT placement may differ.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use dvb_conformance::{ConformanceMonitor, Indicator};
@@ -43,7 +42,7 @@ const GUARD: Duration = Duration::from_secs(60);
 const PSI_BOUND_TICKS: u64 = 500 * 90;
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
+    let p = test_fixtures::root().join(rel);
     std::fs::read(&p).unwrap_or_else(|e| panic!("fixture {rel}: {e}"))
 }
 
@@ -351,19 +350,19 @@ async fn check_fixture(rel: &str) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn srt_push_av_offset_is_one_continuous_ts() {
-    check_fixture("../transmux/tests/fixtures/timeline/av_offset.ts").await;
+    check_fixture("transmux/timeline/av_offset.ts").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn srt_push_h264_aac_is_one_continuous_ts() {
-    check_fixture("../fixtures/ts/h264_aac.ts").await;
+    check_fixture("ts/h264_aac.ts").await;
 }
 
 /// The transport-level pin without a socket: feeding `StreamingTsMux` sample by
 /// sample is the default `encode_media` path's whole behaviour.
 #[test]
 fn streaming_mux_sample_by_sample_equals_whole_media() {
-    let media = demux("../fixtures/ts/h264_aac.ts");
+    let media = demux("ts/h264_aac.ts");
     let mut mux = StreamingTsMux::new();
     let mut out = Vec::new();
     for (ti, s) in interleaved(&media) {

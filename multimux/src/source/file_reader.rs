@@ -1527,11 +1527,11 @@ mod loop_tests {
 
     /// Demux a real TS fixture into a `ParsedFile`.
     pub(super) async fn demux_fixture() -> ParsedFile {
-        let path = format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"));
+        let path = test_fixtures::path("ts/h264_aac.ts");
         let trunk_cfg = crate::source::driver_trunk_config(8);
         let scratch = media_plane::trunk::Trunk::new(trunk_cfg);
         let reader = FileReader::new(
-            FileReaderConfig::new(path.into(), true, scratch)
+            FileReaderConfig::new(path, true, scratch)
                 .with_pace(false)
                 .with_max_retries(0)
                 .with_retry_interval(std::time::Duration::ZERO),
@@ -1716,10 +1716,10 @@ mod playout_tests {
     /// going), not resolve to `Cancelled`.
     #[tokio::test]
     async fn dropping_a_spawned_reader_cancels_the_run() {
-        let fixture = format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"));
+        let fixture = test_fixtures::path("ts/h264_aac.ts");
         let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
         let reader = FileReader::new(
-            FileReaderConfig::new(fixture.into(), true, trunk)
+            FileReaderConfig::new(fixture, true, trunk)
                 .with_pace(true)
                 .with_max_retries(0),
         );
@@ -1747,11 +1747,11 @@ mod playout_tests {
     /// `impl Drop for SpawnedReader` makes the task run forever and times out.
     #[tokio::test]
     async fn dropping_a_spawned_reader_without_cancel_stops_the_run() {
-        let fixture = format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"));
+        let fixture = test_fixtures::path("ts/h264_aac.ts");
         let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
         let reader = FileReader::new(
             // `loop_file = true`: a detached task would never end on its own.
-            FileReaderConfig::new(fixture.into(), true, trunk)
+            FileReaderConfig::new(fixture, true, trunk)
                 .with_pace(true)
                 .with_max_retries(0),
         );

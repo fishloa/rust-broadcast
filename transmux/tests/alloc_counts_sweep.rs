@@ -27,9 +27,7 @@ mod ps_demux_copies {
     use transmux::PsDemux;
 
     fn load(rel: &str) -> Option<Vec<u8>> {
-        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../fixtures")
-            .join(rel);
+        let p = test_fixtures::root().join(rel);
         std::fs::read(p).ok()
     }
 
@@ -76,8 +74,7 @@ mod ts_demux_copies {
     /// bytes allocated while demuxing, as a multiple of the input size.
     #[test]
     fn ts_demux_copies_of_the_payload() {
-        let p =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+        let p = test_fixtures::path("ts/h264_aac.ts");
         let Ok(bytes) = std::fs::read(p) else {
             eprintln!("SKIPPED ts/h264_aac.ts");
             return;
@@ -137,8 +134,7 @@ mod rtp_stream_copies {
     /// loop, as a multiple of the packet bytes pushed.
     #[test]
     fn rtp_push_copies_each_packet_once() {
-        let p =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+        let p = test_fixtures::path("ts/h264_aac.ts");
         let Ok(data) = std::fs::read(p) else {
             eprintln!("SKIPPED ts/h264_aac.ts");
             return;
@@ -198,8 +194,7 @@ mod cenc_decrypt_copies {
     use transmux::CencDecryptor;
 
     fn load() -> Option<Vec<u8>> {
-        let p =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/mp4/cenc.mp4");
+        let p = test_fixtures::path("mp4/cenc.mp4");
         std::fs::read(p).ok()
     }
 
@@ -245,8 +240,7 @@ mod muxer_buffering {
     /// Bytes allocated by `package`, as a multiple of the produced output size.
     #[test]
     fn muxers_copy_the_output_few_times() {
-        let p =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+        let p = test_fixtures::path("ts/h264_aac.ts");
         let Ok(data) = std::fs::read(p) else {
             eprintln!("SKIPPED ts/h264_aac.ts");
             return;

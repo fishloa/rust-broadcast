@@ -54,7 +54,7 @@
 //! - [`DataMode`] (Table 8) and the constants [`SYNC_WORD_PA`],
 //!   [`SYNC_WORD_PB`], [`MAX_5_BIT_FIELD`], [`MAX_DATA_STREAM_NUMBER`],
 //!   [`MAX_LENGTH_CODE_BITS`].
-//! - A committed real E-AC-3 burst (`tests/fixtures/eac3_frame0.bin`)
+//! - A committed real E-AC-3 burst (`../fixtures/eac3-dep/eac3_frame0.bin`)
 //!   round-trips byte-exact.
 //!
 //! # Design notes

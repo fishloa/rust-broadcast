@@ -29,12 +29,7 @@
 use std::{fs, path::PathBuf};
 
 fn fixture_path() -> PathBuf {
-    // Locate the fixture relative to the manifest directory so `cargo test` from
-    // any working directory finds it.  `CARGO_MANIFEST_DIR` is set by Cargo.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("m6-single.ts")
+    test_fixtures::path("ts/m6-single.ts")
 }
 
 #[test]

@@ -3084,10 +3084,7 @@ mod tests {
 
         const TF1_SERVICE_ID: u16 = 0x0601;
 
-        let fixture_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
-        );
+        let fixture_path = test_fixtures::path("dvb-si/tnt-5w-12732v-isi6-10s.ts");
         let ts_bytes = std::fs::read(fixture_path).expect("read real DVB-T fixture");
 
         // Discover every genuine present/following section for TF1. This
@@ -3253,11 +3250,8 @@ mod tests {
     #[test]
     fn feed_si_reads_split_at_any_size_recover_the_same_programme() {
         const TF1_SERVICE_ID: u16 = 0x0601;
-        let ts_bytes = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
-        ))
-        .expect("read real DVB-T fixture");
+        let ts_bytes = std::fs::read(test_fixtures::path("dvb-si/tnt-5w-12732v-isi6-10s.ts"))
+            .expect("read real DVB-T fixture");
         let programme_after = |chunk: usize| {
             let tmp = temp_dir();
             let trunk = Trunk::new(trunk_config());
@@ -3291,11 +3285,8 @@ mod tests {
     fn a_failing_eit_section_is_dropped_not_refed_forever() {
         use broadcast_common::{Parse as WireParse, Serialize as WireSerialize};
         const TF1_SERVICE_ID: u16 = 0x0601;
-        let ts_bytes = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
-        ))
-        .expect("read real DVB-T fixture");
+        let ts_bytes = std::fs::read(test_fixtures::path("dvb-si/tnt-5w-12732v-isi6-10s.ts"))
+            .expect("read real DVB-T fixture");
         // The genuine following event, promoted to running, as in
         // `eit_transition_rolls_the_period...`.
         let mut discover = SiDemux::builder().dvb_si_pids(false).pid(EIT_PID).build();

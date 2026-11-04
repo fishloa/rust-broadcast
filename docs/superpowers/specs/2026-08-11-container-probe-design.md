@@ -257,10 +257,10 @@ All three are suppressed by a strong container match, per the suppression rule.
 ## Testing
 
 **Real fixtures are the bar.** Every format in scope gets a real file, not
-hand-made bytes. The workspace already has a corpus: `dvb-si/tests/fixtures/*.ts`,
+hand-made bytes. The workspace already has a corpus: `dvb-si/fixtures/*.ts`,
 `transmux`'s ISOBMFF/WebM/FLV fixtures, `st377-1`'s MXF fixture. Each is
 asserted to probe to its correct `Format` with the expected `Detail`. Fixtures
-live in this crate's own `tests/fixtures/`, or are referenced from the existing
+live in this crate's own `fixtures/`, or are referenced from the existing
 corpus where licensing permits — permissive only, provenance documented, no
 copyleft.
 

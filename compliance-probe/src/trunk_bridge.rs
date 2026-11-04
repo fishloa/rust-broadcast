@@ -254,7 +254,7 @@ mod tests {
     /// would not bite.
     #[test]
     fn byte_tap_drain_reaches_conformance_monitor() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
+        let path = test_fixtures::path("ts/m6-single.ts");
         let data = std::fs::read(path).expect("committed fixture must be readable");
         let mut tap = ByteTap::new(media_plane::TapPoint::Wire, 32);
         tap.record(

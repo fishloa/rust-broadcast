@@ -40,7 +40,7 @@ use broadcast_common::{Parse, Unpackage};
 use cc_data::CcData;
 use cc_data::decode::Cea608Channel;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use timed_metadata::event::MediaTime;
 use timed_metadata::webvtt::{Cea608CueExtractor, write_document};
 use transmux::{CodecConfig, NalCodec, TsDemux, caption_cc_data};
@@ -116,11 +116,7 @@ fn assert_valid_webvtt(doc: &str) {
 // ---------------------------------------------------------------------------
 
 fn synthetic_fixture_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("cc")
-        .join("cea608_cc1_synthetic.txt")
+    test_fixtures::path("cc/cea608_cc1_synthetic.txt")
 }
 
 fn load_synthetic_frames() -> Vec<(u64, Vec<u8>)> {

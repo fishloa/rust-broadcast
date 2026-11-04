@@ -25,7 +25,9 @@ const SHOWN: usize = 5;
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts").to_string()
+        test_fixtures::path("ts/h264_aac.ts")
+            .to_string_lossy()
+            .into_owned()
     });
     let data = match std::fs::read(&path) {
         Ok(d) => d,

@@ -136,7 +136,7 @@ fn real_sections() -> Vec<(String, Vec<u8>)> {
         ("ts", "m6-single.ts"),
         ("dvb-si", "tnt-5w-12732v-isi6-10s.ts"),
     ] {
-        let path = format!("{}/../fixtures/{dir}/{name}", env!("CARGO_MANIFEST_DIR"));
+        let path = test_fixtures::path(&format!("{}/{}", dir, name));
         let Ok(data) = std::fs::read(&path) else {
             continue;
         };

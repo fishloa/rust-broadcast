@@ -62,7 +62,7 @@ fn find_box_range(data: &[u8], lo: usize, hi: usize, fourcc: &[u8; 4]) -> Option
 }
 
 fn fixture(path: &str) -> Vec<u8> {
-    std::fs::read(path).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
+    std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
 }
 
 /// Copy `fixture`, then overwrite the 4 bytes at `start + offset_in_box` of
@@ -87,11 +87,8 @@ fn patch_fixture(
     file
 }
 
-const PROG_MP4: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/transmux/h264_aac_prog.mp4"
-);
-const CENC_MP4: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/cenc.mp4");
+const PROG_MP4: &str = "transmux/h264_aac_prog.mp4";
+const CENC_MP4: &str = "mp4/cenc.mp4";
 
 /// `stts`/`ctts`: header(8) + version/flags(4) + entry_count(4) -> first
 /// entry's `sample_count`.

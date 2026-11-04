@@ -4,14 +4,9 @@
 //! Run with `cargo run -p caption-convert --example webvtt_to_srt`.
 
 use std::fs;
-use std::path::Path;
 
 fn main() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("sub")
-        .join("cap.vtt");
+    let path = test_fixtures::path("sub/cap.vtt");
     let vtt = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
 
     let (srt, lossy) = caption_convert::webvtt_to_srt(&vtt).expect("valid WebVTT");

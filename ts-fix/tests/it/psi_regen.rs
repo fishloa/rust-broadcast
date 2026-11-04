@@ -414,9 +414,9 @@ fn identity_fails_to_repair_corrupted_pat() {
 fn load_m6_single() -> Vec<u8> {
     // CWD when running `cargo test -p ts-fix` is the crate dir (ts-fix/), so the
     // fixture is read from the copy committed inside this crate.
-    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/m6-single.ts");
-    fs::read(fixture_path)
-        .unwrap_or_else(|e| panic!("required fixture {fixture_path} missing: {e}"))
+    let fixture_path = test_fixtures::path("ts/m6-single.ts");
+    fs::read(&fixture_path)
+        .unwrap_or_else(|e| panic!("required fixture {} missing: {e}", fixture_path.display()))
 }
 
 /// Scan a TS for the authoritative program → PMT-PID mapping by parsing the

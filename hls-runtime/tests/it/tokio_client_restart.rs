@@ -54,11 +54,7 @@ async fn handle(State(o): State<Origin>, req: Request) -> axum::response::Respon
 
 #[tokio::test]
 async fn a_rejected_blocking_reload_is_retried_once_as_a_plain_get() {
-    let segment = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/ts-hls/index0.ts"
-    ))
-    .unwrap();
+    let segment = std::fs::read(test_fixtures::path("hls/ts-hls/index0.ts")).unwrap();
     // Bound to port 0 first and handed to axum: no reserve-then-rebind.
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();

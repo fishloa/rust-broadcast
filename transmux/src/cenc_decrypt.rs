@@ -1613,13 +1613,12 @@ mod tests {
     /// `clear_samples.txt` is its per-sample hash manifest.
     #[test]
     fn all_layouts_decrypt_audio_to_clear() {
-        let dir = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/cenc_frag_layouts"
-        );
         let read = |name: &str| {
-            std::fs::read(alloc::format!("{dir}/{name}"))
-                .unwrap_or_else(|e| panic!("read {dir}/{name}: {e}"))
+            std::fs::read(test_fixtures::path(&format!(
+                "transmux/cenc_frag_layouts/{}",
+                name
+            )))
+            .unwrap_or_else(|e| panic!("read {name}: {e}"))
         };
         // Independent-of-this-test oracle: the clear file's own audio samples,
         // read with the plain (unencrypted) `Fmp4Demux`.
@@ -1748,13 +1747,12 @@ mod tests {
     /// cenc_boxes sets), so the dedup is behaviour-preserving.
     #[test]
     fn shared_box_nav_agrees_with_removed_private_copies_on_real_fixtures() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
         let mut files = Vec::new();
         for dir in [
-            alloc::format!("{root}/cenc_frag_layouts"),
-            alloc::format!("{root}/mp4/cmaf"),
-            alloc::format!("{root}/mp4/cenc_boxes"),
-            root.to_string(),
+            test_fixtures::path("transmux/cenc_frag_layouts"),
+            test_fixtures::path("transmux/mp4/cmaf"),
+            test_fixtures::path("transmux/mp4/cenc_boxes"),
+            test_fixtures::path("transmux"),
         ] {
             if let Ok(rd) = std::fs::read_dir(&dir) {
                 for e in rd.flatten() {

@@ -10,11 +10,8 @@ use transmux::{Fmp4Demux, SmoothPackager};
 
 #[test]
 fn packager_text_stream_parses_back() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/mp4/cmaf/av_subtitle_frag.mp4"
-    );
-    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let path = test_fixtures::path("transmux/mp4/cmaf/av_subtitle_frag.mp4");
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let media = Fmp4Demux::new().unpackage(&bytes).expect("demux fixture");
     let out = SmoothPackager::default().package(&media).expect("smooth");
 

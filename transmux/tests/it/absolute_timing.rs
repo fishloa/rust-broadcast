@@ -377,11 +377,7 @@ fn assert_absolute_timeline(media: &Media, what: &str) {
 /// independently re-walked here from the raw file.
 #[test]
 fn flv_demux_emits_absolute_time_from_tag_timestamps() {
-    let flv = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/flv/av.flv"
-    ))
-    .expect("fixtures/flv/av.flv");
+    let flv = std::fs::read(test_fixtures::path("flv/av.flv")).expect("fixtures/flv/av.flv");
     let media = FlvDemux::new().unpackage(&flv[..]).expect("FLV → IR");
     assert_absolute_timeline(&media, "FLV");
 
@@ -634,11 +630,8 @@ fn walk_webm(data: &[u8]) -> WebmOracle {
 /// `TimestampScale` would satisfy just as easily as a correct one.
 #[test]
 fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
-    let webm = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/webm/vp9_opus.webm"
-    ))
-    .expect("fixtures/webm/vp9_opus.webm");
+    let webm = std::fs::read(test_fixtures::path("webm/vp9_opus.webm"))
+        .expect("fixtures/webm/vp9_opus.webm");
     let media = WebmDemux::new().unpackage(&webm[..]).expect("WebM → IR");
     assert_absolute_timeline(&media, "WebM");
     for t in &media.tracks {
@@ -689,11 +682,7 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
 /// packs (ISO/IEC 13818-1 §2.5), 33-bit-unwrapped once at the demux edge.
 #[test]
 fn ps_demux_emits_absolute_time_from_pes_timestamps() {
-    let ps = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ps/h264_ac3.ps"
-    ))
-    .expect("fixtures/ps/h264_ac3.ps");
+    let ps = std::fs::read(test_fixtures::path("ps/h264_ac3.ps")).expect("fixtures/ps/h264_ac3.ps");
     let media = PsDemux::new().unpackage(&ps[..]).expect("PS → IR");
     assert_absolute_timeline(&media, "MPEG Program Stream");
 }
@@ -703,11 +692,7 @@ fn ps_demux_emits_absolute_time_from_pes_timestamps() {
 /// must recover the same absolute timeline.
 #[test]
 fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
-    let flv = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/flv/av.flv"
-    ))
-    .expect("fixtures/flv/av.flv");
+    let flv = std::fs::read(test_fixtures::path("flv/av.flv")).expect("fixtures/flv/av.flv");
     let ir = FlvDemux::new().unpackage(&flv[..]).expect("FLV → IR");
     let wire = RtmpMux::default().package(&ir).expect("IR → RTMP wire");
     let back = transmux::RtmpDemux::new()
@@ -743,11 +728,7 @@ fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
 /// match the source, and the header timestamps are the independent oracle.
 #[test]
 fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
-    let ts = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/h264_aac.ts"
-    ))
-    .expect("h264_aac.ts fixture");
+    let ts = std::fs::read(test_fixtures::path("ts/h264_aac.ts")).expect("h264_aac.ts fixture");
     let ir = TsDemux::new().unpackage(&ts[..]).expect("TS → IR");
     let out: RtpOutput = RtpPacketiser {
         mtu: 1400,

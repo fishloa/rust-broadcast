@@ -19,7 +19,7 @@ use mpeg_ts::ts::Pcr;
 use ts_fix::{PcrRestamp, TsFix};
 
 const PKT: usize = 188;
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/pcr-wrap.ts");
+const FIXTURE: &str = "ts/pcr-wrap.ts";
 const WRAP_BASE: u64 = 1 << 33;
 
 fn pcr_27mhz(p: &[u8]) -> u64 {
@@ -35,7 +35,8 @@ fn pcr_27mhz(p: &[u8]) -> u64 {
 
 #[test]
 fn interpolate_adopts_observations_after_the_wrap() {
-    let fixture = std::fs::read(FIXTURE).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"));
+    let fixture = std::fs::read(test_fixtures::path(FIXTURE))
+        .unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"));
     let template: [u8; PKT] = fixture[..PKT].try_into().unwrap();
 
     // Pre-wrap +3000 base per packet, post-wrap +3100.

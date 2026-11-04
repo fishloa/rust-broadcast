@@ -11,10 +11,7 @@ use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
 fn load_ps() -> Vec<u8> {
-    let path = format!(
-        "{}/../fixtures/ps/ffmpeg-mpeg2video-mp2.ps",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = test_fixtures::path("ps/ffmpeg-mpeg2video-mp2.ps");
     std::fs::read(&path).expect("ffmpeg-mpeg2video-mp2.ps fixture must exist")
 }
 

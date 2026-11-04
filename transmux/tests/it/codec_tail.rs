@@ -19,7 +19,6 @@
 //! 5. Enumeration: track count + `CodecConfig` variants via `matches!`.
 
 use std::fs;
-use std::path::PathBuf;
 
 use broadcast_common::{Package, Serialize, Unpackage};
 use bytes::Bytes;
@@ -27,16 +26,7 @@ use transmux::media::{CmafMux, Fmp4Demux};
 use transmux::pipeline::CodecConfig;
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path: PathBuf = [
-        env!("CARGO_MANIFEST_DIR"),
-        "..",
-        "fixtures",
-        "mp4",
-        "frag",
-        name,
-    ]
-    .iter()
-    .collect();
+    let path = test_fixtures::path(&format!("mp4/frag/{name}"));
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 

@@ -50,7 +50,7 @@
 
 **Interfaces — Consumes:** `dvb_ci::builder::build_ca_pmt` (exact sig from preflight), the existing multi-programme send path. **Produces:** `Driver::add_service(&mut self, pmt: &dvb_si::tables::pmt::PmtSection<'_>) -> Result<(), CaError>` (new `CaError` in a new `error` arm or module); records the service in `ManagedCa`.
 
-- [ ] Step 1: Fixture prep — obtain a real scrambled-service PMT: parse it from a committed capture (`fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` or another with CA descriptors) via `dvb-si` in the test, OR add a small committed PMT section fixture with program + ES CA descriptors under `dvb-ci-runtime/tests/fixtures/`. Document provenance.
+- [ ] Step 1: Fixture prep — obtain a real scrambled-service PMT: parse it from a committed capture (`fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` or another with CA descriptors) via `dvb-si` in the test, OR add a small committed PMT section fixture with program + ES CA descriptors under `dvb-ci-runtime/fixtures/`. Document provenance.
 - [ ] Step 2: Test — `add_service(&pmt)` then assert the `ca_pmt` bytes sent to `MockCaDevice` byte-equal `dvb_ci::builder::build_ca_pmt(&pmt, first/only, ok_descrambling)`'s `to_bytes()` (oracle). Run → FAIL.
 - [ ] Step 3: Implement `ManagedCa` + `add_service`: build via `build_ca_pmt`, send through the existing path, record `program_number` + ES/CA PIDs + `CaError::NoCaDescriptor{program_number}` when the PMT has no CA descriptor at program or ES level.
 - [ ] Step 4: Run → PASS + gate. Commit `feat(dvb-ci-runtime): ManagedCa + add_service(&PmtSection) building ca_pmt (#763)`.

@@ -7,7 +7,6 @@
 //! the fixtures / the ffprobe CSV oracle — no hardcoded offsets.
 
 use std::fs;
-use std::path::PathBuf;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
@@ -17,7 +16,7 @@ use transmux::pipeline::CodecConfig;
 use transmux::ts_demux::TsDemux;
 
 fn fixture(rel: &[&str]) -> Vec<u8> {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut path = test_fixtures::root();
     path.push("..");
     path.push("fixtures");
     for p in rel {

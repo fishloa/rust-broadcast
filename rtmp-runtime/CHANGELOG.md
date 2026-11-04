@@ -207,7 +207,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
 ### Added
 - `examples/capture_publish.rs` (feature `tokio`): a real-socket RTMP publish
   recorder driving `ServerSession` over a live TCP connection, used to
-  capture `tests/fixtures/obs-publish.bin` (a real `ffmpeg -f flv` publish).
+  capture `../fixtures/rtmp/obs-publish.bin` (a real `ffmpeg -f flv` publish).
 - `tests/ingest_fixture.rs`: replays the captured fixture through
   `ServerSession::handle_data` (single-call and small-chunk reassembly) and
   feeds the emitted FLV to `transmux::FlvDemux`, asserting a decoded

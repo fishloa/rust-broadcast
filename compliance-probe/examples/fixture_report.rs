@@ -28,9 +28,13 @@ fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under a
     // sibling crate — see `dvb-conformance/examples/monitor_stream.rs` for
     // the same pattern this example mirrors.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
-    let data = std::fs::read(path)
-        .unwrap_or_else(|e| panic!("committed fixture {path} could not be read: {e}"));
+    let path = test_fixtures::path("ts/m6-single.ts");
+    let data = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
 
     let mut probe = Probe::new();
     for (i, chunk) in data.chunks(TS_PACKET_SIZE).enumerate() {

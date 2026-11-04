@@ -1,4 +1,4 @@
-//! Real-fixture gate: `tests/fixtures/rtp_simple.bin` (RFC 3550 §5.1, the
+//! Real-fixture gate: `../fixtures/rtp/rtp_simple.bin` (RFC 3550 §5.1, the
 //! `P=0 X=0 CC=0` simple case).
 //!
 //! ## Fixture provenance
@@ -25,11 +25,7 @@ use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
 fn fixture_bytes() -> Vec<u8> {
-    std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/rtp_simple.bin"
-    ))
-    .expect("rtp_simple.bin fixture must exist")
+    test_fixtures::read("rtp/rtp_simple.bin")
 }
 
 #[test]

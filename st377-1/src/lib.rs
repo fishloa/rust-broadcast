@@ -77,7 +77,7 @@
 //!   [`MxfTimestamp`], [`ProductVersion`], [`UlBytes`], UTF-16BE helpers.
 //! - **[`op1a`]**: `OP1A_UL_PREFIX`, `Op1aQualifier`, `is_op1a`, `op1a_ul`.
 //! - Validated against a real ffmpeg-muxed OP1a file
-//!   (`tests/fixtures/op1a_mpeg2_pcm.mxf`; all 25 of its partition packs
+//!   (`../fixtures/mxf/st377-1/op1a_mpeg2_pcm.mxf`; all 25 of its partition packs
 //!   round-trip byte-identically) and a small synthetic file.
 //!
 //! ## OP1a support is structural-metadata-only (issue #937)

@@ -50,7 +50,7 @@ where
 
 /// First CRC-valid section with `table_id` from a committed real capture.
 fn real_section(file: &str, tid: u8) -> Vec<u8> {
-    let path = format!("{}/../fixtures/{file}", env!("CARGO_MANIFEST_DIR"));
+    let path = test_fixtures::path(file);
     let data = std::fs::read(&path).expect("committed fixture");
     let mut demux = SiDemux::builder().build();
     for chunk in data.chunks(TS_PACKET_SIZE) {

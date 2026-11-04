@@ -1,7 +1,7 @@
 //! Oracle consumer: H.264 HLS Sample-AES CBC chaining (audit r05-W1).
 //!
 //! Consumes the committed, independently-generated fixtures under
-//! `tests/fixtures/sample_aes_h264/` — see that directory's `README.md` and
+//! `../fixtures/transmux/sample_aes_h264/` — see that directory's `README.md` and
 //! `ORACLES.md`. The claim they pin:
 //!
 //! * AES-128-CBC **chains across the encrypted 16-byte blocks within one NAL**;
@@ -34,9 +34,7 @@ const IV: [u8; BLOCK_LEN] = [
 ];
 
 fn fx(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sample_aes_h264")
-        .join(name)
+    test_fixtures::path("transmux/sample_aes_h264").join(name)
 }
 
 fn read(name: &str) -> Vec<u8> {

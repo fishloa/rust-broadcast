@@ -6,16 +6,14 @@
 //! the implementation instead of re-running it.
 
 use broadcast_common::Unpackage;
-use std::path::PathBuf;
 use transmux::{
     DropReason, JoinDecision, JoinPolicy, LiveJoin, RapKind, Sample, TsDemux,
     iter_length_prefixed_nals,
 };
 
 fn video_samples(rel: &str) -> (transmux::TrackSpec, Vec<Sample>) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(rel);
+    let rel = rel.strip_prefix("fixtures/").unwrap_or(rel);
+    let path = test_fixtures::path(rel);
     let ts = std::fs::read(path).expect("fixture");
     let m = TsDemux::new().unpackage(&ts).expect("demux");
     let t = m

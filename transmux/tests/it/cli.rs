@@ -33,7 +33,7 @@ use transmux::cli::{Args, Container, Opts, Output, OutputFormat, detect_containe
 use transmux::{Severity, validate_init_segment, validate_media_segment};
 
 fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
+    test_fixtures::root()
 }
 
 fn read(rel: &str) -> Vec<u8> {

@@ -33,21 +33,13 @@ fn find_box_body<'a>(data: &'a [u8], four_cc: &[u8; 4]) -> &'a [u8] {
 }
 
 fn avc_config() -> AVCDecoderConfigurationRecord {
-    let data = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/h264_high.mp4"
-    ))
-    .expect("fixture");
+    let data = std::fs::read(test_fixtures::path("mp4/h264_high.mp4")).expect("fixture");
     let body = find_box_body(&data, b"avcC");
     AVCDecoderConfigurationRecord::parse(body).expect("parse avcC")
 }
 
 fn hevc_config() -> HEVCDecoderConfigurationRecord {
-    let data = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mp4/hevc_main.mp4"
-    ))
-    .expect("fixture");
+    let data = std::fs::read(test_fixtures::path("mp4/hevc_main.mp4")).expect("fixture");
     let hvc_box = find_full_box(&data, b"hvcC");
     HEVCDecoderConfigurationRecord::parse(&hvc_box[8..]).expect("parse hvcC")
 }
@@ -539,8 +531,7 @@ fn transformers_neither() {
 #[test]
 fn gulli_colr_no_pasp() {
     // public fixture
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/gulli-opengop.ts");
+    let path = test_fixtures::path("ts/gulli-opengop.ts");
     let Ok(data) = std::fs::read(&path) else {
         return;
     };
@@ -661,8 +652,7 @@ fn ffprobe_oracle_real_captures() {
         }
     }
     // gulli public fixture
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/gulli-opengop.ts");
+    let path = test_fixtures::path("ts/gulli-opengop.ts");
     if let Ok(data) = std::fs::read(&path) {
         let media = transmux::ts_demux::TsDemux::new()
             .demux(&data)

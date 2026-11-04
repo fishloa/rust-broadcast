@@ -10,7 +10,7 @@
 //! `media-doctor/tests/mediastreamvalidator_oracle.rs` uses Apple's own
 //! `mediastreamvalidator` for HLS.
 //!
-//! ## Fixture: `tests/fixtures/pat-with-nit.ts`
+//! ## Fixture: `../fixtures/ts/pat-with-nit.ts`
 //!
 //! None of the committed fixtures under `fixtures/ts/` carry a `network_pid`
 //! entry in their PAT (checked all of them with `tsp -P tables --pid 0`).
@@ -21,7 +21,7 @@
 //! entry:
 //!
 //! ```text
-//! tsp -I file fixtures/ts/h264_aac.ts -P pat --nit 16 -O file tests/fixtures/pat-with-nit.ts
+//! tsp -I file fixtures/ts/h264_aac.ts -P pat --nit 16 -O file ../fixtures/ts/pat-with-nit.ts
 //! ```
 //!
 //! (TSDuck 3.44-4676.) The result is still a real capture's actual PES/PSI
@@ -75,11 +75,9 @@ macro_rules! skip_unless_tsduck_available {
 }
 
 fn fixture_path() -> String {
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/pat-with-nit.ts"
-    )
-    .to_string()
+    test_fixtures::path("ts/pat-with-nit.ts")
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Run the fixture through `regen_psi` and write the result to a fresh temp

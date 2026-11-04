@@ -65,7 +65,7 @@ git fetch -q origin
 git worktree add -b w2/a .worktree/w2-a origin/main
 cd .worktree/w2-a
 git -c protocol.file.allow=always submodule update -q --init --reference /Volumes/External/Projects/rust-broadcast/private private
-ln -s /Volumes/External/Projects/rust-broadcast/.test-streams .test-streams
+ln -s /Volumes/External/Projects/rust-broadcast/private fixtures private fixtures
 ln -s /Volumes/External/Projects/rust-broadcast/multimux/tests/assets/node_modules multimux/tests/assets/node_modules
 export CARGO_TARGET_DIR="$PWD/target"
 ```

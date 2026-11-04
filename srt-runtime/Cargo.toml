@@ -52,6 +52,7 @@ bytes      = { version = "1", optional = true, default-features = false }
 tokio-util = { version = "0.7", optional = true, default-features = false, features = ["rt"] }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 serde_json = { workspace = true }
 # `test-util` for the paused, manually advanced clock the adapter tests use
 # instead of sleeping.

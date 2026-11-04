@@ -28,15 +28,9 @@ use transmux::webm_demux::WebmDemux;
 use transmux::{CmafMux, Media, parse_box};
 
 /// Path to the committed WebM fixture, relative to this crate's manifest dir.
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/webm/vp9_opus.webm"
-);
+const FIXTURE: &str = "webm/vp9_opus.webm";
 /// Path to the ffprobe per-frame oracle CSV.
-const ORACLE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/webm/vp9_opus.packets.csv"
-);
+const ORACLE: &str = "webm/vp9_opus.packets.csv";
 
 /// Opus codec delay ffprobe applies to audio presentation times, in ms.
 /// (pre-skip 312 samples @ 48 kHz = 6.5 ms, rounded up to 7 ms.)
@@ -52,7 +46,7 @@ struct OracleRow {
 }
 
 fn load_oracle() -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(ORACLE).expect("read oracle csv");
+    let text = std::fs::read_to_string(test_fixtures::path(ORACLE)).expect("read oracle csv");
     let mut rows = Vec::new();
     for line in text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -74,7 +68,7 @@ fn oracle_for<'a>(rows: &'a [OracleRow], codec_type: &str) -> Vec<&'a OracleRow>
 }
 
 fn demux() -> Media {
-    let bytes = std::fs::read(FIXTURE).expect("read webm fixture");
+    let bytes = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let mut d = WebmDemux::new();
     d.demux(&bytes).expect("demux webm")
 }
@@ -771,7 +765,7 @@ mod laced_mkv {
 /// re-implements the parser: lacing must be invisible in the IR.
 #[test]
 fn laced_blocks_are_unlaced_like_the_unlaced_fixture() {
-    let data = std::fs::read(FIXTURE).expect("read webm fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let audio_track = 2u64;
     // The oracle is the *same rewritten file* with group = 1 — i.e. the blocks
     // carried over one per block, unlaced. Rebuilding it that way exercises the
@@ -834,7 +828,7 @@ fn laced_blocks_are_unlaced_like_the_unlaced_fixture() {
 /// frames from the one block.
 #[test]
 fn fixed_lacing_yields_one_sample_per_frame() {
-    let data = std::fs::read(FIXTURE).expect("read webm fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let all = laced_mkv::blocks(&data);
     // A real audio frame, repeated three times: still real frame bytes, and
     // equal length as fixed lacing requires.
@@ -929,7 +923,7 @@ fn fixture_audio_frames(data: &[u8]) -> Vec<Vec<u8>> {
 /// out as (0, 20, 40).
 #[test]
 fn laced_frames_are_spaced_by_default_duration() {
-    let data = std::fs::read(FIXTURE).expect("read webm fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let frames = fixture_audio_frames(&data);
     assert_eq!(frames.len(), 3);
 
@@ -965,7 +959,7 @@ fn laced_frames_are_spaced_by_default_duration() {
 /// that boundary, so the gap covers block 0's three frames - not six.)
 #[test]
 fn laced_frames_are_spread_across_the_block_interval() {
-    let data = std::fs::read(FIXTURE).expect("read webm fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let frames = fixture_audio_frames(&data);
 
     let rows = laced_timing(
@@ -988,7 +982,7 @@ fn laced_frames_are_spread_across_the_block_interval() {
 /// still advance, and no non-final frame has duration 0.
 #[test]
 fn last_laced_block_frames_never_have_zero_duration() {
-    let data = std::fs::read(FIXTURE).expect("read webm fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let frames = fixture_audio_frames(&data);
 
     let rows = laced_timing(&data, 0, &[(0, frames.clone())]);
@@ -1016,7 +1010,7 @@ fn last_laced_block_frames_never_have_zero_duration() {
 /// timing rule are checked together rather than only through Xiph.
 #[test]
 fn timing_holds_for_every_lacing_mode() {
-    let data = std::fs::read(FIXTURE).expect("read webm fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let all = laced_mkv::blocks(&data);
     // Three consecutive real audio frames, plus a following block to bound the
     // interval, relaced with each mode.
@@ -1140,7 +1134,7 @@ fn timing_holds_for_every_lacing_mode() {
 /// produce.
 #[test]
 fn default_duration_is_rounded_not_truncated() {
-    let data = std::fs::read(FIXTURE).expect("read webm fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let all = laced_mkv::blocks(&data);
     let frames: Vec<Vec<u8>> = all
         .iter()

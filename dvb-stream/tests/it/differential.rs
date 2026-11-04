@@ -62,7 +62,7 @@ fn sync_oracle(data: &[u8]) -> Vec<dvb_si::demux::SectionEvent> {
 // ── fixture path helper ───────────────────────────────────────────────────────
 
 fn m6_fixture_path() -> &'static str {
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts")
+    "ts/m6-single.ts"
 }
 
 // ── test 1: differential against SiDemux on m6-single.ts ─────────────────────
@@ -70,7 +70,7 @@ fn m6_fixture_path() -> &'static str {
 #[tokio::test]
 async fn section_stream_matches_sync_oracle_m6() {
     let path = m6_fixture_path();
-    let data = std::fs::read(path).expect("m6-single.ts fixture not found");
+    let data = std::fs::read(test_fixtures::path(path)).expect("m6-single.ts fixture not found");
 
     // Sync oracle.
     let oracle = sync_oracle(&data);
@@ -116,7 +116,7 @@ async fn section_stream_matches_sync_oracle_m6() {
 #[tokio::test]
 async fn section_stream_in_memory_cursor_produces_events() {
     let path = m6_fixture_path();
-    let data = std::fs::read(path).expect("m6-single.ts fixture not found");
+    let data = std::fs::read(test_fixtures::path(path)).expect("m6-single.ts fixture not found");
 
     let cursor = std::io::Cursor::new(data);
     let stream = SectionStream::new(cursor);
@@ -173,7 +173,7 @@ impl AsyncRead for OneByteAtATime {
 #[tokio::test]
 async fn section_stream_one_byte_at_a_time_matches_oracle() {
     let path = m6_fixture_path();
-    let data = std::fs::read(path).expect("m6-single.ts fixture not found");
+    let data = std::fs::read(test_fixtures::path(path)).expect("m6-single.ts fixture not found");
     let oracle = sync_oracle(&data);
 
     let reader = OneByteAtATime {
@@ -218,7 +218,7 @@ async fn section_stream_one_byte_at_a_time_matches_oracle() {
 #[tokio::test]
 async fn section_stream_stats_after_completion() {
     let path = m6_fixture_path();
-    let data = std::fs::read(path).expect("m6-single.ts fixture not found");
+    let data = std::fs::read(test_fixtures::path(path)).expect("m6-single.ts fixture not found");
     let data_len = data.len();
 
     let cursor = std::io::Cursor::new(data);

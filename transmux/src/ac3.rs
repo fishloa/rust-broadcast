@@ -755,7 +755,7 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
 /// Distinct from [`split_eac3_syncframes`], which folds dependent syncframes
 /// into their independent access unit. Sample-AES needs the syncframe ranges,
 /// not the access units: the protected block is a single syncframe, and the
-/// independent oracle (`tests/fixtures/sample_aes_eac3/`) shows the CBC IV is
+/// independent oracle (`../fixtures/transmux/sample_aes_eac3/`) shows the CBC IV is
 /// **reset at every syncframe** (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §6).
 ///
 /// Stops at the first bad sync word / truncated tail (mirrors

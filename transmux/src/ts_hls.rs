@@ -161,7 +161,7 @@ pub struct TsHlsOutput {
 /// ```
 /// use broadcast_common::{Package, Unpackage};
 /// use transmux::{TsDemux, TsHlsPackager};
-/// # fn ts_bytes() -> Vec<u8> { std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts")).unwrap() }
+/// # fn ts_bytes() -> Vec<u8> { std::fs::read(test_fixtures::path("ts/h264_aac.ts")).unwrap() }
 /// let ir = TsDemux::new().unpackage(&ts_bytes()).unwrap();
 /// let out = TsHlsPackager::new(1).package(&ir).unwrap();
 /// assert!(out.playlist.starts_with("#EXTM3U"));

@@ -16,7 +16,7 @@ use transmux::nal::{NalCodec, access_unit_is_keyframe, is_keyframe_nal, nal_unit
 use transmux::pipeline::CodecConfig;
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
+    test_fixtures::root()
 }
 
 // ── Test 1: AVC — helper agrees with demuxer is_sync and the ffprobe oracle ──

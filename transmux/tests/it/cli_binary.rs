@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
+    test_fixtures::root()
 }
 
 /// The built `transmux` binary (cargo sets this for a package's own bins).

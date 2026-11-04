@@ -1,7 +1,7 @@
 //! Integration tests for the sans-IO RTSP engine — the exit gate for issue #521.
 //!
 //! Each test drives the engine end-to-end against the RFC 2326 fixtures in
-//! `tests/fixtures/` and asserts observable behaviour that a no-op / passthrough
+//! `../fixtures/rtsp/` and asserts observable behaviour that a no-op / passthrough
 //! implementation would fail (each is annotated with how it "bites").
 
 use rtsp_runtime::client::ClientEvent;
@@ -342,7 +342,7 @@ fn gate6_server_transitions_bite() {
 
 #[test]
 fn gate7_sdp_parse() {
-    let sdp = std::fs::read("tests/fixtures/sdp_sample.sdp").expect("read sdp fixture");
+    let sdp = std::fs::read("../fixtures/rtsp/sdp_sample.sdp").expect("read sdp fixture");
     let session = sdp_types::Session::parse(&sdp).expect("parse SDP");
     assert_eq!(session.medias.len(), 2, "two media sections (video+audio)");
     assert_eq!(session.medias[0].media, "video");

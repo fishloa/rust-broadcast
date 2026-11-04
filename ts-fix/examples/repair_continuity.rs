@@ -14,16 +14,18 @@ use std::collections::BTreeMap;
 use std::fs;
 
 /// Path to the test fixture, resolved at compile time.
-const FIXTURE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/m6-single.ts");
+const FIXTURE_PATH: &str = "ts/m6-single.ts";
 
 fn main() {
-    let input = fs::read(FIXTURE_PATH).expect("fixture m6-single.ts not found");
+    let input =
+        fs::read(test_fixtures::path(FIXTURE_PATH)).expect("fixture m6-single.ts not found");
 
     // --- Before: count anomalies in the original ---
     let before_anomalies = count_cc_anomalies(&input);
     println!(
-        "input:      {} packets from {FIXTURE_PATH}",
-        input.len() / 188
+        "input:      {} packets from {}",
+        input.len() / 188,
+        test_fixtures::path(FIXTURE_PATH).display()
     );
 
     // --- Apply repair ---

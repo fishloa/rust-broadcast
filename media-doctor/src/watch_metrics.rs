@@ -115,11 +115,7 @@ mod tests {
     use core::time::Duration;
 
     fn assert_matches_main_golden(fixture: &str, golden_name: &str) {
-        let bytes = std::fs::read(format!(
-            "{}/../fixtures/ts/{fixture}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap();
+        let bytes = std::fs::read(test_fixtures::path(&format!("ts/{}", fixture))).unwrap();
         let mut state = WatchState::new();
         let mut clock = Duration::ZERO;
         for datagram in bytes.chunks(7 * 188) {

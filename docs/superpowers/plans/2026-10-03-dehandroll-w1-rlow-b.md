@@ -64,7 +64,7 @@ git fetch -q origin
 git worktree add -b w1/r-low-b .worktree/w1-r-low-b origin/main
 cd .worktree/w1-r-low-b
 git -c protocol.file.allow=always submodule update -q --init --reference /Volumes/External/Projects/rust-broadcast/private private
-ln -s /Volumes/External/Projects/rust-broadcast/.test-streams .test-streams
+ln -s /Volumes/External/Projects/rust-broadcast/private fixtures private fixtures
 ln -s /Volumes/External/Projects/rust-broadcast/multimux/tests/assets/node_modules multimux/tests/assets/node_modules
 rustup target add thumbv7em-none-eabi
 git rev-parse HEAD

@@ -1152,8 +1152,8 @@ git add -A && git commit -m "feat(timed-metadata): Timeline session with 33-bit 
 ### Task 8: Real-fixture integration tests
 
 **Files:**
-- Create: `timed-metadata/tests/fixtures/scte35_emsg_v0.bin`, `timed-metadata/tests/fixtures/emsg_v1_scte35_livesim.bin`
-- Create: `timed-metadata/tests/fixtures/daterange_2002.txt`, `daterange_2004.txt`
+- Create: `timed-metadata/fixtures/scte35_emsg_v0.bin`, `timed-metadata/fixtures/emsg_v1_scte35_livesim.bin`
+- Create: `timed-metadata/fixtures/daterange_2002.txt`, `daterange_2004.txt`
 - Create: `timed-metadata/tests/emsg_interop.rs`, `timed-metadata/tests/daterange_fixture.rs`
 
 **Interfaces:** uses the public crate API.
@@ -1161,17 +1161,17 @@ git add -A && git commit -m "feat(timed-metadata): Timeline session with 33-bit 
 - [ ] **Step 1: Copy the real emsg fixtures + write the DATERANGE fixtures**
 
 ```bash
-mkdir -p timed-metadata/tests/fixtures
-cp dvb-emsg/tests/fixtures/scte35_emsg_v0.bin timed-metadata/tests/fixtures/
-cp dvb-emsg/tests/fixtures/emsg_v1_scte35_livesim.bin timed-metadata/tests/fixtures/
+mkdir -p timed-metadata/fixtures
+cp dvb-emsg/fixtures/scte35_emsg_v0.bin timed-metadata/fixtures/
+cp dvb-emsg/fixtures/emsg_v1_scte35_livesim.bin timed-metadata/fixtures/
 ```
-> If Plan A already moved `dvb-emsg`→`mp4-emsg`, copy from `mp4-emsg/tests/fixtures/` instead.
+> If Plan A already moved `dvb-emsg`→`mp4-emsg`, copy from `mp4-emsg/fixtures/` instead.
 
-Create `timed-metadata/tests/fixtures/daterange_2002.txt` (single line, no trailing newline issues — exact verified fixture):
+Create `timed-metadata/fixtures/daterange_2002.txt` (single line, no trailing newline issues — exact verified fixture):
 ```
 #EXT-X-DATERANGE:ID="2002",START-DATE="2018-10-29T10:38:00Z",PLANNED-DURATION=24,SCTE35-OUT=0xFC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D
 ```
-Create `timed-metadata/tests/fixtures/daterange_2004.txt`:
+Create `timed-metadata/fixtures/daterange_2004.txt`:
 ```
 #EXT-X-DATERANGE:ID="2004",START-DATE="2018-10-29T10:42:00Z",PLANNED-DURATION=24,SCTE35-OUT=0xFC302100000000000000FFF01005000007D47FEF7F7E0020F580C000000000004F1B1A5F
 ```

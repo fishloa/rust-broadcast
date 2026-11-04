@@ -330,7 +330,7 @@ fn split_adts_frames(payload: &[u8]) -> Vec<&[u8]> {
 
 #[test]
 fn real_fixture_remux_is_lossless_and_parseable() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let ts = std::fs::read(path).expect("fixture exists");
 
     let mut vid_asm = PesAssembler::new();

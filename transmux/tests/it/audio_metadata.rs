@@ -42,7 +42,7 @@ fn role(loop_bytes: &[u8]) -> AudioRole {
 
 #[test]
 fn france2_real_pmt_roles() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/france2.ts");
+    let path = test_fixtures::path("ts/france2.ts");
     let media = TsDemux::new()
         .unpackage(&std::fs::read(path).unwrap())
         .unwrap();
@@ -116,7 +116,7 @@ fn role_rules() {
 /// the metadata off the re-demuxed `TrackSpec`.
 #[test]
 fn synthetic_pmt_through_tsmux() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let bytes = std::fs::read(path).unwrap();
     let mut france = iso639(b"qad", 0);
     france.extend(supplementary(true, 0x01, Some(b"fra")));

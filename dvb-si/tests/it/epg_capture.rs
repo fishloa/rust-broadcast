@@ -1,6 +1,6 @@
 //! Real-capture validation of the EPG layer (`dvb_si::epg`).
 //!
-//! Fixture: `tests/fixtures/tnt-5w-12732v-isi6-10s.ts` — a 10 s satellite
+//! Fixture: `../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` — a 10 s satellite
 //! capture (ISI 6) carrying standard SI, including a rich EIT (PID 0x0012).
 //! This drives the full pipeline `SiDemux` → EIT section bytes →
 //! `EpgStore::feed` → `now_and_next` on real broadcast data, not synthetic

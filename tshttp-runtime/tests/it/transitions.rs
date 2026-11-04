@@ -1,6 +1,7 @@
 use tshttp_runtime::{Action, Config, Event, StarveKind, TsHttpClient};
 
-const D: &[u8] = include_bytes!("../../../fixtures/ts/h264_aac.ts");
+static D: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
 
 fn cfg() -> Config {
     Config::default()
@@ -72,7 +73,7 @@ fn t05_awaiting_first_sample_moves_to_playing_and_resets_attempts() {
     c.on_response(200, &[], 5);
     let _ = c.poll_event();
     // first sample -> Playing, attempt reset
-    c.feed(D, 6);
+    c.feed(D.as_slice(), 6);
     let mut saw_sample = false;
     while let Some(e) = c.poll_event() {
         if matches!(e, Event::Demux(transmux::DemuxEvent::Sample { .. })) {
@@ -137,7 +138,7 @@ fn t08_playing_eof_reconnect_zero() {
     let _ = c.poll();
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
-    c.feed(D, 1);
+    c.feed(D.as_slice(), 1);
     c.on_eof(60_000);
     let mut saw_zero = false;
     while let Some(a) = c.poll() {
@@ -184,7 +185,7 @@ fn t11_playing_no_bytes_stall_notice() {
     let _ = c.poll();
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
-    c.feed(D, 0);
+    c.feed(D.as_slice(), 0);
     while c.poll_event().is_some() {}
     // nothing before 5s
     c.poll_timeout(4999);
@@ -210,7 +211,7 @@ fn t12_playing_no_bytes_stall_reconnect_aborts_and_resets_attempts() {
     let _ = c.poll();
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
-    c.feed(D, 0);
+    c.feed(D.as_slice(), 0);
     c.poll_timeout(29999);
     // no abort before
     let mut aborted = false;
@@ -262,7 +263,7 @@ fn t13_any_connected_reconnect_aborts() {
         let _ = c.poll();
         c.on_response(200, &[], 0);
         let _ = c.poll_event();
-        c.feed(D, 1);
+        c.feed(D.as_slice(), 1);
         c.reconnect(5);
         assert_eq!(c.poll(), Some(Action::Abort));
         assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
@@ -275,7 +276,7 @@ fn t14_bytes_no_samples_starved_data_once_per_episode() {
     let _ = c.poll();
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
-    c.feed(D, 0); // playing
+    c.feed(D.as_slice(), 0); // playing
     // bytes flowing but no sample for stall_notice (4 bytes at now=10000)
     c.feed(&[0u8; 4], 10000);
     let mut saw_data = false;
@@ -302,7 +303,7 @@ fn t15_playing_no_bytes_starved_nodata_once_per_episode() {
     let _ = c.poll();
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
-    c.feed(D, 0); // playing
+    c.feed(D.as_slice(), 0); // playing
     c.poll_timeout(5000);
     let mut saw_nodata = false;
     while let Some(e) = c.poll_event() {

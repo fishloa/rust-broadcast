@@ -43,7 +43,7 @@ Parse a real 324-byte packet (produced by `transmux`'s RTP packetiser over the c
 use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
-let wire = std::fs::read("tests/fixtures/rtp_simple.bin").unwrap();
+let wire = std::fs::read("../fixtures/rtp/rtp_simple.bin").unwrap();
 let pkt = RtpPacket::parse(&wire).unwrap();
 assert!(pkt.extension.is_none() && pkt.csrc.is_empty());
 println!("pt={} seq={} ts={} ssrc={:#x}",

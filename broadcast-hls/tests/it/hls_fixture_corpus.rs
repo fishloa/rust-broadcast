@@ -8,7 +8,10 @@
 //! Provenance for every fixture lives in `fixtures/hls/MANIFEST.md`; read
 //! that file, not this one, for *why* each fixture exists.
 //!
-//! Fixtures are loaded with `concat!(env!("CARGO_MANIFEST_DIR"), ..)` +
+//! Fixtures are loaded with `concat!(
+//!     env!("CARGO_MANIFEST_DIR"),
+//!     ..
+//! )` +
 //! `std::fs` at **runtime** — never `include_bytes!`, never a bare relative
 //! path, and never a skip-on-missing branch. A missing fixture is a hard
 //! `panic!`, not a silently-vacuous pass.
@@ -79,7 +82,7 @@ use broadcast_hls::{MasterPlaylist, MediaPlaylist, SignedDecimalSeconds};
 /// `fixtures/hls/`, resolved from this crate's own manifest dir — never a
 /// bare relative path (that depends on the caller's cwd).
 fn fixtures_hls_root() -> PathBuf {
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/hls"))
+    test_fixtures::path("hls")
 }
 
 /// Read one fixture file by its path relative to `fixtures/hls/`. Panics

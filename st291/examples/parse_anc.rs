@@ -10,8 +10,8 @@ use st291::AncDataPacket;
 
 fn main() {
     // Resolve relative to the crate so it runs from any cwd.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/st291/anc.bin");
-    let data = match fs::read(path) {
+    let path = test_fixtures::path("st291/anc.bin");
+    let data = match fs::read(&path) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("fixture not available ({e}); nothing to do");
@@ -21,7 +21,7 @@ fn main() {
 
     let pkt = AncDataPacket::parse(&data).unwrap();
 
-    println!("File: {path}");
+    println!("File: {}", path.display());
     println!("Size: {} bytes", data.len());
     println!("PTS: {} (90 kHz units)", pkt.pts);
     println!("PES_priority={}", pkt.pes_priority);

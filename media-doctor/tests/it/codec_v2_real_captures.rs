@@ -26,7 +26,7 @@ use media_doctor::{
 const NON_MISMATCH_RULE_IDS: &[&str] = &["avc-interlaced-content", "interlaced-content"];
 
 fn fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
+    test_fixtures::root()
 }
 
 /// Recursively collect every regular file under `dir`.

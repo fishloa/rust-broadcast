@@ -24,7 +24,6 @@
 #![cfg(feature = "std")]
 
 use std::fs;
-use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
@@ -38,16 +37,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::trickplay::derive_iframe_track;
 
 fn av_frag_fixture() -> Vec<u8> {
-    let path: PathBuf = [
-        env!("CARGO_MANIFEST_DIR"),
-        "tests",
-        "fixtures",
-        "mp4",
-        "cmaf",
-        "av_frag.mp4",
-    ]
-    .iter()
-    .collect();
+    let path = test_fixtures::path("transmux/mp4/cmaf/av_frag.mp4");
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 

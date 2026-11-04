@@ -84,10 +84,7 @@ fn extract_hvcc_body(file: &[u8]) -> Vec<u8> {
 /// level_idc=60, main tier (tier_flag=false).
 #[test]
 fn hevc_sps_decode_from_hvcc_fixture() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/hevc_frag.mp4"
-    );
+    let path = test_fixtures::path("transmux/hevc_frag.mp4");
     let file = std::fs::read(path).expect("fixture hevc_frag.mp4 must exist");
 
     // Extract hvcC body and parse the decoder config record.
@@ -146,10 +143,7 @@ fn hevc_sps_decode_from_hvcc_fixture() {
 /// accident or by a raw-passthrough implementation.
 #[test]
 fn hevc_sps_wrong_dimension_is_caught() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/hevc_frag.mp4"
-    );
+    let path = test_fixtures::path("transmux/hevc_frag.mp4");
     let file = std::fs::read(path).expect("fixture hevc_frag.mp4 must exist");
 
     let hvcc_body = extract_hvcc_body(&file);

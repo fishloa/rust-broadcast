@@ -11,8 +11,8 @@ const FLV_HEADER_PLUS_PREV: usize = 13;
 const TAG_HEADER: usize = 11;
 
 fn av_flv() -> Vec<u8> {
-    let path = format!("{}/../fixtures/flv/av.flv", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+    let path = test_fixtures::path("flv/av.flv");
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 /// `(offset, tag_type, data_size)` of every tag, walked by `DataSize`.

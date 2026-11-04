@@ -27,7 +27,6 @@
 //! that the pre-fix behaviour (no output at all / unbounded growth /
 //! everything in segment 0) trips them.
 
-use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Stage, Unpackage};
@@ -130,7 +129,7 @@ fn scte35_track(track_id: u32) -> TrackSpec {
 /// The real `hvcC` from `fixtures/ts/hevc/main.ts` — a fabricated one would not
 /// decode, and `build_init_segment` needs a genuine parameter set.
 fn real_hevc_config() -> (HEVCConfigurationBox, u16, u16) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/hevc/main.ts");
+    let path = test_fixtures::path("ts/hevc/main.ts");
     let ts = std::fs::read(&path).expect("hevc/main.ts fixture must exist");
     let ir = TsDemux::new().unpackage(&ts).expect("demux hevc fixture");
     for t in &ir.tracks {

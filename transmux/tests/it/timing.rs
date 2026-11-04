@@ -74,10 +74,7 @@ fn find_full_box<'a>(body: &'a [u8], four_cc: &[u8; 4]) -> &'a [u8] {
 
 #[test]
 fn stts_real_fixture_round_trip() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_aac_prog.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -106,10 +103,7 @@ fn stts_real_fixture_round_trip() {
 
 #[test]
 fn ctts_real_fixture_round_trip() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_aac_prog.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -144,10 +138,7 @@ fn ctts_real_fixture_round_trip() {
 
 #[test]
 fn elst_real_fixture_round_trip() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_aac_prog.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let trak = enter_chain(&data, &[b"moov", b"trak"]);
@@ -190,10 +181,7 @@ fn elst_real_fixture_round_trip() {
 
 #[test]
 fn elst_mutation_changes_bytes() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_aac_prog.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let trak = enter_chain(&data, &[b"moov", b"trak"]);
     let edts = find_full_box(trak, b"edts");
@@ -219,10 +207,7 @@ fn elst_mutation_changes_bytes() {
 
 #[test]
 fn sidx_real_fixture_round_trip() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_sidx.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_sidx.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     // Find sidx via box_iter
@@ -279,10 +264,7 @@ fn sidx_real_fixture_round_trip() {
 
 #[test]
 fn sidx_mutation_changes_bytes() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_sidx.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_sidx.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let mut parsed = None;

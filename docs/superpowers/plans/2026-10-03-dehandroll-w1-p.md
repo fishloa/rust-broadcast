@@ -50,7 +50,7 @@ git fetch -q origin
 git worktree add -b w1/p .worktree/w1-p origin/main
 cd .worktree/w1-p
 git -c protocol.file.allow=always submodule update -q --init --reference /Volumes/External/Projects/rust-broadcast/private private
-ln -s /Volumes/External/Projects/rust-broadcast/.test-streams .test-streams
+ln -s /Volumes/External/Projects/rust-broadcast/private fixtures private fixtures
 ln -s /Volumes/External/Projects/rust-broadcast/multimux/tests/assets/node_modules multimux/tests/assets/node_modules
 ```
 

@@ -52,7 +52,7 @@ fn find_box_recursive<'a>(data: &'a [u8], target: &[u8; 4]) -> Option<&'a [u8]> 
 
 #[test]
 fn stpp_parse_and_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/stpp.mp4");
+    let path = test_fixtures::path("mp4/stpp.mp4");
     let data = std::fs::read(path).expect("stpp.mp4 fixture must exist");
 
     // Navigate to the stsd box
@@ -113,7 +113,7 @@ fn stpp_parse_and_round_trip() {
 
 #[test]
 fn stpp_namespace_is_ttml() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/stpp.mp4");
+    let path = test_fixtures::path("mp4/stpp.mp4");
     let data = std::fs::read(path).expect("stpp.mp4 fixture must exist");
     let stsd_box = find_box_recursive(&data, b"stsd").expect("stsd");
     let stsd = SampleDescriptionBox::parse(stsd_box).unwrap();

@@ -22,7 +22,7 @@
 //!   §5 AC-3, §6 E-AC-3, §9 EXT-X-KEY, §10 IV derivation, §11 cipher details).
 //! - **ffmpeg `libavformat/hls_sample_aes.c`** — the CBC chaining the H.264 and
 //!   E-AC-3 fixtures pin (chained across a NAL's blocks, reset per NAL; reset
-//!   per E-AC-3 syncframe). See `tests/fixtures/ORACLES.md`.
+//!   per E-AC-3 syncframe). See `../fixtures/transmux/ORACLES.md`.
 //! - **RFC 8216 §4.3.2.4** — the `EXT-X-KEY` tag (`METHOD`/`URI`/`IV`/
 //!   `KEYFORMAT`/`KEYFORMATVERSIONS`).
 //! - **NIST SP 800-38A** — AES-128-CBC.
@@ -448,7 +448,7 @@ pub fn ac3_decrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]
 /// each, with the **IV reset at every syncframe**.
 ///
 /// The reset is what the independent oracle shows
-/// (`tests/fixtures/sample_aes_eac3/`): ffmpeg decodes the reset reference 9/9
+/// (`../fixtures/transmux/sample_aes_eac3/`): ffmpeg decodes the reset reference 9/9
 /// audio frames identical to clear but the carried-IV variant only 1/9, and
 /// Bento4's `mp4hls` output is byte-identical to the reset reference. See that
 /// fixture's `README.md` / `proof.log`.
@@ -889,20 +889,19 @@ mod tests {
     }
 
     /// Audit r05-W2, corrected by the independent oracle: our E-AC-3 encryptor
-    /// must reproduce `tests/fixtures/sample_aes_eac3/enc_reset.ec3`
+    /// must reproduce `../fixtures/transmux/sample_aes_eac3/enc_reset.ec3`
     /// byte-for-byte (IV reset at **every** syncframe), and must NOT reproduce
     /// `enc_carried.ec3`. ffmpeg decodes the reset file 9/9 audio frames
     /// identical to clear and the carried one 1/9; Bento4's encryptor is
     /// byte-identical to the reset reference. See that fixture's `proof.log`.
     #[test]
     fn eac3_reset_per_syncframe_matches_oracle() {
-        let dir = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/sample_aes_eac3"
-        );
         let read = |name: &str| {
-            std::fs::read(alloc::format!("{dir}/{name}"))
-                .unwrap_or_else(|e| panic!("read {dir}/{name}: {e}"))
+            std::fs::read(test_fixtures::path(&format!(
+                "transmux/sample_aes_eac3/{}",
+                name
+            )))
+            .unwrap_or_else(|e| panic!("read {name}: {e}"))
         };
         let clear = read("clear.ec3");
         let want_reset = read("enc_reset.ec3");
@@ -952,12 +951,12 @@ mod tests {
         assert!(eac3_decrypt_frame(&NIST_KEY, &NIST_IV, &garbage).is_err());
 
         // A truncated trailing syncframe must also be rejected, not left clear.
-        let dir = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/sample_aes_eac3"
-        );
-        let Ok(clear) = std::fs::read(alloc::format!("{dir}/clear.ec3")) else {
-            panic!("eac3 fixture missing at {dir}/clear.ec3");
+        let Ok(clear) = std::fs::read(test_fixtures::path("transmux/sample_aes_eac3/clear.ec3"))
+        else {
+            panic!(
+                "eac3 fixture missing at {}",
+                test_fixtures::path("transmux/sample_aes_eac3/clear.ec3").display()
+            );
         };
         // Chop 100 bytes off the end: the last syncframe no longer completes.
         let truncated = &clear[..clear.len() - 100];
@@ -986,11 +985,8 @@ mod tests {
     /// passing syncframes one at a time already got.
     #[test]
     fn eac3_single_syncframe_matches_ac3_form() {
-        let dir = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/sample_aes_eac3"
-        );
-        let Ok(clear) = std::fs::read(alloc::format!("{dir}/clear.ec3")) else {
+        let Ok(clear) = std::fs::read(test_fixtures::path("transmux/sample_aes_eac3/clear.ec3"))
+        else {
             panic!("eac3 fixture missing");
         };
         let ranges = crate::ac3::split_eac3_syncframe_ranges(&clear);

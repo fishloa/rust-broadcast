@@ -19,7 +19,7 @@ use transmux::{TsDemux, TsMux};
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
 fn load_ts() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     std::fs::read(path).expect("h264_aac.ts fixture must exist")
 }
 
@@ -368,7 +368,7 @@ fn mux_noaud_fixture(fixture: &str) -> (Vec<Vec<u8>>, u16) {
 }
 
 fn alloc_path(fixture: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/")).join(fixture)
+    test_fixtures::path("mp4").join(fixture)
 }
 
 /// Every AVC access unit begins with the canonical `00 00 00 01 09 F0` AUD.
@@ -563,11 +563,7 @@ fn packet_pcr_90k(pkt: &[u8]) -> Option<u64> {
 /// decode time stretched `spacing_ticks` apart so the emitted PCR cadence is
 /// driven by the test rather than the fixture's own frame rate.
 fn ac3_media(spacing_ticks: i64) -> Media {
-    let ts = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/dolby/ac3.ts"
-    ))
-    .expect("ac3 fixture must exist");
+    let ts = std::fs::read(test_fixtures::path("ts/dolby/ac3.ts")).expect("ac3 fixture must exist");
     let mut ir = TsDemux::new().unpackage(&ts).expect("demux AC-3 fixture");
     let t = ir.tracks.get_mut(0).expect("one AC-3 track");
     let scale = t.spec.timescale.max(1) as i64;
@@ -701,11 +697,8 @@ fn pcr_only_packets_do_not_advance_cc() {
 fn too_many_elementary_streams_is_refused() {
     use transmux::media::Track;
 
-    let fixture = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/h264_aac.ts"
-    ))
-    .expect("h264_aac.ts fixture must exist");
+    let fixture = std::fs::read(test_fixtures::path("ts/h264_aac.ts"))
+        .expect("h264_aac.ts fixture must exist");
     let ir = TsDemux::new().unpackage(&fixture).expect("demux fixture");
     let video = ir
         .tracks

@@ -50,7 +50,7 @@ fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
                     | "node_modules"
                     | ".delegate"
                     | "private"
-                    | ".test-streams"
+                    | "private fixtures"
             ) {
                 continue;
             }
@@ -62,7 +62,7 @@ fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// 188-stride `.ts` files: the committed fixtures, plus the whole real-capture
-/// corpus (`private/fixtures/**` and the fetched `.test-streams/`) when
+/// corpus (`private/fixtures/**` and the fetched `private fixtures/`) when
 /// `include_archive`.
 fn ts_files(include_archive: bool) -> Vec<(PathBuf, Vec<u8>)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -195,7 +195,7 @@ fn every_pes_header_in_every_committed_ts_round_trips() {
 /// `tsduck-test/input/test-002.ts`, and real `ES_rate` marker bits of `0`
 /// (the same stream: `ES_rate` bytes `25 0D 37`, leading marker `0`).
 #[test]
-#[ignore = "slow: scans the whole real-capture corpus (private/fixtures + .test-streams)"]
+#[ignore = "slow: scans the whole real-capture corpus (private/fixtures)"]
 fn full_archive_pes_headers_round_trip() {
     let t = std::time::Instant::now();
     let r = scan(true);
@@ -222,9 +222,8 @@ fn full_archive_pes_headers_round_trip() {
 /// Real evidence on the PES-extension reserved bits (see module docs).
 #[test]
 fn real_pes_extension_reserved_bits_are_preserved() {
-    let ts = fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mpeg-pes/dirac-vc2-extended-stream-id.ts"
+    let ts = fs::read(test_fixtures::path(
+        "mpeg-pes/dirac-vc2-extended-stream-id.ts",
     ))
     .unwrap();
     let pkts = pes_packets(&ts);

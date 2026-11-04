@@ -19,10 +19,7 @@ const TS_PACKET_SIZE: usize = 188;
 const RS_PARITY_LEN: usize = 16;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("m6-single.ts")
+    test_fixtures::path("ts/m6-single.ts")
 }
 
 fn pid_of(packet: &[u8]) -> Pid {

@@ -36,7 +36,7 @@ const SSRC: u32 = 0x1234_5678;
 // ── Step 0 plumbing, copied verbatim from tests/it/rtp.rs ──────────────────────
 
 fn demux_fixture() -> Media {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let data = std::fs::read(path).expect("h264_aac.ts fixture must exist");
     let mut demux = TsDemux::new();
     demux.unpackage(&data[..]).expect("demux TS → IR")

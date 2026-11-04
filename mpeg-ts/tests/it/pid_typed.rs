@@ -90,7 +90,7 @@ fn verify_stream(name: &str, data: &[u8]) -> usize {
 
 #[test]
 fn every_committed_ts_fixture_pid_matches_the_wire() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
+    let root = test_fixtures::root();
     let mut files = Vec::new();
     collect(&root, "ts", &mut files);
     assert!(
@@ -112,7 +112,7 @@ fn every_committed_ts_fixture_pid_matches_the_wire() {
     assert!(total > 10_000, "only {total} packets verified");
 }
 
-/// The real-capture corpus (`private/fixtures/**` + the fetched `.test-streams`;
+/// The real-capture corpus (`private/fixtures/**` + the fetched `private fixtures`;
 /// skips loudly when the private repo is not checked out).
 #[test]
 #[ignore = "slow: scans the whole real-capture corpus; run with --ignored"]

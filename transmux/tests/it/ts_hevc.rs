@@ -23,7 +23,7 @@ use transmux::validate::{Severity, validate_init_segment, validate_media_segment
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/hevc")
+    test_fixtures::path("ts/hevc")
 }
 
 fn load_ts(name: &str) -> Vec<u8> {

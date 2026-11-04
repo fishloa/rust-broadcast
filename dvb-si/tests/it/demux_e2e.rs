@@ -47,13 +47,8 @@ fn read_fixture(filename: &str) -> Vec<u8> {
     } else {
         "dvb-si"
     };
-    let path = format!(
-        "{}/../fixtures/{}/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        subdir,
-        filename
-    );
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    let path = test_fixtures::path(&format!("{subdir}/{filename}"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// Feed every aligned 188-byte packet in `data` through `demux`.

@@ -100,7 +100,7 @@ fn split_adts_frames(payload: &[u8]) -> Vec<&[u8]> {
 
 #[test]
 fn ts_to_cmaf_end_to_end() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let ts_data = std::fs::read(path).expect("fixture file must exist");
     assert_eq!(
         ts_data.len() % 188,

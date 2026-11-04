@@ -15,12 +15,10 @@
 //! through would be a compile-time failure, not a silent pass.
 
 use container_probe::Probe;
-use std::fs;
 
 /// Join a workspace-relative fixture path to an absolute path from this crate.
 fn fixture(rel: &str) -> Vec<u8> {
-    fs::read(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-        .unwrap_or_else(|e| panic!("failed to read fixture {rel}: {e}"))
+    test_fixtures::read(rel.trim_start_matches("fixtures/"))
 }
 
 /// A deterministic pseudo-random bytes generator (xorshift64), seeded here so

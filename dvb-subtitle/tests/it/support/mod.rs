@@ -12,11 +12,8 @@ const PRIVATE_STREAM_1: StreamId = StreamId(0xBD);
 const DATA_IDENTIFIER_DVB_SUBTITLE: u8 = 0x20;
 
 pub fn data_fields(max_seeds: usize) -> Vec<Vec<u8>> {
-    let ts = fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/m6-single.ts"
-    ))
-    .expect("fixture m6-single.ts must be present");
+    let ts = fs::read(test_fixtures::path("ts/m6-single.ts"))
+        .expect("fixture m6-single.ts must be present");
     let mut asm = PesAssembler::new();
     let mut pes = Vec::new();
     for p in ts.chunks(PKT) {

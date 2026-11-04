@@ -85,12 +85,9 @@ fn fixture_path() -> PathBuf {
 }
 
 /// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
-/// H.264+AAC) -- see `tests/fixtures/PROVENANCE.md`.
+/// H.264+AAC) -- see `../fixtures/multimux/PROVENANCE.md`.
 fn rtmp_fixture_path() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/rtmp-obs-publish.bin"
-    ))
+    test_fixtures::path("multimux/rtmp-obs-publish.bin")
 }
 
 /// Reserves a free TCP port, then immediately releases it -- the same

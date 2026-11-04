@@ -43,13 +43,8 @@ fn fixture(name: &str) -> Vec<u8> {
     } else {
         "mpeg-ts"
     };
-    fs::read(format!(
-        "{}/../fixtures/{}/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        subdir,
-        name
-    ))
-    .unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
+    fs::read(test_fixtures::path(&format!("{subdir}/{name}")))
+        .unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
 }
 
 /// The original adaptation-field body bytes of a TS packet (the bytes after the

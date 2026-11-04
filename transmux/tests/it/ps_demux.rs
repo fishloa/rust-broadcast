@@ -25,7 +25,7 @@ use transmux::pipeline::CodecConfig;
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
 fn ps_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ps")
+    test_fixtures::path("ps")
 }
 
 fn load_ps() -> Vec<u8> {
@@ -36,8 +36,7 @@ fn load_ps() -> Vec<u8> {
 }
 
 fn ref_mp4() -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/ts/demux-oracle/h264_aac.ref.mp4");
+    let path = test_fixtures::path("ts/demux-oracle/h264_aac.ref.mp4");
     std::fs::read(&path).expect("h264_aac.ref.mp4 oracle must exist")
 }
 

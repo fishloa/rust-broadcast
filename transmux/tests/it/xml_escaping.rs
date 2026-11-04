@@ -3,8 +3,6 @@
 //! (exact output asserted) and must re-parse to the original string.
 #![cfg(feature = "std")]
 
-use std::path::PathBuf;
-
 use broadcast_common::{Package, Unpackage};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
@@ -21,7 +19,7 @@ const SPECIALS: &str = "a&b<c>d\"e'f";
 const SPECIALS_ATTR: &str = "a&amp;b&lt;c&gt;d&quot;e&apos;f";
 
 fn demux_media() -> transmux::media::Media {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let ts = std::fs::read(path).expect("h264_aac.ts fixture must exist");
     TsDemux::new()
         .unpackage(&ts[..])

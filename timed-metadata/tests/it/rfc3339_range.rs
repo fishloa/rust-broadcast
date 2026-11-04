@@ -60,11 +60,8 @@ fn media_time_arithmetic_saturates_instead_of_wrapping_or_panicking() {
 
 #[test]
 fn the_converter_errors_instead_of_emitting_an_unrepresentable_start_date() {
-    let line = fs::read_to_string(format!(
-        "{}/../fixtures/timed-metadata/daterange_2002.txt",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .expect("fixture");
+    let line = fs::read_to_string(test_fixtures::path("timed-metadata/daterange_2002.txt"))
+        .expect("fixture");
     let dr = DateRange::parse_tag_line(line.trim()).unwrap();
     let raw = dr.scte35.unwrap().raw;
     let section = SpliceInfoSection::parse(&raw).unwrap();

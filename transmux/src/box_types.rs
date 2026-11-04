@@ -1196,10 +1196,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_known_boxes() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/transmux/h264_aac_frag.mp4"
-        );
+        let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
         let data = std::fs::read(path).expect("fixture file must exist");
         let original_len = data.len();
 
@@ -1437,8 +1434,7 @@ mod largesize_tests {
     }
 
     fn fixture(name: &str) -> Vec<u8> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/transmux/");
-        std::fs::read([path, name].concat()).expect("fixture must exist")
+        test_fixtures::read(&format!("transmux/{name}"))
     }
 
     fn top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
@@ -1531,8 +1527,9 @@ mod largesize_tests {
     }
 
     fn read_path(rel: &str) -> Vec<u8> {
-        let path = [env!("CARGO_MANIFEST_DIR"), "/", rel].concat();
-        std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+        let rel = rel.trim_start_matches("../fixtures/");
+        let path = test_fixtures::path(rel);
+        std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
     }
 
     /// Every committed fixture's `moov` (AVC/HEVC/AAC entries, CENC `sinf`/
@@ -1548,12 +1545,12 @@ mod largesize_tests {
             "../fixtures/transmux/h264_cenc.mp4",
             "../fixtures/transmux/h264_cbcs.mp4",
             "../fixtures/transmux/hevc_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_subtitle_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_aac_subtitle_frag.mp4",
-            "tests/fixtures/mp4/cenc_boxes/aac_cenc.mp4",
-            "tests/fixtures/mp4/cenc_boxes/pcm_clear.mp4",
-            "tests/fixtures/mp4/cenc_boxes/v1_mvhd.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_frag.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_aac_subtitle_frag.mp4",
+            "../fixtures/transmux/mp4/cenc_boxes/aac_cenc.mp4",
+            "../fixtures/transmux/mp4/cenc_boxes/pcm_clear.mp4",
+            "../fixtures/transmux/mp4/cenc_boxes/v1_mvhd.mp4",
         ] {
             let data = read_path(rel);
             let Some(orig) = find_top_box(&data, b"moov") else {
@@ -1591,8 +1588,8 @@ mod largesize_tests {
             "../fixtures/transmux/h264_cenc.mp4",
             "../fixtures/transmux/h264_cbcs.mp4",
             "../fixtures/transmux/hevc_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_subtitle_frag.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_frag.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4",
         ] {
             let data = read_path(rel);
             let Some(orig) = find_top_box(&data, b"moof") else {

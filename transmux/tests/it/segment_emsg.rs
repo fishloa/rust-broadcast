@@ -29,10 +29,7 @@ const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
 /// Load the committed SCTE 35 `emsg` v0 fixture and return the raw `emsg` box
 /// bytes plus the `message_data` slice within it (the `splice_info_section`).
 fn scte35_fixture_emsg_bytes() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/shared/scte35_emsg_v0.bin"
-    );
+    let path = test_fixtures::path("shared/scte35_emsg_v0.bin");
     std::fs::read(path).expect("fixtures/shared/scte35_emsg_v0.bin must be committed")
 }
 

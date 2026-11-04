@@ -1,11 +1,11 @@
 //! Fixture-backed tests: parse AIT, DSM-CC, and NIT sections from captured TS.
 //!
-//! `tests/fixtures/m6-single.ts` contains:
+//! `../fixtures/ts/m6-single.ts` contains:
 //! - AIT (table_id 0x74) on PID 0x00AA (3 sections)
 //! - DSM-CC (table_id 0x3B, 0x3C) on PID 0x00AB (3 sections total)
 //!
 //! NIT fixtures (table_id 0x40/0x41 on PID 0x0010):
-//! - `tests/fixtures/tnt-5w-12732v-isi6-10s.ts` — 2 NIT sections (primary fixture)
+//! - `../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` — 2 NIT sections (primary fixture)
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};
@@ -17,7 +17,7 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Read a TS file and return all reassembled sections for a given PID.
 fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {
-    let data = std::fs::read(path).expect("read fixture");
+    let data = std::fs::read(test_fixtures::path(path)).expect("read fixture");
     let mut reassembler = SectionReassembler::default();
     let mut sections = Vec::new();
 
@@ -44,8 +44,7 @@ fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {
 
 #[test]
 fn fixture_m6_ait_sections_parse() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
-    let sections = extract_sections_for_pid(path, 0x00AA);
+    let sections = extract_sections_for_pid("ts/m6-single.ts", 0x00AA);
 
     assert!(
         !sections.is_empty(),
@@ -70,8 +69,7 @@ fn fixture_m6_ait_sections_parse() {
 
 #[test]
 fn fixture_m6_ait_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
-    let sections = extract_sections_for_pid(path, 0x00AA);
+    let sections = extract_sections_for_pid("ts/m6-single.ts", 0x00AA);
 
     for sec in &sections {
         if sec.is_empty() || sec[0] != 0x74 {
@@ -87,8 +85,7 @@ fn fixture_m6_ait_round_trip() {
 
 #[test]
 fn fixture_m6_dsmcc_sections_parse() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
-    let sections = extract_sections_for_pid(path, 0x00AB);
+    let sections = extract_sections_for_pid("ts/m6-single.ts", 0x00AB);
 
     assert!(
         sections.len() >= 2,
@@ -118,8 +115,7 @@ fn fixture_m6_dsmcc_sections_parse() {
 
 #[test]
 fn fixture_m6_dsmcc_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
-    let sections = extract_sections_for_pid(path, 0x00AB);
+    let sections = extract_sections_for_pid("ts/m6-single.ts", 0x00AB);
 
     for sec in &sections {
         if sec.is_empty() {
@@ -139,11 +135,7 @@ fn fixture_m6_dsmcc_round_trip() {
 
 #[test]
 fn fixture_tnt_isi6_nit_sections_parse() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
-    );
-    let sections = extract_sections_for_pid(path, 0x0010);
+    let sections = extract_sections_for_pid("dvb-si/tnt-5w-12732v-isi6-10s.ts", 0x0010);
 
     assert!(
         !sections.is_empty(),
@@ -172,11 +164,7 @@ fn fixture_tnt_isi6_nit_sections_parse() {
 
 #[test]
 fn fixture_tnt_isi6_nit_round_trip() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
-    );
-    let sections = extract_sections_for_pid(path, 0x0010);
+    let sections = extract_sections_for_pid("dvb-si/tnt-5w-12732v-isi6-10s.ts", 0x0010);
 
     let mut round_tripped = 0;
     for sec in &sections {

@@ -203,12 +203,9 @@ fn abridged_spec_fixtures_do_not_parse_because_the_rfc_elides_them() {
 // ---------------------------------------------------------------------------
 
 fn read_handbuilt_fixture(name: &str) -> String {
-    let path = format!(
-        "{}/../fixtures/hls/handbuilt/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        name
-    );
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read handbuilt fixture {path}: {e}"))
+    let path = test_fixtures::path(&format!("hls/handbuilt/{}", name));
+    fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read handbuilt fixture {}: {e}", path.display()))
 }
 
 /// `(fixture, expected computed_version, the MANIFEST's stated reason)` —

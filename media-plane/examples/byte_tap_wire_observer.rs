@@ -20,7 +20,7 @@
 use bytes::Bytes;
 use media_plane::{ByteTap, TapItem, TapPoint};
 
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+const FIXTURE: &str = "ts/h264_aac.ts";
 const TS_PACKET_SIZE: usize = 188;
 /// Deliberately small next to a real capture's packet count, so this run
 /// exercises the tap's eviction/`Lagged` path on genuine data, not just the
@@ -33,7 +33,8 @@ const CONSUMER_POLL_STRIDE: usize = 64;
 use broadcast_common::stage::Timestamp;
 
 fn main() {
-    let bytes = std::fs::read(FIXTURE).expect("read the committed real-capture TS fixture");
+    let bytes = std::fs::read(test_fixtures::path(FIXTURE))
+        .expect("read the committed real-capture TS fixture");
     assert_eq!(
         bytes.len() % TS_PACKET_SIZE,
         0,

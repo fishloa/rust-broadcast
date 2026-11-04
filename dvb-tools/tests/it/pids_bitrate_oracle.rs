@@ -9,13 +9,13 @@
 //! and reports "n/a" (see the pre-fix run recorded below) instead of an
 //! estimate.
 //!
-//! `dvb-tools/tests/fixtures/france-tnt-pcr-wrap.ts` isolates PID 0x00DC
+//! `dvb-tools/ts/france-tnt-pcr-wrap.ts` isolates PID 0x00DC
 //! alone (`tsp -P filter --pid 0x00DC`, so no *other* PCR PID can mask the
 //! bug by acting as a fallback candidate) from the same capture, then
 //! shifts its PCR values (via TSDuck's `pcredit --add-pcr`, which performs
 //! correct modular PCR arithmetic) so they cross the 27 MHz PCR wrap
 //! (`2^33 * 300` ticks, ISO/IEC 13818-1 §2.4.2.2/§2.4.3.5, ~26.5h) partway
-//! through the file — see `tests/fixtures/README.md` for the exact
+//! through the file — see `ts/README.md` for the exact
 //! commands. Before the wrap-unwrap fix, comparing raw (wrapped)
 //! first/last 27 MHz values on this fixture makes `last_v > first_v` false
 //! and `estimate_bitrate_mbps` reports "n/a" even though a single PCR PID
@@ -40,7 +40,10 @@
 use std::process::{Command, Stdio};
 
 fn fixture(rel: &str) -> String {
-    format!("{}{}", env!("CARGO_MANIFEST_DIR"), rel)
+    format!(
+        "{}",
+        test_fixtures::path(rel.trim_start_matches("/").trim_start_matches("fixtures/")).display()
+    )
 }
 
 fn run(args: &[&str]) -> (bool, String) {
@@ -99,12 +102,12 @@ fn assert_bitrate_matches_oracle(path: &str, oracle_mbps: f64) {
 
 #[test]
 fn pids_bitrate_matches_tsanalyze_oracle_within_1_percent() {
-    let path = fixture("/../fixtures/france-tnt-pcr.ts");
+    let path = fixture("/france-tnt-pcr.ts");
     assert_bitrate_matches_oracle(&path, ORACLE_BPS / 1_000_000.0);
 }
 
 #[test]
 fn pids_bitrate_across_pcr_wrap_matches_tsanalyze_oracle_within_1_percent() {
-    let path = fixture("/tests/fixtures/france-tnt-pcr-wrap.ts");
+    let path = fixture("/ts/france-tnt-pcr-wrap.ts");
     assert_bitrate_matches_oracle(&path, WRAP_FIXTURE_ORACLE_BPS / 1_000_000.0);
 }

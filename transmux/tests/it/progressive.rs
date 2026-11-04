@@ -12,7 +12,6 @@
 //! (below) — no hardcoded offsets — so the tables must be internally consistent
 //! with the real mdat layout for the assertions to hold.
 
-use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
@@ -242,10 +241,9 @@ fn resolve_samples(file: &[u8], trak: Loc) -> Vec<Vec<u8>> {
 // ---------------------------------------------------------------------------
 
 fn fixture(rel: &[&str]) -> Vec<u8> {
-    let mut p: PathBuf = [env!("CARGO_MANIFEST_DIR"), ".."].iter().collect();
-    for seg in rel {
-        p.push(seg);
-    }
+    let rel = rel.join("/");
+    let rel = rel.trim_start_matches("fixtures/").to_string();
+    let p = test_fixtures::path(&rel);
     std::fs::read(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
 }
 
@@ -505,7 +503,7 @@ fn faststart_false_same_samples_different_order() {
 // ---------------------------------------------------------------------------
 
 /// A movie timescale large enough (2 GHz, as in
-/// `tests/fixtures/mp4/cenc_boxes/v1_mvhd.mp4`) that a few minutes of media
+/// `transmux/mp4/cenc_boxes/v1_mvhd.mp4`) that a few minutes of media
 /// overflows `u32::MAX` ticks — the real-world trigger for the version-1
 /// `mvhd`/`tkhd`/`mdhd` layouts.
 const HUGE_TIMESCALE: u32 = 2_000_000_000;

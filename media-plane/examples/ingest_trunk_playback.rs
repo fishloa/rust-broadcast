@@ -26,7 +26,7 @@ use media_plane::{
 };
 use transmux::{DemuxEvent, StreamingTsDemux};
 
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+const FIXTURE: &str = "ts/h264_aac.ts";
 const TS_PACKET_SIZE: usize = 188;
 
 /// Adapts [`StreamingTsDemux`]'s [`DemuxEvent`] stream into the
@@ -118,7 +118,8 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn main() {
-    let ts_bytes = std::fs::read(FIXTURE).expect("read the committed real-capture TS fixture");
+    let ts_bytes = std::fs::read(test_fixtures::path(FIXTURE))
+        .expect("read the committed real-capture TS fixture");
     println!(
         "ingest_trunk_playback: read {} bytes from {FIXTURE}",
         ts_bytes.len()

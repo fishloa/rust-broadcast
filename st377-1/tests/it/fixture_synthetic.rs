@@ -1,4 +1,4 @@
-//! Parses `tests/fixtures/synthetic_minimal.mxf` — a spec-derived synthetic
+//! Parses `../fixtures/mxf/st377-1/synthetic_minimal.mxf` — a spec-derived synthetic
 //! MXF file (no real captured `.mxf` file exists anywhere in this
 //! workspace; see `private/specs-verified/smpte/st377-1/st377-1.md`'s "Fixture provenance" section for the
 //! full justification) assembled by a standalone Python script
@@ -21,11 +21,7 @@ use st377_1::{
 };
 
 fn fixture_bytes() -> Vec<u8> {
-    std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/synthetic_minimal.mxf"
-    ))
-    .expect("read tests/fixtures/synthetic_minimal.mxf")
+    test_fixtures::read("mxf/st377-1/synthetic_minimal.mxf")
 }
 
 /// Reconstruct the exact KLV bytes for one already-split [`KlvItem`], so a

@@ -28,11 +28,8 @@ use ts_fix::discontinuity::detect_pcr_discontinuities;
 use ts_fix::{PcrRestamp, TsFix};
 
 const PKT: usize = 188;
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/ts/france-pcr-discontinuity.ts"
-);
-const CLEAN_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+const FIXTURE: &str = "ts/france-pcr-discontinuity.ts";
+const CLEAN_FIXTURE: &str = "ts/h264_aac.ts";
 
 /// Independently-determined offset of the fixture's only PCR discontinuity
 /// (documented in the module doc above).
@@ -44,7 +41,7 @@ const AF_FLAGS_OFFSET: usize = 5;
 const AF_DISCONTINUITY: u8 = 0x80;
 
 fn load(path: &str) -> Vec<u8> {
-    std::fs::read(path).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
+    std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
 }
 
 fn pid(p: &[u8]) -> Pid {

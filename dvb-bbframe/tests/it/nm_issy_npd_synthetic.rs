@@ -25,7 +25,7 @@ use dvb_bbframe::packet::{CarryOverExtractor, NM_UP_SIZE, TS_SYNC_BYTE, nm_strid
 const STRIDE: usize = NM_UP_SIZE + 2 + 1;
 
 fn real_up_payload() -> [u8; NM_UP_SIZE] {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/scte35-real.ts");
+    let path = test_fixtures::path("ts/scte35-real.ts");
     let bytes = fs::read(path).expect("fixtures/ts/scte35-real.ts must be present");
     assert_eq!(bytes.len(), NM_UP_SIZE, "fixture is exactly one TS packet");
     assert_eq!(bytes[0], TS_SYNC_BYTE);

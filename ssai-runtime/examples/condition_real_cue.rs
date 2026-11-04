@@ -21,10 +21,7 @@ use ssai_runtime::splice::condition_splice_point;
 use std::fs;
 
 fn main() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/scte35-ssai/emsg_splice_insert.bin"
-    );
+    let path = test_fixtures::path("scte35-ssai/emsg_splice_insert.bin");
     let emsg_bytes = fs::read(path).expect("read real emsg fixture (see PROVENANCE.md)");
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     assert!(emsg.is_scte35(), "fixture must carry a SCTE-35 emsg");

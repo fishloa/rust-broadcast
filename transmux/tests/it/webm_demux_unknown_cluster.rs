@@ -29,14 +29,8 @@ use broadcast_common::Package;
 use transmux::webm_demux::WebmDemux;
 use transmux::{CmafMux, Media, parse_box};
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/webm/vp9_opus.webm"
-);
-const ORACLE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/webm/vp9_opus.packets.csv"
-);
+const FIXTURE: &str = "webm/vp9_opus.webm";
+const ORACLE: &str = "webm/vp9_opus.packets.csv";
 
 const CLUSTER_ID: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
 const SEGMENT_ID: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
@@ -170,7 +164,7 @@ struct OracleRow {
 }
 
 fn load_oracle() -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(ORACLE).expect("read oracle csv");
+    let text = std::fs::read_to_string(test_fixtures::path(ORACLE)).expect("read oracle csv");
     text.lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         .map(|line| {
@@ -193,7 +187,7 @@ fn load_oracle() -> Vec<OracleRow> {
 /// (see `webm_demux.rs`'s oracle) would demux.
 #[test]
 fn unknown_size_cluster_does_not_swallow_the_next_cluster() {
-    let original = std::fs::read(FIXTURE).expect("read webm fixture");
+    let original = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let rebuilt = split_into_two_clusters(&original);
 
     // Sanity: the rebuild really did produce two Cluster occurrences.
@@ -250,7 +244,7 @@ fn unknown_size_cluster_does_not_swallow_the_next_cluster() {
 /// unknown-size marker where the original had a real size).
 #[test]
 fn rebuild_helper_actually_changes_the_size_field() {
-    let original = std::fs::read(FIXTURE).expect("read webm fixture");
+    let original = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
     let rebuilt = split_into_two_clusters(&original);
     assert_ne!(
         original.len(),

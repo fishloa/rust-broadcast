@@ -3,8 +3,8 @@
 //! API (mirrors `tests/it/ingest_fixture.rs`, but as a runnable example rather
 //! than an assertion).
 //!
-//! Reads `tests/fixtures/obs-publish.bin` (a real `ffmpeg -f flv` publish,
-//! see `tests/fixtures/PROVENANCE.md`) via `std::fs`, feeds every byte to
+//! Reads `../fixtures/rtmp/obs-publish.bin` (a real `ffmpeg -f flv` publish,
+//! see `../fixtures/rtmp/PROVENANCE.md`) via `std::fs`, feeds every byte to
 //! [`ServerSession::handle_data`], concatenates each [`ServerEvent::Media`]
 //! tag in arrival order, and writes the resulting FLV byte stream to stdout.
 //! A one-line summary per event (Connected/Publish/Media size/Eof) goes to
@@ -17,13 +17,10 @@
 use rtmp_runtime::server::{ServerEvent, ServerSession};
 use std::io::Write;
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/obs-publish.bin"
-);
+const FIXTURE: &str = "rtmp/obs-publish.bin";
 
 fn main() -> std::io::Result<()> {
-    let input = std::fs::read(FIXTURE)?;
+    let input = std::fs::read(test_fixtures::path(FIXTURE))?;
 
     let mut session = ServerSession::with_defaults();
     let (_out, events) = session

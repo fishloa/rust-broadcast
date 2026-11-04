@@ -15,8 +15,6 @@
 //! emitted config serializes via both `to_bytes()` and `try_to_bytes()`, and
 //! the full event sequence is chunk-size invariant.
 
-use std::path::PathBuf;
-
 use broadcast_common::{Serialize, Unpackage};
 use transmux::{CodecConfig, DemuxEvent, StreamingTsDemux, TsDemux};
 
@@ -27,9 +25,7 @@ const TS_HEADER_SIZE: usize = 4;
 const KEEP_AFTER_PES_START: usize = 32;
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(rel);
+    let path = test_fixtures::root().join("..").join(rel);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
@@ -191,9 +187,9 @@ const FIXTURES: &[&str] = &[
     "fixtures/ts/france2.ts",
     "fixtures/ts/m6-single.ts",
     "fixtures/ts/h264/high_1080_cropped.ts",
-    "transmux/tests/fixtures/ts/h264-two-resolutions.ts",
-    "transmux/tests/fixtures/sample_aes_eac3/clear.ts",
-    "transmux/tests/fixtures/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
+    "fixtures/transmux/ts/h264-two-resolutions.ts",
+    "fixtures/transmux/sample_aes_eac3/clear.ts",
+    "fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
 ];
 
 /// The config-validity check needs whole-length damage: the over-long

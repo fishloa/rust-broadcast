@@ -6,7 +6,7 @@
 //!
 //! `tests/it/spec_vectors.rs` notes this crate had no real captured RTCP traffic
 //! to draw on; this file closes that gap with one captured from a real
-//! Chromium `RTCPeerConnection` (see `tests/fixtures/README.md` for exact
+//! Chromium `RTCPeerConnection` (see `../fixtures/rtcp/README.md` for exact
 //! provenance) rather than another hand-built or spec-derived vector — this
 //! specific bug (rejecting on PT 205/206/207) can only be demonstrated by
 //! bytes a real peer actually sends, since a spec-derived vector risks
@@ -15,13 +15,14 @@
 use broadcast_common::{Parse, Serialize};
 use rtcp_packet::{CompoundPacket, RtcpPacket};
 
-const FIXTURE: &[u8] = include_bytes!("../fixtures/chrome_rr_pli_remb.bin");
+static FIXTURE: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("rtcp/chrome_rr_pli_remb.bin"));
 
 #[test]
 fn real_chrome_compound_parses_all_three_packets() {
-    assert_eq!(FIXTURE.len(), 68);
+    assert_eq!(FIXTURE.as_slice().len(), 68);
 
-    let compound = CompoundPacket::parse(FIXTURE)
+    let compound = CompoundPacket::parse(FIXTURE.as_slice())
         .expect("a real Chromium RR+PLI+REMB compound packet must parse");
     assert_eq!(compound.packets.len(), 3);
 
@@ -79,11 +80,12 @@ fn real_chrome_compound_parses_all_three_packets() {
 
 #[test]
 fn real_chrome_compound_round_trips_byte_identical() {
-    let compound = CompoundPacket::parse(FIXTURE).unwrap();
+    let compound = CompoundPacket::parse(FIXTURE.as_slice()).unwrap();
     let mut out = vec![0u8; compound.serialized_len()];
     compound.serialize_into(&mut out).unwrap();
     assert_eq!(
-        out, FIXTURE,
+        out,
+        FIXTURE.as_slice(),
         "byte-identical to the real captured Chromium datagram"
     );
 }
@@ -93,7 +95,7 @@ fn real_chrome_compound_round_trips_byte_identical() {
 /// with no leading SR/RR must parse and round-trip byte-exactly (#1071).
 #[test]
 fn real_chrome_lone_pli_reduced_size_parses_and_round_trips() {
-    let pli = &FIXTURE[32..44];
+    let pli = &FIXTURE.as_slice()[32..44];
     assert_eq!(&pli[..2], &[0x81, 206], "V=2 FMT=1 PT=206 (PSFB PLI)");
 
     let compound = CompoundPacket::parse(pli).expect("reduced-size lone PLI must parse");

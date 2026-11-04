@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
+    let path = test_fixtures::path("ts/m6-single.ts");
     let data = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => {

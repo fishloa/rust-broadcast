@@ -1143,7 +1143,7 @@ mod tests {
     /// sidx this type serialized was 2 bytes short of a conformant one.
     #[test]
     fn sidx_real_fixture_oracle() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/sidx_real.bin");
+        let path = test_fixtures::path("mp4/sidx_real.bin");
         let data = std::fs::read(path).expect("fixtures/mp4/sidx_real.bin must exist");
 
         let sidx = SegmentIndexBox::parse(&data).expect("parse real sidx");

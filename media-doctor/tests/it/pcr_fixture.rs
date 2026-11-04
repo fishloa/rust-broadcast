@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use media_doctor::{Diagnostic, PcrCheck, Report, Severity};
 
 fn read(rel: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel);
-    fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"))
+    let path = test_fixtures::path(rel);
+    fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 
 fn pcr_errors(report: &Report) -> Vec<&media_doctor::Finding> {
@@ -149,12 +149,11 @@ fn pcr_stats(ts: &[u8]) -> Vec<(u16, PcrStats)> {
 /// Enumerated by walking the fixture directories rather than hard-coded, so a
 /// newly committed capture is covered automatically.
 fn every_ts_fixture() -> Vec<PathBuf> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut roots = vec![
-        root.join("fixtures"),
-        root.join("media-doctor/tests/fixtures"),
-        root.join("scte35-splice/tests/fixtures"),
-        root.join("transmux/tests/fixtures"),
+        test_fixtures::root(),
+        test_fixtures::root(),
+        test_fixtures::root(),
+        test_fixtures::root(),
     ];
     roots.retain(|p| p.exists());
 

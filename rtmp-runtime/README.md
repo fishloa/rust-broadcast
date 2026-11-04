@@ -21,7 +21,7 @@ Typical users: a live-ingest origin (`multimux`'s RTMP input and push output), t
 | Adobe AMF0 (referenced as `[AMF0]` by the RTMP spec) | Not separately vendored | Value types and the command set used for ingest | Partial | AMF3 commands (type 17) decode like AMF0; Data-AMF3 (15) and Shared-Object (16/19) are out of scope |
 | Adobe FLV (file format v10.1) | v10.1 (vendored `adobe_flv_f4v_v10_1`) | Server emits FLV tags for audio, video and script data | Full for output | Demux with `transmux` |
 
-Verified against a real ffmpeg publish capture (`tests/fixtures/obs-publish.bin`, provenance in `tests/fixtures/PROVENANCE.md`), replayed whole and in small chunks, and decoded by `transmux` into an H.264 plus AAC `Media`.
+Verified against a real ffmpeg publish capture (`../fixtures/rtmp/obs-publish.bin`, provenance in `../fixtures/rtmp/PROVENANCE.md`), replayed whole and in small chunks, and decoded by `transmux` into an H.264 plus AAC `Media`.
 
 ## Features
 
@@ -39,7 +39,7 @@ Replay the real ffmpeg capture through the server session:
 ```rust
 use rtmp_runtime::server::{ServerEvent, ServerSession};
 
-let capture = std::fs::read("tests/fixtures/obs-publish.bin").unwrap();
+let capture = std::fs::read("../fixtures/rtmp/obs-publish.bin").unwrap();
 let mut session = ServerSession::with_defaults();
 let mut flv = Vec::new();
 let mut published = false;

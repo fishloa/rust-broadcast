@@ -13,7 +13,10 @@ use std::process::{Command, Stdio};
 /// Workspace-root-relative fixture (resolved at compile time from the
 /// crate's manifest dir, which is `dvb-tools/`).
 fn fixture(rel: &str) -> String {
-    format!("{}{}", env!("CARGO_MANIFEST_DIR"), rel)
+    format!(
+        "{}",
+        test_fixtures::path(rel.trim_start_matches("/").trim_start_matches("fixtures/")).display()
+    )
 }
 
 /// Run the built binary and assert: exit success + at least one byte on
@@ -37,7 +40,7 @@ fn run(args: &[&str]) -> (bool, Vec<u8>, String) {
 
 #[test]
 fn dump_m6_single() {
-    let path = fixture("/../fixtures/ts/m6-single.ts");
+    let path = fixture("/ts/m6-single.ts");
     let (ok, stdout, stderr) = run(&["dump", &path]);
     assert!(ok, "dump m6-single failed: stderr={stderr}");
     assert!(
@@ -48,7 +51,7 @@ fn dump_m6_single() {
 
 #[test]
 fn dump_tnt_isi6() {
-    let path = fixture("/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts");
+    let path = fixture("/dvb-si/tnt-5w-12732v-isi6-10s.ts");
     let (ok, stdout, stderr) = run(&["dump", &path]);
     assert!(ok, "dump tnt-isi6 failed: stderr={stderr}");
     assert!(
@@ -61,7 +64,7 @@ fn dump_tnt_isi6() {
 fn services_m6_single_exits_success() {
     // m6-single.ts is a brief capture with no SDT — `services` should still
     // exit cleanly and write a note about the missing table.
-    let path = fixture("/../fixtures/ts/m6-single.ts");
+    let path = fixture("/ts/m6-single.ts");
     let (ok, _, stderr) = run(&["services", &path]);
     assert!(
         ok,
@@ -71,7 +74,7 @@ fn services_m6_single_exits_success() {
 
 #[test]
 fn pids_m6_single() {
-    let path = fixture("/../fixtures/ts/m6-single.ts");
+    let path = fixture("/ts/m6-single.ts");
     let (ok, stdout, stderr) = run(&["pids", &path]);
     assert!(ok, "pids m6-single failed: stderr={stderr}");
     assert!(

@@ -26,7 +26,6 @@
 //! without hand-fabricating one).
 
 use std::fs;
-use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
@@ -34,16 +33,7 @@ use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};
 use transmux::{Ac4SpecificBox, CmafMux, Fmp4Demux, Media, Sample, Track, TrackSpec};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path: PathBuf = [
-        env!("CARGO_MANIFEST_DIR"),
-        "tests",
-        "fixtures",
-        "mp4",
-        "cmaf",
-        name,
-    ]
-    .iter()
-    .collect();
+    let path = test_fixtures::path(&format!("transmux/mp4/cmaf/{name}"));
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 

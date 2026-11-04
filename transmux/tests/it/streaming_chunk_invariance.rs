@@ -14,13 +14,10 @@
 //! pseudo-random chunkings of 1..=64 KiB (xorshift64*, no extra dependency),
 //! over audio+video, multi-track, discontinuity and track-update fixtures.
 
-use std::path::PathBuf;
 use transmux::{DemuxEvent, StreamingTsDemux};
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(rel);
+    let path = test_fixtures::root().join("..").join(rel);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
@@ -145,9 +142,9 @@ fn audio_and_video_fixtures_are_chunk_size_invariant() {
         "fixtures/ts/dolby/ac3.ts",
         "fixtures/ts/dts/dts_core.ts",
         "fixtures/ts/m6-single.ts",
-        "transmux/tests/fixtures/timeline/av_offset.ts",
-        "transmux/tests/fixtures/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
-        "transmux/tests/fixtures/paff/paff_tff_12f_64x64.ts",
+        "fixtures/transmux/timeline/av_offset.ts",
+        "fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
+        "fixtures/transmux/paff/paff_tff_12f_64x64.ts",
     ] {
         let events = assert_invariant(rel);
         let k = kinds(&events);
@@ -167,7 +164,7 @@ fn discontinuity_and_track_update_events_are_chunk_size_invariant() {
     );
 
     // SD <-> HD parameter-set change on one PID: TrackUpdated, same track_id.
-    let events = assert_invariant("transmux/tests/fixtures/ts/h264-two-resolutions.ts");
+    let events = assert_invariant("fixtures/transmux/ts/h264-two-resolutions.ts");
     let k = kinds(&events);
     assert!(
         k.get("TrackUpdated").copied().unwrap_or(0) > 0,

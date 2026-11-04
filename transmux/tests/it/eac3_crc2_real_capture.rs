@@ -26,8 +26,8 @@ const PID: u16 = 0x82;
 const FALSE_HEADER_OFFSETS: [usize; 4] = [9165, 16764, 30064, 69270];
 
 fn capture(name: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/ts/{name}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    let path = test_fixtures::path(&format!("ts/{}", name));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// The PID's PES payload bytes, concatenated.

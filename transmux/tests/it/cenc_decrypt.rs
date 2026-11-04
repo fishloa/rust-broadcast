@@ -15,8 +15,8 @@ use transmux::TsDemux;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
 
-const CENC_MP4: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/cenc.mp4");
-const CLEAR_TS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264/main.ts");
+const CENC_MP4: &str = "mp4/cenc.mp4";
+const CLEAR_TS: &str = "ts/h264/main.ts";
 
 const KID: [u8; 16] = [
     0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3, 0xb8,
@@ -26,7 +26,7 @@ const CONTENT_KEY: [u8; 16] = [
 ];
 
 fn read(path: &str) -> Vec<u8> {
-    std::fs::read(path).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
+    std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
 }
 
 fn keys() -> KeyMap {
@@ -218,10 +218,7 @@ fn decrypt_via_trait() {
 /// first protected track whose `frma` is not `avc1`, so such a file could not
 /// be demuxed at all — nor could a protected HEVC file. The non-AVC protected
 /// track is now skipped, with the AVC one still reconstructed.
-const CENC_AV_ENCA_MP4: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/mp4/cenc_av_enca.mp4"
-);
+const CENC_AV_ENCA_MP4: &str = "mp4/cenc_av_enca.mp4";
 
 #[test]
 fn demux_skips_non_avc_protected_track() {
@@ -269,7 +266,11 @@ fn demux_skips_non_avc_protected_track() {
     // a file, so give it one in the temp dir.
     let dump = std::env::temp_dir().join(format!("cenc_av_enca_{}.xml", std::process::id()));
     match std::process::Command::new("MP4Box")
-        .args(["-diso", CENC_AV_ENCA_MP4, "-out"])
+        .args([
+            "-diso",
+            test_fixtures::path(CENC_AV_ENCA_MP4).to_str().unwrap(),
+            "-out",
+        ])
         .arg(&dump)
         .output()
     {
@@ -300,10 +301,7 @@ fn demux_skips_non_avc_protected_track() {
 /// `mp4a` (audio) — GPAC `MP4Box -crypt` with only track 1 encrypted.
 #[test]
 fn demux_reports_unprotected_track_as_skipped() {
-    const MIXED: &str = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/cenc_mixed_tracks.mp4"
-    );
+    const MIXED: &str = "transmux/cenc_mixed_tracks.mp4";
     let file = read(MIXED);
     let dec = CencDecryptor::from_fmp4(&file).expect("harvest");
     let media = dec
@@ -351,11 +349,8 @@ fn demux_avc_track_matches_mp4decrypt() {
         );
         return;
     }
-    const LAY: &str = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/cenc_frag_layouts"
-    );
-    let path = format!("{LAY}/enc_base_moof_none.mp4");
+    const LAY: &str = "transmux/cenc_frag_layouts";
+    let path = test_fixtures::path(&format!("{}/enc_base_moof_none.mp4", LAY));
     let file = std::fs::read(&path).expect("read layout fixture");
 
     // Ours.

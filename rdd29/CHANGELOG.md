@@ -166,7 +166,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
   gaps this disclosure document itself left unresolved.
 - Real-fixture test (`tests/fixture_eac3.rs`) wrapping the same real
   834-byte E-AC-3 syncframe already committed for `st337`'s own real-fixture
-  test (`tests/fixtures/eac3_frame0.bin`, originally extracted from this
+  test (`../fixtures/eac3-dep/eac3_frame0.bin`, originally extracted from this
   workspace's `fixtures/ts/dolby/eac3.ts`, issue #426) as an opaque
   `AudioDataDLC` payload, with byte-identical parse/serialize round-trip
   coverage and a mutation test guarding against a `self.raw`-style

@@ -1,4 +1,4 @@
-# Fixture provenance — `tests/fixtures/sample_aes/`
+# Fixture provenance — `fixtures/sample_aes/`
 
 ## `eac3_51_1024k.ec3`
 

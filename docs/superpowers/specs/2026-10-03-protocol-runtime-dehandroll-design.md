@@ -181,7 +181,7 @@ One commit per group: (1) semver-compatible `cargo update`; (2) RustCrypto
 pbkdf2 0.13, aes-kw 0.3); (3) rtc-* 0.21; (4) base64 0.23; (5) criterion 0.8;
 (6) roxmltree 0.21 (atsc3). axum/tower-http/reqwest go with SP2, sdp-types
 with SP4. Proof: the full gate, the crypto known-answer tests and oracle
-fixtures (`transmux/tests/fixtures/ORACLES.md`, SRT key-wrap/PBKDF2 vectors),
+fixtures (`transmux/fixtures/ORACLES.md`, SRT key-wrap/PBKDF2 vectors),
 libsrt interop, and the WebRTC DTLS fingerprint and loopback tests, all
 unweakened.
 

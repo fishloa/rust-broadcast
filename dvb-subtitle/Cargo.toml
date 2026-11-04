@@ -22,6 +22,7 @@ thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 serde_json = { workspace = true }
 # Reassemble subtitle PES from a real TS capture in the integration fixture test.
 mpeg-pes = { path = "../mpeg-pes", version = "0.6" }

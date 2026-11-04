@@ -63,7 +63,7 @@ git fetch -q origin
 git worktree add -b w1/t .worktree/w1-t origin/main
 cd .worktree/w1-t
 git -c protocol.file.allow=always submodule update -q --init --reference /Volumes/External/Projects/rust-broadcast/private private
-ln -s /Volumes/External/Projects/rust-broadcast/.test-streams .test-streams
+ln -s /Volumes/External/Projects/rust-broadcast/private fixtures private fixtures
 ln -s /Volumes/External/Projects/rust-broadcast/multimux/tests/assets/node_modules multimux/tests/assets/node_modules
 ```
 
@@ -1013,7 +1013,7 @@ fn invalid_bytes_and_whitespace_are_errors() {
 }
 
 /// The real ffmpeg High-profile `sprop-parameter-sets` (fixture
-/// `tests/fixtures/rtp/high-ffmpeg.sdp`) with its padding removed must give a
+/// `fixtures/rtp/high-ffmpeg.sdp`) with its padding removed must give a
 /// byte-identical avcC.
 #[test]
 fn unpadded_real_sprop_gives_identical_avcc() {

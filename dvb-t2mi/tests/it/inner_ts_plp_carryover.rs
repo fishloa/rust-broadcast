@@ -123,10 +123,7 @@ fn outer_ts(pid: Pid, data: &[u8]) -> Vec<[u8; TS_LEN]> {
 
 /// Committed copy of the two-PLP outer TS this test builds (T2-MI PID
 /// 0x1000), consumed by `dvb-tools`'s `t2mi --inner` multi-PLP CLI test.
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/dvb-t2mi/two-plp-synthetic.ts"
-);
+const FIXTURE: &str = "dvb-t2mi/two-plp-synthetic.ts";
 
 #[test]
 fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
@@ -193,10 +190,10 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
 
     let flat: Vec<u8> = outer.iter().flatten().copied().collect();
     if std::env::var_os("UPDATE_T2MI_FIXTURE").is_some() {
-        fs::write(FIXTURE, &flat).unwrap();
+        fs::write(test_fixtures::path(FIXTURE), &flat).unwrap();
     }
     assert_eq!(
-        fs::read(FIXTURE).expect("committed two-plp-synthetic.ts"),
+        fs::read(test_fixtures::path(FIXTURE)).expect("committed two-plp-synthetic.ts"),
         flat,
         "fixtures/dvb-t2mi/two-plp-synthetic.ts out of sync (UPDATE_T2MI_FIXTURE=1 regenerates)"
     );

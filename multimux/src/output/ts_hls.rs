@@ -246,11 +246,7 @@ mod tests {
     /// `avc1.4D400D` / `mp4a.40.2` (`fixtures/hls/cmaf-fmp4`).
     #[tokio::test]
     async fn master_playlist_carries_codecs_from_the_ts_track_specs() {
-        let ts = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/ts/h264_aac.ts"
-        ))
-        .expect("h264_aac.ts fixture");
+        let ts = std::fs::read(test_fixtures::path("ts/h264_aac.ts")).expect("h264_aac.ts fixture");
         let media = transmux::TsDemux::new().demux(&ts).expect("demux");
         let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
 

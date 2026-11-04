@@ -3,7 +3,7 @@
 //! Before this fix, `multimux::push::drive_push` muxed **every** push output
 //! with `transmux::TsMux` and `push::rtmp::RtmpTransport::send` shipped the
 //! resulting MPEG-2 TS bytes as an RTMP `send_video` message payload — a
-//! payload no RTMP server can decode (RTMP Audio/Video messages carry FLV
+//! payload no RTMP server can decode (RTMP Audio/Video messages carry FLV.as_slice()
 //! `AudioTagHeader`/`VideoTagHeader` bodies, not TS). This test exercises the
 //! fix end-to-end over a **real** TCP loopback connection, using a real
 //! independent RTMP server implementation (`rtmp_runtime::server::ServerSession`)
@@ -15,11 +15,11 @@
 //! `transmux/tests/it/flv.rs`) is demuxed to get real `TrackSpec`s + samples,
 //! pushed through `RtmpTransport::setup` (metadata + sequence headers) and
 //! `send_media` (per-frame payloads), received by `ServerSession` (which
-//! reconstructs FLV tags from the RTMP messages it decodes), and the
-//! reconstructed FLV byte stream is re-demuxed with `transmux::FlvDemux` —
+//! reconstructs FLV.as_slice() tags from the RTMP messages it decodes), and the
+//! reconstructed FLV.as_slice() byte stream is re-demuxed with `transmux::FlvDemux` —
 //! asserting the round-tripped samples are byte-identical to the source.
 //! **The bite**: feed `ServerSession` raw MPEG-2 TS bytes (the pre-fix
-//! defect) instead of FLV video/audio payloads and this re-demux fails
+//! defect) instead of FLV.as_slice() video/audio payloads and this re-demux fails
 //! outright or the sample counts/bytes stop matching — there is no way for
 //! wrong container framing to accidentally produce a byte-identical
 //! round-trip.
@@ -34,7 +34,8 @@ use tokio::net::TcpListener;
 use transmux::FlvDemux;
 use transmux::ir::TrackSpec;
 
-const FLV: &[u8] = include_bytes!("../../../fixtures/flv/av.flv");
+static FLV: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
 
 /// HANG GUARD (workspace precedent, issue #826): every blocking wait below is
 /// bounded, so a broken connect/publish/media path fails the test rather than
@@ -44,7 +45,9 @@ const GUARD: Duration = Duration::from_secs(15);
 #[tokio::test]
 async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
     let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV).expect("demux av.flv fixture");
+    let media = demux
+        .unpackage(FLV.as_slice())
+        .expect("demux av.flv fixture");
     assert_eq!(media.tracks.len(), 2, "fixture must carry AVC + AAC");
 
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -52,7 +55,7 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
 
     // The server side: a real, independent RTMP ingest implementation.
     // Reads raw bytes off the wire, drives `ServerSession`, and collects
-    // every `Media` event's FLV tag bytes in arrival order.
+    // every `Media` event's FLV.as_slice() tag bytes in arrival order.
     let server = tokio::spawn(async move {
         let (mut sock, _) = listener.accept().await.expect("accept");
         let mut session = ServerSession::with_defaults();
@@ -121,7 +124,7 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
     assert!(!flv_bytes.is_empty(), "server must have received media");
 
     // THE BITE: a real, independent RTMP server decoded what `RtmpTransport`
-    // sent into FLV tags; re-demuxing those tags must recover the source
+    // sent into FLV.as_slice() tags; re-demuxing those tags must recover the source
     // media byte-identically. MPEG-2 TS bytes sent as a video/audio payload
     // (the pre-#934 defect) would not survive this round-trip: either
     // `FlvDemux` errors outright on a malformed AVCVIDEOPACKET/AACAUDIODATA
@@ -129,7 +132,7 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
     let mut demux2 = FlvDemux::new();
     let media2 = demux2
         .unpackage(&flv_bytes)
-        .expect("re-demux the RTMP-received FLV tags");
+        .expect("re-demux the RTMP-received FLV.as_slice() tags");
     assert_eq!(
         media2.tracks.len(),
         2,

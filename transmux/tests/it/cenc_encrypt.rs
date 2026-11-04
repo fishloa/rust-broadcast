@@ -64,7 +64,7 @@ fn fixture_path() -> PathBuf {
 /// that can catch cross-track IV reuse (see
 /// [`counter_ivs_are_unique_across_every_track`]).
 fn multi_track_fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts")
+    test_fixtures::path("ts/h264_aac.ts")
 }
 
 /// The two-track cleartext fixture, demuxed with **every** track kept.

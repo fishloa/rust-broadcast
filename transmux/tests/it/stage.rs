@@ -57,11 +57,13 @@ use transmux::{
 
 use broadcast_common::Unpackage;
 
-const FLV: &[u8] = include_bytes!("../../../fixtures/flv/av.flv");
-const PROGRESSIVE_MP4: &[u8] = include_bytes!("../../../fixtures/transmux/h264_aac_prog.mp4");
+static FLV: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
+static PROGRESSIVE_MP4: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("transmux/h264_aac_prog.mp4"));
 
 fn fixtures_ts_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts")
+    test_fixtures::path("ts")
 }
 
 fn read(path: &std::path::Path) -> Vec<u8> {
@@ -247,10 +249,10 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
     }
 
     // --- StreamingFlvDemux ---------------------------------------------------
-    let flv_bytes: &[u8] = FLV;
+    let flv_bytes: &[u8] = FLV.as_slice();
     let oracle_flv: Media = transmux::FlvDemux::new()
         .unpackage(flv_bytes)
-        .expect("batch FLV demux");
+        .expect("batch FLV.as_slice() demux");
 
     let flv_chunks: Vec<&[u8]> = flv_bytes.chunks(257).collect();
     let mut flv_stage = StreamingFlvDemux::new();
@@ -272,10 +274,10 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
     // an `Out` type that isn't `DemuxEvent` at all just as well.
     let oracle_prog: Media = ProgressiveDemux::new(1024 * 1024)
         .expect("non-zero cap must construct")
-        .unpackage(PROGRESSIVE_MP4)
+        .unpackage(PROGRESSIVE_MP4.as_slice())
         .expect("batch progressive demux");
 
-    let prog_chunks: Vec<&[u8]> = PROGRESSIVE_MP4.chunks(4096).collect();
+    let prog_chunks: Vec<&[u8]> = PROGRESSIVE_MP4.as_slice().chunks(4096).collect();
     let mut prog_stage = ProgressiveDemux::new(1024 * 1024).expect("non-zero cap must construct");
     let mut prog_media = drive(&mut prog_stage, prog_chunks);
     assert_eq!(

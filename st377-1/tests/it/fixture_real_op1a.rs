@@ -1,4 +1,4 @@
-//! Parses `tests/fixtures/op1a_mpeg2_pcm.mxf` — a real OP1a MXF file
+//! Parses `../fixtures/mxf/st377-1/op1a_mpeg2_pcm.mxf` — a real OP1a MXF file
 //! (MPEG-2 video + PCM audio) — and validates every top-level KLV item:
 //!
 //! - Partition Packs, the Primer Pack, and the Random Index Pack — all
@@ -66,11 +66,7 @@ use st377_1::{
 };
 
 fn fixture_bytes() -> Vec<u8> {
-    std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/op1a_mpeg2_pcm.mxf"
-    ))
-    .expect("read tests/fixtures/op1a_mpeg2_pcm.mxf")
+    test_fixtures::read("mxf/st377-1/op1a_mpeg2_pcm.mxf")
 }
 
 /// Parse `klv` as `T`, then serialize -> parse again and assert the second

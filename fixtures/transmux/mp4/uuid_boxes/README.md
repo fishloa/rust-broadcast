@@ -1,4 +1,4 @@
-# Fixture provenance — `tests/fixtures/mp4/uuid_boxes/`
+# Fixture provenance — `fixtures/mp4/uuid_boxes/`
 
 Real, tool-generated media with real `uuid` child boxes, for the audit item-1
 fix (`uuid` children were re-serialised corrupted: `parse_box`'s body excludes

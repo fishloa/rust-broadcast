@@ -8279,7 +8279,7 @@ pub(crate) mod tests {
     #[test]
     fn eac3_probe_rewalk_is_bounded_for_tiny_pes() {
         let real = {
-            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/dolby/eac3.ts");
+            let path = test_fixtures::path("ts/dolby/eac3.ts");
             let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
             let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
             media.tracks[0].samples[0].data.to_vec()
@@ -8328,7 +8328,7 @@ pub(crate) mod tests {
     #[test]
     fn eac3_walked_len_follows_the_held_tail() {
         let real = {
-            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/dolby/eac3.ts");
+            let path = test_fixtures::path("ts/dolby/eac3.ts");
             let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
             let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
             media.tracks[0].samples[0].data.to_vec()
@@ -9523,11 +9523,7 @@ pub(crate) mod tests {
         // A second, genuinely different SPS: the same bytes with the level_idc
         // byte altered is enough to be a different parameter set, but it must
         // still decode, so take a real SPS from another committed capture.
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests");
-        path.push("fixtures");
-        path.push("ts");
-        path.push("h264-two-resolutions.ts");
+        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
         let other =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
         let media = TsDemux::new()
@@ -9964,8 +9960,7 @@ pub(crate) mod tests {
 
     /// The (SPS, PPS, width) of the fixture's first and second resolution.
     fn two_resolution_sets() -> [(Vec<u8>, Vec<u8>, u16); 2] {
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/fixtures/ts/h264-two-resolutions.ts");
+        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
         let bytes = std::fs::read(&path).unwrap();
         let mut demux = StreamingTsDemux::new();
         demux.feed(&bytes);
@@ -10056,7 +10051,7 @@ pub(crate) mod tests {
     /// so the track kept the *first* `avcC` and the init segment described a
     /// stream that had stopped being sent; a decoder then fails from the change
     /// onwards. The fixture is a real two-resolution capture (see
-    /// `tests/fixtures/ts/README.md`), demuxed through the streaming core so the
+    /// `../fixtures/transmux/ts/README.md`), demuxed through the streaming core so the
     /// `TrackUpdated` event is observable.
     ///
     /// The second half is the anti-spam half: the same fixture shows the
@@ -10064,11 +10059,7 @@ pub(crate) mod tests {
     /// *unchanged* repeat must emit nothing.
     #[test]
     fn mid_stream_config_change_emits_track_updated_once_and_only_when_it_changes() {
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests");
-        path.push("fixtures");
-        path.push("ts");
-        path.push("h264-two-resolutions.ts");
+        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
         let bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 
@@ -13302,7 +13293,7 @@ pub(crate) mod tests {
 
     /// The real independent frames of the committed Dolby E-AC-3 capture.
     fn real_eac3_independent_frames() -> Vec<Vec<u8>> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/dolby/eac3.ts");
+        let path = test_fixtures::path("ts/dolby/eac3.ts");
         let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
         let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
         media.tracks[0]
@@ -13480,11 +13471,7 @@ pub(crate) mod tests {
     #[test]
     fn eac3_without_dependents_emits_each_access_unit_immediately() {
         let real = real_eac3_independent_frames();
-        let ts = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/ts/dolby/eac3.ts"
-        ))
-        .unwrap();
+        let ts = std::fs::read(test_fixtures::path("ts/dolby/eac3.ts")).unwrap();
         let mut d = StreamingTsDemux::new();
         let mut got = 0usize;
         for c in ts.chunks(188) {

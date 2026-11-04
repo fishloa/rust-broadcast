@@ -3,15 +3,11 @@
 //! Usage: `cargo run -p ttml-subtitle --example parse_document`
 
 use std::fs;
-use std::path::PathBuf;
 
 use ttml_subtitle::Document;
 
 fn main() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("imsc1-document-example-822.ttml");
+    let fixture = test_fixtures::path("ttml/imsc1-document-example-822.ttml");
 
     let xml = fs::read_to_string(&fixture).expect("failed to read fixture");
 

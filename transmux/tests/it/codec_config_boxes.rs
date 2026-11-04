@@ -32,7 +32,7 @@ fn find_box_body<'a>(data: &'a [u8], four_cc: &[u8; 4]) -> &'a [u8] {
 
 #[test]
 fn avcc_h264_high_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/h264_high.mp4");
+    let path = test_fixtures::path("mp4/h264_high.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let avcc_body = find_box_body(&data, b"avcC");
@@ -71,7 +71,7 @@ fn avcc_h264_high_round_trip() {
 
 #[test]
 fn avcc_h264_high_mutation_changes_bytes() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/h264_high.mp4");
+    let path = test_fixtures::path("mp4/h264_high.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let avcc_body = find_box_body(&data, b"avcC");
@@ -95,7 +95,7 @@ fn avcc_h264_high_mutation_changes_bytes() {
 
 #[test]
 fn hvcc_hevc_main_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/hevc_main.mp4");
+    let path = test_fixtures::path("mp4/hevc_main.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let hvcc_body = find_box_body(&data, b"hvcC");
@@ -135,7 +135,7 @@ fn hvcc_hevc_main_round_trip() {
 
 #[test]
 fn hvcc_hevc_main_mutation_changes_bytes() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/hevc_main.mp4");
+    let path = test_fixtures::path("mp4/hevc_main.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let hvcc_body = find_box_body(&data, b"hvcC");

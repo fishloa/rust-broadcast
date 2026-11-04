@@ -186,7 +186,7 @@ fn private_corpus_track_ids_match_pre_typed_golden() {
     let Some(private) = test_fixtures::private_root() else {
         return;
     };
-    let got = summarize(&private.join("fixtures"), |r| {
+    let got = summarize(&private.join(Path::new("fixtures")), |r| {
         if let Some(x) = r.strip_prefix("ts/") {
             Some(format!("test-streams/{x}"))
         } else if let Some(x) = r.strip_prefix("tsduck/") {
@@ -202,9 +202,13 @@ fn private_corpus_track_ids_match_pre_typed_golden() {
 /// Fetched (pinned tsduck-test clone) legacy directory.
 #[test]
 fn legacy_test_streams_track_ids_match_pre_typed_golden() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let got = summarize(&manifest.join("../.test-streams"), |r| {
-        Some(format!("test-streams/{r}"))
+    let _manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let Some(root) = test_fixtures::private_root() else {
+        eprintln!("SKIPPED - private not available");
+        return;
+    };
+    let got = summarize(&root.join(Path::new("fixtures")), |r| {
+        Some(format!("private/{r}"))
     });
     bless_or(&got, false);
 }

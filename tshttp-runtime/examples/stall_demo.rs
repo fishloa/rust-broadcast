@@ -5,8 +5,9 @@ fn main() {
     let _ = client.poll();
     client.on_response(200, &[], 0);
     let _ = client.poll_event();
-    const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
-    client.feed(D, 0);
+    static D: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
+    client.feed(D.as_slice(), 0);
 
     // Advance time to trigger stall notice and reconnect.
     client.poll_timeout(5000);

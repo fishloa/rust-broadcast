@@ -9,7 +9,7 @@
 //! (`srat`, §12.2.3.1), inside an `stsd` whose version is 1.
 //!
 //! Fixtures and their generator commands are described in
-//! `tests/fixtures/audio_srat/README.md`.
+//! `transmux/audio_srat/README.md`.
 //!
 //! The strongest test here is
 //! [`our_muxed_192k_output_is_read_back_by_external_tools`]: it muxes our own
@@ -32,17 +32,14 @@ use transmux::{FlacSpecificBox, ProgressiveDemux, TrackSpec};
 // ── Fixture plumbing ────────────────────────────────────────────────────────
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let path = format!(
-        "{}/tests/fixtures/audio_srat/{rel}",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    let path = test_fixtures::path(&format!("transmux/audio_srat/{rel}"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// A fixture kept at the workspace root (`fixtures/`), not under `transmux/`.
 fn repo_fixture(rel: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/{rel}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    let path = test_fixtures::path(rel.trim_start_matches("fixtures/"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// The box's first byte offset (four-CC position minus the 4-byte size).

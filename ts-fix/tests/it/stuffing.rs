@@ -9,10 +9,7 @@
 use mpeg_ts::pid::Pid;
 use std::{fs, path::PathBuf};
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("m6-single.ts")
+    test_fixtures::path("ts/m6-single.ts")
 }
 
 /// Check if a packet is a null packet (PID 0x1FFF).

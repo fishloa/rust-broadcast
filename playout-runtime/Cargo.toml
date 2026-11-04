@@ -28,6 +28,7 @@ thiserror        = { version = "2", default-features = false }
 serde            = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 # Real-fixture tests/examples only (`fixtures/scte35-ssai/`): decode the real
 # emsg-carried cue this crate's transition/emission logic is verified
 # against. Not a runtime dependency of the core itself.
