@@ -25,7 +25,7 @@ use rdd29::{
 
 fn real_eac3_frame() -> Vec<u8> {
     std::fs::read(test_fixtures::path("eac3-dep/eac3_frame0.bin"))
-    .expect("eac3_frame0.bin fixture must exist")
+        .expect("eac3_frame0.bin fixture must exist")
 }
 
 fn build_frame(payload: &[u8]) -> AtmosFrame<'_> {

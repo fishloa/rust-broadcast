@@ -86,10 +86,7 @@ fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 /// Every `.mp4`/`.m4s`/`.mov` under `fixtures/` (and the crate-local ones).
 fn fixture_files() -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
-    let mut stack = vec![
-        test_fixtures::root(),
-        test_fixtures::path("transmux"),
-    ];
+    let mut stack = vec![test_fixtures::root(), test_fixtures::path("transmux")];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -177,8 +174,7 @@ fn every_committed_init_segment_round_trips_byte_identically() {
 /// own length, so the file is malformed rather than merely short.
 #[test]
 fn a_moov_with_trailing_partial_bytes_is_rejected() {
-    let path =
-        test_fixtures::path("mp4/h264_high.mp4");
+    let path = test_fixtures::path("mp4/h264_high.mp4");
     let Ok(data) = std::fs::read(&path) else {
         eprintln!("SKIP a_moov_with_trailing_partial_bytes_is_rejected: fixture missing");
         return;

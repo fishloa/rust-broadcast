@@ -40,8 +40,7 @@ fn fixture(rel: &str) -> Vec<u8> {
 }
 
 fn local_fixture(rel: &str) -> Vec<u8> {
-    let p = test_fixtures::path("transmux/audio_pes_straddle")
-        .join(rel);
+    let p = test_fixtures::path("transmux/audio_pes_straddle").join(rel);
     std::fs::read(&p).unwrap_or_else(|e| panic!("read fixture {}: {e}", p.display()))
 }
 

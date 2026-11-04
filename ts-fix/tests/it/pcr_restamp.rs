@@ -81,7 +81,8 @@ fn pcr_and_disc(p: &[u8]) -> Option<(u64, bool)> {
 }
 
 fn load_disc() -> Vec<u8> {
-    std::fs::read(test_fixtures::path(DISC_FIXTURE)).unwrap_or_else(|e| panic!("fixture {DISC_FIXTURE}: {e}"))
+    std::fs::read(test_fixtures::path(DISC_FIXTURE))
+        .unwrap_or_else(|e| panic!("fixture {DISC_FIXTURE}: {e}"))
 }
 
 fn load() -> Vec<u8> {

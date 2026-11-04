@@ -613,7 +613,7 @@ async fn w13_fragment_tfxd_and_duration_match_manifest() {
 #[tokio::test]
 async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
     let ts = std::fs::read(test_fixtures::path("ts/h264_aac_40s.ts"))
-    .expect("h264_aac_40s.ts fixture must exist");
+        .expect("h264_aac_40s.ts fixture must exist");
     let media = transmux::TsDemux::new().demux(&ts).expect("demux");
     let specs: Vec<TrackSpec> = media
         .tracks

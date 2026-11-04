@@ -45,7 +45,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "cenc")]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-
     use broadcast_common::{Encrypt, Package, Unpackage};
     use broadcast_hls::cenc_ext_x_key;
     use transmux::init_segment::protect_init_segment;

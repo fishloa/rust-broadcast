@@ -118,7 +118,8 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn main() {
-    let ts_bytes = std::fs::read(test_fixtures::path(FIXTURE)).expect("read the committed real-capture TS fixture");
+    let ts_bytes = std::fs::read(test_fixtures::path(FIXTURE))
+        .expect("read the committed real-capture TS fixture");
     println!(
         "ingest_trunk_playback: read {} bytes from {FIXTURE}",
         ts_bytes.len()

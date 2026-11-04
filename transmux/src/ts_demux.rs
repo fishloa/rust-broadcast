@@ -13471,8 +13471,7 @@ pub(crate) mod tests {
     #[test]
     fn eac3_without_dependents_emits_each_access_unit_immediately() {
         let real = real_eac3_independent_frames();
-        let ts = std::fs::read(test_fixtures::path("ts/dolby/eac3.ts"))
-        .unwrap();
+        let ts = std::fs::read(test_fixtures::path("ts/dolby/eac3.ts")).unwrap();
         let mut d = StreamingTsDemux::new();
         let mut got = 0usize;
         for c in ts.chunks(188) {

@@ -25,10 +25,8 @@ use bytes::Bytes;
 use transmux::TrackId;
 use transmux::{CodecConfig, DemuxEvent, FlvDemux, FlvError, StreamingFlvDemux};
 
-#[allow(non_snake_case)]
-fn FLV_fx() -> &'static [u8] {
-    test_fixtures::read("flv/av.flv").leak()
-}
+static FLV: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
 
 /// Feed `input` into `demux`, then drain every event it newly queued via
 /// `poll_event` (FIFO) — the drain loop a real caller uses.
@@ -100,7 +98,9 @@ fn track_dims(c: &CodecConfig) -> (u16, u16) {
 /// shape, for direct comparison against the streaming demux's output.
 fn one_shot_full() -> Vec<FullTrack> {
     let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV_fx()).expect("one-shot demux av.flv");
+    let media = demux
+        .unpackage(FLV.as_slice())
+        .expect("one-shot demux av.flv");
     media
         .tracks
         .iter()
@@ -187,7 +187,8 @@ fn streaming_whole_buffer_matches_one_shot_demux() {
     );
 
     let mut streaming = StreamingFlvDemux::new();
-    let mut events = feed_and_drain(&mut streaming, FLV_fx()).expect("streaming demux av.flv");
+    let mut events =
+        feed_and_drain(&mut streaming, FLV.as_slice()).expect("streaming demux av.flv");
     events.extend(finish_and_drain(&mut streaming));
     let stream_full = full_from_events(&events);
 
@@ -282,7 +283,7 @@ fn sample_tuples(
 #[test]
 fn streaming_chunked_feeds_match_whole_buffer_feed() {
     let mut whole = StreamingFlvDemux::new();
-    let mut whole_events = feed_and_drain(&mut whole, FLV_fx()).expect("whole-buffer feed");
+    let mut whole_events = feed_and_drain(&mut whole, FLV.as_slice()).expect("whole-buffer feed");
     whole_events.extend(finish_and_drain(&mut whole));
     let whole_summary = summarize(&whole_events);
     let whole_samples = sample_tuples(&whole_events);
@@ -292,7 +293,7 @@ fn streaming_chunked_feeds_match_whole_buffer_feed() {
     for chunk_size in [100usize, 1] {
         let mut chunked = StreamingFlvDemux::new();
         let mut chunked_events = Vec::new();
-        for chunk in FLV_fx().chunks(chunk_size) {
+        for chunk in FLV.as_slice().chunks(chunk_size) {
             chunked_events.extend(feed_and_drain(&mut chunked, chunk).expect("chunked feed"));
         }
         chunked_events.extend(finish_and_drain(&mut chunked));
@@ -332,7 +333,7 @@ const CHANGED_AVCC: &[u8] = &[
     0xe2, 0x00,
 ];
 
-/// Append one FLV_fx() tag (header + body + `PreviousTagSize`).
+/// Append one FLV.as_slice() tag (header + body + `PreviousTagSize`).
 fn write_tag(out: &mut Vec<u8>, tag_type: u8, timestamp: u32, body: &[u8]) {
     let start = out.len();
     out.push(tag_type);
@@ -359,11 +360,11 @@ fn avc_nalu_body(payload: u8) -> Vec<u8> {
     body
 }
 
-/// An FLV_fx() with one sequence header, one NALU, then a **second** sequence
+/// An FLV.as_slice() with one sequence header, one NALU, then a **second** sequence
 /// header whose SPS describes a different coded size, then another NALU —
 /// a resolution change mid-publish (`OBS`/`ffmpeg` do this routinely).
 fn flv_with_config_change() -> Vec<u8> {
-    let mut out = FLV_fx()[..13].to_vec(); // real header + PreviousTagSize0
+    let mut out = FLV.as_slice()[..13].to_vec(); // real header + PreviousTagSize0
     write_tag(&mut out, 9, 0, &avc_seq_body(FIXTURE_AVCC));
     write_tag(&mut out, 9, 0, &avc_nalu_body(0xAA));
     write_tag(&mut out, 9, 40, &avc_seq_body(CHANGED_AVCC));
@@ -416,7 +417,7 @@ fn resent_sequence_header_updates_the_track() {
 /// updates the audio track the same way.
 #[test]
 fn resent_aac_sequence_header_updates_the_track() {
-    let mut out = FLV_fx()[..13].to_vec();
+    let mut out = FLV.as_slice()[..13].to_vec();
     // Stereo 44100 (ASC 0x12 0x10), a sample, then mono 48000 (0x11 0x88).
     write_tag(&mut out, 8, 0, &[0xAF, 0x00, 0x12, 0x10]);
     write_tag(&mut out, 8, 0, &[0xAF, 0x01, 0x00, 0x11, 0x22]);
@@ -459,7 +460,7 @@ fn resent_aac_sequence_header_updates_the_track() {
 /// and the live ingest could never continue past one bad tag.
 #[test]
 fn corrupt_tag_is_drained_and_the_stream_continues() {
-    let mut out = FLV_fx()[..13].to_vec();
+    let mut out = FLV.as_slice()[..13].to_vec();
     // An avcC that declares one SPS whose length runs past the tag body —
     // `AVCDecoderConfigurationRecord::parse` rejects it.
     write_tag(
@@ -508,7 +509,7 @@ fn corrupt_tag_is_drained_and_the_stream_continues() {
 /// of times a minute for a config that never changed.
 #[test]
 fn identical_resent_sequence_header_emits_no_event() {
-    let mut out = FLV_fx()[..13].to_vec();
+    let mut out = FLV.as_slice()[..13].to_vec();
     // The same real avcC three times, interleaved with NALUs.
     for (i, ts) in [0u32, 40, 80].into_iter().enumerate() {
         write_tag(&mut out, 9, ts, &avc_seq_body(FIXTURE_AVCC));
@@ -534,7 +535,7 @@ fn identical_resent_sequence_header_emits_no_event() {
 /// The same rule for AAC, and the audio track must equally stay silent.
 #[test]
 fn identical_resent_aac_sequence_header_emits_no_event() {
-    let mut out = FLV_fx()[..13].to_vec();
+    let mut out = FLV.as_slice()[..13].to_vec();
     for ts in [0u32, 23, 46] {
         write_tag(&mut out, 8, ts, &[0xAF, 0x00, 0x12, 0x10]);
         write_tag(&mut out, 8, ts, &[0xAF, 0x01, 0x00, 0x11, 0x22]);
@@ -553,7 +554,7 @@ fn identical_resent_aac_sequence_header_emits_no_event() {
 /// dedupe compares bytes, it does not latch "already updated once".
 #[test]
 fn changed_sequence_header_still_emits_track_updated() {
-    let mut out = FLV_fx()[..13].to_vec();
+    let mut out = FLV.as_slice()[..13].to_vec();
     for (avcc, ts) in [
         (FIXTURE_AVCC, 0u32),
         (FIXTURE_AVCC, 40),  // identical — silent
@@ -604,7 +605,7 @@ fn undetermined_aac_channel_count_is_unknown_not_zero_fabricated() {
         ([0x11, 0xC0], 0), // channelConfiguration 8: reserved -> unknown
     ];
     for (asc, expected) in cases {
-        let mut out = FLV_fx()[..13].to_vec();
+        let mut out = FLV.as_slice()[..13].to_vec();
         write_tag(&mut out, 8, 0, &[0xAF, 0x00, asc[0], asc[1]]);
         write_tag(&mut out, 8, 0, &[0xAF, 0x01, 0x00, 0xAA, 0xBB]);
 
@@ -625,7 +626,7 @@ fn streaming_undetermined_aac_channel_count_matches() {
         ([0x11, 0xB8], 8),
         ([0x11, 0xC0], 0),
     ] {
-        let mut out = FLV_fx()[..13].to_vec();
+        let mut out = FLV.as_slice()[..13].to_vec();
         write_tag(&mut out, 8, 0, &[0xAF, 0x00, asc[0], asc[1]]);
         write_tag(&mut out, 8, 0, &[0xAF, 0x01, 0x00, 0xAA, 0xBB]);
 

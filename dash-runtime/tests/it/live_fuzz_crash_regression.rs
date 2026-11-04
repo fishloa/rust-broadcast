@@ -40,43 +40,36 @@ const HTTP_DATES: [&str; 3] = [
     "not a date",
 ];
 
-#[allow(non_snake_case)]
-fn MPDS() -> [&'static [u8]; 6] {
+static MPDS: std::sync::LazyLock<[Vec<u8>; 6]> = std::sync::LazyLock::new(|| {
     [
-        test_fixtures::read("dash/live-number/live.mpd").leak(),
-        test_fixtures::read("dash/live-timeline/live.mpd").leak(),
-        test_fixtures::read("dash/livesim2/segtimeline_time_a.mpd").leak(),
-        test_fixtures::read("dash/livesim2/segtimeline_time_b.mpd").leak(),
-        test_fixtures::read("dash/livesim2/segtimelinenr_a.mpd").leak(),
-        test_fixtures::read("dash/livesim2/segtimelinenr_b.mpd").leak(),
+        test_fixtures::read("dash/live-number/live.mpd"),
+        test_fixtures::read("dash/live-timeline/live.mpd"),
+        test_fixtures::read("dash/livesim2/segtimeline_time_a.mpd"),
+        test_fixtures::read("dash/livesim2/segtimeline_time_b.mpd"),
+        test_fixtures::read("dash/livesim2/segtimelinenr_a.mpd"),
+        test_fixtures::read("dash/livesim2/segtimelinenr_b.mpd"),
     ]
-}
-#[allow(non_snake_case)]
-fn VIDEO_SEGS() -> [&'static [u8]; POOL] {
+});
+static VIDEO_SEGS: std::sync::LazyLock<[Vec<u8>; POOL]> = std::sync::LazyLock::new(|| {
     [
-        test_fixtures::read("dash/live-number/seg-0-005.m4s").leak(),
-        test_fixtures::read("dash/live-number/seg-0-006.m4s").leak(),
-        test_fixtures::read("dash/live-number/seg-0-007.m4s").leak(),
-        test_fixtures::read("dash/live-number/seg-0-008.m4s").leak(),
+        test_fixtures::read("dash/live-number/seg-0-005.m4s"),
+        test_fixtures::read("dash/live-number/seg-0-006.m4s"),
+        test_fixtures::read("dash/live-number/seg-0-007.m4s"),
+        test_fixtures::read("dash/live-number/seg-0-008.m4s"),
     ]
-}
-#[allow(non_snake_case)]
-fn AUDIO_SEGS() -> [&'static [u8]; POOL] {
+});
+static AUDIO_SEGS: std::sync::LazyLock<[Vec<u8>; POOL]> = std::sync::LazyLock::new(|| {
     [
-        test_fixtures::read("dash/live-number/seg-1-005.m4s").leak(),
-        test_fixtures::read("dash/live-number/seg-1-006.m4s").leak(),
-        test_fixtures::read("dash/live-number/seg-1-007.m4s").leak(),
-        test_fixtures::read("dash/live-number/seg-1-008.m4s").leak(),
+        test_fixtures::read("dash/live-number/seg-1-005.m4s"),
+        test_fixtures::read("dash/live-number/seg-1-006.m4s"),
+        test_fixtures::read("dash/live-number/seg-1-007.m4s"),
+        test_fixtures::read("dash/live-number/seg-1-008.m4s"),
     ]
-}
-#[allow(non_snake_case)]
-fn VIDEO_INIT_fx() -> &'static [u8] {
-    test_fixtures::read("dash/live-number/init-0.m4s").leak()
-}
-#[allow(non_snake_case)]
-fn AUDIO_INIT_fx() -> &'static [u8] {
-    test_fixtures::read("dash/live-number/init-1.m4s").leak()
-}
+});
+static VIDEO_INIT: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("dash/live-number/init-0.m4s"));
+static AUDIO_INIT: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("dash/live-number/init-1.m4s"));
 
 fn name_hash(name: &str) -> usize {
     name.bytes().fold(0usize, |h, b| {
@@ -90,14 +83,14 @@ fn real_body(url: &str, range: Option<(u64, u64)>) -> Option<Vec<u8>> {
     let audio = path.contains("-1-") || path.contains("A48") || path.contains("init-1");
     let all: &[u8] = if name.contains("init") {
         if audio {
-            AUDIO_INIT_fx()
+            AUDIO_INIT.as_slice()
         } else {
-            VIDEO_INIT_fx()
+            VIDEO_INIT.as_slice()
         }
     } else if audio {
-        AUDIO_SEGS()[name_hash(name) % POOL]
+        AUDIO_SEGS[name_hash(name) % POOL].as_slice()
     } else {
-        VIDEO_SEGS()[name_hash(name) % POOL]
+        VIDEO_SEGS[name_hash(name) % POOL].as_slice()
     };
     match range {
         None => Some(all.to_vec()),
@@ -193,7 +186,8 @@ fn utc_body(mode: u8, aux: u8, now: u64, base_unix: i64, rest: &mut &[u8]) -> Op
 
 #[test]
 fn dash_client_live_crash_regression() {
-    let data = test_fixtures::read("dash/fuzz/dash_client_live-crash.bin").leak();
+    let data = test_fixtures::read("dash/fuzz/dash_client_live-crash.bin");
+    let data = data.as_slice();
     assert!(data.len() >= HEADER && data.len() <= MAX_INPUT);
     let (head, mut rest) = data.split_at(HEADER);
     let mut limits = PullLimits::default();
@@ -211,14 +205,14 @@ fn dash_client_live_crash_regression() {
     dash.early_grace_us = [0, MICROS, 5 * MICROS][usize::from((head[4] >> 2) % 3)];
     let window = limits.max_inflight_segments;
 
-    let selector = usize::from(head[1]) % (MPDS().len() + 1);
+    let selector = usize::from(head[1]) % (MPDS.len() + 1);
     let mpd: Vec<u8> = if selector == 0 {
         let len = (usize::from(head[2]) << 8 | usize::from(head[3])) % (rest.len() + 1);
         let (m, tail) = rest.split_at(len);
         rest = tail;
         m.to_vec()
     } else {
-        MPDS()[selector - 1].to_vec()
+        MPDS[selector - 1].to_vec()
     };
     let publish = dash_runtime::mpd::Mpd::parse(&mpd)
         .ok()
@@ -302,7 +296,7 @@ fn dash_client_live_crash_regression() {
             break;
         };
         let received = now.max(sent);
-        let alt = MPDS()[usize::from(aux) % MPDS().len()];
+        let alt = MPDS[usize::from(aux) % MPDS.len()].as_slice();
         match action {
             Action::FetchMpd { .. } => {
                 let reply = answer(Some(mpd.clone()), mode, aux, &mut tail_data, Some(alt));

@@ -55,8 +55,7 @@ use transmux::{
 };
 
 fn workspace_fixture(rel: &str) -> Vec<u8> {
-    let path = test_fixtures::root()
-        .join(rel);
+    let path = test_fixtures::root().join(rel);
     std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 

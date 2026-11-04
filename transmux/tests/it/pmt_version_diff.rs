@@ -725,8 +725,7 @@ const STREAM_TYPE_AVC: u8 = 0x1B;
 /// so the reclassified track's config is recovered from genuine BSI bits, not
 /// from bytes invented to satisfy the parser.
 fn real_ac3_syncframes() -> Vec<Vec<u8>> {
-    let path =
-        test_fixtures::path("ts/dolby/ac3.ts");
+    let path = test_fixtures::path("ts/dolby/ac3.ts");
     let bytes =
         std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
     let media = TsDemux::new()

@@ -22,7 +22,8 @@ const HEVC_AAC: &str = "mkv/hevc_aac.mkv";
 const VP9_OPUS: &str = "mkv/vp9_opus.mkv";
 
 fn demux(path: &str) -> Media {
-    let bytes = std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let bytes =
+        std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("read {path}: {e}"));
     WebmDemux::new()
         .demux(&bytes)
         .unwrap_or_else(|e| panic!("demux {path}: {e}"))

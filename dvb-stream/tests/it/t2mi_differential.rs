@@ -31,7 +31,8 @@ fn t2mi_fixture_path() -> &'static str {
 #[tokio::test]
 async fn t2mi_stream_matches_sync_oracle() {
     let path = t2mi_fixture_path();
-    let data = std::fs::read(test_fixtures::path(path)).expect("colombia-capital-t2mi.ts fixture not found");
+    let data = std::fs::read(test_fixtures::path(path))
+        .expect("colombia-capital-t2mi.ts fixture not found");
 
     // The T2-MI PID for this fixture (see dvb-t2mi/tests/it/real_capture.rs,
     // which uses the same file and PID).
@@ -115,7 +116,8 @@ impl tokio::io::AsyncRead for OneByteAtATime {
 #[tokio::test]
 async fn t2mi_stream_one_byte_at_a_time_matches_oracle() {
     let path = t2mi_fixture_path();
-    let data = std::fs::read(test_fixtures::path(path)).expect("colombia-capital-t2mi.ts fixture not found");
+    let data = std::fs::read(test_fixtures::path(path))
+        .expect("colombia-capital-t2mi.ts fixture not found");
     const T2MI_PID: Pid = Pid::new(0x0040);
     let oracle = t2mi_sync_oracle(&data, T2MI_PID);
     assert!(

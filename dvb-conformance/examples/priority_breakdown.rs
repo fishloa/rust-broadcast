@@ -15,8 +15,12 @@ fn main() {
     // sibling crate. A committed fixture that cannot be read is a bug, not a
     // reason to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("ts/m6-single.ts");
-    let data = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("committed fixture {} could not be read: {e}", path.display()));
+    let data = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
 
     let mut monitor = ConformanceMonitor::new();
     let mut events: Vec<ConformanceEvent> = Vec::new();

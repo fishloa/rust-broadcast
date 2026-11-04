@@ -94,10 +94,7 @@ const VALIDATOR_MARGIN: Duration = Duration::from_secs(30);
 // ── Fixture + scratch-dir plumbing (mirrors transmux/tests/golden_gate.rs) ──
 
 fn repo_fixture(rel: &str) -> PathBuf {
-    PathBuf::from(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/.."
-)).join(rel)
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).join(rel)
 }
 
 fn ts_fixture_bytes() -> Vec<u8> {

@@ -28,10 +28,8 @@ use transmux::{
     MHADecoderConfigurationRecord, SampleDescriptionBox, SampleEntryVariant,
 };
 
-#[allow(non_snake_case)]
-fn FIXTURE_fx() -> &'static [u8] {
-    test_fixtures::read("mp4/frag/mpegh_stereo.frag.mp4").leak()
-}
+static FIXTURE: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("mp4/frag/mpegh_stereo.frag.mp4"));
 
 // Ground-truth values decoded from the fixture's own mhaC record (asserted, not
 // trusted): LC profile-level L1 and CICP ChannelConfiguration 2 (stereo).
@@ -103,7 +101,7 @@ fn source_mhac_body(mp4: &[u8]) -> &[u8] {
 /// Demux the fixture to the IR and return the single MPEG-H track.
 fn demux_fixture() -> transmux::Media {
     let mut demux = Fmp4Demux::new();
-    demux.unpackage(FIXTURE_fx()).expect("demux fixture")
+    demux.unpackage(FIXTURE.as_slice()).expect("demux fixture")
 }
 
 fn mpegh_track(media: &transmux::Media) -> &transmux::Track {
@@ -128,7 +126,7 @@ fn demux_enumerates_mpegh_and_mhac_is_byte_exact() {
 
     // Re-serialize the reconstructed record and compare byte-for-byte against
     // the mhaC box body walked out of the source mp4.
-    let expected = source_mhac_body(FIXTURE_fx());
+    let expected = source_mhac_body(FIXTURE.as_slice());
     let mut got = alloc::vec![0u8; config.serialized_len()];
     let n = config
         .serialize_into(&mut got)
@@ -249,7 +247,7 @@ fn output_init_segment_carries_source_mhac() {
     // The muxed mhaC body must equal the source mhaC body.
     assert_eq!(
         mhac.data.as_slice(),
-        source_mhac_body(FIXTURE_fx()),
+        source_mhac_body(FIXTURE.as_slice()),
         "muxed mhaC must be byte-identical to the source mhaC"
     );
 }
@@ -260,7 +258,7 @@ fn output_init_segment_carries_source_mhac() {
 // ---------------------------------------------------------------------------
 #[test]
 fn record_parse_serialize_symmetry_and_mutation_bites() {
-    let body = source_mhac_body(FIXTURE_fx());
+    let body = source_mhac_body(FIXTURE.as_slice());
     let rec = MHADecoderConfigurationRecord::parse(body).expect("parse source mhaC record");
 
     // parse → serialize → byte-identical.

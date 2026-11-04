@@ -927,7 +927,8 @@ mod tests {
     const FIXTURE: &str = "multimux/rtmp-obs-publish.bin";
 
     fn load_fixture() -> Vec<u8> {
-        std::fs::read(test_fixtures::path(FIXTURE)).expect("read ../fixtures/multimux/rtmp-obs-publish.bin")
+        std::fs::read(test_fixtures::path(FIXTURE))
+            .expect("read ../fixtures/multimux/rtmp-obs-publish.bin")
     }
 
     /// Reserves a free loopback TCP port then immediately releases it, so a

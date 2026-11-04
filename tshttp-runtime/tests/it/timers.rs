@@ -1,9 +1,7 @@
 use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
-#[allow(non_snake_case)]
-fn D_fx() -> &'static [u8] {
-    test_fixtures::read("ts/h264_aac.ts").leak()
-}
+static D: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
 
 fn drain_actions(c: &mut TsHttpClient) -> Vec<Action> {
     let mut v = Vec::new();
@@ -49,7 +47,7 @@ fn stall_is_measured_from_the_last_received_byte() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = drain_actions(&mut c);
     c.on_response(200, &[], 0);
-    c.feed(D_fx(), 0);
+    c.feed(D.as_slice(), 0);
     c.poll_timeout(1_000);
     c.feed(&[0u8; 188], 10_000);
     let _ = drain_events(&mut c);
@@ -77,7 +75,7 @@ fn stall_reconnect_emits_abort_then_zero_delay_reconnect() {
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = drain_actions(&mut c);
     c.on_response(200, &[], 0);
-    c.feed(D_fx(), 0);
+    c.feed(D.as_slice(), 0);
     c.poll_timeout(30_000);
     assert_eq!(
         drain_actions(&mut c),

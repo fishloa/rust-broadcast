@@ -38,10 +38,7 @@ const STRIDE: usize = TS_LEN;
 const SPLIT: usize = 100;
 
 fn real_packet(rel_path: &str, offset: usize) -> [u8; TS_LEN] {
-    let path = format!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../{}"
-), rel_path);
+    let path = format!(concat!(env!("CARGO_MANIFEST_DIR"), "/../{}"), rel_path);
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("{rel_path} must be present: {e}"));
     let pkt = &bytes[offset..offset + TS_LEN];
     assert_eq!(

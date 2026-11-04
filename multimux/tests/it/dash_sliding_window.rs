@@ -94,12 +94,7 @@ fn derivable(e: &Edge, elapsed: f64) -> std::ops::RangeInclusive<u64> {
 /// Run one output (`manifest_path`) through the sliding-window scenario.
 async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
     let media = TsDemux::new()
-        .unpackage(
-            &std::fs::read(
-                test_fixtures::path("ts/h264_aac_40s.ts"),
-            )
-            .expect("fixture"),
-        )
+        .unpackage(&std::fs::read(test_fixtures::path("ts/h264_aac_40s.ts")).expect("fixture"))
         .expect("demux fixture");
     let mut track = media
         .tracks

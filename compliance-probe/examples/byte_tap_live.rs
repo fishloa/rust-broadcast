@@ -18,8 +18,12 @@ use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn main() {
     let path = test_fixtures::path("ts/m6-single.ts");
-    let data = fs::read(&path)
-        .unwrap_or_else(|e| panic!("committed fixture {} could not be read: {e}", path.display()));
+    let data = fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
 
     // A real ingest driver calls `ByteTap::record` once per arriving
     // datagram/read and a probe host calls `drain_byte_tap` periodically —

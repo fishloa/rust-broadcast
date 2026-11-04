@@ -68,7 +68,8 @@ fn unroll_pcrs(pcrs: &[u64]) -> Vec<u64> {
 
 #[test]
 fn interpolate_preserves_33bit_pcr_base_wrap() {
-    let input = std::fs::read(test_fixtures::path(FIXTURE)).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"));
+    let input = std::fs::read(test_fixtures::path(FIXTURE))
+        .unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"));
     assert_eq!(input.len(), 5 * PKT, "fixture must have exactly 5 packets");
 
     // Verify the input has the expected wrap pattern.

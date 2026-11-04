@@ -86,10 +86,7 @@ fn bind_tcp_addr() -> (SocketAddr, tokio::net::TcpListener) {
 }
 
 fn assets_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/assets"
-))
+    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/assets"))
 }
 
 fn node_available() -> bool {

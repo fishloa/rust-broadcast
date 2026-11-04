@@ -25,8 +25,7 @@ use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
 fn load_ps() -> Vec<u8> {
-    let path =
-        test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.ps");
+    let path = test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.ps");
     let data = std::fs::read(&path).expect("ffmpeg-mpeg2video-2xac3.ps fixture must exist");
     assert_eq!(
         data[..4],
@@ -225,8 +224,7 @@ fn ac3_frames_are_split_by_declared_length() {
 /// interfere.
 #[test]
 fn h264_access_units_split_without_auds() {
-    let path =
-        test_fixtures::path("ps/ffmpeg-h264-noaud.ps");
+    let path = test_fixtures::path("ps/ffmpeg-h264-noaud.ps");
     let data = std::fs::read(&path).expect("ffmpeg-h264-noaud.ps fixture must exist");
     assert_eq!(data[..4], [0x00, 0x00, 0x01, 0xBA], "fixture must be a PS");
 
@@ -591,8 +589,7 @@ fn load_ps_with_dts() -> Vec<u8> {
 /// (`ffmpeg -i ... -map 0:a:0 -c copy -f ac3 ...`), the independent oracle for
 /// what the demuxer must produce for the AC-3 substream.
 fn ffmpeg_ac3_dts_fixture_es() -> Vec<u8> {
-    let path =
-        test_fixtures::path("ps/ffmpeg-ac3-dts.a0.ac3");
+    let path = test_fixtures::path("ps/ffmpeg-ac3-dts.a0.ac3");
     std::fs::read(&path).expect("fixture must exist")
 }
 

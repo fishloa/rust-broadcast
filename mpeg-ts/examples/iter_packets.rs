@@ -15,7 +15,9 @@ use mpeg_ts::ts::{ScramblingControl, iter_packets};
 
 fn main() {
     let path = env::args().nth(1).unwrap_or_else(|| {
-        test_fixtures::path("ts/m6-single.ts").to_string_lossy().into_owned()
+        test_fixtures::path("ts/m6-single.ts")
+            .to_string_lossy()
+            .into_owned()
     });
 
     let buf = fs::read(&path).unwrap_or_else(|e| {

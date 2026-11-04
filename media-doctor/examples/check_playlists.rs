@@ -28,7 +28,11 @@ fn main() {
         // `CARGO_MANIFEST_DIR`-relative, so it works from any working directory.
         DEFAULT_SET
             .iter()
-            .map(|n| test_fixtures::path(&format!("hls/{}", n)).to_string_lossy().into_owned())
+            .map(|n| {
+                test_fixtures::path(&format!("hls/{}", n))
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect()
     } else {
         args

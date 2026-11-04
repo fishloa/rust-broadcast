@@ -11,7 +11,6 @@
 //! `france-tnt-uhf32-si-audio.ts` from the private fixtures repo (the whole
 //! capture's non-video packets).
 
-
 use broadcast_common::Unpackage;
 use transmux::pipeline::CodecConfig;
 use transmux::{Ec3SyncframeInfo, TsDemux};

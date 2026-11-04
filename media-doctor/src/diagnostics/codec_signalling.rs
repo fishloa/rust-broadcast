@@ -274,7 +274,8 @@ mod tests {
             "ts/m6-single.ts",
         ] {
             let path = test_fixtures::path(rel);
-            let ts = std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+            let ts = std::fs::read(&path)
+                .unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
             let mut report = Report::new();
             CodecSignallingCheck.run(&ts, &mut report);
             assert!(

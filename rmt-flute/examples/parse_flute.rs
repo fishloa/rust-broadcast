@@ -17,8 +17,12 @@ fn main() {
     // Missing fixture is now a hard error: an example that quietly does
     // nothing is worse than one that fails.
     let path = test_fixtures::path("rmt-flute/flute_fdt.bin");
-    let data = fs::read(&path)
-        .unwrap_or_else(|e| panic!("committed fixture {} could not be read: {e}", path.display()));
+    let data = fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
 
     // FLUTE default FEC is Compact No-Code (Encoding ID 0): a 16-bit Source
     // Block Number + 16-bit Encoding Symbol ID = 4 bytes. But this fixture uses

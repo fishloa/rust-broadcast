@@ -207,6 +207,8 @@ fn legacy_test_streams_track_ids_match_pre_typed_golden() {
         eprintln!("SKIPPED - private not available");
         return;
     };
-    let got = summarize(&root.join(Path::new("fixtures")), |r| Some(format!("private/{r}")));
+    let got = summarize(&root.join(Path::new("fixtures")), |r| {
+        Some(format!("private/{r}"))
+    });
     bless_or(&got, false);
 }

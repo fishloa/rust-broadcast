@@ -522,7 +522,7 @@ fn depacketised_tracks_carry_their_own_kind_clock_and_config() {
 }
 
 /// An AAC stream with no codec config must be rejected, not described with an
-/// invented one — RTP carries no config, so it has to come from the SDP_fx()
+/// invented one — RTP carries no config, so it has to come from the SDP.as_str()
 /// (RFC 3640 §4.1). The old placeholder wrote an AVC config with a 90 kHz
 /// clock instead, i.e. a track claiming to be video.
 #[test]
@@ -573,36 +573,35 @@ fn zero_clock_rate_is_rejected() {
     );
 }
 
-// ── Test 4c: a real ffmpeg RTSP SDP_fx() becomes a byte-exact avcC ───────────────
+// ── Test 4c: a real ffmpeg RTSP SDP.as_str() becomes a byte-exact avcC ───────────────
 
-/// The High profile `avcC` built from ffmpeg's own SDP_fx() for
+/// The High profile `avcC` built from ffmpeg's own SDP.as_str() for
 /// `fixtures/ts/h264/high.ts` must be byte-identical to the `avcC` ffmpeg
 /// itself writes when remuxing that stream (audit r04-W33).
 ///
-/// Both sides come from ffmpeg 8.1 over the same input: the SDP_fx() from
+/// Both sides come from ffmpeg 8.1 over the same input: the SDP.as_str() from
 /// `-c copy -f rtp -sdp_file` (what an RTSP camera's DESCRIBE returns) and the
 /// avcC from `-c copy out.mp4`. Pre-fix the record omitted ISO/IEC
 /// 14496-15 §5.3.3.1.2's High profile chroma/bit-depth trailer, so it was
 /// four bytes short of ffmpeg's own and a strict reader would mis-parse.
 #[test]
 fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
-    #[allow(non_snake_case)]
-    fn SDP_fx() -> &'static str {
-        test_fixtures::read_to_string("transmux/rtp/high-ffmpeg.sdp").leak()
-    }
-    #[allow(non_snake_case)]
-    fn AVCC_HEX_fx() -> &'static str {
-        test_fixtures::read_to_string("transmux/rtp/high-ffmpeg.avcc.txt").leak()
-    }
-    let oracle = hex_decode(AVCC_HEX_fx().trim()).expect("ffmpeg avcC hex");
+    static SDP: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| test_fixtures::read_to_string("transmux/rtp/high-ffmpeg.sdp"));
+    static AVCC_HEX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        test_fixtures::read_to_string("transmux/rtp/high-ffmpeg.avcc.txt")
+    });
+    let oracle = hex_decode(AVCC_HEX.as_str().trim()).expect("ffmpeg avcC hex");
     // Strip the 8-byte box header (`size` + `avcC`), leaving the record.
     let record = &oracle[8..];
 
-    let fmtp = SDP_fx()
+    let fmtp = SDP
+        .as_str()
         .lines()
         .find(|l| l.starts_with("a=fmtp:"))
-        .expect("SDP_fx() has an fmtp line");
-    let config = transmux::rtp_sdp::avc_config_from_fmtp(fmtp).expect("real ffmpeg High SDP_fx()");
+        .expect("SDP.as_str() has an fmtp line");
+    let config =
+        transmux::rtp_sdp::avc_config_from_fmtp(fmtp).expect("real ffmpeg High SDP.as_str()");
 
     let mut ours = vec![0u8; config.config.serialized_len()];
     config
@@ -611,7 +610,7 @@ fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
         .expect("serialize avcC");
     assert_eq!(
         ours, record,
-        "the avcC from the SDP_fx() must match ffmpeg's own for the same stream"
+        "the avcC from the SDP.as_str() must match ffmpeg's own for the same stream"
     );
     assert_eq!(
         config.config.chroma_format,
@@ -626,16 +625,16 @@ fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
 /// (ISO/IEC 14496-15 §5.3.3.1.2 conditions it on the profile).
 #[test]
 fn baseline_profile_sdp_writes_no_trailer() {
-    #[allow(non_snake_case)]
-    fn SDP_fx() -> &'static str {
-        test_fixtures::read_to_string("transmux/rtp/baseline-ffmpeg.sdp").leak()
-    }
-    let fmtp = SDP_fx()
+    static SDP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        test_fixtures::read_to_string("transmux/rtp/baseline-ffmpeg.sdp")
+    });
+    let fmtp = SDP
+        .as_str()
         .lines()
         .find(|l| l.starts_with("a=fmtp:"))
-        .expect("SDP_fx() has an fmtp line");
+        .expect("SDP.as_str() has an fmtp line");
     let config =
-        transmux::rtp_sdp::avc_config_from_fmtp(fmtp).expect("real ffmpeg Baseline SDP_fx()");
+        transmux::rtp_sdp::avc_config_from_fmtp(fmtp).expect("real ffmpeg Baseline SDP.as_str()");
     assert_eq!(config.config.profile_indication, 0x42, "Baseline");
     assert_eq!(
         config.config.chroma_format, None,
@@ -660,12 +659,10 @@ fn baseline_profile_sdp_writes_no_trailer() {
 /// clock — never a hardcoded value.
 #[test]
 fn packetised_timestamps_are_presentation_times() {
-    #[allow(non_snake_case)]
-    fn REF_fx() -> &'static [u8] {
-        test_fixtures::read("ts/h264/high.ts").leak()
-    }
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
     let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF_fx()).expect("demux high.ts");
+    let media = demux.unpackage(REF.as_slice()).expect("demux high.ts");
     let track = media
         .tracks
         .iter()
@@ -734,12 +731,10 @@ fn packetised_timestamps_are_presentation_times() {
 /// signal surfaces through `poll_timing_warning`.
 #[test]
 fn batch_depacketiser_reports_reordered_timestamps() {
-    #[allow(non_snake_case)]
-    fn REF_fx() -> &'static [u8] {
-        test_fixtures::read("ts/h264/high.ts").leak()
-    }
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
     let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF_fx()).expect("demux high.ts");
+    let media = demux.unpackage(REF.as_slice()).expect("demux high.ts");
     let out = packetise(&media);
     let mut depack = RtpDepacketiser::new();
     let ir = depack
@@ -787,12 +782,10 @@ fn batch_depacketiser_reports_reordered_timestamps() {
 /// backward, and the samples it does emit keep their presentation timestamps.
 #[test]
 fn streaming_depacketiser_reports_reordered_timestamps() {
-    #[allow(non_snake_case)]
-    fn REF_fx() -> &'static [u8] {
-        test_fixtures::read("ts/h264/high.ts").leak()
-    }
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
     let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF_fx()).expect("demux high.ts");
+    let media = demux.unpackage(REF.as_slice()).expect("demux high.ts");
     let out = packetise(&media);
     let config = media.tracks[0].spec.config.clone();
 
@@ -950,12 +943,12 @@ fn fua_continuation_without_start_does_not_fail_the_stream() {
 /// bytes.
 #[test]
 fn fragmented_aac_access_units_round_trip() {
-    #[allow(non_snake_case)]
-    fn REF_fx() -> &'static [u8] {
-        test_fixtures::read("ts/aac-5_1-640k.ts").leak()
-    }
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
     let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF_fx()).expect("demux aac-5_1-640k.ts");
+    let media = demux
+        .unpackage(REF.as_slice())
+        .expect("demux aac-5_1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1046,12 +1039,12 @@ fn fragmented_aac_access_units_round_trip() {
 /// dropping it.
 #[test]
 fn incomplete_aac_fragments_are_not_emitted_truncated() {
-    #[allow(non_snake_case)]
-    fn REF_fx() -> &'static [u8] {
-        test_fixtures::read("ts/aac-5_1-640k.ts").leak()
-    }
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
     let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF_fx()).expect("demux aac-5_1-640k.ts");
+    let media = demux
+        .unpackage(REF.as_slice())
+        .expect("demux aac-5_1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1116,7 +1109,7 @@ fn incomplete_aac_fragments_are_not_emitted_truncated() {
     );
 }
 
-// ── Test 4f: SDP_fx() payload types and the c= line (audit r04-W34) ──────────────
+// ── Test 4f: SDP.as_str() payload types and the c= line (audit r04-W34) ──────────────
 
 /// A session with more than one video (or audio) track must give every stream
 /// its own dynamic payload type, and none may collide with the fixed type this
@@ -1173,24 +1166,24 @@ fn every_stream_gets_a_unique_dynamic_payload_type() {
     }
 
     // The first video/audio tracks keep the documented defaults, so the common
-    // single-video/single-audio session's SDP_fx() is unchanged.
+    // single-video/single-audio session's SDP.as_str() is unchanged.
     assert_eq!(pts[0], transmux::DEFAULT_VIDEO_PT);
     assert_eq!(pts[3], transmux::DEFAULT_AUDIO_PT);
 
-    // And the generated SDP_fx() binds each of those types exactly once.
+    // And the generated SDP.as_str() binds each of those types exactly once.
     for pt in &pts {
         let needle = format!("a=rtpmap:{pt} ");
         assert_eq!(
             out.sdp.matches(&needle).count(),
             1,
-            "SDP_fx() must bind {pt} exactly once:
+            "SDP.as_str() must bind {pt} exactly once:
 {}",
             out.sdp
         );
     }
 }
 
-/// The generated SDP_fx() must be accepted by an independent parser, including
+/// The generated SDP.as_str() must be accepted by an independent parser, including
 /// RFC 4566 §5.7's `c=` requirement: "A session description MUST contain
 /// either at least one `c=` field in each media description or a single `c=`
 /// field at the session level."
@@ -1204,13 +1197,13 @@ fn generated_sdp_parses_with_an_independent_parser() {
     let out = packetise(&media);
     assert!(
         out.sdp.contains("c=IN IP4 "),
-        "the SDP_fx() must carry a c= line:
+        "the SDP.as_str() must carry a c= line:
 {}",
         out.sdp
     );
 
-    let parsed: sdp_types::Session =
-        sdp_types::Session::parse(out.sdp.as_bytes()).expect("sdp-types must accept the SDP_fx()");
+    let parsed: sdp_types::Session = sdp_types::Session::parse(out.sdp.as_bytes())
+        .expect("sdp-types must accept the SDP.as_str()");
     assert_eq!(
         parsed.medias.len(),
         out.streams.len(),
@@ -1338,12 +1331,10 @@ fn vfr_stream_keeps_dts_equal_to_pts() {
 /// are real.
 #[test]
 fn reordered_stream_gets_an_exact_decode_order() {
-    #[allow(non_snake_case)]
-    fn REF_fx() -> &'static [u8] {
-        test_fixtures::read("ts/h264/high.ts").leak()
-    }
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
     let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF_fx()).expect("demux high.ts");
+    let media = demux.unpackage(REF.as_slice()).expect("demux high.ts");
     let out = packetise(&media);
     let ir = RtpDepacketiser::new()
         .unpackage(RtpInput {
@@ -1527,10 +1518,10 @@ fn aac_pkt(seq: u16, ts: u32, au: &[u8]) -> Vec<u8> {
     p
 }
 
-// ── Test 4i: the c= address is typed, so it cannot inject SDP_fx() (r04-W34) ─────
+// ── Test 4i: the c= address is typed, so it cannot inject SDP.as_str() (r04-W34) ─────
 
 /// The `c=` line's `<addrtype>` follows the address's own family, and a typed
-/// address cannot carry SDP_fx() syntax into the description.
+/// address cannot carry SDP.as_str() syntax into the description.
 ///
 /// RFC 8866 §5.7: "This memo only defines `IP4` and `IP6`". A `&str` parameter
 /// made this a way to inject arbitrary fields — an address of
@@ -1544,9 +1535,9 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
     let out = packetise(&media);
 
     // IPv4: `c=IN IP4 <v4>`, alongside real media sections (taken from the
-    // packetiser's own SDP_fx() through the independent parser).
+    // packetiser's own SDP.as_str() through the independent parser).
     let media_sections = sdp_types::Session::parse(out.sdp.as_bytes())
-        .expect("sdp-types accepts the packetiser's SDP_fx()")
+        .expect("sdp-types accepts the packetiser's SDP.as_str()")
         .medias;
     let v4 = transmux::build_sdp_with_connection(
         IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)),
@@ -1594,7 +1585,8 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
     );
     // A description with the typed address still parses, and every media
     // section resolves a connection from the session level (RFC 8866 §5.7).
-    let parsed = sdp_types::Session::parse(v4.as_bytes()).expect("sdp-types accepts the SDP_fx()");
+    let parsed =
+        sdp_types::Session::parse(v4.as_bytes()).expect("sdp-types accepts the SDP.as_str()");
     assert!(parsed.connection.is_some(), "session c= must be present");
     for m in &parsed.medias {
         assert!(
@@ -1717,12 +1709,12 @@ fn lost_middle_fu_a_fragment_never_emits_a_truncated_nal() {
 /// it claims to be.
 #[test]
 fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
-    #[allow(non_snake_case)]
-    fn REF_fx() -> &'static [u8] {
-        test_fixtures::read("ts/aac-5_1-640k.ts").leak()
-    }
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
     let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF_fx()).expect("demux aac-5_1-640k.ts");
+    let media = demux
+        .unpackage(REF.as_slice())
+        .expect("demux aac-5_1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1790,12 +1782,12 @@ fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
 /// run is known to be incomplete.
 #[test]
 fn missing_audio_fragment_drops_the_whole_au() {
-    #[allow(non_snake_case)]
-    fn REF_fx() -> &'static [u8] {
-        test_fixtures::read("ts/aac-5_1-640k.ts").leak()
-    }
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
     let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF_fx()).expect("demux aac-5_1-640k.ts");
+    let media = demux
+        .unpackage(REF.as_slice())
+        .expect("demux aac-5_1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1886,22 +1878,20 @@ fn missing_audio_fragment_drops_the_whole_au() {
 #[test]
 fn reordered_video_and_audio_share_one_epoch() {
     // Video: a real B-frame encode.
-    #[allow(non_snake_case)]
-    fn VIDEO_TS_fx() -> &'static [u8] {
-        test_fixtures::read("ts/h264/high.ts").leak()
-    }
+    static VIDEO_TS: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
     let mut vdemux = transmux::TsDemux::new();
-    let video_media = vdemux.unpackage(VIDEO_TS_fx()).expect("demux high.ts");
+    let video_media = vdemux
+        .unpackage(VIDEO_TS.as_slice())
+        .expect("demux high.ts");
     let vout = packetise(&video_media);
 
     // Audio: a real AAC stream, packetised at a small MTU too.
-    #[allow(non_snake_case)]
-    fn AUDIO_TS_fx() -> &'static [u8] {
-        test_fixtures::read("ts/aac-5_1-640k.ts").leak()
-    }
+    static AUDIO_TS: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
     let mut ademux = transmux::TsDemux::new();
     let audio_media = ademux
-        .unpackage(AUDIO_TS_fx())
+        .unpackage(AUDIO_TS.as_slice())
         .expect("demux aac-5_1-640k.ts");
     let aout = {
         let mut p = RtpPacketiser {
@@ -2406,7 +2396,7 @@ fn gap_before_an_fu_a_start_loses_only_the_runs_au() {
     );
 }
 
-// ── Test 5: SDP_fx() correctness against the demuxed config ───────────────────────
+// ── Test 5: SDP.as_str() correctness against the demuxed config ───────────────────────
 
 #[test]
 fn sdp_matches_demuxed_config() {
@@ -2414,8 +2404,8 @@ fn sdp_matches_demuxed_config() {
     let out = packetise(&media);
     let sdp = &out.sdp;
 
-    assert!(sdp.contains("m=video"), "SDP_fx() has m=video");
-    assert!(sdp.contains("m=audio"), "SDP_fx() has m=audio");
+    assert!(sdp.contains("m=video"), "SDP.as_str() has m=video");
+    assert!(sdp.contains("m=audio"), "SDP.as_str() has m=audio");
     assert!(
         sdp.contains(&format!("H264/{VIDEO_CLOCK_RATE}")),
         "video rtpmap uses the 90 kHz clock"
@@ -2487,7 +2477,7 @@ fn sdp_matches_demuxed_config() {
 fn extract_param(sdp: &str, key: &str) -> String {
     let start = sdp
         .find(key)
-        .unwrap_or_else(|| panic!("SDP_fx() has {key}"))
+        .unwrap_or_else(|| panic!("SDP.as_str() has {key}"))
         + key.len();
     let tail = &sdp[start..];
     let end = tail.find([';', '\r', '\n', ' ']).unwrap_or(tail.len());

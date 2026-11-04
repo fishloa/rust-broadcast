@@ -897,8 +897,11 @@ mod tests {
     #[test]
     fn eac3_reset_per_syncframe_matches_oracle() {
         let read = |name: &str| {
-            std::fs::read(test_fixtures::path(&format!("transmux/sample_aes_eac3/{}", name)))
-                .unwrap_or_else(|e| panic!("read {name}: {e}"))
+            std::fs::read(test_fixtures::path(&format!(
+                "transmux/sample_aes_eac3/{}",
+                name
+            )))
+            .unwrap_or_else(|e| panic!("read {name}: {e}"))
         };
         let clear = read("clear.ec3");
         let want_reset = read("enc_reset.ec3");
@@ -948,8 +951,12 @@ mod tests {
         assert!(eac3_decrypt_frame(&NIST_KEY, &NIST_IV, &garbage).is_err());
 
         // A truncated trailing syncframe must also be rejected, not left clear.
-        let Ok(clear) = std::fs::read(test_fixtures::path("transmux/sample_aes_eac3/clear.ec3")) else {
-            panic!("eac3 fixture missing at {}", test_fixtures::path("transmux/sample_aes_eac3/clear.ec3").display());
+        let Ok(clear) = std::fs::read(test_fixtures::path("transmux/sample_aes_eac3/clear.ec3"))
+        else {
+            panic!(
+                "eac3 fixture missing at {}",
+                test_fixtures::path("transmux/sample_aes_eac3/clear.ec3").display()
+            );
         };
         // Chop 100 bytes off the end: the last syncframe no longer completes.
         let truncated = &clear[..clear.len() - 100];
@@ -978,7 +985,8 @@ mod tests {
     /// passing syncframes one at a time already got.
     #[test]
     fn eac3_single_syncframe_matches_ac3_form() {
-        let Ok(clear) = std::fs::read(test_fixtures::path("transmux/sample_aes_eac3/clear.ec3")) else {
+        let Ok(clear) = std::fs::read(test_fixtures::path("transmux/sample_aes_eac3/clear.ec3"))
+        else {
             panic!("eac3 fixture missing");
         };
         let ranges = crate::ac3::split_eac3_syncframe_ranges(&clear);

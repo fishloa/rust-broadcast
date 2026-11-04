@@ -75,7 +75,15 @@ fn inner_on_multi_plp_feed_requires_plp_selection() {
     // inflate non-UTF-8 bytes).
     for plp in ["0", "1"] {
         let out = Command::new(env!("CARGO_BIN_EXE_dvb-tools"))
-            .args(["t2mi", path.to_str().unwrap(), "--pid", "0x1000", "--inner", "--plp", plp])
+            .args([
+                "t2mi",
+                path.to_str().unwrap(),
+                "--pid",
+                "0x1000",
+                "--inner",
+                "--plp",
+                plp,
+            ])
             .output()
             .expect("spawn dvb-tools");
         assert!(out.status.success(), "--plp {plp} must succeed");

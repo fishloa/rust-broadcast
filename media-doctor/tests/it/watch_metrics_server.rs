@@ -102,8 +102,7 @@ fn first_scrape_already_lists_every_family() {
 #[test]
 fn final_datagrams_become_visible_after_the_feed_stops() {
     let (_g, udp, http) = spawn_watch(&[]);
-    let bytes = std::fs::read(test_fixtures::path("ts/m6-single.ts"))
-    .unwrap();
+    let bytes = std::fs::read(test_fixtures::path("ts/m6-single.ts")).unwrap();
     let packets = bytes.len() / TS_PACKET_SIZE;
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
     for chunk in bytes.chunks(DATAGRAM_PACKETS * TS_PACKET_SIZE) {

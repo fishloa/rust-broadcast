@@ -507,7 +507,8 @@ mod tests {
     /// actually drives a real publish to `Connected` -> `Publish` -> `Media`.
     #[tokio::test]
     async fn loopback_replay_of_real_publish_reaches_connected_publish_media() {
-        let fixture = std::fs::read(test_fixtures::path(FIXTURE)).expect("read ../fixtures/rtmp/obs-publish.bin");
+        let fixture = std::fs::read(test_fixtures::path(FIXTURE))
+            .expect("read ../fixtures/rtmp/obs-publish.bin");
 
         let server = AsyncRtmpServer::bind("127.0.0.1:0", ServerConfig::default())
             .await

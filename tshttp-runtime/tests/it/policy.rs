@@ -38,14 +38,12 @@ fn played_then_ended_resets_attempt_counter() {
     let dl = c.next_deadline().unwrap();
     c.poll_timeout(dl);
     let _ = c.poll();
-    #[allow(non_snake_case)]
-    fn D_fx() -> &'static [u8] {
-        test_fixtures::read("ts/h264_aac.ts").leak()
-    }
+    static D: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
     // play
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
-    c.feed(D_fx(), 1);
+    c.feed(D.as_slice(), 1);
     // EOF
     c.on_eof(60_000);
     // reconnect 0 (drain queued actions)
@@ -71,11 +69,9 @@ fn server_closes_every_60s_no_stall_notice() {
     for i in 0..10 {
         c.on_response(200, &[], i * 60000);
         let _ = c.poll_event();
-        #[allow(non_snake_case)]
-        fn D_fx() -> &'static [u8] {
-            test_fixtures::read("ts/h264_aac.ts").leak()
-        }
-        c.feed(D_fx(), i * 60000 + 1);
+        static D: std::sync::LazyLock<Vec<u8>> =
+            std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
+        c.feed(D.as_slice(), i * 60000 + 1);
         c.on_eof(i * 60000 + 60000);
         assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
         let dl = c.next_deadline().unwrap();
@@ -118,15 +114,13 @@ fn gone_410_is_not_found_event() {
 
 #[test]
 fn stall_notice_repeats_once_per_second_after_first() {
-    #[allow(non_snake_case)]
-    fn D_fx() -> &'static [u8] {
-        test_fixtures::read("ts/h264_aac.ts").leak()
-    }
+    static D: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
-    c.feed(D_fx(), 0);
+    c.feed(D.as_slice(), 0);
     // no bytes afterwards; poll timeouts
     c.poll_timeout(5000);
     // first stall notice
@@ -197,15 +191,13 @@ fn starved_data_vs_nodata_classified_separately() {
     }
     assert!(saw_data);
 
-    #[allow(non_snake_case)]
-    fn D_fx() -> &'static [u8] {
-        test_fixtures::read("ts/h264_aac.ts").leak()
-    }
+    static D: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
     let mut c2 = TsHttpClient::new("u", Config::default(), 0);
     let _ = c2.poll();
     c2.on_response(200, &[], 0);
     let _ = c2.poll_event();
-    c2.feed(D_fx(), 0);
+    c2.feed(D.as_slice(), 0);
     c2.poll_timeout(5000);
     let mut saw_nodata = false;
     while let Some(e) = c2.poll_event() {

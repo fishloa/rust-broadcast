@@ -456,8 +456,8 @@ fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
 #[test]
 fn track_set_change_across_a_discontinuity_re_emits_init() {
     let seg0 = read_fixture("index0.ts");
-    let other = std::fs::read(test_fixtures::path("ts/h264/main.ts"))
-    .expect("workspace h264 fixture");
+    let other =
+        std::fs::read(test_fixtures::path("ts/h264/main.ts")).expect("workspace h264 fixture");
     let playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
 #EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nindex0.ts\n#EXT-X-DISCONTINUITY\n\
 #EXTINF:2.0,\nmain.ts\n#EXT-X-ENDLIST\n";

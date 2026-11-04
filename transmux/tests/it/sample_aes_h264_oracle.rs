@@ -34,8 +34,7 @@ const IV: [u8; BLOCK_LEN] = [
 ];
 
 fn fx(name: &str) -> PathBuf {
-    test_fixtures::path("transmux/sample_aes_h264")
-        .join(name)
+    test_fixtures::path("transmux/sample_aes_h264").join(name)
 }
 
 fn read(name: &str) -> Vec<u8> {

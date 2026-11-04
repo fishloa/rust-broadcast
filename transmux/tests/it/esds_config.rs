@@ -159,7 +159,8 @@ fn esds_real_fixtures_round_trip_box_and_public_parse() {
 
     for rel in fixtures {
         let path = test_fixtures::path(rel);
-        let data = std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {}: {e}", path.display()));
+        let data =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {}: {e}", path.display()));
         let box_bytes = find_esds_box(&data);
 
         // Box path: parse_box -> serialize must be byte-identical.

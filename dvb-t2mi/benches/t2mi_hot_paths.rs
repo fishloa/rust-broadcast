@@ -12,10 +12,8 @@ use std::hint::black_box;
 
 // ── Fixture (shared /fixtures/dvb-t2mi/) ────────────────────────────
 
-#[allow(non_snake_case)]
-fn COLOMBIA_FIXTURE_fx() -> &'static [u8] {
-    test_fixtures::read("dvb-t2mi/colombia-capital-t2mi.ts").leak()
-}
+static COLOMBIA_FIXTURE: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("dvb-t2mi/colombia-capital-t2mi.ts"));
 
 /// PID carrying T2-MI in the Colombia fixture (from the PMT).
 const T2MI_PID: Pid = Pid::new(0x0040);
@@ -26,7 +24,7 @@ const TS_PACKET_SIZE: usize = 188;
 
 /// `T2miPump::feed_ts` throughput over the Colombia T2-MI fixture.
 fn bench_t2mi_pump_feed(c: &mut Criterion) {
-    let data = COLOMBIA_FIXTURE_fx();
+    let data = COLOMBIA_FIXTURE.as_slice();
     let bytes = (data.len() / TS_PACKET_SIZE * TS_PACKET_SIZE) as u64;
 
     let mut group = c.benchmark_group("t2mi_pump_feed_ts");

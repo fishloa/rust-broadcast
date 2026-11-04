@@ -17,7 +17,8 @@ use std::fs;
 const FIXTURE_PATH: &str = "ts/m6-single.ts";
 
 fn main() {
-    let input = fs::read(test_fixtures::path(FIXTURE_PATH)).expect("fixture m6-single.ts not found");
+    let input =
+        fs::read(test_fixtures::path(FIXTURE_PATH)).expect("fixture m6-single.ts not found");
 
     // --- Before: count anomalies in the original ---
     let before_anomalies = count_cc_anomalies(&input);

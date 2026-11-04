@@ -18,8 +18,12 @@ fn main() {
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("dvb-simulcrypt/cw_provision.bin");
-    let bytes = fs::read(&path)
-        .unwrap_or_else(|e| panic!("committed fixture {} could not be read: {e}", path.display()));
+    let bytes = fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
 
     let msg = SimulcryptMessage::parse_on(Interface::EcmgScs, &bytes)
         .expect("CW_provision fixture must parse");

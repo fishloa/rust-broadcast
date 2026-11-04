@@ -266,7 +266,11 @@ fn demux_skips_non_avc_protected_track() {
     // a file, so give it one in the temp dir.
     let dump = std::env::temp_dir().join(format!("cenc_av_enca_{}.xml", std::process::id()));
     match std::process::Command::new("MP4Box")
-        .args(["-diso", test_fixtures::path(CENC_AV_ENCA_MP4).to_str().unwrap(), "-out"])
+        .args([
+            "-diso",
+            test_fixtures::path(CENC_AV_ENCA_MP4).to_str().unwrap(),
+            "-out",
+        ])
         .arg(&dump)
         .output()
     {

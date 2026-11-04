@@ -981,8 +981,7 @@ fn concat_leaves_untimed_section_samples_as_none() {
 // ---------------------------------------------------------------------------
 #[test]
 fn splice_insert_rebases_real_fixture_onto_the_join() {
-    let path =
-        test_fixtures::path("ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let source: Media = TsDemux::new().unpackage(&bytes[..]).expect("TS demux");
 

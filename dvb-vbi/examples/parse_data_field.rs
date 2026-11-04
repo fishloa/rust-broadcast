@@ -13,8 +13,12 @@ fn main() {
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("dvb-vbi/vbi_data_field.bin");
-    let bytes = fs::read(&path)
-        .unwrap_or_else(|e| panic!("committed fixture {} could not be read: {e}", path.display()));
+    let bytes = fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
 
     let field = DataField::parse(&bytes).expect("fixture must parse");
     println!("PES data field: {} bytes", bytes.len());

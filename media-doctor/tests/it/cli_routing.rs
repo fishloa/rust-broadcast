@@ -241,8 +241,7 @@ fn m2ts_over_rs_208_byte_framing_is_still_checked() {
 /// the routing change must not make every input a transport stream.
 #[test]
 fn isobmff_still_routes_to_the_container_path() {
-    let path =
-        test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
     let stdout = run_check(&path);
     assert!(
         !stdout.contains("[cc-anomaly]") && !stdout.contains("[sync-byte]"),

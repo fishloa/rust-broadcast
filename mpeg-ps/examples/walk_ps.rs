@@ -12,8 +12,12 @@ fn main() {
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("mpeg-ps/ffmpeg-mpeg2-ps.mpg");
-    let data = fs::read(&path)
-        .unwrap_or_else(|e| panic!("committed fixture {} could not be read: {e}", path.display()));
+    let data = fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
     let (packs, trailing) = program_stream::parse_all_packs(&data).unwrap();
 
     println!("File: {}", path.display());

@@ -1,14 +1,14 @@
 //! Issue #942 acceptance: `crate::push::drive_push` negotiates a mixed
-//! track set through a real RTMP server, carrying only what FLV_fx() can
+//! track set through a real RTMP server, carrying only what FLV.as_slice() can
 //! actually hold.
 //!
 //! `multimux/tests/push_rtmp.rs` already proves `RtmpTransport::send_media`
-//! produces byte-identical FLV_fx() over a real, independent RTMP server; that
+//! produces byte-identical FLV.as_slice() over a real, independent RTMP server; that
 //! test drives the transport directly, never through `drive_push`. This
 //! file closes the gap issue #942 asked about: does the *production*
 //! `drive_push` loop, going through `push::egress::PushTransportEgress`'s
 //! `negotiate`, actually (a) carry the AVC+AAC tracks the fixture has and
-//! (b) never even attempt to carry a track FLV_fx() cannot hold, rather than
+//! (b) never even attempt to carry a track FLV.as_slice() cannot hold, rather than
 //! either refusing the whole push or crashing trying to frame it?
 
 use std::sync::Arc;
@@ -26,10 +26,8 @@ use tokio_util::sync::CancellationToken;
 use transmux::FlvDemux;
 use transmux::ir::TrackSpec;
 
-#[allow(non_snake_case)]
-fn FLV_fx() -> &'static [u8] {
-    test_fixtures::read("flv/av.flv").leak()
-}
+static FLV: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
 
 /// HANG GUARD (workspace precedent, issue #826).
 const GUARD: Duration = Duration::from_secs(20);
@@ -38,10 +36,10 @@ fn nz(n: usize) -> std::num::NonZeroUsize {
     std::num::NonZeroUsize::new(n).unwrap()
 }
 
-/// A `TrackSpec` no push output in this crate can carry (neither FLV_fx()'s
+/// A `TrackSpec` no push output in this crate can carry (neither FLV.as_slice()'s
 /// AVC+AAC nor — deliberately, to make the point sharpest — anything TS
 /// couldn't carry either would prove much; the point here is specifically
-/// FLV_fx()'s narrower restriction): opaque PES private data, exactly the
+/// FLV.as_slice()'s narrower restriction): opaque PES private data, exactly the
 /// fallback `crate::push::mod`'s pre-#942 `media_from_samples` used to
 /// synthesize for an unmatched track, now instead a genuinely *declared*
 /// track this test asserts gets refused rather than silently mis-framed.
@@ -60,7 +58,9 @@ fn opaque_spec(track_id: TrackId) -> TrackSpec {
 #[tokio::test]
 async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
     let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV_fx()).expect("demux av.flv fixture");
+    let media = demux
+        .unpackage(FLV.as_slice())
+        .expect("demux av.flv fixture");
     assert_eq!(media.tracks.len(), 2, "fixture must carry AVC + AAC");
 
     // A real `Trunk`, exactly as a driver-backed ingest route mints one --
@@ -199,7 +199,7 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
     assert!(!flv_bytes.is_empty(), "server must have received media");
 
     // THE BITE: re-demux what the real server received. If `drive_push`
-    // had tried to carry the opaque track through RTMP's FLV_fx() framing (the
+    // had tried to carry the opaque track through RTMP's FLV.as_slice() framing (the
     // pre-#942 shape had no structured way to refuse it at all), this
     // would either fail to demux or recover garbage frames; if `negotiate`
     // had refused the *whole* push over one non-carriable track (an
@@ -207,7 +207,7 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
     let mut demux2 = FlvDemux::new();
     let media2 = demux2
         .unpackage(&flv_bytes)
-        .expect("re-demux the RTMP-received FLV_fx() tags");
+        .expect("re-demux the RTMP-received FLV.as_slice() tags");
     assert_eq!(
         media2.tracks.len(),
         2,

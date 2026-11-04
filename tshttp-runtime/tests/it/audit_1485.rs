@@ -1,9 +1,7 @@
 use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
-#[allow(non_snake_case)]
-fn D_fx() -> &'static [u8] {
-    test_fixtures::read("ts/h264_aac.ts").leak()
-}
+static D: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
 const TEN_MINUTES_MS: u64 = 600_000;
 const ITERATION_BOUND: u32 = 5_000;
 
@@ -36,7 +34,7 @@ fn playing(config: Config) -> TsHttpClient {
     let mut c = TsHttpClient::new("u", config, 0);
     let _ = actions(&mut c);
     c.on_response(200, &[], 0);
-    c.feed(D_fx(), 0);
+    c.feed(D.as_slice(), 0);
     let _ = events(&mut c);
     c
 }
@@ -55,7 +53,7 @@ fn run_host_loop(config: Config, silent_server: bool) -> u32 {
             if matches!(a, Action::Open { .. }) {
                 c.on_response(200, &[], now);
                 if silent_server {
-                    c.feed(D_fx(), now);
+                    c.feed(D.as_slice(), now);
                 }
             }
         }
@@ -188,7 +186,7 @@ fn one_sample_then_close_server_spaces_opens_by_the_floor() {
             if matches!(a, Action::Open { .. }) {
                 opens += 1;
                 c.on_response(200, &[], now);
-                c.feed(D_fx(), now);
+                c.feed(D.as_slice(), now);
                 c.on_eof(now);
             }
         }

@@ -35,8 +35,7 @@ fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
 
 #[test]
 fn tenc_round_trip() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let tenc_bytes = find_box(&data, b"tenc");
 
     let tenc = TrackEncryptionBox::parse_box(tenc_bytes).expect("parse tenc");
@@ -58,8 +57,7 @@ fn tenc_round_trip() {
 
 #[test]
 fn tenc_mutation_changes_bytes() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let tenc_bytes = find_box(&data, b"tenc");
     let mut tenc = TrackEncryptionBox::parse_box(tenc_bytes).unwrap();
     let original = {
@@ -78,8 +76,7 @@ fn tenc_mutation_changes_bytes() {
 
 #[test]
 fn schm_round_trip() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let schm_bytes = find_box(&data, b"schm");
 
     // Parse full box manually: version+flags then body
@@ -97,8 +94,7 @@ fn schm_round_trip() {
 
 #[test]
 fn frma_round_trip() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let frma_bytes = find_box(&data, b"frma");
 
     let frma = OriginalFormatBox::parse(frma_bytes).expect("parse frma");
@@ -111,8 +107,7 @@ fn frma_round_trip() {
 
 #[test]
 fn senc_round_trip() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let senc_bytes = find_box(&data, b"senc");
 
     let version = senc_bytes[8];
@@ -140,8 +135,7 @@ fn senc_round_trip() {
 
 #[test]
 fn senc_mutation_changes_bytes() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let senc_bytes = find_box(&data, b"senc");
     let version = senc_bytes[8];
     let flags = u32::from_be_bytes([0, senc_bytes[9], senc_bytes[10], senc_bytes[11]]);
@@ -162,8 +156,7 @@ fn senc_mutation_changes_bytes() {
 
 #[test]
 fn saiz_round_trip() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let saiz_bytes = find_box(&data, b"saiz");
 
     let saiz = SampleAuxInfoSizesBox::parse_box(saiz_bytes).expect("parse saiz");
@@ -179,8 +172,7 @@ fn saiz_round_trip() {
 
 #[test]
 fn saio_round_trip() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let saio_bytes = find_box(&data, b"saio");
 
     let saio = SampleAuxInfoOffsetsBox::parse_box(saio_bytes).expect("parse saio");
@@ -195,8 +187,7 @@ fn saio_round_trip() {
 
 #[test]
 fn sinf_round_trip() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let sinf_bytes = find_box(&data, b"sinf");
 
     let sinf = ProtectionSchemeInfoBox::parse(sinf_bytes).expect("parse sinf");
@@ -248,8 +239,7 @@ fn pssh_spec_vector_round_trip() {
 
 #[test]
 fn schi_round_trip() {
-    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4"))
-    .expect("fixture must exist");
+    let data = std::fs::read(test_fixtures::path("mp4/cenc.mp4")).expect("fixture must exist");
     let schi_bytes = find_box(&data, b"schi");
 
     let schi = SchemeInformationBox::parse(schi_bytes).expect("parse schi");

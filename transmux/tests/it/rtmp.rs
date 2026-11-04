@@ -2,7 +2,7 @@
 //!
 //! Exercises `transmux::rtmp` — the handshake (§5.2), chunk headers (§5.3.1),
 //! chunk reassembly (§5.3), protocol control (§5.4) and AMF0 command (§7)
-//! primitives, plus the RTMP ⇄ FLV_fx() ⇄ IR tie against the real fixture
+//! primitives, plus the RTMP ⇄ FLV.as_slice() ⇄ IR tie against the real fixture
 //! `fixtures/flv/av.flv`.
 //!
 //! Gates (each bites — see the per-test comments):
@@ -10,7 +10,7 @@
 //! 2. Multi-chunk reassembly across a small chunk size + interleaved csids.
 //! 3. Handshake byte layout (lengths, version, C1 field offsets).
 //! 4. AMF0 `connect` command round-trip + member-mutation sensitivity.
-//! 5. RTMP → IR equals FLV_fx() → IR (track/sample counts + per-sample sizes).
+//! 5. RTMP → IR equals FLV.as_slice() → IR (track/sample counts + per-sample sizes).
 
 use broadcast_common::{Package, Unpackage};
 use transmux::FlvDemux;
@@ -20,10 +20,8 @@ use transmux::rtmp::{
     read_chunks, write_chunks,
 };
 
-#[allow(non_snake_case)]
-fn FLV_fx() -> &'static [u8] {
-    test_fixtures::read("flv/av.flv").leak()
-}
+static FLV: std::sync::LazyLock<Vec<u8>> =
+    std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
 
 // ---------------------------------------------------------------------------
 // Test 1 — Chunk header round-trip, all four fmts + mutation bite
@@ -272,22 +270,24 @@ fn amf0_connect_command_round_trip() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 — RTMP ⇄ FLV_fx() ⇄ IR tie (the real-data bite)
+// Test 5 — RTMP ⇄ FLV.as_slice() ⇄ IR tie (the real-data bite)
 // ---------------------------------------------------------------------------
 
-/// Split `av.flv` into its FLV_fx() tags, wrap each A/V tag body as an RTMP message,
+/// Split `av.flv` into its FLV.as_slice() tags, wrap each A/V tag body as an RTMP message,
 /// chunk them at a small chunk size (so video spans multiple chunks), then run
-/// `RtmpDemux` → `Media`. Assert the result equals `FlvDemux` on the same FLV_fx().
+/// `RtmpDemux` → `Media`. Assert the result equals `FlvDemux` on the same FLV.as_slice().
 #[test]
 fn rtmp_demux_matches_flv_demux() {
     const CHUNK: usize = 128;
 
-    // Ground truth: FLV_fx() → IR directly.
+    // Ground truth: FLV.as_slice() → IR directly.
     let mut flv_demux = FlvDemux::new();
-    let flv_media = flv_demux.unpackage(FLV_fx()).expect("FLV_fx() → IR");
+    let flv_media = flv_demux
+        .unpackage(FLV.as_slice())
+        .expect("FLV.as_slice() → IR");
 
-    // Split av.flv into FLV_fx() tags (reuse the same walk the FLV_fx() spoke uses).
-    let tags = split_flv(FLV_fx());
+    // Split av.flv into FLV.as_slice() tags (reuse the same walk the FLV.as_slice() spoke uses).
+    let tags = split_flv(FLV.as_slice());
     assert!(!tags.is_empty(), "av.flv has tags");
 
     // Wrap each A/V (and script) tag body as an RTMP message on its per-kind
@@ -327,11 +327,11 @@ fn rtmp_demux_matches_flv_demux() {
     assert_eq!(
         rtmp_media.tracks.len(),
         flv_media.tracks.len(),
-        "RTMP and FLV_fx() yield the same track count"
+        "RTMP and FLV.as_slice() yield the same track count"
     );
 
     // Per-track: sample count and per-sample payload sizes equal (this proves
-    // the chunk reassembly + FLV_fx() routing rebuilt the exact A/V bodies — a
+    // the chunk reassembly + FLV.as_slice() routing rebuilt the exact A/V bodies — a
     // passthrough could not fake it because it went through RTMP chunking).
     for (r, f) in rtmp_media.tracks.iter().zip(&flv_media.tracks) {
         assert_eq!(
@@ -354,11 +354,13 @@ fn rtmp_demux_matches_flv_demux() {
 
 /// IR → `RtmpMux` → wire → `RtmpDemux` → IR must preserve the sample set.
 /// A raw-passthrough `RtmpMux` cannot pass: the bytes are re-chunked and the A/V
-/// bodies re-framed as RTMP messages, then de-chunked and FLV_fx()-routed back.
+/// bodies re-framed as RTMP messages, then de-chunked and FLV.as_slice()-routed back.
 #[test]
 fn rtmp_mux_round_trip_preserves_samples() {
     let mut flv_demux = FlvDemux::new();
-    let media = flv_demux.unpackage(FLV_fx()).expect("FLV_fx() → IR");
+    let media = flv_demux
+        .unpackage(FLV.as_slice())
+        .expect("FLV.as_slice() → IR");
 
     let mut mux = RtmpMux::new();
     let wire = mux.package(&media).expect("IR → RTMP wire");
@@ -384,7 +386,7 @@ fn rtmp_mux_round_trip_preserves_samples() {
     }
 }
 
-/// Minimal FLV_fx() tag walk for the test (mirrors Adobe FLV_fx() v10.1 §E.4.1).
+/// Minimal FLV.as_slice() tag walk for the test (mirrors Adobe FLV.as_slice() v10.1 §E.4.1).
 fn split_flv(flv: &[u8]) -> Vec<(u8, u32, Vec<u8>)> {
     let data_offset = u32::from_be_bytes([flv[5], flv[6], flv[7], flv[8]]) as usize;
     let mut off = data_offset.max(9) + 4;

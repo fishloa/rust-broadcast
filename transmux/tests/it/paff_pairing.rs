@@ -433,8 +433,7 @@ fn regenerate_fixtures() {
 #[test]
 fn real_broadcast_paff_capture_pairs() {
     use transmux::slice_header::{AvcParamSets, AvcPicture};
-    let path =
-        test_fixtures::path("ts/gulli-opengop.ts");
+    let path = test_fixtures::path("ts/gulli-opengop.ts");
     let ts = std::fs::read(path).expect("gulli-opengop.ts fixture");
     let samples = batch(&ts);
     assert_eq!(samples.len(), 147, "293 fields -> 146 pairs + 1 lone field");

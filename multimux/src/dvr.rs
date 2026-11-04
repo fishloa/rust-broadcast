@@ -3251,7 +3251,7 @@ mod tests {
     fn feed_si_reads_split_at_any_size_recover_the_same_programme() {
         const TF1_SERVICE_ID: u16 = 0x0601;
         let ts_bytes = std::fs::read(test_fixtures::path("dvb-si/tnt-5w-12732v-isi6-10s.ts"))
-        .expect("read real DVB-T fixture");
+            .expect("read real DVB-T fixture");
         let programme_after = |chunk: usize| {
             let tmp = temp_dir();
             let trunk = Trunk::new(trunk_config());
@@ -3286,7 +3286,7 @@ mod tests {
         use broadcast_common::{Parse as WireParse, Serialize as WireSerialize};
         const TF1_SERVICE_ID: u16 = 0x0601;
         let ts_bytes = std::fs::read(test_fixtures::path("dvb-si/tnt-5w-12732v-isi6-10s.ts"))
-        .expect("read real DVB-T fixture");
+            .expect("read real DVB-T fixture");
         // The genuine following event, promoted to running, as in
         // `eit_transition_rolls_the_period...`.
         let mut discover = SiDemux::builder().dvb_si_pids(false).pid(EIT_PID).build();

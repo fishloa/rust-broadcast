@@ -70,10 +70,7 @@ fn fixture_path() -> PathBuf {
 }
 
 fn assets_dir() -> PathBuf {
-    PathBuf::from(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/assets"
-))
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/assets"))
 }
 
 macro_rules! skip_unless {

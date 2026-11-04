@@ -1614,8 +1614,11 @@ mod tests {
     #[test]
     fn all_layouts_decrypt_audio_to_clear() {
         let read = |name: &str| {
-            std::fs::read(test_fixtures::path(&format!("transmux/cenc_frag_layouts/{}", name)))
-                .unwrap_or_else(|e| panic!("read {name}: {e}"))
+            std::fs::read(test_fixtures::path(&format!(
+                "transmux/cenc_frag_layouts/{}",
+                name
+            )))
+            .unwrap_or_else(|e| panic!("read {name}: {e}"))
         };
         // Independent-of-this-test oracle: the clear file's own audio samples,
         // read with the plain (unencrypted) `Fmp4Demux`.

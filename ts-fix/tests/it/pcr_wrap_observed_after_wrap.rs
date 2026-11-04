@@ -35,7 +35,8 @@ fn pcr_27mhz(p: &[u8]) -> u64 {
 
 #[test]
 fn interpolate_adopts_observations_after_the_wrap() {
-    let fixture = std::fs::read(test_fixtures::path(FIXTURE)).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"));
+    let fixture = std::fs::read(test_fixtures::path(FIXTURE))
+        .unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"));
     let template: [u8; PKT] = fixture[..PKT].try_into().unwrap();
 
     // Pre-wrap +3000 base per packet, post-wrap +3100.

@@ -542,7 +542,8 @@ mod tests {
     #[test]
     fn demux_scans_mdats_once_per_file() {
         use broadcast_common::Unpackage;
-        let path = test_fixtures::path("transmux/cenc_frag_layouts/clear_multitrun_omit_implicit.mp4");
+        let path =
+            test_fixtures::path("transmux/cenc_frag_layouts/clear_multitrun_omit_implicit.mp4");
         let bytes = std::fs::read(path).expect("fixture");
         let before = scans();
         let media = crate::media::Fmp4Demux::new()

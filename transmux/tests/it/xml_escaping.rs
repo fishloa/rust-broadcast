@@ -3,7 +3,6 @@
 //! (exact output asserted) and must re-parse to the original string.
 #![cfg(feature = "std")]
 
-
 use broadcast_common::{Package, Unpackage};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;

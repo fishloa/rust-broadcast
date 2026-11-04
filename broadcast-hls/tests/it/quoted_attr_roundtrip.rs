@@ -34,10 +34,7 @@ use std::path::PathBuf;
 use broadcast_hls::{AttrValue, MasterPlaylist, parse_attribute_list, render_attribute_list};
 
 fn repo_fixture(rel: &str) -> String {
-    let path = PathBuf::from(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/.."
-))
+    let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
         .join("fixtures/hls")
         .join(rel);
     fs::read_to_string(&path)

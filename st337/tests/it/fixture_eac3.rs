@@ -25,7 +25,7 @@ use st337::{Burst, DataMode};
 
 fn real_eac3_frame() -> Vec<u8> {
     std::fs::read(test_fixtures::path("eac3-dep/eac3_frame0.bin"))
-    .expect("eac3_frame0.bin fixture must exist")
+        .expect("eac3_frame0.bin fixture must exist")
 }
 
 /// The real E-AC-3 IEC 61937 data_type code (private/specs-verified/smpte/st337/st337-PROVENANCE.md).

@@ -11,7 +11,6 @@ use std::path::Path;
 
 const MANIFEST_DIR_NEEDLE: &str = concat!("CARGO", "_MANIFEST_DIR");
 
-
 fn skip_dir(name: &str) -> bool {
     matches!(
         name,
@@ -91,7 +90,6 @@ pub fn scan_dot_test_streams(root: &Path) -> Vec<String> {
     bad
 }
 
-
 pub fn scan_handbuilt_fixture_paths(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     walk_files(root, &mut files);
@@ -100,7 +98,11 @@ pub fn scan_handbuilt_fixture_paths(root: &Path) -> Vec<String> {
         if p.extension().and_then(|x| x.to_str()) != Some("rs") {
             continue;
         }
-        let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+        let rel = p
+            .strip_prefix(root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
         if rel.starts_with("test-fixtures/")
             || rel.starts_with("fuzz/")
             || rel.starts_with("tools/")
@@ -133,7 +135,9 @@ pub fn scan_handbuilt_fixture_paths(root: &Path) -> Vec<String> {
                 let mut search = text.as_str();
                 while let Some(i) = search.find(macro_name) {
                     let rest = &search[i..];
-                    let Some(open) = rest.find('(') else { break; };
+                    let Some(open) = rest.find('(') else {
+                        break;
+                    };
                     let mut depth = 0usize;
                     let mut end = rest.len();
                     for (k, c) in rest[open..].char_indices() {
@@ -158,7 +162,9 @@ pub fn scan_handbuilt_fixture_paths(root: &Path) -> Vec<String> {
                     }
                     search = &rest[end..];
                 }
-                if flagged { break; }
+                if flagged {
+                    break;
+                }
             }
         }
         if flagged {
@@ -331,7 +337,8 @@ fn detector_bites_concat_manifest_fixtures() {
         concat!(
             "const P: &str = concat!(\n",
             "    env!(\"",
-            "CARGO", "_MANIFEST_DIR",
+            "CARGO",
+            "_MANIFEST_DIR",
             "\"),\n",
             "    \"/../fixtures/x.ts\"\n",
             ");",
@@ -352,7 +359,8 @@ fn detector_bites_join_tests_fixtures() {
         tmp.join("foo/src/lib.rs"),
         concat!(
             "let p = PathBuf::from(env!(\"",
-            "CARGO", "_MANIFEST_DIR",
+            "CARGO",
+            "_MANIFEST_DIR",
             "\"\")).join(\"tests\").join(\"fixtures\");",
         ),
     )

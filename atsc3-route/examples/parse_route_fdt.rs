@@ -6,7 +6,6 @@
 //!
 //! Run with `cargo run -p atsc3-route --example parse_route_fdt`.
 
-
 use atsc3_route::RoutePacket;
 use broadcast_common::Parse;
 

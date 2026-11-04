@@ -56,7 +56,8 @@ fn main() {
         // when the example happens to be run from the workspace root, so it
         // turns "wrong working directory" into "fixture missing".
         test_fixtures::path("container-probe/m2ts_192.m2ts")
-        .to_string_lossy().into_owned()
+            .to_string_lossy()
+            .into_owned()
     });
     let data = match std::fs::read(&path) {
         Ok(d) => d,
