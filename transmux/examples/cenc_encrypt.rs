@@ -45,7 +45,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "cenc")]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    use std::path::PathBuf;
 
     use broadcast_common::{Encrypt, Package, Unpackage};
     use broadcast_hls::cenc_ext_x_key;
@@ -76,7 +75,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Read a real cleartext fixture (fixture-less checkouts still build
     //    and run cleanly, per the crate's example convention).
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264/main.ts");
+    let path = test_fixtures::path("ts/h264/main.ts");
     let ts = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(err) => {

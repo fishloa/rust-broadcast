@@ -20,7 +20,7 @@ const RTP_HEADER_LEN: usize = 12;
 // ── Fixture demux ────────────────────────────────────────────────────────────
 
 fn demux_fixture() -> Media {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let data = std::fs::read(path).expect("h264_aac.ts fixture must exist");
     let mut demux = transmux::TsDemux::new();
     demux.unpackage(&data[..]).expect("demux TS → IR")

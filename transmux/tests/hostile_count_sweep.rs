@@ -84,7 +84,7 @@ fn after_fourcc(data: &[u8]) -> Vec<usize> {
 }
 
 fn sweep_shard(shard: usize) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/mp4");
+    let root = test_fixtures::path("mp4");
     let mut files = Vec::new();
     collect(&root, &mut files);
     files.sort();

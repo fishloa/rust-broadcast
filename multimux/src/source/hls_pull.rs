@@ -1756,10 +1756,7 @@ Content-Length: {over}
         use axum::routing::get;
         use transmux::TsDemux;
 
-        let fixture_dir = std::path::PathBuf::from(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/hls/ts-hls"
-        ));
+        let fixture_dir = test_fixtures::path("hls/ts-hls");
         let playlist_text =
             std::fs::read_to_string(fixture_dir.join("index.m3u8")).expect("read fixture playlist");
         assert!(

@@ -14,14 +14,11 @@
 use broadcast_common::{Parse, Serialize, Unpackage};
 use transmux::{Fmp4Demux, MovieBox};
 
-const DIR: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/transmux/mp4/uuid_boxes"
-);
+const DIR: &str = "transmux/mp4/uuid_boxes";
 
 fn read(name: &str) -> Vec<u8> {
-    let p = format!("{DIR}/{name}");
-    std::fs::read(&p).unwrap_or_else(|e| panic!("read {p}: {e}"))
+    let p = test_fixtures::path(&format!("{}/{}", DIR, name));
+    std::fs::read(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
 }
 
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {

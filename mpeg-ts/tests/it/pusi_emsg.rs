@@ -11,20 +11,17 @@ use mpeg_ts::pusi::PusiReassembler;
 
 /// Path to the TS fixture: one 188-byte packet, PID 0x0004, PUSI=1,
 /// adaptation-field-stuffed, payload = 98-byte emsg box.
-const TS_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/emsg-pid4.ts");
+const TS_FIXTURE: &str = "ts/emsg-pid4.ts";
 
 /// Path to the known-good emsg box bytes (98 bytes, version 1, SCTE-35).
-const EMSG_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/shared/emsg_v1_scte35_livesim.bin"
-);
+const EMSG_FIXTURE: &str = "shared/emsg_v1_scte35_livesim.bin";
 
 #[test]
 fn reassemble_emsg_from_ts() {
     // Read the TS packet fixture.
     let ts_bytes: [u8; 188] = {
         let mut buf = [0u8; 188];
-        let data = std::fs::read(TS_FIXTURE).expect("failed to read TS fixture");
+        let data = std::fs::read(test_fixtures::path(TS_FIXTURE)).expect("failed to read TS fixture");
         assert_eq!(data.len(), 188, "fixture must be exactly 188 bytes");
         buf.copy_from_slice(&data);
         buf
@@ -38,7 +35,7 @@ fn reassemble_emsg_from_ts() {
     let payload = pkt.payload().expect("expected payload bytes in TS packet");
 
     // Read the expected emsg box bytes.
-    let expected = std::fs::read(EMSG_FIXTURE).expect("failed to read emsg fixture");
+    let expected = std::fs::read(test_fixtures::path(EMSG_FIXTURE)).expect("failed to read emsg fixture");
     assert_eq!(expected.len(), 98, "expected emsg fixture to be 98 bytes");
 
     // Reassemble via PusiReassembler.

@@ -59,12 +59,9 @@ fn the_captures_t2mi_pid_decodes_and_another_pid_yields_nothing() {
 /// `inner_ts_plp_carryover` test, which pins this file byte-for-byte).
 #[test]
 fn inner_on_multi_plp_feed_requires_plp_selection() {
-    let path = format!(
-        "{}/../fixtures/dvb-t2mi/two-plp-synthetic.ts",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = test_fixtures::path("dvb-t2mi/two-plp-synthetic.ts");
 
-    let (ok, stdout, stderr) = run(&["t2mi", &path, "--pid", "0x1000", "--inner"]);
+    let (ok, stdout, stderr) = run(&["t2mi", path.to_str().unwrap(), "--pid", "0x1000", "--inner"]);
     assert!(!ok, "multi-PLP --inner without --plp must fail");
     assert!(
         stdout.is_empty(),
@@ -78,7 +75,7 @@ fn inner_on_multi_plp_feed_requires_plp_selection() {
     // inflate non-UTF-8 bytes).
     for plp in ["0", "1"] {
         let out = Command::new(env!("CARGO_BIN_EXE_dvb-tools"))
-            .args(["t2mi", &path, "--pid", "0x1000", "--inner", "--plp", plp])
+            .args(["t2mi", path.to_str().unwrap(), "--pid", "0x1000", "--inner", "--plp", plp])
             .output()
             .expect("spawn dvb-tools");
         assert!(out.status.success(), "--plp {plp} must succeed");

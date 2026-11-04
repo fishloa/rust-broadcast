@@ -17,13 +17,10 @@
 use rtmp_runtime::server::{ServerEvent, ServerSession};
 use std::io::Write;
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/rtmp/obs-publish.bin"
-);
+const FIXTURE: &str = "rtmp/obs-publish.bin";
 
 fn main() -> std::io::Result<()> {
-    let input = std::fs::read(FIXTURE)?;
+    let input = std::fs::read(test_fixtures::path(FIXTURE))?;
 
     let mut session = ServerSession::with_defaults();
     let (_out, events) = session

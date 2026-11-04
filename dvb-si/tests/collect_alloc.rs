@@ -16,10 +16,7 @@ use test_alloc::ThreadCounting;
 static A: ThreadCounting = ThreadCounting::new();
 
 fn nit_sections() -> Vec<Vec<u8>> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
-    );
+    let path = test_fixtures::path("dvb-si/tnt-5w-12732v-isi6-10s.ts");
     let data = std::fs::read(path).expect("read fixture");
     let mut reassembler = SectionReassembler::default();
     let mut sections = Vec::new();

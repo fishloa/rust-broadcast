@@ -1,14 +1,10 @@
 //! Master (multivariant) playlist handling in `HlsClient`.
 
-use std::path::PathBuf;
 
 use hls_runtime::client::{Action, Error, HlsClient, Output, VariantPolicy};
 
 fn read_ts_fixture(name: &str) -> Vec<u8> {
-    let path = PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/hls/ts-hls"
-    ))
+    let path = test_fixtures::path("hls/ts-hls")
     .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }

@@ -5,13 +5,12 @@
 #![cfg(feature = "std")]
 
 use std::fs;
-use std::path::PathBuf;
 
 use ttml_subtitle::{Document, Error};
 
 #[test]
 fn every_fixture_truncation_errors() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ttml");
+    let dir = test_fixtures::path("ttml");
     let mut checked = 0;
     for entry in fs::read_dir(&dir).expect("fixtures dir") {
         let path = entry.expect("entry").path();

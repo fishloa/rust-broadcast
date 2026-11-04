@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use transmux::{CodecConfig, MovieFragmentBox, Segmenter, TsDemux};
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts")
+    test_fixtures::path("ts")
 }
 
 /// AVC video elementary-stream PID in both committed fixtures.

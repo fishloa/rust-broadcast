@@ -21,7 +21,7 @@ use mpeg_ts::pid::Pid;
 use ts_fix::{PcrRestamp, TsFix};
 
 const PKT: usize = 188;
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/pcr-wrap.ts");
+const FIXTURE: &str = "ts/pcr-wrap.ts";
 
 /// Read the 27 MHz PCR value from a TS packet's adaptation field.
 fn pcr_27mhz(p: &[u8]) -> Option<u64> {
@@ -68,7 +68,7 @@ fn unroll_pcrs(pcrs: &[u64]) -> Vec<u64> {
 
 #[test]
 fn interpolate_preserves_33bit_pcr_base_wrap() {
-    let input = std::fs::read(FIXTURE).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"));
+    let input = std::fs::read(test_fixtures::path(FIXTURE)).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"));
     assert_eq!(input.len(), 5 * PKT, "fixture must have exactly 5 packets");
 
     // Verify the input has the expected wrap pattern.

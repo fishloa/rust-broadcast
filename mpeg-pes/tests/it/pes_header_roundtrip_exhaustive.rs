@@ -222,10 +222,7 @@ fn full_archive_pes_headers_round_trip() {
 /// Real evidence on the PES-extension reserved bits (see module docs).
 #[test]
 fn real_pes_extension_reserved_bits_are_preserved() {
-    let ts = fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mpeg-pes/dirac-vc2-extended-stream-id.ts"
-    ))
+    let ts = fs::read(test_fixtures::path("mpeg-pes/dirac-vc2-extended-stream-id.ts"))
     .unwrap();
     let pkts = pes_packets(&ts);
     assert!(!pkts.is_empty());

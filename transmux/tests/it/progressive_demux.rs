@@ -19,18 +19,12 @@ use broadcast_common::{Package, Unpackage};
 use transmux::{CmafMux, CodecConfig, Fmp4Demux, ProgressiveDemux, SegmentIndexBox};
 
 fn prog_fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_aac_prog.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
     std::fs::read(path).expect("h264_aac_prog.mp4 fixture must exist")
 }
 
 fn sidx_fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_sidx.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_sidx.mp4");
     std::fs::read(path).expect("h264_sidx.mp4 fixture must exist")
 }
 

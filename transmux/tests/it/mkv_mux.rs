@@ -14,15 +14,15 @@ use transmux::webm_demux::WebmDemux;
 use transmux::{Media, MkvMux};
 
 /// H.264 (`fixtures/ts/h264_aac.ts`, `-c copy`'d to Matroska) + AAC.
-const H264_AAC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mkv/h264_aac.mkv");
+const H264_AAC: &str = "mkv/h264_aac.mkv";
 /// HEVC (`fixtures/ts/hevc/main.ts`) video muxed with the same real AAC audio
 /// as [`H264_AAC`] (`fixtures/ts/h264_aac.ts`) — two genuine captures, one file.
-const HEVC_AAC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mkv/hevc_aac.mkv");
+const HEVC_AAC: &str = "mkv/hevc_aac.mkv";
 /// VP9 + Opus (`fixtures/webm/vp9_opus.webm`, `-c copy`'d to Matroska).
-const VP9_OPUS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mkv/vp9_opus.mkv");
+const VP9_OPUS: &str = "mkv/vp9_opus.mkv";
 
 fn demux(path: &str) -> Media {
-    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let bytes = std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("read {path}: {e}"));
     WebmDemux::new()
         .demux(&bytes)
         .unwrap_or_else(|e| panic!("demux {path}: {e}"))

@@ -34,8 +34,7 @@ const IV: [u8; BLOCK_LEN] = [
 ];
 
 fn fx(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/transmux/sample_aes_h264")
+    test_fixtures::path("transmux/sample_aes_h264")
         .join(name)
 }
 

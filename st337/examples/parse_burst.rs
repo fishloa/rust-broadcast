@@ -11,10 +11,7 @@ fn main() {
     // See private/specs-verified/smpte/st337/st337-PROVENANCE.md for how this fixture was extracted (a
     // real E-AC-3 syncframe from fixtures/ts/dolby/eac3.ts) and cross-checked
     // against ffmpeg's own IEC 61937 burst framing.
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/eac3-dep/eac3_frame0.bin"
-    );
+    let path = test_fixtures::path("eac3-dep/eac3_frame0.bin");
     let payload = std::fs::read(path).expect("fixture must exist");
 
     let burst = Burst::new(

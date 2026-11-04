@@ -29,10 +29,7 @@ fn find_esds_box(data: &[u8]) -> &[u8] {
 
 #[test]
 fn esds_real_fixture_round_trip() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_aac_frag.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let esds_box_bytes = find_esds_box(&data);
 
@@ -115,10 +112,7 @@ fn esds_real_fixture_round_trip() {
 
 #[test]
 fn esds_oti_mutation_changes_bytes() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/h264_aac_frag.mp4"
-    );
+    let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let esds_box_bytes = find_esds_box(&data);
 
@@ -164,8 +158,8 @@ fn esds_real_fixtures_round_trip_box_and_public_parse() {
     let mut seen: Vec<Vec<u8>> = Vec::new();
 
     for rel in fixtures {
-        let path = format!("{}/../fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel);
-        let data = std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {path}: {e}"));
+        let path = test_fixtures::path(rel);
+        let data = std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {}: {e}", path.display()));
         let box_bytes = find_esds_box(&data);
 
         // Box path: parse_box -> serialize must be byte-identical.

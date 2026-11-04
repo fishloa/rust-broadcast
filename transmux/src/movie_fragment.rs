@@ -2429,10 +2429,7 @@ mod tests {
 
     #[test]
     fn real_fixture_first_moof_byte_identical() {
-        let data = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/transmux/h264_aac_frag.mp4"
-        ))
+        let data = std::fs::read(test_fixtures::path("transmux/h264_aac_frag.mp4"))
         .unwrap();
         use crate::box_types::parse_box;
         let mut remaining: &[u8] = &data;

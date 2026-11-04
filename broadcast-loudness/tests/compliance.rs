@@ -665,8 +665,7 @@ fn read_wav_mono_s16le(path: &std::path::Path) -> (Vec<f32>, u32) {
 /// file — nowhere near the tolerance below.
 #[test]
 fn lra_case_5_programme_dynamic_matches_ffmpeg_oracle() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/loudness/programme_dynamic.wav");
+    let path = test_fixtures::path("loudness/programme_dynamic.wav");
     let (samples, sample_rate) = read_wav_mono_s16le(&path);
 
     let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Mono).unwrap();
@@ -692,8 +691,7 @@ fn lra_case_5_programme_dynamic_matches_ffmpeg_oracle() {
 /// dBFS; ffmpeg reports `LRA: 15.0 LU` on this exact file.
 #[test]
 fn lra_case_6_programme_segments_matches_ffmpeg_oracle_tightly() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/loudness/programme_segments.wav");
+    let path = test_fixtures::path("loudness/programme_segments.wav");
     let (samples, sample_rate) = read_wav_mono_s16le(&path);
 
     let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Mono).unwrap();

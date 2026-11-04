@@ -33,7 +33,7 @@ fn find_box<'a>(data: &'a [u8], four_cc: &[u8; 4]) -> Option<&'a [u8]> {
 }
 
 fn extract_hevc_sps(path: &str) -> Vec<u8> {
-    let file = std::fs::read(path).expect("fixture must exist");
+    let file = std::fs::read(test_fixtures::path(path)).expect("fixture must exist");
     let moov = find_box(&file, b"moov").expect("moov");
     let trak = find_box(moov, b"trak").expect("trak");
     let mdia = find_box(trak, b"mdia").expect("mdia");
@@ -122,11 +122,7 @@ fn hevc_vui_timing_and_nominal_rate_per_fixture() {
         },
     ];
     for r in rows {
-        let sps = extract_hevc_sps(&format!(
-            "{}/../fixtures/mp4/{}.mp4",
-            env!("CARGO_MANIFEST_DIR"),
-            r.fixture
-        ));
+        let sps = extract_hevc_sps(&format!("mp4/{}.mp4", r.fixture));
         if let Some((tick, scale, field_seq, ffi, hrd)) = r.vui {
             let t = decode_hevc_vui_timing(&sps).unwrap().unwrap();
             assert_eq!(t.num_units_in_tick, tick, "{}", r.fixture);

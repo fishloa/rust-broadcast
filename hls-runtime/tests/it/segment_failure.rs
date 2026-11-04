@@ -16,10 +16,7 @@ const SEG0: ResourceId = ResourceId::Segment { msn: 0 };
 const SEG1: ResourceId = ResourceId::Segment { msn: 1 };
 
 fn ts(name: &str) -> Vec<u8> {
-    std::fs::read(format!(
-        "{}/../fixtures/hls/ts-hls/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    ))
+    std::fs::read(test_fixtures::path(&format!("hls/ts-hls/{}", name)))
     .unwrap()
 }
 

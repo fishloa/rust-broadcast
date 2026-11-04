@@ -24,22 +24,13 @@ use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
 
 /// VP8+Opus fixture (video track 0, audio track 1).
-const VP8_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/webm/vp8_opus.webm"
-);
+const VP8_FIXTURE: &str = "webm/vp8_opus.webm";
 /// VP8+Opus ffprobe oracle.
-const VP8_ORACLE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/webm/vp8_opus.packets.csv"
-);
+const VP8_ORACLE: &str = "webm/vp8_opus.packets.csv";
 /// Vorbis-only fixture (audio track 0).
-const VORBIS_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/webm/vorbis.webm");
+const VORBIS_FIXTURE: &str = "webm/vorbis.webm";
 /// Vorbis ffprobe oracle.
-const VORBIS_ORACLE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/webm/vorbis.packets.csv"
-);
+const VORBIS_ORACLE: &str = "webm/vorbis.packets.csv";
 
 /// One ffprobe oracle row.
 #[derive(Debug)]
@@ -50,7 +41,7 @@ struct OracleRow {
 }
 
 fn load_oracle(path: &str) -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(path).expect("read oracle csv");
+    let text = std::fs::read_to_string(test_fixtures::path(path)).expect("read oracle csv");
     let mut rows = Vec::new();
     for line in text.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -71,7 +62,7 @@ fn oracle_for<'a>(rows: &'a [OracleRow], codec_type: &str) -> Vec<&'a OracleRow>
 }
 
 fn demux(path: &str) -> Media {
-    let bytes = std::fs::read(path).expect("read webm fixture");
+    let bytes = std::fs::read(test_fixtures::path(path)).expect("read webm fixture");
     let mut d = WebmDemux::new();
     d.demux(&bytes).expect("demux webm")
 }
@@ -199,11 +190,8 @@ fn vorbis_frame_oracle() {
 /// the expected VP9 + Opus configs (the existing WebM path is unaffected).
 #[test]
 fn vp9_opus_still_demuxes() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/webm/vp9_opus.webm"
-    );
-    let m = demux(path);
+    let path = test_fixtures::path("webm/vp9_opus.webm");
+    let m = demux(path.to_str().unwrap());
     assert_eq!(m.tracks.len(), 2, "VP9 video + Opus audio");
     assert!(
         matches!(m.tracks[0].spec.config, CodecConfig::Vp9 { .. }),

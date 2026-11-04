@@ -174,10 +174,7 @@ fn a_mid_stream_desync_drops_at_most_one_old_read_not_the_whole_buffer() {
 // ── RTP-encapsulated TS datagrams (#1099 / W-DS-2) ──────────────────────────
 
 fn real_packets() -> Vec<[u8; 188]> {
-    let bytes = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/m6-single.ts"
-    ))
+    let bytes = std::fs::read(test_fixtures::path("ts/m6-single.ts"))
     .expect("committed fixture");
     bytes
         .chunks_exact(188)

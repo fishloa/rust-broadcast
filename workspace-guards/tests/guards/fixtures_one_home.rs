@@ -1,11 +1,16 @@
 //! Tripwire: test fixtures live in exactly two homes — `fixtures/` (public) and
-//! `private/fixtures/` (private submodule). No crate keeps its own
-//! `tests/fixtures/`, no code reads the retired `.test-streams/` tier, and no
-//! `.rs` file outside `test-fixtures` and `fuzz/` pulls a fixture in via
-//! `include_bytes!` / `include_str!` (fuzz targets embed their seeds at compile time).
+//! `private/fixtures/` (private submodule). Rules:
+//! 1. no tracked file under `<crate>/tests/fixtures/`;
+//! 2. no `.rs` outside test-fixtures reads the retired `.test-streams/` tier;
+//! 3. no `.rs` outside test-fixtures include_bytes!/include_str!s a fixture;
+//! 4. no `.rs` outside test-fixtures/fuzz/tools/workspace-guards builds a
+//!    fixture path by hand.
 
 use std::fs;
 use std::path::Path;
+
+const MANIFEST_DIR_NEEDLE: &str = concat!("CARGO", "_MANIFEST_DIR");
+
 
 fn skip_dir(name: &str) -> bool {
     matches!(
@@ -83,6 +88,85 @@ pub fn scan_dot_test_streams(root: &Path) -> Vec<String> {
         }
     }
     bad.sort();
+    bad
+}
+
+
+pub fn scan_handbuilt_fixture_paths(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    walk_files(root, &mut files);
+    let mut bad = Vec::new();
+    for p in files {
+        if p.extension().and_then(|x| x.to_str()) != Some("rs") {
+            continue;
+        }
+        let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+        if rel.starts_with("test-fixtures/")
+            || rel.starts_with("fuzz/")
+            || rel.starts_with("tools/")
+            || rel.starts_with("workspace-guards/")
+        {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&p) else {
+            continue;
+        };
+        let mut flagged = false;
+        // Line-based rules.
+        for line in text.lines() {
+            if line.contains(MANIFEST_DIR_NEEDLE)
+                && (line.contains("fixtures") || line.contains("\"tests\""))
+            {
+                flagged = true;
+                break;
+            }
+            if line.contains("\"tests/fixtures") || line.contains("join(\"fixtures\")") {
+                flagged = true;
+                break;
+            }
+        }
+        // Expression-based rule: a concat!/format! expression that contains
+        // the manifest env macro and "fixtures"/"tests" on separate lines is still
+        // a hand-built fixture path.
+        if !flagged {
+            for macro_name in ["concat!", "format!"] {
+                let mut search = text.as_str();
+                while let Some(i) = search.find(macro_name) {
+                    let rest = &search[i..];
+                    let Some(open) = rest.find('(') else { break; };
+                    let mut depth = 0usize;
+                    let mut end = rest.len();
+                    for (k, c) in rest[open..].char_indices() {
+                        match c {
+                            '(' => depth += 1,
+                            ')' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    end = open + k + 1;
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let inv = &rest[..end];
+                    if inv.contains(MANIFEST_DIR_NEEDLE)
+                        && (inv.contains("fixtures") || inv.contains("\"tests\""))
+                    {
+                        flagged = true;
+                        break;
+                    }
+                    search = &rest[end..];
+                }
+                if flagged { break; }
+            }
+        }
+        if flagged {
+            bad.push(rel);
+        }
+    }
+    bad.sort();
+    bad.dedup();
     bad
 }
 
@@ -169,6 +253,17 @@ fn no_dot_test_streams_in_code() {
 }
 
 #[test]
+fn no_handbuilt_fixture_paths_outside_test_fixtures() {
+    let root = workspace_guards::workspace_root();
+    let bad = scan_handbuilt_fixture_paths(&root);
+    assert!(
+        bad.is_empty(),
+        ".rs files outside test-fixtures/fuzz/tools/workspace-guards must not build fixture paths by hand:\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
 fn no_include_bytes_fixtures_outside_test_fixtures() {
     let root = workspace_guards::workspace_root();
     let bad = scan_include_bytes_fixtures(&root);
@@ -222,6 +317,62 @@ fn detector_bites_include_bytes_fixtures() {
     )
     .unwrap();
     let bad = scan_include_bytes_fixtures(&tmp);
+    assert_eq!(bad.len(), 1);
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn detector_bites_concat_manifest_fixtures() {
+    let tmp = std::env::temp_dir().join("fixtures_one_home_bite5");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("foo/src")).unwrap();
+    fs::write(
+        tmp.join("foo/src/lib.rs"),
+        concat!(
+            "const P: &str = concat!(\n",
+            "    env!(\"",
+            "CARGO", "_MANIFEST_DIR",
+            "\"),\n",
+            "    \"/../fixtures/x.ts\"\n",
+            ");",
+        ),
+    )
+    .unwrap();
+    let bad = scan_handbuilt_fixture_paths(&tmp);
+    assert_eq!(bad.len(), 1);
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn detector_bites_join_tests_fixtures() {
+    let tmp = std::env::temp_dir().join("fixtures_one_home_bite6");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("foo/src")).unwrap();
+    fs::write(
+        tmp.join("foo/src/lib.rs"),
+        concat!(
+            "let p = PathBuf::from(env!(\"",
+            "CARGO", "_MANIFEST_DIR",
+            "\"\")).join(\"tests\").join(\"fixtures\");",
+        ),
+    )
+    .unwrap();
+    let bad = scan_handbuilt_fixture_paths(&tmp);
+    assert_eq!(bad.len(), 1);
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn detector_bites_join_fixtures() {
+    let tmp = std::env::temp_dir().join("fixtures_one_home_bite7");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("foo/src")).unwrap();
+    fs::write(
+        tmp.join("foo/src/lib.rs"),
+        "let p = base.join(\"fixtures\");",
+    )
+    .unwrap();
+    let bad = scan_handbuilt_fixture_paths(&tmp);
     assert_eq!(bad.len(), 1);
     let _ = fs::remove_dir_all(&tmp);
 }

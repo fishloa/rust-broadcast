@@ -17,12 +17,12 @@ use scte35_splice::commands::AnyCommand;
 use ts_fix::{PcrRestamp, PidFilter, TsFix};
 
 const PKT: usize = 188;
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/scte35-pcr.ts");
+const FIXTURE: &str = "ts/scte35-pcr.ts";
 const PCR_PID: Pid = Pid::new(0x0100);
 const SCTE35_PID: Pid = Pid::new(0x01F0);
 
 fn load() -> Vec<u8> {
-    std::fs::read(FIXTURE).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"))
+    std::fs::read(test_fixtures::path(FIXTURE)).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"))
 }
 
 fn pid(p: &[u8]) -> Pid {

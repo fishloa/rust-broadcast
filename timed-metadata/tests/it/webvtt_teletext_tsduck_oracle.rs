@@ -32,15 +32,12 @@
 use broadcast_common::Unpackage;
 use dvb_vbi::{DataField, DataUnitPayload, TeletextDataField};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use timed_metadata::webvtt::TeletextCueExtractor;
 use transmux::{CodecConfig, TsDemux};
 
 fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("teletext")
+    test_fixtures::path("teletext")
 }
 
 /// Teletext PID declared in the fixture's PMT (`teletext_descriptor`, tag

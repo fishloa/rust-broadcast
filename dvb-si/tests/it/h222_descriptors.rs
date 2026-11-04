@@ -44,10 +44,7 @@ use dvb_si::tables::pmt::PmtSection;
 
 /// The TSDuck-compiled PMT, committed next to its XML input.
 fn pmt_bytes() -> Vec<u8> {
-    std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-si/tsduck-h222-descriptors-pmt.bin"
-    ))
+    std::fs::read(test_fixtures::path("dvb-si/tsduck-h222-descriptors-pmt.bin"))
     .expect("committed TSDuck fixture")
 }
 
@@ -384,10 +381,7 @@ fn virtual_segmentation_follows_the_spec_and_diverges_from_tsduck() {
     // `.xml`: ticks=100, partition 0 explicit with a 13-bit duration 0x1000,
     // partition 1 a dependent partition on PID 0x0200) carries:
     //   3f 0c 10 | 5f 00 03 23 | 8f 30 00 | 1f 5f 10 07
-    let bin = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-si/tsduck-h222-virtual-segmentation-pmt.bin"
-    ))
+    let bin = std::fs::read(test_fixtures::path("dvb-si/tsduck-h222-virtual-segmentation-pmt.bin"))
     .expect("committed TSDuck fixture");
     let b = [
         0x3F, 0x0C, 0x10, 0x5F, 0x00, 0x03, 0x23, 0x8F, 0x30, 0x00, 0x1F, 0x5F, 0x10, 0x07,

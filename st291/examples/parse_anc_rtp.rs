@@ -9,7 +9,7 @@ use broadcast_common::Serialize;
 use st291::AncRtpPayload;
 
 fn main() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/st291/anc_rtp.bin");
+    let path = test_fixtures::path("st291/anc_rtp.bin");
     let bytes = std::fs::read(path).expect("fixture must exist");
 
     let (rtp, anc) = AncRtpPayload::parse_rtp_packet(&bytes).expect("parse ANC-over-RTP packet");

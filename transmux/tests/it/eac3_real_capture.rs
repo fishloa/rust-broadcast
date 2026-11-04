@@ -11,7 +11,6 @@
 //! `france-tnt-uhf32-si-audio.ts` from the private fixtures repo (the whole
 //! capture's non-video packets).
 
-use std::path::PathBuf;
 
 use broadcast_common::Unpackage;
 use transmux::pipeline::CodecConfig;
@@ -73,9 +72,7 @@ fn check(label: &str, ts: &[u8]) -> Vec<(usize, usize)> {
 }
 
 fn committed(name: &str) -> Vec<u8> {
-    let path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "..", "fixtures", "ts", name]
-        .iter()
-        .collect();
+    let path = test_fixtures::path(&format!("ts/{}", name));
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 

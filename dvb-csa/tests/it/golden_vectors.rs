@@ -105,11 +105,8 @@ mod bitsliced {
 
     #[test]
     fn golden_vectors_scramble_batch() {
-        let path = format!(
-            "{}/../fixtures/csa/libdvbcsa-vectors.hex",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let vectors = load_vectors(&path);
+        let path = test_fixtures::path("csa/libdvbcsa-vectors.hex");
+        let vectors = load_vectors(path.to_str().unwrap());
         run(
             scramble_batch,
             &vectors,
@@ -121,11 +118,8 @@ mod bitsliced {
 
     #[test]
     fn golden_vectors_descramble_batch() {
-        let path = format!(
-            "{}/../fixtures/csa/libdvbcsa-vectors.hex",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let vectors = load_vectors(&path);
+        let path = test_fixtures::path("csa/libdvbcsa-vectors.hex");
+        let vectors = load_vectors(path.to_str().unwrap());
         run(
             descramble_batch,
             &vectors,
@@ -138,9 +132,8 @@ mod bitsliced {
 
 #[test]
 fn golden_vectors_scramble() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path = format!("{}/../fixtures/csa/libdvbcsa-vectors.hex", manifest_dir);
-    let vectors = load_vectors(&path);
+    let path = test_fixtures::path("csa/libdvbcsa-vectors.hex");
+    let vectors = load_vectors(path.to_str().unwrap());
 
     assert!(!vectors.is_empty(), "no vectors loaded");
 
@@ -163,9 +156,8 @@ fn golden_vectors_scramble() {
 
 #[test]
 fn golden_vectors_descramble() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path = format!("{}/../fixtures/csa/libdvbcsa-vectors.hex", manifest_dir);
-    let vectors = load_vectors(&path);
+    let path = test_fixtures::path("csa/libdvbcsa-vectors.hex");
+    let vectors = load_vectors(path.to_str().unwrap());
 
     assert!(!vectors.is_empty(), "no vectors loaded");
 

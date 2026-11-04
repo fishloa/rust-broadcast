@@ -210,10 +210,7 @@ mod tests {
     /// Parse a committed real DASH-IF livesim2 MPD (BSD-3-Clause, see
     /// `fixtures/PROVENANCE.md`) and return its video template.
     fn livesim2_video_template(name: &str) -> (Mpd, SegmentTemplate) {
-        let path = format!(
-            "{}/../fixtures/dash/livesim2/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        );
+        let path = test_fixtures::path(&format!("dash/livesim2/{}", name));
         let text = std::fs::read_to_string(&path).expect("fixture");
         let mpd = Mpd::parse(&text).expect("parse");
         let st = mpd.periods[0]

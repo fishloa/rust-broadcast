@@ -16,13 +16,10 @@ use broadcast_common::Unpackage;
 use rtmp_runtime::server::{ServerEvent, ServerSession};
 use transmux::{CodecConfig, FlvDemux};
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/rtmp/obs-publish.bin"
-);
+const FIXTURE: &str = "rtmp/obs-publish.bin";
 
 fn load_fixture() -> Vec<u8> {
-    std::fs::read(FIXTURE).expect("read ../fixtures/rtmp/obs-publish.bin")
+    std::fs::read(test_fixtures::path(FIXTURE)).expect("read ../fixtures/rtmp/obs-publish.bin")
 }
 
 /// Feed `input` to a fresh [`ServerSession`] in `chunk_len`-sized pieces

@@ -726,7 +726,7 @@ const STREAM_TYPE_AVC: u8 = 0x1B;
 /// from bytes invented to satisfy the parser.
 fn real_ac3_syncframes() -> Vec<Vec<u8>> {
     let path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/dolby/ac3.ts");
+        test_fixtures::path("ts/dolby/ac3.ts");
     let bytes =
         std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
     let media = TsDemux::new()
@@ -824,7 +824,7 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
 
 /// The first SPS and PPS of the committed `h264_aac.ts` capture.
 fn real_avc_sps_pps() -> (Vec<u8>, Vec<u8>) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     let source = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let media = TsDemux::new().unpackage(&source[..]).expect("demux");
     let video = media

@@ -26,7 +26,7 @@ use transmux::pipeline::CodecConfig;
 
 fn load_ps() -> Vec<u8> {
     let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ps/ffmpeg-mpeg2video-2xac3.ps");
+        test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.ps");
     let data = std::fs::read(&path).expect("ffmpeg-mpeg2video-2xac3.ps fixture must exist");
     assert_eq!(
         data[..4],
@@ -226,7 +226,7 @@ fn ac3_frames_are_split_by_declared_length() {
 #[test]
 fn h264_access_units_split_without_auds() {
     let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ps/ffmpeg-h264-noaud.ps");
+        test_fixtures::path("ps/ffmpeg-h264-noaud.ps");
     let data = std::fs::read(&path).expect("ffmpeg-h264-noaud.ps fixture must exist");
     assert_eq!(data[..4], [0x00, 0x00, 0x01, 0xBA], "fixture must be a PS");
 
@@ -583,7 +583,7 @@ const PRIVATE1_MIN_LEN: usize = 4;
 /// AC-3 substream id is 0x80 and the DTS one 0x88, exactly the DVD/ATSC
 /// assignments the demuxer's range constants name.
 fn load_ps_with_dts() -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ps/ffmpeg-ac3-dts.ps");
+    let path = test_fixtures::path("ps/ffmpeg-ac3-dts.ps");
     std::fs::read(&path).expect("fixture must exist")
 }
 
@@ -592,7 +592,7 @@ fn load_ps_with_dts() -> Vec<u8> {
 /// what the demuxer must produce for the AC-3 substream.
 fn ffmpeg_ac3_dts_fixture_es() -> Vec<u8> {
     let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ps/ffmpeg-ac3-dts.a0.ac3");
+        test_fixtures::path("ps/ffmpeg-ac3-dts.a0.ac3");
     std::fs::read(&path).expect("fixture must exist")
 }
 
@@ -677,7 +677,7 @@ fn dts_substream_is_skipped_without_disturbing_ac3() {
 /// real stream. Named here rather than in `fixtures/ps/` because it is the
 /// existing TS fixture, read only for its codec bytes.
 fn h264_ts() -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     std::fs::read(&path).expect("fixtures/ts/h264_aac.ts must exist")
 }
 
@@ -1007,8 +1007,7 @@ fn ps_with_ac3_es(es: &[u8]) -> Vec<u8> {
 /// present.
 #[test]
 fn dts_substream_with_a_false_ac3_syncword_is_still_skipped() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/ps/ffmpeg-ac3-dts-with-fake-ac3-sync.ps");
+    let path = test_fixtures::path("ps/ffmpeg-ac3-dts-with-fake-ac3-sync.ps");
     let data = std::fs::read(&path).expect("fixture must exist");
 
     // The stamp really is inside a 0x88 (DTS) packet's payload.

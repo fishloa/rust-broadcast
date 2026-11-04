@@ -8,10 +8,7 @@ use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
 fn main() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/rtp/rtp_simple.bin"
-    );
+    let path = test_fixtures::path("rtp/rtp_simple.bin");
     let bytes = std::fs::read(path).expect("fixture must exist");
 
     let pkt = RtpPacket::parse(&bytes).expect("parse RTP fixed header");

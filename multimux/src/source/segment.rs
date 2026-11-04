@@ -3593,10 +3593,7 @@ mod tests {
 
     fn aac_track_spec(track_id: TrackId) -> TrackSpec {
         use broadcast_common::Unpackage;
-        let ts = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/ts/h264_aac.ts"
-        ))
+        let ts = std::fs::read(test_fixtures::path("ts/h264_aac.ts"))
         .expect("h264_aac.ts fixture must exist");
         let media = transmux::TsDemux::new().unpackage(&ts).expect("demux TS");
         let mut spec = media

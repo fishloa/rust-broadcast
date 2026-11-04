@@ -24,10 +24,7 @@ use broadcast_common::{Parse, Serialize};
 use st337::{Burst, DataMode};
 
 fn real_eac3_frame() -> Vec<u8> {
-    std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/eac3-dep/eac3_frame0.bin"
-    ))
+    std::fs::read(test_fixtures::path("eac3-dep/eac3_frame0.bin"))
     .expect("eac3_frame0.bin fixture must exist")
 }
 

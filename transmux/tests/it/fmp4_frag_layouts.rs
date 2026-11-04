@@ -16,14 +16,11 @@ use broadcast_common::Unpackage;
 use transmux::TrackId;
 use transmux::{CodecConfig, Fmp4Demux, Media};
 
-const DIR: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/transmux/cenc_frag_layouts"
-);
+const DIR: &str = "transmux/cenc_frag_layouts";
 
 fn read(name: &str) -> Vec<u8> {
-    let p = format!("{DIR}/{name}");
-    std::fs::read(&p).unwrap_or_else(|e| panic!("read {p}: {e}"))
+    let p = test_fixtures::path(&format!("{}/{}", DIR, name));
+    std::fs::read(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
 }
 
 fn demux(name: &str) -> Media {

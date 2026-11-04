@@ -10,7 +10,7 @@ use transmux::pipeline::CodecConfig;
 use transmux::{StreamingTsHlsSegmenter, TsDemux, UpdateTrackOutcome};
 
 fn load_ts() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     std::fs::read(path).expect("h264_aac.ts fixture must exist")
 }
 

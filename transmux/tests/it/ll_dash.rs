@@ -22,7 +22,7 @@ use transmux::ts_demux::TsDemux;
 // ---------------------------------------------------------------------------
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
+    test_fixtures::root()
 }
 
 fn demux_media() -> Media {

@@ -17,7 +17,6 @@
 //! validator and keep `startNumber`/`@duration` constant as it refreshes.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use transmux::TrackId;
 
@@ -97,7 +96,7 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
     let media = TsDemux::new()
         .unpackage(
             &std::fs::read(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac_40s.ts"),
+                test_fixtures::path("ts/h264_aac_40s.ts"),
             )
             .expect("fixture"),
         )

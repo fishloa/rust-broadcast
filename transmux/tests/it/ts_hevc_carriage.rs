@@ -39,7 +39,7 @@ use transmux::{
 // ── Fixture loading (mirrors tests/it/ts_hevc.rs) ──────────────────────────────
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/hevc")
+    test_fixtures::path("ts/hevc")
 }
 
 fn load_ts(name: &str) -> Vec<u8> {

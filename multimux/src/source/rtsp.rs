@@ -1841,8 +1841,8 @@ mod tests {
         use tokio::net::TcpListener;
 
         /// Self-signed `CN=localhost` cert/key fixture, shared byte-for-byte
-        /// with `rtsp-runtime/../fixtures/multimux/localhost-{cert,key}.der` (see
-        /// `multimux/../fixtures/multimux/PROVENANCE.md`) — the same pair
+        /// with `rtsp-runtime/fixtures/multimux/localhost-{cert,key}.der` (see
+        /// `multimux/fixtures/multimux/PROVENANCE.md`) — the same pair
         /// `rtsp-runtime`'s own `tests/io_loopback.rs::tls_full_session_over_loopback`
         /// uses to run a real TLS handshake over `127.0.0.1` loopback.
         fn cert_der() -> Vec<u8> {

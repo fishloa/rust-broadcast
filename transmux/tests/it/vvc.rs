@@ -11,13 +11,10 @@ use transmux::media::{CmafMux, Fmp4Demux};
 use transmux::pipeline::CodecConfig;
 use transmux::vvc_config::{VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalUnitType};
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/mp4/frag/vvc.frag.mp4"
-);
+const FIXTURE: &str = "mp4/frag/vvc.frag.mp4";
 
 fn read_fixture() -> Vec<u8> {
-    std::fs::read(FIXTURE).expect("read vvc.frag.mp4 fixture")
+    std::fs::read(test_fixtures::path(FIXTURE)).expect("read vvc.frag.mp4 fixture")
 }
 
 /// Walk boxes at `data`, recursing into container boxes, to find the first box

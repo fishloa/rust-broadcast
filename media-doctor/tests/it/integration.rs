@@ -863,8 +863,8 @@ fn pes_on_a_pmt_pid_is_not_read_as_a_section() {
 
 /// Path helper: fixture TS file from fixtures/ top level.
 fn fixture_pcr(name: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/{}", env!("CARGO_MANIFEST_DIR"), name);
-    fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {path}: {e}"))
+    let path = test_fixtures::path(name);
+    fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", path.display()))
 }
 
 /// france-tnt-pcr.ts is a clean multi-PCR TS stream. PcrCheck must produce

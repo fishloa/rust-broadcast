@@ -31,10 +31,7 @@ const PLAYLIST_URL: &str = "http://fixture/index.m3u8";
 const TS_SYNC_BYTE: u8 = 0x47;
 
 fn fixture_dir() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/hls/ts-hls"
-    ))
+    test_fixtures::path("hls/ts-hls")
 }
 
 fn read_fixture(name: &str) -> Vec<u8> {
@@ -459,10 +456,7 @@ fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
 #[test]
 fn track_set_change_across_a_discontinuity_re_emits_init() {
     let seg0 = read_fixture("index0.ts");
-    let other = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/h264/main.ts"
-    ))
+    let other = std::fs::read(test_fixtures::path("ts/h264/main.ts"))
     .expect("workspace h264 fixture");
     let playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
 #EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nindex0.ts\n#EXT-X-DISCONTINUITY\n\

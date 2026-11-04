@@ -26,7 +26,6 @@
 #![cfg(feature = "std")]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
@@ -41,8 +40,7 @@ fn fixture(rel: &str) -> Vec<u8> {
 }
 
 fn local_fixture(rel: &str) -> Vec<u8> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/transmux/audio_pes_straddle")
+    let p = test_fixtures::path("transmux/audio_pes_straddle")
         .join(rel);
     std::fs::read(&p).unwrap_or_else(|e| panic!("read fixture {}: {e}", p.display()))
 }

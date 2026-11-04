@@ -186,7 +186,7 @@ fn private_corpus_track_ids_match_pre_typed_golden() {
     let Some(private) = test_fixtures::private_root() else {
         return;
     };
-    let got = summarize(&private.join("fixtures"), |r| {
+    let got = summarize(&private.join(Path::new("fixtures")), |r| {
         if let Some(x) = r.strip_prefix("ts/") {
             Some(format!("test-streams/{x}"))
         } else if let Some(x) = r.strip_prefix("tsduck/") {
@@ -207,6 +207,6 @@ fn legacy_test_streams_track_ids_match_pre_typed_golden() {
         eprintln!("SKIPPED - private not available");
         return;
     };
-    let got = summarize(&root.join("fixtures"), |r| Some(format!("private/{r}")));
+    let got = summarize(&root.join(Path::new("fixtures")), |r| Some(format!("private/{r}")));
     bless_or(&got, false);
 }

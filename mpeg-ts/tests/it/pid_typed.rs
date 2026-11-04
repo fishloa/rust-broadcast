@@ -90,7 +90,7 @@ fn verify_stream(name: &str, data: &[u8]) -> usize {
 
 #[test]
 fn every_committed_ts_fixture_pid_matches_the_wire() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
+    let root = test_fixtures::root();
     let mut files = Vec::new();
     collect(&root, "ts", &mut files);
     assert!(

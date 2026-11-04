@@ -101,7 +101,7 @@ const SGPD_ORACLE_BODY: &[u8] = &[
 
 #[test]
 fn prft_real_fixture_parse_fields() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/prft.mp4");
+    let path = test_fixtures::path("mp4/prft.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     // prft is a top-level box in this file, after moov.
@@ -126,7 +126,7 @@ fn prft_real_fixture_parse_fields() {
 
 #[test]
 fn prft_real_fixture_byte_exact_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/prft.mp4");
+    let path = test_fixtures::path("mp4/prft.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let prft_box = find_full_box(&data, b"prft");
@@ -149,7 +149,7 @@ fn prft_real_fixture_byte_exact_round_trip() {
 fn prft_oracle_body_matches() {
     // Verify that the oracle body bytes from the spec doc match what we parse
     // from the real file.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/prft.mp4");
+    let path = test_fixtures::path("mp4/prft.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let prft_box = find_full_box(&data, b"prft");
     // body = full box bytes after the 8-byte header
@@ -163,7 +163,7 @@ fn prft_oracle_body_matches() {
 
 #[test]
 fn prft_mutation_changes_bytes() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/prft.mp4");
+    let path = test_fixtures::path("mp4/prft.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let prft_box = find_full_box(&data, b"prft");
     let mut parsed = ProducerReferenceTimeBox::parse(prft_box).expect("parse");
@@ -183,7 +183,7 @@ fn prft_mutation_changes_bytes() {
 
 #[test]
 fn sgpd_roll_real_fixture_parse_fields() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -209,7 +209,7 @@ fn sgpd_roll_real_fixture_parse_fields() {
 
 #[test]
 fn sgpd_roll_real_fixture_byte_exact_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -231,7 +231,7 @@ fn sgpd_roll_real_fixture_byte_exact_round_trip() {
 
 #[test]
 fn sgpd_oracle_body_matches() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
     let sgpd_box = find_full_box(stbl, b"sgpd");
@@ -245,7 +245,7 @@ fn sgpd_oracle_body_matches() {
 
 #[test]
 fn sbgp_real_fixture_parse_fields() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -268,7 +268,7 @@ fn sbgp_real_fixture_parse_fields() {
 
 #[test]
 fn sbgp_real_fixture_byte_exact_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -294,7 +294,7 @@ fn sbgp_real_fixture_byte_exact_round_trip() {
 
 #[test]
 fn sgpd_mutation_changes_bytes() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
     let sgpd_box = find_full_box(stbl, b"sgpd");
@@ -313,7 +313,7 @@ fn sgpd_mutation_changes_bytes() {
 
 #[test]
 fn sbgp_mutation_changes_bytes() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
     let sbgp_box = find_full_box(stbl, b"sbgp");

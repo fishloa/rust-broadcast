@@ -273,8 +273,8 @@ mod tests {
             "ts/france-pcr-discontinuity.ts",
             "ts/m6-single.ts",
         ] {
-            let path = alloc::format!("{}/../fixtures/{rel}", env!("CARGO_MANIFEST_DIR"));
-            let ts = std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"));
+            let path = test_fixtures::path(rel);
+            let ts = std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
             let mut report = Report::new();
             CodecSignallingCheck.run(&ts, &mut report);
             assert!(

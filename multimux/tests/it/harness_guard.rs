@@ -88,7 +88,8 @@ const SLEEP_ALLOW: &[&str] = &[
 ];
 
 fn test_files() -> Vec<(String, String)> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests");
     let mut out = Vec::new();
     collect(&dir, &mut out);
     out

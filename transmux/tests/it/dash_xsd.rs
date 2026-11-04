@@ -16,7 +16,7 @@ use transmux::media::Media;
 use transmux::ts_demux::TsDemux;
 
 fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
+    test_fixtures::root()
 }
 
 fn media() -> Media {

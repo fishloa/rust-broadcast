@@ -245,7 +245,7 @@ fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
 
 #[test]
 fn committed_fixtures_match_the_generator_and_pair() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/transmux/paff");
+    let dir = test_fixtures::path("transmux/paff");
     for (name, g) in [
         ("paff_tff_12f_64x64", gen_tff()),
         ("paff_bff_12f_64x64", gen_bff()),
@@ -363,7 +363,7 @@ fn progressive_and_non_field_streams_are_unaffected() {
     // Every committed H.264 TS fixture that is not PAFF must keep one sample per
     // access unit: classification never reports a field for them.
     use transmux::slice_header::{AvcParamSets, AvcPicture};
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264");
+    let root = test_fixtures::path("ts/h264");
     let Ok(rd) = std::fs::read_dir(&root) else {
         eprintln!("{root:?} absent: SKIPPED");
         return;
@@ -417,7 +417,7 @@ fn progressive_and_non_field_streams_are_unaffected() {
 #[test]
 #[ignore]
 fn regenerate_fixtures() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/transmux/paff");
+    let dir = test_fixtures::path("transmux/paff");
     for (name, g) in [
         ("paff_tff_12f_64x64", gen_tff()),
         ("paff_bff_12f_64x64", gen_bff()),
@@ -434,7 +434,7 @@ fn regenerate_fixtures() {
 fn real_broadcast_paff_capture_pairs() {
     use transmux::slice_header::{AvcParamSets, AvcPicture};
     let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/gulli-opengop.ts");
+        test_fixtures::path("ts/gulli-opengop.ts");
     let ts = std::fs::read(path).expect("gulli-opengop.ts fixture");
     let samples = batch(&ts);
     assert_eq!(samples.len(), 147, "293 fields -> 146 pairs + 1 lone field");

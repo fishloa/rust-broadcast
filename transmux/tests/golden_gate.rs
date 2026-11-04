@@ -42,7 +42,7 @@ use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
 // ── Fixture + scratch-dir plumbing ──────────────────────────────────────────
 
 fn ts_fixture() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264_aac.ts");
     std::fs::read(path).expect("h264_aac.ts fixture must exist")
 }
 

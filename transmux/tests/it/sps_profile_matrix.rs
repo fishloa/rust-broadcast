@@ -198,14 +198,12 @@ const HEVC_ORACLE: &[Oracle] = &[
 // ---------------------------------------------------------------------------
 
 fn h264_fixture_path(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/ts/h264")
+    test_fixtures::path("ts/h264")
         .join(name)
 }
 
 fn hevc_fixture_path(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/ts/hevc")
+    test_fixtures::path("ts/hevc")
         .join(name)
 }
 

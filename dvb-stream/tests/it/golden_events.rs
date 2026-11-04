@@ -7,11 +7,11 @@ use std::pin::Pin;
 use dvb_stream::SectionStream;
 use futures_core::Stream;
 
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
+const FIXTURE: &str = "ts/m6-single.ts";
 
 #[tokio::test]
 async fn section_stream_events_are_byte_identical_to_golden() {
-    let data = std::fs::read(FIXTURE).expect("m6-single.ts");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("m6-single.ts");
     let mut stream = SectionStream::new(std::io::Cursor::new(data));
     let mut out = String::new();
     while let Some(ev) = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await {

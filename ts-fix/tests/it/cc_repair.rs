@@ -12,27 +12,15 @@
 use mpeg_ts::pid::Pid;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 fn m6_single_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("ts")
-        .join("m6-single.ts")
+    test_fixtures::path("ts/m6-single.ts")
 }
 
 fn m6_duplicate_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("ts")
-        .join("m6-duplicate.ts")
+    test_fixtures::path("ts/m6-duplicate.ts")
 }
 
 fn m6_discontinuity_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("ts")
-        .join("m6-discontinuity.ts")
+    test_fixtures::path("ts/m6-discontinuity.ts")
 }
 
 fn extract_pid(pkt: &[u8]) -> Pid {

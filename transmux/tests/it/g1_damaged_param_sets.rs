@@ -3,10 +3,7 @@ use transmux::ir::DemuxEvent;
 use transmux::ts_demux::StreamingTsDemux;
 
 fn load() -> Vec<u8> {
-    std::fs::read(format!(
-        "{}/../fixtures/ts/h264_aac.ts",
-        env!("CARGO_MANIFEST_DIR")
-    ))
+    std::fs::read(test_fixtures::path("ts/h264_aac.ts"))
     .unwrap()
 }
 

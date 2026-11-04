@@ -6,8 +6,8 @@ use std::fs;
 use media_doctor::{Diagnostic, PtsCheck, Report, Severity};
 
 fn read(rel: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel);
-    fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"))
+    let path = test_fixtures::path(rel);
+    fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 
 fn pts_errors(report: &Report) -> Vec<&media_doctor::Finding> {

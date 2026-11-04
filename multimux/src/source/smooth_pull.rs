@@ -1301,10 +1301,7 @@ mod tests {
     }
 
     fn fixture_ts_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/ts/h264_aac.ts"
-        ))
+        test_fixtures::path("ts/h264_aac.ts")
     }
 
     fn build_smooth_output() -> (Media, SmoothOutput) {
@@ -1950,10 +1947,7 @@ mod tests {
     /// from a genuine encrypted fragment rather than a hand-built box.
     #[test]
     fn real_piff_encrypted_fixture_is_detected() {
-        let path = std::path::PathBuf::from(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/multimux/piff-sample-encrypted.mp4"
-        ));
+        let path = test_fixtures::path("multimux/piff-sample-encrypted.mp4");
         if !path.exists() {
             eprintln!("SKIP real_piff_encrypted_fixture_is_detected: fixture missing");
             return;

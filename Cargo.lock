@@ -1214,6 +1214,7 @@ dependencies = [
  "serde",
  "serde_json",
  "test-alloc",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -1251,6 +1252,7 @@ dependencies = [
  "mpeg-ts",
  "rand 0.10.3",
  "subtle",
+ "test-fixtures",
  "thiserror 2.0.21",
  "zeroize",
 ]
@@ -1312,6 +1314,7 @@ dependencies = [
  "mpeg-ts",
  "rtp-packet",
  "socket2",
+ "test-fixtures",
  "tokio",
  "tokio-util",
 ]
@@ -1324,6 +1327,7 @@ dependencies = [
  "mpeg-pes",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -2409,6 +2413,7 @@ dependencies = [
  "event-listener",
  "parking_lot 0.13.0",
  "scte35-splice",
+ "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
  "transmux",
@@ -2899,6 +2904,7 @@ dependencies = [
  "scte35-splice",
  "serde",
  "ssai-runtime",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -3271,6 +3277,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -4113,6 +4120,7 @@ dependencies = [
  "scte35-splice",
  "serde",
  "test-alloc",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -4155,6 +4163,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 

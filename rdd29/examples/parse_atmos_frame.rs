@@ -16,10 +16,7 @@ fn main() {
     // (a real E-AC-3 syncframe from fixtures/ts/dolby/eac3.ts). RDD 29 never
     // decodes audio essence -- this crate treats it as an opaque
     // AudioDataDLC payload, exactly like st337 treats its burst_payload.
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/eac3-dep/eac3_frame0.bin"
-    );
+    let path = test_fixtures::path("eac3-dep/eac3_frame0.bin");
     let real_audio = std::fs::read(path).expect("fixture must exist");
 
     let bed = BedDefinition1::new(

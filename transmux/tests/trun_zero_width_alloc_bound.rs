@@ -18,10 +18,7 @@ use transmux::{Fmp4Demux, TrackFragmentRunBox};
 #[global_allocator]
 static ALLOC: ThreadCapped<{ 256 << 20 }> = ThreadCapped::new();
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/mp4/llcmaf/ll_chunked.mp4"
-);
+const FIXTURE: &str = "mp4/llcmaf/ll_chunked.mp4";
 
 /// Offset of the `trun` box's `version|flags` word (just after its fourcc).
 fn trun_flags_offset(data: &[u8]) -> usize {
@@ -34,7 +31,7 @@ fn trun_flags_offset(data: &[u8]) -> usize {
 
 /// The whole fixture with its first `trun`'s flags/sample_count replaced.
 fn with_trun(sample_count: u32, flags: u32) -> Vec<u8> {
-    let mut data = std::fs::read(FIXTURE).expect("fixture");
+    let mut data = std::fs::read(test_fixtures::path(FIXTURE)).expect("fixture");
     let off = trun_flags_offset(&data);
     data[off..off + 4].copy_from_slice(&flags.to_be_bytes());
     data[off + 4..off + 8].copy_from_slice(&sample_count.to_be_bytes());
@@ -44,7 +41,7 @@ fn with_trun(sample_count: u32, flags: u32) -> Vec<u8> {
 /// The real fixture's `trun` box body (`version|flags` onwards), with flags and
 /// sample_count replaced.
 fn trun_box(sample_count: u32, flags: u32) -> Vec<u8> {
-    let data = std::fs::read(FIXTURE).expect("fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("fixture");
     let off = trun_flags_offset(&data);
     let size =
         u32::from_be_bytes([data[off - 8], data[off - 7], data[off - 6], data[off - 5]]) as usize;
@@ -56,7 +53,7 @@ fn trun_box(sample_count: u32, flags: u32) -> Vec<u8> {
 
 #[test]
 fn unmodified_fixture_still_demuxes() {
-    let data = std::fs::read(FIXTURE).expect("fixture");
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("fixture");
     Fmp4Demux::new()
         .unpackage(&data)
         .expect("real LL-CMAF fixture demuxes");

@@ -1,9 +1,9 @@
 //! Drive a real RTMP publish through `AsyncRtmpServer`/`RtmpConnection`.
 //!
 //! Originally the #738 Task 8 harness that captured
-//! `rtmp-runtime/../fixtures/rtmp/obs-publish.bin` by hand-rolling the socket
+//! `rtmp-runtime/fixtures/rtmp/obs-publish.bin` by hand-rolling the socket
 //! plumbing; that fixture is now committed (see
-//! `../fixtures/rtmp/PROVENANCE.md`), so this example instead demonstrates the
+//! `fixtures/rtmp/PROVENANCE.md`), so this example instead demonstrates the
 //! Task 9 tokio adapter (`rtmp_runtime::io::AsyncRtmpServer`) as its real
 //! consumer: bind, accept one publisher, and print each `ServerEvent` as the
 //! adapter drives the session over the socket.

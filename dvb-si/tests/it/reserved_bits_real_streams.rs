@@ -97,7 +97,7 @@ fn survey_pmt(pmt: &PmtSection<'_>, src: &str, seen: &mut Seen) {
 
 #[test]
 fn survey_real_reserved_bits() {
-    let root = format!("{}/../fixtures", env!("CARGO_MANIFEST_DIR"));
+    let root = test_fixtures::root();
     let mut seen = Seen::new();
     let mut bins = Vec::new();
     walk(Path::new(&root), "bin", &mut bins);

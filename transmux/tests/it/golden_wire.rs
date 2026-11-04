@@ -24,7 +24,7 @@ fn check(name: &str, actual: &str) {
 
 #[test]
 fn rtp_session_sdp_matches_golden() {
-    let ts = fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts"))
+    let ts = fs::read(test_fixtures::path("ts/h264_aac.ts"))
         .expect("ts fixture");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
     let mut p = RtpPacketiser {

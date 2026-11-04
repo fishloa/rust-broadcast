@@ -32,7 +32,7 @@ fn golden_for(stem: &str, xml: &str) {
 
 #[test]
 fn committed_fixtures_match_golden() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ttml");
+    let dir = test_fixtures::path("ttml");
     let mut names: Vec<_> = fs::read_dir(&dir)
         .expect("fixtures dir")
         .map(|e| e.expect("entry").path())

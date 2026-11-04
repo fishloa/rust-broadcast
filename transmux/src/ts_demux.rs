@@ -8279,7 +8279,7 @@ pub(crate) mod tests {
     #[test]
     fn eac3_probe_rewalk_is_bounded_for_tiny_pes() {
         let real = {
-            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/dolby/eac3.ts");
+            let path = test_fixtures::path("ts/dolby/eac3.ts");
             let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
             let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
             media.tracks[0].samples[0].data.to_vec()
@@ -8328,7 +8328,7 @@ pub(crate) mod tests {
     #[test]
     fn eac3_walked_len_follows_the_held_tail() {
         let real = {
-            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/dolby/eac3.ts");
+            let path = test_fixtures::path("ts/dolby/eac3.ts");
             let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
             let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
             media.tracks[0].samples[0].data.to_vec()
@@ -13293,7 +13293,7 @@ pub(crate) mod tests {
 
     /// The real independent frames of the committed Dolby E-AC-3 capture.
     fn real_eac3_independent_frames() -> Vec<Vec<u8>> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/dolby/eac3.ts");
+        let path = test_fixtures::path("ts/dolby/eac3.ts");
         let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
         let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
         media.tracks[0]
@@ -13471,10 +13471,7 @@ pub(crate) mod tests {
     #[test]
     fn eac3_without_dependents_emits_each_access_unit_immediately() {
         let real = real_eac3_independent_frames();
-        let ts = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/ts/dolby/eac3.ts"
-        ))
+        let ts = std::fs::read(test_fixtures::path("ts/dolby/eac3.ts"))
         .unwrap();
         let mut d = StreamingTsDemux::new();
         let mut got = 0usize;

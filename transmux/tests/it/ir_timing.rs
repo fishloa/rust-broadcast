@@ -22,7 +22,7 @@ use transmux::{Ec3SyncframeInfo, Error, Fmp4Demux, Media, PcrSample, Track, TsDe
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts")
+    test_fixtures::path("ts")
 }
 
 fn read_fixture(rel: &str) -> Vec<u8> {

@@ -40,7 +40,7 @@ fn assert_every_truncation_errors<T, E: std::fmt::Debug>(
 }
 
 fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
+    test_fixtures::root()
 }
 
 #[test]

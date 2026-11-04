@@ -30,6 +30,7 @@ zeroize          = { version = "1", default-features = false }
 subtle           = { version = "2", default-features = false }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 criterion = { workspace = true, features = ["html_reports"] }
 rand      = "0.10"
 

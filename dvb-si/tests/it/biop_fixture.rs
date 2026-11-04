@@ -23,7 +23,7 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Extract reassembled sections for PID 0x00AB from the m6 fixture.
 fn m6_sections_pid_ab() -> Vec<Vec<u8>> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
+    let path = test_fixtures::path("ts/m6-single.ts");
     let data = std::fs::read(path).expect("read m6 fixture");
     let mut reassembler = SectionReassembler::default();
     let mut sections = Vec::new();

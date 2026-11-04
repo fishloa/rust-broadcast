@@ -20,10 +20,7 @@ fn exercise(b: &[u8]) -> bool {
 
 #[test]
 fn truncation_and_every_value_mutation_never_panic() {
-    let seed = fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-vbi/vbi_data_field.bin"
-    ))
+    let seed = fs::read(test_fixtures::path("dvb-vbi/vbi_data_field.bin"))
     .expect("fixture vbi_data_field.bin must be committed");
     assert!(exercise(&seed));
     for n in 0..=seed.len() {

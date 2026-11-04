@@ -13,10 +13,7 @@ use dvb_ci::objects::ca_pmt::{CaPmt, CaPmtCmdId, CaPmtListManagement};
 use dvb_si::tables::pmt::PmtSection;
 
 fn real_pmt() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/shared/real-pmt.bin"
-    );
+    let path = test_fixtures::path("shared/real-pmt.bin");
     fs::read(path).expect("fixture real-pmt.bin must be present")
 }
 

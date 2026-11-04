@@ -67,7 +67,7 @@ fn PROGRESSIVE_MP4_fx() -> &'static [u8] {
 }
 
 fn fixtures_ts_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts")
+    test_fixtures::path("ts")
 }
 
 fn read(path: &std::path::Path) -> Vec<u8> {

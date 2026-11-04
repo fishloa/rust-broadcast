@@ -48,10 +48,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn subtitle_fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4"
-    );
+    let path = test_fixtures::path("transmux/mp4/cmaf/av_subtitle_frag.mp4");
     std::fs::read(path).expect("fixture file must exist")
 }
 
