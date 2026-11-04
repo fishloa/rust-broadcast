@@ -12,8 +12,8 @@ use transmux::{PsDemux, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind,
 const PACK_START_CODE: [u8; 4] = [0x00, 0x00, 0x01, 0xBA];
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/{rel}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+    let path = test_fixtures::path(rel.trim_start_matches("fixtures/"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 fn total_bytes(m: &Media) -> usize {

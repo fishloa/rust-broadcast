@@ -61,4 +61,4 @@ These need no new fixture; the prober's tests reference the corpus in place:
 | WebM | `fixtures/webm/` (vp8_opus, vp9_opus, vorbis) |
 | FLV | `fixtures/flv/av.flv` |
 | MPEG-PS | `fixtures/ps/h264_ac3.ps` |
-| MXF | `fixtures/mxf/op1a_mpeg2_pcm.mxf`, `st377-1/tests/fixtures/` |
+| MXF | `fixtures/mxf/op1a_mpeg2_pcm.mxf`, `st377-1/fixtures/` |

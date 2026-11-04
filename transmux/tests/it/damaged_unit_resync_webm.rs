@@ -10,8 +10,8 @@ use transmux::media::Media;
 const CLUSTER_ID: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/{rel}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+    let path = test_fixtures::path(rel.trim_start_matches("fixtures/"));
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 fn cluster_offsets(bytes: &[u8]) -> Vec<usize> {

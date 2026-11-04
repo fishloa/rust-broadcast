@@ -2,7 +2,7 @@
 //!
 //! The captures are large, real, third-party muxes kept in the private
 //! fixtures repo (`private/fixtures/ts/`, the `private/` submodule; resolved by
-//! `test_fixtures`, which also falls back to a fetched `.test-streams/` — see
+//! `test_fixtures`, which also falls back to a fetched `private fixtures/` — see
 //! `tools/fetch-test-streams.sh`). This test runs every resolvable capture
 //! through `SiDemux` and asserts it parses real SI without panicking.
 //!

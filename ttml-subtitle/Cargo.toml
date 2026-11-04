@@ -23,6 +23,7 @@ thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 serde_json = { workspace = true }
 
 [[example]]

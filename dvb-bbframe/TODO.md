@@ -6,7 +6,7 @@ DVB-S2/DVB-T2 Base-Band Frame parser and builder.
 
 ### Extract raw BBFrame fixtures
 
-- [ ] Extract raw BBFrame binary files from existing TS `.ts` captures in `tests/fixtures/`
+- [ ] Extract raw BBFrame binary files from existing TS `.ts` captures in `fixtures/`
   - Strip the outer TS section headers (`00 80 00 [slen] [count]`)
   - Save as `.bbframe` files (e.g. `tnt-5w-12732v-bbframe.bbframe`)
   - Each file = complete concatenated BBFrames, 10-byte header + data

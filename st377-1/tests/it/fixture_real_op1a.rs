@@ -66,11 +66,7 @@ use st377_1::{
 };
 
 fn fixture_bytes() -> Vec<u8> {
-    std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mxf/st377-1/op1a_mpeg2_pcm.mxf"
-    ))
-    .expect("read ../fixtures/mxf/st377-1/op1a_mpeg2_pcm.mxf")
+    test_fixtures::read("mxf/st377-1/op1a_mpeg2_pcm.mxf")
 }
 
 /// Parse `klv` as `T`, then serialize -> parse again and assert the second

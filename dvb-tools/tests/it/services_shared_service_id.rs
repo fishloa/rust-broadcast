@@ -1,7 +1,7 @@
 //! Independent-oracle test for `dvb-tools services` keying (issue #1100 /
 //! audit W-DT-2).
 //!
-//! `../fixtures/ts/sdt_nit_two_ts_shared_service_id.ts` (see that
+//! `ts/sdt_nit_two_ts_shared_service_id.ts` (see that
 //! directory's README for the exact `tstabcomp`/`tsp` generation command)
 //! is a synthetic capture built from TSDuck-compiled tables: two
 //! transport streams — `(onid=1, tsid=6)` and `(onid=1, tsid=7)` — each
@@ -20,7 +20,10 @@
 use std::process::{Command, Stdio};
 
 fn fixture(rel: &str) -> String {
-    format!("{}{}", env!("CARGO_MANIFEST_DIR"), rel)
+    format!(
+        "{}",
+        test_fixtures::path(rel.trim_start_matches("/").trim_start_matches("fixtures/")).display()
+    )
 }
 
 fn run(args: &[&str]) -> (bool, String, String) {
@@ -40,7 +43,7 @@ fn run(args: &[&str]) -> (bool, String, String) {
 
 #[test]
 fn services_keeps_same_service_id_on_different_transport_streams_distinct() {
-    let path = fixture("/../fixtures/ts/sdt_nit_two_ts_shared_service_id.ts");
+    let path = fixture("/ts/sdt_nit_two_ts_shared_service_id.ts");
     let (ok, stdout, stderr) = run(&["services", &path]);
     assert!(ok, "services fixture failed: stderr={stderr}");
 

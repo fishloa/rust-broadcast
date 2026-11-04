@@ -87,7 +87,10 @@ fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 fn fixture_files() -> Vec<std::path::PathBuf> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut out = Vec::new();
-    let mut stack = vec![root.join("fixtures"), root.join("transmux/../fixtures/transmux")];
+    let mut stack = vec![
+        root.join("fixtures"),
+        root.join("transmux/../fixtures/transmux"),
+    ];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

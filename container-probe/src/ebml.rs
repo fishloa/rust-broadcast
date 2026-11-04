@@ -334,8 +334,7 @@ mod tests {
     use super::*;
 
     fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
-        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+        test_fixtures::read(rel.trim_start_matches("fixtures/"))
     }
 
     /// Finding 1: a 12-byte input whose size VINT width is 8 must never panic.
@@ -506,11 +505,7 @@ mod tests {
     /// "read more", so the fix above did not simply turn EBML into "stop".
     #[test]
     fn a_truncated_legal_header_still_asks_for_more() {
-        let full = std::fs::read(std::format!(
-            "{}/../fixtures/mkv/h264_aac.mkv",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture");
+        let full = test_fixtures::read("mkv/h264_aac.mkv");
         // Long enough to carry the magic, too short to reach DocType.
         let prefix = &full[..12];
         match probe(prefix, prefix.len()) {

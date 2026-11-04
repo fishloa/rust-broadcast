@@ -186,11 +186,7 @@ mod drift {
         );
 
         // Real fixture key (extracted from the file).
-        let real = std::fs::read(std::format!(
-            "{}/../fixtures/mxf/op1a_mpeg2_pcm.mxf",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("fixture");
+        let real = test_fixtures::read("mxf/op1a_mpeg2_pcm.mxf");
         let real_key: [u8; 16] = real[..16].try_into().expect("16 bytes");
         assert_eq!(
             super::is_partition_pack_key(&real_key),
@@ -222,8 +218,7 @@ mod tests {
     use super::*;
 
     fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
-        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+        test_fixtures::read(rel.trim_start_matches("fixtures/"))
     }
 
     /// Finding 4: a 15-byte prefix of a real MXF fixture (1 byte short of the

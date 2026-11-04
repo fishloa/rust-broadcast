@@ -2,16 +2,13 @@
 # Re-fetch the upstream real-broadcast captures from their ORIGINAL sources
 # (issue #67 / #1259).
 #
-# The captures the tests need are already mirrored, with a PROVENANCE.md per
-# topic, in the private fixtures repo (`private/fixtures/{ts,mpegh,dash,tsduck}/`,
-# the `private/` submodule; the 187/352 MB captures are kept there as small excerpts made by
-# `tools/make-fixture-excerpts.py`, not as LFS objects). The shared
-# resolver (`test-fixtures` crate: public `fixtures/` -> `private/fixtures/` ->
-# `.test-streams/`) finds them there with no script run. This script exists to
-# (a) re-derive/verify a mirrored file from upstream, (b) fetch the one capture
-# too large to mirror (`russia-t2mi-scte35`, 4.9 GB), and (c) pin the TSDuck
-# `tsduck-test` corpus clone (`tsduck-test`, below). Downloads land in the
-# gitignored `.test-streams/` scratch dir, the resolver's last-resort tier.
+# The captures the tests need are mirrored, with a PROVENANCE.md per topic,
+# in `fixtures/` (public) and `private/fixtures/` (private submodule). Tests
+# reach them only through the `test-fixtures` crate; `.test-streams/` is NOT
+# on the test path. This script is retained solely to (a) re-derive/verify a
+# mirrored file from upstream, (b) fetch the one capture too large to mirror
+# (`russia-t2mi-scte35`, 4.9 GB), and (c) pin the TSDuck `tsduck-test` corpus
+# clone. Downloads land in the gitignored `.test-streams/` scratch dir.
 #
 # Usage:  tools/fetch-test-streams.sh [name ...]   (no args = fetch all)
 #         tools/fetch-test-streams.sh --list

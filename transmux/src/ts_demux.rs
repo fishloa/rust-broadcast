@@ -9523,11 +9523,7 @@ pub(crate) mod tests {
         // A second, genuinely different SPS: the same bytes with the level_idc
         // byte altered is enough to be a different parameter set, but it must
         // still decode, so take a real SPS from another committed capture.
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests");
-        path.push("fixtures");
-        path.push("ts");
-        path.push("h264-two-resolutions.ts");
+        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
         let other =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
         let media = TsDemux::new()
@@ -9964,8 +9960,7 @@ pub(crate) mod tests {
 
     /// The (SPS, PPS, width) of the fixture's first and second resolution.
     fn two_resolution_sets() -> [(Vec<u8>, Vec<u8>, u16); 2] {
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("../fixtures/transmux/ts/h264-two-resolutions.ts");
+        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
         let bytes = std::fs::read(&path).unwrap();
         let mut demux = StreamingTsDemux::new();
         demux.feed(&bytes);
@@ -10064,11 +10059,7 @@ pub(crate) mod tests {
     /// *unchanged* repeat must emit nothing.
     #[test]
     fn mid_stream_config_change_emits_track_updated_once_and_only_when_it_changes() {
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests");
-        path.push("fixtures");
-        path.push("ts");
-        path.push("h264-two-resolutions.ts");
+        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
         let bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 

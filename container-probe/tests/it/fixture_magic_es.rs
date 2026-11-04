@@ -7,11 +7,9 @@
 //! (128). Fixture paths are workspace-relative (joined to `CARGO_MANIFEST_DIR`).
 
 use container_probe::{Confidence, Format, Probe};
-use std::fs;
 
 fn fixture(rel: &str) -> Vec<u8> {
-    fs::read(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-        .unwrap_or_else(|e| panic!("failed to read fixture {rel}: {e}"))
+    test_fixtures::read(rel.trim_start_matches("fixtures/"))
 }
 
 /// Assert a file is `Identified` as exactly `format`.

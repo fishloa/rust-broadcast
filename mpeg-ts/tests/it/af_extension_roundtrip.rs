@@ -173,7 +173,7 @@ fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
                     | "node_modules"
                     | ".delegate"
                     | "private"
-                    | ".test-streams"
+                    | "private fixtures"
             ) {
                 continue;
             }
@@ -208,7 +208,7 @@ fn scan(include_archive: bool) -> Report {
     let mut files = Vec::new();
     collect_ts_files(&root, &mut files);
     if include_archive {
-        // The whole real-capture corpus: private/fixtures/** + fetched .test-streams/.
+        // The whole real-capture corpus: private/fixtures/** + fetched private fixtures/.
         files.extend(test_fixtures::corpus(&["ts"]));
     }
     files.sort();
@@ -319,7 +319,7 @@ fn every_committed_ts_adaptation_field_round_trips() {
 ///   overruns the AF. That is stream damage, not a sender convention, so the
 ///   parser keeps rejecting it rather than guess.
 #[test]
-#[ignore = "slow: scans the whole real-capture corpus (private/fixtures + .test-streams)"]
+#[ignore = "slow: scans the whole real-capture corpus (private/fixtures + private fixtures)"]
 fn full_archive_adaptation_fields_round_trip() {
     let t = std::time::Instant::now();
     let r = scan(true);

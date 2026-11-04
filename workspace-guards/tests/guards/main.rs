@@ -1,6 +1,7 @@
 mod clock33;
 mod clock33_data;
 mod common;
+mod fixtures_one_home;
 mod handroll_data;
 mod handroll_dehandroll;
 mod handroll_lines;

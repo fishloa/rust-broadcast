@@ -1,7 +1,7 @@
 //! Fetch-on-demand SCTE-35 capture test — exercises the T2-MI → inner TS
 //! → SCTE-35 pipeline against a real Russian mux (issue #218).
 //!
-//! Keyed on `.test-streams/russia-t2mi-scte35.ts` (~4.9 GB). When the capture
+//! Keyed on `private fixtures/russia-t2mi-scte35.ts` (~4.9 GB). When the capture
 //! is present, feeds the outer TS through `InnerTsRecovery` for PLP 0,
 //! scans the inner TS for `splice_info_section` (table_id 0xFC), and asserts
 //! at least one splice command parses successfully.
@@ -27,7 +27,7 @@ const T2MI_PID: u16 = 0x1000;
 fn russia_t2mi_scte35_parse() {
     // ~4.9 GB: too large for the private repo (see `tools/fetch-test-streams.sh`),
     // so it is the one fetch-on-demand capture; resolved through the shared
-    // resolver (`.test-streams/` fallback) and skipped loudly when not fetched.
+    // resolver (`private fixtures/` fallback) and skipped loudly when not fetched.
     let Some((path, _)) = test_fixtures::find(&format!("{CAPTURE}.ts")) else {
         eprintln!(
             "downloaded_scte35: SKIPPED - {CAPTURE}.ts (~4.9 GB) not fetched. \

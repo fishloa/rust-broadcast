@@ -17,7 +17,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use transmux::sample_aes::aes128_encrypt_segment;
 
-const FIXTURE: &[u8] = include_bytes!("../fixtures/ts-hls/index0.ts");
+#[allow(non_snake_case)]
+fn FIXTURE_fx() -> &'static [u8] {
+    test_fixtures::read("hls/ts-hls/index0.ts").leak()
+}
 const KEY: [u8; 16] = [0x61; 16];
 const IV: [u8; 16] = [0x17; 16];
 const PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
@@ -48,7 +51,7 @@ async fn handle(State(o): State<Origin>, req: Request) -> axum::response::Respon
         }
         "/live/index0.ts" => {
             let n = o.segment_hits.fetch_add(1, Ordering::SeqCst);
-            let cipher = aes128_encrypt_segment(&KEY, &IV, FIXTURE);
+            let cipher = aes128_encrypt_segment(&KEY, &IV, FIXTURE_fx());
             let body = if o.truncated_segment_first && n == 0 {
                 cipher[..cipher.len() - 1].to_vec()
             } else {

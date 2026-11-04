@@ -52,7 +52,7 @@ const RUN_CEILING: Duration = Duration::from_secs(150);
 type Fingerprint = Vec<(String, Vec<u8>, Option<i64>, Option<i64>)>;
 
 fn seg(index: u8) -> Vec<u8> {
-    let name = format!("../hls-runtime/../fixtures/multimux/ts-hls/index{index}.ts");
+    let name = format!("../hls-runtime/../fixtures/hls/ts-hls/index{index}.ts");
     test_fixtures::read(&name)[TS_PACKET_LEN * LEADING_PACKETS_DROPPED..].to_vec()
 }
 

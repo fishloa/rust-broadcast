@@ -55,7 +55,7 @@ if ! git merge-base --is-ancestor origin/main w2/a 2>/dev/null; then
   git merge --no-edit w2/a || { echo "W2a merge conflict — resolve, do not skip"; exit 1; }
 fi
 git -c protocol.file.allow=always submodule update -q --init --reference /Volumes/External/Projects/rust-broadcast/private private
-ln -s /Volumes/External/Projects/rust-broadcast/.test-streams .test-streams
+ln -s /Volumes/External/Projects/rust-broadcast/private fixtures private fixtures
 ln -s /Volumes/External/Projects/rust-broadcast/multimux/tests/assets/node_modules multimux/tests/assets/node_modules
 export CARGO_TARGET_DIR="$PWD/target"
 ```

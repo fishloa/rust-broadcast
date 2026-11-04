@@ -618,8 +618,8 @@ fn fetched_ranges(client: &mut HlsClient) -> Vec<(ResourceId, Option<(u64, u64)>
 }
 
 fn fixture(rel: &str) -> String {
-    let path = format!("{}/../fixtures/hls/{rel}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    let path = test_fixtures::path(&format!("hls/{rel}"));
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// ffmpeg's single-file byte-range playlist (7 segments of `index.ts`, 14 s,
@@ -832,13 +832,8 @@ fn regression_after_delivery_neither_refetches_nor_duplicates() {
     // r09-C3 shape: MSN 10 delivered, the origin then reports 9..=10 (a
     // regression of the first sequence number, 10 reused). 10 is already
     // delivered, so only 9 is fetched; the samples are the union, once.
-    let ts = |name: &str| {
-        std::fs::read(format!(
-            "{}/../fixtures/hls/ts-hls/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap()
-    };
+    let ts =
+        |name: &str| std::fs::read(test_fixtures::path(&format!("hls/ts-hls/{name}"))).unwrap();
     let live = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
                 #EXT-X-MEDIA-SEQUENCE:10\n#EXTINF:2.0,\nindex0.ts\n";
     let regressed = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\

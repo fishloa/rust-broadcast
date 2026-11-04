@@ -15,13 +15,16 @@
 use broadcast_common::{Parse, Serialize};
 use rtcp_packet::{CompoundPacket, RtcpPacket};
 
-const FIXTURE: &[u8] = include_bytes!("../fixtures/chrome_rr_pli_remb.bin");
+#[allow(non_snake_case)]
+fn FIXTURE_fx() -> &'static [u8] {
+    test_fixtures::read("rtcp/chrome_rr_pli_remb.bin").leak()
+}
 
 #[test]
 fn real_chrome_compound_parses_all_three_packets() {
-    assert_eq!(FIXTURE.len(), 68);
+    assert_eq!(FIXTURE_fx().len(), 68);
 
-    let compound = CompoundPacket::parse(FIXTURE)
+    let compound = CompoundPacket::parse(FIXTURE_fx())
         .expect("a real Chromium RR+PLI+REMB compound packet must parse");
     assert_eq!(compound.packets.len(), 3);
 
@@ -79,11 +82,12 @@ fn real_chrome_compound_parses_all_three_packets() {
 
 #[test]
 fn real_chrome_compound_round_trips_byte_identical() {
-    let compound = CompoundPacket::parse(FIXTURE).unwrap();
+    let compound = CompoundPacket::parse(FIXTURE_fx()).unwrap();
     let mut out = vec![0u8; compound.serialized_len()];
     compound.serialize_into(&mut out).unwrap();
     assert_eq!(
-        out, FIXTURE,
+        out,
+        FIXTURE_fx(),
         "byte-identical to the real captured Chromium datagram"
     );
 }
@@ -93,7 +97,7 @@ fn real_chrome_compound_round_trips_byte_identical() {
 /// with no leading SR/RR must parse and round-trip byte-exactly (#1071).
 #[test]
 fn real_chrome_lone_pli_reduced_size_parses_and_round_trips() {
-    let pli = &FIXTURE[32..44];
+    let pli = &FIXTURE_fx()[32..44];
     assert_eq!(&pli[..2], &[0x81, 206], "V=2 FMT=1 PT=206 (PSFB PLI)");
 
     let compound = CompoundPacket::parse(pli).expect("reduced-size lone PLI must parse");

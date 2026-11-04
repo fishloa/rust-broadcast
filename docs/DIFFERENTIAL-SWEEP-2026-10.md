@@ -147,7 +147,7 @@ Run 1's BUG (`dump --json` grew on 72 of 102 TS fixtures, undocumented) is close
 
 ## Coverage gaps (what this sweep cannot see)
 
-* The 4.9 GB `russia-t2mi-scte35` capture and the `.test-streams/` tsduck clone beyond what is mirrored under `private/fixtures/tsduck/`: not fetched (no network).
+* The 4.9 GB `russia-t2mi-scte35` capture and the `private fixtures/` tsduck clone beyond what is mirrored under `private/fixtures/tsduck/`: not fetched (no network).
 * TS files above 30 MB are skipped for the `cli.*` subprocess probes; above 100 MB for every probe.
 * `multimux.ts_ingest` exercises the session only, not the `IngestDriver` / `Trunk` publication or any transport; network crates (`rtsp-runtime`, `hls-runtime`, `srt-runtime`, `rtmp-runtime`, `webrtc-runtime`, `rist-runtime`), `dvb-ci` / `dvb-ci-runtime`, `ssai-runtime`, `playout-runtime`, `caption-convert`, `ttml-subtitle` have no fixture-driven probe.
 * `.pcap` fixtures (rist, st2022, webrtc) are not read.

@@ -178,9 +178,9 @@ impl DateRange {
 
 No new fixtures needed for the emsg edges; one real paired fixture gathered for DATERANGE.
 
-**emsg edges — reuse existing real bins (copy into `timed-metadata/tests/fixtures/`):**
-- `dvb-emsg/tests/fixtures/scte35_emsg_v0.bin` (real v0 SCTE-35-scheme emsg)
-- `dvb-emsg/tests/fixtures/emsg_v1_scte35_livesim.bin` (real v1, DASH-IF livesim2)
+**emsg edges — reuse existing real bins (copy into `timed-metadata/fixtures/`):**
+- `dvb-emsg/fixtures/scte35_emsg_v0.bin` (real v0 SCTE-35-scheme emsg)
+- `dvb-emsg/fixtures/emsg_v1_scte35_livesim.bin` (real v1, DASH-IF livesim2)
 - Enables real interop round-trip: emsg → SCTE-35 → emsg, byte-identical.
 
 **SCTE-35 input — reuse existing real vectors:** `dvb-scte35/tests/` (threefive corpus,

@@ -21,11 +21,7 @@ use st377_1::{
 };
 
 fn fixture_bytes() -> Vec<u8> {
-    std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/mxf/st377-1/synthetic_minimal.mxf"
-    ))
-    .expect("read ../fixtures/mxf/st377-1/synthetic_minimal.mxf")
+    test_fixtures::read("mxf/st377-1/synthetic_minimal.mxf")
 }
 
 /// Reconstruct the exact KLV bytes for one already-split [`KlvItem`], so a

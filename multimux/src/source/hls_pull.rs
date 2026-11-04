@@ -1744,7 +1744,7 @@ Content-Length: {over}
 
     /// Issue #760: classic MPEG-TS-segment HLS (HLS v3 — no `EXT-X-MAP`,
     /// self-contained `.ts` segments, the dominant legacy/IPTV form) served
-    /// from the real, committed `hls-runtime/../fixtures/multimux/ts-hls/`
+    /// from the real, committed `../fixtures/hls/ts-hls/`
     /// fixture — proving the pump recovers real `TrackSpec`s (from the
     /// client's issue-#760-synthesized `Output::Init`) and every real access
     /// unit lands in the `Trunk`, entirely through the production
@@ -1758,7 +1758,7 @@ Content-Length: {over}
 
         let fixture_dir = std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../hls-runtime/../fixtures/multimux/ts-hls"
+            "/../fixtures/hls/ts-hls"
         ));
         let playlist_text =
             std::fs::read_to_string(fixture_dir.join("index.m3u8")).expect("read fixture playlist");

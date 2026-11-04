@@ -202,8 +202,7 @@ mod tests {
     use super::*;
 
     fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
-        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+        test_fixtures::read(rel.trim_start_matches("fixtures/"))
     }
 
     /// The chain-threshold discriminator (mutation #2 for the MP3 chain rule).

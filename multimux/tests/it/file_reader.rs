@@ -6,7 +6,7 @@
 //! workspace-relative and resolved against `CARGO_MANIFEST_DIR`:
 //!
 //! ```
-//! format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), "fixtures/ts/h264_aac.ts")
+//! format!("{}/../{}", test_fixtures::root(), "fixtures/ts/h264_aac.ts")
 //! ```
 //!
 //! The tests cover the design spec's `multimux/src/source/file_reader.rs`
@@ -27,7 +27,7 @@ use transmux::{DemuxEvent, StreamingTsDemux};
 
 /// Workspace-root fixture path for a `rel` path like `"fixtures/ts/h264_aac.ts"`.
 fn fixture(rel: &str) -> PathBuf {
-    PathBuf::from(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
+    test_fixtures::path(rel.trim_start_matches("fixtures/"))
 }
 
 /// A per-test Trunk ready for the reader to write into, with generous ring

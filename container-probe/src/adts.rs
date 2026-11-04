@@ -187,8 +187,7 @@ mod tests {
     /// Read a workspace-relative fixture (crate is `no_std`; the test build
     /// links `std`).
     fn fixture_bytes(rel: &str) -> std::vec::Vec<u8> {
-        std::fs::read(std::format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"))
+        test_fixtures::read(rel.trim_start_matches("fixtures/"))
     }
 
     /// The suppression half of the "an ES prober fires on a container's

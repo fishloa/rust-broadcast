@@ -37,7 +37,7 @@
 
 ## Review Focus
 
-1. CENC `cenc`/`cbcs` and HLS Sample-AES (chained CBC, E-AC-3 IV reset per syncframe) ciphertext must be byte-identical. The independent oracle fixtures (Bento4/pycryptodome, `transmux/tests/fixtures/ORACLES.md`) must still pass. Owned by Task 2, step 5.
+1. CENC `cenc`/`cbcs` and HLS Sample-AES (chained CBC, E-AC-3 IV reset per syncframe) ciphertext must be byte-identical. The independent oracle fixtures (Bento4/pycryptodome, `transmux/fixtures/ORACLES.md`) must still pass. Owned by Task 2, step 5.
 2. SRT key-wrap with 128/192/256-bit KEKs and PBKDF2-derived keys must match the vectors, and must interoperate with real libsrt. Owned by Task 2, step 5.
 3. Digest MD5 responses and HMAC-SHA256 signed URLs in broadcast-auth must be unchanged. Owned by Task 2, step 5 (existing tests) plus the new pin test in Task 2, step 1.
 4. DTLS fingerprint, STUN RFC 5769 and SRTP RFC 3711 vectors must pass after the rtc 0.21 bump. Owned by Task 3.
@@ -57,7 +57,7 @@ git fetch -q origin
 git worktree add -b w0/deps .worktree/w0 origin/main
 cd .worktree/w0
 git -c protocol.file.allow=always submodule update -q --init --reference /Volumes/External/Projects/rust-broadcast/private private
-ln -s /Volumes/External/Projects/rust-broadcast/.test-streams .test-streams
+ln -s /Volumes/External/Projects/rust-broadcast/private fixtures private fixtures
 ln -s /Volumes/External/Projects/rust-broadcast/multimux/tests/assets/node_modules multimux/tests/assets/node_modules
 ```
 

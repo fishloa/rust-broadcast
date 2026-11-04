@@ -1,6 +1,6 @@
 //! Live-capture validation of the BIOP object-carousel layer.
 //!
-//! Uses the same `../fixtures/dvb-si/m6-single.ts` (French TNT, M6 HbbTV object
+//! Uses the same `../fixtures/ts/m6-single.ts` (French TNT, M6 HbbTV object
 //! carousel, PID 0x00AB) as `carousel_fixture.rs`.
 //!
 //! Test `m6_sgi_oracle` is the primary correctness gate: it parses the DSI

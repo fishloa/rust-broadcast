@@ -112,7 +112,7 @@ fn every_committed_ts_fixture_pid_matches_the_wire() {
     assert!(total > 10_000, "only {total} packets verified");
 }
 
-/// The real-capture corpus (`private/fixtures/**` + the fetched `.test-streams`;
+/// The real-capture corpus (`private/fixtures/**` + the fetched `private fixtures`;
 /// skips loudly when the private repo is not checked out).
 #[test]
 #[ignore = "slow: scans the whole real-capture corpus; run with --ignored"]

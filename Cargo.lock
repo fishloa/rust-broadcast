@@ -3596,6 +3596,7 @@ dependencies = [
  "serde",
  "serde_json",
  "test-alloc",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -3626,6 +3627,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -4094,6 +4096,7 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "subtle",
+ "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
@@ -4162,6 +4165,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -4677,6 +4681,7 @@ dependencies = [
  "quick-xml",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 

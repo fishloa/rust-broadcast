@@ -23,13 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Directories to walk, relative to the workspace root.
-const WALK_DIRS: &[&str] = &[
-    "fixtures/",
-    "transmux/tests/fixtures/",
-    "st377-1/tests/fixtures/",
-    "ts-fix/tests/fixtures/",
-    "media-doctor/tests/",
-];
+const WALK_DIRS: &[&str] = &["fixtures/", "media-doctor/tests/"];
 
 /// The extension -> expected `Format` map. `.ts` is excluded (ambiguous).
 fn extension_format(ext: &str) -> Option<Format> {

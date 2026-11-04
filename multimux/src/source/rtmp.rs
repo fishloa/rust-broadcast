@@ -923,7 +923,7 @@ mod tests {
 
     /// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
     /// H.264+AAC) — copied into this crate for hermeticity, see
-    /// `../fixtures/multimux/PROVENANCE.md`. Original: `rtmp-runtime/../fixtures/multimux/obs-publish.bin`.
+    /// `../fixtures/multimux/PROVENANCE.md`. Original: `../fixtures/multimux/rtmp-obs-publish.bin`.
     const FIXTURE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../fixtures/multimux/rtmp-obs-publish.bin"

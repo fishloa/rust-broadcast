@@ -16,10 +16,10 @@ use std::hint::black_box;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
-const TNT_FIXTURE: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../fixtures/dvb-bbframe/tnt-5w-12732v-bbframe.ts"
-));
+#[allow(non_snake_case)]
+fn TNT_FIXTURE_fx() -> &'static [u8] {
+    test_fixtures::read("dvb-bbframe/tnt-5w-12732v-bbframe.ts").leak()
+}
 
 /// PID carrying BBFrames in the TNT fixture.
 const TNT_PID: u16 = 0x010E;
@@ -109,7 +109,7 @@ fn nm_bbheader(dfl_bits: u16) -> [u8; BBHEADER_LEN] {
 
 /// `BbframePump::feed` throughput over the TNT real-capture fixture.
 fn bench_bbframe_pump_feed(c: &mut Criterion) {
-    let frames = extract_bbframe_data(TNT_FIXTURE, TNT_PID);
+    let frames = extract_bbframe_data(TNT_FIXTURE_fx(), TNT_PID);
     if frames.is_empty() {
         // No frames extracted — benches still link, just produce no timing data.
         return;

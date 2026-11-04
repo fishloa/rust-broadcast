@@ -1,4 +1,4 @@
-# Fixture provenance — `tests/fixtures/mp4/cenc_boxes/`
+# Fixture provenance — `fixtures/mp4/cenc_boxes/`
 
 Real, tool-generated fixtures for the W4 box-level spec-misread fixes
 (issue #1131 theme T3 — no hand-made bytes, no self-round-trip-only oracle).

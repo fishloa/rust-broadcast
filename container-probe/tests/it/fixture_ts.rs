@@ -2,19 +2,17 @@
 //! the MPEG-2 TS prober ([`container_probe::ts`]).
 //!
 //! Paths are relative to the workspace root; from a test we build them with
-//! [`env!("CARGO_MANIFEST_DIR")`] joined to `../<path>` because fixtures
+//! [`test_fixtures::root()`] joined to `../<path>` because fixtures
 //! are committed at the workspace's `fixtures/` tree, outside this crate.
 //!
 //! The stride/phase values asserted here were measured from the real files and
 //! are correct; if the code disagrees with them the code is wrong.
 
 use container_probe::{Confidence, Detail, Format, Probe};
-use std::fs;
 
 /// Join a workspace-relative fixture path to an absolute path from this crate.
 fn fixture(rel: &str) -> Vec<u8> {
-    fs::read(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-        .unwrap_or_else(|e| panic!("failed to read fixture {rel}: {e}"))
+    test_fixtures::read(rel.trim_start_matches("fixtures/"))
 }
 
 /// `LATTICE_STRONG` confidence — reused by name so assertions read clearly.

@@ -416,7 +416,7 @@ fn survey_file(s: &mut Survey, path: &Path) {
 #[test]
 fn real_captures_reserialize_byte_identically() {
     // The whole real-capture corpus: `private/fixtures/**` plus the fetched
-    // `.test-streams/` (pinned tsduck-test clone).
+    // `private fixtures/` (pinned tsduck-test clone).
     let files = test_fixtures::corpus(&["ts", "m2ts", "mpg"]);
     if files.is_empty() {
         eprintln!(

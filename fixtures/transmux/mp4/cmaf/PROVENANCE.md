@@ -1,4 +1,4 @@
-# Fixture provenance — `tests/fixtures/mp4/cmaf/`
+# Fixture provenance — `fixtures/mp4/cmaf/`
 
 ## `av_subtitle_frag.mp4`
 

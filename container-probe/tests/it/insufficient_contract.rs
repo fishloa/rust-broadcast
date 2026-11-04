@@ -15,11 +15,9 @@
 //! constant is visible.)
 
 use container_probe::{Format, Probe};
-use std::fs;
 
 fn fixture(rel: &str) -> Vec<u8> {
-    fs::read(format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), rel))
-        .unwrap_or_else(|e| panic!("failed to read fixture {rel}: {e}"))
+    test_fixtures::read(rel.trim_start_matches("fixtures/"))
 }
 
 /// Feed the first `min - 1` bytes of `rel` to the public `probe` and assert it

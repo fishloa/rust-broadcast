@@ -206,7 +206,7 @@ for packet in ts_packets {                       // each aligned 188-byte packet
 Or from the command line, without writing code:
 
 ```console
-$ cargo run -p dvb-tools -- dump dvb-si/tests/fixtures/m6-single.ts
+$ cargo run -p dvb-tools -- dump dvb-si/fixtures/m6-single.ts
 pid=0x0000 PROGRAM_ASSOCIATION v0 sn=0
 pid=0x0064 PROGRAM_MAP v1 sn=0
 -- packets=1264 sections=47 emitted=3 suppressed=44 crc_failures=0 malformed=0

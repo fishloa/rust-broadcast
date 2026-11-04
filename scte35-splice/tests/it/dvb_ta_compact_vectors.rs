@@ -10,7 +10,7 @@
 //! mistake applied identically in `compact.rs`'s parser and serializer (which
 //! the self round-trip tests in `dvb_ta.rs` cannot see) fails here.
 //!
-//! **No real compact-watermark capture exists** (none in `.test-streams/`, the
+//! **No real compact-watermark capture exists** (none in `private fixtures/`, the
 //! committed fixtures, or any public corpus we know of), so this is the
 //! strongest evidence available: spec table -> independent encoder -> crate
 //! decode/encode. It does NOT settle the one place the spec contradicts

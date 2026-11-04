@@ -8,7 +8,6 @@
 //! `index0.ts` from the first, `index1.ts` from the second.
 #![cfg(feature = "tokio")]
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,11 +25,7 @@ use tokio::net::TcpListener;
 type Log = Arc<Mutex<Vec<(String, bool)>>>;
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/hls/ts-hls"
-    ))
-    .join(name);
+    let path = test_fixtures::path(&format!("hls/ts-hls/{name}"));
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 

@@ -6,7 +6,6 @@
 //! fails here.
 #![cfg(feature = "std")]
 
-use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
@@ -104,9 +103,7 @@ fn legacy_pid_debug(s: &str) -> String {
 }
 
 fn fixture(rel: &str) -> Option<Vec<u8>> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(rel);
+    let p = test_fixtures::root().join("../fixtures").join(rel);
     std::fs::read(p).ok()
 }
 

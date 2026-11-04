@@ -1,6 +1,6 @@
 //! Real-capture round-trip for the section→TS packetiser (`dvb_si::mux`).
 //!
-//! Fixture: `../fixtures/dvb-si/m6-single.ts` (French TNT). Drives the full output
+//! Fixture: `../fixtures/ts/m6-single.ts` (French TNT). Drives the full output
 //! half against the real input half: demux the capture to its current SI
 //! sections, re-packetise each PID's sections with `SectionPacketiser`, then
 //! feed the regenerated TS packets back through a fresh `SiDemux` and assert

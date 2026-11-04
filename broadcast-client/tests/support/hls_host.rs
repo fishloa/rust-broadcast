@@ -9,7 +9,7 @@ pub const TS_SEG1_URL: &str = "http://origin.test/hls/index1.ts";
 pub const MS: u64 = 1_000;
 pub const SEC: u64 = 1_000_000;
 
-const TS_FIXTURE_DIR: &str = "../hls-runtime/tests/fixtures/ts-hls";
+const TS_FIXTURE_DIR: &str = "../fixtures/hls/ts-hls";
 const CMAF_FIXTURE_DIR: &str = "hls/cmaf-fmp4";
 
 pub fn ts_playlist() -> Vec<u8> {

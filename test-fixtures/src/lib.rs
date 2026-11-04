@@ -157,17 +157,10 @@ pub fn is_private_checkout(dir: &Path) -> bool {
     }
 }
 
-/// Directory of the pinned BSD-2 `tsduck/tsduck-test` clone, if present. The
-/// clone is fetched on demand by `tools/fetch-test-streams.sh tsduck-test` into
-/// `.test-streams/tsduck-test` (repository URL and pinned commit are recorded
-/// in that script); the files the tests actually reference are also mirrored
-/// under `private/fixtures/tsduck/`.
+/// Directory of the mirrored tsduck-test files under `private/fixtures/tsduck/`,
+/// if the private repo is checked out.
 #[must_use]
 pub fn tsduck_dir() -> Option<PathBuf> {
-    let clone = workspace().join(".test-streams/tsduck-test");
-    if clone.is_dir() {
-        return Some(clone);
-    }
     private("tsduck")
 }
 
@@ -178,12 +171,9 @@ pub enum Source {
     Public,
     /// `private/fixtures/` (private repo).
     Private,
-    /// Legacy fetch-on-demand `.test-streams/` directory.
-    Legacy,
 }
 
 /// Locate `rel` in, in order: the committed `fixtures/`, `private/fixtures/`,
-/// and (legacy fallback) `.test-streams/`.
 #[must_use]
 pub fn find(rel: &str) -> Option<(PathBuf, Source)> {
     let public = path(rel);
@@ -193,8 +183,7 @@ pub fn find(rel: &str) -> Option<(PathBuf, Source)> {
     if let Some(p) = private(rel) {
         return Some((p, Source::Private));
     }
-    let legacy = workspace().join(".test-streams").join(rel);
-    legacy.exists().then_some((legacy, Source::Legacy))
+    None
 }
 
 /// The single entry point for tests that need a non-redistributable fixture
@@ -231,7 +220,7 @@ pub fn require(rel: &str, who: &str) -> Option<PathBuf> {
             None
         }
         Some(root) => panic!(
-            "{who}: fixture `{rel}` is in none of fixtures/, {}/fixtures/, .test-streams/",
+            "{who}: fixture `{rel}` is in none of fixtures/, {}/fixtures/",
             root.display()
         ),
     }
@@ -285,17 +274,12 @@ pub fn spec_string(rel: &str, who: &str) -> Option<String> {
 }
 
 /// Locate `rel` (e.g. `input/test-002.ts`, `reference/test-147/test-147.ts`) in
-/// the pinned `tsduck-test` clone (`.test-streams/tsduck-test`) or the
-/// `private/fixtures/tsduck/` mirror. Same skip/panic contract as [`require`].
+/// the `private/fixtures/tsduck/` mirror. Same skip/panic contract as [`require`].
 ///
 /// # Panics
 /// If the private repo is checked out but `rel` is in neither location.
 #[must_use]
 pub fn tsduck(rel: &str, who: &str) -> Option<PathBuf> {
-    let clone = workspace().join(".test-streams/tsduck-test").join(rel);
-    if clone.exists() {
-        return Some(clone);
-    }
     require(&format!("tsduck/{rel}"), who)
 }
 
@@ -337,13 +321,11 @@ pub fn private_files(dir: &str, exts: &[&str]) -> Vec<PathBuf> {
 }
 
 /// The whole real-capture corpus for the scan/survey tests: every file with
-/// one of `exts` under `private/fixtures/` plus, if present, the fetched
-/// `.test-streams/` directory (which holds the pinned `tsduck-test` clone).
-/// Sorted; empty when neither is available.
+/// one of `exts` under `private/fixtures/`. Sorted; empty when the private
+/// repo is not checked out.
 #[must_use]
 pub fn corpus(exts: &[&str]) -> Vec<PathBuf> {
     let mut out = private_files("", exts);
-    walk_files(&workspace().join(".test-streams"), exts, &mut out);
     out.sort();
     out
 }

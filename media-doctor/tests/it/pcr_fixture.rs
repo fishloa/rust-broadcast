@@ -152,9 +152,9 @@ fn every_ts_fixture() -> Vec<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut roots = vec![
         root.join("fixtures"),
-        root.join("media-doctor/tests/fixtures"),
-        root.join("scte35-splice/tests/fixtures"),
-        root.join("transmux/tests/fixtures"),
+        root.join("fixtures"),
+        root.join("fixtures"),
+        root.join("fixtures"),
     ];
     roots.retain(|p| p.exists());
 

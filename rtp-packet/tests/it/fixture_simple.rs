@@ -25,11 +25,7 @@ use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
 fn fixture_bytes() -> Vec<u8> {
-    std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/rtp/rtp_simple.bin"
-    ))
-    .expect("rtp_simple.bin fixture must exist")
+    test_fixtures::read("rtp/rtp_simple.bin")
 }
 
 #[test]

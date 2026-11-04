@@ -5,8 +5,11 @@ fn main() {
     let _ = client.poll();
     client.on_response(200, &[], 0);
     let _ = client.poll_event();
-    const D: &[u8] = include_bytes!("../../fixtures/ts/h264_aac.ts");
-    client.feed(D, 0);
+    #[allow(non_snake_case)]
+    fn D_fx() -> &'static [u8] {
+        test_fixtures::read("ts/h264_aac.ts").leak()
+    }
+    client.feed(D_fx(), 0);
 
     // Advance time to trigger stall notice and reconnect.
     client.poll_timeout(5000);

@@ -1,4 +1,4 @@
-# `tests/fixtures/ts/`
+# `fixtures/ts/`
 
 ## `h264-two-resolutions.ts`
 

@@ -75,11 +75,9 @@ macro_rules! skip_unless_tsduck_available {
 }
 
 fn fixture_path() -> String {
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/pat-with-nit.ts"
-    )
-    .to_string()
+    test_fixtures::path("ts/pat-with-nit.ts")
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Run the fixture through `regen_psi` and write the result to a fresh temp

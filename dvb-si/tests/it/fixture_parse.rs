@@ -1,6 +1,6 @@
 //! Fixture-backed tests: parse AIT, DSM-CC, and NIT sections from captured TS.
 //!
-//! `../fixtures/dvb-si/m6-single.ts` contains:
+//! `../fixtures/ts/m6-single.ts` contains:
 //! - AIT (table_id 0x74) on PID 0x00AA (3 sections)
 //! - DSM-CC (table_id 0x3B, 0x3C) on PID 0x00AB (3 sections total)
 //!

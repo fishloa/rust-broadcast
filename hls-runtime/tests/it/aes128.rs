@@ -12,8 +12,14 @@ use transmux::sample_aes::aes128_encrypt_segment;
 const URL: &str = "http://fixture/index.m3u8";
 const TS_PACKET_LEN: usize = 188;
 const LEADING_PACKETS_DROPPED: usize = 3;
-const FIXTURE0: &[u8] = include_bytes!("../fixtures/ts-hls/index0.ts");
-const FIXTURE1: &[u8] = include_bytes!("../fixtures/ts-hls/index1.ts");
+#[allow(non_snake_case)]
+fn FIXTURE0_fx() -> &'static [u8] {
+    test_fixtures::read("hls/ts-hls/index0.ts").leak()
+}
+#[allow(non_snake_case)]
+fn FIXTURE1_fx() -> &'static [u8] {
+    test_fixtures::read("hls/ts-hls/index1.ts").leak()
+}
 const KEY_A: [u8; 16] = [0x11; 16];
 const KEY_B: [u8; 16] = [0x22; 16];
 const KEY_WRONG: [u8; 16] = [0x33; 16];
@@ -24,11 +30,11 @@ const KEY_WRONG: [u8; 16] = [0x33; 16];
 /// video PES header (carrying the PTS) in the first block, where a bad IV
 /// visibly changes the samples.
 fn seg0() -> &'static [u8] {
-    &FIXTURE0[TS_PACKET_LEN * LEADING_PACKETS_DROPPED..]
+    &FIXTURE0_fx()[TS_PACKET_LEN * LEADING_PACKETS_DROPPED..]
 }
 
 fn seg1() -> &'static [u8] {
-    &FIXTURE1[TS_PACKET_LEN * LEADING_PACKETS_DROPPED..]
+    &FIXTURE1_fx()[TS_PACKET_LEN * LEADING_PACKETS_DROPPED..]
 }
 
 fn hex(b: &[u8; 16]) -> String {

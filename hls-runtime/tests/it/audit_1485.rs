@@ -7,7 +7,10 @@ use transmux::sample_aes::aes128_encrypt_segment;
 const URL: &str = "http://origin/live/media.m3u8";
 const TS_PACKET_LEN: usize = 188;
 const LEADING_PACKETS_DROPPED: usize = 3;
-const FIXTURE0: &[u8] = include_bytes!("../fixtures/ts-hls/index0.ts");
+#[allow(non_snake_case)]
+fn FIXTURE0_fx() -> &'static [u8] {
+    test_fixtures::read("hls/ts-hls/index0.ts").leak()
+}
 const KEY: [u8; 16] = [0x42; 16];
 const MAX_WAIT_MS: u64 = 60_000;
 
@@ -50,7 +53,7 @@ fn has_discontinuity(outputs: &[Output]) -> bool {
 }
 
 fn ts_segment() -> Vec<u8> {
-    FIXTURE0[TS_PACKET_LEN * LEADING_PACKETS_DROPPED..].to_vec()
+    FIXTURE0_fx()[TS_PACKET_LEN * LEADING_PACKETS_DROPPED..].to_vec()
 }
 
 fn delta_playlist(first_msn: u64, skipped: Option<u64>, last_msn: u64, key: bool) -> String {

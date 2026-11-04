@@ -22,53 +22,53 @@ const BASE_URL: &str = "http://example/dash/";
 const MPD_NAME: &str = "stream.mpd";
 
 const MPDS: [&[u8]; 2] = [
-    include_bytes!("../../fixtures/dash/manifest.mpd"),
-    include_bytes!("../../fixtures/dash/ondemand-sidx/ondemand.mpd"),
+    test_fixtures::read("dash/manifest.mpd"),
+    test_fixtures::read("dash/ondemand-sidx/ondemand.mpd"),
 ];
 const FILES: [(&str, &[u8]); 11] = [
     (
         "init-stream0.m4s",
-        include_bytes!("../../fixtures/dash/init-stream0.m4s"),
+        test_fixtures::read("dash/init-stream0.m4s"),
     ),
     (
         "init-stream1.m4s",
-        include_bytes!("../../fixtures/dash/init-stream1.m4s"),
+        test_fixtures::read("dash/init-stream1.m4s"),
     ),
     (
         "chunk-stream0-00001.m4s",
-        include_bytes!("../../fixtures/dash/chunk-stream0-00001.m4s"),
+        test_fixtures::read("dash/chunk-stream0-00001.m4s"),
     ),
     (
         "chunk-stream0-00002.m4s",
-        include_bytes!("../../fixtures/dash/chunk-stream0-00002.m4s"),
+        test_fixtures::read("dash/chunk-stream0-00002.m4s"),
     ),
     (
         "chunk-stream0-00003.m4s",
-        include_bytes!("../../fixtures/dash/chunk-stream0-00003.m4s"),
+        test_fixtures::read("dash/chunk-stream0-00003.m4s"),
     ),
     (
         "chunk-stream1-00001.m4s",
-        include_bytes!("../../fixtures/dash/chunk-stream1-00001.m4s"),
+        test_fixtures::read("dash/chunk-stream1-00001.m4s"),
     ),
     (
         "chunk-stream1-00002.m4s",
-        include_bytes!("../../fixtures/dash/chunk-stream1-00002.m4s"),
+        test_fixtures::read("dash/chunk-stream1-00002.m4s"),
     ),
     (
         "chunk-stream1-00003.m4s",
-        include_bytes!("../../fixtures/dash/chunk-stream1-00003.m4s"),
+        test_fixtures::read("dash/chunk-stream1-00003.m4s"),
     ),
     (
         "chunk-stream1-00004.m4s",
-        include_bytes!("../../fixtures/dash/chunk-stream1-00004.m4s"),
+        test_fixtures::read("dash/chunk-stream1-00004.m4s"),
     ),
     (
         "v_dashinit.mp4",
-        include_bytes!("../../fixtures/dash/ondemand-sidx/v_dashinit.mp4"),
+        test_fixtures::read("dash/ondemand-sidx/v_dashinit.mp4"),
     ),
     (
         "a_dashinit.mp4",
-        include_bytes!("../../fixtures/dash/ondemand-sidx/a_dashinit.mp4"),
+        test_fixtures::read("dash/ondemand-sidx/a_dashinit.mp4"),
     ),
 ];
 

@@ -1845,8 +1845,12 @@ mod tests {
         /// `multimux/../fixtures/multimux/PROVENANCE.md`) — the same pair
         /// `rtsp-runtime`'s own `tests/io_loopback.rs::tls_full_session_over_loopback`
         /// uses to run a real TLS handshake over `127.0.0.1` loopback.
-        const CERT_DER: &[u8] = include_bytes!("../../../fixtures/multimux/localhost-cert.der");
-        const KEY_DER: &[u8] = include_bytes!("../../../fixtures/multimux/localhost-key.der");
+        fn cert_der() -> Vec<u8> {
+            test_fixtures::read("multimux/localhost-cert.der")
+        }
+        fn key_der() -> Vec<u8> {
+            test_fixtures::read("multimux/localhost-key.der")
+        }
 
         /// A hang guard, not a speed assertion (issue #807): every
         /// real-socket step below is wrapped in this so a wiring bug fails
@@ -1865,8 +1869,8 @@ mod tests {
 
         fn server_config() -> rustls::ServerConfig {
             use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-            let certs = vec![CertificateDer::from(CERT_DER.to_vec())];
-            let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(KEY_DER.to_vec()));
+            let certs = vec![CertificateDer::from(cert_der())];
+            let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der()));
             rustls::ServerConfig::builder_with_provider(tls_provider())
                 .with_safe_default_protocol_versions()
                 .expect("aws-lc-rs provider supports the safe default protocol versions")
@@ -1882,7 +1886,7 @@ mod tests {
             use rustls::pki_types::CertificateDer;
             let mut roots = rustls::RootCertStore::empty();
             roots
-                .add(CertificateDer::from(CERT_DER.to_vec()))
+                .add(CertificateDer::from(cert_der()))
                 .expect("add self-signed root");
             rustls::ClientConfig::builder_with_provider(tls_provider())
                 .with_safe_default_protocol_versions()

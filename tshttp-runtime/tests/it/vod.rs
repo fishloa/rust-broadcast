@@ -1,6 +1,9 @@
 use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
-const D: &[u8] = include_bytes!("../../../fixtures/ts/h264_aac.ts");
+#[allow(non_snake_case)]
+fn D_fx() -> &'static [u8] {
+    test_fixtures::read("ts/h264_aac.ts").leak()
+}
 
 fn cfg() -> Config {
     Config::default()
@@ -12,15 +15,15 @@ fn finite_content_length_eof_is_ended_not_reconnect() {
     let _ = c.poll();
     c.on_response(
         200,
-        &[("Content-Length".to_string(), D.len().to_string())],
+        &[("Content-Length".to_string(), D_fx().len().to_string())],
         0,
     );
     assert!(matches!(c.poll_event(), Some(Event::Connected)));
     assert!(matches!(
         c.poll_event(),
-        Some(Event::Finite { expected_bytes }) if expected_bytes == D.len() as u64
+        Some(Event::Finite { expected_bytes }) if expected_bytes == D_fx().len() as u64
     ));
-    for chunk in D.chunks(1316) {
+    for chunk in D_fx().chunks(1316) {
         c.feed(chunk, 0);
     }
     c.on_eof(1);
@@ -49,7 +52,7 @@ fn chunked_without_length_stays_live() {
         &[("Transfer-Encoding".to_string(), "chunked".to_string())],
         0,
     );
-    for chunk in D.chunks(1316) {
+    for chunk in D_fx().chunks(1316) {
         c.feed(chunk, 0);
     }
     c.on_eof(60_000);
@@ -74,7 +77,7 @@ fn no_content_length_http2_style_stays_live() {
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
     c.on_response(200, &[], 0);
-    for chunk in D.chunks(1316) {
+    for chunk in D_fx().chunks(1316) {
         c.feed(chunk, 0);
     }
     c.on_eof(60_000);
@@ -139,12 +142,12 @@ fn finite_eof_before_all_bytes_is_failure_backoff() {
     let _ = c.poll();
     c.on_response(
         200,
-        &[("Content-Length".to_string(), D.len().to_string())],
+        &[("Content-Length".to_string(), D_fx().len().to_string())],
         0,
     );
     let _ = c.poll_event();
     let _ = c.poll_event();
-    c.feed(&D[..1000], 0);
+    c.feed(&D_fx()[..1000], 0);
     c.on_eof(1);
     let mut reconnecting = false;
     while let Some(e) = c.poll_event() {
@@ -162,12 +165,12 @@ fn timers_stop_after_all_bytes_received() {
     let _ = c.poll();
     c.on_response(
         200,
-        &[("Content-Length".to_string(), D.len().to_string())],
+        &[("Content-Length".to_string(), D_fx().len().to_string())],
         0,
     );
     let _ = c.poll_event();
     let _ = c.poll_event();
-    for chunk in D.chunks(1316) {
+    for chunk in D_fx().chunks(1316) {
         c.feed(chunk, 0);
     }
     while c.poll_event().is_some() {}
@@ -196,12 +199,12 @@ fn ended_is_terminal_no_actions_forever() {
     let _ = c.poll();
     c.on_response(
         200,
-        &[("Content-Length".to_string(), D.len().to_string())],
+        &[("Content-Length".to_string(), D_fx().len().to_string())],
         0,
     );
     let _ = c.poll_event();
     let _ = c.poll_event();
-    for chunk in D.chunks(1316) {
+    for chunk in D_fx().chunks(1316) {
         c.feed(chunk, 0);
     }
     c.on_eof(1);
@@ -222,12 +225,12 @@ fn caller_reconnect_from_ended_reopens_and_resets_attempts() {
     let _ = c.poll();
     c.on_response(
         200,
-        &[("Content-Length".to_string(), D.len().to_string())],
+        &[("Content-Length".to_string(), D_fx().len().to_string())],
         0,
     );
     let _ = c.poll_event();
     let _ = c.poll_event();
-    for chunk in D.chunks(1316) {
+    for chunk in D_fx().chunks(1316) {
         c.feed(chunk, 0);
     }
     c.on_eof(1);
@@ -251,12 +254,12 @@ fn finite_flushes_demux_before_ended() {
     let _ = c.poll();
     c.on_response(
         200,
-        &[("Content-Length".to_string(), D.len().to_string())],
+        &[("Content-Length".to_string(), D_fx().len().to_string())],
         0,
     );
     let _ = c.poll_event();
     let _ = c.poll_event();
-    for chunk in D.chunks(1316) {
+    for chunk in D_fx().chunks(1316) {
         c.feed(chunk, 0);
     }
     c.on_eof(1);

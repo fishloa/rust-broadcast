@@ -95,9 +95,7 @@ fn decode_hevc(nal: &[u8]) -> HevcSpsInfo {
 }
 
 fn fixture_path(rel: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(rel)
+    test_fixtures::path(rel.trim_start_matches("fixtures/"))
 }
 
 // ---- H.264 tests ------------------------------------------------------------
