@@ -144,7 +144,7 @@ impl Drop for BlockingRequestGuard {
 /// HTTP range requests (RFC 9110 section 13.1.5, 14.1-14.4, 15.3.7,
 /// 15.5.17) are served through the shared helper in `crate::http`
 /// (`range_response`); the normative transcription is
-/// `docs/hls-iframe/http-range-requests.md`.
+/// `private/specs-verified/hls/broadcast-hls/http-range-requests.md`.
 pub(crate) fn router(route: Arc<RouteHandle>) -> Router {
     Router::new()
         .route("/{file}", get(dynamic_file).options(cors_preflight))

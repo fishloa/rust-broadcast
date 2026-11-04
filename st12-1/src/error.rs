@@ -1,7 +1,7 @@
 //! Error type for LTC codeword parsing/serialization.
 //!
 //! Field-by-field semantics are documented in the curated spec oracle,
-//! `st12-1/docs/st12-1.md` (SMPTE ST 12-1:2014 §8/§9).
+//! `private/specs-verified/smpte/st12-1/st12-1.md` (SMPTE ST 12-1:2014 §8/§9).
 
 /// Result alias for `st12-1` parsing/serialization.
 pub type Result<T> = core::result::Result<T, Error>;
@@ -23,7 +23,7 @@ pub enum Error {
     },
     /// Bits 64–79 did not match the fixed synchronization word (§9.2.5,
     /// Table 5: bytes `0xFC 0xBF` under this crate's bit-to-byte packing —
-    /// see `docs/st12-1.md`'s "Byte packing convention" section).
+    /// see `private/specs-verified/smpte/st12-1/st12-1.md`'s "Byte packing convention" section).
     #[error("sync word mismatch: expected {expected:02X?}, found {found:02X?} (ST 12-1 §9.2.5)")]
     SyncWordMismatch {
         /// The fixed sync word bytes (see [`crate::SYNC_WORD`]).

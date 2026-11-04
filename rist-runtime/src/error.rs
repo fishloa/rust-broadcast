@@ -1,7 +1,7 @@
 //! Error type for RIST RTCP message parsing/serialization.
 //!
 //! Field-by-field semantics are documented in the curated spec oracle,
-//! `rist-runtime/docs/tr-06-1-simple-profile.md` (VSF TR-06-1:2020).
+//! `private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md` (VSF TR-06-1:2020).
 
 /// Result alias for `rist-runtime` parsing/serialization.
 pub type Result<T> = core::result::Result<T, Error>;

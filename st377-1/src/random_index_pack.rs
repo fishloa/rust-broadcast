@@ -1,5 +1,5 @@
 //! Random Index Pack — SMPTE ST 377-1:2019 §12, Tables 29-30
-//! (`docs/st377-1.md`): the optional last KLV item in a file, letting a
+//! (`private/specs-verified/smpte/st377-1/st377-1.md`): the optional last KLV item in a file, letting a
 //! decoder locate every Partition without a linear scan.
 
 extern crate alloc;

@@ -46,8 +46,8 @@ text with ruby annotations) that a hand-written fixture would not.
   files + hundreds of reference PNGs total) — same licence, so redistribution
   would have been permitted, but committing the whole suite is unnecessary
   weight for a spec-prep task; the 11-file selection above was chosen to
-  cover the syntax breadth documented in `docs/ttml2-syntax.md` and
-  `docs/imsc11-profiles.md` (Text Profile, Image Profile via both
+  cover the syntax breadth documented in `private/specs-verified/w3c/ttml-subtitle/ttml2-syntax.md` and
+  `private/specs-verified/w3c/ttml-subtitle/imsc11-profiles.md` (Text Profile, Image Profile via both
   mechanisms, animation, ruby/textEmphasis/textShadow as IMSC-1.1-only
   reachable TTML2 features, the full time-expression grammar, an IMSC
   extension attribute, and referential styling).

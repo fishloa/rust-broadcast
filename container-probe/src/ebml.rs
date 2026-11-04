@@ -1,5 +1,5 @@
 //! EBML / Matroska / WebM prober — RFC 8794 (EBML framing) + RFC 9559
-//! (Matroska element IDs); transcription in `transmux/docs/webm/ebml-matroska.md`.
+//! (Matroska element IDs); transcription in `private/specs-verified/mpeg/transmux/webm/ebml-matroska.md`.
 //!
 //! The EBML magic `1A 45 DF A3` must be at offset 0 (nowhere else). The header's
 //! element chain is then walked to locate the `DocType` element (ID `0x4282`)

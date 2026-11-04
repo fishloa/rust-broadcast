@@ -39,7 +39,7 @@ industry lab tests were both active then), though the specific source
 site cannot be confirmed beyond what the repository itself records.
 
 **Byte layout** (`LLS_table()` common envelope, A/331 §6.2 Table 6.1 —
-see `atsc3/docs/a331-signalling.md`):
+see `private/specs-verified/atsc/atsc3/a331-signalling.md`):
 
 | Offset | Bytes | Field | Value |
 |---|---|---|---|

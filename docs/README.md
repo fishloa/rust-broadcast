@@ -43,8 +43,6 @@ the spec transcriptions in its `docs/` directory.
 | [IDEAS.md](IDEAS.md) | Products that could be built on top of the workspace. |
 | [stories/](stories/) | Per-story design notes from earlier work. |
 | [superpowers/](superpowers/) | Design specs and implementation plans. |
-| [specs/](specs/) | The private-repo move map (`PRIVATE-MAP.md`) only. |
-
 ## Specifications
 
-All specification material (RFC/IETF/W3C texts, PDFs, Markdown transcriptions, notes, registries) lives only in the private `private/` submodule (maintainers only), under `private/specs-verified/`. The old public paths are decoded by [`specs/PRIVATE-MAP.md`](specs/PRIVATE-MAP.md); the [STANDARDS.md](STANDARDS.md) coverage table names the standards each crate implements.
+All specification material (RFC/IETF/W3C texts, PDFs, Markdown transcriptions, notes, registries) lives only in the private `private/` submodule (maintainers only), under `private/specs-verified/`. The [STANDARDS.md](STANDARDS.md) coverage table names the standards each crate implements.

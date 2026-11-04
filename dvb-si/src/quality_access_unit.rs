@@ -1,6 +1,6 @@
 //! `Quality_Access_Unit()` — Rec. ITU-T H.222.0 (08/2023) | ISO/IEC
 //! 13818-1:2023 §2.20.1, Table 2-164 (PDF pp.250-251, printed pp.228-229),
-//! syntax in `docs/tables/iso_13818_1/2-164-quality-access-unit.md`, verified
+//! syntax in `private/specs-verified/dvb/dvb-si/tables/iso_13818_1/2-164-quality-access-unit.md`, verified
 //! on the rendered pages.
 //!
 //! The access unit is carried "in MPEG sections" (stream_type 0x2F,

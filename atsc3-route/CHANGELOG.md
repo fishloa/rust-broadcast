@@ -80,6 +80,6 @@ SLS XML), this crate is the binary ROUTE delta over `rmt-flute`'s RFC
   against ran with the LCT SPI bit set (source-data), so no repair-flow
   packet exists to test against. Implemented directly from A/331's own
   Figure A.3.4 bit-diagram (SBN 8 bits / ESI 24 bits, matching RFC 6330 §3.2 —
-  corrected 2026-08-09 in `atsc3/docs/a331-route.md` after the transcription
+  corrected 2026-08-09 in `private/specs-verified/atsc/atsc3/a331-route.md` after the transcription
   previously read SBN 16 / ESI 16) and unit-tested against hand-built
   vectors only. See the crate root / `fec.rs` module docs.

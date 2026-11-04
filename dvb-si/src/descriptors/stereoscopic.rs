@@ -5,7 +5,7 @@
 //! * `Stereoscopic_program_info_descriptor` (tag 0x35) — §2.6.86–2.6.87, Tables 2-105/2-106.
 //! * `Stereoscopic_video_info_descriptor` (tag 0x36) — §2.6.88–2.6.89, Tables 2-107/2-108.
 //!
-//! Syntax: `docs/descriptors/iso_13818_1/33-37-mvc-operation-point-stereoscopic-and-transport-profile-descriptors.md`.
+//! Syntax: `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/33-37-mvc-operation-point-stereoscopic-and-transport-profile-descriptors.md`.
 //! Every `reserved` field is a typed field re-emitted verbatim (default: all ones).
 
 use crate::error::Result;

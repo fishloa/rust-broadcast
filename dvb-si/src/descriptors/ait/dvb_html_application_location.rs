@@ -1,6 +1,6 @@
 //! DVB-HTML Application Location Descriptor — ETSI TS 102 727 V1.1.1 §10.10.2,
 //! Table 87 (AIT tag 0x09; physical-root semantics Table 88). PDF p.173,
-//! transcribed in `docs/descriptors/ts_102_727/87-*.md`, verified against the
+//! transcribed in `private/specs-verified/dvb/dvb-si/descriptors/ts_102_727/87-*.md`, verified against the
 //! rendered page.
 //!
 //! One instance in the "application" AIT loop per DVB-HTML application. Body:

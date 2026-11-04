@@ -31,7 +31,7 @@
 //!
 //! # Value-verified
 //! The field layout is cross-checked against the vendored ISO/IEC 14496-1 §7.2.6
-//! (`transmux/docs/codec/es-descriptor-14496-1.md`) and byte-exact round-tripped
+//! (`private/specs-verified/mpeg/transmux/codec/es-descriptor-14496-1.md`) and byte-exact round-tripped
 //! against a real ffmpeg-authored `esds` (see `real_esds_box_round_trips_byte_exact`).
 
 use crate::box_types::BoxHeader;

@@ -21,7 +21,7 @@ const RESERVED_BIT_MASK: u8 = 0x02;
 const RESERVED_BIT_SHIFT: u8 = 1;
 /// Spec default of the entry's 1-bit `reserved_future_use` (`reserved` before
 /// V1.17.1): `1` (EN 300 468 V1.3.1-V1.20.1 Table 29; audit
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
 pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
 
 /// One per-country offset entry.

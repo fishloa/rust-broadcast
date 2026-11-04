@@ -1,5 +1,5 @@
 //! DII Location Descriptor — ETSI TS 102 727 V1.1.1 §10.8.3.3, Table 83 (AIT tag
-//! 0x0D). PDF p.170, transcribed in `docs/descriptors/ts_102_727/83-*.md`,
+//! 0x0D). PDF p.170, transcribed in `private/specs-verified/dvb/dvb-si/descriptors/ts_102_727/83-*.md`,
 //! verified against the rendered page.
 //!
 //! Zero or one in the "common" or "application" AIT loop, for object-carousel

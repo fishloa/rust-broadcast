@@ -15,7 +15,7 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(reparsed, frame, "parse(serialize(frame)) != frame");
 
     // Byte-exact against the INPUT (not a re-serialization), over the parsed extent.
-    // A non-minimal Plex(n) escape in the input (docs/rdd29.md §3.4) decodes
+    // A non-minimal Plex(n) escape in the input (private/specs-verified/smpte/rdd29/rdd29.md §3.4) decodes
     // unambiguously but re-serializes shorter, so exactness is only required when the
     // lengths agree; any shortening is covered by the reparse check above.
     if serialized.len() <= data.len() {

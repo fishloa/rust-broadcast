@@ -1,7 +1,7 @@
 //! AMF0 (Action Message Format 0) value encoding/decoding, used by RTMP
 //! command and data messages.
 //!
-//! See [`docs/rtmp.md`](../README.md) §8 (AMF0) for the full transcription
+//! See [`private/specs-verified/rtmp/rtmp-runtime/rtmp.md`](../README.md) §8 (AMF0) for the full transcription
 //! of `[AMF0]` (the companion spec this doc cites): §8.1 for the type marker
 //! table, §8.2 for the wire encoding of each data type needed by RTMP command
 //! messages.
@@ -27,7 +27,7 @@
 //! `recordset-marker` (`0x0E`, reserved), `xml-document-marker` (`0x0F`),
 //! `typed-object-marker` (`0x10`), and `avmplus-object-marker` (`0x11`, the
 //! AMF3 switch — AMF3 itself, `[AMF3]`, is a separate spec and explicitly
-//! out of scope for this ingest engine per docs/rtmp.md §8.3).
+//! out of scope for this ingest engine per private/specs-verified/rtmp/rtmp-runtime/rtmp.md §8.3).
 //!
 //! [`Amf0Value`] is a data-carrying ADT (like `Fmt`/`MessageHeader`'s payload
 //! variants), not a closed label enum, so it is a `#204` `label_coverage`
@@ -40,7 +40,7 @@ use crate::RtmpError;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
-/// AMF0 type markers (`[AMF0]` §2.1, docs/rtmp.md §8.1) — 1 byte.
+/// AMF0 type markers (`[AMF0]` §2.1, private/specs-verified/rtmp/rtmp-runtime/rtmp.md §8.1) — 1 byte.
 pub mod marker {
     /// Number (§2.2): `DOUBLE`, 8-byte big-endian IEEE-754.
     pub const NUMBER: u8 = 0x00;
@@ -87,7 +87,7 @@ const DATE_RESERVED_LEN: usize = 2;
 /// `00 00 09`: empty key + [`marker::OBJECT_END`].
 const OBJECT_END_LEN: usize = 3;
 
-/// A single AMF0 value (`[AMF0]` §2, docs/rtmp.md §8.2).
+/// A single AMF0 value (`[AMF0]` §2, private/specs-verified/rtmp/rtmp-runtime/rtmp.md §8.2).
 ///
 /// AMF3 (`avmplus-object-marker`, `0x11`) and the reserved/legacy markers
 /// (`movieclip`, `reference`, `unsupported`, `recordset`, `xml-document`,
@@ -454,7 +454,7 @@ impl Serialize for Amf0Value {
 
 /// An RTMP Command Message body (§7.1.1): `name` (AMF0 String) + AMF0
 /// `transaction_id` (AMF0 Number) + zero or more argument values (typically
-/// a Command Object, then optional trailing arguments) — see docs/rtmp.md
+/// a Command Object, then optional trailing arguments) — see private/specs-verified/rtmp/rtmp-runtime/rtmp.md
 /// §8.2's closing note and §6.1 (Command Message).
 ///
 /// This is the message-body-level container: unlike [`Amf0Value`] it is not

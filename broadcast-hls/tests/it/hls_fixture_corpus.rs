@@ -68,7 +68,7 @@
 //! spec tier — see MANIFEST.md). The `handbuilt/` fixtures fill exactly
 //! that gap. They are **not** spec vectors and are deliberately pathed and
 //! named so nobody mistakes them for one; their `EXT-X-VERSION` lines are
-//! derived from the §8 table in `broadcast-hls/docs/version-compatibility.md`
+//! derived from the §8 table in `private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`
 //! rather than invented (see MANIFEST.md for each derivation).
 
 use std::fs;
@@ -313,7 +313,7 @@ fn spec_dir_has_no_untested_m3u8_fixtures() {
 // Tier 1b — hand-built fixtures for the #872 tags (fixtures/hls/handbuilt/).
 //
 // NOT spec vectors. Each is authored in-repo from the confirmed attribute
-// grammar in `broadcast-hls/docs/playlist-tags.md`, covering tags no §9
+// grammar in `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`, covering tags no §9
 // example exercises as a complete playlist. Provenance + per-file
 // EXT-X-VERSION derivation in MANIFEST.md.
 // ---------------------------------------------------------------------------

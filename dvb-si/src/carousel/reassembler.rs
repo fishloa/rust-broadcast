@@ -1,6 +1,6 @@
 //! Data-carousel module reassembly — collects [`DownloadDataBlock`]s into
 //! complete modules per the DII's `moduleSize`/`blockSize` announcement
-//! (`dvb-si/docs/text/iso_13818_6/module-reassembly.md`).
+//! (`private/specs-verified/dvb/dvb-si/text/iso_13818_6/module-reassembly.md`).
 
 use alloc::collections::BTreeMap;
 use alloc::collections::VecDeque;

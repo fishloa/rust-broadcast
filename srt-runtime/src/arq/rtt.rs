@@ -1,8 +1,8 @@
 //! RTT / RTTVar EWMA estimation — `draft-sharabayko-srt-01` §4.10 (Round-Trip
-//! Time Estimation), `specs/rules/srt-arq.md` rules 29-31.
+//! Time Estimation), `private/specs-verified/rules/srt-arq.md` rules 29-31.
 //!
 //! Both formulas and the initial values are quoted verbatim in
-//! `specs/rules/srt-arq.md`:
+//! `private/specs-verified/rules/srt-arq.md`:
 //! - rule 29: `RTT = 7/8 * RTT + 1/8 * rtt` (L3009).
 //! - rule 30: `RTTVar = 3/4 * RTTVar + 1/4 * abs(RTT - rtt)` (L3011-3013),
 //!   where `RTT` on the right-hand side is the value *before* this update
@@ -17,9 +17,9 @@
 
 use core::time::Duration;
 
-/// Initial RTT — 100 ms (`specs/rules/srt-arq.md` rule 31, L3017-3018).
+/// Initial RTT — 100 ms (`private/specs-verified/rules/srt-arq.md` rule 31, L3017-3018).
 pub const INITIAL_RTT: Duration = Duration::from_millis(100);
-/// Initial RTTVar — 50 ms (`specs/rules/srt-arq.md` rule 31, L3017-3018).
+/// Initial RTTVar — 50 ms (`private/specs-verified/rules/srt-arq.md` rule 31, L3017-3018).
 pub const INITIAL_RTT_VAR: Duration = Duration::from_millis(50);
 
 /// RTT/RTTVar estimator, updated by the rule-29/30 EWMA formulas on each new

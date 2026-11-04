@@ -43,7 +43,7 @@ Enable it with `rtp-packet = { version = "0.5", features = ["av3a"] }`. `Av3aDep
 ## What changed (from CHANGELOG `[Unreleased]`)
 
 #### Documentation
-- `av3a`: the lossless-header `channel_number` gap is now documented from the rendered T/AI 109.3-2023 pages (Table A.6, Annex A semantics) with the spec sentence quoted and a transcription in `docs/av3a-aatf-frame-header.md`; the previous "vendored text does not make unambiguous" wording is replaced. No behaviour change.
+- `av3a`: the lossless-header `channel_number` gap is now documented from the rendered T/AI 109.3-2023 pages (Table A.6, Annex A semantics) with the spec sentence quoted and a transcription in `private/specs-verified/rtp/rtp-packet/av3a-aatf-frame-header.md`; the previous "vendored text does not make unambiguous" wording is replaced. No behaviour change.
 - README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
 
 #### Changed (BREAKING: epoch — requires broadcast-common 10)

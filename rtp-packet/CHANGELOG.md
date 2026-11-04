@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - 2026-10-17
 ### Documentation
-- `av3a`: the lossless-header `channel_number` gap is now documented from the rendered T/AI 109.3-2023 pages (Table A.6, Annex A semantics) with the spec sentence quoted and a transcription in `docs/av3a-aatf-frame-header.md`; the previous "vendored text does not make unambiguous" wording is replaced. No behaviour change.
+- `av3a`: the lossless-header `channel_number` gap is now documented from the rendered T/AI 109.3-2023 pages (Table A.6, Annex A semantics) with the spec sentence quoted and a transcription in `private/specs-verified/rtp/rtp-packet/av3a-aatf-frame-header.md`; the previous "vendored text does not make unambiguous" wording is replaced. No behaviour change.
 - README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).
 
 ### Changed (BREAKING: epoch — requires broadcast-common 10)
@@ -83,8 +83,8 @@ Bundles the initial release (0.1.0 was never separately published).
     `Serialize` always emits a single trailing padding run regardless of
     where the original padding fell — decoding still recovers the
     identical element list either way (see
-    `docs/rfc8285_header_ext.md`'s judgment call 4).
-  - `docs/rfc8285_header_ext.md` — curated transcription of RFC 8285
+    `private/specs-verified/rtp/rtp-packet/rfc8285_header_ext.md`'s judgment call 4).
+  - `private/specs-verified/rtp/rtp-packet/rfc8285_header_ext.md` — curated transcription of RFC 8285
     §4.1/§4.1.2/§4.2/§4.3 (fetched directly from the RFC), including its two
     worked-example byte diagrams and this crate's judgment calls (the
     ID-0-reserved-in-both-forms point above, and the one-byte "ID 0 with
@@ -120,7 +120,7 @@ Bundles the initial release (0.1.0 was never separately published).
   field, counted in 32-bit words, is always derived from the data length, and
   a zero-length extension is accepted per §5.3.1: "therefore zero is a valid
   length").
-- `docs/rtp-header.md` — curated transcription of RFC 3550 §5.1/§5.3.1 (fetched
+- `private/specs-verified/rtp/rtp-packet/rtp-header.md` — curated transcription of RFC 3550 §5.1/§5.3.1 (fetched
   directly from the RFC), the implementation/audit oracle for this crate.
 - Real-fixture test (`tests/fixture_simple.rs`) over a committed 324-byte RTP
   packet (`tests/fixtures/rtp_simple.bin`) captured by running this

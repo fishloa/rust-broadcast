@@ -108,7 +108,7 @@
 
 **Files:**
 - Modify: `transmux/src/hls.rs` (`EXT-X-KEY`), `transmux/src/dash.rs` (`ContentProtection`+`cenc:pssh`), `transmux/src/lib.rs` crate-doc coverage, `CHANGELOG.md`, README coverage table
-- Reference: `transmux/src/sample_aes.rs` (HLS key-tag precedent), `cenc.rs` `ProtectionSystemSpecificHeaderBox` (pssh #480), `transmux/docs/codec/cenc-23001-7.md`.
+- Reference: `transmux/src/sample_aes.rs` (HLS key-tag precedent), `cenc.rs` `ProtectionSystemSpecificHeaderBox` (pssh #480), `private/specs-verified/mpeg/transmux/codec/cenc-23001-7.md`.
 
 **Interfaces:** Consumes `Track.encryption`; optional caller-supplied `pssh` system entries (add to `EncryptConfig` or a packager option — decide: packager-level `Vec<(system_id, data)>`).
 

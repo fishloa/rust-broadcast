@@ -1,4 +1,4 @@
-//! Sequence — SMPTE ST 377-1:2019 Annex B §B.8/B.9 (`docs/st377-1.md`):
+//! Sequence — SMPTE ST 377-1:2019 Annex B §B.8/B.9 (`private/specs-verified/smpte/st377-1/st377-1.md`):
 //! an ordered collection of Structural Components forming a Track's
 //! content (byte 14/15 = `0x01`/`0x0F`).
 //!

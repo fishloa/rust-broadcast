@@ -8,8 +8,8 @@
 //! Sources:
 //! - **ISO/IEC 23008-3 §20** — canonical box/record syntax (paid).
 //! - **ATSC A/342-3 §5.2.2** — profile-level constraints for broadcast
-//!   (`transmux/docs/codec/mpegh-atsc-a342-3.md`).
-//! - Record layout: `transmux/docs/codec/mpegh-mhaC.md`.
+//!   (`private/specs-verified/mpeg/transmux/codec/mpegh-atsc-a342-3.md`).
+//! - Record layout: `private/specs-verified/mpeg/transmux/codec/mpegh-mhaC.md`.
 //!
 //! ## Record layout
 //!
@@ -219,7 +219,7 @@ pub type MhaCBox = MHADecoderConfigurationRecord;
 // also independently agrees with the PMT `MPEG-H_3dAudio_descriptor`'s
 // `mpegh3daProfileLevelIndication` byte in the same fixture (both `0x10` —
 // BL Profile Level 1), cross-confirming the packet boundaries are correct.
-// See `transmux/docs/codec/mpegh-ts-101154.md` for the full derivation.
+// See `private/specs-verified/mpeg/transmux/codec/mpegh-ts-101154.md` for the full derivation.
 
 /// `MHASPacketType` for the config packet carrying `mpegh3daConfig()`
 /// (empirically verified — see the module section docs above).

@@ -1,6 +1,6 @@
 //! AC-4 in ISOBMFF — `ac-4` AudioSampleEntry + `dac4` config box.
 //!
-//! ETSI TS 103 190-2 Annex E (`transmux/docs/codec/ac4-dac4.md`): the
+//! ETSI TS 103 190-2 Annex E (`private/specs-verified/mpeg/transmux/codec/ac4-dac4.md`): the
 //! `AC4SpecificBox` (`dac4`) carries an `ac4_dsi_v1()` blob derived from the AC-4
 //! TOC. `transmux` is samples-in, so — like `esds`/`avcC` — it takes the `dac4`
 //! body as **caller-supplied opaque config** (the AC-4 TOC is not parsed here;

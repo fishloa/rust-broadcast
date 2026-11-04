@@ -1,4 +1,4 @@
-//! Source Clip — SMPTE ST 377-1:2019 Annex B §B.10 (`docs/st377-1.md`):
+//! Source Clip — SMPTE ST 377-1:2019 Annex B §B.10 (`private/specs-verified/smpte/st377-1/st377-1.md`):
 //! a Structural Component that references a contiguous range of essence
 //! from a Source Package's Track (byte 14/15 = `0x01`/`0x11`).
 //!

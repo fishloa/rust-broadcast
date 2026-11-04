@@ -24,7 +24,7 @@
 //! - **SMPTE ST 336** "Data Encoding Protocol Using Key-Length-Value" — KLV
 //!   framing (16-byte UL key, BER length, BER-OID tags, Local Set). The standard
 //!   itself is paywalled; the byte-level framing used here is fully covered by
-//!   MISB ST 0601 + RFC 6597. See `transmux/docs/klv/klv-misb0601.md`.
+//!   MISB ST 0601 + RFC 6597. See `private/specs-verified/mpeg/transmux/klv/klv-misb0601.md`.
 //! - **MISB ST 0601** UAS Datalink Local Set — the [`UAS_LS_KEY`] Universal
 //!   Label, tag ordering (tag 2 first, tag 1 last), tag 2 Precision Time Stamp
 //!   and tag 1 Checksum (ST 0601 §5.5/§7.1 — "the lower 16-bits of summation",

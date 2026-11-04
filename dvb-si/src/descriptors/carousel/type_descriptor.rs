@@ -1,6 +1,6 @@
 //! Type Descriptor — ETSI EN 301 192 V1.7.1 §10.2.2, Table 50 (data-carousel
 //! tag 0x01). PDF p.65, transcribed in
-//! `docs/descriptors/en_301_192/50-*.md`, verified against the rendered page.
+//! `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/50-*.md`, verified against the rendered page.
 //!
 //! The Media Type (IETF RFC 2045 / RFC 2046, e.g. `"text/plain"`) of a module
 //! or group: the whole body is the `text_char` string.

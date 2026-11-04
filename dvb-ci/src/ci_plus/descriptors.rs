@@ -1,6 +1,6 @@
 //! CI Plus Sample-Mode descriptors (IV / key-identifier) — ETSI TS 103 205
 //! V1.4.1 §7.5.5.4, Tables 45-47 (PDF pp. 79-80). See
-//! `docs/ts_103_205/ci-plus-descriptors.md`.
+//! `private/specs-verified/dvb/dvb-ci/ts_103_205/ci-plus-descriptors.md`.
 //!
 //! Both follow the standard TLV form `descriptor_tag` (8) + `descriptor_length`
 //! (8) + `descriptor_length` opaque body bytes (§7.5.5.4.1). They may be carried

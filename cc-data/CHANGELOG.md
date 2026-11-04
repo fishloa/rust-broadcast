@@ -136,7 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Caption decode layer** (`decode` feature, default-on; additive → 0.2.0) — the
   CEA-608/708 character/control decode that interprets the demuxed caption byte
   pairs into displayed text. `no_std` + `alloc`, grounded in ANSI/CTA-608-E,
-  ANSI/CTA-708-E and 47 CFR §79.102 (`cc-data/docs/decode/`).
+  ANSI/CTA-708-E and 47 CFR §79.102 (`private/specs-verified/captions/cc-data/decode/`).
   - `Cea608Decoder` — line-21 state machine: pop-on (RCL/EOC), roll-up
     (RU2/RU3/RU4 + CR), paint-on (RDC); Preamble Address Codes (row + indent +
     colour/italics/underline); mid-row codes; tab offsets; the standard / special

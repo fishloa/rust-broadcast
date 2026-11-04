@@ -12,7 +12,7 @@ use rdd29::{
 };
 
 fn main() {
-    // See st337/docs/st337-PROVENANCE.md for how this fixture was extracted
+    // See private/specs-verified/smpte/st337/st337-PROVENANCE.md for how this fixture was extracted
     // (a real E-AC-3 syncframe from fixtures/ts/dolby/eac3.ts). RDD 29 never
     // decodes audio essence -- this crate treats it as an opaque
     // AudioDataDLC payload, exactly like st337 treats its burst_payload.

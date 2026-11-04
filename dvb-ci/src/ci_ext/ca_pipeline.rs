@@ -1,5 +1,5 @@
 //! CA Pipeline objects — ETSI TS 101 699 V1.1.1 §6.8, Tables 84-86
-//! (PDF pp. 75-77). See `docs/ci_plus/ca-pipeline.md`.
+//! (PDF pp. 75-77). See `private/specs-verified/dvb/dvb-ci/ci_plus/ca-pipeline.md`.
 //!
 //! Resource ID `0x00061ii1` (`ii` = Module ID, `type = 1*`). A module-provided
 //! framework that lets receiver-hosted applications and CA systems exchange

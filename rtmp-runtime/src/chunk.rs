@@ -1,7 +1,7 @@
 //! RTMP chunk stream — basic header, message header, extended timestamp
 //! (Adobe RTMP 1.0 §5.3).
 //!
-//! See [`docs/rtmp.md`](../README.md) §3 (RTMP Chunk Stream) for the wire
+//! See [`private/specs-verified/rtmp/rtmp-runtime/rtmp.md`](../README.md) §3 (RTMP Chunk Stream) for the wire
 //! layout: chunk format (§5.3.1), basic header (§5.3.1.1), the four message
 //! header `fmt` variants (§5.3.1.2), and extended timestamp (§5.3.1.3).
 //!
@@ -787,7 +787,7 @@ impl ChunkAssembler {
 
     /// Update the chunk size in effect for subsequent chunks (called on
     /// receipt of a Set Chunk Size protocol control message, §5.4.1). Per
-    /// `docs/rtmp.md` §3's transcription of §5.4.1 ("Default max chunk size
+    /// `private/specs-verified/rtmp/rtmp-runtime/rtmp.md` §3's transcription of §5.4.1 ("Default max chunk size
     /// is 128; SHOULD be ≥ 128, MUST be ≥ 1"), 128 is only a `SHOULD` for a
     /// *sender* choosing what to announce — a peer that announces (and
     /// then frames its own chunks at) a smaller value is still wire-legal,

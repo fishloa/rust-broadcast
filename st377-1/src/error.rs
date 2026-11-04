@@ -1,7 +1,7 @@
 //! Error type for MXF (SMPTE ST 377-1) parsing/serialization.
 //!
 //! Field-by-field semantics are documented in the curated spec oracle,
-//! `st377-1/docs/st377-1.md`.
+//! `private/specs-verified/smpte/st377-1/st377-1.md`.
 
 /// Result alias for `st377-1` parsing/serialization.
 pub type Result<T> = core::result::Result<T, Error>;
@@ -23,7 +23,7 @@ pub enum Error {
     },
     /// A BER length token used the reserved "unspecified length" value
     /// (`0x80` with zero following bytes), forbidden in MXF files
-    /// (`docs/st377-1.md` §6.3.4).
+    /// (`private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4).
     #[error("BER length used the reserved indefinite-length token (0x80)")]
     BerIndefiniteLength,
     /// A BER long-form length used more following bytes than an
@@ -57,14 +57,14 @@ pub enum Error {
         found: usize,
     },
     /// A Partition Pack's Key byte 14 (Partition Kind) was not one of the
-    /// three defined values (`docs/st377-1.md` §7.1 Table 4).
+    /// three defined values (`private/specs-verified/smpte/st377-1/st377-1.md` §7.1 Table 4).
     #[error("unknown Partition Kind byte: {byte:#04X}")]
     UnknownPartitionKind {
         /// The offending byte 14 value.
         byte: u8,
     },
     /// A Partition Pack's Key byte 15 (Partition Status) was not one of
-    /// the four defined values (`docs/st377-1.md` §7.1 Table 4 / §6.2.3).
+    /// the four defined values (`private/specs-verified/smpte/st377-1/st377-1.md` §7.1 Table 4 / §6.2.3).
     #[error("unknown Partition Status byte: {byte:#04X}")]
     UnknownPartitionStatus {
         /// The offending byte 15 value.
@@ -78,7 +78,7 @@ pub enum Error {
         byte: u8,
     },
     /// A KLV Key did not match the expected fixed 13-byte Partition Pack /
-    /// Primer Pack / Random Index Pack prefix (`docs/st377-1.md` §7.1
+    /// Primer Pack / Random Index Pack prefix (`private/specs-verified/smpte/st377-1/st377-1.md` §7.1
     /// Table 4 / §9.2 Table 13 / §12.1 Table 29).
     #[error("key prefix mismatch for {what}")]
     KeyPrefixMismatch {
@@ -111,7 +111,7 @@ pub enum Error {
     },
     /// A Batch/Array's 8-byte header (`count: u32`, `item_len: u32`) did
     /// not agree with the actual buffer length, or `item_len` did not
-    /// match the expected fixed element size (`docs/st377-1.md` §4.3).
+    /// match the expected fixed element size (`private/specs-verified/smpte/st377-1/st377-1.md` §4.3).
     #[error("batch header invalid: count={count} item_len={item_len} buffer_len={buffer_len}")]
     InvalidBatchHeader {
         /// Declared element count.

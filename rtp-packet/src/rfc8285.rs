@@ -1,7 +1,7 @@
 //! RFC 8285 one-byte/two-byte RTP header-extension element multiplexing.
 //!
 //! This is a profile-specific interpretation of the RFC 3550 §5.3.1 opaque
-//! [`HeaderExtension`] `data` — see `rtp-packet/docs/rfc8285_header_ext.md`
+//! [`HeaderExtension`] `data` — see `private/specs-verified/rtp/rtp-packet/rfc8285_header_ext.md`
 //! for the curated spec transcription this module implements field-for-field
 //! (cite that file, not this doc comment, as the field-semantics oracle).
 //!
@@ -58,7 +58,7 @@ const ONE_BYTE_DATA_MAX: usize = 16;
 /// Minimum valid two-byte-form local identifier. Per RFC 8285 §4.1.2/§5,
 /// "0 is reserved for padding in **both** forms" (not just the one-byte
 /// form, despite §4.3 in isolation reading as "range 1-255 inclusive" —
-/// see `docs/rfc8285_header_ext.md`'s "Judgment calls" section).
+/// see `private/specs-verified/rtp/rtp-packet/rfc8285_header_ext.md`'s "Judgment calls" section).
 const TWO_BYTE_ID_MIN: u8 = 1;
 /// Maximum two-byte-form element data length in bytes (§4.3: an 8-bit
 /// length field, stored directly with no `-1` bias, unlike the one-byte
@@ -548,7 +548,7 @@ mod tests {
         // elem(L=1 -> 2 bytes), elem(L=3 -> 4 bytes). The RFC gives concrete
         // hex only for the profile id + length; IDs and data bytes here are
         // concrete values we chose to instantiate that structure (see
-        // docs/rfc8285_header_ext.md). Padding is placed at the tail here
+        // private/specs-verified/rtp/rtp-packet/rfc8285_header_ext.md). Padding is placed at the tail here
         // (this crate's `Serialize` always canonicalizes padding to a single
         // trailing run, since RFC 8285 assigns it no semantic content — see
         // `one_byte_reparses_interspersed_padding_to_the_same_elements` below

@@ -37,7 +37,7 @@ are head-end/gateway software that generates or consumes that configuration.
 | | | Clause 10.2.5 `MulticastGatewayConfigurationTransportSession` and configuration macros | Partial | The `ReferencingObjectCarouselType` vs base `ObjectCarouselType` cardinality rule is not enforced by the types |
 | | | Clause 10.2.1.0 / 10.2.2.3 reporting-destination declarations | Full | |
 | | | Annex A.1 extension points (`xs:any`) | Not implemented | Recognised and skipped on parse, not stored |
-| | | Clause 11 reporting JSON; Annex F transport profiles | Not implemented | Reporting body documented in `docs/mabr-reporting.md` only |
+| | | Clause 11 reporting JSON; Annex F transport profiles | Not implemented | Reporting body documented in `private/specs-verified/dvb/dvb-mabr/mabr-reporting.md` only |
 
 ## Feature flags
 
@@ -101,7 +101,7 @@ Runnable examples: `cargo run -p dvb-mabr --example parse_session` and
 
 Field-level spec transcriptions (`mabr-signalling.md`, `mabr-transport.md`, `mabr-reporting.md`) are kept
 in the private companion repository, not published; see the
-[docs pointer](https://github.com/fishloa/rust-broadcast/blob/main/dvb-mabr/docs/README.md#private-spec-transcriptions).
+[docs pointer](https://github.com/fishloa/rust-broadcast/blob/main/private/specs-verified/dvb/dvb-mabr/#private-spec-transcriptions).
 
 ## Round-trip guarantee
 

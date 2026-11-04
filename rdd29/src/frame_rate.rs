@@ -82,7 +82,7 @@ impl FrameRate {
     /// `NumPanSubBlocks` (§5.4.1 Table 7) — the number of ~5ms pan sub-blocks
     /// an `ObjectDefinition1` element's pan-info loop carries per frame at
     /// this frame rate. Table 7 gives the same count for both sample rates
-    /// at a given frame rate (see `docs/rdd29.md` scope decision 5), so this
+    /// at a given frame rate (see `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 5), so this
     /// depends only on `FrameRate`.
     ///
     /// # Errors

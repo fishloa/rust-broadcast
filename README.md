@@ -168,7 +168,7 @@ Plus `test-alloc`, `test-bounded`, `test-fixtures`, `workspace-guards`: `publish
 
 Outside the workspace: Python bindings [`dvb-si-py`](bindings/python/) and
 [`transmux-py`](bindings/transmux-py/), and the docs-only spec directories
-[`cpix/`](cpix/) and [`st2110/`](st2110/). See [docs/CRATES.md](docs/CRATES.md#outside-the-workspace).
+See [docs/CRATES.md](docs/CRATES.md#outside-the-workspace).
 
 ## Getting started
 

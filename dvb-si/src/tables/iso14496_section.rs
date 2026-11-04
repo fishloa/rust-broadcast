@@ -1,7 +1,7 @@
 //! `ISO_IEC_14496_section()` — Rec. ITU-T H.222.0 (08/2023) | ISO/IEC
 //! 13818-1:2023 §2.11.3.8, Table 2-153 (table_id 0x04 scene description, 0x05
 //! object descriptor, 0x08 other ISO/IEC 14496 streams); syntax in
-//! `docs/tables/iso_13818_1/2-153-2-158-2-162-sections-14496-metadata-green.md`.
+//! `private/specs-verified/dvb/dvb-si/tables/iso_13818_1/2-153-2-158-2-162-sections-14496-metadata-green.md`.
 //!
 //! The header (`table_id_extension`, version, section numbers) is typed. The
 //! payload is one of `SL_Packet()` / `M4MuxPacket()`s / reserved bytes

@@ -1,6 +1,6 @@
 # rtmp-runtime — sans-IO RTMP 1.0 ingest session engine (#738)
 
-> Design spec for #738. Status: authored 2026-07-25 during the autonomous backlog run, from the scouting digest + `rtmp-runtime/docs/rtmp.md` (#762). New independent crate; mirrors `rtsp-runtime`. Ingest-only.
+> Design spec for #738. Status: authored 2026-07-25 during the autonomous backlog run, from the scouting digest + `private/specs-verified/rtmp/rtmp-runtime/rtmp.md` (#762). New independent crate; mirrors `rtsp-runtime`. Ingest-only.
 
 ## Problem / scope
 Every encoder + OBS speaks **RTMP push** (publish). multimux has no RTMP ingest. Add a new **`rtmp-runtime`** crate — a sans-IO RTMP 1.0 **server session** engine (handshake → chunk (de)assembly → AMF command routing → publish state machine) — plus a `tokio`-gated TCP listener adapter, and wire it into multimux as a first-class `InputSpec::Rtmp` source. transmux keeps the **FLV-body → `Media`** demux (`FlvDemux`); rtmp-runtime hands it reassembled FLV tag bytes.

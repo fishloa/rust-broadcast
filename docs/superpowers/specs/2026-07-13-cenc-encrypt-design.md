@@ -2,7 +2,7 @@
 
 **Status:** approved design, pre-implementation
 **Crate:** `transmux` (feature `cenc`)
-**Spec sources:** ISO/IEC 23001-7 (Common Encryption) — transcribed in `transmux/docs/codec/cenc-23001-7.md`; ISO/IEC 14496-12 §8.8 (`moof`/`traf`/`trun`), §8.12 (`sinf`/`frma`/`schm`/`schi`).
+**Spec sources:** ISO/IEC 23001-7 (Common Encryption) — transcribed in `private/specs-verified/mpeg/transmux/codec/cenc-23001-7.md`; ISO/IEC 14496-12 §8.8 (`moof`/`traf`/`trun`), §8.12 (`sinf`/`frma`/`schm`/`schi`).
 
 ## Why
 

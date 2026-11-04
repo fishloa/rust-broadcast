@@ -27,7 +27,7 @@ const LINE_PARITY_MASK: u8 = 0x20;
 const LINE_OFFSET_MASK: u8 = 0x1F;
 /// Spec default of the per-line `reserved_future_use`(2) (`reserved` before
 /// V1.17.1): all ones (EN 300 468 V1.4.1-V1.20.1 Table 106; audit
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
 pub const LINE_RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
 
 /// Per-service-descriptor content, keyed by `data_service_id`.

@@ -24,7 +24,7 @@ const AVAILABILITY_FLAG_MASK: u8 = 0b1000_0000;
 const RESERVED_MASK: u8 = 0b0111_1111;
 /// Spec default of `reserved_future_use`(7): all ones (EN 300 468 V1.5.1-V1.20.1
 /// Table 90 (`reserved` before V1.17.1); audit
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
 pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x7F;
 
 /// Service Availability Descriptor.

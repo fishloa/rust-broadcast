@@ -1,6 +1,6 @@
 //! ROUTE-specific LCT header extension **constants** — HET values for A/331
 //! Annex A §A.3.7 (`EXT_ROUTE_PRESENTATION_TIME`) and §A.3.8 (`EXT_TOL`),
-//! transcribed at `atsc3/docs/a331-route.md` §2.
+//! transcribed at `private/specs-verified/atsc/atsc3/a331-route.md` §2.
 //!
 //! The typed decoders (`ExtRoutePresentationTime`, `ExtTol`) that previously
 //! lived here were **removed** because no publicly-available ATSC 3.0 ROUTE

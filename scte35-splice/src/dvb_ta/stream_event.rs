@@ -16,7 +16,7 @@
 //!
 //! Following the transcription's verified reading of the mis-registered render:
 //! `private_data_specifier` is **32 bits** (the `private_data_length-4` byte loop
-//! consumes 4 bytes for it first). See `docs/dvb_ta/dsmcc-stream-event.md`.
+//! consumes 4 bytes for it first). See `private/specs-verified/scte/scte35-splice/dvb_ta/dsmcc-stream-event.md`.
 
 use alloc::vec::Vec;
 

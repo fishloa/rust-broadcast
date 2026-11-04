@@ -53,7 +53,7 @@ fn main() {
     .expect("build ObjectDefinition1");
 
     // Opaque audio-essence payloads -- this crate never decodes DLC audio,
-    // so any bytes work here (see docs/rdd29.md scope decision 3).
+    // so any bytes work here (see private/specs-verified/smpte/rdd29/rdd29.md scope decision 3).
     let left = AudioDataDlc::new(10, b"left channel DLC payload").unwrap();
     let right = AudioDataDlc::new(11, b"right channel DLC payload").unwrap();
     let object_audio = AudioDataDlc::new(12, b"object DLC payload").unwrap();

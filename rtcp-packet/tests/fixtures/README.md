@@ -33,6 +33,6 @@ because it walked into the PSFB packets and rejected their PT (206) as
 with them. It now parses as one `CompoundPacket` of three packets: a typed
 `RtcpPacket::ReceiverReport`, and two `RtcpPacket::Unknown { packet_type:
 206, .. }` (this crate does not decode PSFB FCI — see the crate's own
-`docs/rtcp.md` decode-completeness notes). See
+`private/specs-verified/rtp/rtcp-packet/rtcp.md` decode-completeness notes). See
 `tests/it/real_browser_fixture.rs` for the parse + byte-identical round-trip
 assertions.

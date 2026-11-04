@@ -446,7 +446,7 @@ pub struct TimeAssociationBody {
 // ── Beamhopping Time Plan (Table 11g) ───────────────────────────────────────
 
 /// Time plan mode — ETSI EN 300 468 §5.2.11.5 Table 11g
-/// (`dvb-si/docs/tables/en_300_468/11g-beamhopping-time-plan-info.md`).
+/// (`private/specs-verified/dvb/dvb-si/tables/en_300_468/11g-beamhopping-time-plan-info.md`).
 ///
 /// 2-bit field. Selects the body structure of a beamhopping plan entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

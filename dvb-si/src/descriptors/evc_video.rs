@@ -1,6 +1,6 @@
 //! EVC video descriptor — Rec. ITU-T H.222.0 (08/2023) | ISO/IEC 13818-1:2023
 //! §2.6.133–2.6.134, Table 2-140 (tag 0x3A); syntax in
-//! `docs/descriptors/iso_13818_1/39-3a-vvc-and-evc-video-descriptors.md`.
+//! `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/39-3a-vvc-and-evc-video-descriptors.md`.
 //!
 //! **Spec erratum:** Table 2-140 prints `descriptor_length` as 16 bits (every
 //! other descriptor, including the VVC one, uses 8). The standard 8-bit

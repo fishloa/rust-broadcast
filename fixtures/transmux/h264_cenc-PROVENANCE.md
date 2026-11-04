@@ -8,7 +8,7 @@ encryption tool — not this project's own code) against the already-committed r
 ## Why Bento4, not a hand-built fixture
 
 ISO/IEC 23001-7 (Common Encryption) is a paid ISO standard not owned by this project (see
-`specs/MEDIA-SPECS-LOCAL.md`). Per the project's "no implementation without truthful source"
+`private/specs-verified/specs-index/MEDIA-SPECS-LOCAL.md`). Per the project's "no implementation without truthful source"
 rule, the box-level syntax for `tenc`/`senc`/`saio`/`saiz`/`sinf`/`frma`/`schm`/`schi` is
 grounded in two independent, cross-corroborating open-source implementations instead:
 **Shaka Packager** (`packager/media/formats/mp4/box_definitions.{h,cc}`, Apache-2.0, Google)

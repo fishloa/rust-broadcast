@@ -8,7 +8,7 @@ already-audited `fixtures/st291/anc.bin` fixture (see
 `st291/tests/it/fixture_anc.rs` for the values it asserts) and wrapping them
 fresh in RFC-8331-correct RTP + payload-header framing — the parity/checksum
 math over `DID`/`SDID`/`Data_Count`/`User_Data_Words`/`Checksum_Word` is
-**identical across transports** per `st291/docs/anc_packet_291.md`, so the
+**identical across transports** per `private/specs-verified/smpte/st291/anc_packet_291.md`, so the
 content itself carries the same "is this really what a conformant sender
 would produce" weight as the ST 2038 fixture, while the RTP-specific framing
 around it (placement fields, payload header, word-alignment) is exercised

@@ -166,7 +166,7 @@ Depends on `broadcast-common`, `ssai-runtime` (splice-point conditioning) and
 ## Spec references
 
 - SCTE-35 `splice_insert()`: ANSI/SCTE 35 2023r1 section 9.7.3, transcribed at
-  [`scte35-splice/docs/`](../scte35-splice/docs/).
+  the private repo (`private/specs-verified/scte/scte35-splice/`).
 - Splice-point conditioning: [`ssai-runtime`](../ssai-runtime), issue #929.
 
 ## MSRV and license

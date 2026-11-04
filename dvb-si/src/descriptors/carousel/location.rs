@@ -1,6 +1,6 @@
 //! Location Descriptor — ETSI EN 301 192 V1.7.1 §10.2.7, Table 55
 //! (data-carousel tag 0x06). PDF p.67, transcribed in
-//! `docs/descriptors/en_301_192/55-*.md`, verified against the rendered page.
+//! `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/55-*.md`, verified against the rendered page.
 //!
 //! Locates the PID carrying blocks, modules or groups of the carousel by the
 //! `component_tag` of its `stream_identifier_descriptor`.

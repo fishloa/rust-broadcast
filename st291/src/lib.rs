@@ -57,7 +57,7 @@
 //! - **`rtp`**: [`AncRtpPayload`] (extended sequence number, [`FieldSense`],
 //!   packet list; `Length` and `ANC_Count` recomputed on serialize and
 //!   cross-checked on parse) holding [`RtpAncPacket`]s. See
-//!   `docs/anc_rtp_8331.md` and `docs/anc_packet_291.md`.
+//!   `private/specs-verified/smpte/st291/anc_rtp_8331.md` and `private/specs-verified/smpte/st291/anc_packet_291.md`.
 //!
 //! # Design notes
 //!

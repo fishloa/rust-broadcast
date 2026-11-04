@@ -1,6 +1,6 @@
 //! DVB-HTML Application Boundary Descriptor — ETSI TS 102 727 V1.1.1 §10.10.3,
 //! Table 89 (AIT tag 0x0A). PDF p.174, transcribed in
-//! `docs/descriptors/ts_102_727/89-*.md`, verified against the rendered page.
+//! `private/specs-verified/dvb/dvb-si/descriptors/ts_102_727/89-*.md`, verified against the rendered page.
 //!
 //! Optional, in the "application" AIT loop; several may be present (the
 //! boundary is their union). Body: `label_length`(8), `label_bytes`×N1, then

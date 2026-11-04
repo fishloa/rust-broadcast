@@ -1461,7 +1461,7 @@ impl ConformanceMonitor {
     }
 
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.1 — NIT_error, bad-table_id
-    /// dimension. `docs/tr_101_290.md` clause 3.1: allowed table_ids on
+    /// dimension. `private/specs-verified/dvb/dvb-conformance/tr_101_290.md` clause 3.1: allowed table_ids on
     /// PID 0x0010 are NIT_actual (0x40), NIT_other (0x41), stuffing/ST
     /// (0x72). The absence dimension (NIT_actual missing for the
     /// EN 300 468 §5.1.4 repetition interval) is raised from the shared 3.2
@@ -1491,7 +1491,7 @@ impl ConformanceMonitor {
     }
 
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.5 — SDT_error, bad-table_id
-    /// dimension. `docs/tr_101_290.md` clause 3.5: allowed table_ids on
+    /// dimension. `private/specs-verified/dvb/dvb-conformance/tr_101_290.md` clause 3.5: allowed table_ids on
     /// PID 0x0011 are SDT_actual (0x42), SDT_other (0x46), BAT (0x4A),
     /// stuffing/ST (0x72). The absence dimension (SDT_actual missing) is
     /// raised from the shared 3.2 SI timer in `check_presence_timeouts`.
@@ -1521,7 +1521,7 @@ impl ConformanceMonitor {
     }
 
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.6 — EIT_error, bad-table_id
-    /// dimension. `docs/tr_101_290.md` clause 3.6: allowed table_ids on
+    /// dimension. `private/specs-verified/dvb/dvb-conformance/tr_101_290.md` clause 3.6: allowed table_ids on
     /// PID 0x0012 are EIT P/F actual (0x4E), EIT P/F other (0x4F), EIT
     /// schedule actual (0x50..=0x5F), EIT schedule other (0x60..=0x6F),
     /// stuffing/ST (0x72). The absence dimension (EIT P/F actual missing) is
@@ -1557,7 +1557,7 @@ impl ConformanceMonitor {
     }
 
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.7 — RST_error, bad-table_id
-    /// dimension. `docs/tr_101_290.md` clause 3.7: allowed table_ids on
+    /// dimension. `private/specs-verified/dvb/dvb-conformance/tr_101_290.md` clause 3.7: allowed table_ids on
     /// PID 0x0013 are RST (0x71), stuffing/ST (0x72). RST has no documented
     /// absence threshold in Table 5.0c, so there is no presence dimension.
     fn check_rst_table_id(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
@@ -1583,7 +1583,7 @@ impl ConformanceMonitor {
     }
 
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.8 — TDT_error, bad-table_id
-    /// dimension. `docs/tr_101_290.md` clause 3.8: allowed table_ids on
+    /// dimension. `private/specs-verified/dvb/dvb-conformance/tr_101_290.md` clause 3.8: allowed table_ids on
     /// PID 0x0014 are TDT (0x70), stuffing/ST (0x72), TOT (0x73). The
     /// absence dimension (TDT missing) is raised from the shared 3.2 SI
     /// timer in `check_presence_timeouts`.
@@ -2521,7 +2521,7 @@ impl ConformanceMonitor {
             // (NIT_error 3.1 / SDT_error 3.5 / EIT_error 3.6 / TDT_error 3.8)
             // — the same underlying absence, per the spec's historical
             // combined indicator vs. the split `_actual` variants (see
-            // docs/tr_101_290.md notes 2-4).
+            // private/specs-verified/dvb/dvb-conformance/tr_101_290.md notes 2-4).
             let (table_name, group_indicator) = match table_id {
                 NIT_ACTUAL_TABLE_ID => ("NIT_actual", Some(Indicator::NitError)),
                 SDT_ACTUAL_TABLE_ID => ("SDT_actual", Some(Indicator::SdtError)),

@@ -1,5 +1,5 @@
 //! Power Manager objects — ETSI TS 101 699 V1.1.1 §6.3, Tables 52-55
-//! (PDF pp. 51-52). See `docs/ci_plus/power-manager.md`.
+//! (PDF pp. 51-52). See `private/specs-verified/dvb/dvb-ci/ci_plus/power-manager.md`.
 //!
 //! Resource ID `0x00220041`. Lets a module tell the host it is busy with a task
 //! that should complete before the host powers down.

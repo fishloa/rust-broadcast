@@ -352,7 +352,7 @@ Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
   repeat-decrease backoff (bounded by `DecCount<=5`), the `AvgNAKNum` EWMA,
   and the `MAX_BW`-derived `MIN_PERIOD` clamp. Sans-IO, `no_std` (including
   `thumbv7em-none-eabi`): driven by `on_ack`/`on_loss`/`on_timeout`, no
-  wall-clock reads. Curated at `specs/rules/srt-congestion.md`, every
+  wall-clock reads. Curated at `private/specs-verified/rules/srt-congestion.md`, every
   constant/formula cited to a source line. The draft's two flagged gaps
   (the `RECEIVING_RATE`/`EST_LINK_CAPACITY` EWMA smoothing weight; the
   packet-pairs probing mechanics that would produce those inputs) are
@@ -417,7 +417,7 @@ Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
     receiver gets ALL N in order (byte-identical), wrapped in
     `tokio::time::timeout` for fail-fast on deadlock.
 - **Sans-IO TSBPD delivery scheduler + too-late packet drop** (§4.5/§4.6/§4.7
-  of `draft-sharabayko-srt-01`; curated at `specs/rules/srt-tsbpd.md`, issue
+  of `draft-sharabayko-srt-01`; curated at `private/specs-verified/rules/srt-tsbpd.md`, issue
   #607):
   - `tsbpd::TsbpdScheduler` — receiver-side delivery scheduler: `feed_data`
     accepts a packet's sequence number and 32-bit timestamp, computes its
@@ -443,7 +443,7 @@ Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
     (rule 22), sender-side TLPKTDROP (rule 18-20), wrapping-period
     TsbpdTimeBase adjustment (rule 16).
 - **Sans-IO LiveCC packet pacing controller** (§5.1 SRT Packet Pacing and Live
-  Congestion Control; issue #610, curated at `specs/rules/srt-livecc.md`):
+  Congestion Control; issue #610, curated at `private/specs-verified/rules/srt-livecc.md`):
   - `livecc::LiveCC` — sender-side pacing state: computes the inter-packet send
     period (`PKT_SND_PERIOD`) from the running EWMA average payload size
     (`AvgPayloadSize`) and the configured maximum bandwidth (`MAX_BW`), per the
@@ -510,7 +510,7 @@ Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
     §6.2.2/§6.3.2 formula `IV = (MSB(112, Salt) << 2) XOR PktSeqNo` — the
     draft gives a second, textually different formula in §6.1.2 that this
     crate deliberately does *not* implement; both are transcribed and the
-    conflict documented in `specs/rules/srt-crypto.md` and the `crypto`
+    conflict documented in `private/specs-verified/rules/srt-crypto.md` and the `crypto`
     module doc.
   - `crypto::wrap_sek` / `crypto::unwrap_sek` — RFC 3394 AES key wrap/unwrap
     of the SEK under the KEK (§6.1.5/§6.2.1/§6.3.1), split as
@@ -532,9 +532,9 @@ Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
     (byte-exact both directions), and an SRT-specific SEK+Salt+PktSeqNo
     payload round-trip including a wrong-SEK-does-not-recover negative case.
     `draft-sharabayko-srt-01` §6 has no test vectors of its own
-    (`specs/rules/srt-crypto.md`).
+    (`private/specs-verified/rules/srt-crypto.md`).
 - **Sans-IO Rendezvous handshake state machine** (§4.3.2, issue #609, curated
-  at `specs/rules/srt-rendezvous.md`), reusing the same shared
+  at `private/specs-verified/rules/srt-rendezvous.md`), reusing the same shared
   `handshake_sm` types and packet codecs as the Caller-Listener flow:
   - `rendezvous::RendezvousHandshake` — a single, symmetric engine: both
     peers run the same code. `start()` sends WAVEAHAND (Version 5, this

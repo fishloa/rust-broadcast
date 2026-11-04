@@ -10,7 +10,7 @@
 - New crate `rtmp-runtime` (workspace member). `edition=2024`, `rust-version=1.86`, `license="MIT OR Apache-2.0"`, `#![forbid(unsafe_code)]`. Not no_std (uses Vec) but core needs no tokio.
 - Every wire struct: `broadcast_common::Parse`/`Serialize` + a byte-identical round-trip test (HARD invariant). No raw-byte public API. No magic numbers outside `#[cfg(test)]` (named consts; spec §-cited).
 - Every public spec/field enum: `name()->&'static str` + `broadcast_common::impl_spec_display!` (#204) + `tests/label_coverage.rs`.
-- Spec grounding: cite `rtmp-runtime/docs/rtmp.md` §-numbers in module docs; no impl from memory.
+- Spec grounding: cite `private/specs-verified/rtmp/rtmp-runtime/rtmp.md` §-numbers in module docs; no impl from memory.
 - 6-gate per task: build all-features / build no-default-features / test / clippy -D warnings / fmt --check / doc -D warnings. MSRV 1.86.
 - Ack seq = plain modular u32 (documented); timestamps RFC1982 serial compare.
 - Ingest-only: no egress/play/AMF3/SharedObject/HMAC-handshake.

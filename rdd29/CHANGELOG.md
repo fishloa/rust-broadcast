@@ -131,7 +131,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
   per Table 8), `ObjectSpreadMode`/`ObjectSpread` (Table 10), decorrelation
   (`DecorCoefPrefix`, Table 11), and `AudioDescription` (NULL-terminated
   ASCII text, gated by a flag bit — the only field in the whole disclosure
-  document with no `§5.4.x` prose description; see `docs/rdd29.md` scope
+  document with no `§5.4.x` prose description; see `private/specs-verified/smpte/rdd29/rdd29.md` scope
   decision 2 for how this crate handles the gap honestly). Cannot implement
   `broadcast_common::Parse` (its pan-info loop length needs the enclosing
   `ATMOSFrame`'s `FrameRate` as context) — exposes `parse_with_frame_rate`
@@ -140,7 +140,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
   `AudioDataID` + `DLCSize` + the opaque remainder as `&[u8]`. The Dolby
   Lossless Coding (DLC) codec's own predictor/residual bitstream past those
   two fields is never parsed — this crate's audio-essence/metadata boundary
-  (see `docs/rdd29.md` scope decision 3).
+  (see `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 3).
 - `distance` module — `distance_xy`/`distance_z` (§3.2): decode the raw
   `DistanceXY`/`DistanceZ`-coded position/spread fields to their `[0,1]`
   linear values. Read-only derived views; the raw wire code is always the
@@ -150,7 +150,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
   `ChannelCount`, and `ChannelID`. Implements the general escape-doubling
   algorithm per the spec's prose + worked example rather than the literally
   printed (and internally inconsistent) `Plex(8)` pseudocode — see
-  `docs/rdd29.md` scope decision 1.
+  `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 1.
 - `ElementId` (Table 1), `SampleRate` (Table 2), `BitDepth` (Table 3),
   `FrameRate` (Table 4, also driving `NumPanSubBlocks` via
   `FrameRate::num_pan_sub_blocks`), `ZoneId`/`ZoneGain` (Tables 8/9),
@@ -158,9 +158,9 @@ Includes fixes for privately reported security issues; no public advisory is pub
   the `name()`/`Display` label pair per the workspace's #204 convention.
 - All "Reserved (set to `0xNN`)" fields are hard-validated against their
   documented literal constants on parse (`Error::InvalidReserved`), and
-  always re-emitted literally on serialize — see `docs/rdd29.md` scope
+  always re-emitted literally on serialize — see `private/specs-verified/smpte/rdd29/rdd29.md` scope
   decision 4 for why this differs from `st337`'s soft-preserved `Pf`.
-- `docs/rdd29.md` — curated transcription of SMPTE RDD 29:2019 §1-§5
+- `private/specs-verified/smpte/rdd29/rdd29.md` — curated transcription of SMPTE RDD 29:2019 §1-§5
   (fetched directly from `pub.smpte.org`), the implementation/audit oracle
   for this crate, including the crate's scope decisions and the two honest
   gaps this disclosure document itself left unresolved.

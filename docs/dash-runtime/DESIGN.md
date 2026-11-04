@@ -1,7 +1,7 @@
 # dash-runtime: sans-IO DASH-pull client (design)
 
 Status: DESIGN ONLY (no crate, no code in this PR). Plan-only; every behavioural statement cites a clause of ISO/IEC 23009-1:2022 (Ed.5,
-"23009-1"), DASH-IF IOP v4.3 ("IOP"), ETSI TS 103 285 ("DVB-DASH") or a repo source. Spec notes: `docs/specs/dash/**`; verbatim private text:
+"23009-1"), DASH-IF IOP v4.3 ("IOP"), ETSI TS 103 285 ("DVB-DASH") or a repo source. Spec notes: `private/specs-verified/dash/docs-specs/**`; verbatim private text:
 `private/specs-verified/dash/**` (formulas below were cross-checked against the public notes; the private files are not checked out in CI, so the
 work-breakdown step W-c re-reads them before coding). Sections 0-11 are written and committed one at a time; 12 to 12.3 record what each work-breakdown step built.
 
@@ -429,7 +429,7 @@ public fixtures), the r8 fault harness designed in from the first adapter PR.
 | `fixtures/dash/manifest.mpd` + `init-stream*.m4s`/`chunk-stream*-0000N.m4s` | real ffmpeg static timeline presentation (video 90 kHz, audio 44.1 kHz); first chunk tfdt 0, second 90 000; `S@t=2070` while tfdt=0 (section 11) | committed |
 | `fixtures/dash/manifest-inheritance.mpd` | Period/AdaptationSet/Representation attribute inheritance (5.3.9.1) | committed (derived, documented) |
 | `fixtures/dash/livesim2/segtimeline*_{a,b}.mpd` | real DASH-IF livesim2 dynamic MPDs, `$Time$` and `$Number$`+timeline, huge absolute `t`, `startNumber=895967208`, `UTCTiming http-xsdate`; the a/b pairs are consecutive refreshes (`publishTime` 23:34:38 -> 23:34:46) = a real MPD-update sequence | committed |
-| `docs/specs/dash/23009-1/annex-g-examples.md` | the spec's own example MPDs (G.1...) as parser inputs; W-c extracts them to `fixtures/dash/annex-g/*.mpd` with provenance | P0 |
+| `private/specs-verified/dash/docs-specs/23009-1/annex-g-examples.md` | the spec's own example MPDs (G.1...) as parser inputs; W-c extracts them to `fixtures/dash/annex-g/*.mpd` with provenance | P0 |
 | IOP v4.3 Table 10 (`ch04-02`) | a complete numeric vector: 43 s, SPD 15 s, MBT 5 s, TSB 25 s, 5 s segments => `k1=1, k2=9, SAST[k]=START+5k, SAET[k]=SAST[k]+30 s`, init available `START..START+75 s` | exact-value test of `address::plan` + `timing::availability` |
 | CMAF segments from repo media | `transmux`'s `DashPackager`/CMAF segmenter over `fixtures/ts/h264_aac_40s.ts` and `fixtures/mp4/cmaf/*` produce contiguous segments with known continuous tfdt; the loopback origin serves them under a generated dynamic MPD (template, timeline, multi-Period, SegmentBase+sidx, SegmentList variants) | built in W-d |
 | DASH-IF livesim2 (BSD licence, `LICENSE.md` verified in the module) | third-party origin: `go install github.com/Dash-Industry-Forum/livesim2/cmd/livesim2@v1.15.2` BUILT here (29.6 MB binary, `--help` runs); the module ships 33 MB of test assets (`cmd/livesim2/app/testdata/assets`: `testpic_2s`, `testpic_6s`, `timeline_number_2s`, `testpic_2s_low_delay`, ...) usable with `--vodroot`. W-g served it locally (`--vodroot` at those assets) and played 30 s from it, six shapes at once | plan below |
@@ -522,7 +522,7 @@ Needs spec clarification FIRST: nothing blocks (the public notes cover every cla
 
 ## 11. Spec quirks that affect implementation
 
-1. **`$Number$` formula (5.3.9.5.3).** The URL bullet prints the replacement as `(k-1) + (kstart-1)` (`kstart` = `@startNumber`, default 1) while the `@duration` bullet one page later writes `(k-1) + NumberStart` (`docs/specs/dash/23009-1/05-3-9-5-segment-information-derivation.md`, quirk note). Real content, checked this session:
+1. **`$Number$` formula (5.3.9.5.3).** The URL bullet prints the replacement as `(k-1) + (kstart-1)` (`kstart` = `@startNumber`, default 1) while the `@duration` bullet one page later writes `(k-1) + NumberStart` (`private/specs-verified/dash/docs-specs/23009-1/05-3-9-5-segment-information-derivation.md`, quirk note). Real content, checked this session:
    livesim2 v1.15.2 `testpic_2s` (`startNumber="0"`, `duration="2"`, no `@timescale`): `V300/896501965.m4s` has `tfdt = 161 370 353 700 000 / 90 000 = 1 793 003 930 s = 896 501 965 x 2`, i.e. `MPDstart(Number) = (Number - startNumber) x duration`; the same server answers a number 4 ahead with `425 "earl"` and a number 80 behind with `410 Gone`.
    The committed ffmpeg fixture (`startNumber="1"`): `chunk-stream0-00001.m4s` tfdt 0, `-00002` tfdt 90 000. Both packagers use `Number = startNumber + k - 1`, the `NumberStart` reading, which is also what Annex A.3.3 (`(i-1) + @startNumber`) and IOP 4.3.2.2.7 print (`Address = @startNumber` for the first segment, then +1). The `(kstart-1)` reading would yield number -1 for livesim2's `startNumber=0`. Implement `startNumber + k - 1`; pinned by a test on both real captures.
 2. **`S@t` is a presentation time, not tfdt.** The ffmpeg fixture has `<S t="2070" d="90000" r="2"/>` for video while the first segment's `tfdt` is 0 (the 2 070-tick difference is the composition offset); `$Time$` substitutes `S@t` (5.3.9.4.4 Table 21, 5.3.9.6.1) and the spec's sidx rule equates `S@t` with the sidx `earliest_presentation_time`. Never derive `$Time$` or Period-relative times from tfdt.

@@ -4,7 +4,7 @@
 //! `@targetAcquisitionLatency` omitted on any of the three children means
 //! "repeat as often as the session bit rate allows".
 //!
-//! **Simplification vs. the XSD**: clause 10.2.5 (§7 of `docs/mabr-signalling.md`)
+//! **Simplification vs. the XSD**: clause 10.2.5 (§7 of `private/specs-verified/dvb/dvb-mabr/mabr-signalling.md`)
 //! defines a *second* carousel type, `ReferencingObjectCarouselType`, used only
 //! by `MulticastGatewayConfigurationTransportSession` (`gateway.rs`). It
 //! differs from the base `ObjectCarouselType` used here in two ways: (1)

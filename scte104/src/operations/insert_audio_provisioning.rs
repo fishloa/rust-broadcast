@@ -3,7 +3,7 @@
 //!
 //! Control usage. Carries, per audio service, the `channel_mode` (SCTE 242-1
 //! Table 1) to be set and the `Codec_index` (Table 9-35). Transcription:
-//! `docs/ansi_scte_104/audio-and-alternate-break.md`.
+//! `private/specs-verified/scte/scte104/ansi_scte_104/audio-and-alternate-break.md`.
 
 use alloc::vec::Vec;
 

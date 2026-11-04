@@ -19,7 +19,7 @@ pub struct VvcSubpicture {
 
 /// Spec default of the 5-bit `reserved_zero_future_use` before
 /// `processing_mode`: 0 (EN 300 468 Table 162a, V1.18.1-V1.20.1;
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
 pub const VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
 const RESERVED_ZERO_MASK: u8 = 0x1F;
 const PROCESSING_MODE_MASK: u8 = 0x07;

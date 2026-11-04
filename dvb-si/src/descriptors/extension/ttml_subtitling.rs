@@ -13,7 +13,7 @@ impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
 /// Spec default of every `reserved_zero_future_use` field of the
 /// TTML_subtitling_descriptor (the 2-bit one in byte 4 and the 1-bit one in
 /// each font entry): 0 (EN 303 560 V1.1.1 Table 1;
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
 pub const TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
 const RESERVED_ZERO_2_MASK: u8 = 0x03;
 const FONT_ID_MASK: u8 = 0x7F;

@@ -22,7 +22,7 @@ Same as `rmt-flute`: the FDT/S-TSID/USBD/MPD **XML** documents carried as opaque
 
 ## Known gap: repair-flow coverage
 
-`RepairFecPayloadId`'s RaptorQ FEC Payload ID layout has **no real-capture corroboration**. Every packet in the real ROUTE capture fixtures this crate was verified against (`fixtures/atsc3/route-*.bin`, 8,885 frames scanned across both source `.pcap` files) ran with the LCT SPI bit set to source-data — no FEC-repair flow was ever active in that capture. The layout is implemented directly from A/331's own Figure A.3.4 bit-diagram (SBN 8 bits / ESI 24 bits, matching RFC 6330 §3.2 — corrected 2026-08-09 in `atsc3/docs/a331-route.md` after the transcription previously read SBN 16 / ESI 16) and is unit-tested only against hand-built vectors. See `fixtures/atsc3/PROVENANCE.md`'s "What was not obtained" section and the `fec.rs` module docs.
+`RepairFecPayloadId`'s RaptorQ FEC Payload ID layout has **no real-capture corroboration**. Every packet in the real ROUTE capture fixtures this crate was verified against (`fixtures/atsc3/route-*.bin`, 8,885 frames scanned across both source `.pcap` files) ran with the LCT SPI bit set to source-data — no FEC-repair flow was ever active in that capture. The layout is implemented directly from A/331's own Figure A.3.4 bit-diagram (SBN 8 bits / ESI 24 bits, matching RFC 6330 §3.2 — corrected 2026-08-09 in `private/specs-verified/atsc/atsc3/a331-route.md` after the transcription previously read SBN 16 / ESI 16) and is unit-tested only against hand-built vectors. See `fixtures/atsc3/PROVENANCE.md`'s "What was not obtained" section and the `fec.rs` module docs.
 
 ## Migration
 

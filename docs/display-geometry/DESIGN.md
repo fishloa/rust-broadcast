@@ -15,7 +15,7 @@ tkhd presentation size) landed (`[Unreleased]`).**
   `ColourPrimaries`, `TransferCharacteristics`, `MatrixCoefficients`,
   `ColourDescription` and `VideoSignalType`, read from both VUI walks in
   `transmux/src/sps.rs`. Tables E-2..E-5 / E.2..E.5 are page-verified and
-  transcribed in `transmux/docs/codec/vui-colour-tables.md`; the real-fixture
+  transcribed in `private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md`; the real-fixture
   combinations covered are absent, BT.601 SD (5/5/5, two captures), BT.709
   (1/1/1) and full-range `component` without a colour description. HEVC
   colour is spec-vector only: no HEVC capture in this worktree signals a
@@ -52,17 +52,17 @@ tkhd presentation size) landed (`[Unreleased]`).**
   origin engine.
 
 **Spec groundwork for the crop and AFD phases (page-verified transcriptions, written before any implementation):**
-[`crop-conformance-window.md`](../../transmux/docs/README.md#private-spec-transcriptions) (H.264 frame cropping, H.265
+`crop-conformance-window.md` (`../../private/specs-verified/mpeg/transmux/#private-spec-transcriptions`) (H.264 frame cropping, H.265
 conformance window + default display window, H.266 SPS/PPS windows),
-[`afd-bar-data.md`](../../transmux/docs/README.md#private-spec-transcriptions) (ST 2016-1/-3, TS 101 154 Annex B, A/53 Part 4, T.35 SEI),
-[`isobmff-14496-12-2012-visual.md`](../../transmux/docs/README.md#private-spec-transcriptions) and
+`afd-bar-data.md` (`../../private/specs-verified/mpeg/transmux/#private-spec-transcriptions`) (ST 2016-1/-3, TS 101 154 Annex B, A/53 Part 4, T.35 SEI),
+`isobmff-14496-12-2012-visual.md` (`../../private/specs-verified/mpeg/transmux/#private-spec-transcriptions`) and
 `dash-23009-1-2022-aspect.md`. Known source gaps are listed at
 the end of each: AFD persistence for H.264/HEVC is unstated; the order of crop / SAR rescale / `clap` / `tkhd` is
 unspecified; CTA-CEB16 (receiver behaviour) is paywalled.
 
 Spec facts are transcribed and page-checked in
 `SPEC-NOTES.md` (and, for the colour tables, in
-`transmux/docs/codec/vui-colour-tables.md`); this document cites the former
+`private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md`); this document cites the former
 as `SN §n`.
 
 Requester: an integrator building an Apple TV player on `transmux` (and
@@ -505,7 +505,7 @@ cares about shape listens to `DisplayChanged` alone.
   MPEG-2 (spec, SN §5): in effect "until the next sequence_header() or until a
   new AFD is introduced"; after a sequence_header() with no AFD the area of
   interest reverts to the coded frame => `afd = None` from that picture.
-  H.264/H.265 - **two systems, two answers (sources: `transmux/docs/codec/afd-bar-data.md` §4b and Gaps):**
+  H.264/H.265 - **two systems, two answers (sources: `private/specs-verified/mpeg/transmux/codec/afd-bar-data.md` §4b and Gaps):**
   *DVB* (ETSI TS 101 154 §B.7/§B.8a): carriage only, **no persistence rule**.
   *ATSC / SCTE* (ANSI/SCTE 128-1 §8.2.4, which ATSC A/72 Part 1 §7.4.2 and A/341 §6.4.2 defer to, printed p. 21):
   "After introduction, an AFD shall remain in effect until the next SRAP or until another AFD value is introduced.
@@ -580,7 +580,7 @@ caret epoch, so **no cascade** (§9).
 ### Phase 1 - static geometry (the player waits for this)
 
 Scope: transcribe H.264 Tables E-2..E-5 / H.265 E.2..E.5 into
-`transmux/docs/codec/` (page-checked); `ir::display` types (§4) minus AFD;
+`private/specs-verified/mpeg/transmux/codec/` (page-checked); `ir::display` types (§4) minus AFD;
 `DisplayGeometry::from_{avc,hevc}_sps` sharing the existing VUI walks (stop
 discarding the values; crop rect from the CropUnitX/Y derivation already in
 `decode_avc_sps_inner`); `from_codec_config`; `TrackSpec.display` auto-derived
@@ -757,7 +757,7 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
 |---|---|---|---|
 | G1 | **SMPTE ST 2016-1** (AFD and bar data, the normative source TS 101 154 refers to as [23]) | no AFD persistence rule for AVC/HEVC; Table B.8 line semantics | cited by TS 101 154 §B.4.2, ATSC A/53-4, ST 377-1; no transcription |
 | G2 | **ATSC A/72 Part 1** (AVC video in ATSC, AFD/bar data carriage + persistence for AVC) | same | not present at all |
-| G3 | **ISO/IEC 14496-12** as a whole: no `private/specs-md` file. Only an excerpt exists in `transmux/docs/codec/isobmff-visual-ext.md` (§12.1.4.2 syntax, §12.1.4.3, §12.1.5), starting mid-sentence. **Closed**: ISO/IEC 14496-12:2012 is now in the private repo and transcribed, page-verified, in `transmux/docs/codec/isobmff-14496-12-2012-visual.md` (§8.3.2 `tkhd`; §8.5.2 `pasp`/`clap`/`colr` precedence: the boxes override the codec structures). Earlier note: §8.3.2 (`tkhd` width/height) is now covered via `transmux/docs/codec/isobmff-tkhd.md` (F4V layout + the normative DVB TS 103 285 §5.1.2 rule), not the ISO text itself | Phase 4 `pasp` precedence and `tkhd` sizing | `PixelAspectRatioBox` appears only in the UWA HDR guide and AVS3 IMF md (other specs quoting it) |
+| G3 | **ISO/IEC 14496-12** as a whole: no `private/specs-md` file. Only an excerpt exists in `private/specs-verified/mpeg/transmux/codec/isobmff-visual-ext.md` (§12.1.4.2 syntax, §12.1.4.3, §12.1.5), starting mid-sentence. **Closed**: ISO/IEC 14496-12:2012 is now in the private repo and transcribed, page-verified, in `private/specs-verified/mpeg/transmux/codec/isobmff-14496-12-2012-visual.md` (§8.3.2 `tkhd`; §8.5.2 `pasp`/`clap`/`colr` precedence: the boxes override the codec structures). Earlier note: §8.3.2 (`tkhd` width/height) is now covered via `private/specs-verified/mpeg/transmux/codec/isobmff-tkhd.md` (F4V layout + the normative DVB TS 103 285 §5.1.2 rule), not the ISO text itself | Phase 4 `pasp` precedence and `tkhd` sizing | `PixelAspectRatioBox` appears only in the UWA HDR guide and AVS3 IMF md (other specs quoting it) |
 | G4 | **ISO/IEC 23001-8 / ITU-T H.273 (CICP)** | none for VUI (H.264/H.265 Tables E-3..E-5 are sufficient and authoritative for the codec); needed only if `colr` values outside the codec tables must be labelled | cited by A/331, TS 102 366, H.222.0, and rfc8216bis `[CICP]` |
 | G5 | **ISO/IEC 23009-1** (MPD `@sar`/`@par` attribute syntax) | Phase 4 DASH output | only ETSI TS 103 285 (DVB-DASH) rules present |
 | G6 | H.264 Table E-2 and Tables E-3..E-5 / H.265 E.2..E.5 not yet page-checked into a `docs/` transcription | Phase 1 first task | present in md, unverified |

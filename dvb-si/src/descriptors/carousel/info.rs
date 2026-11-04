@@ -1,5 +1,5 @@
 //! Info Descriptor — ETSI EN 301 192 V1.7.1 §10.2.4, Table 52 (data-carousel
-//! tag 0x03). PDF pp.65-66, transcribed in `docs/descriptors/en_301_192/52-*.md`,
+//! tag 0x03). PDF pp.65-66, transcribed in `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/52-*.md`,
 //! verified against the rendered pages.
 //!
 //! A plain-text description of a module or group: `ISO_639_language_code`(24)

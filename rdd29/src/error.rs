@@ -1,7 +1,7 @@
 //! Error type for `rdd29` frame/element parsing and serialization.
 //!
 //! Field-by-field semantics are documented in the curated spec oracle,
-//! `rdd29/docs/rdd29.md` (SMPTE RDD 29:2019).
+//! `private/specs-verified/smpte/rdd29/rdd29.md` (SMPTE RDD 29:2019).
 
 use broadcast_common::bits::BitError;
 

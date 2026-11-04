@@ -244,7 +244,7 @@ impl LinuxCaDevice {
 /// maximum-value long form: size_indicator plus 2 length bytes), and the
 /// `length_field`'s own max value, 65535, of `t_c_id` plus data (§7
 /// semantics: "length_field codes the length of all following fields", i.e.
-/// t_c_id + data — see `dvb-ci/docs/en_50221/apdu-coding.md`). r10-W-2: a
+/// t_c_id + data — see `private/specs-verified/dvb/dvb-ci/en_50221/apdu-coding.md`). r10-W-2: a
 /// 4096-byte scratch buffer silently truncated any larger TPDU and returned
 /// `Ok` with the truncated bytes as if they were the whole thing.
 const MAX_CA_FRAME: usize = 2 + 1 + 3 + 65_535;

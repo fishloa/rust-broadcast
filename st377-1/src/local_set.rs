@@ -1,5 +1,5 @@
 //! The "local set" KLV-lite framing used by every Header Metadata Set —
-//! SMPTE ST 377-1:2019 §9.3/§9.6.1 (`docs/st377-1.md`).
+//! SMPTE ST 377-1:2019 §9.3/§9.6.1 (`private/specs-verified/smpte/st377-1/st377-1.md`).
 //!
 //! A local set's outer Key+Length is an ordinary [`crate::KlvItem`]; its
 //! Value is a sequence of `{local_tag: u16, length: u16 | BER, value}`
@@ -7,7 +7,7 @@
 //! applies (§9.3 Note 1). [`LocalSet`] is the generic, identified-but-not-
 //! deeply-typed fallback this crate uses for every Header Metadata Set
 //! other than the four Root Metadata Sets (`Preface`/`Identification`/
-//! `ContentStorage`/`EssenceContainerData`) — see `docs/st377-1.md`'s Scope
+//! `ContentStorage`/`EssenceContainerData`) — see `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope
 //! section.
 
 extern crate alloc;
@@ -104,7 +104,7 @@ pub fn is_local_set_key(key: &UlBytes) -> bool {
 
 /// Set Kind (Table 17 — this crate's byte 14/15 identification list for
 /// every Header Metadata Set the spec defines, whether or not this crate
-/// types its properties). See `docs/st377-1.md`'s Table 17 reproduction.
+/// types its properties). See `private/specs-verified/smpte/st377-1/st377-1.md`'s Table 17 reproduction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]

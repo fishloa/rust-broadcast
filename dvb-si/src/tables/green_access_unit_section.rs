@@ -1,6 +1,6 @@
 //! `Green_access_unit_section_message()` — Rec. ITU-T H.222.0 (08/2023) |
 //! ISO/IEC 13818-1:2023 §2.18.1–2.18.3, Tables 2-162/2-163 (table_id 0x09);
-//! syntax in `docs/tables/iso_13818_1/2-153-2-158-2-162-sections-14496-metadata-green.md`.
+//! syntax in `private/specs-verified/dvb/dvb-si/tables/iso_13818_1/2-153-2-158-2-162-sections-14496-metadata-green.md`.
 //!
 //! ```text
 //! table_ID(8)=0x09 section_syntax_indicator(1)='0' private_indicator(1) reserved(2)

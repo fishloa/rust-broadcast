@@ -1,7 +1,7 @@
 //! Streaming (incremental) FLV → samples demux for live RTMP ingest (#738),
 //! mirroring [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux) (issue
 //! #555) for the FLV container (Adobe FLV v10.1 Annex E — see
-//! `transmux/docs/codec/flv.md` and [`crate::flv`] for the wire layout).
+//! `private/specs-verified/mpeg/transmux/codec/flv.md` and [`crate::flv`] for the wire layout).
 //!
 //! [`FlvDemux`](crate::flv::FlvDemux) is a **one-shot** [`Unpackage`
 //! ](broadcast_common::Unpackage): it demands the whole FLV byte stream up

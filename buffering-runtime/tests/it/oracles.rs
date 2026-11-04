@@ -1,6 +1,6 @@
 //! Unit-level tests against independent oracles: a brute-force sliding window,
 //! an exact rational / floating Q15 reference, the RFC 3550 A.8 algorithm
-//! (`specs/rfc3550_rtp.txt`, hand-ported below), the RFC 5481 PDV definition
+//! (`private/specs-verified/ietf/specs/rfc3550_rtp.txt`, hand-ported below), the RFC 5481 PDV definition
 //! computed directly, and a brute-force replay of the stall max-hold.
 //! No test compares a component to itself.
 use crate::support::*;

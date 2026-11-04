@@ -20,7 +20,7 @@ So: python reference, Bento4 encryptor and ffmpeg decryptor agree.
 
 ## What is NOT covered by any independent oracle (important)
 
-The crate's documented rule (`transmux/docs/drm/hls-sample-aes.md` §6, Apple §2.3.1.3) is "IV not reset at
+The crate's documented rule (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §6, Apple §2.3.1.3) is "IV not reset at
 syncframe boundaries **within an audio frame**; reset at the beginning of each audio frame". ffmpeg and Bento4
 treat every independent syncframe (strmtyp 0) as a separate audio frame, hence reset - consistent with Apple's text
 when 1 syncframe == 1 audio frame. **Carrying the IV across an independent syncframe + its dependent syncframes

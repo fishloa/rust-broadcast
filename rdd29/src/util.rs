@@ -8,7 +8,7 @@ use crate::error::{BitResultExt, Error, Result};
 /// explicit literal value for every reserved field it defines (unlike, e.g.,
 /// `st337`'s "reserved for future use" `Pf`), so every one of them is
 /// hard-validated here rather than round-tripped as an unexamined raw value
-/// — see `docs/rdd29.md` scope decision 4.
+/// — see `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 4.
 ///
 /// # Errors
 /// [`Error::InvalidReserved`] if the field's value does not equal `expected`.
@@ -45,7 +45,7 @@ pub(crate) fn write_reserved(
 /// Unlike RDD 29's other reserved fields, `AlignBits` carries no documented
 /// "(set to X)" value anywhere in the syntax tables (it is genuinely
 /// "VARIABLE" width with no stated content) — the same "no fixed value
-/// given" category as `st337`'s `Pf` (`docs/rdd29.md` scope decision 4's own
+/// given" category as `st337`'s `Pf` (`private/specs-verified/smpte/rdd29/rdd29.md` scope decision 4's own
 /// contrast). So this crate preserves it verbatim rather than discarding it
 /// (RD-W2, #1114): forcing it to `0` on serialize would silently corrupt a
 /// real producer's padding value, and byte-exact round-trip requires

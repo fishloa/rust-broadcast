@@ -1,6 +1,6 @@
 //! Estimated Download Time Descriptor — ETSI EN 301 192 V1.7.1 §10.2.8,
 //! Table 56 (data-carousel tag 0x07). PDF p.67, transcribed in
-//! `docs/descriptors/en_301_192/56-*.md`, verified against the rendered page.
+//! `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/56-*.md`, verified against the rendered page.
 //!
 //! `est_download_time`(32): estimated download time of a module or group, in
 //! seconds.

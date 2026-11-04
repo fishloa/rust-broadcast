@@ -15,7 +15,7 @@ const COORDINATE_SYSTEM_MASK: u8 = 0x07;
 /// Spec default of the 5-bit `reserved_future_use` fields (the one in byte 1
 /// and the one that follows `position_flag == 0`): all ones, EN 300 468 Table
 /// 145 in every edition V1.9.1-V1.20.1
-/// (`dvb-si/docs/reserved-bits-edition-audit.md` §6).
+/// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
 pub const IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT: u8 = 0x1F;
 /// Spec default of the 2-bit `reserved_future_use` after `coordinate_system`:
 /// all ones (same source as [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`]).
@@ -24,7 +24,7 @@ const RESERVED_5_MASK: u8 = 0x1F;
 const RESERVED_2_MASK: u8 = 0x03;
 
 /// Icon transport mode — ETSI EN 300 468 §6.4.8 Table 146
-/// (`dvb-si/docs/enums/en_300_468/146-icon-transport-mode-coding.md`).
+/// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/146-icon-transport-mode-coding.md`).
 ///
 /// 2-bit field. Selects where the icon data is carried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

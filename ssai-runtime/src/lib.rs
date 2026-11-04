@@ -5,7 +5,7 @@
 //! keyframe boundaries ([`splice`]), and per-session HLS Interstitial
 //! (`EXT-X-DATERANGE CLASS="com.apple.hls.interstitial"`,
 //! draft-pantos-hls-rfc8216bis Appendix D, transcribed at
-//! `broadcast-hls/docs/interstitials.md`) playlist rendering over
+//! `private/specs-verified/hls/ietf/rfc8216bis-interstitials.md`) playlist rendering over
 //! [`broadcast_hls::MediaPlaylist`] ([`playlist`]).
 //!
 //! # What it does / what it does not

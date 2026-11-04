@@ -2,7 +2,7 @@
 //! `draft-sharabayko-srt-01` §4.8 (Acknowledgement and Lost Packet
 //! Handling), §4.8.1 (Packet Acknowledgement — ACKs, ACKACKs), §4.8.2
 //! (Packet Retransmission — NAKs), §4.10 (Round-Trip Time Estimation).
-//! Curated behavioural rules: `specs/rules/srt-arq.md`. The wire field
+//! Curated behavioural rules: `private/specs-verified/rules/srt-arq.md`. The wire field
 //! layouts this module drives (ACK/NAK/ACKACK) are the existing
 //! [`crate::packet`] codecs — this module never re-encodes them, it only
 //! decides *when* to build one and *what* to do with one received.
@@ -45,17 +45,17 @@ pub use sender::Sender;
 
 use core::time::Duration;
 
-/// Full ACK timer period — 10 milliseconds (`specs/rules/srt-arq.md` rule
+/// Full ACK timer period — 10 milliseconds (`private/specs-verified/rules/srt-arq.md` rule
 /// 11, quoting `draft-sharabayko-srt-01` L2874-2876: "the ACK period or
 /// synchronization time interval SYN").
 pub const FULL_ACK_PERIOD: Duration = Duration::from_millis(10);
 
-/// Light-ACK packet-count threshold — 64 packets (`specs/rules/srt-arq.md`
+/// Light-ACK packet-count threshold — 64 packets (`private/specs-verified/rules/srt-arq.md`
 /// rule 12, L2877-2883): if this many packets have been sent/received
 /// within the Full ACK period, the receiver sends a Light ACK early.
 pub const LIGHT_ACK_THRESHOLD: u32 = 64;
 
-/// `NAKInterval` floor — 20 milliseconds (`specs/rules/srt-arq.md` rule 22,
+/// `NAKInterval` floor — 20 milliseconds (`private/specs-verified/rules/srt-arq.md` rule 22,
 /// L2953-2960 / L3276): `NAKInterval = max((RTT + 4*RTTVar) / 2, 20ms)`.
 pub const NAK_INTERVAL_FLOOR: Duration = Duration::from_millis(20);
 
@@ -69,7 +69,7 @@ pub const NAK_INTERVAL_FLOOR: Duration = Duration::from_millis(20);
 /// after that point carry the *same* fixed timestamp forever, instead of one
 /// that keeps counting up (mod 2^32) the way the field is defined. A real
 /// peer's `PktTsbpdTime` formula (`TsbpdTimeBase + PKT_TIMESTAMP + ...`,
-/// `specs/rules/srt-tsbpd.md` rule 9) would then compute the same constant
+/// `private/specs-verified/rules/srt-tsbpd.md` rule 9) would then compute the same constant
 /// play time for every such packet — which the peer's receiver clock keeps
 /// advancing past, so every packet after the clamp point looks
 /// arbitrarily-far too late and gets Too-Late-Packet-Dropped. The receiving
@@ -84,7 +84,7 @@ pub(crate) fn duration_to_wire_us(d: Duration) -> u32 {
     u32::try_from(d.as_micros() & u128::from(u32::MAX)).unwrap_or(0)
 }
 
-/// `NAKInterval = max((RTT + 4 * RTTVar) / 2, 20 ms)` (`specs/rules/srt-arq.md`
+/// `NAKInterval = max((RTT + 4 * RTTVar) / 2, 20 ms)` (`private/specs-verified/rules/srt-arq.md`
 /// rule 22, verbatim from `draft-sharabayko-srt-01` L2953-2960, unit
 /// resolution cross-referenced from §5.2's L3276 restatement).
 pub(crate) fn nak_interval(rtt: Duration, rtt_var: Duration) -> Duration {

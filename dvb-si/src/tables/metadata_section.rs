@@ -1,6 +1,6 @@
 //! `Metadata_section()` — Rec. ITU-T H.222.0 (08/2023) | ISO/IEC 13818-1:2023
 //! §2.12.6, Tables 2-158/2-159 (table_id 0x06); syntax in
-//! `docs/tables/iso_13818_1/2-153-2-158-2-162-sections-14496-metadata-green.md`.
+//! `private/specs-verified/dvb/dvb-si/tables/iso_13818_1/2-153-2-158-2-162-sections-14496-metadata-green.md`.
 //!
 //! ```text
 //! table_id(8)=0x06 section_syntax_indicator(1) private_indicator(1)

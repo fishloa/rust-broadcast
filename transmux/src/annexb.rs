@@ -155,7 +155,7 @@ pub fn iter_length_prefixed_nals(lp: &[u8]) -> Result<Vec<&[u8]>> {
 /// `lengthSizeMinusOne` is a 2-bit field, but only 0, 1 and 3 are defined —
 /// 1-, 2- and 4-byte lengths; the value 2 (a 3-byte length) is reserved, so a
 /// `length_size` of 3 is rejected rather than interpreted (the transcription at
-/// `docs/codec/avcC-hvcC-14496-15.md` states `0/1/3 → 1/2/4-byte
+/// `private/specs-verified/mpeg/transmux/codec/avcC-hvcC-14496-15.md` states `0/1/3 → 1/2/4-byte
 /// NALUnitLength`).
 ///
 /// Returns an error if `length_size` is not 1, 2 or 4, or if a declared length

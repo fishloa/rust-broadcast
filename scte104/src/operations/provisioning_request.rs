@@ -6,7 +6,7 @@
 //! of DPI PID entries and an optional `injector_component_list()`
 //! (§10.8.1, Table 10-9).
 //!
-//! Transcribed in `docs/ansi_scte_104/pams_operations.md` (verified via
+//! Transcribed in `private/specs-verified/scte/scte104/ansi_scte_104/pams_operations.md` (verified via
 //! `pdf2md` against ANSI/SCTE 104 2023 pp. 75-76 and p. 80-81).
 
 use alloc::vec::Vec;

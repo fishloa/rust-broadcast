@@ -1,7 +1,7 @@
 //! Multi-stream Host Control resource objects — ETSI TS 103 205 V1.4.1 §6.4.5,
 //! Tables 17-22 (PDF pp. 40-44); base DVB Host Control v3 tune APDUs §13.2,
 //! Tables 97-102 (PDF pp. 126-130). See
-//! `docs/ts_103_205/multi-stream-host-control.md`.
+//! `private/specs-verified/dvb/dvb-ci/ts_103_205/multi-stream-host-control.md`.
 //!
 //! The multi-stream Host Control resource (**resource ID `0x00200081`**) is based
 //! on DVB Host Control version 3 (**resource ID `0x00200043`**). The multi-stream
@@ -255,7 +255,7 @@ const LCN_KEEP_BIT: u8 = 0x40;
 // logical_channel_number occupies the low 14 bits of the last two bytes.
 const LCN_MASK: u16 = 0x3FFF;
 /// Width of `logical_channel_number` in bits (TS 103 205 Table 20,
-/// `docs/ts_103_205/multi-stream-host-control.md`).
+/// `private/specs-verified/dvb/dvb-ci/ts_103_205/multi-stream-host-control.md`).
 const LCN_BITS: u32 = 14;
 
 impl<'a> Parse<'a> for TuneLcnReq {

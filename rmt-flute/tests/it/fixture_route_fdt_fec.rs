@@ -19,7 +19,7 @@
 //! FEC scheme this repo has no vendored spec for) — it only uses that one
 //! corroborated Transfer-Length as a real-world `L` input to the
 //! scheme-agnostic Block Partitioning Algorithm, exactly the shape
-//! `docs/fec.md` §9 describes: `SourceBlockPartition` operates purely on
+//! `private/specs-verified/ietf/rmt-flute/fec.md` §9 describes: `SourceBlockPartition` operates purely on
 //! symbol counts the caller supplies, never on FEC-scheme-specific bytes.
 
 use rmt_flute::{ALC_HET_EXT_FTI, AlcPacket, HET_EXT_FDT, SourceBlockPartition};

@@ -4,9 +4,9 @@ What this workspace implements of HTTP Live Streaming, and — equally important
 does not.
 
 **Spec revision: `draft-pantos-hls-rfc8216bis-22`, 1 May 2026.** Confirmed current against the
-IETF datatracker. It obsoletes RFC 8216, and both are vendored under `specs/`. The syntax
+IETF datatracker. It obsoletes RFC 8216, and both are vendored under `private/specs-verified/`. The syntax
 tables, version-compatibility matrix, server requirements, low-latency mechanism and segment
-formats are transcribed into [`broadcast-hls/docs/`](../broadcast-hls/docs/) — those
+formats are transcribed in the private repo (`private/specs-verified/hls/`) — those
 transcriptions, not the raw draft, are what the implementation is written against.
 
 ## Crate layout

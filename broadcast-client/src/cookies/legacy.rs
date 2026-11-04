@@ -1,6 +1,6 @@
 //! Host-only cookie jar scoped to the session origin (RFC 6265 sections 5.1.4, 5.2, 5.3, 5.4).
 //!
-//! `Domain` and `Expires` are ignored; see `docs/cookies.md` for the documented deviations.
+//! `Domain` and `Expires` are ignored; see `private/specs-verified/ietf/broadcast-client/cookies.md` for the documented deviations.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

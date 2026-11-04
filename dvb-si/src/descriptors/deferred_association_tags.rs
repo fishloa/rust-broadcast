@@ -1,6 +1,6 @@
 //! Deferred Association Tags Descriptor — ETSI EN 301 192 V1.7.1 §11.3.3,
 //! Tables 64 and 65 (tag 0x15; "the decimal value of 21"). PDF p.73, transcribed
-//! in `docs/descriptors/en_301_192/64-*.md`, verified against the rendered page.
+//! in `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/64-*.md`, verified against the rendered page.
 //!
 //! Carried in the PMT (`ES_info` loop of the data-broadcast stream) to list
 //! `association_tag`s that belong to a stream outside this data broadcast

@@ -12,7 +12,7 @@
 //! diagram, not literal bytes). The vectors below instantiate those exact
 //! worked-example *structures* (element count and `L` values) with concrete
 //! ID/data values chosen for this crate, matching
-//! `rtp-packet/docs/rfc8285_header_ext.md`'s transcription — spec-structure-
+//! `private/specs-verified/rtp/rtp-packet/rfc8285_header_ext.md`'s transcription — spec-structure-
 //! derived, not verbatim RFC bytes, and independent of this crate's own
 //! serializer (so a parse/serialize bug that merely agreed with itself would
 //! still be caught against the hand-built vector).
@@ -22,7 +22,7 @@
 //! the last"), but this crate's `Serialize` canonicalizes padding to a
 //! single trailing run on output (padding carries no semantic content, so
 //! its exact wire position is not preserved — see
-//! `docs/rfc8285_header_ext.md`'s "Judgment calls" section). So each worked
+//! `private/specs-verified/rtp/rtp-packet/rfc8285_header_ext.md`'s "Judgment calls" section). So each worked
 //! example below has two vectors: the RFC's own inter-element-padding
 //! layout (`*_SPEC_LAYOUT`, used to check *decoding* matches the spec
 //! exactly) and this crate's canonical trailing-padding form (`*_CANONICAL`,

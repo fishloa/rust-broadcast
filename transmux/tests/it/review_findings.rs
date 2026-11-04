@@ -175,7 +175,7 @@ fn eac3_held_access_unit_is_retimed_onto_the_next_pes_timeline_after_a_pts_jump(
 /// `SegmentTimeline::resolve` compares `S@t` with the Period end as if `S@t`
 /// were Period-relative, but `S@t` is on the MEDIA timeline: the Period-
 /// relative start is `S@t - @presentationTimeOffset` (ISO/IEC 23009-1 Table 17;
-/// `specs/rules/dash-mpd-rules.md`: `SAST = PSwc + (t + d - o) / ts`; ETSI TS
+/// `private/specs-verified/rules/dash-mpd-rules.md`: `SAST = PSwc + (t + d - o) / ts`; ETSI TS
 /// 103 285 §10.x sets `@presentationTimeOffset` to the earliest presentation
 /// time, i.e. the first `S@t`). `resolve` has no PTO input, so a real live/VoD
 /// timeline with `presentationTimeOffset == S@t` and `@r = -1` resolves to

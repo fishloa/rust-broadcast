@@ -685,7 +685,7 @@ fn parse_smooth_fragment_request(full_path: &str) -> Option<SmoothFragmentReques
 ///
 /// Only AVC video and AAC audio: `SmoothPackager`'s own `resolve_codec`
 /// rejects everything else with `Error::UnsupportedCodec`, and "HEVC" is not
-/// in this repo's MS-SSTR transcription (`transmux/docs/smooth/ms-sstr.md`
+/// in this repo's MS-SSTR transcription (`private/specs-verified/mpeg/transmux/smooth/ms-sstr.md`
 /// lists `H264`/`AACL`/`AACH` only). Advertising HEVC here made every HEVC
 /// fragment request 404 while the manifest still listed it (audit W13c), so
 /// HEVC is dropped — a track Smooth cannot actually serve is not advertised.

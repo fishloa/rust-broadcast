@@ -6,7 +6,7 @@
 //! * 0x19 `Media_service_kind_descriptor()` — §2.6.141, Table 2-144 (+ Tables
 //!   2-145…2-151).
 //!
-//! Syntax transcription: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x0f-0x19.md`.
+//! Syntax transcription: `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x0f-0x19.md`.
 //! Every `reserved` field is a typed field re-emitted verbatim (default: all
 //! ones; `reserved_zero_2bit` defaults to zero as its name says).
 

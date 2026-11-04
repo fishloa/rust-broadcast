@@ -1,5 +1,5 @@
 //! Essence Container Data — SMPTE ST 377-1:2019 Annex A.5
-//! (`docs/st377-1.md`): links a Package to the BodySID/IndexSID pair
+//! (`private/specs-verified/smpte/st377-1/st377-1.md`): links a Package to the BodySID/IndexSID pair
 //! identifying its internal Essence Container / Index Table in the file's
 //! Partitions.
 
@@ -41,13 +41,13 @@ const KNOWN_TAGS: [u16; 6] = [
 /// allocated, no fixed static tag) local tag — `PrecedingIndexTable`,
 /// `SingularPartitionUsage`, `FollowingIndexTable`, `IsSparse` — are
 /// preserved byte-for-byte in `dark` rather than individually typed in this
-/// first pass, per `docs/st377-1.md`'s Scope section.
+/// first pass, per `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EssenceContainerData {
     /// Interchange Object (A.1) base properties.
     pub interchange: InterchangeObjectFields,
     /// Linked Package UID (`0x2701`, Req) — the Package this Set is linked
-    /// to (opaque UMID, see `docs/st377-1.md`'s Scope section).
+    /// to (opaque UMID, see `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope section).
     pub linked_package_uid: PackageId,
     /// IndexSID (`0x3F06`, Opt) — ID of the Index Table for the linked
     /// Essence Container, if any.

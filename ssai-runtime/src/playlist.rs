@@ -2,7 +2,7 @@
 //!
 //! `EXT-X-DATERANGE CLASS="com.apple.hls.interstitial"` — Appendix D §D.2 of
 //! draft-pantos-hls-rfc8216bis, transcribed in full at
-//! `broadcast-hls/docs/interstitials.md` (§D.2, examples §D.6/§D.7). Renders
+//! `private/specs-verified/hls/ietf/rfc8216bis-interstitials.md` (§D.2, examples §D.6/§D.7). Renders
 //! over `broadcast-hls`: [`render_session_playlist`] clones the primary
 //! [`MediaPlaylist`] and appends this session's interstitial tag line to
 //! [`MediaPlaylist::extra_tags`] — the injection point `broadcast-hls`

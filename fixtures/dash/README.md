@@ -39,7 +39,7 @@ for each is in its `oracle.txt`, and `python3 tools/check-dash-fixtures.py` re-v
 
 | Directory | Addressing | What it is |
 | --- | --- | --- |
-| `annex-g/` | n/a (no media) | the nine fresh example MPDs of `docs/specs/dash/23009-1/annex-g-examples.md` plus the F8 patch |
+| `annex-g/` | n/a (no media) | the nine fresh example MPDs of `private/specs-verified/dash/docs-specs/23009-1/annex-g-examples.md` plus the F8 patch |
 | `ondemand-sidx/` | `SegmentBase` + `sidx` | on-demand profile, one single-file fMP4 per Representation |
 | `ondemand-gpac-pto-quirk/` | `SegmentBase` + `sidx` | same, with GPAC's nonsense `presentationTimeOffset` |
 | `segmentlist/` | `SegmentList` | ffmpeg, `Initialization@sourceURL` + `SegmentURL`s |

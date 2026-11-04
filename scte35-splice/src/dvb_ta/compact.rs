@@ -22,7 +22,7 @@
 //! (6 bits) to land on a byte boundary (152 bits). The PDF render
 //! (ETSI TS 103 752-1 V1.2.1, pp.27-28) offsets the "No. of Bits" column by one
 //! row from `cw_index` down; re-aligning it row-for-row (re-derived from the
-//! page image and the text layer, see `docs/dvb_ta/compact-scte35.md`) gives
+//! page image and the text layer, see `private/specs-verified/scte/scte35-splice/dvb_ta/compact-scte35.md`) gives
 //! the widths implemented here, and every layout then sums to a whole number of
 //! bytes - a cross-check the earlier reconstruction (which inserted
 //! SCTE 35-style reserved bits the table does not list) did not satisfy.

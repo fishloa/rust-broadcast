@@ -1,5 +1,5 @@
 //! Spec vectors for the MPEG-2 display tracker, hand-built from
-//! `docs/codec/mpeg2-video-display.md` / `afd-bar-data.md` §4.4 — never from
+//! `private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md` / `afd-bar-data.md` §4.4 — never from
 //! production code.
 
 use super::*;

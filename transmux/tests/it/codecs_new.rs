@@ -416,7 +416,7 @@ fn heaac_v2_ps_signaling_and_esds_round_trip() {
 
 /// C2 (#1008): explicit **hierarchical** SBR/PS signaling — `audioObjectType
 /// == 5` (SBR) or `29` (PS) at the TOP of the ASC, ISO/IEC 14496-3 §1.6.2.1 +
-/// Amd 1/2, transcribed in `transmux/docs/codec/heaac-asc.md`. Before the fix,
+/// Amd 1/2, transcribed in `private/specs-verified/mpeg/transmux/codec/heaac-asc.md`. Before the fix,
 /// `to_adts_header` used `self.audio_object_type.raw()` directly: AOT 5 gives
 /// `(5-1)&3 == 0` and AOT 29 gives `(29-1)&3 == 0` — both silently become ADTS
 /// profile 0 (AAC **Main**) instead of the actual core codec.

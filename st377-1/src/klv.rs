@@ -1,5 +1,5 @@
 //! Generic KLV (Key-Length-Value) triplet — SMPTE ST 377-1:2019 §6.3
-//! (`docs/st377-1.md`), the base framing primitive every other KLV item in
+//! (`private/specs-verified/smpte/st377-1/st377-1.md`), the base framing primitive every other KLV item in
 //! an MXF file (Partition Packs, the Primer Pack, Header Metadata Sets,
 //! Index Table Segments, the Random Index Pack, and every Essence Container
 //! element) rides on.
@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::types::{UlBytes, ul_bytes_from_prefix};
 
 /// A single KLV triplet: a 16-byte Key, a BER-encoded Length, and the Value
-/// bytes it describes (`docs/st377-1.md` §6.3).
+/// bytes it describes (`private/specs-verified/smpte/st377-1/st377-1.md` §6.3).
 ///
 /// `PartialEq`/`Eq` compare only `key`/`value` — `len_size` is a
 /// serialization-*form* preference (which on-wire BER width to reproduce),

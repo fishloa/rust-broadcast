@@ -33,10 +33,10 @@ Licence: project licence (MIT OR Apache-2.0), same as all in-repo source.
 
 ## Tier 1 — spec test vectors (private repo: `private/fixtures/hls/spec/`)
 
-Source: `ll-hls-runtime/docs/examples.md`, itself a verbatim transcription
+Source: verbatim transcription
 (commit `a07124ae`, 2026-08-01, issue #867) of §9 "Playlist Examples" from
 **draft-pantos-hls-rfc8216bis-22** (IETF Internet-Draft, 1 May 2026),
-source lines 4608–5023 of `specs/ietf_draft_pantos_hls_rfc8216bis.txt`.
+source lines 4608–5023 of `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`.
 Extraction/commit date into this fixture tree: 2026-08-02.
 
 Licence/redistribution: the draft forbids modification and derivative works, so these files are spec text and live only in the private repo (`private/fixtures/hls/spec/`, with its own `PROVENANCE.md`); tests load them through `test_fixtures` and skip loudly when private is absent.
@@ -74,7 +74,7 @@ in the spec's own prose, not complete playlists:
 Neither begins with `#EXTM3U`, so neither is a playlist a parser could ever
 be expected to accept — committing either as a `.m3u8` fixture would just
 be an always-red test with no signal. (Their content is fully reproduced,
-with this same reasoning, in `ll-hls-runtime/docs/examples.md` §9.8/§9.9.)
+with this same reasoning, in the source draft §9.8/§9.9.)
 
 ### Line-continuation joining (9.6, 9.7, 9.10, 9.12)
 
@@ -175,7 +175,7 @@ the seventh (`EXT-X-SESSION-DATA`) appears only in §9.8 — an explicit
 fragment with no `#EXTM3U` line, excluded from Tier 1 above. Without these,
 those tags would have no fixture-level coverage. Content is derived from
 each tag's confirmed attribute grammar in
-`broadcast-hls/docs/playlist-tags.md` (the §4.4 transcription), not invented
+`private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md` (the §4.4 transcription), not invented
 freehand.
 
 Extraction/authoring date: 2026-08-02.
@@ -204,7 +204,7 @@ the reason §9.8 itself stays excluded from Tier 1.
 ### `EXT-X-VERSION` derivation (§8)
 
 Version numbers here are **derived from the §8 table** in
-`broadcast-hls/docs/version-compatibility.md`, not guessed. That doc's own
+`private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`, not guessed. That doc's own
 note explains why guessing high is harmful and not merely untidy: a client
 that doesn't support a falsely-declared version is required by §8 to refuse
 playback entirely.

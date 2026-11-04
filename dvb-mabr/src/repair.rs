@@ -2,7 +2,7 @@
 //! 10.2.3.12-10.2.3.13.
 //!
 //! If no `BaseURL` is present, the repair URL is built directly per the
-//! (protocol-specific) construction rules in `docs/mabr-transport.md` §5.
+//! (protocol-specific) construction rules in `private/specs-verified/dvb/dvb-mabr/mabr-transport.md` §5.
 
 extern crate alloc;
 

@@ -1,5 +1,5 @@
 //! Application Information v2 objects — ETSI TS 101 699 V1.1.1 §5, Table 11
-//! (PDF p. 21). See `docs/ci_plus/application-info-v2.md`.
+//! (PDF p. 21). See `private/specs-verified/dvb/dvb-ci/ci_plus/application-info-v2.md`.
 //!
 //! Resource ID `0x00020042`. The object layouts (Application Info Enquiry,
 //! Application Info, Enter Menu) are **unchanged** from EN 50221 §8.4 — v2 only

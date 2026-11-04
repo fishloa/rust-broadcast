@@ -2,11 +2,11 @@
 //!
 //! Structured [`thiserror`] errors covering the failure surface of the sans-IO
 //! engine: RTSP message parse/serialize, state-machine violations (RFC 2326
-//! Appendix A — see `docs/state-machines.md`),
+//! Appendix A — see `private/specs-verified/rtp/rtsp-runtime/state-machines.md`),
 //! CSeq correlation, missing/invalid `Session`, `Transport` header parsing
-//! (§12.39 — `docs/transport-header.md`),
-//! interleaved framing (§10.12 — `docs/interleaved-framing.md`),
-//! and authentication (§14 — `docs/auth.md`).
+//! (§12.39 — `private/specs-verified/rtp/rtsp-runtime/transport-header.md`),
+//! interleaved framing (§10.12 — `private/specs-verified/rtp/rtsp-runtime/interleaved-framing.md`),
+//! and authentication (§14 — `private/specs-verified/rtp/rtsp-runtime/auth.md`).
 
 use crate::Method;
 use crate::state::SessionState;

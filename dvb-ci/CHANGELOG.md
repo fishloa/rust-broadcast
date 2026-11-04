@@ -105,7 +105,7 @@ versioning.
   body") instead of the extra bytes being silently dropped, which broke the
   parse -> serialize round trip (audit r10-O-1, #1091). The EN 50221 / CI+ /
   TS 101 699 length_field covers exactly the listed fields in every one of
-  these tables (`docs/en_50221/`, `docs/ci_plus/`, `docs/ts_103_205/`), so no
+  these tables (`private/specs-verified/dvb/dvb-ci/en_50221/`, `private/specs-verified/dvb/dvb-ci/ci_plus/`, `private/specs-verified/dvb/dvb-ci/ts_103_205/`), so no
   trailing data is allowed or carried. The strict parsers are exactly:
   `host_control::{Tune, Replace}`, `low_speed_comms::{CommsReply, CommsCmd
   (connect, set_params, get_next_buffer and every parameterless command)}`,
@@ -549,7 +549,7 @@ length fields computed from content and biting round-trip tests.
   the MMI low-level/display objects.
 - **Host Control** (tune / replace) and **Low-Speed Communications** resources.
 
-Their `apdu_tag`s are retained in `docs/en_50221/apdu-tag-values.md`; until typed
+Their `apdu_tag`s are retained in `private/specs-verified/dvb/dvb-ci/en_50221/apdu-tag-values.md`; until typed
 they parse as `AnyApdu::Unknown` (raw body preserved, lossless round-trip). CI+
 crypto (the CC resource) and the PC-Card hardware transport remain out of scope.
 

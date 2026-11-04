@@ -354,7 +354,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EXT-X-VERSION` is now **computed** from the playlist's actual content
   (RFC 8216bis §8), not chosen ahead of time (issue #871): `to_m3u8` takes
   the `max()` of the minimums the content triggers, per the feature-to-row
-  table transcribed at `docs/version-compatibility.md`. A playlist that
+  table transcribed at `private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`. A playlist that
   triggers nothing emits no `EXT-X-VERSION` tag at all (per §8's opening
   rule). This fixes a real over-declaration bug — `hls-runtime`'s LL-HLS
   origin previously baked in a hardcoded version 9 even though none of the

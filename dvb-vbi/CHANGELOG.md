@@ -144,7 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typed body on serialize (no raw passthrough); parse rejects a length that does
   not match the typed payload size. `DataUnitId` carries `name()` +
   `impl_spec_display!`. ⚠ Per Table 3 (authoritative), `0xC1` is reserved, not
-  Teletext (resolving the Table 1 / Table 3 conflict; see `docs/vbi.md`).
+  Teletext (resolving the Table 1 / Table 3 conflict; see `private/specs-verified/dvb/dvb-vbi/vbi.md`).
 - Typed data-unit payloads (`DataUnitPayload`):
   - `TeletextDataField` — EBU (`0x02`/`0x03`) and Inverted (`0xC0`) Teletext
     (§4.5, Table 4): shared `LineHeader` + 8-bit `framing_code`

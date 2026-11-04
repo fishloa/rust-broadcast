@@ -1,9 +1,9 @@
 //! The single RFC 2326 §15.1 field-value lexer shared by the `Transport` (§12.39)
 //! and `Session` (§12.37) header parsers. Owner decision (c): rtsp-runtime owns
 //! these two header grammars because `rtsp-types` 0.1.3 mis-parses real-world
-//! values (see "rtsp-types gaps" in `docs/transport-header.md`).
+//! values (see "rtsp-types gaps" in `private/specs-verified/rtp/rtsp-runtime/transport-header.md`).
 //!
-//! Spec: `rtsp-runtime/docs/rfc2326.md` §15.1 Base Syntax:
+//! Spec: `private/specs-verified/rtp/rtsp-runtime/rfc2326.md` §15.1 Base Syntax:
 //!
 //! ```text
 //! LWS           = [CRLF] 1*( SP | HT )

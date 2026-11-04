@@ -1,4 +1,4 @@
-//! Preface — SMPTE ST 377-1:2019 Annex A.2 (`docs/st377-1.md`): the file's
+//! Preface — SMPTE ST 377-1:2019 Annex A.2 (`private/specs-verified/smpte/st377-1/st377-1.md`): the file's
 //! root Header Metadata Set, always the first Set after the Primer Pack
 //! (§9.5.1).
 
@@ -63,7 +63,7 @@ pub const VERSION_1_3: u16 = 0x0103;
 /// `IsRIPPresent` — no fixed static local tag; a real Primer Pack must be
 /// consulted to learn which tag a given file used) are preserved
 /// byte-for-byte in `dark` rather than individually typed in this first
-/// pass — see `docs/st377-1.md`'s Scope section.
+/// pass — see `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preface {
     /// Interchange Object (A.1) base properties.

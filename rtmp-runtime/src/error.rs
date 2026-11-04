@@ -3,7 +3,7 @@
 //! Structured [`thiserror`] errors covering the failure surface of the
 //! sans-IO engine: handshake framing (§5.2), chunk stream parsing (§5.3),
 //! message reassembly (§6), AMF0 decoding (`[AMF0]`), and session state-machine
-//! violations (§7.2) — see [`docs/rtmp.md`](../README.md).
+//! violations (§7.2) — see [`private/specs-verified/rtmp/rtmp-runtime/rtmp.md`](../README.md).
 
 /// Errors produced by the RTMP ingest session engine.
 #[non_exhaustive]

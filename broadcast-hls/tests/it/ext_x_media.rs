@@ -1,4 +1,4 @@
-//! Typed `#EXT-X-MEDIA` (RFC 8216bis §4.4.6.1, `docs/playlist-tags.md`):
+//! Typed `#EXT-X-MEDIA` (RFC 8216bis §4.4.6.1, `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`):
 //! parse, render, round-trip, and the spec's MUST/MUST NOT rules.
 
 use broadcast_hls::{ClosedCaptionsRef, InstreamId, MasterPlaylist, MediaType};

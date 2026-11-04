@@ -1,7 +1,7 @@
 //! Error types for ST 2022-6/-7 parsing.
 //!
 //! Field-by-field semantics are documented in the curated spec transcription,
-//! `st2022/docs/st2022-6-framing.md` (SMPTE ST 2022-6:2012 §6.4).
+//! `private/specs-verified/smpte/st2022/st2022-6-framing.md` (SMPTE ST 2022-6:2012 §6.4).
 
 use crate::header::ClockFrequency;
 

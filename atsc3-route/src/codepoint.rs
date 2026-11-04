@@ -1,11 +1,11 @@
 //! Codepoint (`CP`) delivery-object semantics — A/331 Annex A §A.3.6, Table
-//! A.3.6, transcribed at `atsc3/docs/a331-route.md` §4.
+//! A.3.6, transcribed at `private/specs-verified/atsc/atsc3/a331-route.md` §4.
 //!
 //! The LCT header's Codepoint field (`CP`, 8 bits — [`rmt_flute::LctHeader::codepoint`])
 //! indicates the type of delivery object carried, either directly (`CP`
 //! 0-9) or, for `CP` 128-255, by indirection through the signalling XML's
 //! `SrcFlow.Payload@codePoint`-matched element (out of scope of this binary
-//! crate — see `atsc3/docs/a331-route.md` §5's `SrcFlow` table).
+//! crate — see `private/specs-verified/atsc/atsc3/a331-route.md` §5's `SrcFlow` table).
 
 use broadcast_common::impl_spec_display;
 

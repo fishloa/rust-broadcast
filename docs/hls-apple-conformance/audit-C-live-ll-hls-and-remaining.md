@@ -46,7 +46,7 @@ The served path (hls-runtime `HlsOrigin` + multimux outputs) has **no encryption
 
 ## Section 14 Low-Latency HLS
 
-14.1 requires all of RFC 8216bis App. B.1 (draft text checked: specs/ietf_draft_pantos_hls_rfc8216bis.txt:5574-5760). Broken down per B.1 clause:
+14.1 requires all of RFC 8216bis App. B.1 (draft text checked: private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt:5574-5760). Broken down per B.1 clause:
 
 | Item | Requirement | Class | Evidence | Note |
 |---|---|---|---|---|

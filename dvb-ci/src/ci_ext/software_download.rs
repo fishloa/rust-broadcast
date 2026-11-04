@@ -1,6 +1,6 @@
 //! Software Download (CAM firmware) objects + DSM-CC download messages — ETSI
 //! TS 101 699 V1.1.1 §6.7, Tables 74-83 (PDF pp. 64-74). See
-//! `docs/ci_plus/software-download.md`.
+//! `private/specs-verified/dvb/dvb-ci/ci_plus/software-download.md`.
 //!
 //! Resource ID `0x00051041` (fixed). A CI module acts as a firmware source for a
 //! host; the host is the DSM-CC client and the module the download server, using

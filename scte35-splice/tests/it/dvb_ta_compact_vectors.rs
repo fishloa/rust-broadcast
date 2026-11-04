@@ -30,7 +30,7 @@
 //! the tests below pin the crate to Table 8 for the compact form only. Both
 //! readings are selectable through `DasNibbleOrder` and pinned in
 //! `tests/it/das_nibble_order.rs`; the evidence search is recorded in
-//! `docs/dvb_ta/compact-scte35.md`.
+//! `private/specs-verified/scte/scte35-splice/dvb_ta/compact-scte35.md`.
 
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::dvb_ta::EquivalentSegmentationType;

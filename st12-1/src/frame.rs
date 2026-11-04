@@ -1,4 +1,4 @@
-//! The LTC codeword — SMPTE ST 12-1:2014 §9. See `st12-1/docs/st12-1.md` for
+//! The LTC codeword — SMPTE ST 12-1:2014 §9. See `private/specs-verified/smpte/st12-1/st12-1.md` for
 //! the curated spec transcription this module implements field-for-field.
 
 use broadcast_common::bcd::bcd_to_decimal;
@@ -35,13 +35,13 @@ pub const MAX_MINUTES_SECONDS: u8 = 59;
 /// 24-frame: `00`-`23` per §7.2). The 80-bit codeword carries no
 /// self-describing frame-rate field, so this crate validates against the
 /// widest bound and leaves the tighter per-rate bound to a caller that knows
-/// its stream's frame rate (see `docs/st12-1.md` §8.2).
+/// its stream's frame rate (see `private/specs-verified/smpte/st12-1/st12-1.md` §8.2).
 pub const MAX_FRAMES: u8 = 29;
 /// Maximum value of one 4-bit binary group ("user bits") nibble (§8.1/Table 4).
 pub const MAX_BINARY_GROUP: u8 = 0x0F;
 
 /// The fixed synchronization word (§9.2.5, Table 5), as the two bytes it
-/// occupies under this crate's bit-to-byte packing (`docs/st12-1.md`'s "Byte
+/// occupies under this crate's bit-to-byte packing (`private/specs-verified/smpte/st12-1/st12-1.md`'s "Byte
 /// packing convention"): byte 8 holds bits 64-71, byte 9 holds bits 72-79.
 /// This is the well-known LTC sync-word byte pair.
 pub const SYNC_WORD: [u8; 2] = [0xFC, 0xBF];
@@ -55,7 +55,7 @@ pub const SYNC_WORD: [u8; 2] = [0xFC, 0xBF];
 /// The drop-frame flag (bit 10) and color-frame flag (bit 11) sit at fixed
 /// bit positions regardless of frame rate, but the polarity-correction/BGF0/
 /// BGF1/BGF2 bits move: 30-frame and 24-frame share one mapping, while
-/// 25-frame swaps bit 27 and bit 59's meaning (see `docs/st12-1.md`'s
+/// 25-frame swaps bit 27 and bit 59's meaning (see `private/specs-verified/smpte/st12-1/st12-1.md`'s
 /// "Judgment call" note on Table 3). The 80-bit codeword itself carries no
 /// self-describing frame-rate field, so the caller supplies it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -201,7 +201,7 @@ impl BinaryGroupFlags {
 ///
 /// This models only the logical codeword content — not the §9.3 biphase-mark
 /// modulation that carries it as an analog/digital audio signal (see
-/// `docs/st12-1.md`'s "Scope" section).
+/// `private/specs-verified/smpte/st12-1/st12-1.md`'s "Scope" section).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LtcFrame {
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn serialize_then_parse_matches_spec_vector() {
-        // See docs/st12-1.md's "Worked vector" section.
+        // See private/specs-verified/smpte/st12-1/st12-1.md's "Worked vector" section.
         let f = sample_frame();
         let mut out = [0u8; FRAME_LEN];
         f.serialize_into(&mut out).unwrap();

@@ -3,7 +3,7 @@
 //! Relocated to the standalone [`rtcp_packet`] crate (issue #654, part of
 //! epic #653) — this module re-exports it unchanged so every existing
 //! `transmux::rtcp::*` (and crate-root `transmux::*`) call site keeps
-//! working. See `rtcp-packet/docs/rtcp.md` for the curated spec
+//! working. See `private/specs-verified/rtp/rtcp-packet/rtcp.md` for the curated spec
 //! transcription that is now the implementation/audit oracle for these
 //! types, and `rtcp-packet`'s own crate-root doc for the field-by-field
 //! wire-format summary.

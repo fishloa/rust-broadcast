@@ -8,7 +8,7 @@ _Released 2026-10-12._
 
 ### Added
 
-- `transmux::slice_header`: bit-exact H.264 slice-header prefix (§7.3.3), PPS prefix (§7.3.2.2) and field-pair classification (`AvcParamSets::classify_au`, `AvcFieldInfo::pairs_with`); `sps::decode_avc_slice_sps` for the SPS fields a slice header needs. Spec transcription: `docs/codec/h264-slice-header.md`.
+- `transmux::slice_header`: bit-exact H.264 slice-header prefix (§7.3.3), PPS prefix (§7.3.2.2) and field-pair classification (`AvcParamSets::classify_au`, `AvcFieldInfo::pairs_with`); `sps::decode_avc_slice_sps` for the SPS fields a slice header needs. Spec transcription: `private/specs-verified/mpeg/transmux/codec/h264-slice-header.md`.
 
 ### Behaviour change worth knowing
 
@@ -16,7 +16,7 @@ Field-coded (PAFF) H.264 now yields one sample per complementary field pair (was
 
 ### Verification
 
-Spec-built PAFF generator streams (TFF and BFF; licence MIT OR Apache-2.0, README in `tests/fixtures/paff/`) decode bit-exact in ffmpeg and demux to 12 samples for 12 frames; batch equals streaming at 75 chunk sizes; TS and fMP4 re-mux round trips; revert-verified (6 of 8 tests fail with pairing disabled). The slice-header syntax is transcribed from ITU-T H.264 in `transmux/docs/codec/h264-slice-header.md`.
+Spec-built PAFF generator streams (TFF and BFF; licence MIT OR Apache-2.0, README in `tests/fixtures/paff/`) decode bit-exact in ffmpeg and demux to 12 samples for 12 frames; batch equals streaming at 75 chunk sizes; TS and fMP4 re-mux round trips; revert-verified (6 of 8 tests fail with pairing disabled). The slice-header syntax is transcribed from ITU-T H.264 in `private/specs-verified/mpeg/transmux/codec/h264-slice-header.md`.
 
 ---
 

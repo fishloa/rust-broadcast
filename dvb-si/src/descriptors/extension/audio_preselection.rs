@@ -36,7 +36,7 @@ impl<'a> ExtensionBodyDef<'a> for AudioPreselection<'a> {
 /// audio_preselection_descriptor (3-bit header, 5-bit after the aux
 /// component tags count, 3-bit before `future_extension_length`): 0 since the
 /// descriptor's introduction in EN 300 468 V1.16.1
-/// (`dvb-si/docs/reserved-bits-edition-audit.md` §6).
+/// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
 pub const AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
 const RESERVED_ZERO_3_MASK: u8 = 0x07;
 const RESERVED_ZERO_5_MASK: u8 = 0x1F;

@@ -1,7 +1,7 @@
 //! BIOP (Broadcast Inter-ORB Protocol) object-carousel layer.
 //!
 //! Implements the DVB-profiled subset of ISO/IEC 13818-6 §11 as documented
-//! in `dvb-si/docs/text/iso_13818_6/` (transcribed from ETSI TR 101 202 §4.7).
+//! in `private/specs-verified/dvb/dvb-si/text/iso_13818_6/` (transcribed from ETSI TR 101 202 §4.7).
 //!
 //! # Layer overview
 //!

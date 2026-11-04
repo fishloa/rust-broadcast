@@ -1,5 +1,5 @@
 //! Usage Rules Information (URI) version 3 — ETSI TS 103 205 V1.4.1 §11,
-//! Tables 90-92 (PDF pp. 110-112). See `docs/ts_103_205/usage-rules-v3.md`.
+//! Tables 90-92 (PDF pp. 110-112). See `private/specs-verified/dvb/dvb-ci/ts_103_205/usage-rules-v3.md`.
 //!
 //! CI Plus URI v3 extends the v1/v2 `uri_message` syntax (CI Plus V1.3 \[3\]
 //! §5.7.5.2) with the `trick_mode_control_info` signal, applicable to content with

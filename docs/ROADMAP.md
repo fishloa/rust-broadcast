@@ -44,7 +44,7 @@ Sequenced plan for the backlog filed 2026-07-24 (#736–#760). Ordered **reuse-f
 
 ## Spec acquisition + "excellent md" transcription — task list
 
-Per project discipline: **before** implementing an item, its spec is collected from the source below, rendered (not `pdftotext`), and transcribed to **excellent md** in the target crate's `docs/`; commit that + a real fixture + the parse/round-trip gate BEFORE delegating the code (as done for TR 101 290 → `dvb-conformance/docs/tr_101_290.md`). ISO/IEC copies: `private/` submodule + the free ossrs collection.
+Per project discipline: **before** implementing an item, its spec is collected from the source below, rendered (not `pdftotext`), and transcribed to **excellent md** in the target crate's `docs/`; commit that + a real fixture + the parse/round-trip gate BEFORE delegating the code (as done for TR 101 290 → `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`). ISO/IEC copies: `private/` submodule + the free ossrs collection.
 
 | Spec | For | Source (all free unless noted) | Target docs | Status |
 |------|-----|-------------------------------|-------------|--------|

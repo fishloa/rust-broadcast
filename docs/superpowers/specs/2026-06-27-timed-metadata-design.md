@@ -208,7 +208,7 @@ model: `TimedEvent.at = None` ⇒ caller/anchor supplies the wall-clock position
 not try to derive `START-DATE` from a missing `pts_time`.
 
 ## Specs to vendor
-- **draft-pantos-hls-rfc8216bis** + **RFC 8216** — IETF, redistributable; vendor text into `specs/`.
+- **draft-pantos-hls-rfc8216bis** + **RFC 8216** — IETF, redistributable; vendor text into `private/specs-verified/`.
 - **SCTE 214-3** — SCTE register-wall; transcribe the mapping tables into the crate's `docs/`
   (per project standard); do not commit the raw PDF if terms are unclear.
 - **DASH-IF "Event & Timed Metadata Processing"** — free PDF, cite for cross-check.

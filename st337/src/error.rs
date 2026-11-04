@@ -1,7 +1,7 @@
 //! Error type for `st337` burst-preamble/burst-payload parsing/serialization.
 //!
 //! Field-by-field semantics are documented in the curated spec oracle,
-//! `st337/docs/st337.md` (SMPTE ST 337:2015 §7).
+//! `private/specs-verified/smpte/st337/st337.md` (SMPTE ST 337:2015 §7).
 
 use crate::burst::DataMode;
 
@@ -50,7 +50,7 @@ pub enum Error {
     },
     /// `data_mode` (§7.2.4.3 Table 8) was not `Mode16`. This crate's
     /// byte-stream abstraction only supports the 16-bit data mode — see
-    /// `docs/st337.md`'s "Scope decisions" §2 for why 20-/24-bit-wide
+    /// `private/specs-verified/smpte/st337/st337.md`'s "Scope decisions" §2 for why 20-/24-bit-wide
     /// preamble words are out of scope.
     #[error(
         "data_mode {0:?} is not supported by this crate (only Mode16 -- \

@@ -23,7 +23,7 @@ const HEADER_LEN: usize = 2;
 /// field for it, so its width must be a constant for the body to be
 /// splittable at all. The clause is not vendored in `private/specs/`, so the
 /// transcription this constant comes from is
-/// `docs/descriptors/iso_14496_1/11_2-flexmux-buffer-descriptors.md` — which
+/// `private/specs-verified/dvb/dvb-si/descriptors/iso_14496_1/11_2-flexmux-buffer-descriptors.md` — which
 /// records that it is corroborated by three independent implementations
 /// rather than copied from the standard text.
 const DEFAULT_FLEX_MUX_BUFFER_DESCRIPTOR_LEN: usize = 3;

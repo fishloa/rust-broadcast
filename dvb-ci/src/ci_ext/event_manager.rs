@@ -1,5 +1,5 @@
 //! Event Manager objects — ETSI TS 101 699 V1.1.1 §6.4, Tables 56-61
-//! (PDF pp. 55-56). See `docs/ci_plus/event-manager.md`.
+//! (PDF pp. 55-56). See `private/specs-verified/dvb/dvb-ci/ci_plus/event-manager.md`.
 //!
 //! Resource ID `0x00231ii1` (`ii` = Module ID). Lets a module book timer events
 //! that wake the host.

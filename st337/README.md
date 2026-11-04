@@ -30,7 +30,7 @@ It does **not**:
 - decode or re-encode the payload (compressed audio stays opaque bytes);
 - implement IEC 61937 (the consumer S/PDIF sibling). `length_code` is read as
   **bits** per ST 337's own text; a real IEC 61937 E-AC-3 capture writes bytes
-  for the same data type (documented in `docs/st337-PROVENANCE.md`).
+  for the same data type (documented in `private/specs-verified/smpte/st337/st337-PROVENANCE.md`).
 
 ## Standards supported
 

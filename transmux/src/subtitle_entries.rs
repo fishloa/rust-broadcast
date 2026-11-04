@@ -418,7 +418,7 @@ impl VttCueBox {
             let child = &body[pos..end];
             let fourcc = &child[4..8];
             // ISO/IEC 14496-30 `VTTCueBox` lists each of `iden`/`sttg`/`payl`
-            // once (docs/codec/captions-14496-30.md): a repeat cannot be held
+            // once (private/specs-verified/mpeg/transmux/codec/captions-14496-30.md): a repeat cannot be held
             // in the typed fields (the last would win while the order listed
             // both, so `serialized_len` and `serialize_into` disagreed), so
             // it is rejected.

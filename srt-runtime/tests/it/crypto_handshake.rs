@@ -1,6 +1,6 @@
 //! Integration test: §6.1.5 Key Material Exchange piggybacked on the
 //! Caller-Listener handshake (`draft-sharabayko-srt-01` §4.3.1 exchange +
-//! §6.1.5, curated at `specs/rules/srt-crypto.md`), issue #621.
+//! §6.1.5, curated at `private/specs-verified/rules/srt-crypto.md`), issue #621.
 //!
 //! Drives [`srt_runtime::caller::CallerHandshake`] and
 //! [`srt_runtime::listener::ListenerHandshake`] to a full byte-level

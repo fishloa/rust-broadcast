@@ -8,7 +8,7 @@
 //! or an unrecognized-PT packet per RFC 5506).
 //!
 //! This crate implements exactly the wire structures described in the
-//! curated spec transcription at `rtcp-packet/docs/rtcp.md` (fetched
+//! curated spec transcription at `private/specs-verified/rtp/rtcp-packet/rtcp.md` (fetched
 //! directly from [RFC 3550](https://www.rfc-editor.org/rfc/rfc3550.txt),
 //! §6) — cite that file, not this doc comment, as the field-semantics
 //! oracle. It documents two known decode-completeness gaps (SR/RR

@@ -1,6 +1,6 @@
 //! IP Signalling Descriptor — ETSI TS 102 727 V1.1.1 §10.8.2, Table 81
 //! (AIT tag 0x11). PDF p.169, transcribed in
-//! `docs/descriptors/ts_102_727/81-*.md`, verified against the rendered page.
+//! `private/specs-verified/dvb/dvb-si/descriptors/ts_102_727/81-*.md`, verified against the rendered page.
 //!
 //! Defined for the "common" or "application" AIT loop. Fixed 3-byte body: the
 //! 24-bit `platform_id` of the organisation providing IP/MAC streams (the

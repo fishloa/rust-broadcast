@@ -1,5 +1,5 @@
 //! Rendezvous handshake engine — `draft-sharabayko-srt-01` §4.3.2 (Rendezvous
-//! Handshake), curated at `specs/rules/srt-rendezvous.md`. Line cites below
+//! Handshake), curated at `private/specs-verified/rules/srt-rendezvous.md`. Line cites below
 //! (`LNNNN`) are the source draft's line numbers, exactly as recorded in that
 //! curation.
 //!

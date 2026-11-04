@@ -109,7 +109,7 @@ ffmpeg -y -v error -f lavfi -i "testsrc2=size=320x240:rate=25" -frames:v 15 \
 ## HEVC VUI timing / frame-rate fixtures (`hevc_vui_*.mp4`)
 
 Real `libx265` streams whose SPS VUI carries specific timing syntax, for the HLS
-`FRAME-RATE` derivation (`transmux/docs/codec/vui-timing-frame-rate.md`). 25 frames,
+`FRAME-RATE` derivation (`private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md`). 25 frames,
 320x240, source `lavfi testsrc2` (generated, no third-party content). The `field`
 files only set the SPS flags (`field_seq_flag`, `frame_field_info_present_flag`);
 their pictures are NOT really interlaced. SPS flags verified with
@@ -139,7 +139,7 @@ rate") adds it to a real libx265 stream. Verified with `trace_headers` on the ou
 `vps_timing_info_present_flag=1`, `vps_num_units_in_tick=1001`, `vps_time_scale=30000`, `vps_num_hrd_parameters=0`;
 SPS VUI `vui_timing_info_present_flag=1` with the same pair (the spec requires them equal). The filter
 sets both, so **no real stream with timing in the VPS only exists here** (a VPS-only case is covered by
-pure-function tests, `transmux/docs/codec/hevc-vps-timing.md` §4). The mp4 timebase (`-r`) is irrelevant
+pure-function tests, `private/specs-verified/mpeg/transmux/codec/hevc-vps-timing.md` §4). The mp4 timebase (`-r`) is irrelevant
 to the SPS/VPS content.
 
 ```bash

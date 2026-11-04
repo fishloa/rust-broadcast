@@ -1,5 +1,5 @@
 //! Resource Manager v2 objects — ETSI TS 101 699 V1.1.1 §4.2.1, Tables 3-7
-//! (PDF pp. 13-17). See `docs/ci_plus/resource-manager-v2.md`.
+//! (PDF pp. 13-17). See `private/specs-verified/dvb/dvb-ci/ci_plus/resource-manager-v2.md`.
 //!
 //! Resource ID `0x00010042`. Adds Module ID establishment to the EN 50221 v1
 //! Resource Manager. The three v1 objects (Profile Enquiry, Profile Reply,

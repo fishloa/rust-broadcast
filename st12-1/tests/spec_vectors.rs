@@ -9,12 +9,12 @@
 //! `tests/fixtures/rtp_simple.bin`, captured from this workspace's own
 //! `transmux::RtpPacketiser`), and LTC is normally carried as a
 //! biphase-mark-encoded analog audio signal — out of this crate's scope (see
-//! `docs/st12-1.md`'s "Scope" section) — so there is no in-repo bitstream to
+//! `private/specs-verified/smpte/st12-1/st12-1.md`'s "Scope" section) — so there is no in-repo bitstream to
 //! extract a logical codeword from either. Per the project's documented
 //! fallback (`docs/CRATE-ACCEPTANCE.md` §3 — "no real capture exists, gate
 //! is the biting round-trip"), every byte vector below is **computed
 //! directly from the ST 12-1 §9.2 Tables 2-5 bit diagrams**
-//! (`st12-1/docs/st12-1.md`) with a standalone Python script, independently
+//! (`private/specs-verified/smpte/st12-1/st12-1.md`) with a standalone Python script, independently
 //! of this crate's own `Serialize` implementation — so a bug that made
 //! `serialize`/`parse` agree with each other but disagree with the spec
 //! would still be caught.
@@ -22,7 +22,7 @@
 use broadcast_common::{Parse, Serialize};
 use st12_1::{BinaryGroupFlags, BinaryGroupUsage, FrameRate, LtcFrame};
 
-// ── Worked example: Time Address = 01:23:45:13 (docs/st12-1.md) ───────────
+// ── Worked example: Time Address = 01:23:45:13 (private/specs-verified/smpte/st12-1/st12-1.md) ───────────
 //
 // hours=01 minutes=23 seconds=45 frames=13, drop_frame=0, color_frame=1,
 // bit27=1 bit43=1 bit58=0 bit59=1 (30-frame: polarity=1 BGF0=1 BGF1=0 BGF2=1

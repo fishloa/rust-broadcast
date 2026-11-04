@@ -9,16 +9,16 @@
 //! (no ids are registered for broadcast use — yields U+FFFD). Reserved
 //! selectors (0x08, 0x0C–0x0F, 0x16–0x1E) yield U+FFFD per byte. The
 //! selector → decoder table is generated into
-//! [`dvb-si/docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#text-en-300-468-annex-a).
+//! [`private/specs-verified/dvb/dvb-si/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#text-en-300-468-annex-a).
 //! ISO 8859-2 … -15, KS X 1001, GB-2312 and Big5 use `encoding_rs` and need
 //! the `std` feature (without it they decode lossily, raw bytes stay
 //! available); default Latin, ISO 8859-1, UCS-2 and UTF-8 decode without it.
 //!
 //! Glyph mappings are pinned to EN 300 468 V1.19.1 (2025-02) Figure A.1
 //! "Character code table 00 - Latin alphabet with Unicode equivalents"
-//! (PDF p. 159, vendored at `specs/etsi_en_300_468_v01.19.01_dvb_si.pdf`;
+//! (PDF p. 159, vendored at `private/specs/etsi_en_300_468_v01.19.01_dvb_si.pdf`;
 //! transcription in
-//! `dvb-si/docs/tables/en_300_468/figure-a1-character-code-table-00-default-latin-alphabet.md`).
+//! `private/specs-verified/dvb/dvb-si/tables/en_300_468/figure-a1-character-code-table-00-default-latin-alphabet.md`).
 //!
 //! [`DvbText`] wraps the raw wire bytes and decodes only on demand — parsing
 //! stays zero-copy; decoding happens when you call [`DvbText::decode`], `Display`,
@@ -838,7 +838,7 @@ mod tests {
     /// Pins the GR-area single-byte mappings to ETSI EN 300 468 V1.19.1
     /// (2025-02) Figure A.1 — "Character code table 00 - Latin alphabet with
     /// Unicode equivalents" (PDF p. 159; vendored at
-    /// `specs/etsi_en_300_468_v01.19.01_dvb_si.pdf`).
+    /// `private/specs/etsi_en_300_468_v01.19.01_dvb_si.pdf`).
     #[test]
     fn figure_a1_gr_area_single_byte_mappings() {
         let pins: &[(u8, char)] = &[

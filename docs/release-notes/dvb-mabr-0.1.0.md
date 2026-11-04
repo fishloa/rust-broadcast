@@ -15,7 +15,7 @@ Initial release. `dvb-mabr` is a DVB multicast ABR (ETSI TS 103 769 V1.2.1) sess
 
 ## Out of scope
 
-- The reporting-report JSON body itself (clause 11) — see `docs/mabr-reporting.md`.
+- The reporting-report JSON body itself (clause 11) — see `private/specs-verified/dvb/dvb-mabr/mabr-reporting.md`.
 - Presentation manifests (DASH MPD / HLS Master Playlist) are referenced by URL only, never parsed.
 - The multicast transport of the objects themselves (FLUTE/ROUTE) — see `rmt-flute`.
 

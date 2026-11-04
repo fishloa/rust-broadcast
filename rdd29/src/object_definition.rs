@@ -295,7 +295,7 @@ pub struct PanSubBlock {
 }
 
 /// `AudioDescription` — RDD 29 §4.4 (syntax only; no `5.4.x` prose section
-/// documents this field's semantics — see `docs/rdd29.md` scope decision 2).
+/// documents this field's semantics — see `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 2).
 ///
 /// `text` is a borrowed `Option<&'a [u8]>`: serde_json's default
 /// array-of-numbers representation cannot round-trip back into a borrowed
@@ -414,7 +414,7 @@ impl<'a> ObjectDefinition1<'a> {
     /// length (`NumPanSubBlocks`, §5.4.1 Table 7) is derived from the
     /// enclosing `ATMOSFrame`'s `FrameRate`, which is not available from
     /// `bytes` alone — RDD 29's own syntax makes this element's body
-    /// genuinely ambiguous out of context. See `docs/rdd29.md` scope
+    /// genuinely ambiguous out of context. See `private/specs-verified/smpte/rdd29/rdd29.md` scope
     /// decision 5.
     ///
     /// # Errors

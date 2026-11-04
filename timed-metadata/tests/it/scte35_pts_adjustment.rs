@@ -1,7 +1,7 @@
 //! Regression fixtures for issues #1039 (`pts_adjustment` ignored) and #1040
 //! (`time_signal` cues lose time/kind/id). Both `.bin` fixtures are compiled
 //! by TSDuck's `tstabcomp` (an independent tool) from synthetic XML input --
-//! see `fixtures/scte35/README.md` for the exact command and the oracle
+//! see `../fixtures/scte35/README.md` for the exact command and the oracle
 //! values read from `tstabcomp --decompile`'s own output, not from this
 //! crate's parser or serializer.
 use broadcast_common::traits::Parse;

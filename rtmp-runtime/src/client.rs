@@ -643,7 +643,7 @@ impl ClientSession {
                     // same value back as if it were our own advertised
                     // window. Track it separately; reply with our OWN
                     // configured window size, and only when it actually
-                    // changed from what we last advertised (docs/rtmp.md
+                    // changed from what we last advertised (private/specs-verified/rtmp/rtmp-runtime/rtmp.md
                     // §5.4.5: "Receiver SHOULD reply with Window Ack Size
                     // if its window differs from the last one it
                     // advertised").

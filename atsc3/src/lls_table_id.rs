@@ -2,7 +2,7 @@
 //!
 //! Identifies which LLS table body follows the common 4-byte envelope (see
 //! [`crate::lls::LlsEnvelope`]). `0x01`-`0x05` are transcribed verbatim in
-//! `docs/a331-signalling.md` Table 6.1. `0x06` (CDT, A/360 CertificationData)
+//! `private/specs-verified/atsc/atsc3/a331-signalling.md` Table 6.1. `0x06` (CDT, A/360 CertificationData)
 //! and `0x07` (DRCT, Dedicated Return Channel Table) are additional
 //! cross-spec registrations — Table 6.1's own prose notes "Additional LLS
 //! table IDs exist outside this list (e.g. A/360's CertificationData...)".

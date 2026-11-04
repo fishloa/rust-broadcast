@@ -1,5 +1,5 @@
 //! The RTP fixed header, CSRC list, and generic header extension — RFC 3550
-//! §5.1 / §5.3.1. See `rtp-packet/docs/rtp-header.md` for the curated spec
+//! §5.1 / §5.3.1. See `private/specs-verified/rtp/rtp-packet/rtp-header.md` for the curated spec
 //! transcription this module implements field-for-field.
 
 use alloc::vec::Vec;
@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 // ---------------------------------------------------------------------------
 
 /// RTP version — "the version defined by this specification is two (2)"
-/// (docs/rtp-header.md §5.1, `version (V), 2 bits`).
+/// (private/specs-verified/rtp/rtp-packet/rtp-header.md §5.1, `version (V), 2 bits`).
 pub const RTP_VERSION: u8 = 2;
 
 /// Length of the fixed header (12 bytes: byte0 + byte1 + seq(2) + ts(4) +
@@ -108,7 +108,7 @@ impl HeaderExtension<'_> {
 /// are derived from `padding.is_some()` / `extension.is_some()` on serialize,
 /// and `CC` is derived from `csrc.len()` — the same "derive from the typed
 /// data, never trust an independent flag" discipline used throughout this
-/// project (see the module doc's citation of docs/rtp-header.md).
+/// project (see the module doc's citation of private/specs-verified/rtp/rtp-packet/rtp-header.md).
 ///
 /// [`parse`]: Parse::parse
 /// [`serialize_into`]: Serialize::serialize_into

@@ -25,7 +25,7 @@ reads more and re-probes, guided by `Insufficient`).
 
 Detection needs only each format's framing, so the table lists what each prober
 checks. Editions are the ones cited in the prober's module docs; where the
-specification is not in the vendored `private/specs-md` set the edition is
+specification is not in the private repo: `private/specs-md` set the edition is
 marked unverified.
 
 | Format | Specification (as cited in code) | Edition | Probe scope | Status | Notes |

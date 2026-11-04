@@ -1,5 +1,5 @@
 //! Spec vectors for the H.262 display syntax, hand-built from the transcription
-//! (`docs/codec/mpeg2-video-display.md`), never from production code.
+//! (`private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md`), never from production code.
 
 use super::*;
 use alloc::vec::Vec;

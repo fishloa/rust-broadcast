@@ -228,7 +228,7 @@ Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.
 
 ### Changed
 - `Indicator` enum is now `#[non_exhaustive]` with 4 new variants
-- Indicator-coverage documentation updated in README, docs/tr_101_290.md,
+- Indicator-coverage documentation updated in README, private/specs-verified/dvb/dvb-conformance/tr_101_290.md,
   and lib.rs module doc
 
 ## [9.0.0] - 2026-07-27
@@ -249,7 +249,7 @@ Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.
   SDT_actual/EIT P/F actual/TDT sharing the existing 3.2 SI-repetition timer.
   New `PID_RST` (0x0013) well-known PID; new `Config::unreferenced_pid_period`
   (default 500 ms). `Indicator` gains 6 new `#[non_exhaustive]` variants —
-  additive, no breaking change. See `docs/tr_101_290.md` for the full spec
+  additive, no breaking change. See `private/specs-verified/dvb/dvb-conformance/tr_101_290.md` for the full spec
   transcription and per-clause coverage mapping.
 
 ## [8.5.0] - 2026-07-21

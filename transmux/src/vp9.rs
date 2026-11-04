@@ -29,7 +29,7 @@ const VPCC_RECORD_FIXED: usize = 8;
 /// Format Binding v1.0 (2017-03-31) declares the box as
 /// `FullBox('vpcC', version = 1, 0)` and states "Version 0 is deprecated and
 /// should not be used" — it gives no syntax for version 0 at all, so no other
-/// version can be decoded or emitted (see `docs/codec/vp9-isobmff.md`).
+/// version can be decoded or emitted (see `private/specs-verified/mpeg/transmux/codec/vp9-isobmff.md`).
 const VERSION_1: u8 = 1;
 /// A 4-bit field occupies the high nibble of its byte.
 const BITS_4: u8 = 4;

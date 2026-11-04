@@ -45,7 +45,7 @@ fixtures**:
 |---|---|
 | MPEG-2 TS | `mpeg-ts` — `TS_SYNC_BYTE`, `TS_PACKET_SIZE` |
 | ISOBMFF | `transmux/src/box_types.rs` — box header layout, size-0/size-1 handling |
-| Matroska/WebM | `transmux/docs/webm/` — EBML transcription |
+| Matroska/WebM | `private/specs-verified/mpeg/transmux/webm/ebml-matroska.md/` — EBML transcription |
 | MXF | `st377-1/src/partition.rs`, `src/klv.rs` — partition-pack UL prefix, KLV BER |
 | MPEG-PS | `mpeg-ps` — `pack_start_code` (`0x000001BA`) + marker-bit validation |
 | FLV | `private/specs/adobe_flv_f4v_v10_1.pdf` |

@@ -12,7 +12,7 @@
 //! for the byte-level hand-decode this test's expected values come from,
 //! independently re-derived here against the crate's own parser.
 //!
-//! This is also the fixture `st2022/docs/st2022-6-framing.md` asked a real
+//! This is also the fixture `private/specs-verified/smpte/st2022/st2022-6-framing.md` asked a real
 //! capture to confirm or refute: whether `RESERVE` (`PayloadHeader::reserve`)
 //! is genuinely 5 bits wide, since that width was derived by arithmetic
 //! from the surrounding fields rather than read verbatim off spec prose. See
@@ -237,7 +237,7 @@ fn every_packet_hbrmt_header_round_trips_byte_exact() {
     );
 }
 
-/// The specific finding `st2022/docs/st2022-6-framing.md` asked a real
+/// The specific finding `private/specs-verified/smpte/st2022/st2022-6-framing.md` asked a real
 /// capture to settle: is `RESERVE` really 5 bits wide at bit position
 /// `[4:0]` of the `R|S|FEC|CF|RESERVE` word, as derived by arithmetic
 /// (2+2+3+4+5=16), or is that derivation wrong?

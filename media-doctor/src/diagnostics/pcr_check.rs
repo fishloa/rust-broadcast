@@ -3,7 +3,7 @@
 //!
 //! Both indicators are defined on the same quantity — the difference between
 //! two consecutive PCR values — with different thresholds. Quoting the
-//! transcription at `dvb-conformance/docs/tr_101_290.md`:
+//! transcription at `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`:
 //!
 //! | Indicator | Definition |
 //! |---|---|
@@ -152,7 +152,7 @@ impl Diagnostic for PcrCheck {
 
             // The two indicators are defined on the *same* quantity, with
             // different thresholds (TR 101 290 v1.4.1 Table 5.0b, transcribed
-            // at `dvb-conformance/docs/tr_101_290.md`):
+            // at `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`):
             //
             //   2.3a  PCR_repetition_error: "Time interval between two
             //         consecutive PCR values more than 100 ms" (note 2: the

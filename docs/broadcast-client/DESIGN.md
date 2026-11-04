@@ -127,7 +127,7 @@ None. For RTSP `close()` first queues one `Send` carrying `TEARDOWN` (only when 
 One named test per bullet above using the real fixtures: TF1 capture `private/fixtures/zenith-http/tf1-live.ts`
 (+ headers files) through `test_fixtures`, driven through a tiny in-test host (feeds on_response/on_data/on_closed
 from the capture). Auth tests use constructed response headers from RFC 9110/6750/9728 verbatim examples
-(see broadcast-auth/docs/www-authenticate-challenges.md) and Digest vectors already in broadcast-auth tests.
+(see private/specs-verified/ietf/broadcast-auth/www-authenticate-challenges.md) and Digest vectors already in broadcast-auth tests.
 Chunking invariance (1-byte, 1316-byte, 64 KiB) of the Sample/Tracks sequence; Tracks-before-first-sample; Live
 status once; stall -> Stalled -> Live; reconnect after server close emits Discontinuity; 401->replay->200 for
 Basic and Digest; Bearer preemptive; 401 with no credentials waits (no actions for 10 minutes of poll calls);
@@ -225,7 +225,7 @@ Tests: `broadcast-client/tests/hls_renditions.rs`. The separate audio-only and v
 
 ## BC cookies/headers (#1458)
 
-Binding spec: `broadcast-client/docs/cookies.md` (RFC 6265 verbatim plus the first-slice decisions). Summary of what is built:
+Binding spec: `private/specs-verified/ietf/broadcast-client/cookies.md` (RFC 6265 verbatim plus the first-slice decisions). Summary of what is built:
 
 - `src/cookies.rs`: jar scoped to the session origin; domain-match and path-match/default-path are `cookie_store`'s pure `CookieDomain`/`CookiePath` (a `Domain` attribute is accepted only if the origin host domain-matches it, otherwise the cookie is refused, and an accepted one is still sent ONLY to the session origin - origin scope is a deliberate security property, since no public-suffix data is shipped; no public-suffix list; no `cookie_store` type that reads the wall clock is used); `Expires` ignored; `Secure` only on https; `Max-Age` relative to the `now_us` of the response (<= 0 deletes, expiry is exclusive: gone at `stored_at + max_age`); same name+path replaces in place; `Cookie` header ordered longest path first, then storage order; at most 50 cookies (oldest evicted) and 4096 bytes of name+value per cookie. `Set-Cookie` lines are parsed with the `cookie` crate; every `Set-Cookie` line of any status (401 and 3xx included) is processed, but only for responses of the session origin.
 - The jar lives in `AuthState`, the single layer every request passes through (`request_headers(url, now_us)`), so the TS-HTTP and HLS adapters share it: playlists, segments, reconnects and in-origin redirects carry the cookies; requests to another origin carry no cookie (whatever its `Domain`), no extra header and no `Authorization`.
@@ -235,7 +235,7 @@ Binding spec: `broadcast-client/docs/cookies.md` (RFC 6265 verbatim plus the fir
 
 ## BC-3 HLS AES-128 keys (#1459 S2)
 
-Binding spec: `broadcast-hls/docs/ext-x-key.md`. The core (`hls-runtime`) emits `Action::FetchKey{id,url}` once per distinct key URI and decrypts AES-128 segments itself; the session only moves bytes.
+Binding spec: `private/specs-verified/hls/ietf/rfc8216-ext-x-key.md`. The core (`hls-runtime`) emits `Action::FetchKey{id,url}` once per distinct key URI and decrypts AES-128 segments itself; the session only moves bytes.
 
 - A key is a third request purpose (`Purpose::Key(KeyId)`) through the same path as playlists and segments: origin-scoped `Authorization`, cookies and `extra_headers` (a key on another origin carries none of them), per-request redirect budget, a 401/407 from the session origin enters the normal `AuthRequired`/wait flow and the parked request is replayed after `set_credentials`.
 - `Config::hls_key_timeout_us` (20 s) and `Config::max_key_bytes` (4096; a larger body is closed and counts as a failure).
@@ -782,7 +782,7 @@ real TS fixtures plus a PMT-flipped copy, and `fuzz/seed-corpus.py` generates si
 `Fmp4Demux` records a track it cannot model in `Media::skipped` (now with the `tkhd.track_ID`, `transmux::SkippedTrack::track_id`). hls-runtime forwards each as `Output::TrackSkipped` (once per track and init), and the HLS source turns it into ONE non-fatal `Event::Error` per track id per session: `ErrorKind::UnsupportedEncryption { method: "encv" | "enca" }` for an encrypted sample entry (CENC/CBCS sample encryption is never decrypted; the playlist tags are not consulted, a plain playlist can carry an encrypted init), `ErrorKind::TrackDropped { track_id, stream_type: None, fourcc: Some(..) }` for any other. `TrackDropped` gained only the additive `fourcc: Option<String>`. When the init yields no track at all (empty `Tracks` after at least one skip) the session ends with a FATAL error of the first skipped track's kind instead of `Ended` with zero samples.
 
 ### F3: one init per `EXT-X-MAP` run
-RFC 8216 §4.4.4.5 (`broadcast-hls/docs/playlist-tags.md`): a map applies to every Media Segment after it until the next map. `HlsClient` keeps an `InitSlot` per map-run (identity: resolved URL + `BYTERANGE`), binds each Media Sequence Number to the slot of the map that precedes it (`msn_init`), and demuxes every Part/Segment with its own slot's bytes; a resource that arrives before its init waits in `pending_demux`. Because `ResourceId::Init` carries no identity, inits are fetched one at a time in playlist order. The consumer-visible contract: `Output::Init` for the first init on arrival, every other init lazily before the first resource that uses it (after that resource's `Discontinuity`), then `Tracks` when the set changed. The key of a run's init is the `EXT-X-KEY` preceding that run's `EXT-X-MAP` line; an unsupported one skips only that run's segments. Multi-MAP windows (backlog item 15 remainder) are covered by the same state.
+RFC 8216 §4.4.4.5 (`private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`): a map applies to every Media Segment after it until the next map. `HlsClient` keeps an `InitSlot` per map-run (identity: resolved URL + `BYTERANGE`), binds each Media Sequence Number to the slot of the map that precedes it (`msn_init`), and demuxes every Part/Segment with its own slot's bytes; a resource that arrives before its init waits in `pending_demux`. Because `ResourceId::Init` carries no identity, inits are fetched one at a time in playlist order. The consumer-visible contract: `Output::Init` for the first init on arrival, every other init lazily before the first resource that uses it (after that resource's `Discontinuity`), then `Tracks` when the set changed. The key of a run's init is the `EXT-X-KEY` preceding that run's `EXT-X-MAP` line; an unsupported one skips only that run's segments. Multi-MAP windows (backlog item 15 remainder) are covered by the same state.
 
 ### F9a: typed errors instead of silent zero-sample endings
 - A progressive MP4 served as init and segment (`moov`, no `moof`) -> `Error::NotFragmented` -> FATAL `ErrorKind::UnsupportedContainer { reason: "non_fragmented_mp4" }`.

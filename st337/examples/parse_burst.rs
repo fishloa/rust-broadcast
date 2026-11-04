@@ -8,7 +8,7 @@ use broadcast_common::{Parse, Serialize};
 use st337::{Burst, DataMode};
 
 fn main() {
-    // See docs/st337-PROVENANCE.md for how this fixture was extracted (a
+    // See private/specs-verified/smpte/st337/st337-PROVENANCE.md for how this fixture was extracted (a
     // real E-AC-3 syncframe from fixtures/ts/dolby/eac3.ts) and cross-checked
     // against ffmpeg's own IEC 61937 burst framing.
     let path = concat!(
@@ -19,7 +19,7 @@ fn main() {
 
     let burst = Burst::new(
         21, // data_type -- the IEC 61937 E-AC-3 code point used by the real
-        // ffmpeg cross-check oracle (docs/st337-PROVENANCE.md); ST 337 itself
+        // ffmpeg cross-check oracle (private/specs-verified/smpte/st337/st337-PROVENANCE.md); ST 337 itself
         // defers the data_type registry to SMPTE ST 338 (not verified here).
         DataMode::Mode16,
         false,

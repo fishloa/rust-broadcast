@@ -1,4 +1,4 @@
-//! Primer Pack — SMPTE ST 377-1:2019 §9.2, Tables 13-15 (`docs/st377-1.md`):
+//! Primer Pack — SMPTE ST 377-1:2019 §9.2, Tables 13-15 (`private/specs-verified/smpte/st377-1/st377-1.md`):
 //! the per-Partition lookup table mapping every 2-byte local tag used in
 //! this Partition's Header Metadata to its full UL/UUID.
 
@@ -84,7 +84,7 @@ impl PrimerPack {
 
     /// Resolve a UL/UUID to its local tag in this Primer Pack, if present.
     /// Used to decode "dyn" (dynamically-allocated-tag) properties whose
-    /// static tag the spec deliberately does not fix (`docs/st377-1.md`'s
+    /// static tag the spec deliberately does not fix (`private/specs-verified/smpte/st377-1/st377-1.md`'s
     /// Annex A tables) — e.g. `Preface`'s `IsRIPPresent`.
     #[must_use]
     pub fn resolve_ul(&self, ul: &UlBytes) -> Option<u16> {

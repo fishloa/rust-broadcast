@@ -1,5 +1,5 @@
 //! OP1a Operational Pattern — SMPTE ST 378:2004 / ST 377-1:2019 §A.2
-//! (`docs/st377-1.md`): identification helpers for the "single item,
+//! (`private/specs-verified/smpte/st377-1/st377-1.md`): identification helpers for the "single item,
 //! single package" operational pattern that nearly all real MXF files
 //! use.
 //!
@@ -15,7 +15,7 @@
 //! | 15     | qualifier      | bitfield (see below)  |
 //! | 16     | `0x00`         | reserved              |
 //!
-//! Byte 15 qualifier bits (`docs/st378-op1a.md` §6.4, Table "Bit"/"§6.4"/
+//! Byte 15 qualifier bits (`private/specs-verified/smpte/st377-1/st378-op1a.md` §6.4, Table "Bit"/"§6.4"/
 //! "Meaning when set to 0" — 1-indexed bit *positions*, i.e. "bit 1" names
 //! value `0x02`, not `0x01`; bit 0 (`0x01`) is a marker every real encoder
 //! sets and is always written here):

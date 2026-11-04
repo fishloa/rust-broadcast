@@ -1,6 +1,6 @@
 //! Conditional Access Support — CI Plus multi-stream `ca_pmt` / `ca_pmt_reply` —
 //! ETSI TS 103 205 V1.4.1 §6.4.4, Tables 14/16 (PDF pp. 38-40). See
-//! `docs/ts_103_205/ca-support.md`.
+//! `private/specs-verified/dvb/dvb-ci/ts_103_205/ca-support.md`.
 //!
 //! For multi-stream functionality the CA Support resource gets a new
 //! `resource_type` (= 2, version = 1) in which `ca_pmt()` and `ca_pmt_reply()`

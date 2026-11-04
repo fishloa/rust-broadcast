@@ -31,7 +31,7 @@ use broadcast_hls::{
     SessionDataContent,
 };
 
-/// All 32 tags RFC 8216bis §4.4 defines, per `docs/playlist-tags.md`'s "Tag
+/// All 32 tags RFC 8216bis §4.4 defines, per `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`'s "Tag
 /// count" table (§4.4.1 through §4.4.6.6).
 const ALL_32_TAGS: &[&str] = &[
     // §4.4.1 Basic Tags (2)

@@ -4,7 +4,7 @@
 //! `mvhd`/`tkhd` wrong size/offsets (#1015, #1016).
 //!
 //! Every fixture here is generated with an independent tool (ffmpeg and/or
-//! GPAC's MP4Box — see `fixtures/mp4/cenc_boxes/README.md` for the exact
+//! GPAC's MP4Box — see `../fixtures/mp4/cenc_boxes/README.md` for the exact
 //! commands) and the expected values are recorded from that tool's own
 //! inspector (`MP4Box -diso`), never derived from this crate's own
 //! serializer.

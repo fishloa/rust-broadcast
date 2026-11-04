@@ -1,7 +1,7 @@
 //! RTMP (Adobe Real-Time Messaging Protocol) 1.0 transport spoke.
 //!
 //! Spec: **Adobe RTMP Specification 1.0** (December 2012); AMF0 values follow
-//! the companion **AMF0 Specification**. See `transmux/docs/rtmp/rtmp.md` for
+//! the companion **AMF0 Specification**. See `private/specs-verified/mpeg/transmux/rtmp/rtmp.md` for
 //! the transcription. Everything is **big-endian** on the wire except the RTMP
 //! message stream id (little-endian, §5.3.1.2.1) and where AMF0 dictates.
 //!

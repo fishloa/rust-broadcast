@@ -15,7 +15,7 @@
 //! `copy_protection::tag` both define a `0x9F8000`).
 //!
 //! Spec: ETSI TS 101 699 V1.1.1 §8, Table 87 (resource IDs + tags) — see
-//! `docs/ci_plus/resource-ids.md`. The per-resource layouts are cited in their
+//! `private/specs-verified/dvb/dvb-ci/ci_plus/resource-ids.md`. The per-resource layouts are cited in their
 //! own module docs.
 //!
 //! Resources implemented: Resource Manager v2, Application Information v2, Power
@@ -53,7 +53,7 @@ pub const APPLICATION_MMI: ResourceId = ResourceId(0x0041_0041);
 /// Download resource — class 5, type 1, version 1 (`0x00051041`). Fixed ID.
 ///
 /// (Table 87 prints `0x000510041`, a 9-hex-digit spec typo; the authoritative
-/// binary packs to `0x00051041` — see `docs/ci_plus/resource-ids.md`.)
+/// binary packs to `0x00051041` — see `private/specs-verified/dvb/dvb-ci/ci_plus/resource-ids.md`.)
 pub const DOWNLOAD: ResourceId = ResourceId(0x0005_1041);
 
 /// StreamInput template — class 128, type 1\*, version 1 (`0x00801ii1`, `ii` =

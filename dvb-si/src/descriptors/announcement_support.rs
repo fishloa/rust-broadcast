@@ -45,7 +45,7 @@ const RESERVED_BIT_MASK: u8 = 0x08;
 const RESERVED_BIT_SHIFT: u8 = 3;
 /// Spec default of the entry's 1-bit `reserved_future_use`: `1` (EN 300 468
 /// V1.4.1-V1.20.1 Table 17, global convention; audit
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class A, stable).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A, stable).
 pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
 const REFERENCE_TYPE_MASK: u8 = 0x07;
 /// Max value of the 4-bit announcement_type field.

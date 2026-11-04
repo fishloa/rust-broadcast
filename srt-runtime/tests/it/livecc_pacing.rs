@@ -1,13 +1,13 @@
 //! LiveCC pacing — integration tests (`draft-sharabayko-srt-01` §5.1).
 //!
 //! Assertions use hand-computed constants so a trivial/constant impl must fail.
-//! Spec grounding: `specs/rules/srt-livecc.md`.
+//! Spec grounding: `private/specs-verified/rules/srt-livecc.md`.
 
 use core::time::Duration;
 use srt_runtime::livecc::{LiveCC, MaxBwConfig};
 
 /// Default MAX_BW in bytes/sec (1 Gbps = 125_000_000 bytes/sec), per
-/// `specs/rules/srt-livecc.md` §5.1.1 L3122-3123.
+/// `private/specs-verified/rules/srt-livecc.md` §5.1.1 L3122-3123.
 const ONE_GBPS_BYTES_PER_SEC: u64 = 125_000_000;
 
 #[test]

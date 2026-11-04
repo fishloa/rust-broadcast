@@ -24,7 +24,7 @@ _Released 2026-10-19._
 - **`VideoFormat`** (H.264 Table E-2 / H.265 Table E.2), **`ColourPrimaries`** (E-3 / E.3), **`TransferCharacteristics`** (E-4 / E.4) and **`MatrixCoefficients`** (E-5 / E.5), each with `from_wire`, `code`, `name` (the spec's own label) and `Display`.
 - **`ColourDescription`** and **`VideoSignalType`**, plus `DisplayGeometry::{overscan_appropriate, video_signal, full_range, video_format, colour_description}` and the constants for the inferred defaults.
 - The H.264 and H.265 VUI walks now read `overscan_info_present_flag`, `overscan_appropriate_flag` and the whole `video_signal_type` group in the specified order.
-- `transmux/docs/codec/vui-colour-tables.md`: the verified code-point tables with their source pages.
+- `private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md`: the verified code-point tables with their source pages.
 
 ## Verification
 

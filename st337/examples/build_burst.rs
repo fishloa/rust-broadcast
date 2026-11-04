@@ -9,7 +9,7 @@ use st337::{Burst, DataMode};
 fn main() {
     // A minimal four-word-preamble burst carrying an arbitrary payload.
     // `data_type` 1 is used here purely as an example value (this crate does
-    // not define a data_type -> codec mapping -- see docs/st337.md).
+    // not define a data_type -> codec mapping -- see private/specs-verified/smpte/st337/st337.md).
     let payload = b"example non-PCM burst payload bytes";
     let burst = Burst::new(
         1,                // data_type

@@ -78,7 +78,7 @@ site. This unblocks a whole professional-broadcast-plant surface that was
 previously paywalled, on top of the one SMPTE crate already shipped
 (`st291`, ANC data in MPEG-2 TS). Same filter as everything else in this
 repo: parse the wrapper/protocol, never the bitstream. (Check each PDF's own
-licence/redistribution terms before vendoring into `specs/` — the catalog page
+licence/redistribution terms before vendoring into `private/specs-verified/` — the catalog page
 itself doesn't state one.)
 
 9. **[SHIPPED — st291 0.2.0, #648] ST 2110-40 — ancillary data over RTP.** The direct RTP sibling of the

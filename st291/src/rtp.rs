@@ -1,8 +1,8 @@
 //! RFC 8331 — RTP Payload for SMPTE ST 291 Ancillary Data (ST 2110-40) §2/§2.1.
 //!
-//! See `docs/anc_rtp_8331.md` for the full field-by-field transcription this
+//! See `private/specs-verified/smpte/st291/anc_rtp_8331.md` for the full field-by-field transcription this
 //! module implements (RTP-header semantics, the §2.1 payload header, and the
-//! §3.1/§4 media-type/clock-rate constants) — `docs/anc_packet_291.md` for the
+//! §3.1/§4 media-type/clock-rate constants) — `private/specs-verified/smpte/st291/anc_packet_291.md` for the
 //! per-ANC-packet fields ([`crate::AncContent`]) this module reuses unchanged.
 //!
 //! This module implements only the RFC 8331 **payload** ([`AncRtpPayload`]):
@@ -91,7 +91,7 @@ fn bits_to_word_boundary(bits_so_far: usize) -> u32 {
 /// recommendation, not a wire-validity rule for this stateless parser: per
 /// this project's decode-completeness principle, parsing an `F` of `0b01`
 /// **succeeds** as [`FieldSense::Invalid`] rather than being rejected —
-/// leaving any SHOULD-ignore behavior to the caller (see `docs/anc_rtp_8331.md`).
+/// leaving any SHOULD-ignore behavior to the caller (see `private/specs-verified/smpte/st291/anc_rtp_8331.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -280,7 +280,7 @@ impl RtpAncPacket {
 /// `Length` and `ANC_Count` are never independent stored fields: both are
 /// always recomputed from `anc_packets` on [`Serialize::serialize_into`] and
 /// cross-validated against the wire value on [`Parse::parse`] (see
-/// `docs/anc_rtp_8331.md`).
+/// `private/specs-verified/smpte/st291/anc_rtp_8331.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AncRtpPayload {
@@ -288,7 +288,7 @@ pub struct AncRtpPayload {
     /// extended 32-bit RFC 4175 sequence number. Reconstructing the full
     /// 32-bit counter (RFC 4175's stateful sliding-window algorithm) is
     /// explicitly **out of scope** for this stateless per-packet parser (see
-    /// `docs/anc_rtp_8331.md`); this is the raw 16-bit field only.
+    /// `private/specs-verified/smpte/st291/anc_rtp_8331.md`); this is the raw 16-bit field only.
     pub extended_sequence_number: u16,
     /// `F` (2 bits) — field-sense signalling (§2.1); see [`FieldSense`].
     pub field_sense: FieldSense,

@@ -1,6 +1,6 @@
 //! Receiver-side ARQ (Automatic Repeat reQuest) reliability engine — VSF
 //! TR-06-1:2020 §5.3 (NACK-Based Recovery). Curated transcription:
-//! `docs/tr-06-1-simple-profile.md` §4 (§5.3.1 receiver buffers, §5.3.2
+//! `private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md` §4 (§5.3.1 receiver buffers, §5.3.2
 //! retransmission requests, §5.3.3 sender response, §5.3.4 burst control,
 //! Appendix B suggested defaults).
 //!
@@ -26,7 +26,7 @@
 //!   burst-suppression "are left to the discretion of the implementer" — no
 //!   formula relating RTT to timing is given, and TR-06-2:2024 (the Main
 //!   Profile) was checked and confirmed to add none either
-//!   (`docs/tr-06-2-main-profile-timing.md`).
+//!   (`private/specs-verified/vsf/rist-runtime/tr-06-2-main-profile-timing.md`).
 //! - Appendix B's only concrete numbers are flat, RTT-independent
 //!   *suggested defaults* ("manually configured... in the absence of user
 //!   input"): 1000 ms Receiver Buffer, 70 ms Reorder Section, 7
@@ -74,7 +74,7 @@
 //! and [`rtt`] — do not conflate a librist-sourced default with a
 //! spec-stated one; that conflation is exactly what produced the three
 //! fabricated Appendix B figures this crate's docs previously had to
-//! correct (see `docs/tr-06-1-simple-profile.md` Appendix B's own
+//! correct (see `private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md` Appendix B's own
 //! correction note).
 //!
 //! # Module map

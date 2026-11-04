@@ -6,7 +6,7 @@
 //! each a fragmented-MP4 `moof`+`mdat` carrying the Smooth-specific `tfxd`
 //! `uuid` box.
 //!
-//! # Structure ([MS-SSTR]; see `transmux/docs/smooth/ms-sstr.md`)
+//! # Structure ([MS-SSTR]; see `private/specs-verified/mpeg/transmux/smooth/ms-sstr.md`)
 //!
 //! - **Client Manifest** (§2.2.2): `SmoothStreamingMedia`(`MajorVersion=2`,
 //!   `MinorVersion=0`, `Duration`, `TimeScale=10000000`) → one `StreamIndex`

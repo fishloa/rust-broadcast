@@ -1,5 +1,5 @@
 //! Timeline Track, Event Track, and Static Track — SMPTE ST 377-1:2019
-//! Annex B §B.6/B.12/B.13/B.14 (`docs/st377-1.md`): the three concrete
+//! Annex B §B.6/B.12/B.13/B.14 (`private/specs-verified/smpte/st377-1/st377-1.md`): the three concrete
 //! Track kinds used inside Material and Source Packages.
 //!
 //! All three inherit Generic Track properties (B.6): Track ID, Track

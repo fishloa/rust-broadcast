@@ -1,6 +1,6 @@
 //! Every worked sample message from ANSI/SCTE 35 2023r1 §14 (PDF pp.112-121),
 //! run through the crate end-to-end. Each base64 string is verbatim from the
-//! spec's §14 (transcribed into `scte35-splice/docs/README.md`, machine-verified
+//! spec's §14 (transcribed into `private/specs-verified/scte/scte35-splice/`, machine-verified
 //! to decode to its stated byte length + match the spec's hex/CRC).
 //!
 //! For each: `parse` must succeed (which validates the splice_info_section

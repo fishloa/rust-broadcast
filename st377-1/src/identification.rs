@@ -1,4 +1,4 @@
-//! Identification — SMPTE ST 377-1:2019 Annex A.3 (`docs/st377-1.md`):
+//! Identification — SMPTE ST 377-1:2019 Annex A.3 (`private/specs-verified/smpte/st377-1/st377-1.md`):
 //! records the application/device that created or last modified the file.
 
 extern crate alloc;

@@ -1,7 +1,7 @@
 //! ARQ recovery integration test — wires a [`Sender`] and [`Receiver`] in
 //! memory (no sockets, no threads) and drives them through data loss,
 //! NAK-triggered retransmission, and the ACK/ACKACK exchange, per
-//! `specs/rules/srt-arq.md` (`draft-sharabayko-srt-01` §4.8/§4.8.1/§4.8.2/
+//! `private/specs-verified/rules/srt-arq.md` (`draft-sharabayko-srt-01` §4.8/§4.8.1/§4.8.2/
 //! §4.10).
 
 use core::time::Duration;
