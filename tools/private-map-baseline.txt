@@ -1,3 +1,0 @@
-# Citations that were already dangling before the private move (tools/check-private-map.py check 3).
-# file<TAB>cited path. May only shrink: fix or delete a citation, then delete its line.
-fixtures/hls/MANIFEST.md	ll-hls-runtime/docs/examples.md
