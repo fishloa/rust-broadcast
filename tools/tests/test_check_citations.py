@@ -72,5 +72,21 @@ def test_c_passes(tmp_path, monkeypatch) -> None:
     assert _run(monkeypatch, tmp_path) == 0
 
 
+
+_URL = "https://github.com/fishloa/rust-broadcast/blob/main/"
+
+
+def test_d_fails(tmp_path, monkeypatch) -> None:
+    _scratch(tmp_path, {"good.md": "see " + _URL + "missing.md\n"})
+    assert _run(monkeypatch, tmp_path) == 1
+
+
+def test_d_passes(tmp_path, monkeypatch) -> None:
+    (tmp_path / "good.md").write_text("hi\n", encoding="utf-8")
+    _scratch(tmp_path, {"good.md": "see " + _URL + "good.md\n"})
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    assert _run(monkeypatch, tmp_path) == 0
+
+
 def test_committed_tree_passes() -> None:
     assert cc.main() == 0

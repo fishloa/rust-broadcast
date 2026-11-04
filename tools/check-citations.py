@@ -30,6 +30,9 @@ PRIVATE_CITE = re.compile(
     r"(?<![\w./-])(private/(?:[\w.+\-*?\[\]]+/)*[\w.+\-*?\[\]]+\."
     r"(?:md|txt|pdf|tsv|toml|html))"
 )
+GITHUB_URL = re.compile(
+    r"https://github\.com/fishloa/rust-broadcast/(?:blob|tree)/[^/]+/([^\s)\"#?]+)"
+)
 GLOB_CHARS = set("*?[")
 HISTORICAL = re.compile(r"(^|/)CHANGELOG[^/]*\.md$|^docs/release-notes/|^docs/superpowers/|^\.delegate/|^private/")
 
@@ -317,6 +320,12 @@ def main() -> int:
             resolved = posixpath.normpath(posixpath.join(d, path))
             if resolved == "private" or resolved.startswith("private/") or path.startswith("private/"):
                 errors.append(f"{rel}: Markdown link into private/: {tgt}")
+
+        # d. absolute github URLs with nonexistent public paths
+        for m in GITHUB_URL.finditer(text):
+            path = m.group(1)
+            if not (ROOT / path).exists():
+                errors.append(f"{rel}: GitHub URL path does not exist: {path}")
 
     if errors:
         print("check-citations: FAILED", file=sys.stderr)
