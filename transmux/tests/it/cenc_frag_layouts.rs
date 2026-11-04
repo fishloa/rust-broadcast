@@ -1,7 +1,7 @@
 //! Oracle consumer: CENC fragmented-MP4 addressing (audit r05-W7,
 //! ISO/IEC 14496-12 §8.8.7 / §8.8.8).
 //!
-//! Consumes `tests/fixtures/cenc_frag_layouts/` — see its `README.md` and
+//! Consumes `../fixtures/transmux/cenc_frag_layouts/` — see its `README.md` and
 //! `ORACLES.md`. Nine encrypted files cover every combination of the three base
 //! rules (`base_data_offset` present / `default-base-is-moof` / neither) and two
 //! trun addressing modes (explicit `data_offset` / implicit, continuing after
@@ -27,7 +27,7 @@ const KEY: [u8; 16] = [
 
 const DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/cenc_frag_layouts"
+    "/../fixtures/transmux/cenc_frag_layouts"
 );
 
 fn read(name: &str) -> Vec<u8> {

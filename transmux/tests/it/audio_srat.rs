@@ -9,7 +9,7 @@
 //! (`srat`, §12.2.3.1), inside an `stsd` whose version is 1.
 //!
 //! Fixtures and their generator commands are described in
-//! `tests/fixtures/audio_srat/README.md`.
+//! `../fixtures/transmux/audio_srat/README.md`.
 //!
 //! The strongest test here is
 //! [`our_muxed_192k_output_is_read_back_by_external_tools`]: it muxes our own
@@ -33,7 +33,7 @@ use transmux::{FlacSpecificBox, ProgressiveDemux, TrackSpec};
 
 fn fixture(rel: &str) -> Vec<u8> {
     let path = format!(
-        "{}/tests/fixtures/audio_srat/{rel}",
+        "{}/../fixtures/transmux/audio_srat/{rel}",
         env!("CARGO_MANIFEST_DIR")
     );
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))

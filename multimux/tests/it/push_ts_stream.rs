@@ -351,7 +351,7 @@ async fn check_fixture(rel: &str) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn srt_push_av_offset_is_one_continuous_ts() {
-    check_fixture("../transmux/tests/fixtures/timeline/av_offset.ts").await;
+    check_fixture("../transmux/../fixtures/multimux/timeline/av_offset.ts").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

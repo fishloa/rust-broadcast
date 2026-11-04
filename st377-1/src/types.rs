@@ -442,7 +442,7 @@ pub fn parse_uid_batch(bytes: &[u8]) -> Result<Vec<UlBytes>> {
     // meaningful (and validated against 16) when `count > 0`. A real
     // encoder-written empty Batch (`count == 0`) has been observed with
     // `item_len == 0` rather than 16 (ffmpeg's OP1a Preface `DMSchemes`,
-    // `tests/fixtures/op1a_mpeg2_pcm.mxf`) — this crate previously rejected
+    // `../fixtures/mxf/st377-1/op1a_mpeg2_pcm.mxf`) — this crate previously rejected
     // that as `InvalidBatchHeader`, even though `count == 0` unambiguously
     // means "no elements" regardless of the stated element size.
     // #1108/MX-W1: `count as usize * 16` wraps on a 32-bit target for a
@@ -471,7 +471,7 @@ pub fn parse_uid_batch(bytes: &[u8]) -> Result<Vec<UlBytes>> {
 /// each *element type* in the batch, not the instance count, so this crate
 /// keeps it constant even when `count == 0`. (Some real encoders write
 /// `item_len = 0` for an empty batch instead — e.g. `ffmpeg`'s OP1a Preface
-/// `DMSchemes` in `tests/fixtures/op1a_mpeg2_pcm.mxf` — which
+/// `DMSchemes` in `../fixtures/mxf/st377-1/op1a_mpeg2_pcm.mxf` — which
 /// [`parse_uid_batch`] tolerates on input; this crate's own output stays
 /// canonical.)
 #[must_use]

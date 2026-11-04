@@ -158,7 +158,7 @@ const TWO_RESOLUTIONS_KEYFRAME_DTS: i64 = 306_000;
 #[test]
 fn track_updated_lands_after_the_last_old_config_sample() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/ts/h264-two-resolutions.ts");
+        .join("../fixtures/transmux/ts/h264-two-resolutions.ts");
     let data = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let mut demux = StreamingTsDemux::new();
     let mut sequence = Vec::new();

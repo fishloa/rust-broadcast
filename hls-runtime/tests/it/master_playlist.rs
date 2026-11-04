@@ -7,7 +7,7 @@ use hls_runtime::client::{Action, Error, HlsClient, Output, VariantPolicy};
 fn read_ts_fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/ts-hls"
+        "/../fixtures/hls/ts-hls"
     ))
     .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))

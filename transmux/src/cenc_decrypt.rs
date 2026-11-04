@@ -1615,7 +1615,7 @@ mod tests {
     fn all_layouts_decrypt_audio_to_clear() {
         let dir = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/cenc_frag_layouts"
+            "/../fixtures/transmux/cenc_frag_layouts"
         );
         let read = |name: &str| {
             std::fs::read(alloc::format!("{dir}/{name}"))
@@ -1748,7 +1748,7 @@ mod tests {
     /// cenc_boxes sets), so the dedup is behaviour-preserving.
     #[test]
     fn shared_box_nav_agrees_with_removed_private_copies_on_real_fixtures() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/transmux");
         let mut files = Vec::new();
         for dir in [
             alloc::format!("{root}/cenc_frag_layouts"),

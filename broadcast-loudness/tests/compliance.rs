@@ -602,7 +602,7 @@ fn lra_case_4_five_tones_music_box() {
 // meter that computes LRA from 400 ms momentary blocks instead of 3 s
 // short-term values: a steady tone's 400 ms and 3 s loudness are identical,
 // so the two computations agree by construction. `programme_dynamic.wav`
-// (see `tests/fixtures/README.md` for exact provenance/generation command)
+// (see `../fixtures/loudness/README.md` for exact provenance/generation command)
 // alternates every 0.5 s between -20 dBFS and -35 dBFS — fast enough that a
 // 3 s window almost always sees close to the same blend of both levels
 // (narrow spread, correct LRA close to 0 LU) while a 400 ms window sits
@@ -659,14 +659,14 @@ fn read_wav_mono_s16le(path: &std::path::Path) -> (Vec<f32>, u32) {
 }
 
 /// The fixture's LRA per this crate vs. ffmpeg's independently-computed
-/// `ebur128` LRA (`0.2 LU`, recorded in `tests/fixtures/README.md`). A
+/// `ebur128` LRA (`0.2 LU`, recorded in `../fixtures/loudness/README.md`). A
 /// meter computing LRA from 400 ms blocks instead of 3 s short-term values
 /// was measured (pre-fix) at several times ffmpeg's value on this exact
 /// file — nowhere near the tolerance below.
 #[test]
 fn lra_case_5_programme_dynamic_matches_ffmpeg_oracle() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/programme_dynamic.wav");
+        .join("../fixtures/loudness/programme_dynamic.wav");
     let (samples, sample_rate) = read_wav_mono_s16le(&path);
 
     let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Mono).unwrap();
@@ -686,14 +686,14 @@ fn lra_case_5_programme_dynamic_matches_ffmpeg_oracle() {
 
 /// A second, slower-moving (segment-scale, not 400 ms-scale) programme
 /// signal, checked to a tighter ±0.1 LU against ffmpeg's own `ebur128`
-/// (coordinator review of issue #1051 — see `tests/fixtures/README.md` for
+/// (coordinator review of issue #1051 — see `../fixtures/loudness/README.md` for
 /// exact provenance/generation and why 0.1 LU is a meaningful bound against
 /// a 1-decimal-printed oracle value). Four 10 s segments at -30/-20/-25/-15
 /// dBFS; ffmpeg reports `LRA: 15.0 LU` on this exact file.
 #[test]
 fn lra_case_6_programme_segments_matches_ffmpeg_oracle_tightly() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/programme_segments.wav");
+        .join("../fixtures/loudness/programme_segments.wav");
     let (samples, sample_rate) = read_wav_mono_s16le(&path);
 
     let mut meter = LoudnessMeter::new(sample_rate, ChannelLayout::Mono).unwrap();

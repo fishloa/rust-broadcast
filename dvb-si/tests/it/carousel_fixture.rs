@@ -1,6 +1,6 @@
 //! Live-capture validation of the DSM-CC carousel message layouts.
 //!
-//! `tests/fixtures/m6-single.ts` (French TNT, M6 HbbTV object carousel,
+//! `../fixtures/dvb-si/m6-single.ts` (French TNT, M6 HbbTV object carousel,
 //! PID 0x00AB) carries a DSI, a DII and DDB sections. These tests pin the
 //! hand-transcribed layouts in `private/specs-verified/dvb/dvb-si/` against real
 //! broadcast bytes: DSM-CC section framing → typed DSI/DII/DDB messages →

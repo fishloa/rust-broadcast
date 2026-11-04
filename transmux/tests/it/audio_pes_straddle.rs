@@ -42,7 +42,7 @@ fn fixture(rel: &str) -> Vec<u8> {
 
 fn local_fixture(rel: &str) -> Vec<u8> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/audio_pes_straddle")
+        .join("../fixtures/transmux/audio_pes_straddle")
         .join(rel);
     std::fs::read(&p).unwrap_or_else(|e| panic!("read fixture {}: {e}", p.display()))
 }

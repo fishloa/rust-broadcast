@@ -100,14 +100,14 @@ fn real_paff_capture_reports_field_pairs() {
 
 #[test]
 fn synthetic_paff_reports_parity_of_the_first_field() {
-    let (scan, tff) = facts_of("transmux/tests/fixtures/paff/paff_tff_12f_64x64.ts");
+    let (scan, tff) = facts_of("transmux/../fixtures/transmux/paff/paff_tff_12f_64x64.ts");
     assert_eq!(scan, VideoScan::Paff);
     assert_eq!(tff.len(), 12);
     assert!(
         tff.iter()
             .all(|f| f.field_pic && f.fields == 2 && f.bottom_field_first == Some(false))
     );
-    let (_, bff) = facts_of("transmux/tests/fixtures/paff/paff_bff_12f_64x64.ts");
+    let (_, bff) = facts_of("transmux/../fixtures/transmux/paff/paff_bff_12f_64x64.ts");
     assert!(
         bff.iter()
             .all(|f| f.field_pic && f.fields == 2 && f.bottom_field_first == Some(true))

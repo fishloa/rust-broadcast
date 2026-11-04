@@ -145,9 +145,9 @@ fn audio_and_video_fixtures_are_chunk_size_invariant() {
         "fixtures/ts/dolby/ac3.ts",
         "fixtures/ts/dts/dts_core.ts",
         "fixtures/ts/m6-single.ts",
-        "transmux/tests/fixtures/timeline/av_offset.ts",
-        "transmux/tests/fixtures/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
-        "transmux/tests/fixtures/paff/paff_tff_12f_64x64.ts",
+        "transmux/../fixtures/transmux/timeline/av_offset.ts",
+        "transmux/../fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
+        "transmux/../fixtures/transmux/paff/paff_tff_12f_64x64.ts",
     ] {
         let events = assert_invariant(rel);
         let k = kinds(&events);
@@ -167,7 +167,7 @@ fn discontinuity_and_track_update_events_are_chunk_size_invariant() {
     );
 
     // SD <-> HD parameter-set change on one PID: TrackUpdated, same track_id.
-    let events = assert_invariant("transmux/tests/fixtures/ts/h264-two-resolutions.ts");
+    let events = assert_invariant("transmux/../fixtures/transmux/ts/h264-two-resolutions.ts");
     let k = kinds(&events);
     assert!(
         k.get("TrackUpdated").copied().unwrap_or(0) > 0,

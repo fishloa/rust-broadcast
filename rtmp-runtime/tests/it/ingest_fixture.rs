@@ -2,9 +2,9 @@
 //! publish through [`ServerSession::handle_data`] and confirm the emitted FLV
 //! decodes through [`transmux::FlvDemux`] to a real H.264+AAC `Media`.
 //!
-//! Fixture: `tests/fixtures/obs-publish.bin` — every raw inbound byte a real
+//! Fixture: `../fixtures/rtmp/obs-publish.bin` — every raw inbound byte a real
 //! `ffmpeg -f flv` publisher sent to the sans-IO [`ServerSession`], captured
-//! by `examples/capture_publish.rs`. See `tests/fixtures/PROVENANCE.md` for
+//! by `examples/capture_publish.rs`. See `../fixtures/rtmp/PROVENANCE.md` for
 //! the exact command and capture details.
 //!
 //! This test is entirely offline: no socket, no tokio — it only replays the
@@ -18,11 +18,11 @@ use transmux::{CodecConfig, FlvDemux};
 
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/obs-publish.bin"
+    "/../fixtures/rtmp/obs-publish.bin"
 );
 
 fn load_fixture() -> Vec<u8> {
-    std::fs::read(FIXTURE).expect("read tests/fixtures/obs-publish.bin")
+    std::fs::read(FIXTURE).expect("read ../fixtures/rtmp/obs-publish.bin")
 }
 
 /// Feed `input` to a fresh [`ServerSession`] in `chunk_len`-sized pieces

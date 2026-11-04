@@ -9,12 +9,12 @@
 //! `usertype` replaced by the first 8 payload bytes.
 //!
 //! Fixtures: real ffmpeg output with real `uuid` children spliced in —
-//! see `tests/fixtures/mp4/uuid_boxes/README.md`.
+//! see `../fixtures/transmux/mp4/uuid_boxes/README.md`.
 
 use broadcast_common::{Parse, Serialize, Unpackage};
 use transmux::{Fmp4Demux, MovieBox};
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mp4/uuid_boxes");
+const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/transmux/mp4/uuid_boxes");
 
 fn read(name: &str) -> Vec<u8> {
     let p = format!("{DIR}/{name}");

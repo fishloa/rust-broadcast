@@ -56,7 +56,7 @@ async fn handle(State(o): State<Origin>, req: Request) -> axum::response::Respon
 async fn a_rejected_blocking_reload_is_retried_once_as_a_plain_get() {
     let segment = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/ts-hls/index0.ts"
+        "/../fixtures/hls/ts-hls/index0.ts"
     ))
     .unwrap();
     // Bound to port 0 first and handed to axum: no reserve-then-rebind.

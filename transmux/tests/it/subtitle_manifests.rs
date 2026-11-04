@@ -10,7 +10,7 @@
 //! means `stpp.ttml.etd1`); Smooth per [MS-SSTR] §2.2.2.3 (`Type="text"`,
 //! `Subtype` required) and §2.2.2.5 (FourCC: a registered MPEG4-RA code).
 //!
-//! Real artifact: `tests/fixtures/mp4/cmaf/av_subtitle_frag.mp4` (ffmpeg CMAF,
+//! Real artifact: `../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4` (ffmpeg CMAF,
 //! AVC + `stpp`/TTML). `wvtt` has no real producer available (ffmpeg
 //! cannot write it), so it is a spec-vector.
 
@@ -24,7 +24,7 @@ use transmux::{
 fn load_av_subtitle() -> Media {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/mp4/cmaf/av_subtitle_frag.mp4"
+        "/../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4"
     );
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     Fmp4Demux::new().unpackage(&bytes).expect("demux fixture")

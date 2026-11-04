@@ -544,7 +544,7 @@ mod tests {
         use broadcast_common::Unpackage;
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/cenc_frag_layouts/clear_multitrun_omit_implicit.mp4"
+            "/../fixtures/transmux/cenc_frag_layouts/clear_multitrun_omit_implicit.mp4"
         );
         let bytes = std::fs::read(path).expect("fixture");
         let before = scans();

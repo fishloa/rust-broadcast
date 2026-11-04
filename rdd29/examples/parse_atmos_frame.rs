@@ -1,5 +1,5 @@
 //! Wrap the committed real-fixture E-AC-3 frame
-//! (`tests/fixtures/eac3_frame0.bin`) as an opaque `AudioDataDLC` payload
+//! (`../fixtures/eac3-dep/eac3_frame0.bin`) as an opaque `AudioDataDLC` payload
 //! inside a hand-built `ATMOSFrame`, parse it back, and confirm the payload
 //! is byte-identical to the real capture — SMPTE RDD 29:2019 §2.4/§4.5.
 //!
@@ -18,7 +18,7 @@ fn main() {
     // AudioDataDLC payload, exactly like st337 treats its burst_payload.
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/eac3_frame0.bin"
+        "/../fixtures/eac3-dep/eac3_frame0.bin"
     );
     let real_audio = std::fs::read(path).expect("fixture must exist");
 

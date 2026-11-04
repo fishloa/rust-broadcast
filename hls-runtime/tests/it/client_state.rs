@@ -618,7 +618,7 @@ fn fetched_ranges(client: &mut HlsClient) -> Vec<(ResourceId, Option<(u64, u64)>
 }
 
 fn fixture(rel: &str) -> String {
-    let path = format!("{}/tests/fixtures/{rel}", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../fixtures/hls/{rel}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
 }
 
@@ -834,7 +834,7 @@ fn regression_after_delivery_neither_refetches_nor_duplicates() {
     // delivered, so only 9 is fetched; the samples are the union, once.
     let ts = |name: &str| {
         std::fs::read(format!(
-            "{}/tests/fixtures/ts-hls/{name}",
+            "{}/../fixtures/hls/ts-hls/{name}",
             env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap()

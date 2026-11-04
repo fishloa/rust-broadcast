@@ -191,9 +191,9 @@ const FIXTURES: &[&str] = &[
     "fixtures/ts/france2.ts",
     "fixtures/ts/m6-single.ts",
     "fixtures/ts/h264/high_1080_cropped.ts",
-    "transmux/tests/fixtures/ts/h264-two-resolutions.ts",
-    "transmux/tests/fixtures/sample_aes_eac3/clear.ts",
-    "transmux/tests/fixtures/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
+    "transmux/../fixtures/transmux/ts/h264-two-resolutions.ts",
+    "transmux/../fixtures/transmux/sample_aes_eac3/clear.ts",
+    "transmux/../fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
 ];
 
 /// The config-validity check needs whole-length damage: the over-long

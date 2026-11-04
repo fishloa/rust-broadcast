@@ -73,7 +73,7 @@ fn run(mux: &mut StreamingTsMux, m: &Media) -> (Vec<u8>, usize) {
 fn per_sample_feed_is_one_stream_equal_to_the_whole_media_mux() {
     for rel in [
         "../fixtures/ts/h264_aac.ts",
-        "tests/fixtures/timeline/av_offset.ts",
+        "../fixtures/transmux/timeline/av_offset.ts",
     ] {
         let m = media(rel);
         let (out, n) = run(&mut StreamingTsMux::new(), &m);

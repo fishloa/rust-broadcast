@@ -5,7 +5,7 @@
 //!
 //! The streams are spec-built by `tests/support/paff_gen.rs` (I_PCM, losslessly
 //! decodable, every field different), 12 frames of 64x64, TFF and BFF; two are
-//! also committed under `tests/fixtures/paff/` and pinned against the generator.
+//! also committed under `../fixtures/transmux/paff/` and pinned against the generator.
 
 #[path = "support/paff_gen.rs"]
 mod paff_gen;
@@ -245,7 +245,7 @@ fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
 
 #[test]
 fn committed_fixtures_match_the_generator_and_pair() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/paff");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/transmux/paff");
     for (name, g) in [
         ("paff_tff_12f_64x64", gen_tff()),
         ("paff_bff_12f_64x64", gen_bff()),
@@ -417,7 +417,7 @@ fn progressive_and_non_field_streams_are_unaffected() {
 #[test]
 #[ignore]
 fn regenerate_fixtures() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/paff");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/transmux/paff");
     for (name, g) in [
         ("paff_tff_12f_64x64", gen_tff()),
         ("paff_bff_12f_64x64", gen_bff()),

@@ -1,4 +1,4 @@
-//! Real `libsrt` control-packet fixtures (issue #1060) — `tests/fixtures/README.md`
+//! Real `libsrt` control-packet fixtures (issue #1060) — `../fixtures/srt/README.md`
 //! records how they were captured (a real `srt-live-transmit` 1.5.5 session,
 //! sniffed on loopback).
 //!
@@ -14,7 +14,7 @@ use srt_runtime::packet::{AckAckPacket, ControlPacket, KeepAlivePacket, SrtPacke
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
+        .join("../fixtures/srt")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path:?}: {e}"))
 }

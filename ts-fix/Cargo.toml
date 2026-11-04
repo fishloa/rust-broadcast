@@ -8,7 +8,7 @@ rust-version.workspace = true
 description  = "MPEG-2 TS repair / remux — continuity, PID filter, PAT/PMT regen, stuffing, PCR restamp (ISO/IEC 13818-1)."
 keywords     = ["mpeg-ts", "transport-stream", "repair", "remux", "dvb"]
 categories   = ["parser-implementations", "multimedia::video"]
-exclude      = ["tests/fixtures/**"]
+exclude      = ["../fixtures/ts/**"]
 readme       = "README.md"
 
 [dependencies]

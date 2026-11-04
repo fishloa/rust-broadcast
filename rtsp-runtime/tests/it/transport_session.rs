@@ -262,7 +262,7 @@ fn unknown_parameters_keep_order_and_quoting_semantics() {
 }
 
 /// Headers exactly as they appear in this repository's interop tests (the hand-written
-/// RFC-style session fixture `tests/fixtures/session_tcp_interleaved.md`, `tests/it/io_loopback.rs`,
+/// RFC-style session fixture `../fixtures/rtsp/session_tcp_interleaved.md`, `tests/it/io_loopback.rs`,
 /// `tests/it/integration.rs` and multimux's `source/rtsp.rs` tests). No RTSP packet capture exists
 /// under `private/fixtures`.
 #[test]

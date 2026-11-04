@@ -1548,12 +1548,12 @@ mod largesize_tests {
             "../fixtures/transmux/h264_cenc.mp4",
             "../fixtures/transmux/h264_cbcs.mp4",
             "../fixtures/transmux/hevc_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_subtitle_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_aac_subtitle_frag.mp4",
-            "tests/fixtures/mp4/cenc_boxes/aac_cenc.mp4",
-            "tests/fixtures/mp4/cenc_boxes/pcm_clear.mp4",
-            "tests/fixtures/mp4/cenc_boxes/v1_mvhd.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_frag.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_aac_subtitle_frag.mp4",
+            "../fixtures/transmux/mp4/cenc_boxes/aac_cenc.mp4",
+            "../fixtures/transmux/mp4/cenc_boxes/pcm_clear.mp4",
+            "../fixtures/transmux/mp4/cenc_boxes/v1_mvhd.mp4",
         ] {
             let data = read_path(rel);
             let Some(orig) = find_top_box(&data, b"moov") else {
@@ -1591,8 +1591,8 @@ mod largesize_tests {
             "../fixtures/transmux/h264_cenc.mp4",
             "../fixtures/transmux/h264_cbcs.mp4",
             "../fixtures/transmux/hevc_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_frag.mp4",
-            "tests/fixtures/mp4/cmaf/av_subtitle_frag.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_frag.mp4",
+            "../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4",
         ] {
             let data = read_path(rel);
             let Some(orig) = find_top_box(&data, b"moof") else {

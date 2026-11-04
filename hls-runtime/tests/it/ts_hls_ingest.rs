@@ -5,7 +5,7 @@
 //! offline drive style (no socket, no real network — fixture bytes are fed
 //! straight from disk).
 //!
-//! The fixture (`tests/fixtures/ts-hls/`, see its `PROVENANCE.md`) is real
+//! The fixture (`../fixtures/hls/ts-hls/`, see its `PROVENANCE.md`) is real
 //! ffmpeg `-f hls -hls_segment_type mpegts` output generated from the
 //! workspace's own committed `fixtures/ts/h264_aac.ts` capture — not
 //! hand-typed bytes, so it carries the real PAT/PMT/PES layout the wild
@@ -33,7 +33,7 @@ const TS_SYNC_BYTE: u8 = 0x47;
 fn fixture_dir() -> PathBuf {
     PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/ts-hls"
+        "/../fixtures/hls/ts-hls"
     ))
 }
 

@@ -10,7 +10,7 @@ categories   = ["parser-implementations", "multimedia"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 rust-version.workspace = true
-exclude      = ["docs/**", "tests/fixtures/**"]
+exclude      = ["docs/**", "../fixtures/dvb-si/**"]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -200,7 +200,7 @@ fn krone_16_11_to_64_45_pmt_then_sps() {
 #[test]
 fn two_resolutions_one_update_when_only_the_sps_changes() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/ts/h264-two-resolutions.ts");
+        .join("../fixtures/transmux/ts/h264-two-resolutions.ts");
     let data = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let events = video_events(&data);
     let tracks = added(&events);

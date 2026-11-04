@@ -54,7 +54,7 @@ fn stray_equals_inside_the_data_is_an_error() {
 }
 
 /// The real ffmpeg High-profile `sprop-parameter-sets` (fixture
-/// `tests/fixtures/rtp/high-ffmpeg.sdp`) with its padding removed must give a
+/// `../fixtures/transmux/rtp/high-ffmpeg.sdp`) with its padding removed must give a
 /// byte-identical avcC.
 #[test]
 fn unpadded_real_sprop_gives_identical_avcc() {

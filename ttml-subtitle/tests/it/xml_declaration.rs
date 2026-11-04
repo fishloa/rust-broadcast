@@ -12,7 +12,7 @@ const DEFAULT_DECL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>"#;
 
 fn fixture(name: &str) -> String {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
+        .join("../fixtures/ttml")
         .join(name);
     fs::read_to_string(p).expect("fixture")
 }

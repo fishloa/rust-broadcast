@@ -9965,7 +9965,7 @@ pub(crate) mod tests {
     /// The (SPS, PPS, width) of the fixture's first and second resolution.
     fn two_resolution_sets() -> [(Vec<u8>, Vec<u8>, u16); 2] {
         let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/fixtures/ts/h264-two-resolutions.ts");
+        path.push("../fixtures/transmux/ts/h264-two-resolutions.ts");
         let bytes = std::fs::read(&path).unwrap();
         let mut demux = StreamingTsDemux::new();
         demux.feed(&bytes);
@@ -10056,7 +10056,7 @@ pub(crate) mod tests {
     /// so the track kept the *first* `avcC` and the init segment described a
     /// stream that had stopped being sent; a decoder then fails from the change
     /// onwards. The fixture is a real two-resolution capture (see
-    /// `tests/fixtures/ts/README.md`), demuxed through the streaming core so the
+    /// `../fixtures/transmux/ts/README.md`), demuxed through the streaming core so the
     /// `TrackUpdated` event is observable.
     ///
     /// The second half is the anti-spam half: the same fixture shows the

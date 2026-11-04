@@ -1,4 +1,4 @@
-//! Wrap the committed real-fixture E-AC-3 frame (`tests/fixtures/eac3_frame0.bin`)
+//! Wrap the committed real-fixture E-AC-3 frame (`../fixtures/eac3-dep/eac3_frame0.bin`)
 //! in an ST 337 burst, parse it back, and confirm the payload is
 //! byte-identical to the real capture — SMPTE ST 337:2015 §7.
 //!
@@ -13,7 +13,7 @@ fn main() {
     // against ffmpeg's own IEC 61937 burst framing.
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/eac3_frame0.bin"
+        "/../fixtures/eac3-dep/eac3_frame0.bin"
     );
     let payload = std::fs::read(path).expect("fixture must exist");
 

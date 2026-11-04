@@ -13,7 +13,7 @@ use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec, Wvt
 fn fixture() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/mp4/cmaf/av_subtitle_frag.mp4"
+        "/../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4"
     );
     std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"))
 }

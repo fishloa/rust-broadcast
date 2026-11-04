@@ -220,7 +220,7 @@ fn multiple_foreign_children_keep_order() {
 /// an identical tree.
 #[test]
 fn committed_fixtures_round_trip_through_to_xml() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ttml");
     let mut n = 0;
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();

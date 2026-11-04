@@ -1,11 +1,11 @@
 //! Fixture-backed tests: parse AIT, DSM-CC, and NIT sections from captured TS.
 //!
-//! `tests/fixtures/m6-single.ts` contains:
+//! `../fixtures/dvb-si/m6-single.ts` contains:
 //! - AIT (table_id 0x74) on PID 0x00AA (3 sections)
 //! - DSM-CC (table_id 0x3B, 0x3C) on PID 0x00AB (3 sections total)
 //!
 //! NIT fixtures (table_id 0x40/0x41 on PID 0x0010):
-//! - `tests/fixtures/tnt-5w-12732v-isi6-10s.ts` — 2 NIT sections (primary fixture)
+//! - `../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` — 2 NIT sections (primary fixture)
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};

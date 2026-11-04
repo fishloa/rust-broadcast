@@ -18,7 +18,7 @@ fn fixture(name: &str) -> Vec<u8> {
     let path = format!(
         concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/mp4/cenc_boxes/{}"
+            "/../fixtures/transmux/mp4/cenc_boxes/{}"
         ),
         name
     );

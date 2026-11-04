@@ -6,7 +6,7 @@
 //!
 //! `tests/it/spec_vectors.rs` notes this crate had no real captured RTCP traffic
 //! to draw on; this file closes that gap with one captured from a real
-//! Chromium `RTCPeerConnection` (see `tests/fixtures/README.md` for exact
+//! Chromium `RTCPeerConnection` (see `../fixtures/rtcp/README.md` for exact
 //! provenance) rather than another hand-built or spec-derived vector — this
 //! specific bug (rejecting on PT 205/206/207) can only be demonstrated by
 //! bytes a real peer actually sends, since a spec-derived vector risks

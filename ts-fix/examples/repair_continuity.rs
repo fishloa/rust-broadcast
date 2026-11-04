@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::fs;
 
 /// Path to the test fixture, resolved at compile time.
-const FIXTURE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/m6-single.ts");
+const FIXTURE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
 
 fn main() {
     let input = fs::read(FIXTURE_PATH).expect("fixture m6-single.ts not found");

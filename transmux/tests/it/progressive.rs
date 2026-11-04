@@ -505,7 +505,7 @@ fn faststart_false_same_samples_different_order() {
 // ---------------------------------------------------------------------------
 
 /// A movie timescale large enough (2 GHz, as in
-/// `tests/fixtures/mp4/cenc_boxes/v1_mvhd.mp4`) that a few minutes of media
+/// `../fixtures/transmux/mp4/cenc_boxes/v1_mvhd.mp4`) that a few minutes of media
 /// overflows `u32::MAX` ticks — the real-world trigger for the version-1
 /// `mvhd`/`tkhd`/`mdhd` layouts.
 const HUGE_TIMESCALE: u32 = 2_000_000_000;

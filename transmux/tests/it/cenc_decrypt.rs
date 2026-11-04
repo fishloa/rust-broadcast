@@ -302,7 +302,7 @@ fn demux_skips_non_avc_protected_track() {
 fn demux_reports_unprotected_track_as_skipped() {
     const MIXED: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/cenc_mixed_tracks.mp4"
+        "/../fixtures/transmux/cenc_mixed_tracks.mp4"
     );
     let file = read(MIXED);
     let dec = CencDecryptor::from_fmp4(&file).expect("harvest");
@@ -353,7 +353,7 @@ fn demux_avc_track_matches_mp4decrypt() {
     }
     const LAY: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/cenc_frag_layouts"
+        "/../fixtures/transmux/cenc_frag_layouts"
     );
     let path = format!("{LAY}/enc_base_moof_none.mp4");
     let file = std::fs::read(&path).expect("read layout fixture");

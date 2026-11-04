@@ -44,7 +44,7 @@ Parse a real `libsrt` KEEPALIVE (captured from `srt-live-transmit` 1.5.5) and wr
 ```rust
 use srt_runtime::packet::{ControlPacket, SrtPacket};
 
-let bytes = std::fs::read("tests/fixtures/libsrt_keepalive.bin").unwrap();
+let bytes = std::fs::read("../fixtures/srt/libsrt_keepalive.bin").unwrap();
 let packet = SrtPacket::parse(&bytes).unwrap();
 assert!(matches!(packet, SrtPacket::Control(ControlPacket::KeepAlive(_))));
 

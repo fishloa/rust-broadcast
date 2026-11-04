@@ -35,7 +35,7 @@ fn track(m: &Media, pick: impl Fn(&CodecConfig) -> bool) -> &CodecConfig {
         .config
 }
 
-const SINTEL: &str = "tests/fixtures/audio_pes_straddle/sintel-ac3-eac3-aligned.ts";
+const SINTEL: &str = "../fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts";
 
 #[test]
 fn ac3_5_1_counts_lfe_and_keeps_full_bandwidth_count() {

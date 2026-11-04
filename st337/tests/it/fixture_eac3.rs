@@ -3,7 +3,7 @@
 //!
 //! ## Fixture provenance
 //!
-//! `tests/fixtures/eac3_frame0.bin` is 834 real bytes: the first E-AC-3
+//! `../fixtures/eac3-dep/eac3_frame0.bin` is 834 real bytes: the first E-AC-3
 //! syncframe of this workspace's own ffmpeg-encoded capture
 //! `fixtures/ts/dolby/eac3.ts` (already a committed Dolby oracle fixture,
 //! issue #426). SMPTE ST 337 is an AES3 *wire*-layer format with no
@@ -26,7 +26,7 @@ use st337::{Burst, DataMode};
 fn real_eac3_frame() -> Vec<u8> {
     std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/eac3_frame0.bin"
+        "/../fixtures/eac3-dep/eac3_frame0.bin"
     ))
     .expect("eac3_frame0.bin fixture must exist")
 }

@@ -57,7 +57,7 @@
 //! - Symmetric `Parse`/`Serialize`; every reserved field is a hard-validated
 //!   constant so a corrupt frame cannot re-serialize differently.
 //! - Real-data caveat: RDD 29 has no capturable file format outside a licensed
-//!   encoder, so the committed fixture (`tests/fixtures/eac3_frame0.bin`) is a
+//!   encoder, so the committed fixture (`../fixtures/eac3-dep/eac3_frame0.bin`) is a
 //!   real E-AC-3 syncframe used as an opaque `AudioDataDLC` payload inside
 //!   framing built through this crate's own typed API; there is no real Atmos
 //!   capture behind the tests.

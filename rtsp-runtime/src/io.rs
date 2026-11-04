@@ -871,8 +871,8 @@ mod tls_timeout_tests {
     }
 
     fn server_config() -> rustls::ServerConfig {
-        let cert = include_bytes!("../tests/fixtures/localhost-cert.der").to_vec();
-        let key = include_bytes!("../tests/fixtures/localhost-key.der").to_vec();
+        let cert = include_bytes!("../../fixtures/rtsp/localhost-cert.der").to_vec();
+        let key = include_bytes!("../../fixtures/rtsp/localhost-key.der").to_vec();
         rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
             rustls::crypto::aws_lc_rs::default_provider(),
         ))

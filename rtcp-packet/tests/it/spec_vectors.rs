@@ -5,7 +5,7 @@
 //!
 //! `rtcp-packet` had no real captured RTCP traffic to draw a fixture from
 //! when this file was written: unlike `rtp-packet` (whose
-//! `tests/fixtures/rtp_simple.bin` was captured by running this workspace's
+//! `../fixtures/rtcp/rtp_simple.bin` was captured by running this workspace's
 //! own `transmux::RtpPacketiser`), transmux's RTCP module (`transmux::rtcp`,
 //! pre-extraction) was never wired to a hub `Package`/`Unpackage` spoke — a
 //! standalone codec with no producer in this repo, and no live network/pcap
