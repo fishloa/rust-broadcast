@@ -17,7 +17,7 @@
 //! per-code reference — standard, verified clause, Rust type and status for every
 //! table_id and descriptor tag, plus every allocated code that is **not**
 //! implemented — is
-//! ``private/specs-verified/dvb/dvb-si/COVERAGE.md``.
+//! `private/specs-verified/dvb/dvb-si/COVERAGE.md`.
 //!
 //! <!-- BEGIN GENERATED: dvb-si-at-a-glance (tools/gen-dvbsi-coverage.py) -->
 //!
