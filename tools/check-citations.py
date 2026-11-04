@@ -204,6 +204,8 @@ def is_text(path: Path) -> bool:
 
 
 def has_prefix(p: str) -> bool:
+    if p.startswith("private/"):
+        return False
     if p.startswith("docs/") or p.startswith("specs/") or p.startswith("fixtures/"):
         return True
     # <crate>/docs/
@@ -218,7 +220,10 @@ def main() -> int:
     present = set(f for f in present if f != "private")
 
     private_root = ROOT / "private" / "specs-verified"
-    if not private_root.is_dir():
+    if os.environ.get("SKIP_PRIVATE_FIXTURES") == "1":
+        skip_private = True
+        print("check-citations: private/specs-verified skipped (SKIP_PRIVATE_FIXTURES=1)")
+    elif not private_root.is_dir():
         if os.environ.get("REQUIRE_PRIVATE_FIXTURES") == "1":
             print("check-citations: FAILED", file=sys.stderr)
             print("  private/specs-verified not checked out (REQUIRE_PRIVATE_FIXTURES=1)", file=sys.stderr)
@@ -266,6 +271,8 @@ def main() -> int:
         for m in CITE.finditer(text):
             cite = m.group(1)
             if not has_prefix(cite):
+                continue
+            if cite.startswith("private/"):
                 continue
             if "release-notes/" in cite:
                 continue
@@ -321,10 +328,12 @@ def main() -> int:
             if resolved == "private" or resolved.startswith("private/") or path.startswith("private/"):
                 errors.append(f"{rel}: Markdown link into private/: {tgt}")
 
-        # d. absolute github URLs with nonexistent public paths
+        # d. absolute github URLs
         for m in GITHUB_URL.finditer(text):
             path = m.group(1)
-            if not (ROOT / path).exists():
+            if path.startswith("private/") or path.startswith("private"):
+                errors.append(f"{rel}: GitHub URL links into private/: {path}")
+            elif not (ROOT / path).exists():
                 errors.append(f"{rel}: GitHub URL path does not exist: {path}")
 
     if errors:

@@ -43,6 +43,7 @@ def test_a_passes(tmp_path, monkeypatch) -> None:
 
 
 def test_b_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
     _scratch(tmp_path, {"good.md": "see private/missing.md\n", "private/specs-verified/.keep": ""})
     # ensure private root present
     (tmp_path / "private" / "specs-verified").mkdir(parents=True, exist_ok=True)
@@ -52,6 +53,7 @@ def test_b_fails(tmp_path, monkeypatch) -> None:
 
 
 def test_b_passes(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
     (tmp_path / "private" / "specs-verified").mkdir(parents=True, exist_ok=True)
     (tmp_path / "private" / "exists.md").parent.mkdir(parents=True, exist_ok=True)
     (tmp_path / "private" / "exists.md").write_text("hi\n", encoding="utf-8")
@@ -88,5 +90,20 @@ def test_d_passes(tmp_path, monkeypatch) -> None:
     assert _run(monkeypatch, tmp_path) == 0
 
 
+
+def test_private_citation_passes_check_a_when_absent(tmp_path, monkeypatch) -> None:
+    # private/ tree absent; a private/docs/... citation must not be flagged by check a
+    _scratch(tmp_path, {"good.md": "see private/docs/x.md\n"})
+    # ensure private root absent
+    assert not (tmp_path / "private" / "specs-verified").exists()
+    assert _run(monkeypatch, tmp_path) == 0
+
+
+def test_github_url_into_private_fails(tmp_path, monkeypatch) -> None:
+    (tmp_path / "private").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "private" / "secret.md").write_text("hi\n", encoding="utf-8")
+    _scratch(tmp_path, {"good.md": "see " + _URL + "private/secret.md\n"})
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    assert _run(monkeypatch, tmp_path) == 1
 def test_committed_tree_passes() -> None:
     assert cc.main() == 0
