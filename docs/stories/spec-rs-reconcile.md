@@ -1,6 +1,6 @@
 # Story — reconcile dvb-si coded enums against the corrected spec md
 
-The `dvb-si/docs/*.md` transcriptions were just corrected verbatim from the
+The `private/specs-verified/dvb/dvb-si/**/*.md` transcriptions were just corrected verbatim from the
 vendored PDFs (commits f018b20, a7a30cd, 348dc2b). This story reconciles the
 `.rs` enum codings against them — applying the **exact** changes below. These are
 decided; do not invent values, and do **not** mass-rename concise names to verbose
