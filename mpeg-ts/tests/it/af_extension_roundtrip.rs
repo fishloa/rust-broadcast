@@ -319,7 +319,7 @@ fn every_committed_ts_adaptation_field_round_trips() {
 ///   overruns the AF. That is stream damage, not a sender convention, so the
 ///   parser keeps rejecting it rather than guess.
 #[test]
-#[ignore = "slow: scans the whole real-capture corpus (private/fixtures + private fixtures)"]
+#[ignore = "slow: scans the whole real-capture corpus (private/fixtures)"]
 fn full_archive_adaptation_fields_round_trip() {
     let t = std::time::Instant::now();
     let r = scan(true);

@@ -29,7 +29,276 @@ const IV: [u8; 16] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
 ];
 const TS_SOURCES: [&[u8]; 4] = [
-    test_fixtures::read("ts/h264_aac.ts"))
+    include_bytes!("../../fixtures/ts/h264_aac.ts"),
+    include_bytes!("../../fixtures/ts/legacy/mpeg2_mp2.ts"),
+    include_bytes!("../../fixtures/ts/hevc/main.ts"),
+    include_bytes!("../../fixtures/ts/aac-5_1-640k.ts"),
+];
+const PMT_FLIP_SOURCE: usize = TS_SOURCES.len();
+const TS_SOURCE_COUNT: usize = TS_SOURCES.len() + 1;
+const PAT_PID: u16 = 0;
+const PUSI: u8 = 0x40;
+const PID_HIGH_MASK: u8 = 0x1f;
+const SECTION_HEADER: usize = 3;
+const CRC_LEN: usize = 4;
+const PAT_PROGRAM_OFFSET: usize = 8;
+const PAT_ENTRY: usize = 4;
+const PMT_FIXED: usize = 12;
+const PMT_ES_FIXED: usize = 5;
+const PMT_VERSION_BYTE: usize = 5;
+const PMT_VERSION_BASE: u8 = 0xC1;
+const PMT_VERSION_MASK: u8 = 0x1f;
+const PMT_DROP_FROM: usize = 3;
+const PMT_DROP_UNTIL: usize = 6;
+const PMT_DIVISIONS: usize = 9;
+const CONFIG_HEADER: usize = 8;
+const MAX_PUMP_ACTIONS: usize = 4096;
+const TS_PACKET: usize = 188;
+const TS_SEED_PACKETS: usize = 160;
+const STEP_US: u64 = 700_000;
+const BACKWARD_US: u64 = 5 * STEP_US;
+const TIMER_JUMP_US: u64 = 20_000_000;
+const DATAGRAM_URLS: [&str; 5] = [
+    "udp://239.1.1.1:5000",
+    "rtp://239.1.1.1:5000",
+    "rtp://[::1]:6000",
+    "srt://example:9000",
+    "srt://[::1]:9001",
+];
+const SRT_ENTROPY_SEED: [u8; 32] = [7; 32];
+const CLIENT_IDENTITY_HANDLE: u64 = 1;
+const SRT_HEADER_BYTES: usize = 16;
+const SRT_CONTROL_TYPES: u8 = 8;
+const SRT_CONTROL_BIT: u8 = 0x80;
+const RTP_VERSION_BYTE: u8 = 0x80;
+const RTP_PAYLOAD_TYPE_MP2T: u8 = 33;
+const RTP_HEADER_BYTES: usize = 12;
+const DATAGRAM_TS_PACKETS: usize = 7;
+const RTSP_URLS: [&str; 2] = ["rtsp://example/live/", "rtsps://example:8322/live/"];
+const RTSP_REPLY_STATUSES: [u16; 6] = [200, 200, 200, 401, 404, 461];
+const INTERLEAVED_MAGIC: u8 = 0x24;
+const MTU: usize = 1400;
+const RTP_SSRC: u32 = 0x1234_5678;
+const RTP_TRACKS: usize = 2;
+const CHANNEL_STEP: u8 = 2;
+const MAX_PACKET_RUN: usize = 64;
+const POSITION_UNIT: u64 = 2_700_000;
+const STORM_ROUNDS: usize = 24;
+const STORM_FIRST_STATUSES: [u16; 5] = [302, 401, 404, 307, 301];
+const STORM_THEN_STATUSES: [u16; 8] = [401, 401, 404, 500, 407, 403, 410, 302];
+const BASIC_CHALLENGE: &str = "Basic realm=\"f\"";
+const PLAYER_HINTS: [Hint; 3] = [Hint::SourceEnded, Hint::SourceError, Hint::PcrDiscontinuity];
+const RENDERED_IDS: [u32; 7] = [1, 2, 3, 1_001, 1_002, 999, u32::MAX];
+const HOLD_WALL_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
+const START_WAIT_US: [u64; 4] = [0, 500_000, 1_500_000, u64::MAX];
+const DASH_US: [u64; 4] = [1, 1_000, 20_000_000, u64::MAX];
+const DASH_ZERO_OK_US: [u64; 4] = [0, 1_000, 20_000_000, u64::MAX];
+const DASH_LIVE_DELAY_US: [Option<u64>; 4] = [None, Some(0), Some(6_000_000), Some(u64::MAX)];
+const DASH_POLICIES: [DashClockPolicy; 4] = [
+    DashClockPolicy::Auto,
+    DashClockPolicy::PreferHost,
+    DashClockPolicy::Auto,
+    DashClockPolicy::PreferHost,
+];
+const DASH_FLAGS: [(bool, bool); 4] = [(false, true), (true, true), (false, false), (true, false)];
+const HOLD_MEDIA_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
+const HOLD_QUIET_BYTES: [usize; 4] = [1, TS_PACKET, 512 * 1024, 1 << 30];
+const HOLD_MAX_BYTES: [usize; 4] = [0, TS_PACKET, 4 * 1024 * 1024, usize::MAX];
+const QUEUE_CAPS: [usize; 4] = [1, 16, 100_000, usize::MAX];
+const JUMP_US: [u64; 4] = [1, 1_000_000, 5_000_000, u64::MAX];
+const LEAD_US: [u64; 4] = [0, 1_000_000, 6_000_000, u64::MAX];
+const KEY_FAILURES: [u32; 4] = [0, 1, 3, u32::MAX];
+const SEGMENT_FAILURES: [u32; 4] = [0, 1, 3, u32::MAX];
+const REDIRECTS: [u32; 4] = [0, 1, 5, u32::MAX];
+const INFLIGHT: [usize; 4] = [0, 1, 4, usize::MAX];
+const BYTE_LIMITS: [usize; 4] = [1, 4096, 4 * 1024 * 1024, usize::MAX];
+const TIMEOUTS_US: [u64; 4] = [1, 1_000, 20_000_000, u64::MAX];
+const COOKIE_NAMES: [&str; 6] = ["sid", "a", "t", "__Host-h", "__Secure-s", "p"];
+const COOKIE_PREFIXES: [&str; 8] = [
+    "",
+    "Secure; ",
+    "Path=/; ",
+    "Secure; Path=/; ",
+    "Path=/x; ",
+    "Domain=example; ",
+    "Domain=.EXAMPLE; Path=/; ",
+    "Domain=other.example; ",
+];
+const STATUS_CODES: [u16; 9] = [200, 200, 404, 302, 401, 500, 307, 429, 503];
+const RETRY_AFTER_VALUES: [&str; 8] = [
+    "30",
+    "0",
+    "99999999999999999999",
+    "Mon, 26 Oct 2026 08:39:34 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+    "",
+    "soon",
+];
+const RESPONSE_DATES: [&str; 4] = [
+    "Mon, 26 Oct 2026 08:39:04 GMT",
+    "Thu, 01 Jan 1970 00:00:00 GMT",
+    "Thu, 30 Dec 9999 00:00:00 GMT",
+    "yesterday",
+];
+const WALL_UNIX_US: [u64; 4] = [0, 1, 1_793_003_944_000_000, u64::MAX];
+const WALL_CLOCK_BYTE: usize = 7;
+const WALL_CLOCK_PERIOD: u8 = 8;
+const LOCATIONS: [&str; 4] = [
+    "http://example/next.ts",
+    "http://other.example/x.ts",
+    "/rel/next.m3u8",
+    "https://cdn.other/seg.ts",
+];
+const STALE_CHALLENGE: &str = "Digest realm=\"f\", nonce=\"n\", qop=\"auth\", stale=true";
+const AUDIT_HEADERS: [&str; 3] = ["authorization", "cookie", "x-fuzz"];
+
+fn pid_of(p: &[u8]) -> u16 {
+    (u16::from(p[1] & PID_HIGH_MASK) << 8) | u16::from(p[2])
+}
+
+fn section_of(p: &[u8]) -> &[u8] {
+    &p[5 + usize::from(p[4])..]
+}
+
+fn section_len(s: &[u8]) -> usize {
+    SECTION_HEADER + ((usize::from(s[1] & 0xf) << 8) | usize::from(s[2]))
+}
+
+fn pmt_pid_of(ts: &[u8]) -> Option<u16> {
+    let pat = ts
+        .chunks_exact(TS_PACKET)
+        .find(|p| pid_of(p) == PAT_PID && p[1] & PUSI != 0)?;
+    let s = section_of(pat);
+    let end = section_len(s).checked_sub(CRC_LEN)?;
+    let mut i = PAT_PROGRAM_OFFSET;
+    while i + PAT_ENTRY <= end {
+        if u16::from_be_bytes([s[i], s[i + 1]]) != 0 {
+            return Some((u16::from(s[i + 2] & PID_HIGH_MASK) << 8) | u16::from(s[i + 3]));
+        }
+        i += PAT_ENTRY;
+    }
+    None
+}
+
+fn rebuilt_pmt(packet: &[u8], keep_every_es: bool, version: u8) -> Option<Vec<u8>> {
+    let s = section_of(packet);
+    let len = section_len(s);
+    if 5 + usize::from(packet[4]) + len > TS_PACKET || len < PMT_FIXED + CRC_LEN {
+        return None;
+    }
+    let section = &s[..len];
+    let info_len = (usize::from(section[10] & 0xf) << 8) | usize::from(section[11]);
+    let mut out = section[..PMT_FIXED + info_len].to_vec();
+    out[PMT_VERSION_BYTE] = PMT_VERSION_BASE | ((version & PMT_VERSION_MASK) << 1);
+    let mut j = PMT_FIXED + info_len;
+    let mut entries: Vec<&[u8]> = Vec::new();
+    while j + PMT_ES_FIXED <= len - CRC_LEN {
+        let il = (usize::from(section[j + 3] & 0xf) << 8) | usize::from(section[j + 4]);
+        entries.push(&section[j..(j + PMT_ES_FIXED + il).min(len - CRC_LEN)]);
+        j += PMT_ES_FIXED + il;
+    }
+    if !keep_every_es {
+        entries.pop();
+    }
+    for e in entries {
+        out.extend_from_slice(e);
+    }
+    let new_len = out.len() - SECTION_HEADER + CRC_LEN;
+    out[1] = (out[1] & 0xf0) | (new_len >> 8) as u8;
+    out[2] = new_len as u8;
+    let crc = broadcast_common::crc32_mpeg2::compute(&out);
+    out.extend_from_slice(&crc.to_be_bytes());
+    let mut p = vec![
+        0x47,
+        PUSI | (packet[1] & PID_HIGH_MASK),
+        packet[2],
+        packet[3],
+        0,
+    ];
+    p.extend_from_slice(&out);
+    p.resize(TS_PACKET, 0xff);
+    Some(p)
+}
+
+fn pmt_flipped(ts: &[u8]) -> Vec<u8> {
+    let Some(pmt_pid) = pmt_pid_of(ts) else {
+        return ts.to_vec();
+    };
+    let total = ts.len() / TS_PACKET;
+    let mut out = Vec::with_capacity(ts.len());
+    for (i, p) in ts.chunks_exact(TS_PACKET).enumerate() {
+        if pid_of(p) == pmt_pid && p[1] & PUSI != 0 {
+            let phase = i * PMT_DIVISIONS / total.max(1);
+            let rebuilt = if (PMT_DROP_FROM..PMT_DROP_UNTIL).contains(&phase) {
+                rebuilt_pmt(p, false, 1)
+            } else if phase >= PMT_DROP_UNTIL {
+                rebuilt_pmt(p, true, 2)
+            } else {
+                None
+            };
+            if let Some(r) = rebuilt {
+                out.extend_from_slice(&r);
+                continue;
+            }
+        }
+        out.extend_from_slice(p);
+    }
+    out
+}
+
+fn ts_source(index: usize) -> &'static [u8] {
+    static FLIPPED: OnceLock<Vec<u8>> = OnceLock::new();
+    match index % TS_SOURCE_COUNT {
+        PMT_FLIP_SOURCE => FLIPPED.get_or_init(|| pmt_flipped(TS_SOURCES[0])),
+        n => TS_SOURCES[n],
+    }
+}
+
+fn ts_seed(source: usize, offset: usize, packets: usize) -> &'static [u8] {
+    let ts = ts_source(source);
+    let total = (ts.len() / TS_PACKET).max(1);
+    let first = offset % total;
+    let last = (first + packets).min(total);
+    &ts[first * TS_PACKET..last * TS_PACKET]
+}
+
+struct RtpSeed {
+    sdp: String,
+    packets: Vec<Vec<Vec<u8>>>,
+}
+
+fn rtp_seed() -> &'static RtpSeed {
+    static SEED: OnceLock<RtpSeed> = OnceLock::new();
+    SEED.get_or_init(|| {
+        let media = transmux::TsDemux::new()
+            .unpackage(TS_SOURCES[0])
+            .expect("demux fixture");
+        let mut packetiser = transmux::RtpPacketiser {
+            mtu: MTU,
+            ssrc: RTP_SSRC,
+            stap_a_parameter_sets: false,
+            ..transmux::RtpPacketiser::default()
+        };
+        let out = packetiser.package(&media).expect("packetise fixture");
+        let mut sdp = String::new();
+        let mut media_sections = 0usize;
+        for line in out.sdp.lines() {
+            sdp.push_str(line);
+            sdp.push_str("\r\n");
+            if line.starts_with("m=") {
+                media_sections += 1;
+                sdp.push_str(&format!("a=control:trackID={media_sections}\r\n"));
+            }
+        }
+        let packets = out
+            .streams
+            .iter()
+            .map(|stream| {
+                stream
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
                     .collect()
             })
             .collect();

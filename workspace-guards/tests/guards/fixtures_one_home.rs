@@ -1,8 +1,8 @@
 //! Tripwire: test fixtures live in exactly two homes — `fixtures/` (public) and
 //! `private/fixtures/` (private submodule). No crate keeps its own
 //! `tests/fixtures/`, no code reads the retired `.test-streams/` tier, and no
-//! `.rs` file outside `test-fixtures` pulls a fixture in via `include_bytes!` /
-//! `include_str!`.
+//! `.rs` file outside `test-fixtures` and `fuzz/` pulls a fixture in via
+//! `include_bytes!` / `include_str!` (fuzz targets embed their seeds at compile time).
 
 use std::fs;
 use std::path::Path;
@@ -99,7 +99,7 @@ pub fn scan_include_bytes_fixtures(root: &Path) -> Vec<String> {
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
-        if rel.starts_with("test-fixtures/") {
+        if rel.starts_with("test-fixtures/") || rel.starts_with("fuzz/") {
             continue;
         }
         let Ok(text) = fs::read_to_string(&p) else {

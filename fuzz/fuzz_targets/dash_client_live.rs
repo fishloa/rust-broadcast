@@ -41,29 +41,27 @@ const HTTP_DATES: [&str; 3] = [
 ];
 
 const MPDS: [&[u8]; 6] = [
-    test_fixtures::read("dash/live-number/live.mpd"),
-    test_fixtures::read("dash/live-timeline/live.mpd"),
-    test_fixtures::read("dash/livesim2/segtimeline_time_a.mpd"),
-    test_fixtures::read("dash/livesim2/segtimeline_time_b.mpd"),
-    test_fixtures::read("dash/livesim2/segtimelinenr_a.mpd"),
-    test_fixtures::read("dash/livesim2/segtimelinenr_b.mpd"),
+    include_bytes!("../../fixtures/dash/live-number/live.mpd"),
+    include_bytes!("../../fixtures/dash/live-timeline/live.mpd"),
+    include_bytes!("../../fixtures/dash/livesim2/segtimeline_time_a.mpd"),
+    include_bytes!("../../fixtures/dash/livesim2/segtimeline_time_b.mpd"),
+    include_bytes!("../../fixtures/dash/livesim2/segtimelinenr_a.mpd"),
+    include_bytes!("../../fixtures/dash/livesim2/segtimelinenr_b.mpd"),
 ];
 const VIDEO_SEGS: [&[u8]; POOL] = [
-    test_fixtures::read("dash/live-number/seg-0-005.m4s"),
-    test_fixtures::read("dash/live-number/seg-0-006.m4s"),
-    test_fixtures::read("dash/live-number/seg-0-007.m4s"),
-    test_fixtures::read("dash/live-number/seg-0-008.m4s"),
+    include_bytes!("../../fixtures/dash/live-number/seg-0-005.m4s"),
+    include_bytes!("../../fixtures/dash/live-number/seg-0-006.m4s"),
+    include_bytes!("../../fixtures/dash/live-number/seg-0-007.m4s"),
+    include_bytes!("../../fixtures/dash/live-number/seg-0-008.m4s"),
 ];
 const AUDIO_SEGS: [&[u8]; POOL] = [
-    test_fixtures::read("dash/live-number/seg-1-005.m4s"),
-    test_fixtures::read("dash/live-number/seg-1-006.m4s"),
-    test_fixtures::read("dash/live-number/seg-1-007.m4s"),
-    test_fixtures::read("dash/live-number/seg-1-008.m4s"),
+    include_bytes!("../../fixtures/dash/live-number/seg-1-005.m4s"),
+    include_bytes!("../../fixtures/dash/live-number/seg-1-006.m4s"),
+    include_bytes!("../../fixtures/dash/live-number/seg-1-007.m4s"),
+    include_bytes!("../../fixtures/dash/live-number/seg-1-008.m4s"),
 ];
-#[allow(non_snake_case)]
-fn VIDEO_INIT_fx() -> &'static [u8] { test_fixtures::read("dash/live-number/init-0.m4s").leak() }
-#[allow(non_snake_case)]
-fn AUDIO_INIT_fx() -> &'static [u8] { test_fixtures::read("dash/live-number/init-1.m4s").leak() }
+const VIDEO_INIT: &[u8] = include_bytes!("../../fixtures/dash/live-number/init-0.m4s");
+const AUDIO_INIT: &[u8] = include_bytes!("../../fixtures/dash/live-number/init-1.m4s");
 
 fn name_hash(name: &str) -> usize {
     name.bytes().fold(0usize, |h, b| {
@@ -76,7 +74,7 @@ fn real_body(url: &str, range: Option<(u64, u64)>) -> Option<Vec<u8>> {
     let name = path.rsplit('/').next()?;
     let audio = path.contains("-1-") || path.contains("A48") || path.contains("init-1");
     let all: &[u8] = if name.contains("init") {
-        if audio { AUDIO_INIT_fx() } else { VIDEO_INIT_fx() }
+        if audio { AUDIO_INIT } else { VIDEO_INIT }
     } else if audio {
         AUDIO_SEGS[name_hash(name) % POOL]
     } else {

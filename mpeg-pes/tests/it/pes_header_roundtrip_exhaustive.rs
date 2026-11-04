@@ -195,7 +195,7 @@ fn every_pes_header_in_every_committed_ts_round_trips() {
 /// `tsduck-test/input/test-002.ts`, and real `ES_rate` marker bits of `0`
 /// (the same stream: `ES_rate` bytes `25 0D 37`, leading marker `0`).
 #[test]
-#[ignore = "slow: scans the whole real-capture corpus (private/fixtures + private fixtures)"]
+#[ignore = "slow: scans the whole real-capture corpus (private/fixtures)"]
 fn full_archive_pes_headers_round_trip() {
     let t = std::time::Instant::now();
     let r = scan(true);

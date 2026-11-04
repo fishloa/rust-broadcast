@@ -52,11 +52,11 @@ cargo +nightly fuzz build
 Seed corpora live under `fuzz/corpus/<target>/`. They are derived from
 real broadcast captures in the workspace fixtures:
 
-- `dvb-si/fixtures/m6-single.ts`
-- `dvb-si/fixtures/tnt-5w-12732v-isi6-10s.ts`
-- `dvb-t2mi/fixtures/colombia-capital-t2mi.ts`
-- `dvb-bbframe/fixtures/rai-5w-12606v-bbframe.ts`
-- `dvb-bbframe/fixtures/tnt-5w-12732v-bbframe.ts`
+- `dvb-si/tests/fixtures/m6-single.ts`
+- `dvb-si/tests/fixtures/tnt-5w-12732v-isi6-10s.ts`
+- `dvb-t2mi/tests/fixtures/colombia-capital-t2mi.ts`
+- `dvb-bbframe/tests/fixtures/rai-5w-12606v-bbframe.ts`
+- `dvb-bbframe/tests/fixtures/tnt-5w-12732v-bbframe.ts`
 
 ### Re-seeding from fixtures
 
@@ -64,7 +64,7 @@ To add more seeds from a `.ts` fixture, split it into 188-byte packets and drop
 them into the target's corpus directory:
 
 ```bash
-INPUT=../dvb-si/fixtures/m6-single.ts
+INPUT=../dvb-si/tests/fixtures/m6-single.ts
 CORPUS=fuzz/corpus/si_table_section
 dd if="$INPUT" bs=188 count=50 2>/dev/null | split -b 188 - "$CORPUS/m6_"
 ```
