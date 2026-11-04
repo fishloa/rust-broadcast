@@ -4,7 +4,7 @@ Every standard the workspace implements or relies on, which crate implements
 it, which edition, how completely, and where the spec transcription lives. For
 the per-crate view see [CRATES.md](CRATES.md).
 
-**Transcription locations.** All spec material the rows below name (`<crate>/docs/...`, `private/specs-verified/...`: transcriptions, notes, registries, RFC/IETF/W3C texts) now lives only in the private companion repo, under `private/specs-verified/<family>/<crate>/...`. Citations name the private path directly.
+**Transcription locations.** All spec material the rows below name (transcriptions, notes, registries, RFC/IETF/W3C texts, PDFs) lives only in the private companion repo: PDFs and texts under `private/specs/`, transcriptions under `private/specs-verified/<family>/<owner>/`. Citations name the private path directly.
 
 **How this table was built.** Each row comes from the implementing crate's
 module docs (the `//!` citation the code carries), its spec transcription
