@@ -101,7 +101,7 @@ Runnable examples: `cargo run -p dvb-mabr --example parse_session` and
 
 Field-level spec transcriptions (`mabr-signalling.md`, `mabr-transport.md`, `mabr-reporting.md`) are kept
 in the private companion repository, not published; see the
-[docs pointer](https://github.com/fishloa/rust-broadcast/blob/main/private/specs-verified/dvb/dvb-mabr/#private-spec-transcriptions).
+`private/specs-verified/dvb/dvb-mabr/`.
 
 ## Round-trip guarantee
 

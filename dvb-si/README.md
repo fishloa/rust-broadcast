@@ -276,7 +276,7 @@ from the crate's dispatch lists (`declare_tables!`, `declare_descriptors!`,
 `declare_extension_bodies!`, `declare_ait_descriptors!`) and module citations, joined with the
 hand-transcribed allocation lists in `private/specs-verified/dvb/dvb-si/coverage/allocations.tsv`.
 The `docs_coverage_drift` test fails CI when any of it is stale. The spec transcriptions behind
-every layout are indexed in [`docs/README.md`](https://github.com/fishloa/rust-broadcast/blob/main/private/specs-verified/dvb/dvb-si/).
+every layout are indexed in `private/specs-verified/dvb/dvb-si/`.
 
 ## Design notes
 
