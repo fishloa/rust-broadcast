@@ -3,7 +3,7 @@
 //! clause 10.2.5.2.
 //!
 //! Used only for the in-band gateway-configuration transport method
-//! (`docs/mabr-signalling.md` §1 method 3): the Multicast server carousels
+//! (`private/specs-verified/dvb/dvb-mabr/mabr-signalling.md` §1 method 3): the Multicast server carousels
 //! the current gateway configuration document as a multicast transport
 //! object on a dedicated session. Same element/attribute set as
 //! `MulticastTransportSession` (`transport.rs`) **except**: no
@@ -72,7 +72,7 @@ impl ConfigurationMacro {
 pub struct MulticastGatewayConfigurationTransportSession {
     /// Content-class term (same semantics as `MulticastTransportSession::service_class`).
     pub service_class: Option<String>,
-    /// See `docs/mabr-transport.md` §4.
+    /// See `private/specs-verified/dvb/dvb-mabr/mabr-transport.md` §4.
     pub transport_security: Option<TransportSecurity>,
     /// Max inter-packet gap (ms) before the gateway may treat the session
     /// as inactive/unsubscribe. Optional — not present on

@@ -1,5 +1,5 @@
 //! StreamInput objects — ETSI TS 101 699 V1.1.1 §6.1.2, Tables 12-20
-//! (PDF pp. 25-28). See `docs/ci_plus/input-modules.md`.
+//! (PDF pp. 25-28). See `private/specs-verified/dvb/dvb-ci/ci_plus/input-modules.md`.
 //!
 //! Resource ID `0x00801ii1` (`ii` = Module ID), single session. A Type 'A' input
 //! module presents StreamInput: it delivers broadcast services at the **TS

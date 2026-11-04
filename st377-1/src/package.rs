@@ -1,5 +1,5 @@
 //! Material Package and Source Package — SMPTE ST 377-1:2019 Annex B §B.1/
-//! E.1-E.4 (`docs/st377-1.md`): the two concrete Package kinds every MXF
+//! E.1-E.4 (`private/specs-verified/smpte/st377-1/st377-1.md`): the two concrete Package kinds every MXF
 //! file uses.
 //!
 //! Both inherit the Generic Package properties (B.1): Package UID, Name,

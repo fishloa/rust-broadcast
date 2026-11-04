@@ -1,7 +1,7 @@
 //! External-standard test vectors for `srt_runtime::crypto` (issue #608).
 //!
 //! `draft-sharabayko-srt-01` §6 has **no worked test vectors of its own**
-//! (`specs/rules/srt-crypto.md`, "No test vectors" note) — so the ground
+//! (`private/specs-verified/rules/srt-crypto.md`, "No test vectors" note) — so the ground
 //! truth here is the two external algorithms §6 names but does not restate:
 //!
 //! - **AES Key Wrap** — RFC 3394 §4.1, "Wrap 128 bits of Key Data with a

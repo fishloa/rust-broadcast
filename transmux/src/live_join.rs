@@ -19,7 +19,7 @@
 //!   **not necessarily self-contained**. An SPS plus an I slice without either
 //!   signal is the pragmatic fallback the rest of this crate already uses
 //!   ([`access_unit_is_rap`]): [`RapKind::SpsIntra`]. Transcription:
-//!   `docs/codec/h264-vui-pic-timing.md` (recovery_point section).
+//!   `private/specs-verified/mpeg/transmux/codec/h264-vui-pic-timing.md` (recovery_point section).
 //! - **H.265**: IDR (types 19, 20), CRA (21) and BLA (16..=18) pictures
 //!   (Table 7-1). The first picture of a join has `NoRaslOutputFlag` = 1, so the
 //!   RASL pictures (types 8, 9) that follow a CRA/BLA "can be

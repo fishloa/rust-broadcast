@@ -1,5 +1,5 @@
 //! Timecode Component — SMPTE ST 377-1:2019 Annex B §B.17
-//! (`docs/st377-1.md`): a Structural Component carrying a timecode
+//! (`private/specs-verified/smpte/st377-1/st377-1.md`): a Structural Component carrying a timecode
 //! reference (byte 14/15 = `0x01`/`0x14`).
 //!
 //! Inherits the Structural Component base properties (B.8): Data

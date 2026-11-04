@@ -31,7 +31,7 @@ use broadcast_hls::{
     SessionDataContent,
 };
 
-/// All 32 tags RFC 8216bis §4.4 defines, per `docs/playlist-tags.md`'s "Tag
+/// All 32 tags RFC 8216bis §4.4 defines, per `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`'s "Tag
 /// count" table (§4.4.1 through §4.4.6.6).
 const ALL_32_TAGS: &[&str] = &[
     // §4.4.1 Basic Tags (2)
@@ -127,7 +127,7 @@ fn all_32_rfc8216bis_section_4_4_tags_are_referenced_in_source() {
     assert!(
         missing.is_empty(),
         "tag(s) from RFC 8216bis §4.4 with no reference anywhere in src/: {missing:?}\n\
-         Either implement parse/render support (see docs/playlist-tags.md for the \
+         Either implement parse/render support (see private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md for the \
          attribute grammar) or, if intentionally unmodeled, add a `#EXT...` string \
          literal reference (e.g. in a doc comment or an ignore-arm) so the decision \
          is visible in source."

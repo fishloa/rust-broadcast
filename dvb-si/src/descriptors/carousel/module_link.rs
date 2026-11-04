@@ -1,6 +1,6 @@
 //! Module Link Descriptor — ETSI EN 301 192 V1.7.1 §10.2.5, Table 53
 //! (data-carousel tag 0x04). PDF p.66, transcribed in
-//! `docs/descriptors/en_301_192/53-*.md`, verified against the rendered page.
+//! `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/53-*.md`, verified against the rendered page.
 //!
 //! Chains modules into one piece of data: `position`(8) and the `module_id`(16)
 //! of the next module (ignored for the last one). [`LinkPosition`] is shared

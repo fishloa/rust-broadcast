@@ -1,6 +1,6 @@
 //! Group Link Descriptor — ETSI EN 301 192 V1.7.1 §10.2.9, Table 57
 //! (data-carousel tag 0x08). PDF pp.67-68, transcribed in
-//! `docs/descriptors/en_301_192/57-*.md`, verified against the rendered pages.
+//! `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/57-*.md`, verified against the rendered pages.
 //!
 //! Links DII group descriptions that together describe one larger group:
 //! `position`(8) and the 32-bit `group_id` of the next description (ignored

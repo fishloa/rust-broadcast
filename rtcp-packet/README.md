@@ -22,7 +22,7 @@ Typical users: RTSP/RTP clients and servers, WebRTC engines, RIST, and monitorin
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| IETF RFC 3550 "RTP" | RFC 3550 (vendored `specs/rfc3550_rtp.txt`) | §6.1 compound packets, §6.4.1 SR, §6.4.2 RR, §6.4.1 report block (24-bit signed `cumulative_lost`), §6.5 SDES (CNAME, NAME, EMAIL, PHONE, LOC, TOOL, NOTE, PRIV), §6.6 BYE, §6.7 APP, §6.4.1 profile-specific extensions | Full | SDES PRIV's internal `prefix`/`value` split is not separately typed (the text is kept flat and round-trips). See `docs/rtcp.md` |
+| IETF RFC 3550 "RTP" | RFC 3550 (private repo: `private/specs-verified/ietf/specs/rfc3550_rtp.txt`) | §6.1 compound packets, §6.4.1 SR, §6.4.2 RR, §6.4.1 report block (24-bit signed `cumulative_lost`), §6.5 SDES (CNAME, NAME, EMAIL, PHONE, LOC, TOOL, NOTE, PRIV), §6.6 BYE, §6.7 APP, §6.4.1 profile-specific extensions | Full | SDES PRIV's internal `prefix`/`value` split is not separately typed (the text is kept flat and round-trips). See `private/specs-verified/rtp/rtcp-packet/rtcp.md` |
 | IETF RFC 5506 "Reduced-Size RTCP" | RFC 5506 (not vendored) | A compound that starts with a non-SR/RR packet is accepted | Partial | Only the leading-packet relaxation, no feedback semantics |
 | IETF RFC 4585 / RFC 5104 / RFC 3611 / REMB draft | n/a | PT 205, 206, 207 and XR | Typed-opaque | Preserved as `RtcpPacket::Unknown` |
 

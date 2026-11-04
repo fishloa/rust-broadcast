@@ -1,5 +1,5 @@
 //! Status Query objects + audience-metering item structures — ETSI TS 101 699
-//! V1.1.1 §6.2, Tables 35-51 (PDF pp. 42-50). See `docs/ci_plus/status-query.md`.
+//! V1.1.1 §6.2, Tables 35-51 (PDF pp. 42-50). See `private/specs-verified/dvb/dvb-ci/ci_plus/status-query.md`.
 //!
 //! Resource ID `0x00211ii1` (`ii` = Module ID, `type = 1*`). The module
 //! interrogates the host's status items (Table 36): Selection Information (1),

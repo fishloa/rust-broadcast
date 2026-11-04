@@ -1,7 +1,7 @@
 //! Legal-duplicate transport-stream-packet detection — ITU-T H.222.0
 //! (08/2023) / ISO/IEC 13818-1 §2.4.3.3.
 //!
-//! Cited via `mpeg-ts/docs/README.md` (§2.4.3.3 — duplicate packets), which
+//! Cited via `private/specs-verified/mpeg/mpeg-ts/` (§2.4.3.3 — duplicate packets), which
 //! carries the verbatim clause (Rec. ITU-T H.222.0 (08/2023) §2.4.3.3, PDF
 //! p. 48):
 //!

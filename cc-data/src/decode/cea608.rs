@@ -3,7 +3,7 @@
 //! Decodes the line-21 two-byte control / character codes that the
 //! [`crate::CcData`] carriage demuxes (`cc_type` 0 = field 1, 1 = field 2) into a
 //! caption screen. Implements the control-code state machine of
-//! `cc-data/docs/decode/cea608-decode.md`:
+//! `private/specs-verified/captions/cc-data/decode/cea608-decode.md`:
 //!
 //! - pop-on (RCL/EOC), roll-up (RU2/RU3/RU4 + CR), paint-on (RDC) modes,
 //! - Preamble Address Codes (row + indent + colour/italics/underline),
@@ -473,7 +473,7 @@ impl Cea608Decoder {
         // C1, 0x18–0x1F = C2. For field 2: same first-byte split selects C1/C2
         // for every category EXCEPT Miscellaneous Control Codes, which use a
         // shifted pair of their own on field 2 (CTA-608-E §8.4 a/b, cited in
-        // `docs/decode/cea608-decode.md`): field-1 `0x14`(C1)/`0x1C`(C2) become
+        // `private/specs-verified/captions/cc-data/decode/cea608-decode.md`): field-1 `0x14`(C1)/`0x1C`(C2) become
         // field-2 `0x15`(C1/CC3)/`0x1D`(C2/CC4). That shift only applies to
         // misc-control's own 2nd-byte range (`0x20`-`0x2F`); `0x15`/`0x1D` with
         // a 2nd byte outside it (e.g. a PAC row byte, `0x40`-`0x7F`) is not

@@ -1,7 +1,7 @@
 //! Graphics Constraints Descriptor — ETSI TS 102 809 V1.3.1 §5.3.5.8, Table 27
 //! (AIT tag 0x14; same layout as §5.2.9.2 Table 8, byte values Table 9).
-//! PDF p.44 / p.25, transcribed in `docs/descriptors/ts_102_809/27-*.md` and
-//! `docs/enums/ts_102_809/9-*.md`, verified against the rendered pages.
+//! PDF p.44 / p.25, transcribed in `private/specs-verified/dvb/dvb-si/descriptors/ts_102_809/27-*.md` and
+//! `private/specs-verified/dvb/dvb-si/enums/ts_102_809/9-*.md`, verified against the rendered pages.
 //!
 //! Body: `reserved_future_use`(5), `can_run_without_visible_ui`(1),
 //! `handles_configuration_changed`(1), `handles_externally_controlled_video`(1),

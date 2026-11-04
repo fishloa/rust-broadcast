@@ -1,4 +1,4 @@
-//! Parse a spec-derived LTC codeword (see `docs/st12-1.md`'s "Worked vector"
+//! Parse a spec-derived LTC codeword (see `private/specs-verified/smpte/st12-1/st12-1.md`'s "Worked vector"
 //! section), print its decoded fields — including the `FrameRate`-dependent
 //! polarity-correction and binary-group-flag bits — then round-trip it back
 //! to bytes and confirm the output is byte-identical.
@@ -9,7 +9,7 @@ use broadcast_common::{Parse, Serialize};
 use st12_1::{FrameRate, LtcFrame};
 
 fn main() {
-    // Time Address = 01:23:45:13 (docs/st12-1.md's worked example), computed
+    // Time Address = 01:23:45:13 (private/specs-verified/smpte/st12-1/st12-1.md's worked example), computed
     // independently from ST 12-1 Tables 2-5, not by round-tripping through
     // this crate's own serializer.
     #[rustfmt::skip]

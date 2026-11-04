@@ -21,7 +21,7 @@
 //! fixture contains; replaying only the window's own arrivals would not
 //! reproduce frame 15's NACK by causal simulation, and pretending otherwise
 //! would be exactly the kind of fabricated-provenance claim this crate's
-//! docs have already had to correct once (see `docs/tr-06-1-simple-profile.md`
+//! docs have already had to correct once (see `private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md`
 //! Appendix B's correction note).
 //!
 //! What *is* independently verifiable from the real bytes: each of the

@@ -25,7 +25,7 @@ const AVAILABILITY_FLAG_MASK: u8 = 0x80;
 /// Lower 7 bits of the flag byte are `reserved_future_use`.
 const RESERVED_MASK: u8 = 0x7F;
 /// Spec default of `reserved_future_use`(7): all ones (EN 300 468 V1.3.1-V1.20.1,
-/// audit `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class A: stable in
+/// audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A: stable in
 /// every edition).
 pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x7F;
 

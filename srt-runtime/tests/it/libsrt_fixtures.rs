@@ -32,7 +32,7 @@ fn real_libsrt_keepalive_parses_and_round_trips_byte_exact() {
     let SrtPacket::Control(ControlPacket::KeepAlive(ka)) = parsed else {
         panic!("expected a KeepAlive control packet, got {parsed:?}");
     };
-    // Sanity: these came from the real capture (see fixtures/README.md), not
+    // Sanity: these came from the real capture (see ../fixtures/README.md), not
     // synthesized — timestamp/dest_socket_id are whatever the real session
     // happened to have at that moment, just confirm they decoded as the
     // right wire words. The fixture is 20 bytes (with libsrt's pad), so

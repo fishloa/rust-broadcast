@@ -1,5 +1,5 @@
 //! Pre-fetch Descriptor — ETSI TS 102 727 V1.1.1 §10.8.3.2, Table 82 (AIT tag
-//! 0x0C). PDF pp.169-170, transcribed in `docs/descriptors/ts_102_727/82-*.md`,
+//! 0x0C). PDF pp.169-170, transcribed in `private/specs-verified/dvb/dvb-si/descriptors/ts_102_727/82-*.md`,
 //! verified against the rendered pages.
 //!
 //! Zero or one in the "application" AIT loop, for object-carousel transport

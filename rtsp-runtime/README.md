@@ -24,7 +24,7 @@ Typical users: IP-camera ingest (`multimux`'s RTSP input), RTSP push to a media 
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| IETF RFC 2326 "Real Time Streaming Protocol" | RFC 2326 (vendored `specs/rfc2326_rtsp.txt`, transcribed in `rtsp-runtime/docs/rfc2326.md`) | Appendix A state machines, §10 methods listed above, §10.12 interleaved framing, §12.37 `Session`, §12.39 `Transport`, §14 authentication, CSeq (§12.17) | Partial | See the methods table below |
+| IETF RFC 2326 "Real Time Streaming Protocol" | RFC 2326 (private repo: `private/specs-verified/ietf/specs/rfc2326_rtsp.txt`, transcribed in `private/specs-verified/rtp/rtsp-runtime/rfc2326.md`) | Appendix A state machines, §10 methods listed above, §10.12 interleaved framing, §12.37 `Session`, §12.39 `Transport`, §14 authentication, CSeq (§12.17) | Partial | See the methods table below |
 | IETF RFC 7826 "RTSP 2.0" | RFC 7826 (vendored, not implemented) | n/a | Not implemented | |
 | IETF RFC 7617 / RFC 7616 / RFC 6750 (Basic, Digest, Bearer) | not vendored, unverified here | Client side via `broadcast-auth` | Full | Server side has no authentication |
 | IETF RFC 8866 (SDP) | RFC 8866 (vendored) | Bodies carried opaque | Typed-opaque | Parse with `sdp-types` |
@@ -100,7 +100,7 @@ Runnable programs: `client_server_loopback` and `transport_and_framing` (`cargo 
 
 - `ClientSession`: request builders, `handle_data` (returns `HandleOutcome { events, error }` so frames decoded before a terminal error are never lost) and `handle_data_strict`; `with_credentials`; `AuthRetry` events for `401`; `poll_timeout`/`handle_timeout` keepalive.
 - `ServerSession`: `handle_request` returning response bytes plus `ServerEvent`s (`RequestAccepted`, `MethodNotValid`, `SessionSetup`, `MediaData`), `with_session_timeout`.
-- `Transport`, `TransportSpec`, `LowerTransport`, `Delivery`, `TransportMode`: UDP unicast and multicast, TCP interleaved. `SessionHeader`: `Session` id and `timeout`. Both are parsed by this crate over one RFC 2326 §15.1 lexer, because `rtsp-types` 0.1 is exact-case and drops case-variant parameters (a documented, owner-approved exception to the no-hand-roll rule; probe table in `docs/transport-header.md`).
+- `Transport`, `TransportSpec`, `LowerTransport`, `Delivery`, `TransportMode`: UDP unicast and multicast, TCP interleaved. `SessionHeader`: `Session` id and `timeout`. Both are parsed by this crate over one RFC 2326 §15.1 lexer, because `rtsp-types` 0.1 is exact-case and drops case-variant parameters (a documented, owner-approved exception to the no-hand-roll rule; probe table in `private/specs-verified/rtp/rtsp-runtime/transport-header.md`).
 - `InterleavedFrame` and a streaming demultiplexer (complete frames plus a partial tail).
 - `Credentials` and `Authenticator`, re-exported from `broadcast-auth`.
 - `io` (feature `tokio`): `AsyncRtspClient`, `AsyncRtspServer`, `RtspTimeouts`, `RTSP_DEFAULT_PORT` (554), `RTSPS_DEFAULT_PORT` (322).

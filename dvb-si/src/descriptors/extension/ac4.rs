@@ -60,7 +60,7 @@ broadcast_common::impl_spec_display!(Ac4ChannelMode, Reserved);
 /// Spec default of both `reserved_zero_future_use` fields of the AC-4
 /// descriptor: EN 300 468 V1.15.1 (`reserved_future_use` + NOTE "all bits 0")
 /// and V1.16.1+ (`reserved_zero_future_use`) — 0 in every edition
-/// (`dvb-si/docs/reserved-bits-edition-audit.md` §6).
+/// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
 pub const AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
 const AC4_FLAGS_RESERVED_MASK: u8 = 0x3F;
 const AC4_CONFIG_RESERVED_MASK: u8 = 0x1F;
@@ -92,7 +92,7 @@ pub struct Ac4<'a> {
     /// Kept opaque by design: EN 300 468 carries the AC-4 TOC as an
     /// `ac4_toc_byte` run whose structure (`ac4_toc()`) is defined in the AC-4
     /// codec spec — ETSI TS 103 190-2 §6.2.1 (vendored at
-    /// `specs/etsi_ts_103_190_2_v01.03.01_ac4.pdf`), not in DVB SI. Typing it is
+    /// `private/specs/etsi_ts_103_190_2_v01.03.01_ac4.pdf`), not in DVB SI. Typing it is
     /// a separate, nested codec-bitstream effort tracked in issue #102.
     pub toc: Option<&'a [u8]>,
     /// Trailing additional_info_byte run.

@@ -24,9 +24,9 @@ hls-runtime = "0.11"
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| IETF HLS 2nd edition, `draft-pantos-hls-rfc8216bis` | Internet-Draft of 1 May 2026, "HTTP Live Streaming 2nd Edition" (vendored `specs/ietf_draft_pantos_hls_rfc8216bis.txt`) | §6.2.5.2 Blocking Playlist Reload, Partial Segments, preload hint, Playlist Delta Updates (client), `EXT-X-DATERANGE` (origin), discontinuities | Partial | Origin has no delta updates or rendition reports; client has no ABR |
-| IETF RFC 8216 HLS | RFC 8216 (vendored `specs/ietf_rfc8216_hls.txt`) | Classic TS-segment HLS playback (HLS v3 form) | Partial | Client only |
-| Apple HLS timed metadata | Vendored `specs/apple_hls_timed_metadata.html` | SCTE-35 cues rendered as `EXT-X-DATERANGE` via `timed-metadata` | Partial | |
+| IETF HLS 2nd edition, `draft-pantos-hls-rfc8216bis` | Internet-Draft of 1 May 2026, "HTTP Live Streaming 2nd Edition" (private repo: `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`) | §6.2.5.2 Blocking Playlist Reload, Partial Segments, preload hint, Playlist Delta Updates (client), `EXT-X-DATERANGE` (origin), discontinuities | Partial | Origin has no delta updates or rendition reports; client has no ABR |
+| IETF RFC 8216 HLS | RFC 8216 (private repo: `private/specs-verified/ietf/specs/ietf_rfc8216_hls.txt`) | Classic TS-segment HLS playback (HLS v3 form) | Partial | Client only |
+| Apple HLS timed metadata | private repo: `private/specs-verified/hls/apple/apple_hls_timed_metadata.html` | SCTE-35 cues rendered as `EXT-X-DATERANGE` via `timed-metadata` | Partial | |
 | IETF RFC 3986 reference resolution, RFC 3339 dates | RFC 3986, RFC 3339 | Relative URL joins (`url`), program-date-time (`jiff`) | Full | Not hand-rolled |
 | IETF RFC 7617 / 7616 / 6750 | not vendored | `TokioClient` authentication through `broadcast-auth`; credentials go only to the playlist's origin | Full, behind `tokio` | |
 

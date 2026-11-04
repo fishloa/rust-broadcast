@@ -1,6 +1,6 @@
 //! Low Speed Communication resource version 4 extensions — ETSI TS 103 205
 //! V1.4.1 §10, Tables 76-89 (PDF pp. 100-110). See
-//! `docs/ts_103_205/low-speed-comms-v4.md`.
+//! `private/specs-verified/dvb/dvb-ci/ts_103_205/low-speed-comms-v4.md`.
 //!
 //! LSC v4 extends LSC v3 (CI Plus V1.3 \[3\] §14.1) to add source-specific
 //! multicast, hybrid connections (response data across the TS interface), a new

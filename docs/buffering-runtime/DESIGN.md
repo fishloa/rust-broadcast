@@ -332,7 +332,7 @@ Cost/benefit: the freeze after a stall drops by 0.35 s (0.25 x gap on a burst se
 
 **Unit, with independent oracles** (no test compares the crate to itself):
 - Windowed minimum vs a brute-force scan of the same window; max-hold vs brute force; quantile vs sort of the weight-expanded multiset (tolerance: one bucket).
-- RFC 3550 A.8: J against the reference C algorithm in `specs/rfc3550_rtp.txt` s A.8 (hand-ported in the test, not in `src`), with worked vectors for constant, alternating and ramping transit.
+- RFC 3550 A.8: J against the reference C algorithm in `private/specs-verified/ietf/specs/rfc3550_rtp.txt` s A.8 (hand-ported in the test, not in `src`), with worked vectors for constant, alternating and ramping transit.
 - RFC 5481 PDV definition: D - Dmin against a direct implementation on a 1 M-sample random trace.
 - **Python parity (independent oracle)**: `docs/buffering-runtime/analysis/*.py` is a second implementation of PDV, estimators and the playback model; the Rust golden tests must match its published numbers (PDV p90/p99.9, J, estimator outputs, the 1430/1475 ms survival minima) within one bucket / 1 ms.
 - Integer exactness: Q15 forgetting equals an exact rational reference to <= 1 LSB per interval; no float in `src` (grep gate).

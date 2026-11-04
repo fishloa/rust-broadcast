@@ -1,5 +1,5 @@
 //! SRT Live Congestion Control — packet pacing (`draft-sharabayko-srt-01` §5.1,
-//! curated at `specs/rules/srt-livecc.md`).
+//! curated at `private/specs-verified/rules/srt-livecc.md`).
 //!
 //! A sans-IO, `no_std` sender-side pacing controller that computes the minimum
 //! inter-packet send period (`PKT_SND_PERIOD`) from a configured maximum
@@ -22,34 +22,34 @@
 //!
 //! ## Spec grounding
 //!
-//! - `specs/rules/srt-livecc.md` §5.1.1 — MAX_BW configuration modes (§5.1.1,
+//! - `private/specs-verified/rules/srt-livecc.md` §5.1.1 — MAX_BW configuration modes (§5.1.1,
 //!   lines L3116-L3202).
-//! - `specs/rules/srt-livecc.md` §5.1.2 — LiveCC algorithm (lines L3203-L3238):
+//! - `private/specs-verified/rules/srt-livecc.md` §5.1.2 — LiveCC algorithm (lines L3203-L3238):
 //!   - EWMA formula: L3219 (`AvgPayloadSize = 7/8 * AvgPayloadSize + 1/8 * PacketPayloadSize`)
 //!   - Initial value cap: L3222-3223 (max 1456 bytes).
 //!   - PktSize formula: L3227-3229 (`PktSize = AvgPayloadSize + SRT header size`).
 //!   - PKT_SND_PERIOD formula: L3234 (`PktSize * 1000000 / MAX_BW`).
-//! - `specs/rules/srt-livecc.md` — SYN = 0.01 s (imported from §5.2.1,
+//! - `private/specs-verified/rules/srt-livecc.md` — SYN = 0.01 s (imported from §5.2.1,
 //!   L3421-3423, restated at L197-L199 of the curated doc).
 
 use core::time::Duration;
 
 /// The fixed SRT header size (16 bytes), defined in `draft-sharabayko-srt-01` §3,
-/// Figure 2. Used by the PktSize formula (`specs/rules/srt-livecc.md` §5.1.2
+/// Figure 2. Used by the PktSize formula (`private/specs-verified/rules/srt-livecc.md` §5.1.2
 /// step 2, L3227-3229).
 const SRT_HEADER_SIZE: u64 = 16;
 
 /// Initial cap for `AvgPayloadSize`: the maximum allowed packet payload size,
-/// which cannot be larger than 1456 bytes (`specs/rules/srt-livecc.md` §5.1.2,
+/// which cannot be larger than 1456 bytes (`private/specs-verified/rules/srt-livecc.md` §5.1.2,
 /// L3222-3223).
 const INITIAL_AVG_PAYLOAD_SIZE_CAP: u64 = 1456;
 
-/// Default MAX_BW for MAXBW_SET mode — 1 Gbps (`specs/rules/srt-livecc.md`
+/// Default MAX_BW for MAXBW_SET mode — 1 Gbps (`private/specs-verified/rules/srt-livecc.md`
 /// §5.1.1, L3122-3123). Stored in bytes per second (L3156-3157): 1 Gbps =
 /// 125_000_000 bytes/s.
 const DEFAULT_MAX_BW_BYTES_PER_SEC: u64 = 125_000_000;
 
-/// Maximum bandwidth configuration mode (`specs/rules/srt-livecc.md` §5.1.1,
+/// Maximum bandwidth configuration mode (`private/specs-verified/rules/srt-livecc.md` §5.1.1,
 /// lines L3116-L3202).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -86,7 +86,7 @@ pub enum MaxBwConfig {
 }
 
 impl Default for MaxBwConfig {
-    /// Default: [`MaxBwConfig::Set`] at 1 Gbps (`specs/rules/srt-livecc.md`
+    /// Default: [`MaxBwConfig::Set`] at 1 Gbps (`private/specs-verified/rules/srt-livecc.md`
     /// §5.1.1, L3122-3123).
     fn default() -> Self {
         MaxBwConfig::Set(DEFAULT_MAX_BW_BYTES_PER_SEC)
@@ -107,7 +107,7 @@ impl MaxBwConfig {
     /// Resolve the current `MAX_BW` value in bytes per second, or `None` for
     /// unbounded (infinite bandwidth).
     ///
-    /// Per `specs/rules/srt-livecc.md` §5.1.1:
+    /// Per `private/specs-verified/rules/srt-livecc.md` §5.1.1:
     /// - MAXBW_SET: returns the explicit value (L3120-3128).
     /// - INPUTBW_SET: returns `input_bw * (1 + overhead / 100)` (L3143).
     /// - INPUTBW_ESTIMATED: returns `est_input_bw * (1 + overhead / 100)` (L3154).
@@ -133,7 +133,7 @@ impl MaxBwConfig {
 
 broadcast_common::impl_spec_display!(MaxBwConfig);
 
-/// Apply `'MAX_BW = bw * (1 + overhead / 100)'` (`specs/rules/srt-livecc.md`
+/// Apply `'MAX_BW = bw * (1 + overhead / 100)'` (`private/specs-verified/rules/srt-livecc.md`
 /// L3143/L3154, verbatim).
 fn apply_overhead(bw: u64, overhead: u64) -> u64 {
     // `overhead / 100` is truncated integer division, but the spec formula
@@ -167,7 +167,7 @@ impl LiveCC {
     /// for the default 1 Gbps fixed MAXBW_SET mode.
     ///
     /// Initial `AvgPayloadSize` is set to the initial cap (1456 bytes),
-    /// per `specs/rules/srt-livecc.md` §5.1.2 (L3222-3223).
+    /// per `private/specs-verified/rules/srt-livecc.md` §5.1.2 (L3222-3223).
     pub fn new(max_bw_config: MaxBwConfig) -> Self {
         LiveCC {
             avg_payload_size: INITIAL_AVG_PAYLOAD_SIZE_CAP,
@@ -176,7 +176,7 @@ impl LiveCC {
     }
 
     /// Update the EWMA average payload size on sending a data packet
-    /// (`specs/rules/srt-livecc.md` §5.1.2, L3216-3223).
+    /// (`private/specs-verified/rules/srt-livecc.md` §5.1.2, L3216-3223).
     ///
     /// `packet_payload_size` — the payload size (bytes) of the just-sent data
     /// packet (original or retransmitted, L3216-3217).
@@ -208,7 +208,7 @@ impl LiveCC {
     }
 
     /// Compute the current inter-packet send period in microseconds
-    /// (`specs/rules/srt-livecc.md` §5.1.2, L3225-3238).
+    /// (`private/specs-verified/rules/srt-livecc.md` §5.1.2, L3225-3238).
     ///
     /// Call this on ACK reception (method (2), L3225). The period is also
     /// used after any state change (e.g. reconfiguration).

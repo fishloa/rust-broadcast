@@ -79,7 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BinaryGroupUsage`/`BinaryGroupFlags` — Table 1's classification of what
   the binary groups contain, from the three binary group flag bits
   (BGF2/BGF1/BGF0).
-- `docs/st12-1.md` — curated transcription of ST 12-1:2014 §8/§9 (fetched
+- `private/specs-verified/smpte/st12-1/st12-1.md` — curated transcription of ST 12-1:2014 §8/§9 (fetched
   directly from `pub.smpte.org`), including a note on Table 3's
   frame-rate-dependent bit-position swap verified against the rendered PDF
   page image (not just a plain-text extraction, since a column-transposition

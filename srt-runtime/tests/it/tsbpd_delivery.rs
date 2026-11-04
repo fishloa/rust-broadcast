@@ -5,7 +5,7 @@
 //! that packets are released in proper sequence order, each at or after its
 //! `PktTsbpdTime`, and that too-late packets are dropped.
 //!
-//! Spec grounding: `specs/rules/srt-tsbpd.md` §4.5/§4.6 (curated from
+//! Spec grounding: `private/specs-verified/rules/srt-tsbpd.md` §4.5/§4.6 (curated from
 //! `draft-sharabayko-srt-01`).
 
 use core::time::Duration;

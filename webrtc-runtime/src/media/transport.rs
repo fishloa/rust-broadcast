@@ -45,7 +45,7 @@ const DEMUX_RTP_MAX: u8 = 191;
 /// RFC 5761 §4: RTCP packet types occupy `[192, 223]` today, with `[224,
 /// 254]` reserved as a SHOULD-only-when-exhausted fallback band for future
 /// IANA allocations — see the `media` module doc and
-/// `docs/rfc5761-rtcp-mux.md` §3 for the full citation. This range is
+/// `private/specs-verified/ietf/webrtc-runtime/rfc5761-rtcp-mux.md` §3 for the full citation. This range is
 /// widened to include `[224, 254]` (issue #948 item 3): a legitimately
 /// registered future RTCP packet type in that band would otherwise be
 /// silently misclassified as RTP by [`is_rtcp_packet_type`].
@@ -241,7 +241,7 @@ fn stun_url(server: SocketAddr) -> String {
 /// conservative for RTP (whose own bound is the looser 2^48, never actually
 /// reached first per §9.2's own worked example). RFC 5764 §4.4 ("Key Usage
 /// Limitations") names this same figure `maximum_lifetime` and points at its
-/// own §4.1.2 protection-profile table (`docs/rfc5764-dtls-srtp.md` §2.1),
+/// own §4.1.2 protection-profile table (`private/specs-verified/ietf/webrtc-runtime/rfc5764-dtls-srtp.md` §2.1),
 /// which independently tabulates 2^31 as "max lifetime" for every profile it
 /// defines, including [`OFFERED_SRTP_PROFILE`].
 const MAXIMUM_LIFETIME_PACKETS: u64 = 1 << 31;

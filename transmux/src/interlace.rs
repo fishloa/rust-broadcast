@@ -19,8 +19,8 @@
 //! and costing a slice-header parse per sample is not something every
 //! consumer should pay. The function is additive and touches no existing API.
 //!
-//! Specs (transcribed in `docs/codec/h264-vui-pic-timing.md`,
-//! `docs/codec/h265-vui-pic-timing.md`, `docs/codec/h264-slice-header.md`):
+//! Specs (transcribed in `private/specs-verified/mpeg/transmux/codec/h264-vui-pic-timing.md`,
+//! `private/specs-verified/mpeg/transmux/codec/h265-vui-pic-timing.md`, `private/specs-verified/mpeg/transmux/codec/h264-slice-header.md`):
 //! H.264 §7.3.2.1.1, §7.3.3, §D.1.3/D.2.3 + Table D-1, §E.1.1-E.1.2;
 //! H.265 §7.3.7, §D.2.3/D.3.3 + Table D.2, §E.2.1-E.3.1.
 

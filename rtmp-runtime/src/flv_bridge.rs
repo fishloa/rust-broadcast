@@ -28,7 +28,7 @@ pub(crate) const AGG_BACK_POINTER_LEN: usize = 4;
 /// top 8.
 pub(crate) const AGG_TIMESTAMP_EXTENDED_SHIFT: u32 = 24;
 
-// ── FLV mapping consts (transmux/docs/codec/flv.md, Annex E) ────────────
+// ── FLV mapping consts (private/specs-verified/mpeg/transmux/codec/flv.md, Annex E) ────────────
 
 /// FLV file header `Signature` field (Annex E.2): `"FLV"`.
 pub(crate) const FLV_SIGNATURE: [u8; 3] = *b"FLV";

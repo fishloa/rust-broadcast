@@ -1,7 +1,7 @@
 //! SSU Module Type Descriptor — ETSI TS 102 006 §8.2.1, Table 9 (data-carousel
 //! tag 0x0A, allocated by EN 301 192 Table 48; module types Table 10). PDF p.18
 //! of the vendored V1.4.1 text, transcribed in
-//! `docs/descriptors/ts_102_006/9-*.md` and `docs/enums/ts_102_006/10-*.md`,
+//! `private/specs-verified/dvb/dvb-si/descriptors/ts_102_006/9-*.md` and `private/specs-verified/dvb/dvb-si/enums/ts_102_006/10-*.md`,
 //! verified against the rendered page.
 //!
 //! `SSU_module_type`(8): the type of the SSU module (DII `moduleInfo` only).

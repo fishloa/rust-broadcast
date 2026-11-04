@@ -1,7 +1,7 @@
 //! Application Icons Descriptor — ETSI TS 102 809 V1.3.1 §5.3.5.6.2, Table 25
 //! (AIT tag 0x0B); the `icon_flags` values are §5.2.8.2 Table 7 (PDF p.43 / p.23,
-//! transcribed in `docs/descriptors/ts_102_809/25-*.md` and
-//! `docs/enums/ts_102_809/7-*.md`, verified against the rendered pages).
+//! transcribed in `private/specs-verified/dvb/dvb-si/descriptors/ts_102_809/25-*.md` and
+//! `private/specs-verified/dvb/dvb-si/enums/ts_102_809/7-*.md`, verified against the rendered pages).
 //!
 //! Zero or one instance in the "application" (inner) AIT loop. Body:
 //! `icon_locator_length`(8), `icon_locator_byte`×N, `icon_flags`(16), then

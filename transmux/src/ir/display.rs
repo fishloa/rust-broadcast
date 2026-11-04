@@ -22,8 +22,8 @@
 //!   Tables E.1 (same values as Table E-1), E.2, E.3, E.4 and E.5.
 //!
 //! Every table was re-verified row by row against the rendered PDF pages and
-//! is transcribed in `docs/codec/vui-colour-tables.md` (see also
-//! `docs/display-geometry/SPEC-NOTES.md`), not read from the markdown text,
+//! is transcribed in `private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md` (see also
+//! `private/specs-verified/mpeg/display-geometry/public-notes/SPEC-NOTES.md`), not read from the markdown text,
 //! whose Table E-1 rows are merged and whose Tables E-3..E-5 lost their
 //! column structure.
 //!
@@ -314,7 +314,7 @@ pub const INFERRED_COLOUR_CODE: u8 = 2;
 /// The MPEG-2 inferred `colour_primaries` / `transfer_characteristics` /
 /// `matrix_coefficients` when `sequence_display_extension()` or its
 /// `colour_description` is absent: value 1 in all three, i.e. BT.709
-/// (ITU-T H.262 §6.3.6, printed pp. 44/47; `docs/codec/mpeg2-video-display.md`).
+/// (ITU-T H.262 §6.3.6, printed pp. 44/47; `private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md`).
 /// Distinct from [`INFERRED_COLOUR_CODE`]: MPEG-2 never infers "unspecified".
 pub const MPEG2_INFERRED_COLOUR_CODE: u8 = 1;
 

@@ -1,4 +1,4 @@
-//! Filler — SMPTE ST 377-1:2019 Annex B §B.11 (`docs/st377-1.md`): a
+//! Filler — SMPTE ST 377-1:2019 Annex B §B.11 (`private/specs-verified/smpte/st377-1/st377-1.md`): a
 //! Structural Component that occupies a gap in a Sequence's timeline
 //! (byte 14/15 = `0x01`/`0x09`).
 //!

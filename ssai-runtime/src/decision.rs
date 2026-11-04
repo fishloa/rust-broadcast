@@ -3,7 +3,7 @@
 //! Models the subset of the HLS Interstitials `EXT-X-DATERANGE` attribute
 //! set (`CLASS="com.apple.hls.interstitial"`, draft-pantos-hls-rfc8216bis
 //! Appendix D §D.2, transcribed in full at
-//! `broadcast-hls/docs/interstitials.md`) issue #929 scoped:
+//! `private/specs-verified/hls/ietf/rfc8216bis-interstitials.md`) issue #929 scoped:
 //! `X-ASSET-URI`/`X-ASSET-LIST`, `X-RESUME-OFFSET`, `X-PLAYOUT-LIMIT`,
 //! `X-SNAP`, `X-RESTRICT`. `X-CONTENT-MAY-VARY`, `X-TIMELINE-OCCUPIES`,
 //! `X-TIMELINE-STYLE`, and the §D.3 skip-button-control attributes are not

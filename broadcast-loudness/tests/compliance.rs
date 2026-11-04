@@ -2,7 +2,7 @@
 //!
 //! Each test case from Table 1 (tests 1–14 for loudness, 15–23 for true-peak)
 //! is implemented here. The expected values and tolerances are taken verbatim
-//! from the spec transcription at `docs/r128-metering.md`.
+//! from the spec transcription at `private/specs-verified/loudness/broadcast-loudness/r128-metering.md`.
 //!
 //! EBU Tech 3342 LRA test cases from Table 1 are also included.
 //!
@@ -579,7 +579,7 @@ fn lra_case_4_five_tones_music_box() {
 }
 
 // `lra_case_1`..`lra_case_4` above ARE the EBU Tech 3342 Table 1 "minimum
-// requirements" test signals verbatim (checked against `docs/tech3342-lra.md`,
+// requirements" test signals verbatim (checked against `private/specs-verified/loudness/broadcast-loudness/tech3342-lra.md`,
 // coordinator review of issue #1051): case 1 = two 20 s tones 10 dB apart
 // (LRA 10±1 LU), case 2 = 5 dB apart (5±1 LU), case 3 = 20 dB apart
 // (20±1 LU), case 4 = five 20 s tone segments (15±1 LU) — all already

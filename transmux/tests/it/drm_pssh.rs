@@ -1,6 +1,6 @@
 //! Biting tests for multi-DRM `pssh` init-data generation (issue #480).
 //!
-//! Spec basis: `transmux/docs/drm/pssh.md`.
+//! Spec basis: `private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md`.
 #![cfg(feature = "std")]
 
 use transmux::cenc::ProtectionSystemSpecificHeaderBox;
@@ -10,7 +10,7 @@ use transmux::drm::{
 };
 use transmux::rtp::base64_decode;
 
-/// Documented vector (docs/drm/pssh.md §3.3 pattern):
+/// Documented vector (private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §3.3 pattern):
 /// UUID 01020304-0506-0708-090a-0b0c0d0e0f10.
 const KID_A: [u8; 16] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
@@ -30,7 +30,7 @@ const KID_B: [u8; 16] = [
 
 #[test]
 fn playready_kid_swap_matches_documented_vector() {
-    // Known vector from docs/drm/pssh.md §3.3.
+    // Known vector from private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §3.3.
     assert_eq!(cenc_kid_to_playready(KID_A), KID_A_PLAYREADY);
     // Inverse round-trips to the original CENC UUID.
     assert_eq!(playready_kid_to_cenc(cenc_kid_to_playready(KID_A)), KID_A);
@@ -200,7 +200,7 @@ fn widevine_proto_encoding_bites() {
 
 #[test]
 fn widevine_minimal_matches_spec_vector() {
-    // docs/drm/pssh.md §4 "Minimum valid PSSH Data" — one key_id, no algorithm
+    // private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md §4 "Minimum valid PSSH Data" — one key_id, no algorithm
     // set by our builder (we omit field 1). Expect exactly: 12 10 <16 bytes>.
     let data = widevine_pssh_data(&[KID_A], None, None);
     let mut expected = Vec::new();

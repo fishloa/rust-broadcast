@@ -59,11 +59,11 @@ The negative-`S@r` vector (DASH-IF test-assets `dash264/TestCases/1c/qualcomm/1/
 
 | Source | Reason |
 |---|---|
-| ETSI TS 103 769 V1.2.1 Annex C.1/C.2/C.3 (the spec's own worked examples) | ETSI retains copyright over redistribution of the deliverable text ("No part may be reproduced or utilized... except as authorized by written permission of ETSI"). Not vendored in `private/` either (see `dvb-mabr/docs/README.md` "Source"). Replaced by the workspace's own fixtures above, modeled on the same *shape* (element/attribute coverage) but with original content. |
+| ETSI TS 103 769 V1.2.1 Annex C.1/C.2/C.3 (the spec's own worked examples) | ETSI retains copyright over redistribution of the deliverable text ("No part may be reproduced or utilized... except as authorized by written permission of ETSI"). Not vendored in `private/` either (see `private/specs-verified/dvb/dvb-mabr/` "Source"). Replaced by the workspace's own fixtures above, modeled on the same *shape* (element/attribute coverage) but with original content. |
 
 ## CPIX key-exchange fixtures (`fixtures/cpix/`)
 
-Prep work for issue #745 (multimux DRM key-server integration). See `cpix/docs/README.md`
+Prep work for issue #745 (multimux DRM key-server integration). See `private/specs-verified/dash/cpix/`
 for the full transcription these fixtures support.
 
 | File | Source | Date | Licence |
@@ -73,7 +73,7 @@ for the full transcription these fixtures support.
 | `EncryptedContentKeys.xml` | Same repo/commit — content keys encrypted for one recipient. Issue #745. | 2021-05 (fetched 2026-08) | MIT (© 2016 Axinom) |
 | `KeyRotationMultiKeyMulitPeriod.xml` | Same repo/commit — two `ContentKeyPeriod`s, `KeyPeriodFilter`-based key rotation. Issue #745. | 2021-05 (fetched 2026-08) | MIT (© 2016 Axinom) |
 | `UsageRulesBasedOnLabels.xml` | Same repo/commit — `LabelFilter`-based usage rules. Issue #745. | 2021-05 (fetched 2026-08) | MIT (© 2016 Axinom) |
-| `widevine-pssh-from-complex.bin` | Derived from `Complex.xml` above: the 56-byte raw `pssh` box, extracted by base64-decoding that document's Widevine `DRMSystem/ContentProtectionData` element (which itself wraps a base64 `<pssh>` element per the CPIX schema) with a one-off Python script (not committed — decode is: base64-decode `ContentProtectionData` text → parse the resulting `<pssh xmlns="urn:mpeg:cenc:2013">...</pssh>` XML fragment → base64-decode its text content). Verified against `transmux/docs/drm/pssh.md` §2/§4 field-by-field: box header (`size`/`pssh`/`version 0`/`flags 0`), Widevine SystemID, protobuf field 2 (`key_id`, matches the `DRMSystem@kid` attribute) and field 9 (`protection_scheme` varint = `0x63656E63` = `"cenc"`) all decode exactly per the documented layout — see `cpix/docs/cpix-2.3-dashif.md` §11 for the full worked decode. Issue #745. | 2021-05 source / 2026-08 derived | MIT (source data); derived bytes are a mechanical extraction, not a new creative work |
+| `widevine-pssh-from-complex.bin` | Derived from `Complex.xml` above: the 56-byte raw `pssh` box, extracted by base64-decoding that document's Widevine `DRMSystem/ContentProtectionData` element (which itself wraps a base64 `<pssh>` element per the CPIX schema) with a one-off Python script (not committed — decode is: base64-decode `ContentProtectionData` text → parse the resulting `<pssh xmlns="urn:mpeg:cenc:2013">...</pssh>` XML fragment → base64-decode its text content). Verified against `private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md` §2/§4 field-by-field: box header (`size`/`pssh`/`version 0`/`flags 0`), Widevine SystemID, protobuf field 2 (`key_id`, matches the `DRMSystem@kid` attribute) and field 9 (`protection_scheme` varint = `0x63656E63` = `"cenc"`) all decode exactly per the documented layout — see `private/specs-verified/dash/cpix/cpix-2.3-dashif.md` §11 for the full worked decode. Issue #745. | 2021-05 source / 2026-08 derived | MIT (source data); derived bytes are a mechanical extraction, not a new creative work |
 
 Not vendored from the same repo (available upstream if a later implementation phase
 needs them, but not needed for spec-transcription/fixture prep): the X.509

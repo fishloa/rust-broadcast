@@ -20,7 +20,7 @@ vendored PDFs in `private/specs/` (the private submodule), used to generate the 
    ```bash
    .venv/bin/python render_docs.py --tables out/si/tables \
        --title "ETSI EN 300 468 v1.19.1 — DVB SI" \
-       --pdf etsi_en_300_468_v01.19.01_dvb_si.pdf --o ../../dvb-si/docs/README.md
+       --pdf etsi_en_300_468_v01.19.01_dvb_si.pdf --o ../../private/specs-verified/dvb/dvb-si/
    ```
 
 `render_md.py` / `audit.py` are the older EN 300 468-only helpers kept for

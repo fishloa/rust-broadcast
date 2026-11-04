@@ -17,7 +17,7 @@
 //! per-code reference — standard, verified clause, Rust type and status for every
 //! table_id and descriptor tag, plus every allocated code that is **not**
 //! implemented — is
-//! [`dvb-si/docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md).
+//! `private/specs-verified/dvb/dvb-si/COVERAGE.md`.
 //!
 //! <!-- BEGIN GENERATED: dvb-si-at-a-glance (tools/gen-dvbsi-coverage.py) -->
 //!
@@ -233,7 +233,7 @@
 //! 102 772 (MPE-IFEC), ETSI EN 303 560 (TTML subtitling, DFIS), ETSI TS
 //! 102 825-9 (CPCM), and the PDS-scoped regional extensions (NorDig, EACEM /
 //! D-Book, China GY/T 270 / 420 / 422, T/AI 109.6 / 109.7, T/UWA 012.2). The
-//! table above gives each one's edition and status; `dvb-si/docs/COVERAGE.md` lists
+//! table above gives each one's edition and status; `private/specs-verified/dvb/dvb-si/COVERAGE.md` lists
 //! every code.
 //!
 //! # Which API do I use?
@@ -278,11 +278,11 @@
 //!   exceptions documented on the field (AC-3 `reserved_flags` is `0000` in
 //!   every edition; the J2K extended-branch `reserved(5)` is `00000`).
 //! - Where a newer edition gives reserved bits a meaning (the carve-outs
-//!   listed in `dvb-si/docs/reserved-bits-edition-audit.md` §4) the bits are typed
+//!   listed in `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §4) the bits are typed
 //!   with that meaning instead.
 //!
 //! The per-edition evidence for every default lives in
-//! `dvb-si/docs/reserved-bits-edition-audit.md`; the `real_capture_byte_identity`
+//! `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`; the `real_capture_byte_identity`
 //! test re-serializes every descriptor found in the real-capture archive and
 //! requires byte-identity.
 //!

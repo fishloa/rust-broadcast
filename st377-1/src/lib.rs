@@ -3,10 +3,10 @@
 //! Random Index Pack, `no_std` + `alloc`.
 //!
 //! The wire structures follow the curated transcription at
-//! `st377-1/docs/st377-1.md` (from
+//! `private/specs-verified/smpte/st377-1/st377-1.md` (from
 //! `https://pub.smpte.org/latest/st377-1/st377-1-2019.pdf`); cite that file,
 //! not this comment, as the field-semantics oracle. See also
-//! `docs/st378-op1a.md` for the OP1a transcription.
+//! `private/specs-verified/smpte/st377-1/st378-op1a.md` for the OP1a transcription.
 //!
 //! # What it does / what it does not
 //!
@@ -86,7 +86,7 @@
 //! gaps remain by design:
 //!
 //! - **No Essence Descriptor type.** A minimal OP1a file needs the File Package
-//!   to carry an `EssenceDescriptor` (`docs/st378-op1a.md` §6.5/§8). The real
+//!   to carry an `EssenceDescriptor` (`private/specs-verified/smpte/st377-1/st378-op1a.md` §6.5/§8). The real
 //!   fixture carries an MPEG Video Descriptor and a Wave Audio Descriptor, both
 //!   defined by sibling essence-container-mapping specs, which this crate does
 //!   not anticipate.

@@ -6,7 +6,7 @@
 //! bit-for-bit as the NAK loss-list range marker, Appendix A) — see the
 //! crate-internal `crate::packet::SEQ_NUMBER_MASK`.
 //!
-//! `specs/rules/srt-arq.md` does not specify a sequence-number comparison or
+//! `private/specs-verified/rules/srt-arq.md` does not specify a sequence-number comparison or
 //! arithmetic algorithm for ARQ purposes (it is not one of the curated
 //! rules). This module resolves that gap the standard way for a modular
 //! sequence space — comparable to RFC 1982 serial number arithmetic:

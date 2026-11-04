@@ -241,7 +241,7 @@ impl Ac3ComponentType {
 /// Spec default of the 4-bit `reserved_flags` field: EN 300 468 Annex D
 /// (every edition V1.4.1-V1.20.1, and TS 102 366 V1.1.1/V1.2.1 A.3.3.2) says
 /// "should always be set to 0" — an explicit exception to the global
-/// "reserved = 1" rule (`dvb-si/docs/reserved-bits-edition-audit.md` §3.1).
+/// "reserved = 1" rule (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §3.1).
 pub const RESERVED_FLAGS_DEFAULT: u8 = 0x0;
 const RESERVED_FLAGS_MASK: u8 = 0x0F;
 

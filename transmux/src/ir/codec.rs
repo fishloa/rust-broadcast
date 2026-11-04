@@ -290,7 +290,7 @@ pub enum CodecConfig {
     ///
     /// VP8 has **no** out-of-band configuration box — the coded dimensions are
     /// carried in the key-frame header (RFC 6386 §9.1) and decoded from the first
-    /// key frame at demux time (see `transmux/docs/codec/vp8-vorbis-webm.md`).
+    /// key frame at demux time (see `private/specs-verified/mpeg/transmux/codec/vp8-vorbis-webm.md`).
     /// Carried in the IR for `{WebM} → IR → {WebM}` / inspection; there is no
     /// ISOBMFF sample entry for VP8 in this crate (out of scope), so it does not
     /// participate in the fMP4 mux path.
@@ -304,7 +304,7 @@ pub enum CodecConfig {
     ///
     /// The three setup headers (Identification / Comment / Setup) are carried
     /// verbatim in `codec_private` (Xiph-laced, exactly as WebM `CodecPrivate`
-    /// stores them — see `transmux/docs/codec/vp8-vorbis-webm.md`); `channels`
+    /// stores them — see `private/specs-verified/mpeg/transmux/codec/vp8-vorbis-webm.md`); `channels`
     /// and `sample_rate` are decoded from the Identification header (Vorbis I
     /// §4.2.2). Carried in the IR for `{WebM} → IR → {WebM}` / inspection; there
     /// is no ISOBMFF sample entry for Vorbis in this crate (out of scope), so it

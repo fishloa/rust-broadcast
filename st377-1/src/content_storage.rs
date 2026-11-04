@@ -1,4 +1,4 @@
-//! Content Storage — SMPTE ST 377-1:2019 Annex A.4 (`docs/st377-1.md`):
+//! Content Storage — SMPTE ST 377-1:2019 Annex A.4 (`private/specs-verified/smpte/st377-1/st377-1.md`):
 //! the file's inventory of every Package and Essence Container Data Set.
 
 extern crate alloc;

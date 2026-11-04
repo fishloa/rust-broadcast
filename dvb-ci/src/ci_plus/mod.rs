@@ -12,7 +12,7 @@
 //! ([`classify`]), then the leading `apdu_tag` selects the object within that
 //! resource.
 //!
-//! Spec: ETSI TS 103 205 V1.4.1 — resource IDs in `docs/ts_103_205/resource-ids.md`;
+//! Spec: ETSI TS 103 205 V1.4.1 — resource IDs in `private/specs-verified/dvb/dvb-ci/ts_103_205/resource-ids.md`;
 //! per-resource layouts cited in their own module docs.
 //!
 //! ## Resources implemented this pass

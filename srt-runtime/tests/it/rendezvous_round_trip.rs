@@ -1,5 +1,5 @@
 //! Full in-memory Rendezvous handshake — `draft-sharabayko-srt-01` §4.3.2,
-//! curated at `specs/rules/srt-rendezvous.md`. Wires two
+//! curated at `private/specs-verified/rules/srt-rendezvous.md`. Wires two
 //! [`RendezvousHandshake`] peers together with no sockets and no bytes ever
 //! touching a real network: every emitted [`HandshakeOutput::Send`] from one
 //! side is parsed with the existing [`ControlPacket`] codec and fed straight

@@ -1,7 +1,7 @@
 //! ST 337 burst-preamble + burst-payload framing — SMPTE ST 337:2015 §7.
 //!
-//! See `st337/docs/st337.md` for the curated spec transcription this module
-//! implements field-for-field, and `st337/docs/st337-PROVENANCE.md` for the
+//! See `private/specs-verified/smpte/st337/st337.md` for the curated spec transcription this module
+//! implements field-for-field, and `private/specs-verified/smpte/st337/st337-PROVENANCE.md` for the
 //! real-fixture / `ffmpeg -f spdif` cross-check that verified the constants
 //! and bit layout below against real running software.
 //!
@@ -12,7 +12,7 @@
 //! `0xF872` serializes as `[0x72, 0xF8]`). Nothing in ST 337's own text
 //! mandates an endianness for a byte-array representation of what is
 //! logically a 16-bit-word stream (`ffmpeg -f spdif`'s real IEC 61937 burst
-//! output uses this exact convention — `docs/st337-PROVENANCE.md` — so this
+//! output uses this exact convention — `private/specs-verified/smpte/st337/st337-PROVENANCE.md` — so this
 //! crate adopts the verified real-world one rather than inventing one). A
 //! big-endian-per-word carriage (which this crate has not observed in
 //! practice) fails with [`Error::InvalidSync`].
@@ -26,11 +26,11 @@ use crate::error::{Error, Result};
 // ---------------------------------------------------------------------------
 
 /// `Pa` — sync word 1, 16-bit mode (Table 6, §7.2.1). Independently confirmed
-/// against a real `ffmpeg -f spdif` burst — see `docs/st337-PROVENANCE.md`.
+/// against a real `ffmpeg -f spdif` burst — see `private/specs-verified/smpte/st337/st337-PROVENANCE.md`.
 pub const SYNC_WORD_PA: u16 = 0xF872;
 
 /// `Pb` — sync word 2, 16-bit mode (Table 6, §7.2.1). Independently confirmed
-/// against a real `ffmpeg -f spdif` burst — see `docs/st337-PROVENANCE.md`.
+/// against a real `ffmpeg -f spdif` burst — see `private/specs-verified/smpte/st337/st337-PROVENANCE.md`.
 pub const SYNC_WORD_PB: u16 = 0x4E1F;
 
 /// `data_type` value reserved to mean "see `extended_data_type` (`Pe`)" —
@@ -51,7 +51,7 @@ pub const MAX_5_BIT_FIELD: u8 = 0x1F;
 pub const MAX_DATA_STREAM_NUMBER: u8 = 0x07;
 
 /// Byte width of one 16-bit-mode preamble word (`Pa`..`Pf`) in this crate's
-/// byte-stream abstraction — see `docs/st337.md` scope decision 1.
+/// byte-stream abstraction — see `private/specs-verified/smpte/st337/st337.md` scope decision 1.
 const PREAMBLE_WORD_LEN: usize = 2;
 
 /// Byte length of the four-word preamble (`Pa`,`Pb`,`Pc`,`Pd`).
@@ -86,7 +86,7 @@ const PC_DATA_STREAM_NUMBER_MASK: u16 = 0x0007;
 /// The 2-bit `data_mode` field (§7.2.4.3 Table 8): which of the 16/20/24-bit
 /// AES3-3 subframe positions a burst's words occupy.
 ///
-/// This crate's byte-stream abstraction (see `docs/st337.md` scope decision
+/// This crate's byte-stream abstraction (see `private/specs-verified/smpte/st337/st337.md` scope decision
 /// 2) supports only [`DataMode::Mode16`] for parsing/building a [`Burst`] —
 /// `Mode20`/`Mode24` are recognized wire values (round-tripped faithfully as
 /// data) but imply a wider physical preamble word this crate does not model,
@@ -184,7 +184,7 @@ pub struct BurstPreamble {
     /// ([`EXTENDED_DATA_TYPE_MARKER`]) means "see [`Self::extended`]"; this
     /// crate does not define a named enum for the type -> codec mapping
     /// (registered in SMPTE ST 338, not independently verified here — see
-    /// `docs/st337.md` scope decision 3).
+    /// `private/specs-verified/smpte/st337/st337.md` scope decision 3).
     pub data_type: u8,
     /// `data_mode` — Table 8 (§7.2.4.3). Only [`DataMode::Mode16`] is
     /// supported by [`Burst::parse`]/[`Burst::new`] — see the type's doc.
@@ -575,7 +575,7 @@ mod tests {
 
     #[test]
     fn pc_bit_layout_matches_the_real_ffmpeg_oracle() {
-        // docs/st337-PROVENANCE.md: ffmpeg -f spdif's real E-AC-3 burst has
+        // private/specs-verified/smpte/st337/st337-PROVENANCE.md: ffmpeg -f spdif's real E-AC-3 burst has
         // Pc = 0x0015 (LE bytes 15 00): data_type=21, data_mode=Mode16,
         // error_flag=false, data_type_dependent=0, data_stream_number=0.
         let preamble = BurstPreamble {

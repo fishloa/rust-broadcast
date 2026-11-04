@@ -1,4 +1,4 @@
-//! Partition Pack — SMPTE ST 377-1:2019 §7.1-§7.4 (`docs/st377-1.md`), the
+//! Partition Pack — SMPTE ST 377-1:2019 §7.1-§7.4 (`private/specs-verified/smpte/st377-1/st377-1.md`), the
 //! file's own backbone: every Header/Body/Footer Partition begins with one
 //! of these.
 
@@ -170,7 +170,7 @@ pub struct PartitionPack {
     /// reproduces the original length token exactly. Real MXF encoders
     /// commonly use a longer, fixed-width form so the pack can be
     /// rewritten in place (e.g. Open -> Closed) without shifting every
-    /// later absolute offset (`docs/st377-1.md` §6.3.4).
+    /// later absolute offset (`private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4).
     pub len_size: BerLength,
 }
 

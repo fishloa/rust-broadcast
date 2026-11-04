@@ -14,7 +14,7 @@
 //! (a real Chromium `RTCPeerConnection`'s RTCP, captured via
 //! `multimux`'s `whep_egress` browser test — see #1071); every byte vector
 //! below remains **computed directly from
-//! the RFC 3550 §6 bit diagrams** (`rtcp-packet/docs/rtcp.md`) with a
+//! the RFC 3550 §6 bit diagrams** (`private/specs-verified/rtp/rtcp-packet/rtcp.md`) with a
 //! standalone script, independently of this crate's own serializer — so a
 //! bug that made `serialize`/`parse` agree with each other but disagree with
 //! the spec would still be caught. (Additional non-fixture round-trip and

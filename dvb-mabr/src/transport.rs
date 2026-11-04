@@ -65,7 +65,7 @@ impl ContentIngestMethod {
 
 broadcast_common::impl_spec_display!(ContentIngestMethod);
 
-/// `@transmissionMode` (clause 10.2.3.1) — see `docs/mabr-transport.md` §1.
+/// `@transmissionMode` (clause 10.2.3.1) — see `private/specs-verified/dvb/dvb-mabr/mabr-transport.md` §1.
 /// XSD `transmissionModeType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -101,7 +101,7 @@ impl TransmissionMode {
 
 broadcast_common::impl_spec_display!(TransmissionMode);
 
-/// `@transportSecurity` (clause 10.2.3.1) — see `docs/mabr-transport.md` §4.
+/// `@transportSecurity` (clause 10.2.3.1) — see `private/specs-verified/dvb/dvb-mabr/mabr-transport.md` §4.
 /// XSD `transportSecurityType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -303,9 +303,9 @@ pub struct MulticastTransportSession {
     pub duration: Option<String>,
     /// Server-configuration only; a gateway must ignore it if present.
     pub content_ingest_method: Option<ContentIngestMethod>,
-    /// See `docs/mabr-transport.md` §1.
+    /// See `private/specs-verified/dvb/dvb-mabr/mabr-transport.md` §1.
     pub transmission_mode: Option<TransmissionMode>,
-    /// See `docs/mabr-transport.md` §4.
+    /// See `private/specs-verified/dvb/dvb-mabr/mabr-transport.md` §4.
     pub transport_security: Option<TransportSecurity>,
     /// Max inter-packet gap (ms) before the gateway may treat the session
     /// as inactive/unsubscribe. Takes precedence over other timeouts.

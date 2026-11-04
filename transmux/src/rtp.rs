@@ -41,7 +41,7 @@
 //!   across sequential packets sharing one timestamp, marker on the last
 //!   ([`packetise_klv`] / [`depacketise_klv`]).
 //!
-//! See `transmux/docs/rtp/rtp-payload-formats.md` for the full transcription.
+//! See `private/specs-verified/mpeg/transmux/rtp/rtp-payload-formats.md` for the full transcription.
 //!
 //! This module is stateless: packetise takes the IR and returns
 //! [`RtpPacket`]s whose payload is a zero-copy [`bytes::Bytes`] slice of
@@ -56,7 +56,7 @@
 //! [`crate::rtp_stream`]'s stateful
 //! [`crate::rtp_stream::RtpStreamDepacketiser`] does that (loss/
 //! reorder detection, issue #779); see its module docs and
-//! `transmux/docs/rtp/rtp-sequence-validation.md`.
+//! `private/specs-verified/mpeg/transmux/rtp/rtp-sequence-validation.md`.
 //!
 //! `no_std` + `alloc`.
 

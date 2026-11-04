@@ -6,7 +6,7 @@
 //! from IDR detection) carrying the real [`CodecConfig`] supplied at
 //! construction (e.g. from [`crate::rtp_sdp`]).
 //!
-//! See [`transmux/docs/rtp/rtp-payload-formats.md`](../README.md)
+//! See [`private/specs-verified/mpeg/transmux/rtp/rtp-payload-formats.md`](../README.md)
 //! for the RFC background and timing-model specification.
 //!
 //! # Timing model
@@ -74,7 +74,7 @@
 //! validity-check algorithm; the discipline it embodies (wrapping
 //! comparison, SSRC-scoped state, treating a new SSRC as a new source) is
 //! transcribed and cited in full at
-//! `transmux/docs/rtp/rtp-sequence-validation.md`, along with a precise
+//! `private/specs-verified/mpeg/transmux/rtp/rtp-sequence-validation.md`, along with a precise
 //! account of where this implementation follows it and where it must
 //! diverge (that RFC's algorithm classifies validity for RTCP statistics; it
 //! never reorders, because nothing in plain RTCP loss accounting needs
@@ -260,7 +260,7 @@ const MAX_WILD_JUMP_U16: u16 = (RTP_SEQ_MOD - MAX_MISORDER) as u16;
 
 /// Loss/reorder signal from [`RtpStreamDepacketiser`] (RFC 3550 §5.1
 /// sequence-number semantics; see the module docs' "Loss and reorder
-/// detection" section and `transmux/docs/rtp/rtp-sequence-validation.md` for
+/// detection" section and `private/specs-verified/mpeg/transmux/rtp/rtp-sequence-validation.md` for
 /// the RFC 3550 §A.1 discipline this is adapted from, and why the signal
 /// surfaces here rather than in [`crate::ir::DemuxEvent`]).
 ///

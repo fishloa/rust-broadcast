@@ -31,7 +31,7 @@ bytes** for a container demuxer (`transmux`) to turn into samples; it is
 
 ## Spec grounding
 
-Adobe RTMP 1.0, transcribed in `rtmp-runtime/docs/rtmp.md`. AMF3 / egress / `play`
+Adobe RTMP 1.0, transcribed in `private/specs-verified/rtmp/rtmp-runtime/rtmp.md`. AMF3 / egress / `play`
 are out of scope for this release.
 
 ## Consuming it

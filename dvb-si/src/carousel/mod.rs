@@ -6,7 +6,7 @@
 //! [`UnMessage`] (DSI/DII) and [`DownloadDataBlock`] — and
 //! [`ModuleReassembler`] collects DDB blocks into complete modules.
 //!
-//! Wire layouts are documented in `dvb-si/docs/text/iso_13818_6/` (with
+//! Wire layouts are documented in `private/specs-verified/dvb/dvb-si/text/iso_13818_6/` (with
 //! provenance notes — ISO/IEC 13818-6 itself cannot be vendored) and pinned
 //! against a live capture by the `carousel_fixture` integration test.
 //!
@@ -24,7 +24,7 @@
 //! typed in [`crate::descriptors::carousel`] (`AnyCarouselDescriptor` /
 //! `parse_carousel_loop`); [`ModuleInfo::user_info`] walks them in that tag
 //! space. See the generated
-//! [`dvb-si/docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#dsm-cc-data-carousel-etsi-en-301-192-v171-table-48).
+//! `private/specs-verified/dvb/dvb-si/COVERAGE.md`.
 
 pub mod biop;
 pub mod messages;

@@ -16,7 +16,7 @@
 //!
 //! `Pc`'s `data_type=21` here is the real value `ffmpeg -f spdif` uses for
 //! E-AC-3 (an independent, running-software cross-check, not a value this
-//! crate invented) -- see `docs/st337-PROVENANCE.md` for the full oracle
+//! crate invented) -- see `private/specs-verified/smpte/st337/st337-PROVENANCE.md` for the full oracle
 //! comparison, including the one genuine spec-family discrepancy it
 //! surfaced (`length_code` bits-vs-bytes between SMPTE ST 337 and IEC 61937).
 
@@ -31,7 +31,7 @@ fn real_eac3_frame() -> Vec<u8> {
     .expect("eac3_frame0.bin fixture must exist")
 }
 
-/// The real E-AC-3 IEC 61937 data_type code (docs/st337-PROVENANCE.md).
+/// The real E-AC-3 IEC 61937 data_type code (private/specs-verified/smpte/st337/st337-PROVENANCE.md).
 const EAC3_DATA_TYPE: u8 = 21;
 
 fn build_burst(payload: &[u8]) -> Burst<'_> {

@@ -5,8 +5,7 @@
 //! §4.5 "Timestamp-Based Packet Delivery", §4.5.1 "Packet Delivery Time",
 //! §4.5.1.1 "TSBPD Time Base Calculation", §4.6 "Too-Late Packet Drop", and
 //! §4.7 "Drift Management" (for the `Drift` term in the `PktTsbpdTime`
-//! formula). Curated behavioral rules: [`specs/rules/srt-tsbpd.md`](
-//! https://github.com/fishloa/rust-broadcast/blob/main/specs/rules/srt-tsbpd.md).
+//! formula). Curated behavioral rules: `private/specs-verified/rules/srt-tsbpd.md`.
 //!
 //! # Sans-IO contract
 //!
@@ -65,7 +64,7 @@ use core::time::Duration;
 use crate::arq::seq;
 
 /// How many fresh in-sequence packets make up one drift-sampling window
-/// (`specs/rules/srt-tsbpd.md` rules 26-27: "based on packet count, not time
+/// (`private/specs-verified/rules/srt-tsbpd.md` rules 26-27: "based on packet count, not time
 /// duration"). The draft gives no number (the srt-tsbpd.md "Ambiguous" list
 /// says so); this matches the 1000-sample window of libsrt's drift tracer
 /// (`srtcore/tsbpd_time.h`), so both ends of a link correct at the same pace.
@@ -78,7 +77,7 @@ pub const DRIFT_SAMPLE_COUNT: u32 = 1000;
 pub const DRIFT_MAX_US: i64 = 5_000;
 
 /// Minimum negotiated `TsbpdDelay` — 120 milliseconds
-/// (`specs/rules/srt-tsbpd.md` rule 10, verbatim L2601-2603:
+/// (`private/specs-verified/rules/srt-tsbpd.md` rule 10, verbatim L2601-2603:
 /// "The value of minimum TsbpdDelay is negotiated during the SRT handshake
 /// exchange and is equal to 120 milliseconds.").
 const TSBPD_DELAY_MIN_MS: u64 = 120;
@@ -120,7 +119,7 @@ pub struct TickOutcome {
 /// `now: core::time::Duration` in [`feed_data`](Self::feed_data) and
 /// [`tick`](Self::tick).
 ///
-/// # State variables (per `specs/rules/srt-tsbpd.md`)
+/// # State variables (per `private/specs-verified/rules/srt-tsbpd.md`)
 ///
 /// - `TsbpdTimeBase` (µs, rule 12) — seeded at construction (signed), reflects
 ///   the clock difference between receiver-local time and the sender's
@@ -136,7 +135,7 @@ pub struct TickOutcome {
 pub struct TsbpdScheduler {
     /// `TsbpdTimeBase` — time base reflecting the clock difference between
     /// receiver-local time and the sender's packet-timestamping clock
-    /// (µs, `specs/rules/srt-tsbpd.md` rule 12, §4.5.1.1 L2612-2618).
+    /// (µs, `private/specs-verified/rules/srt-tsbpd.md` rule 12, §4.5.1.1 L2612-2618).
     tsbpd_time_base: i64,
     /// `TsbpdDelay` — receiver's buffer delay, in milliseconds
     /// (rule 9-10, §4.5.1 L2588-2592).
@@ -230,7 +229,7 @@ impl TsbpdScheduler {
 
     /// Computed PktTsbpdTime for a packet.
     ///
-    /// Per `specs/rules/srt-tsbpd.md` rule 9 (verbatim from
+    /// Per `private/specs-verified/rules/srt-tsbpd.md` rule 9 (verbatim from
     /// `draft-sharabayko-srt-01` L2581):
     ///
     /// > PktTsbpdTime = TsbpdTimeBase + PKT_TIMESTAMP + TsbpdDelay + Drift
@@ -300,7 +299,7 @@ impl TsbpdScheduler {
 
     /// Extend a packet's raw 32-bit wire timestamp into an always-increasing
     /// microsecond value, correctly spanning a real wraparound past `2^32`
-    /// microseconds (~71.58 minutes, `specs/rules/srt-tsbpd.md` rule 15) —
+    /// microseconds (~71.58 minutes, `private/specs-verified/rules/srt-tsbpd.md` rule 15) —
     /// without this, `pkt_tsbpd_time` fed the raw value straight through, so
     /// every packet after a wrap computed a `PktTsbpdTime` far in the past
     /// (the field dropped back near 0) and got Too-Late-Packet-Dropped
@@ -462,7 +461,7 @@ impl TsbpdScheduler {
     /// delivery.
     ///
     /// The logic here follows the pseudocode from
-    /// `specs/rules/srt-tsbpd.md` rule 21 (L2693-2715):
+    /// `private/specs-verified/rules/srt-tsbpd.md` rule 21 (L2693-2715):
     ///
     /// ```text
     /// while(True) {

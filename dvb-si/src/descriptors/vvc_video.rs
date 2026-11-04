@@ -1,6 +1,6 @@
 //! VVC video descriptor — Rec. ITU-T H.222.0 (08/2023) | ISO/IEC 13818-1:2023
 //! §2.6.129–2.6.130, Tables 2-133…2-138 (tag 0x39); syntax in
-//! `docs/descriptors/iso_13818_1/39-3a-vvc-and-evc-video-descriptors.md`.
+//! `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/39-3a-vvc-and-evc-video-descriptors.md`.
 //!
 //! ```text
 //! profile_idc(7) tier_flag(1) num_sub_profiles(8) { sub_profile_idc(32) }*

@@ -1,5 +1,5 @@
 //! Provider Export Descriptor — ETSI TS 102 727 V1.1.1 §10.15, Table 93 (AIT tag
-//! 0x12). PDF p.181, transcribed in `docs/descriptors/ts_102_727/93-*.md`,
+//! 0x12). PDF p.181, transcribed in `private/specs-verified/dvb/dvb-si/descriptors/ts_102_727/93-*.md`,
 //! verified against the rendered page.
 //!
 //! Used in the application (inner) AIT loop of an application that exports

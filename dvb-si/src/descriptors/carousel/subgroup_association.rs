@@ -1,7 +1,7 @@
 //! Subgroup Association Descriptor — ETSI TS 102 006 §9.6.2.1, Table 39
 //! (data-carousel tag 0x0B, allocated by EN 301 192 Table 48; DSI
 //! `GroupInfoBytes`). PDF p.36 of the vendored V1.4.1 text, transcribed in
-//! `docs/descriptors/ts_102_006/39-*.md`, verified against the rendered page.
+//! `private/specs-verified/dvb/dvb-si/descriptors/ts_102_006/39-*.md`, verified against the rendered page.
 //!
 //! Associates an SSU update group with the UNT targeting criteria. Fixed
 //! 5-byte body (`descriptor_length` = 5): the 40-bit `subgroup_tag`, whose

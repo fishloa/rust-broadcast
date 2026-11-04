@@ -66,7 +66,7 @@ implementation resolves it. `dvb_ta::DasNibbleOrder` (`TypeHigh` = Table 8,
 `DvbDasDescriptor` and `CompactSpliceInsert` selects either reading. Default wire
 behaviour is Table 1 for the descriptor and Table 8 for the compact form; both are
 pinned by `tests/it/das_nibble_order.rs`. Independent-oracle compact vectors:
-`tests/it/dvb_ta_compact_vectors.rs`. Evidence: `docs/dvb_ta/compact-scte35.md`.
+`tests/it/dvb_ta_compact_vectors.rs`. Evidence: `private/specs-verified/scte/scte35-splice/dvb_ta/compact-scte35.md`.
 
 ## Feature flags
 
@@ -135,7 +135,7 @@ Depends on `broadcast-common` (traits, CRC-32, `clock33`). Built on top of it:
 
 ## Spec grounding and examples
 
-Syntax and assignment tables are transcribed in [`docs/README.md`](docs/README.md);
+Syntax and assignment tables are transcribed in the private repo (`private/specs-verified/scte/scte35-splice/`);
 every module doc cites the SCTE 35 section, table and tag. Examples
 (`cargo run -p scte35-splice --example <name>`): `parse_splice_insert`,
 `round_trip_and_descriptors`.

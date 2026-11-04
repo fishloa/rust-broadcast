@@ -22,7 +22,7 @@
 //! # Spec
 //!
 //! - **TS packet + adaptation field**: ITU-T H.222.0 (= ISO/IEC 13818-1) §2.4.3
-//!   (`docs/codec/ts-demux-13818-1.md`) — 4-byte header, `adaptation_field()`
+//!   (`private/specs-verified/mpeg/transmux/codec/ts-demux-13818-1.md`) — 4-byte header, `adaptation_field()`
 //!   carrying `PCR` (§2.4.3.5) and stuffing (§2.4.3.4).
 //! - **PES header**: ISO/IEC 13818-1 §2.4.3.6 / §2.4.3.7 — `packet_start_code`
 //!   `00 00 01`, `stream_id`, `PES_packet_length`, PTS/DTS (33-bit @ 90 kHz).
@@ -165,7 +165,7 @@ const DESCRIPTOR_TAG_CA: u8 = 0x09;
 // ── MPEG-H_3dAudio_descriptor (ISO/IEC 13818-1 §2.6.106, Table 2-121) ───────
 //
 // Syntax transcribed (verified on the rendered page, H.222.0 08/2023 PDF p.156)
-// in `transmux/docs/codec/mpegh-3daudio-descriptor-h222.md`. The wire form is
+// in `private/specs-verified/mpeg/transmux/codec/mpegh-3daudio-descriptor-h222.md`. The wire form is
 // built by `dvb-si`'s typed `MpegH3dAudio` inside an `Mpeg2ExtensionDescriptor`
 // (tag 0x3F, `extension_descriptor_tag` 0x08), not by hand-assembled bytes.
 

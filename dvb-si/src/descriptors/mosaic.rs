@@ -42,7 +42,7 @@ const CELL_RESERVED_LO_SHIFT: u8 = 3;
 const CELL_RESERVED_HI_SHIFT: u8 = 5;
 const CELL_PRESENTATION_MASK: u8 = 0x07;
 /// Spec default of the grid header `reserved_future_use`(1): `1` (EN 300 468
-/// V1.3.1-V1.20.1 Table 71; audit `dvb-si/docs/reserved-bits-edition-audit.md`
+/// V1.3.1-V1.20.1 Table 71; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`
 /// §6.1, class A: stable in every edition).
 pub const GRID_RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
 /// Spec default of the per-logical-cell `reserved_future_use`(7): all ones.

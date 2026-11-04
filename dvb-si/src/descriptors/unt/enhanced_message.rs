@@ -9,7 +9,7 @@
 //! operational loops (Table 19).
 //!
 //! The 3-bit `reserved_for_future_use` has no value column in Table 37; the
-//! reserved-bit audit (`dvb-si/docs/reserved-bits-edition-audit.md`, TS 102 006
+//! reserved-bit audit (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`, TS 102 006
 //! row) records the convention `1` (`0b111`). It is preserved on parse and
 //! re-emitted verbatim; hand-built descriptors default to it.
 
@@ -28,7 +28,7 @@ const RESERVED_SHIFT: u8 = 5;
 const RESERVED_MASK: u8 = 0x07;
 const MESSAGE_INDEX_MASK: u8 = 0x1F;
 /// Default of the 3-bit `reserved_for_future_use`: `0b111` (all-ones
-/// reserved convention; `dvb-si/docs/reserved-bits-edition-audit.md`).
+/// reserved convention; `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`).
 pub const RESERVED_FOR_FUTURE_USE_DEFAULT: u8 = 0b111;
 
 /// enhanced_message_descriptor.

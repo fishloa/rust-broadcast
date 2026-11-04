@@ -1,5 +1,5 @@
 //! Application MMI objects — ETSI TS 101 699 V1.1.1 §6.5, Tables 62-68
-//! (PDF pp. 57-61). See `docs/ci_plus/application-mmi.md`.
+//! (PDF pp. 57-61). See `private/specs-verified/dvb/dvb-ci/ci_plus/application-mmi.md`.
 //!
 //! Resource ID `0x00410041` (fixed). Lets a module interact with the user by
 //! launching an application on the host's application execution environment.

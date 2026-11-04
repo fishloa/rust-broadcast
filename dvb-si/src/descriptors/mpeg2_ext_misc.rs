@@ -35,7 +35,7 @@
 //! tag byte is conceivable; rejecting the one-byte case is the conservative
 //! choice under either reading and is pinned by a test.)
 //!
-//! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-*.md`.
+//! Syntax transcriptions: `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/3f-extension-descriptor-bodies-*.md`.
 //! Every `reserved` field is a typed field re-emitted verbatim (default: all
 //! ones; `zero_bits` of the JPEG XS descriptor defaults to zero as the spec says).
 

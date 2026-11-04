@@ -1,7 +1,7 @@
 //! H.264 slice-header prefix, PPS prefix and field-pair (PAFF) detection —
 //! ITU-T H.264 (08/2021) §7.3.3 (slice header), §7.3.2.2 (PPS), §7.4.1.2.4
 //! (first VCL NAL unit of a primary coded picture), §3.35-3.37 (complementary
-//! field pairs). Transcription: `docs/codec/h264-slice-header.md`.
+//! field pairs). Transcription: `private/specs-verified/mpeg/transmux/codec/h264-slice-header.md`.
 //!
 //! Field-coded (PAFF) H.264 is broadcast as one coded picture per *field*, one
 //! PES per field. ISO/IEC 14496-15 samples are whole access units, i.e. both

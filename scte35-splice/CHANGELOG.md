@@ -21,14 +21,14 @@
 - Serialize: the DVB-TA DAS `reserved` nibble in the compact encoder was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
 
 ### Added (item 3 - DVB DAS nibble-order ambiguity, ETSI TS 103 752-1)
-- `dvb_ta::DasNibbleOrder` (`TypeHigh` = Table 8, `TypeLow` = Table 1) plus `DvbDasDescriptor::{parse,serialize_into}_with_order` and `CompactSpliceInsert::{parse,serialize_into}_with_order`: Table 1 (stand-alone `DVB_DAS_descriptor()`, type in the low nibble) and Table 8 (`compact_splice_insert()`, type in the high nibble) disagree about the `equivalent_segmentation_type`/`reserved` nibble order of the same body. After searching for a resolution (no newer edition or corrigendum, no byte examples in TS 103 752-1/TR 103 752-2/A178-1r1, no independent implementation, no real capture) the question stays open: default wire behaviour is unchanged (descriptor: Table 1, compact: Table 8), both readings are selectable and pinned by `tests/das_nibble_order.rs` (revert-verified), and the evidence is recorded in `docs/dvb_ta/compact-scte35.md` and the `DasNibbleOrder` docs.
+- `dvb_ta::DasNibbleOrder` (`TypeHigh` = Table 8, `TypeLow` = Table 1) plus `DvbDasDescriptor::{parse,serialize_into}_with_order` and `CompactSpliceInsert::{parse,serialize_into}_with_order`: Table 1 (stand-alone `DVB_DAS_descriptor()`, type in the low nibble) and Table 8 (`compact_splice_insert()`, type in the high nibble) disagree about the `equivalent_segmentation_type`/`reserved` nibble order of the same body. After searching for a resolution (no newer edition or corrigendum, no byte examples in TS 103 752-1/TR 103 752-2/A178-1r1, no independent implementation, no real capture) the question stays open: default wire behaviour is unchanged (descriptor: Table 1, compact: Table 8), both readings are selectable and pinned by `tests/das_nibble_order.rs` (revert-verified), and the evidence is recorded in `private/specs-verified/scte/scte35-splice/dvb_ta/compact-scte35.md` and the `DasNibbleOrder` docs.
 
 ### Fixed (#1204)
 - A clear `splice_info_section` whose `splice_command_length` is the deprecated `0xFFF` "backwards compatibility" value is no longer rejected. SCTE 35 §9.6.1 says that value "shall be ignored by downstream equipment", so `parse` now derives the command's extent from its own structure (the smallest length that both parses as the command and closes the descriptor loop exactly at the CRC; an underivable layout, e.g. with alignment stuffing, is still an error, never a guess). Found with a real capture (TSDuck `test-091.ts`, `tests/real_capture.rs`). **BREAKING (additive field on a literal-constructible struct):** `ClearPayload` gains `legacy_command_length_sentinel: bool`; `serialize_into` writes `0xFFF` back when set so such a section round-trips byte-for-byte (`false` and the real length for conformant / hand-built sections).
 
 ### Added (#1204)
 - `tests/real_capture.rs`: real `splice_info_section`s from the committed `fixtures/ts/scte35-*.ts` / SSAI fixture (always) and the local-only TSDuck corpus (archive-gated, skip loudly), checked against an independent Python decode of the spec syntax and re-serialized byte-exactly.
-- `tests/dvb_ta_compact_vectors.rs` + `tests/fixtures/dvb_ta/gen_compact_vectors.py`: independent-oracle byte vectors for the DVB TA compact `time_signal` / `splice_insert` (TS 103 752-1 §8.3.3); documents the open DAS-nibble-order question (`docs/dvb_ta/compact-scte35.md`).
+- `tests/dvb_ta_compact_vectors.rs` + `tests/fixtures/dvb_ta/gen_compact_vectors.py`: independent-oracle byte vectors for the DVB TA compact `time_signal` / `splice_insert` (TS 103 752-1 §8.3.3); documents the open DAS-nibble-order question (`private/specs-verified/scte/scte35-splice/dvb_ta/compact-scte35.md`).
 
 ### Changed (BREAKING, #1202)
 - **BREAKING (behavioural):** `SpliceInfoSection::serialize_into` rejects `sap_type` > 3 and `encryption_algorithm` > 63, and `AudioDescriptor::serialize_into` rejects `bit_stream_mode` > 7 / `num_channels` > 15, with `Error::FieldOverflow` instead of masking them into a different valid-looking value (the #1129 class). Guarded by `tests/serialize_mask_guard.rs` and `tests/serialize_field_width.rs`; `tests/hostility.rs` sweeps CRC-repaired mutations of real sections for panics (none found).
@@ -166,8 +166,8 @@
 
 ### Added
 - **TOML spec-mirror + drift tests for `EquivalentSegmentationType` (Table 2) and
-  `TimelineType` (Table 4)** (dvb_ta audit C): `docs/enums/dvb_ta/
-  equivalent_segmentation_type.toml` and `docs/enums/dvb_ta/timeline_type.toml`
+  `TimelineType` (Table 4)** (dvb_ta audit C): `private/specs-verified/scte/scte35-splice/enums/dvb_ta/
+  equivalent_segmentation_type.toml` and `private/specs-verified/scte/scte35-splice/enums/dvb_ta/timeline_type.toml`
   record every named variant/value/spec-label from ETSI TS 103 752-1 Tables 2 and
   4; `tests/dvb_ta_spec_drift.rs` byte-sweeps each enum and cross-checks the TOML,
   mirroring the existing SCTE-35 enum drift tests.

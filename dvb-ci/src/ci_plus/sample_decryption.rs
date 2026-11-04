@@ -1,5 +1,5 @@
 //! Sample decryption resource objects — ETSI TS 103 205 V1.4.1 §7.4, Tables
-//! 30-39 (PDF pp. 52-60). See `docs/ts_103_205/sample-decryption.md`.
+//! 30-39 (PDF pp. 52-60). See `private/specs-verified/dvb/dvb-ci/ts_103_205/sample-decryption.md`.
 //!
 //! Resource ID `0x00920041` (Class 146, Type 1, Version 1). The resource controls
 //! decryption by the CICAM of a set of consecutive media Samples packaged into an
@@ -316,7 +316,7 @@ impl<'a> SamplePayload<'a> {
 
     /// Range-check every length/count/PID field before [`Self::write_into`]
     /// writes them, so an oversized value is rejected rather than silently
-    /// wrapped (see `dvb-ci/docs/README.md`).
+    /// wrapped (see `private/specs-verified/dvb/dvb-ci/`).
     fn validate(&self) -> Result<()> {
         match self {
             Self::Ts(records) => {

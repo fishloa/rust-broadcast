@@ -4,7 +4,7 @@
 //! Declared at the document root (applies to all sessions) and/or per
 //! `MulticastSession` (that session only); both may be active
 //! simultaneously. The report body itself is a JSON document (clause 11.1)
-//! — out of scope of this crate; see `docs/mabr-reporting.md`.
+//! — out of scope of this crate; see `private/specs-verified/dvb/dvb-mabr/mabr-reporting.md`.
 
 extern crate alloc;
 

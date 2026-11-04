@@ -1,5 +1,5 @@
 //! Auxiliary File System resource (CICAM file retrieval) — ETSI TS 103 205
-//! V1.4.1 §9, Tables 72-75 (PDF pp. 96-99). See `docs/ts_103_205/file-retrieval.md`.
+//! V1.4.1 §9, Tables 72-75 (PDF pp. 96-99). See `private/specs-verified/dvb/dvb-ci/ts_103_205/file-retrieval.md`.
 //!
 //! Resource ID `0x00910041` (Class 145, Type 1, Version 1). A generic read-only
 //! mechanism for a CICAM to offer files to the Host (including CICAM broadcast

@@ -377,7 +377,7 @@ fn frame_rate_millihertz_hevc_convention(time_scale: u32, num_units_in_tick: u32
     u32::try_from(millihertz).ok()
 }
 
-/// Normative tier (H.265 §E.3.2, `transmux/docs/codec/vui-timing-frame-rate.md` §2.7): the
+/// Normative tier (H.265 §E.3.2, `private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md` §2.7): the
 /// picture interval is `ClockTick * elemental_duration`, `ClockTick = num_units / time_scale`,
 /// so the picture rate is `time_scale / (num_units * elemental_duration)` Hz and
 /// `millihertz = round_half_up(1000 * time_scale / (num_units * elemental_duration))`.
@@ -409,7 +409,7 @@ fn frame_rate_millihertz_hevc_normative(
 }
 
 /// H.265 frame-rate derivation from the parsed VUI timing facts, per
-/// `transmux/docs/codec/vui-timing-frame-rate.md` §2.7.
+/// `private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md` §2.7.
 ///
 /// * Tier A (normative): HRD fixed picture rate present. `field_seq_flag = 1` halves the
 ///   picture rate (assumes complementary field pairs); `frame_field_info_present_flag = 1`
@@ -445,7 +445,7 @@ fn hevc_frame_rate_from_timing(
 }
 
 /// Combine an SPS VUI timing (if any) with a VPS timing fallback, per
-/// `transmux/docs/codec/hevc-vps-timing.md` §3-§4. The SPS timing wins when
+/// `private/specs-verified/mpeg/transmux/codec/hevc-vps-timing.md` §3-§4. The SPS timing wins when
 /// present (the spec requires the two to be equal when both are present; the
 /// VPS is then ignored). Otherwise the VPS timing is used together with the
 /// SPS interlace facts (`field_seq` / `frame_field_info_present` from
@@ -487,7 +487,7 @@ fn hevc_timing_with_vps_fallback(
 /// (owner-approved: both emit the same value).
 ///
 /// H.265 (ITU-T H.265 §E.2.1 + hrd_parameters): see
-/// `transmux/docs/codec/vui-timing-frame-rate.md` §2.7.
+/// `private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md` §2.7.
 pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)> {
     match config {
         CodecConfig::Avc { config, .. } => {
@@ -1171,7 +1171,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         }
         // WebM-native codecs: carried in the IR (see [`crate::webm_demux`]) but
         // with no ISOBMFF sample entry in this crate — the fMP4 mux path is out
-        // of scope (see `docs/codec/vp8-vorbis-webm.md`).
+        // of scope (see `private/specs-verified/mpeg/transmux/codec/vp8-vorbis-webm.md`).
         CodecConfig::Vp8 { .. } => {
             return Err(crate::error::Error::UnsupportedCodec { codec: "VP8" });
         }

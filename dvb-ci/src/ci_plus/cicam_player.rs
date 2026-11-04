@@ -1,5 +1,5 @@
 //! CICAM Player resource objects — ETSI TS 103 205 V1.4.1 §8.8, Tables 48-71
-//! (PDF pp. 86-96). See `docs/ts_103_205/cicam-player.md`.
+//! (PDF pp. 86-96). See `private/specs-verified/dvb/dvb-ci/ts_103_205/cicam-player.md`.
 //!
 //! Resource ID `0x00930041` (Class 147, Type 1, Version 1). The CICAM Player
 //! resource lets the Host request the CICAM to initiate and play a service on its

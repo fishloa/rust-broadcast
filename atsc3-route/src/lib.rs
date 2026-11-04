@@ -91,7 +91,7 @@
 //!
 //! ## Related crates
 //!
-//! Depends on `rmt-flute` and `broadcast-common` only. `atsc3` (archived, unpublished) is the signalling-side sibling; the ROUTE transcription lives in that crate's `docs/a331-route.md`.
+//! Depends on `rmt-flute` and `broadcast-common` only. `atsc3` (archived, unpublished) is the signalling-side sibling; the ROUTE transcription lives in that crate's `private/specs-verified/atsc/atsc3/a331-route.md`.
 //!
 //! ## MSRV and licence
 //!

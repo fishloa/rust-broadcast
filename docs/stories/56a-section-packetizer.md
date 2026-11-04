@@ -10,10 +10,10 @@ transcriptions. Touch only the files listed. Do **not** commit.
 All wire rules come from in-repo transcriptions of vendored ETSI/ISO PDFs. Do
 **not** invent values or citations — every constant must trace to one of these:
 
-- **`dvb-si/docs/README.md`** → "PSI section carriage and
+- **`private/specs-verified/dvb/dvb-si/`** → "PSI section carriage and
   pointer_field (§2.4.4–2.4.4.2)". The packetizer's core rules: PUSI semantics,
   `pointer_field` meaning, section concatenation, and 0xFF stuffing.
-- **`dvb-si/docs/README.md`** → "§5.1.4 — Repetition rates and random access"
+- **`private/specs-verified/dvb/dvb-si/`** → "§5.1.4 — Repetition rates and random access"
   (informational here; the 25 ms floor belongs to the scheduler in story 56b,
   not this packetizer).
 
@@ -21,7 +21,7 @@ All wire rules come from in-repo transcriptions of vendored ETSI/ISO PDFs. Do
 
 A new module `dvb-si/src/mux.rs`, `#[cfg(feature = "ts")]`, registered in
 `dvb-si/src/lib.rs` next to `pub mod ts;` / `pub mod demux;`. Module doc comment
-must cite ISO/IEC 13818-1 §2.4.4 and name `dvb-si/docs/README.md` (follow
+must cite ISO/IEC 13818-1 §2.4.4 and name `private/specs-verified/dvb/dvb-si/` (follow
 the citation style in `ts.rs:223`).
 
 ```rust

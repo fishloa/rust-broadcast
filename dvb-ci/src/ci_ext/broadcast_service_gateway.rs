@@ -1,5 +1,5 @@
 //! Broadcast Service Gateway objects — ETSI TS 101 699 V1.1.1 §6.1.3.3,
-//! Tables 32-34 (PDF pp. 39-40). See `docs/ci_plus/input-modules.md`.
+//! Tables 32-34 (PDF pp. 39-40). See `private/specs-verified/dvb/dvb-ci/ci_plus/input-modules.md`.
 //!
 //! Resource ID `0x00811ii1` (`ii` = Module ID). A Type 'B' module on a broadcast
 //! network presents this resource. It **inherits all Generic Service Gateway

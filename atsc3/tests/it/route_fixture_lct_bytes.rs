@@ -9,8 +9,8 @@
 //! `fixture_slt.rs` (which exercises `atsc3::lls::LlsEnvelope` and
 //! `atsc3::slt::Slt` end to end), this file cannot call into any crate API
 //! for the LCT-framed packets — it hand-decodes the LCT header
-//! (RFC 5651 §5.1, transcribed independently in `rmt-flute/docs/lct.md` and
-//! `rmt-flute/docs/alc.md`, neither of which `atsc3` depends on) directly
+//! (RFC 5651 §5.1, transcribed independently in `private/specs-verified/ietf/rmt-flute/lct.md` and
+//! `private/specs-verified/ietf/rmt-flute/alc.md`, neither of which `atsc3` depends on) directly
 //! against the documented byte layout, the same discipline
 //! `webrtc-runtime/tests/it/whip_smoke_pcap_stun.rs` uses for its hand-rolled
 //! pcap walker. It does **not** implement a ROUTE parser (no `Parse`/
@@ -36,7 +36,7 @@ fn read_fixture(name: &str) -> Vec<u8> {
 
 // ---------------------------------------------------------------------------
 // Hand-decode of the LCT header (RFC 5651 §5.1) — test-local only, not a
-// crate API. Field names/widths match `rmt-flute/docs/lct.md` exactly.
+// crate API. Field names/widths match `private/specs-verified/ietf/rmt-flute/lct.md` exactly.
 // ---------------------------------------------------------------------------
 
 /// The fixed 16-bit first word's flag fields, plus `HDR_LEN`/`CP`.
@@ -130,7 +130,7 @@ fn be_uint(bytes: &[u8]) -> u64 {
 }
 
 /// One HET-64 (variable-length, `EXT_FTI`) extension: `HET`, `HEL` (32-bit
-/// words), and the `HEC` content (`rmt-flute/docs/lct.md` "Variable-length
+/// words), and the `HEC` content (`private/specs-verified/ietf/rmt-flute/lct.md` "Variable-length
 /// extension").
 struct VarExt<'a> {
     het: u8,
@@ -150,7 +150,7 @@ fn decode_var_ext(bytes: &[u8]) -> VarExt<'_> {
 }
 
 /// One HET-192+ (fixed-length) extension: exactly one 32-bit word, `HET` +
-/// 24-bit `HEC` (`rmt-flute/docs/lct.md` "Fixed-length extension").
+/// 24-bit `HEC` (`private/specs-verified/ietf/rmt-flute/lct.md` "Fixed-length extension").
 struct FixedExt<'a> {
     het: u8,
     hec: &'a [u8],

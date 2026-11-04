@@ -1,6 +1,6 @@
 //! `Plex(n)` variable-length integer coding — RDD 29:2019 §3.4.
 //!
-//! See `docs/rdd29.md` §3.4 for the full transcription and "Scope decisions"
+//! See `private/specs-verified/smpte/rdd29/rdd29.md` §3.4 for the full transcription and "Scope decisions"
 //! #1 for why this implementation escalates on "the field is all-ones for
 //! its own current width" rather than the literally-printed (and internally
 //! inconsistent) `Plex(8)` pseudocode.

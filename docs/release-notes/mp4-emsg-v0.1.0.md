@@ -40,7 +40,7 @@ ISO BMFF / DASH Event Message Box (`emsg`) parse + serialize:
 - **`EmsgBox::is_scte35()`** — recognises the `urn:scte:scte35…` scheme URI
   prefix; `message_data` carries a SCTE 35 `splice_info_section` in that case.
 - Field semantics sourced from **DASH-IF IOP Part 10 V5.0.0 §6.1 + Table 6-2**
-  (transcribed in `mp4-emsg/docs/emsg.md`); normative ISOBMFF box syntax cites
+  (transcribed in `private/specs-verified/mpeg/mp4-emsg/emsg.md`); normative ISOBMFF box syntax cites
   **ISO/IEC 23009-1 §5.10.3.3** (paid, not vendored — softer footing than fully-
   free crates, flagged per project policy).
 - `#![no_std]` + `alloc`; optional `serde` feature (Serialize-only).

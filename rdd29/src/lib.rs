@@ -2,7 +2,7 @@
 //! bed/object rendering metadata, `no_std` + `alloc`.
 //!
 //! The wire structures follow the curated transcription at
-//! `rdd29/docs/rdd29.md` (from `https://pub.smpte.org/pub/rdd29/rdd29-2019.pdf`);
+//! `private/specs-verified/smpte/rdd29/rdd29.md` (from `https://pub.smpte.org/pub/rdd29/rdd29-2019.pdf`);
 //! cite that file, not this comment, as the field-semantics oracle.
 //!
 //! # What it does / what it does not

@@ -8,7 +8,7 @@
 //!
 //! # Spec citations
 //!
-//! - ETSI TS 101 154 §B.6.1 / A/53 Part 4 §6.2.3-6.2.4 (`docs/codec/afd-bar-data.md`
+//! - ETSI TS 101 154 §B.6.1 / A/53 Part 4 §6.2.3-6.2.4 (`private/specs-verified/mpeg/transmux/codec/afd-bar-data.md`
 //!   §4.4): AFD and bar data ride in `extension_and_user_data(2)` (after the
 //!   picture header); they "remain in effect until the next sequence_header()
 //!   or until a new AFD"; after `sequence_header()` the area of interest

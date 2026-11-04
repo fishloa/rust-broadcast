@@ -1,6 +1,6 @@
 //! Transport profile descriptor — Rec. ITU-T H.222.0 (08/2023) | ISO/IEC
 //! 13818-1:2023 §2.6.93–2.6.94, Tables 2-111/2-112 (tag 0x37); syntax in
-//! `docs/descriptors/iso_13818_1/33-37-mvc-operation-point-stereoscopic-and-transport-profile-descriptors.md`.
+//! `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/33-37-mvc-operation-point-stereoscopic-and-transport-profile-descriptors.md`.
 //!
 //! ```text
 //! transport_profile(8) { private_data(8) }*

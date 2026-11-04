@@ -1,6 +1,6 @@
 //! ST 2022-6 HBRMT Payload Header — SMPTE ST 2022-6:2012 §6.4 (Figure 3).
 //!
-//! See `st2022/docs/st2022-6-framing.md` §3 for the curated spec
+//! See `private/specs-verified/smpte/st2022/st2022-6-framing.md` §3 for the curated spec
 //! transcription this module implements field-for-field (including the
 //! derived-not-quoted width of [`PayloadHeader::reserve`] — see that doc's
 //! "Note on `RESERVE`'s width").
@@ -57,11 +57,11 @@ pub const EXTENSION_UNIT_LEN: usize = 4;
 pub const MAX_EXTENSION_UNITS: u8 = 0x0F;
 
 /// The `T` value of the special PAD tag: no `L`/`V` follows it (§6.4; see
-/// `docs/st2022-6-framing.md` §3.4).
+/// `private/specs-verified/smpte/st2022/st2022-6-framing.md` §3.4).
 pub const EXTENSION_TAG_PAD: u8 = 0;
 
 /// One element of a [`HeaderExtension`]'s Tag/Length/Value chain
-/// (§6.4, `docs/st2022-6-framing.md` §3.4).
+/// (§6.4, `private/specs-verified/smpte/st2022/st2022-6-framing.md` §3.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ExtensionItem<'a> {
@@ -216,7 +216,7 @@ const FMT_RESERVE_MASK: u32 = 0x0000_00FF;
 
 /// `VSID` — Video source ID / protection profile, 3 bits (§6.4).
 ///
-/// Per ST 2022-7 (see `docs/st2022-7-hitless.md`), this field's value is
+/// Per ST 2022-7 (see `private/specs-verified/smpte/st2022/st2022-7-hitless.md`), this field's value is
 /// expected to be identical across ST 2022-7 datagram copies of the same
 /// content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -824,7 +824,7 @@ broadcast_common::impl_spec_display!(SampleStructure, Reserved);
 
 /// The Video Source Format row (§6.4): `MAP`/`FRAME`/`FRATE`/`SAMPLE` plus
 /// the trailing `FMT-RESERVE` byte, present in a [`PayloadHeader`] iff `F` =
-/// 1 (this standard requires `F` = 1 — see `docs/st2022-6-framing.md` §3.1).
+/// 1 (this standard requires `F` = 1 — see `private/specs-verified/smpte/st2022/st2022-6-framing.md` §3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VideoSourceFormat {
@@ -902,7 +902,7 @@ pub struct PayloadHeader<'a> {
     /// [`ClockFrequency::NoTimestamp`].
     pub video_timestamp: Option<u32>,
     /// The Header Extension (§6.4's Tag/Length/Value chain — see
-    /// `docs/st2022-6-framing.md` §3.4), present iff `Ext` != 0. `Ext` is
+    /// `private/specs-verified/smpte/st2022/st2022-6-framing.md` §3.4), present iff `Ext` != 0. `Ext` is
     /// not stored independently — it is exactly
     /// `self.extension.map_or(0, |e| e.len() / 4)`. Walk the typed chain
     /// with [`HeaderExtension::items`].

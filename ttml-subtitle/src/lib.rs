@@ -20,7 +20,7 @@
 //! |---|---|---|---|
 //! | W3C TTML2 | Recommendation 08 Nov 2018 | element tree, `tts:*` style attributes, §9 resource elements | Partial (unmodelled content kept as [`UnknownElement`] / [`ForeignAttribute`]) |
 //! | W3C TTML2 | same | `<time-expression>` grammar ([`TimeExpression`]) | Full |
-//! | W3C IMSC 1.1 | Recommendation 08 Nov 2018, edited 27 Apr 2020 | Text and Image Profile checks listed in the [`validation`] module | Partial (159-row feature table transcribed in `docs/imsc11-profiles.md`, not enforced) |
+//! | W3C IMSC 1.1 | Recommendation 08 Nov 2018, edited 27 Apr 2020 | Text and Image Profile checks listed in the [`validation`] module | Partial (159-row feature table transcribed in `private/specs-verified/w3c/ttml-subtitle/imsc11-profiles.md`, not enforced) |
 //! | W3C IMSC 1.0 / 1.0.1 | [`ImscVersion::V1_0`] | same checker minus the IMSC 1.1-only frame-rate rule | Partial |
 //! | XML 1.0 | §2.8, §4.3.3 | declaration validated at parse | Full |
 //!

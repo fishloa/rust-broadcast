@@ -1,6 +1,6 @@
 //! MVC operation point descriptor — Rec. ITU-T H.222.0 (08/2023) |
 //! ISO/IEC 13818-1:2023 §2.6.82–2.6.83, Table 2-103 (tag 0x33); syntax in
-//! `docs/descriptors/iso_13818_1/33-37-mvc-operation-point-stereoscopic-and-transport-profile-descriptors.md`.
+//! `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/33-37-mvc-operation-point-stereoscopic-and-transport-profile-descriptors.md`.
 //!
 //! ```text
 //! profile_idc(8) constraint_set0..5_flag(1 each) AVC_compatible_flags(2) level_count(8)

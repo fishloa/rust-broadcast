@@ -8,8 +8,7 @@ Scans:
 
 Checks (exit 1 on any finding):
   1. relative Markdown links / backticked relative repo paths that do not resolve;
-  2. citations of docs/... paths that do not exist on disk and are not decoded by
-     docs/specs/PRIVATE-MAP.md.
+  2. citations of docs/... paths that do not exist on disk.
 """
 
 import os
@@ -20,13 +19,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MAP = ROOT / "docs" / "specs" / "PRIVATE-MAP.md"
-
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)|^\[[^\]]+\]:\s*(\S+)", re.M)
 BACKTICK = re.compile(r"`([^`\n]+)`")
 CITE = re.compile(r"(?<![\w./-])((?:[\w.+-]+/)*docs/[\w.+/-]*[\w-]\.(?:md|html|tsv))")
-MAP_ROW = re.compile(r"^\| `([^`]+)` \| `([^`]+)` \|\s*(.*?)\s*\|$")
-
 
 def tracked() -> list[str]:
     try:
@@ -45,29 +40,8 @@ def tracked() -> list[str]:
         return result
 
 
-def load_map() -> set[str]:
-    olds: set[str] = set()
-    if not MAP.is_file():
-        return olds
-    for line in MAP.read_text(encoding="utf-8").splitlines():
-        m = MAP_ROW.match(line)
-        if m:
-            olds.add(m.group(1))
-    return olds
 
 
-def in_map(cite: str, olds: set[str]) -> bool:
-    if cite in olds:
-        return True
-    for o in olds:
-        if o == cite or o.endswith("/" + cite):
-            return True
-    # tail decode: crate-relative docs/... tail
-    for o in olds:
-        m = re.match(r"^[^/]+/(docs/.*)$", o)
-        if m and m.group(1) == cite:
-            return True
-    return False
 
 
 def scan_files() -> list[Path]:
@@ -120,7 +94,7 @@ def is_relative_path(tok: str) -> bool:
     return ("./" in tok) or ("../" in tok)
 
 
-def check_markdown(f: Path, olds: set[str], errors: list[str]) -> None:
+def check_markdown(f: Path, errors: list[str]) -> None:
     text = f.read_text(encoding="utf-8", errors="replace")
     rel = str(f.relative_to(ROOT))
     text_no_code = re.sub(r"`[^`]*`", "", text)
@@ -169,12 +143,10 @@ def check_markdown(f: Path, olds: set[str], errors: list[str]) -> None:
         cands = [cite, f"{crate}/{cite}", posixpath.normpath(posixpath.join(d, cite))]
         if any((ROOT / c).exists() for c in cands):
             continue
-        if in_map(cite, olds) or any(in_map(c, olds) for c in cands):
-            continue
-        errors.append(f"{rel}: citation does not resolve and is not in docs/specs/PRIVATE-MAP.md: {cite}")
+        errors.append(f"{rel}: citation does not resolve: {cite}")
 
 
-def check_rust(f: Path, olds: set[str], errors: list[str]) -> None:
+def check_rust(f: Path, errors: list[str]) -> None:
     text = f.read_text(encoding="utf-8", errors="replace")
     rel = str(f.relative_to(ROOT))
     cr = crate_root(f)
@@ -234,24 +206,21 @@ def check_rust(f: Path, olds: set[str], errors: list[str]) -> None:
             cands = [cite, f"{rel.split('/')[0]}/{cite}", posixpath.normpath(posixpath.join(d, cite))]
             if any((ROOT / c).exists() for c in cands):
                 continue
-            if in_map(cite, olds) or any(in_map(c, olds) for c in cands):
-                continue
-            errors.append(f"{rel}: citation does not resolve and is not in docs/specs/PRIVATE-MAP.md: {cite}")
+            errors.append(f"{rel}: citation does not resolve: {cite}")
 
 
 def main() -> int:
-    olds = load_map()
     errors: list[str] = []
     for f in scan_files():
         try:
-            check_markdown(f, olds, errors)
+            check_markdown(f, errors)
         except (OSError, UnicodeDecodeError):
             continue
     for f in ROOT.rglob("*.rs"):
         if ".git" in f.parts or "private" in f.parts:
             continue
         try:
-            check_rust(f, olds, errors)
+            check_rust(f, errors)
         except (OSError, UnicodeDecodeError):
             continue
     if errors:

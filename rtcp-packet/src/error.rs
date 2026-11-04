@@ -1,7 +1,7 @@
 //! Error type for RTCP packet parsing/serialization.
 //!
 //! Field-by-field semantics are documented in the curated spec oracle,
-//! `rtcp-packet/docs/rtcp.md` (RFC 3550 §6).
+//! `private/specs-verified/rtp/rtcp-packet/rtcp.md` (RFC 3550 §6).
 
 /// Result alias for `rtcp-packet` parsing/serialization.
 pub type Result<T> = core::result::Result<T, Error>;

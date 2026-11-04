@@ -2,20 +2,20 @@
 //!
 //! Assertions use hand-computed constants (mirroring `tests/it/livecc_pacing.rs`'s
 //! style) so a trivial/no-op/constant implementation must fail every test
-//! here. Spec grounding: `specs/rules/srt-congestion.md`.
+//! here. Spec grounding: `private/specs-verified/rules/srt-congestion.md`.
 
 use core::time::Duration;
 use srt_runtime::filecc::{FileCc, Phase};
 
-/// `RC_INTERVAL` = `SYN` = 10 ms (`specs/rules/srt-congestion.md` L3421-3425).
+/// `RC_INTERVAL` = `SYN` = 10 ms (`private/specs-verified/rules/srt-congestion.md` L3421-3425).
 const RC_INTERVAL_US: f64 = 10_000.0;
 /// The initial RTT estimate before any ACK is fed — 100 ms
-/// (`specs/rules/srt-arq.md` rule 31, reused by `filecc`, not redefined).
+/// (`private/specs-verified/rules/srt-arq.md` rule 31, reused by `filecc`, not redefined).
 const INITIAL_RTT_US: f64 = 100_000.0;
 
 /// Test 1 — slow-start growth test: feed ACKs with no loss, assert
 /// `CWND_SIZE` evolves per the exact spec formula (`CWND_SIZE += ACK_SEQNO -
-/// LAST_ACK_SEQNO`, `specs/rules/srt-congestion.md` L3381-3385) and
+/// LAST_ACK_SEQNO`, `private/specs-verified/rules/srt-congestion.md` L3381-3385) and
 /// `PKT_SND_PERIOD` stays fixed at 1 microsecond (L3338-3340). Also checks
 /// the `RC_INTERVAL` rate-control gate (Step 1, L3365-3371): an ACK fed
 /// before 10ms have elapsed since the last one must be a no-op.
@@ -87,12 +87,12 @@ fn slow_start_growth_matches_hand_computed_formula() {
 }
 
 /// Test 2 — loss triggers transition out of slow start into congestion
-/// avoidance (`specs/rules/srt-congestion.md` rule 9, L3427-3432). A trivial
+/// avoidance (`private/specs-verified/rules/srt-congestion.md` rule 9, L3427-3432). A trivial
 /// impl that never transitions must fail this. Also hand-checks the
 /// slow-start-end `PKT_SND_PERIOD` formula (Step 5, L3392-3401): with no ACK
 /// fed yet, `RECEIVING_RATE` is 0, so `PKT_SND_PERIOD = CWND_SIZE / (RTT +
 /// RC_INTERVAL)` using the untouched initial CWND_SIZE (16) and RTT
-/// (100ms, `specs/rules/srt-arq.md` rule 31).
+/// (100ms, `private/specs-verified/rules/srt-arq.md` rule 31).
 #[test]
 fn loss_during_slow_start_transitions_and_computes_step5_period() {
     let mut cc = FileCc::new(0);
@@ -116,7 +116,7 @@ fn loss_during_slow_start_transitions_and_computes_step5_period() {
 
 /// Test 3 — congestion-avoidance CWND formula test: feed a known
 /// RECEIVING_RATE/RTT and assert `CWND_SIZE` matches the exact formula
-/// (`specs/rules/srt-congestion.md` Step 3, L3479-3481):
+/// (`private/specs-verified/rules/srt-congestion.md` Step 3, L3479-3481):
 /// `CWND_SIZE = RECEIVING_RATE*(RTT+RC_INTERVAL)/1000000 + 16`.
 #[test]
 fn congestion_avoidance_cwnd_matches_exact_formula() {
@@ -143,7 +143,7 @@ fn congestion_avoidance_cwnd_matches_exact_formula() {
 /// Test 4 — repeated-decrease rate-backoff test: feed consecutive loss
 /// events within the same congestion period and assert `PKT_SND_PERIOD`
 /// increases by the `1.03` factor per the `DecCount<=5` rule
-/// (`specs/rules/srt-congestion.md` "Step 4", L3652-3658), and that it stops
+/// (`private/specs-verified/rules/srt-congestion.md` "Step 4", L3652-3658), and that it stops
 /// once `DecCount` exceeds 5. A no-op/constant implementation fails every
 /// assertion here; an implementation missing the `DecCount<=5` cutoff fails
 /// the final assertion.

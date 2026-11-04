@@ -74,7 +74,7 @@
 //!   state ([`DisplayInfo`]) on `Sample::display` with a
 //!   [`DemuxEvent::DisplayChanged`] carrying the [`DisplayChangeSet`] that
 //!   names what changed (design: `docs/display-geometry/DESIGN.md`; tables:
-//!   `docs/codec/vui-colour-tables.md`).
+//!   `private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md`).
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /

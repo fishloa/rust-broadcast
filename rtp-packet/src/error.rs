@@ -1,7 +1,7 @@
 //! Error type for RTP fixed-header parsing/serialization.
 //!
 //! Field-by-field semantics are documented in the curated spec oracle,
-//! `rtp-packet/docs/rtp-header.md` (RFC 3550 §5.1 / §5.3.1).
+//! `private/specs-verified/rtp/rtp-packet/rtp-header.md` (RFC 3550 §5.1 / §5.3.1).
 
 /// Result alias for `rtp-packet` parsing/serialization.
 pub type Result<T> = core::result::Result<T, Error>;

@@ -3,7 +3,7 @@
 //!
 //! Each test byte-sweeps the enum's domain, builds the "from code" set (skipping
 //! the Reserved(_) catch-all), then compares against the "from spec" set loaded
-//! from the TOML mirror in `docs/enums/dvb_ta/`. Fails symmetrically if either
+//! from the TOML mirror in `private/specs-verified/scte/scte35-splice/enums/dvb_ta/`. Fails symmetrically if either
 //! set has something the other lacks.
 
 use scte35_splice::dvb_ta::{EquivalentSegmentationType, TimelineType};

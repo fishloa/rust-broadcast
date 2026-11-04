@@ -17,7 +17,7 @@
 //! [`Cea708Decoder`](decode::Cea708Decoder) (DTVCC packet / service-block
 //! reassembly + the C0/C1/G0/G1/G2/G3 window / pen command interpreter, services
 //! 1–6) — and exposes the decoded caption screen / window text. Grounded in
-//! ANSI/CTA-608-E, ANSI/CTA-708-E and 47 CFR §79.102 (see `cc-data/docs/decode/`).
+//! ANSI/CTA-608-E, ANSI/CTA-708-E and 47 CFR §79.102 (see `private/specs-verified/captions/cc-data/decode/`).
 //!
 //! Caption-detection helpers (issue #1428): `Cea608Decoder::has_caption_text`,
 //! `Cea708Decoder::services_seen` and `Cea608Channel::number` (1 to 4).
@@ -35,10 +35,10 @@
 //!
 //! | Standard | Edition | Scope | Status |
 //! |---|---|---|---|
-//! | ETSI TS 101 154 | V2.6.1 (transcribed in `docs/ts_101_154/`) | §B.5 / Table B.9 `cc_data()` | Full |
-//! | ANSI/CTA-608-E | -E; CTA-608-E is not vendored (no copy in `private/specs` or `specs/`), so byte tables cannot be re-verified against it | line-21 decode, CC1-CC4, PACs, character sets | Partial (decode); XDS skipped |
+//! | ETSI TS 101 154 | V2.6.1 (transcribed in `private/specs-verified/captions/cc-data/ts_101_154/b9-cc-data.md/`) | §B.5 / Table B.9 `cc_data()` | Full |
+//! | ANSI/CTA-608-E | -E; CTA-608-E is not vendored (no copy in `private/specs` or `private/specs-verified/`), so byte tables cannot be re-verified against it | line-21 decode, CC1-CC4, PACs, character sets | Partial (decode); XDS skipped |
 //! | ANSI/CTA-708-E | -E; CTA-708-E is not vendored; cross-source: GY/T 270-2013 (vendored, a Chinese adaptation; differences from CTA must be checked) | DTVCC packets, service blocks, windows, pens; services 1-6 | Partial (decode) |
-//! | 47 CFR §79.102 | public domain (`docs/decode/cea708-conformance.md`) | 708 semantic model | Full as a grounding source |
+//! | 47 CFR §79.102 | public domain (`private/specs-verified/captions/cc-data/decode/cea708-conformance.md`) | 708 semantic model | Full as a grounding source |
 //!
 //! # Feature flags
 //!

@@ -2,7 +2,7 @@
 //!
 //! Carries Reed-Solomon FEC data for a MPE-FEC frame in a DVB-H/IP datacast
 //! time-slice burst. Syntax per "Table 45 — MPE-FEC section"
-//! (`dvb-si/docs/README.md`, §9.9, PDF p. 57):
+//! (`private/specs-verified/dvb/dvb-si/`, §9.9, PDF p. 57):
 //!
 //! ```text
 //! MPE-FEC_section() {

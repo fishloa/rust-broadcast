@@ -1,4 +1,4 @@
-//! Typed `Transport` header — RFC 2326 §12.39 (`rtsp-runtime/docs/rfc2326.md`, `docs/transport-header.md`).
+//! Typed `Transport` header — RFC 2326 §12.39 (`private/specs-verified/rtp/rtsp-runtime/rfc2326.md`, `private/specs-verified/rtp/rtsp-runtime/transport-header.md`).
 //!
 //! A full, spec-grounded parser and canonical serializer (owner decision (c): not
 //! `rtsp-types`, whose Transport parser is exact-case and drops parameters). One
@@ -16,7 +16,7 @@
 //! ttl = 1*3(DIGIT)   port = 1*5(DIGIT)   ssrc = 8*8(HEX)   channel = 1*3(DIGIT)
 //! ```
 //!
-//! # Input leniency (interop, see `docs/transport-header.md`)
+//! # Input leniency (interop, see `private/specs-verified/rtp/rtsp-runtime/transport-header.md`)
 //!
 //! Lexing is RFC 2326 §15.1 (see `crate::rfc2326_lex`): transport, profile,
 //! lower-transport tokens and parameter names are case-insensitive; implied LWS is

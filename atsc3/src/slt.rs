@@ -14,7 +14,7 @@
 //! `BroadcastSvcSignaling` child (`slsProtocol` +
 //! `slsMajorProtocolVersion`/`slsMinorProtocolVersion` +
 //! `slsDestinationIpAddress`/`slsDestinationUdpPort`/`slsSourceIpAddress`).
-//! `docs/a331-signalling.md` Table 6.2 documents further `SLT`/`Service`
+//! `private/specs-verified/atsc/atsc3/a331-signalling.md` Table 6.2 documents further `SLT`/`Service`
 //! attributes (`globalServiceID`, `sltSvcSeqNum`, `protected`,
 //! `hideInGuide`, `SvcInetUrl`, `OtherBsid`/`OtherRf`, …) not yet modeled
 //! here — deferred, not fabricated.

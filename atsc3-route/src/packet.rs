@@ -1,6 +1,6 @@
 //! `RoutePacket` — the composed ROUTE ALC/LCT packet, applying A/331 Annex
 //! A's field-value constraints (§A.3.4/§A.3.6, transcribed at
-//! `atsc3/docs/a331-route.md` §1) on top of [`rmt_flute::LctHeader`], plus
+//! `private/specs-verified/atsc/atsc3/a331-route.md` §1) on top of [`rmt_flute::LctHeader`], plus
 //! the SPI-bit-dispatched [`crate::RouteFecPayloadId`].
 //!
 //! This is the crate's one composing type — everything else
@@ -55,7 +55,7 @@ pub struct RoutePacket<'a> {
 }
 
 /// Validate `lct` against A/331's ROUTE-mandated LCT field constraints
-/// (§A.3.4/§A.3.6, `atsc3/docs/a331-route.md` §1's table).
+/// (§A.3.4/§A.3.6, `private/specs-verified/atsc/atsc3/a331-route.md` §1's table).
 fn validate_route_lct(lct: &LctHeader<'_>) -> Result<()> {
     if lct.version != ROUTE_VERSION {
         return Err(Error::InvalidField {
@@ -83,7 +83,7 @@ fn validate_route_lct(lct: &LctHeader<'_>) -> Result<()> {
     }
     // Source packets fix BOTH PSI bits (= 10); repair packets fix only the
     // high bit (SPI = 0) — the low bit is unconstrained by A/331 for repair
-    // packets (§A.4.2.4, `atsc3/docs/a331-route.md` §1's PSI row).
+    // packets (§A.4.2.4, `private/specs-verified/atsc/atsc3/a331-route.md` §1's PSI row).
     let spi = lct.psi & PSI_SPI != 0;
     if spi && lct.psi != ROUTE_PSI_SOURCE {
         return Err(Error::InvalidField {

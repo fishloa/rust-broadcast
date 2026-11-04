@@ -3,7 +3,7 @@
 
 Outputs (all deterministic — same inputs, byte-identical output):
 
-* ``private/specs-verified/dvb/dvb-si/COVERAGE.md`` — the full coverage reference: every table_id,
+* `private/specs-verified/dvb/dvb-si/COVERAGE.md` — the full coverage reference: every table_id,
   descriptor tag, descriptor_tag_extension, MPEG-2 extension tag, AIT / INT /
   UNT / DII / RNT scoped descriptor, private (PDS-scoped) descriptor, DSM-CC
   carousel message, Annex A text charset, plus the honest "Not implemented"
@@ -13,7 +13,7 @@ Outputs (all deterministic — same inputs, byte-identical output):
 * the ``<!-- BEGIN GENERATED: dvb-si-at-a-glance -->`` block in the crate-root
   ``//!`` docs of ``dvb-si/src/lib.rs``, and
 * the ``<!-- BEGIN GENERATED: dvb-si-docs-index -->`` block in
-  ``private/specs-verified/dvb/dvb-si/README.md`` (the spec-transcription index).
+  `private/specs-verified/dvb/dvb-si/README.md` (the spec-transcription index).
 
 Inputs ("what the code implements" — read lexically, never hand-typed):
 
@@ -27,7 +27,7 @@ Inputs ("what the code implements" — read lexically, never hand-typed):
   the ``DescriptorRegistry::with_*`` opt-ins, the ``Charset`` enum, and the
   vendored TSDuck registries (``dvb-si/registries/*.names``).
 
-and ("what the standards define"): ``private/specs-verified/dvb/dvb-si/coverage/allocations.tsv``,
+and ("what the standards define"): `private/specs-verified/dvb/dvb-si/coverage/allocations.tsv`,
 the hand-transcribed allocation lists every "Not implemented" row comes from.
 
 Usage::
@@ -67,8 +67,6 @@ ALLOCATIONS = PRIVATE_DOCS / "coverage" / "allocations.tsv"
 
 BEGIN = "<!-- BEGIN GENERATED: dvb-si-at-a-glance (tools/gen-dvbsi-coverage.py) -->"
 END = "<!-- END GENERATED: dvb-si-at-a-glance -->"
-
-REPO_BLOB = "https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/"
 
 # Tracking issues the generated docs link to.
 ISSUES = {

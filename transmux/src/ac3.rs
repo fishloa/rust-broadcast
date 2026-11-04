@@ -39,7 +39,7 @@ const BYTES_PER_WORD: usize = 2;
 /// (Definitions): "audio block: set of 512 audio samples consisting of 256
 /// samples of the preceding audio block, and 256 new time samples. NOTE 1: A
 /// new audio block occurs every 256 audio samples." (Verified against the
-/// spec; excerpt appended to `docs/codec/ac3-syncframe.md`.)
+/// spec; excerpt appended to `private/specs-verified/mpeg/transmux/codec/ac3-syncframe.md`.)
 pub(crate) const SAMPLES_PER_AUDIO_BLOCK: u32 = 256;
 
 /// AC-3 blocks per syncframe — ETSI TS 102 366 §4.3.0 `syncframe()`:
@@ -49,7 +49,7 @@ const AC3_BLOCKS_PER_SYNCFRAME: u32 = 6;
 /// Samples per AC-3 syncframe: `AC3_BLOCKS_PER_SYNCFRAME` ×
 /// `SAMPLES_PER_AUDIO_BLOCK` = 1536 — stated directly in ETSI TS 102 366
 /// §7.2.1.2: "each AC-3 syncframe contains 1 536 samples of audio per
-/// channel" (excerpt appended to `docs/codec/ac3-syncframe.md`).
+/// channel" (excerpt appended to `private/specs-verified/mpeg/transmux/codec/ac3-syncframe.md`).
 pub const AC3_SAMPLES_PER_SYNCFRAME: u32 = AC3_BLOCKS_PER_SYNCFRAME * SAMPLES_PER_AUDIO_BLOCK;
 
 /// Largest `bsid` of an AC-3 syncframe (ETSI TS 102 366 §4.4.2.1: "01000 (= 8)
@@ -505,7 +505,7 @@ impl Ec3SyncframeInfo {
     /// already seen was parsed, i.e. the next access unit has begun (the
     /// independent-frame-plus-dependents structure of ETSI TS 102 366 §E.1.3.1.2:
     /// "Dependent substreams shall immediately follow the independent substream
-    /// with which they are associated", see `docs/codec/eac3-syncframe.md`).
+    /// with which they are associated", see `private/specs-verified/mpeg/transmux/codec/eac3-syncframe.md`).
     /// `None` while the data may still be missing one of the
     /// AU's dependent frames (it ends at, or before, the data's end) — a
     /// `dec3` built then would silently drop the dependent substreams and
@@ -702,7 +702,7 @@ pub struct Ec3SplitFrame {
 /// Frame length is `(frmsiz + 1) * 2` bytes — ETSI TS 102 366 §E.1.3.1.3:
 /// "The frmsiz field indicates a value one less than the overall size of the
 /// coded syncframe in 16-bit words" (excerpt appended to
-/// `docs/codec/eac3-syncframe.md`).
+/// `private/specs-verified/mpeg/transmux/codec/eac3-syncframe.md`).
 ///
 /// A dependent-substream syncframe with no independent frame before it (an
 /// orphan: the payload starts on one, e.g. after a lost PES) is dropped, not
@@ -756,7 +756,7 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
 /// into their independent access unit. Sample-AES needs the syncframe ranges,
 /// not the access units: the protected block is a single syncframe, and the
 /// independent oracle (`tests/fixtures/sample_aes_eac3/`) shows the CBC IV is
-/// **reset at every syncframe** (`docs/drm/hls-sample-aes.md` §6).
+/// **reset at every syncframe** (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §6).
 ///
 /// Stops at the first bad sync word / truncated tail (mirrors
 /// [`split_ac3_syncframes`]); the caller then treats the payload as unwalkable.
@@ -827,7 +827,7 @@ impl Ac3SpecificBox {
 }
 
 /// `bit_rate_code` → nominal bit rate in kbit/s — ETSI TS 102 366 Table F.4.1
-/// (`docs/codec/ac3-eac3-mp4.md`).
+/// (`private/specs-verified/mpeg/transmux/codec/ac3-eac3-mp4.md`).
 const AC3_BIT_RATE_KBPS: [u16; 19] = [
     32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512, 576, 640,
 ];
@@ -1133,7 +1133,7 @@ const EAC3_CHANMAP_TO_CHAN_LOC: [(u8, u8); 9] = [
 ];
 
 /// Channels contributed by each `chan_loc` bit — ETSI TS 102 366 Table F.6.1
-/// (`docs/codec/eac3-bsi-chanmap.md`), indexed by bit number (bit 0 = `Lc/Rc`
+/// (`private/specs-verified/mpeg/transmux/codec/eac3-bsi-chanmap.md`), indexed by bit number (bit 0 = `Lc/Rc`
 /// pair … bit 8 = `LFE2`).
 const EAC3_CHAN_LOC_CHANNELS: [u8; 9] = [
     2, // 0: Lc/Rc pair
@@ -1706,7 +1706,7 @@ pub(crate) mod tests {
 
     /// #1055: a substream with `num_dep_sub > 0` is 32 bits (4 bytes) on the
     /// wire, not 24 (3 bytes) — ETSI TS 102 366 §F.6.1 (transcribed at
-    /// `docs/codec/ac3-eac3-mp4.md` §F.6.1): the per-substream syntax is
+    /// `private/specs-verified/mpeg/transmux/codec/ac3-eac3-mp4.md` §F.6.1): the per-substream syntax is
     /// `fscod(2) bsid(5) reserved(1) asvc(1) bsmod(3) acmod(3) lfeon(1)
     /// reserved(3) num_dep_sub(4)` = 23 bits, then `chan_loc(9)` when
     /// `num_dep_sub > 0` (32 bits total) or `reserved(1)` otherwise (24 bits

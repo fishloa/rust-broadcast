@@ -17,7 +17,7 @@ Typical users: a live-ingest origin (`multimux`'s RTMP input and push output), t
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| Adobe RTMP specification 1.0 | 1.0 (vendored `adobe_rtmp_1.0`, transcribed in `docs/rtmp.md`) | §5.2 handshake (simple), §5.3 chunk stream (fmt 0 to 3, 1/2/3-byte csid, extended timestamp), §5.4 protocol control, §6 message format, §7.1 message types, §7.2 command messages for the publish and play flows | Partial | Publish and play (client play mode); no complex handshake. `docs/rtmp.md` uses its own section numbering |
+| Adobe RTMP specification 1.0 | 1.0 (vendored `adobe_rtmp_1.0`, transcribed in `private/specs-verified/rtmp/rtmp-runtime/rtmp.md`) | §5.2 handshake (simple), §5.3 chunk stream (fmt 0 to 3, 1/2/3-byte csid, extended timestamp), §5.4 protocol control, §6 message format, §7.1 message types, §7.2 command messages for the publish and play flows | Partial | Publish and play (client play mode); no complex handshake. `private/specs-verified/rtmp/rtmp-runtime/rtmp.md` uses its own section numbering |
 | Adobe AMF0 (referenced as `[AMF0]` by the RTMP spec) | Not separately vendored | Value types and the command set used for ingest | Partial | AMF3 commands (type 17) decode like AMF0; Data-AMF3 (15) and Shared-Object (16/19) are out of scope |
 | Adobe FLV (file format v10.1) | v10.1 (vendored `adobe_flv_f4v_v10_1`) | Server emits FLV tags for audio, video and script data | Full for output | Demux with `transmux` |
 

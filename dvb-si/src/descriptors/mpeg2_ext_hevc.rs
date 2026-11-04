@@ -26,7 +26,7 @@
 //! not silently correct it, so TSDuck-encoded 0x13 bodies are **rejected with a
 //! clear `Err`** (not misparsed); pinned in `tests/it/h222_descriptors.rs`.
 //!
-//! Syntax transcriptions: `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
+//! Syntax transcriptions: `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
 //! and `…-0x0f-0x19.md`. `profile_tier_level_info[i]` is typed as
 //! [`ProfileTierLevelInfo`]: H.222.0 §2.6.101 fixes the field at **96 bits**
 //! and says it is `profile_tier_level()` (Rec. ITU-T H.265 §7.3.3) with

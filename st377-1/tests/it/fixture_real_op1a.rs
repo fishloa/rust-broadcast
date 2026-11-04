@@ -10,7 +10,7 @@
 //!   reproduces that exact width on `serialize_into`, rather than always
 //!   re-canonicalizing to the shortest form that fits. This matters
 //!   because real MXF encoders routinely write a longer, fixed-width form
-//!   (`docs/st377-1.md` §6.3.4 permits any valid BER form) so a pack can be
+//!   (`private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4 permits any valid BER form) so a pack can be
 //!   rewritten in place (e.g. Open -> Closed) without shifting every later
 //!   absolute offset — measured directly against this fixture: **all 25**
 //!   of its Partition Packs, and 2 of its 27 Header Metadata Sets, use a
@@ -318,7 +318,7 @@ fn real_fixture_op1a_qualifier_matches_actual_essence_layout() {
 /// the on-wire BER length-field width it was parsed with (`len_size`, a
 /// [`st377_1::BerLength`]) and reproduces that exact width on
 /// `serialize_into`, instead of always re-canonicalizing to the shortest
-/// form that fits. `docs/st377-1.md` §6.3.4 permits any valid BER form, and
+/// form that fits. `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4 permits any valid BER form, and
 /// real encoders routinely write a longer, fixed-width one (e.g. so a pack
 /// can be rewritten in place without shifting every later absolute offset)
 /// — measured directly against this fixture, a clear majority of its

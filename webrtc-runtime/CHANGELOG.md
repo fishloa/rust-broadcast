@@ -208,4 +208,4 @@ candidates. Upgrade if you use the `media` feature.
   STUN/TURN server discovery (RFC 9725 §4.4).
 - Bearer token authentication on all requests.
 - `no_std` + `alloc` support (`std` feature on by default).
-- Spec transcriptions: `webrtc-runtime/docs/whip-rfc9725.md`, `webrtc-runtime/docs/whep-draft-04.md`.
+- Spec transcriptions: `private/specs-verified/ietf/webrtc-runtime/whip-rfc9725.md`, `private/specs-verified/ietf/webrtc-runtime/whep-draft-04.md`.

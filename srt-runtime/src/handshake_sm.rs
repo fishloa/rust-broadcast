@@ -12,7 +12,7 @@
 //! Exchange helpers ([`CryptoConfig`], `build_key_material_extension`,
 //! `recover_sek`, `echo_key_material_as_response`, `verify_km_echo`) shared
 //! by [`crate::caller::CallerHandshake`] / [`crate::listener::ListenerHandshake`]
-//! — see [`CryptoConfig`]'s doc and `specs/rules/srt-crypto.md`. Congestion
+//! — see [`CryptoConfig`]'s doc and `private/specs-verified/rules/srt-crypto.md`. Congestion
 //! control beyond LiveCC packet pacing is an explicit follow-up — see the
 //! crate root docs.
 
@@ -209,7 +209,7 @@ broadcast_common::impl_spec_display!(RejectionReason, Reserved);
 
 /// Opt-in §6 payload-encryption config for one side of a Caller-Listener
 /// handshake (`draft-sharabayko-srt-01` §6.1.5, Key Material Exchange —
-/// curated at `specs/rules/srt-crypto.md`). `None` on
+/// curated at `private/specs-verified/rules/srt-crypto.md`). `None` on
 /// [`HandshakeConfig::crypto`] (the default) disables the encryption path
 /// entirely: no Key Material extension is sent, and a peer that sends one
 /// unexpectedly is rejected ([`RejectionReason::Unsecure`]).

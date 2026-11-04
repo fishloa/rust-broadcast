@@ -122,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CompoundPacket` (§6.1): a `Vec<RtcpPacket>` enforcing the "first packet
   must be SR or RR" compound-packet rule on both parse and construction,
   with byte-exact round-trip across the whole compound.
-- `docs/rtcp.md` — curated transcription of RFC 3550 §6 (fetched directly
+- `private/specs-verified/rtp/rtcp-packet/rtcp.md` — curated transcription of RFC 3550 §6 (fetched directly
   from the RFC), the implementation/audit oracle for this crate. Documents
   two known decode-completeness gaps carried over unchanged from the
   pre-extraction implementation: SR/RR profile-specific extensions (§6.4.1,

@@ -7,7 +7,7 @@
 //! Oracle: the number of `GA94` + `user_data_type_code 0x03` markers (the 5
 //! bytes `47 41 39 34 03`, which contain no zero byte and so are never
 //! altered by emulation prevention) per capture is the independent Python
-//! extractor's frame count (`fixtures/captions/*.cc_data.txt` line count).
+//! extractor's frame count (`private/fixtures/captions/*/*.cc_data.txt` line count).
 
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;

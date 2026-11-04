@@ -1,5 +1,5 @@
 //! CRC32 Descriptor — ETSI EN 301 192 V1.7.1 §10.2.6, Table 54 (data-carousel
-//! tag 0x05). PDF p.66, transcribed in `docs/descriptors/en_301_192/54-*.md`,
+//! tag 0x05). PDF p.66, transcribed in `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/54-*.md`,
 //! verified against the rendered page.
 //!
 //! The 32-bit `CRC_32` computed over a complete module (ISO/IEC 13818-1

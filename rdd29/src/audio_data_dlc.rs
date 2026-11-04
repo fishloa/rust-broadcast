@@ -3,7 +3,7 @@
 //! Contains the audio essence for one track (channel or object): a
 //! proprietary lossless-compressed-PCM codec (linear-predictive + Rice-
 //! Golomb entropy-coded residual). This crate never decodes it — see
-//! `docs/rdd29.md` scope decision 3 for the exact boundary and why.
+//! `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 3 for the exact boundary and why.
 
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
@@ -18,7 +18,7 @@ use crate::plex::{plex_bits, read_plex, write_plex};
 /// `payload` is the opaque remainder of the element after `AudioDataID` and
 /// `DLCSize` — the codec's own bit-packed `DLCSampleRate`/`ShiftBits`/
 /// predictor/residual data (§5.5.2 onward), never parsed by this crate (see
-/// `docs/rdd29.md` scope decision 3: this is the audio-essence bitstream
+/// `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 3: this is the audio-essence bitstream
 /// itself, not a config header).
 // `payload` is a borrowed `&'a [u8]`: serde_json's default array-of-numbers
 // representation cannot round-trip back into a borrowed byte slice (it

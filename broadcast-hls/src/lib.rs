@@ -895,7 +895,7 @@ impl Default for LowLatencyConfig {
 // ---------------------------------------------------------------------------
 // Protocol Version Compatibility — RFC 8216bis §8 (issue #871).
 //
-// Source of truth: `docs/version-compatibility.md`, a twice-verified
+// Source of truth: `private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`, a twice-verified
 // transcription of §8 from draft-pantos-hls-rfc8216bis-22. One named
 // constant per row of that table, cited by row number. `#EXT-X-VERSION` is
 // always `max()` over the minimums the playlist's actual content triggers —
@@ -915,7 +915,7 @@ const VERSION_BYTERANGE_OR_IFRAMES_ONLY: u8 = 4;
 /// `KEYFORMAT`/`KEYFORMATVERSIONS` attributes, or `EXT-X-MAP` **together
 /// with** `EXT-X-I-FRAMES-ONLY`. (`EXT-X-MAP` alone, without
 /// `EXT-X-I-FRAMES-ONLY`, needs [`VERSION_MAP_WITHOUT_IFRAMES_ONLY`] = 6
-/// instead — the row-6 note in `docs/version-compatibility.md`.)
+/// instead — the row-6 note in `private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`.)
 const VERSION_SAMPLE_AES_OR_KEYFORMAT_OR_MAP_WITH_IFRAMES_ONLY: u8 = 5;
 /// §8 row 6 (Media Playlist): `EXT-X-MAP` in a playlist that does *not* also
 /// carry `EXT-X-I-FRAMES-ONLY`.
@@ -1192,7 +1192,7 @@ fn effective_version(explicit: u8, computed: Option<u8>) -> Option<u8> {
 
 impl MediaPlaylist {
     /// Compute the minimum `#EXT-X-VERSION` this playlist's actual content
-    /// requires, per RFC 8216bis §8 (`docs/version-compatibility.md`).
+    /// requires, per RFC 8216bis §8 (`private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`).
     /// `None` means the playlist is fully compatible with version 1, which
     /// per §8's opening rule need not carry the tag at all.
     ///
@@ -2447,7 +2447,7 @@ impl AttrValue {
     /// one), choosing [`Self::quoted`] or [`Self::bare`] from a static
     /// table of known RFC 8216bis quoted-string attribute names
     /// (§4.4.6.2 / §4.4.6.2.1 — spec text at
-    /// `specs/ietf_draft_pantos_hls_rfc8216bis.txt` lines 2637-2980) for a
+    /// `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt` lines 2637-2980) for a
     /// recognized name, falling back to sniffing the value's content for
     /// one this crate doesn't recognize (a non-`,`/`"`/whitespace/
     /// non-empty value is left unquoted). Prefer calling
@@ -3339,7 +3339,7 @@ fn require_attr(
 }
 
 /// `VIDEO-RANGE` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2,
-/// spec text at `specs/ietf_draft_pantos_hls_rfc8216bis.txt` lines 2786-2815):
+/// spec text at `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt` lines 2786-2815):
 /// an enumerated bare token describing the dynamic range of the variant's video.
 ///
 /// `SDR` for CICP transfer characteristics 1, 6, 13, 14, 15; `HLG` for 18;
@@ -3694,7 +3694,7 @@ pub struct MasterPlaylist {
     /// unrecognized `#EXT-...` tag here (forward-compat) instead of dropping
     /// it; [`Self::computed_version`] scans these lines for the §8 rows this
     /// crate does not model as typed struct fields (rows 7/12/13 —
-    /// `docs/version-compatibility.md`). Rows 8 and 11 were also scanned
+    /// `private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`). Rows 8 and 11 were also scanned
     /// here until issue #872 gave `EXT-X-DEFINE` a typed representation; they
     /// now read [`Self::defines`] instead.
     pub extra_tags: Vec<String>,
@@ -4401,7 +4401,7 @@ impl MasterPlaylist {
 
     /// Compute the minimum `#EXT-X-VERSION` this Multivariant Playlist's
     /// actual content requires, per RFC 8216bis §8
-    /// (`docs/version-compatibility.md`). `None` means fully compatible
+    /// (`private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`). `None` means fully compatible
     /// with version 1 (no tag required). See
     /// [`MediaPlaylist::computed_version`] for the Media-Playlist-only rows
     /// (2–6, 9–10) that do not apply to a Multivariant Playlist.
@@ -6620,7 +6620,7 @@ v300/index.m3u8\n";
 
     // -----------------------------------------------------------------------
     // Protocol version derivation (RFC 8216bis §8, issue #871) — table-driven
-    // per docs/version-compatibility.md, plus the five named regression
+    // per private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md, plus the five named regression
     // cases from that issue.
     // -----------------------------------------------------------------------
 

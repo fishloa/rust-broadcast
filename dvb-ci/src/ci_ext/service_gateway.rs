@@ -1,5 +1,5 @@
 //! Generic Service Gateway objects — ETSI TS 101 699 V1.1.1 §6.1.3, Tables 21-31
-//! (PDF pp. 32-37). See `docs/ci_plus/input-modules.md`.
+//! (PDF pp. 32-37). See `private/specs-verified/dvb/dvb-ci/ci_plus/input-modules.md`.
 //!
 //! A Type 'B' input module presents a **ServiceGateway** (Generic Service
 //! Gateway) resource for **service-level** access. These calls are inherited by
@@ -156,7 +156,7 @@ pub struct ServiceDescAck<'a> {
     /// `EIT_present_following_flag` — SDT meaning.
     pub eit_present_following_flag: bool,
     /// `running_status` — 3-bit SDT running status (the spec prose "6 bit" is a
-    /// typo; 3 bits is authoritative — see `docs/ci_plus/input-modules.md`).
+    /// typo; 3 bits is authoritative — see `private/specs-verified/dvb/dvb-ci/ci_plus/input-modules.md`).
     pub running_status: u8,
     /// `free_CA_mode` — SDT meaning.
     pub free_ca_mode: bool,

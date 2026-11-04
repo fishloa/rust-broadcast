@@ -1,6 +1,6 @@
 //! Parses `tests/fixtures/synthetic_minimal.mxf` — a spec-derived synthetic
 //! MXF file (no real captured `.mxf` file exists anywhere in this
-//! workspace; see `docs/st377-1.md`'s "Fixture provenance" section for the
+//! workspace; see `private/specs-verified/smpte/st377-1/st377-1.md`'s "Fixture provenance" section for the
 //! full justification) assembled by a standalone Python script
 //! (independent of this crate's own `Serialize`) directly from SMPTE
 //! ST 377-1:2019's own Partition Pack / Primer Pack / Local Set / Annex A

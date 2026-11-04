@@ -2,7 +2,7 @@
 //!
 //! Sources: SMPTE ST 336 framing (via MISB ST 0601 + RFC 6597), MISB ST 0601
 //! UAS Datalink Local Set, RFC 6597 KLV-over-RTP. See
-//! `transmux/docs/klv/klv-misb0601.md`.
+//! `private/specs-verified/mpeg/transmux/klv/klv-misb0601.md`.
 
 use broadcast_common::{Parse, Serialize};
 use transmux::klv::{

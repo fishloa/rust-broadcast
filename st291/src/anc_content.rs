@@ -2,7 +2,7 @@
 //! `User_Data_Words`/`Checksum_Word` 10-bit-word sequence, byte-for-byte
 //! identical across every ST 291-1 transport this crate carries: SMPTE
 //! ST 2038:2021 MPEG-2 TS/PES (the `ts` feature) and RFC 8331 / ST 2110-40 RTP
-//! (the `rtp` feature). See `docs/anc_packet_291.md` for the full field
+//! (the `rtp` feature). See `private/specs-verified/smpte/st291/anc_packet_291.md` for the full field
 //! semantics and the parity/checksum derivation. Parsing/serializing a wire
 //! sequence never validates or computes them (a bit-flipped packet still
 //! parses `Ok`, matching this crate's transport-layer error model); use
@@ -125,7 +125,7 @@ impl ValidationReport {
 /// One ST 291-1 ANC data packet's **content**: `DID`/`SDID`/`Data_Count`/
 /// `User_Data_Words`/`Checksum_Word`, every value the raw 10-bit wire word
 /// (including the ST 291-1 parity bits) stored verbatim — parity/checksum are
-/// not computed or validated here (`docs/anc_packet_291.md` scope note).
+/// not computed or validated here (`private/specs-verified/smpte/st291/anc_packet_291.md` scope note).
 ///
 /// Identical across ST 2038 (MPEG-2 TS/PES) and RFC 8331 (RTP) carriage; see
 /// the module doc for why this type is always compiled.
@@ -157,7 +157,7 @@ impl AncContent {
 
     /// Encode an 8-bit payload value into the ST 291-1 10-bit word form: an
     /// even-parity bit `b8` over `b0..b7`, then `b9 = !b8`
-    /// (`docs/anc_packet_291.md` "10-bit-word parity rule"). Used to build
+    /// (`private/specs-verified/smpte/st291/anc_packet_291.md` "10-bit-word parity rule"). Used to build
     /// `did`/`sdid`/`data_count`/each `user_data_words` entry from its raw
     /// 8-bit value (S291-W1, #1116).
     #[must_use]
@@ -217,7 +217,7 @@ impl AncContent {
     /// Compute the ST 291-1 `Checksum_Word` for this content's current
     /// `did`/`sdid`/`data_count`/`user_data_words`: the low 9 bits (`b8..b0`)
     /// of each summed mod 2⁹ (end carry discarded), with `b9 = !b8` of the
-    /// result (`docs/anc_packet_291.md` "Checksum_Word computation").
+    /// result (`private/specs-verified/smpte/st291/anc_packet_291.md` "Checksum_Word computation").
     #[must_use]
     pub fn compute_checksum(&self) -> u16 {
         const LOW9: u16 = 0x1FF;
@@ -398,7 +398,7 @@ mod tests {
 
 /// Parity/checksum (S291-W1, #1116) is transport-independent, so its tests
 /// run regardless of the `ts`/`rtp` feature gate. Expected values are hand
-/// computed independently from `docs/anc_packet_291.md`'s formulas (not
+/// computed independently from `private/specs-verified/smpte/st291/anc_packet_291.md`'s formulas (not
 /// derived by calling the functions under test), since neither RFC 8331 nor
 /// ST 291-1 publishes a full worked numeric example and no local tool
 /// (ffmpeg/TSDuck/…) generates ST 291-1 ANC content.

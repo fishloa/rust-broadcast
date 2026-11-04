@@ -1,5 +1,5 @@
 //! Name Descriptor — ETSI EN 301 192 V1.7.1 §10.2.3, Table 51 (data-carousel
-//! tag 0x02). PDF p.65, transcribed in `docs/descriptors/en_301_192/51-*.md`,
+//! tag 0x02). PDF p.65, transcribed in `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/51-*.md`,
 //! verified against the rendered page.
 //!
 //! The name of a module or group (e.g. `"index"`); the whole body is the

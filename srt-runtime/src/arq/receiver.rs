@@ -1,7 +1,7 @@
 //! ARQ receiver-side reliability state — `draft-sharabayko-srt-01` §4.8.1
 //! (Full/Light ACK generation), §4.8.2 (loss detection + NAK), §4.10 (RTT
 //! measurement via the ACK/ACKACK round trip). Curated rules:
-//! `specs/rules/srt-arq.md`.
+//! `private/specs-verified/rules/srt-arq.md`.
 //!
 //! Sans-IO: [`Receiver`] never reads a wall clock — [`Receiver::feed_data`]
 //! and [`Receiver::tick`] take a caller-supplied `now: core::time::Duration`
@@ -38,7 +38,7 @@ use super::{FULL_ACK_PERIOD, LIGHT_ACK_THRESHOLD, duration_to_wire_us, nak_inter
 /// (`draft-sharabayko-srt-01` §3.2.1 — a packet further ahead than the window
 /// cannot be buffered by the peer's own flow control either), clamped to this
 /// value so a hostile or misconfigured window cannot turn one packet into
-/// unbounded work. Not a `specs/rules/srt-arq.md` rule — an implementation
+/// unbounded work. Not a `private/specs-verified/rules/srt-arq.md` rule — an implementation
 /// bound (about ten times libsrt's default 25 600-packet flow window).
 const MAX_TRACKED_WINDOW: u32 = 1 << 18;
 
@@ -80,7 +80,7 @@ pub struct FeedOutcome {
     /// packets it consequently unblocked.
     pub delivered: Vec<u32>,
     /// An immediate NAK to send, if this packet's arrival revealed a new
-    /// gap (`specs/rules/srt-arq.md` rules 4, 14).
+    /// gap (`private/specs-verified/rules/srt-arq.md` rules 4, 14).
     pub nak: Option<Vec<u8>>,
     /// The packet was not a 31-bit sequence number (§3.1), or was further
     /// ahead of the cumulative ack point than the flow window allows, and was

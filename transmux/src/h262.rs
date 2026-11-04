@@ -20,10 +20,10 @@
 //! - **H.262 §6.2.2.5-6.2.2.8 / §6.2.3.3** `extension_and_user_data(i)` and
 //!   `user_data()` (`0x000001B2` then `user_identifier` + `user_structure()`
 //!   up to the next start code) — the AFD/bar-data carriage of ETSI TS 101 154
-//!   Annex B.6 (`docs/codec/afd-bar-data.md` §4.4).
+//!   Annex B.6 (`private/specs-verified/mpeg/transmux/codec/afd-bar-data.md` §4.4).
 //!
 //! Every syntax element above was page-checked against the rendered PDF and
-//! is transcribed in `transmux/docs/codec/mpeg2-video-display.md`.
+//! is transcribed in `private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md`.
 //!
 //! [`extension_and_user_data(2)`]: SequenceDisplayExtension
 //! [`DisplayGeometry`]: crate::ir::DisplayGeometry
@@ -90,7 +90,7 @@ const DISPLAY_SIZE_BITS: usize = 14;
 const SEQUENCE_SECTION_MAX: usize = 256;
 
 /// H.262 §6.3.3: the "Display Aspect Ratio" Table 6-3 names for its codes,
-/// as width:height (the notation caveat is in `docs/codec/mpeg2-video-display.md`).
+/// as width:height (the notation caveat is in `private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md`).
 fn dar_ratio(aspect: u8) -> Option<(u64, u64)> {
     match aspect {
         ASPECT_DAR_4_3 => Some((4, 3)),
@@ -424,7 +424,7 @@ impl DisplayGeometry {
     ///
     /// The input may be a raw elementary-stream prefix or an `esds`
     /// DecoderSpecificInfo that carries the sequence header
-    /// (`docs/codec/mpeg2-video-h262.md`). [`Error::InvalidInput`] when no
+    /// (`private/specs-verified/mpeg/transmux/codec/mpeg2-video-h262.md`). [`Error::InvalidInput`] when no
     /// sequence header is present; nothing is fabricated for a truncated one.
     ///
     /// `aspect_ratio` is [`AspectRatioIdc::ExtendedSar`] carrying the reduced

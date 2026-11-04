@@ -28,7 +28,7 @@
 //! ## Shared content (issue #648)
 //! The `DID`/`SDID`/`data_count`/`user_data_words`/`checksum` bit sequence is
 //! identical to RFC 8331's RTP carriage of the same ST 291-1 content (see
-//! `docs/anc_rtp_8331.md`); [`AncPacket`]'s `read_from`/`write_into` delegate
+//! `private/specs-verified/smpte/st291/anc_rtp_8331.md`); [`AncPacket`]'s `read_from`/`write_into` delegate
 //! that portion to the always-compiled [`crate::anc_content::AncContent`], so
 //! the bit-packing logic is implemented exactly once. [`AncPacket`]'s public
 //! field layout is unchanged by this — see `anc_content`'s module doc for why.

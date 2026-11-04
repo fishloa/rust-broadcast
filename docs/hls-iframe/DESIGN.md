@@ -1,7 +1,7 @@
 # HLS I-frame playlists from the hls-runtime origin (issue #1413)
 
 Status: design rev 2, 2026-10-22 (rev 1 reviewed against the code by an independent reader; 18 findings folded in).
-Spec basis (page-verified transcriptions, committed first): [`broadcast-hls/docs/iframe-playlists.md`](../../broadcast-hls/docs/README.md#private-spec-transcriptions)
+Spec basis (page-verified transcriptions, committed first): `private/specs-verified/hls/broadcast-hls/iframe-playlists.md` (`../../private/specs-verified/hls/broadcast-hls/#private-spec-transcriptions`)
 cited as **T§n**, and `http-range-requests.md` (RFC 9110 range requests) cited as **H§n**.
 Apple authoring 6.1: *I-frame playlists MUST be provided to support scrubbing and scanning UI.*
 

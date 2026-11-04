@@ -127,7 +127,7 @@ Renamed from `dvb-emsg` (code unchanged); `dvb-emsg` continues as a deprecated r
 ### Source footing
 
 - The `emsg` **field semantics/types** are render-verified from the **free**
-  DASH-IF IOP Part 10 V5.0.0 §6.1 / Table 6-2 (`docs/emsg.md`). The normative
+  DASH-IF IOP Part 10 V5.0.0 §6.1 / Table 6-2 (`private/specs-verified/mpeg/mp4-emsg/emsg.md`). The normative
   ISOBMFF box syntax (`FullBox('emsg', …)` ordering, the `version`-gated branch,
   the null-terminated-string layout) lives in **ISO/IEC 23009-1 §5.10.3.3**
   (**paid, not vendored**). The box layout is implemented from the well-known

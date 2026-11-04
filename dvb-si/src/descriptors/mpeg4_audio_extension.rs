@@ -1,6 +1,6 @@
 //! MPEG-4 audio extension descriptor — Rec. ITU-T H.222.0 (08/2023) |
 //! ISO/IEC 13818-1:2023 §2.6.72–2.6.73, Table 2-97 (tag 0x2E); syntax in
-//! `docs/descriptors/iso_13818_1/2d-2e-mpeg-4-text-and-audio-extension-descriptors.md`.
+//! `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/2d-2e-mpeg-4-text-and-audio-extension-descriptors.md`.
 //!
 //! ```text
 //! ASC_flag(1) reserved(3) num_of_loops(4) { audioProfileLevelIndication(8) }*

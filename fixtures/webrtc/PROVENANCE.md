@@ -13,7 +13,7 @@ spec-vector fixtures that should have existed from day one.
 | Exact URL | https://www.rfc-editor.org/rfc/rfc3711.txt |
 | Section | Appendix B: Test Vectors — B.2 "AES-CM Test Vectors" (line ~2887 of the plain-text RFC), B.3 "Key Derivation Test Vectors" (line ~2919). |
 | Retrieved | 2026-08-09, via `curl https://www.rfc-editor.org/rfc/rfc3711.txt` (plain-text `.txt` rendering, not passed through any summarizing tool, so every hex digit below is copied verbatim from the fetched text file). |
-| Licence | RFC 3711's own "Full Copyright Statement" (verbatim, lines 3089–3097 of the fetched text): "Copyright (C) The Internet Society (2004). This document is subject to the rights, licenses and restrictions contained in BCP 78 and except as set forth therein, the authors retain all their rights." Per the IETF Trust's standing "Copyright" policy for RFC document text (in effect since the IETF Trust's formation and referenced by BCP 78), RFC text may be reproduced, copied, published, and distributed, in whole or in part, without restriction of any kind, provided the copyright notice is included. This project already treats RFC text as freely redistributable (`specs/` holds RFCs as the "freely-redistributable text specs" bucket per `CLAUDE.md`); this is the same basis. |
+| Licence | RFC 3711's own "Full Copyright Statement" (verbatim, lines 3089–3097 of the fetched text): "Copyright (C) The Internet Society (2004). This document is subject to the rights, licenses and restrictions contained in BCP 78 and except as set forth therein, the authors retain all their rights." Per the IETF Trust's standing "Copyright" policy for RFC document text (in effect since the IETF Trust's formation and referenced by BCP 78), RFC text may be reproduced, copied, published, and distributed, in whole or in part, without restriction of any kind, provided the copyright notice is included. This project already treats RFC text as freely redistributable (`private/specs-verified/` holds RFCs as the "freely-redistributable text specs" bucket per `CLAUDE.md`); this is the same basis. |
 | Verification | Independently cross-checked: the B.3 master key/salt/derived-key values transcribed here are byte-identical to the ones asserted in `rtc-srtp-0.20.0`'s own internal test (`~/.cargo/registry/.../rtc-srtp-0.20.0/src/key_derivation.rs`, `test_valid_session_keys`) — two independent transcriptions of the same RFC section agree. |
 
 ## STUN — RFC 5769 (`rfc5769-stun-vectors.md`)
@@ -230,7 +230,7 @@ captured the full STUN/DTLS/SRTP exchange on that port. Only `lo0.pcap`
 
 The byte-exact worked NACK example (bitmask + range formats) from VSF
 TR-06-1:2020 Appendix A is already transcribed in
-`rist-runtime/docs/tr-06-1-simple-profile.md` and already has committed
+`private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md` and already has committed
 tests in `rist-runtime/tests/it/spec_vectors.rs` (`appendix_a_bitmask_nack`,
 `appendix_a_range_nack`, and the cross-verification tests) — landed in an
 earlier PR (#920). Not re-done here; see the task report for the bite-proof

@@ -11,11 +11,11 @@
 //! - **Matroska element IDs / semantics** (Segment, Info, Tracks, Cluster,
 //!   (Simple)Block): RFC 9559 §12 / §27.
 //! - Element-ID table, (Simple)Block layout and the CodecID → [`CodecConfig`]
-//!   mapping are transcribed in `transmux/docs/webm/ebml-matroska.md`.
+//!   mapping are transcribed in `private/specs-verified/mpeg/transmux/webm/ebml-matroska.md`.
 //! - **VP8** key-frame header (dimensions): RFC 6386 §9.1 / §19.1.
 //! - **Vorbis** `CodecPrivate` (Xiph-laced 3 headers) + Identification header:
 //!   the Vorbis I specification §4.2.2. Both are transcribed in
-//!   `transmux/docs/codec/vp8-vorbis-webm.md`.
+//!   `private/specs-verified/mpeg/transmux/codec/vp8-vorbis-webm.md`.
 //!
 //! # Scope
 //!
@@ -1182,7 +1182,7 @@ fn hevc_config(info: &TrackInfo) -> Result<(CodecConfig, Option<usize>)> {
 /// for a key frame, then the 3-byte start code `0x9D 01 2A`, then two 16-bit
 /// little-endian words carrying `width`/`height` in their low 14 bits (the top
 /// two bits are the horizontal/vertical scale). See
-/// `docs/codec/vp8-vorbis-webm.md`.
+/// `private/specs-verified/mpeg/transmux/codec/vp8-vorbis-webm.md`.
 fn vp8_config(first_frame: &[u8]) -> Result<CodecConfig> {
     if first_frame.len() < VP8_KEYFRAME_HEADER_LEN {
         return Err(Error::BufferTooShort {
@@ -1219,7 +1219,7 @@ fn vp8_config(first_frame: &[u8]) -> Result<CodecConfig> {
 /// The Identification header (Vorbis I §4.2.2) is located past the Xiph lacing
 /// (byte 0 = `numPackets - 1` = 2, then the laced lengths of the first two
 /// headers) and decoded for `audio_channels` (u8) + `audio_sample_rate` (u32
-/// LE). See `docs/codec/vp8-vorbis-webm.md`.
+/// LE). See `private/specs-verified/mpeg/transmux/codec/vp8-vorbis-webm.md`.
 fn vorbis_config(info: &TrackInfo) -> Result<CodecConfig> {
     let cp = &info.codec_private;
     let id = vorbis_id_header(cp)?;
@@ -1314,7 +1314,7 @@ fn vorbis_id_header(cp: &[u8]) -> Result<&[u8]> {
 /// Build a [`CodecConfig::Vp9`] from a VP9 [`TrackInfo`].
 ///
 /// WebM stores no `vpcC` in CodecPrivate for VP9, so a profile-0 / 8-bit / 4:2:0
-/// `vpcC` is synthesised (documented default per `docs/webm/ebml-matroska.md`);
+/// `vpcC` is synthesised (documented default per `private/specs-verified/mpeg/transmux/webm/ebml-matroska.md`);
 /// the pixel dimensions come from the `Video` element.
 fn vp9_config(info: &TrackInfo) -> CodecConfig {
     let config = Vp9ConfigurationBox {

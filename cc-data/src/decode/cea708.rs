@@ -1,6 +1,6 @@
 //! CEA-708 (DTVCC) caption decode — ANSI/CTA-708-E S-2023 §5–§8 + 47 CFR §79.102.
 //!
-//! Decode pipeline (`cc-data/docs/decode/cea708-decode.md`):
+//! Decode pipeline (`private/specs-verified/captions/cc-data/decode/cea708-decode.md`):
 //! `cc_data` byte pairs → Caption Channel Packets (§5) → Service Blocks (§6) →
 //! the C0/C1/G0/G1/G2/G3 command interpreter (§7/§8) driving the window + pen
 //! model. Up to six services (47 CFR §79.102 (c)) are tracked; each service has

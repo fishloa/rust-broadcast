@@ -1,6 +1,6 @@
 //! Compressed Module Descriptor — ETSI EN 301 192 V1.7.1 §10.2.11, Table 59
 //! (data-carousel tag 0x09). PDF p.68, transcribed in
-//! `docs/descriptors/en_301_192/59-*.md`, verified against the rendered page.
+//! `private/specs-verified/dvb/dvb-si/descriptors/en_301_192/59-*.md`, verified against the rendered page.
 //!
 //! Its presence says the module has the "zlib" structure of IETF RFC 1950.
 //! Fixed 5-byte body: `compression_method`(8) and `original_size`(32).

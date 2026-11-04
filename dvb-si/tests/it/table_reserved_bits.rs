@@ -1,5 +1,5 @@
 //! Reserved-bit preservation for every table section (reserved-bits audit,
-//! `dvb-si/docs/reserved-bits-edition-audit.md` §3.6 "Section headers").
+//! `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §3.6 "Section headers").
 //!
 //! Policy: parse is tolerant, serialize re-emits what was parsed (typed
 //! `reserved*` / `private_indicator` fields, never a raw blob), and values

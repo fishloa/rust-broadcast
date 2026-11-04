@@ -7,9 +7,9 @@
 //! `Session` id and timeout, optional credentials, and the digest
 //! [`Authenticator`].
 //!
-//! Behaviour implemented here (see `docs/state-machines.md`,
-//! `docs/methods-and-status.md`,
-//! `docs/auth.md`):
+//! Behaviour implemented here (see `private/specs-verified/rtp/rtsp-runtime/state-machines.md`,
+//! `private/specs-verified/rtp/rtsp-runtime/methods-and-status.md`,
+//! `private/specs-verified/rtp/rtsp-runtime/auth.md`):
 //!
 //! - Request builders reject any method not valid in the current state
 //!   ([`Error::MethodNotValidInState`]) before emitting bytes.

@@ -6,9 +6,9 @@
 //! transport object into `N` source blocks of as-equal-as-possible length,
 //! given a maximum source block length `B` (symbols) and an encoding symbol
 //! length `E` (octets). [`SourceBlockPartition`] is that algorithm — see
-//! `docs/fec.md` §5/§9 for the full transcription and for why this module
+//! `private/specs-verified/ietf/rmt-flute/fec.md` §5/§9 for the full transcription and for why this module
 //! stops there rather than reproducing any FEC-scheme-specific FEC Payload ID
-//! (`docs/fec.md` §3/§8) or Scheme-specific FEC OTI layout (§2.3/§8). Those
+//! (`private/specs-verified/ietf/rmt-flute/fec.md` §3/§8) or Scheme-specific FEC OTI layout (§2.3/§8). Those
 //! stay opaque byte slices the caller supplies — exactly like
 //! [`crate::AlcPacket::fec_payload_id`] and [`crate::FecPayloadId128`] already
 //! do — because their bit layout is FEC-scheme dependent, not defined by

@@ -2,7 +2,7 @@
 //! [`SectionReassembler::feed`](crate::ts::SectionReassembler::feed)).
 //!
 //! Per the PSI carriage rules of ITU-T H.222.0 §2.4.4 (= ISO/IEC 13818-1:2007 §2.4.4)
-//! (`mpeg-ts/docs/tables/h222_0/psi_section.md`): sections are packed into 188-byte packets
+//! (`private/specs-verified/mpeg/mpeg-ts/tables/h222_0/psi_section.md`): sections are packed into 188-byte packets
 //! with a `pointer_field` where sections begin, concatenated contiguously, and
 //! 0xFF-stuffed at the batch tail.
 
@@ -25,7 +25,7 @@ use crate::ts::STUFFING_BYTE;
 /// produced here, when fed back through the reassembler, yield the same
 /// sections in order.
 ///
-/// ISO/IEC 13818-1:2007 §2.4.4 (`mpeg-ts/docs/tables/h222_0/psi_section.md`).
+/// ISO/IEC 13818-1:2007 §2.4.4 (`private/specs-verified/mpeg/mpeg-ts/tables/h222_0/psi_section.md`).
 pub struct SectionPacketiser {
     pid: Pid,
     continuity_counter: u8,
@@ -181,34 +181,34 @@ impl SectionPacketiser {
 
 // ── Default interval constants ────────────────────────────────────────────────
 
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — NIT maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — NIT maximum interval.
 pub const NIT_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — BAT maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — BAT maximum interval.
 pub const BAT_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT actual maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT actual maximum interval.
 pub const SDT_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT other maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT other maximum interval.
 pub const SDT_OTHER_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — EIT p/f actual maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — EIT p/f actual maximum interval.
 pub const EIT_PF_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1 — EIT p/f other maximum interval (sat/cable;
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT p/f other maximum interval (sat/cable;
 /// terrestrial is 20 s per §4.4.2).
 pub const EIT_PF_OTHER_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1 — EIT schedule first 8 days maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT schedule first 8 days maximum interval.
 pub const EIT_SCHED_MAX_INTERVAL: Duration = Duration::from_secs(10);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1 — EIT schedule beyond 8 days maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT schedule beyond 8 days maximum interval.
 pub const EIT_SCHED_EXT_MAX_INTERVAL: Duration = Duration::from_secs(30);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — TDT maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — TDT maximum interval.
 pub const TDT_MAX_INTERVAL: Duration = Duration::from_secs(30);
-/// dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2 — TOT maximum interval.
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — TOT maximum interval.
 pub const TOT_MAX_INTERVAL: Duration = Duration::from_secs(30);
 
-/// dvb-si/docs/README.md §4.1.7 — PAT maximum interval (shall ≤ 100 ms).
+/// private/specs-verified/dvb/dvb-si/ §4.1.7 — PAT maximum interval (shall ≤ 100 ms).
 pub const PAT_MAX_INTERVAL: Duration = Duration::from_millis(100);
-/// dvb-si/docs/README.md §4.1.7 — PMT maximum interval (shall ≤ 100 ms).
+/// private/specs-verified/dvb/dvb-si/ §4.1.7 — PMT maximum interval (shall ≤ 100 ms).
 pub const PMT_MAX_INTERVAL: Duration = Duration::from_millis(100);
 
-/// dvb-si/docs/tables/en_300_468/514-repetition-rates-and-random-access-hand-transcribed.md
+/// private/specs-verified/dvb/dvb-si/tables/en_300_468/514-repetition-rates-and-random-access-hand-transcribed.md
 /// §5.1.4.1 — minimum inter-section interval floor (≤100 Mbit/s TSs).
 pub const MIN_SECTION_INTERVAL: Duration = Duration::from_millis(25);
 
@@ -324,42 +324,42 @@ impl SiMux {
 
     /// PAT at [`PAT_MAX_INTERVAL`] on PID 0x0000.
     ///
-    /// Interval cites dvb-si/docs/README.md §4.1.7.
+    /// Interval cites private/specs-verified/dvb/dvb-si/ §4.1.7.
     pub fn upsert_pat(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::PAT, sections, PAT_MAX_INTERVAL);
     }
 
     /// PMT at [`PMT_MAX_INTERVAL`] on the caller-supplied `pid`.
     ///
-    /// Interval cites dvb-si/docs/README.md §4.1.7.
+    /// Interval cites private/specs-verified/dvb/dvb-si/ §4.1.7.
     pub fn upsert_pmt(&mut self, pid: Pid, sections: Vec<u8>) {
         self.upsert(pid, sections, PMT_MAX_INTERVAL);
     }
 
     /// SDT actual at [`SDT_ACTUAL_MAX_INTERVAL`] on PID 0x0011.
     ///
-    /// Interval cites dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2.
+    /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_sdt_actual(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::SDT_BAT, sections, SDT_ACTUAL_MAX_INTERVAL);
     }
 
     /// NIT at [`NIT_MAX_INTERVAL`] on PID 0x0010.
     ///
-    /// Interval cites dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2.
+    /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_nit(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::NIT, sections, NIT_MAX_INTERVAL);
     }
 
     /// TDT at [`TDT_MAX_INTERVAL`] on PID 0x0014.
     ///
-    /// Interval cites dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2.
+    /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_tdt(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::TDT_TOT, sections, TDT_MAX_INTERVAL);
     }
 
     /// TOT at [`TOT_MAX_INTERVAL`] on PID 0x0014.
     ///
-    /// Interval cites dvb-si/docs/text/tr_101_211/README.md §4.4.1/§4.4.2.
+    /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_tot(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::TDT_TOT, sections, TOT_MAX_INTERVAL);
     }

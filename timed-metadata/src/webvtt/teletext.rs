@@ -1,6 +1,6 @@
 //! EBU Teletext (ETSI EN 300 706 V1.2.1) subtitle page decode.
 //!
-//! Cite: `docs/teletext-subtitles.md` (curated transcription of the sections
+//! Cite: `private/specs-verified/dvb/timed-metadata/teletext-subtitles.md` (curated transcription of the sections
 //! used here: §7.1 packet structure, §8.1/§8.2 FEC, §9.3.1 page header,
 //! Table 2 control bits, §12.2 spacing attributes, §15.1-15.2 national option
 //! selection, Table 35/36 Latin G0 character set; the Table 36 reading is in
@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn latin_g0_english_substitutions_verified_against_table_36() {
         // Values read directly from ETSI EN 300 706 Table 36's "English" row
-        // (bitmap glyph chart, visually verified — see docs/teletext-subtitles.md).
+        // (bitmap glyph chart, visually verified — see private/specs-verified/dvb/timed-metadata/teletext-subtitles.md).
         assert_eq!(latin_g0_char(0x23, NationalOption::English), '£');
         assert_eq!(latin_g0_char(0x24, NationalOption::English), '$');
         assert_eq!(latin_g0_char(0x40, NationalOption::English), '@');
@@ -913,7 +913,7 @@ mod tests {
     /// Uses [`encode_hamming_8_4`] — the same function proven correct by the
     /// round-trip and manual-cross-check tests above — to build spec-valid
     /// wire bytes (this project's established "construct from verified spec
-    /// encode rules" fixture fallback; see `docs/teletext-subtitles.md`).
+    /// encode rules" fixture fallback; see `private/specs-verified/dvb/timed-metadata/teletext-subtitles.md`).
     pub(super) fn build_header_block(
         magazine: u8,
         page: u8,

@@ -1,6 +1,6 @@
 //! RTMP handshake — C0/C1/C2 and S0/S1/S2 (Adobe RTMP 1.0 §5.2).
 //!
-//! See [`docs/rtmp.md`](../README.md) §2 (Handshake) for the wire layout:
+//! See [`private/specs-verified/rtmp/rtmp-runtime/rtmp.md`](../README.md) §2 (Handshake) for the wire layout:
 //! C0/S0 (§5.2.2), C1/S1 (§5.2.3), C2/S2 (§5.2.4), and the handshake sequence
 //! diagram (§5.2.5).
 //!
@@ -10,7 +10,7 @@
 //! §5.2 itself: C0/C1/C2 and S0/S1/S2 carry no HMAC-SHA256 digest and no
 //! "complex handshake" key-exchange scheme (that scheme is an Adobe Flash
 //! Media Server addition, not part of the RTMP 1.0 spec text transcribed in
-//! `docs/rtmp.md`). This is sufficient for interoperating with real-world
+//! `private/specs-verified/rtmp/rtmp-runtime/rtmp.md`). This is sufficient for interoperating with real-world
 //! publishers such as ffmpeg and OBS Studio, which fall back to (or always
 //! use) the simple handshake for `rtmp://` publish. Complex-handshake support
 //! is out of scope for this crate.

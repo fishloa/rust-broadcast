@@ -8,7 +8,7 @@
 //!   `inject_complete_response`, `config_request`, `config_response`,
 //!   `provisioning_request`, `provisioning_response`, `fault_request`,
 //!   `fault_response`, `as_alive_request`, `as_alive_response` (the last
-//!   eight are PAMS⇔AS messages, §10, `docs/ansi_scte_104/pams_operations.md`).
+//!   eight are PAMS⇔AS messages, §10, `private/specs-verified/scte/scte104/ansi_scte_104/pams_operations.md`).
 //! - **Multi-operation (Normal):** `splice_request`, `splice_null_request`,
 //!   `start_schedule_download`, `time_signal_request`, `transmit_schedule`,
 //!   `proprietary_command`, `inject_section_data`.
@@ -157,7 +157,7 @@ pub struct InjectCompleteResponse {
     pub cue_message_count: u8,
 }
 
-// ── PAMS ⇔ AS messages (§10, Tables 10-1/10-2/10-5, docs/ansi_scte_104/pams_operations.md) ──
+// ── PAMS ⇔ AS messages (§10, Tables 10-1/10-2/10-5, private/specs-verified/scte/scte104/ansi_scte_104/pams_operations.md) ──
 
 /// `config_request_data()` — §10.4.1, Table 10-1 (opID 0x0009). AS ==> PAMS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

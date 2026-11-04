@@ -22,7 +22,7 @@
 //! |---|---|---|---|
 //! | ANSI/CTA-608-E, CTA-708-E (decoded by `cc-data`) | -E; CTA not vendored (cross-source: GY/T 270-2013, vendored, a Chinese adaptation) | CC1; one 708 service | Partial (lossy), feature `cc-data` |
 //! | ETSI EN 300 706 / EN 301 775 §4.5 | V1.2.1 each | Level-1 subtitle page | Partial (lossy), feature `teletext` |
-//! | W3C WebVTT | curated rules (`specs/rules/webvtt-rules.md`) | parse + write cues | Partial |
+//! | W3C WebVTT | curated rules (`private/specs-verified/rules/webvtt-rules.md`) | parse + write cues | Partial |
 //! | SRT | no formal spec; de facto ffmpeg/VLC form | indexed cues | Full for that form |
 //! | ETSI EN 300 743 DVB subtitling | V1.6.1 | bitmap | Not converted |
 //! | W3C TTML2 / IMSC 1.1 | see `ttml-subtitle` | identity row only | Not implemented as a conversion |

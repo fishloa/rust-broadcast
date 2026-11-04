@@ -1,6 +1,6 @@
 //! ARQ sender-side reliability state — `draft-sharabayko-srt-01` §4.8
 //! (Acknowledgement and Lost Packet Handling), §4.8.1 (ACKs/ACKACKs), §4.8.2
-//! (NAKs), §4.10 (RTT). Curated rules: `specs/rules/srt-arq.md`.
+//! (NAKs), §4.10 (RTT). Curated rules: `private/specs-verified/rules/srt-arq.md`.
 //!
 //! Sans-IO: [`Sender`] never reads a wall clock. [`Sender::on_data`] buffers
 //! a freshly-submitted data packet (rule 1) and returns the wire bytes to
@@ -40,7 +40,7 @@ use super::{duration_to_wire_us, seq};
 /// nothing stops a malformed/adversarial range from declaring billions of
 /// entries. [`Sender::on_nak`] never expands a range: it intersects it with
 /// the (small) send buffer, so the work per range is bounded by what is
-/// actually buffered. This is not a `specs/rules/srt-arq.md` rule — it is a
+/// actually buffered. This is not a `private/specs-verified/rules/srt-arq.md` rule — it is a
 /// further safety cap on how many buffered packets one NAK datagram may mark
 /// for retransmission, bounding the work a single (possibly spoofed) NAK can
 /// cause.
@@ -262,7 +262,7 @@ impl Sender {
     }
 
     /// Record a NAK's loss-list entries for prioritized retransmission
-    /// (`specs/rules/srt-arq.md` rules 5, 15, 16, 18). Entries no longer in
+    /// (`private/specs-verified/rules/srt-arq.md` rules 5, 15, 16, 18). Entries no longer in
     /// the send buffer (already freed by a since-received ACK) are silently
     /// ignored (rule 17).
     ///

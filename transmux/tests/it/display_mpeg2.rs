@@ -20,7 +20,7 @@
 //! `DTG1` in the picture's own `user_data()` (its MPEG-2 decoder does not
 //! persist it across pictures), so the oracle gives the set of values and the
 //! pictures that carry one; persistence itself is the H.262/Ts 101 154 rule
-//! (`docs/codec/afd-bar-data.md` §4.4) and is covered by the spec-vector suite.
+//! (`private/specs-verified/mpeg/transmux/codec/afd-bar-data.md` §4.4) and is covered by the spec-vector suite.
 //!
 //! Fixtures load through `test_fixtures` and SKIP, never fail, when the
 //! private submodule is not checked out.

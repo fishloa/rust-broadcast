@@ -1,7 +1,7 @@
 //! Application Recording Descriptor — ETSI TS 102 809 V1.3.1 §5.3.5.4, Table 21
 //! (AIT tag 0x06; `storage_properties` values Table 22). PDF pp.40-41,
-//! transcribed in `docs/descriptors/ts_102_809/21-*.md` and
-//! `docs/enums/ts_102_809/22-*.md`, verified against the rendered pages.
+//! transcribed in `private/specs-verified/dvb/dvb-si/descriptors/ts_102_809/21-*.md` and
+//! `private/specs-verified/dvb/dvb-si/enums/ts_102_809/22-*.md`, verified against the rendered pages.
 //!
 //! Body: six flag bits + `reserved`(2); `label_count`(8) × { `label_length`(8),
 //! `label_char`×N1, `storage_properties`(2) + `reserved`(6) };

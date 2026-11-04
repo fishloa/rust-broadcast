@@ -1,5 +1,5 @@
 //! MXF simple/compound data types — SMPTE ST 377-1:2019 §4.2/§4.3
-//! (`docs/st377-1.md`).
+//! (`private/specs-verified/smpte/st377-1/st377-1.md`).
 
 extern crate alloc;
 
@@ -83,7 +83,7 @@ pub(crate) fn ul_bytes_from_prefix(bytes: &[u8]) -> UlBytes {
 /// A "Package ID" (§4.2): a 32-byte Basic UMID (SMPTE ST 330) or 32 zero
 /// bytes ("terminate a reference chain"). This crate treats the UMID's own
 /// internal bit layout as out of scope (ST 330 is a separate normative
-/// reference) — see `docs/st377-1.md`'s Scope section — and exposes it only
+/// reference) — see `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope section — and exposes it only
 /// as an opaque, fixed-size value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

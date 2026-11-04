@@ -426,7 +426,7 @@ impl<'a> TsPacket<'a> {
     ///
     /// Returns `None` when the packet carries no adaptation field, and
     /// `Some(Err(..))` when a present field is truncated. Layout per
-    /// ISO/IEC 13818-1:2007 §2.4.3.4 (`mpeg-ts/docs/tables/h222_0/transport_packet.md`).
+    /// ISO/IEC 13818-1:2007 §2.4.3.4 (`private/specs-verified/mpeg/mpeg-ts/tables/h222_0/transport_packet.md`).
     pub fn adaptation_field(&self) -> Option<crate::Result<AdaptationField<'a>>> {
         self.adaptation.map(AdaptationField::parse)
     }

@@ -1,5 +1,5 @@
 //! Provider Usage Descriptor — ETSI TS 102 727 V1.1.1 §10.15, Table 94 (AIT tag
-//! 0x13). PDF p.181, transcribed in `docs/descriptors/ts_102_727/94-*.md`,
+//! 0x13). PDF p.181, transcribed in `private/specs-verified/dvb/dvb-si/descriptors/ts_102_727/94-*.md`,
 //! verified against the rendered page.
 //!
 //! Used in either the application (inner) or common (outer) AIT loop of an

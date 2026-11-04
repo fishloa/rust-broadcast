@@ -1,5 +1,5 @@
 //! SEK-rotation ("KM Refresh") driver — `draft-sharabayko-srt-01` §6.1.6 (KM
-//! Refresh), curated at `specs/rules/srt-crypto.md` ("KM Refresh — §6.1.6").
+//! Refresh), curated at `private/specs-verified/rules/srt-crypto.md` ("KM Refresh — §6.1.6").
 //!
 //! Sans-IO: [`KmRefreshDriver::on_packet_sent`] / [`KmRefreshDriver::tick`]
 //! take a caller-supplied packet count — this crate never reads a wall clock

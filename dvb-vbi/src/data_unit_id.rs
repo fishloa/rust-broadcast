@@ -7,7 +7,7 @@
 //! ⚠ Table 1's parse branch routes `0x02`, `0x03`, `0xC0`, **and `0xC1`** to
 //! `txt_data_field()`, but Table 3 marks `0xC1` as *reserved → discard*. The
 //! spec is internally inconsistent; this crate treats Table 3 as authoritative,
-//! so `0xC1` is [`DataUnitId::Reserved`] (see `docs/vbi.md`).
+//! so `0xC1` is [`DataUnitId::Reserved`] (see `private/specs-verified/dvb/dvb-vbi/vbi.md`).
 
 /// `data_unit_id` value: EBU Teletext non-subtitle data (`0x02`, Table 3).
 pub const ID_EBU_TELETEXT_NON_SUBTITLE: u8 = 0x02;

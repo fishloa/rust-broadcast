@@ -200,7 +200,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   header decode (`PageHeader`, Table 2's full eleven control bits + page
   number/sub-code), and basic Level-1 page composition (header + rows
   1-24, erase-page/inhibit-display handling). See
-  `timed-metadata/docs/teletext-subtitles.md` for the full spec citations
+  `private/specs-verified/dvb/timed-metadata/teletext-subtitles.md` for the full spec citations
   (including the Table 35/36 Latin G0 glyph charts, which render as bitmap
   images in the PDF and were read visually, not machine-extracted) and the
   architectural rationale for placing this decode in `timed-metadata`

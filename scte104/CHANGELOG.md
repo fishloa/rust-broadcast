@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (BREAKING)
 - `insert_audio_descriptor`, `insert_audio_provisioning` and
   `insert_alternate_break_duration` are now typed from Tables 9-33..9-36
-  (re-transcribed into `docs/ansi_scte_104/audio-and-alternate-break.md`)
+  (re-transcribed into `private/specs-verified/scte/scte104/ansi_scte_104/audio-and-alternate-break.md`)
   instead of raw passthrough structs: `InsertAudioDescriptor { entries }`,
   `InsertAudioProvisioning { entries }` (+ `CodecIndex`, Table 9-35) and
   `InsertAlternateBreakDuration { alternate_break_duration }` (milliseconds);
@@ -119,7 +119,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
   `AnySingleOperation::Unknown` (opaque, round-tripped but untyped). All 15
   Table 8-3 opIDs are now typed, alongside the already-complete 22/22 Table
   8-4. Field layouts transcribed into new
-  `docs/ansi_scte_104/pams_operations.md` (§10, pp. 69-81, verified via
+  `private/specs-verified/scte/scte104/ansi_scte_104/pams_operations.md` (§10, pp. 69-81, verified via
   `pdf2md` against the PDF text layer). **User-visible**: new public types
   `scte104::operations::{ConfigRequest, ConfigResponse, ProvisioningResponse,
   FaultRequest, FaultResponse, AsAliveRequest, AsAliveResponse}` and

@@ -38,7 +38,7 @@ impl StunGather {
 
         let mut msg = Message::new();
         // RFC 8489 §5: the Transaction ID "MUST be uniformly random ... and
-        // cryptographically random" (see `docs/rfc8489-stun.md` §1).
+        // cryptographically random" (see `private/specs-verified/ietf/webrtc-runtime/rfc8489-stun.md` §1).
         // `TransactionId::default()` is a plain `#[derive(Default)]` (all
         // zero bytes) — NOT random at all (issue #948 item 4, confirmed by
         // this crate's own test below before the fix: every Binding
@@ -175,7 +175,7 @@ mod tests {
     use super::*;
 
     /// The 96-bit Transaction ID sits at byte offset 8..20 of a STUN
-    /// message (RFC 8489 §5, `docs/rfc8489-stun.md` §1's own header
+    /// message (RFC 8489 §5, `private/specs-verified/ietf/webrtc-runtime/rfc8489-stun.md` §1's own header
     /// diagram: 2 (type) + 2 (length) + 4 (magic cookie) = 8 header bytes
     /// before it starts).
     const TRANSACTION_ID_OFFSET: usize = 8;

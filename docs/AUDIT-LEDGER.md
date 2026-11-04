@@ -25,10 +25,10 @@ cited commit.
 | Doc set | Source spec(s) | Oracle | Checks | Verdict | Nits (all fixed) | Audited at commit |
 |---|---|---|---|---|---|---|
 | `st291/docs/` (st_2038.md, anc_packet_291.md) | SMPTE ST 2038:2021; RFC 8331 (ANC) | PDF render + RFC ASCII | 34 | ✅ 0 substantive | — | `7963ed32` |
-| `dvb-vbi/docs/vbi.md` + `mp4-emsg/docs/README.md` | ETSI EN 301 775; DASH-IF IOP Part 10 | PDF render | 44 | ✅ 0 substantive | — | `7963ed32` |
+| `private/specs-verified/dvb/dvb-vbi/vbi.md` + `private/specs-verified/mpeg/mp4-emsg/` | ETSI EN 301 775; DASH-IF IOP Part 10 | PDF render | 44 | ✅ 0 substantive | — | `7963ed32` |
 | `dvb-simulcrypt/docs/` (message-framing, ecmg-scs, emmg-pdg-mux, parameter-types) | ETSI TS 103 197 V1.5.1 | PDF render | 30 | ✅ 0 substantive | — | `7963ed32` |
 | `dvb-ule/docs/` (sndu, ts-mapping, ext-headers) | RFC 4326; RFC 5163 | RFC ASCII | 37 | ✅ 0 substantive | — | `7963ed32` |
-| `scte35-splice/docs/dvb_ta/` (das-descriptor, scte35-profiling, …) | ETSI TS 103 752-1 V1.2.1 | PDF render (pp.17,26-28) | 16 | ✅ 0 substantive | das-descriptor.md: `equivalent_segmentation_type` mnemonic `uimsbf`→`bslbf` per Table 1 (spec quirk); note de-swapped | `2916d94f` |
+| `private/specs-verified/scte/scte35-splice/dvb_ta/` (das-descriptor, scte35-profiling, …) | ETSI TS 103 752-1 V1.2.1 | PDF render (pp.17,26-28) | 16 | ✅ 0 substantive | das-descriptor.md: `equivalent_segmentation_type` mnemonic `uimsbf`→`bslbf` per Table 1 (spec quirk); note de-swapped | `2916d94f` |
 | `dvb-flute/docs/` (lct, alc, flute, norm) | RFC 5651/5775/6726/5740 | RFC ASCII | 38 | ✅ 37 PASS, 1 citation | norm.md: NORM Header-Ext-Types IANA registry §8.5→§8.1.1 (values were correct) | `2916d94f` |
 | `dvb-cc/docs/decode/` (cea708-decode, cea608-decode, cea708-conformance) | ANSI/CTA-708-E S-2023; CTA-608-E S-2019; 47 CFR §79.102 | PDF render + CFR | 56 | ✅ 53 PASS, 2 wording | conformance.md ¶(i) minimum window/pen style 1 not 1–7; ¶(p) edge-type names from CEA-708-E not the CFR text | `2916d94f` |
 
@@ -48,7 +48,7 @@ Notes:
 
 | Doc set | Source spec(s) | Oracle | Checks | Verdict | Nits (all fixed) | Audited at commit |
 |---|---|---|---|---|---|---|
-| `st291/docs/anc_rtp_8331.md` | RFC 8331 §2/§2.1/§3.1/§4 | RFC ASCII (`specs/rfc8331_anc_rtp.txt`) | 13 (timestamp progressive/interlaced semantics, marker bit, Extended Sequence Number + RFC 4175 scope note, Length, ANC_Count, F's 4 values incl. 0b01 invalid, reserved, media type, subtype, clock rate, SDP rtpmap example) | ✅ 0 substantive | — | `401dcec1` |
+| `private/specs-verified/smpte/st291/anc_rtp_8331.md` | RFC 8331 §2/§2.1/§3.1/§4 | RFC ASCII (`private/specs-verified/ietf/specs/rfc8331_anc_rtp.txt`) | 13 (timestamp progressive/interlaced semantics, marker bit, Extended Sequence Number + RFC 4175 scope note, Length, ANC_Count, F's 4 values incl. 0b01 invalid, reserved, media type, subtype, clock rate, SDP rtpmap example) | ✅ 0 substantive | — | `401dcec1` |
 
 Scope: only the RTP-transport-specific material curated here — the
 per-ANC-packet fields + parity/checksum math were already curated (and
@@ -61,10 +61,10 @@ audited clean, 0 substantive discrepancies) in `anc_packet_291.md` per the
 
 | Doc set | Source spec(s) | Oracle | Checks | Verdict | Nits (all fixed) | Audited at commit |
 |---|---|---|---|---|---|---|
-| `st337/docs/st337.md` | SMPTE ST 337:2015 | PDF render (`private/specs/smpte_st337_2015_aes3_nonpcm.pdf`) | 32 | ✅ 0 substantive | Table 6 Pb row label vs the PDF's own "Sync word 1" typo (noted, not silently corrected); Pe row high/low-significance-bit direction reversed (uninterpreted field, no parser impact) | `67557392` |
-| `st12-1/docs/st12-1.md` | SMPTE ST 12-1:2014 | PDF render (`private/specs/smpte_st12-1_2014_ltc.pdf`) | 26 | ✅ 0 substantive | Figure 9 page cite off-by-one (p.33→p.34); §11/§12 scope-paragraph mischaracterization | `67557392` |
-| `rdd29/docs/rdd29.md` | SMPTE RDD 29:2019 | PDF render (`private/specs/smpte_rdd29_2019_dolby_atmos_metadata.pdf`) | 40 | ✅ 0 substantive | — | (no changes needed) |
-| `st377-1/docs/st377-1.md` | SMPTE ST 377-1:2019 | PDF render (`private/specs/smpte_st377-1_2019_mxf.pdf`, targeted-read via clause citations, ~40 of 187 pages) | 39 | ⚠️ 2 substantive, both fixed | 4 collapsed 15-byte Key hex-string shorthands (Partition/Primer/Local-Set-common/RIP, each missing one of two adjacent `0x01` bytes) | `67557392` |
+| `private/specs-verified/smpte/st337/st337.md` | SMPTE ST 337:2015 | PDF render (`private/specs/smpte_st337_2015_aes3_nonpcm.pdf`) | 32 | ✅ 0 substantive | Table 6 Pb row label vs the PDF's own "Sync word 1" typo (noted, not silently corrected); Pe row high/low-significance-bit direction reversed (uninterpreted field, no parser impact) | `67557392` |
+| `private/specs-verified/smpte/st12-1/st12-1.md` | SMPTE ST 12-1:2014 | PDF render (`private/specs/smpte_st12-1_2014_ltc.pdf`) | 26 | ✅ 0 substantive | Figure 9 page cite off-by-one (p.33→p.34); §11/§12 scope-paragraph mischaracterization | `67557392` |
+| `private/specs-verified/smpte/rdd29/rdd29.md` | SMPTE RDD 29:2019 | PDF render (`private/specs/smpte_rdd29_2019_dolby_atmos_metadata.pdf`) | 40 | ✅ 0 substantive | — | (no changes needed) |
+| `private/specs-verified/smpte/st377-1/st377-1.md` | SMPTE ST 377-1:2019 | PDF render (`private/specs/smpte_st377-1_2019_mxf.pdf`, targeted-read via clause citations, ~40 of 187 pages) | 39 | ⚠️ 2 substantive, both fixed | 4 collapsed 15-byte Key hex-string shorthands (Partition/Primer/Local-Set-common/RIP, each missing one of two adjacent `0x01` bytes) | `67557392` |
 
 **Session totals: 137 checks across 4 doc sets · 2 substantive discrepancies found and fixed · 6 nits found, all fixed.**
 

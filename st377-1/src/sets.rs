@@ -7,7 +7,7 @@
 //! walks zero-copy) built by decoding known local tags out of a parsed
 //! [`crate::LocalSet`] into typed fields, and preserving every other tag
 //! (including "dyn"-tagged optional properties this first pass does not
-//! individually type — see `docs/st377-1.md`'s Scope section) in a `dark`
+//! individually type — see `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope section) in a `dark`
 //! catch-all so nothing is ever silently dropped.
 
 extern crate alloc;
@@ -168,7 +168,7 @@ pub fn get_optional_raw<'a>(items: &[LocalSetItem<'a>], tag: u16) -> Option<&'a 
 /// Every item's tag NOT in `known_tags`, copied into an owned dark list
 /// (round-trip fidelity for properties this crate doesn't individually
 /// decode — including every "dyn"-tagged optional property, see
-/// `docs/st377-1.md`'s Scope section).
+/// `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope section).
 pub fn collect_dark(items: &[LocalSetItem<'_>], known_tags: &[u16]) -> Vec<(u16, Vec<u8>)> {
     items
         .iter()

@@ -4,7 +4,7 @@
 //! 0x03), `VVC_timing_and_HRD_descriptor` (Table 2-139, 0x15) and
 //! `EVC_timing_and_HRD_descriptor` (Table 2-141, 0x16) all carry the same
 //! `picture_and_timing_info` block; syntax in
-//! `docs/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
+//! `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/3f-extension-descriptor-bodies-0x02-0x07.md`
 //! and `…-0x0f-0x19.md`.
 //!
 //! ```text

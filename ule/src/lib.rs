@@ -20,9 +20,9 @@
 //!
 //! | Standard | Edition | Scope covered | Status | Notes |
 //! |----------|---------|---------------|--------|-------|
-//! | RFC 4326 — Unidirectional Lightweight Encapsulation (ULE) for Transmission of IP Datagrams over an MPEG-2 Transport Stream | December 2005 (matches `specs/rfc4326_ule.txt`) | §4 SNDU format (D bit, Length, Type, optional 6-byte NPA, CRC-32), §4.4 Type-field split at `0x0600`, §4.6 CRC-32, §5 extension-header framing, §6/§7 TS encapsulation and receiver | Full | CRC verified byte-exact against the Appendix B worked example (CRC `0x7C171763`). |
+//! | RFC 4326 — Unidirectional Lightweight Encapsulation (ULE) for Transmission of IP Datagrams over an MPEG-2 Transport Stream | December 2005 (matches `private/specs-verified/ietf/specs/rfc4326_ule.txt`) | §4 SNDU format (D bit, Length, Type, optional 6-byte NPA, CRC-32), §4.4 Type-field split at `0x0600`, §4.6 CRC-32, §5 extension-header framing, §6/§7 TS encapsulation and receiver | Full | CRC verified byte-exact against the Appendix B worked example (CRC `0x7C171763`). |
 //! | RFC 4326 §5.1, §5.2, §5.3 — Test-SNDU, Bridged-Frame, Extension-Padding | December 2005 | H-Type constants, framing, length rules | Typed-opaque | Header identity and length are typed; the body bytes are opaque. |
-//! | RFC 5163 — Extension Formats for ULE | April 2008 (matches `specs/rfc5163_ule_ext.txt`) | §3.1 TS-Concat, §3.2 PDU-Concat (Mandatory), §3.3 TimeStamp (Optional) | Typed-opaque | Header identity and length are typed; bodies are not decoded further. |
+//! | RFC 5163 — Extension Formats for ULE | April 2008 (matches `private/specs-verified/ietf/specs/rfc5163_ule_ext.txt`) | §3.1 TS-Concat, §3.2 PDU-Concat (Mandatory), §3.3 TimeStamp (Optional) | Typed-opaque | Header identity and length are typed; bodies are not decoded further. |
 //!
 //! ## Feature flags
 //!

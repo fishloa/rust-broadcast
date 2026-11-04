@@ -20,7 +20,7 @@
 //! `declare_tables!` list); [`TableRegistry`] adds private table_ids. The
 //! per-table_id reference with verified clauses, and the table_ids no module
 //! implements yet, is generated into
-//! [`dvb-si/docs/COVERAGE.md`](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/COVERAGE.md#tables-table_id).
+//! `private/specs-verified/dvb/dvb-si/COVERAGE.md`.
 //!
 //! # Reserved-bit policy (parse tolerant, serialize re-emits)
 //!
@@ -29,7 +29,7 @@
 //! serialize, so a real sender's section re-serializes byte-identically (CRC is
 //! recomputed). Constructed values (`new()` / `Default`) carry the spec fill
 //! value of the edition the crate is transcribed from
-//! (`dvb-si/docs/reserved-bits-edition-audit.md` is the authority):
+//! (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` is the authority):
 //!
 //! * the bit after `section_syntax_indicator` is **`private_indicator`** in
 //!   ITU-T H.222.0 (all nine editions: "a 1-bit user definable flag that shall
@@ -206,7 +206,7 @@ pub(crate) const SECTION_B1_PRIVATE_INDICATOR: u8 = 0x40;
 /// front of `version_number` (byte 5 bits `[7:6]`).
 ///
 /// See the module docs for the policy and
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §3.6 for the per-edition
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §3.6 for the per-edition
 /// evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

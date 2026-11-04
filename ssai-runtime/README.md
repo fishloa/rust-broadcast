@@ -37,7 +37,7 @@ per-session ad breaks without per-viewer media copies.
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| IETF draft-pantos-hls-rfc8216bis, Appendix D (Interstitials) | the vendored draft dated 1 May 2026 (`specs/ietf_draft_pantos_hls_rfc8216bis.txt`), an Internet-Draft, not an RFC | `EXT-X-DATERANGE` Interstitial schema (D.2): `CLASS`, `X-ASSET-URI` / `X-ASSET-LIST` (URI only, JSON not fetched), `X-RESUME-OFFSET`, `X-PLAYOUT-LIMIT`, `X-SNAP`, `X-RESTRICT`; `START-DATE` required on the base playlist (RFC 8216bis section 4.4.5.1) | Partial | Skip-button control (D.3) and the asset-list JSON schema are not implemented. Attribute values are validated against tag injection |
+| IETF draft-pantos-hls-rfc8216bis, Appendix D (Interstitials) | the vendored draft dated 1 May 2026 (`private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`), an Internet-Draft, not an RFC | `EXT-X-DATERANGE` Interstitial schema (D.2): `CLASS`, `X-ASSET-URI` / `X-ASSET-LIST` (URI only, JSON not fetched), `X-RESUME-OFFSET`, `X-PLAYOUT-LIMIT`, `X-SNAP`, `X-RESTRICT`; `START-DATE` required on the base playlist (RFC 8216bis section 4.4.5.1) | Partial | Skip-button control (D.3) and the asset-list JSON schema are not implemented. Attribute values are validated against tag injection |
 | ANSI/SCTE 35 2023r1 | 2023r1 | Cue semantics only: `splice_insert()` out-of-network / break duration / event id as inputs (`BreakContext`), 33-bit `pts_time` wrap handling | Partial | The core takes ticks, not SCTE-35 wire types; decoding the cue is `scte35-splice` |
 
 ## Features
@@ -151,9 +151,9 @@ on `scte35-splice` and `mp4-emsg` for the real-fixture tests. Media splicing is
 ## Spec references
 
 - HLS Interstitials: draft-pantos-hls-rfc8216bis Appendix D, transcribed in the private
-  repo (`private/specs-verified/hls/ietf/rfc8216bis-interstitials.md`, see `docs/specs/PRIVATE-MAP.md`).
+  repo (`private/specs-verified/hls/ietf/rfc8216bis-interstitials.md`).
 - SCTE-35 `splice_insert()` / segmentation: ANSI/SCTE 35 2023r1, transcribed at
-  [`scte35-splice/docs/`](../scte35-splice/docs/).
+  the private repo (`private/specs-verified/scte/scte35-splice/`).
 
 ## MSRV and license
 

@@ -1,7 +1,7 @@
 //! Application Storage Descriptor — ETSI TS 102 809 V1.3.1 §5.3.10.1, Table 37
 //! (AIT tag 0x10; same layout as §5.2.11.2 Table 14, `storage_property` values
 //! Table 15). PDF p.51 / p.28, transcribed in
-//! `docs/descriptors/ts_102_809/37-*.md` and `docs/enums/ts_102_809/15-*.md`,
+//! `private/specs-verified/dvb/dvb-si/descriptors/ts_102_809/37-*.md` and `private/specs-verified/dvb/dvb-si/enums/ts_102_809/15-*.md`,
 //! verified against the rendered pages.
 //!
 //! Fixed 7-byte body: `storage_property`(8), `not_launchable_from_broadcast`(1),

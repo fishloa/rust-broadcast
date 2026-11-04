@@ -214,7 +214,7 @@ impl RegionObjectEntry {
         buf[0..2].copy_from_slice(&self.object_id.to_be_bytes());
         let hpos = self.object_horizontal_position;
         let vpos = self.object_vertical_position;
-        // EN 300 743 Table 11 (docs/tables/en_300_743/11-region-composition-segment.md:29-33):
+        // EN 300 743 Table 11 (private/specs-verified/dvb/dvb-subtitle/tables/en_300_743/11-region-composition-segment.md:29-33):
         // both object_horizontal_position and object_vertical_position are
         // 12-bit uimsbf fields; range-check before narrowing so a value that
         // does not fit is rejected instead of silently masked (#1129/#1044).
@@ -580,7 +580,7 @@ mod tests {
     }
 
     /// Issue #1044: `object_vertical_position >= 0x100` (>= 256) must
-    /// round-trip. EN 300 743 Table 11 (`docs/tables/en_300_743/11-region-composition-segment.md:32-33`):
+    /// round-trip. EN 300 743 Table 11 (`private/specs-verified/dvb/dvb-subtitle/tables/en_300_743/11-region-composition-segment.md:32-33`):
     /// byte 4 of the object entry is `reserved(4)` then the *top 4 bits* of
     /// the 12-bit `object_vertical_position` — the same split `parse` already
     /// uses (`(bytes[4] & 0x0F) << 8 | bytes[5]`). Every existing round-trip

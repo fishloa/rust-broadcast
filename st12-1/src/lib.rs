@@ -3,7 +3,7 @@
 //! word), `no_std`.
 //!
 //! The field semantics follow the curated transcription at
-//! `st12-1/docs/st12-1.md` (from `https://pub.smpte.org/pub/st12-1/st0012-1-2014.pdf`);
+//! `private/specs-verified/smpte/st12-1/st12-1.md` (from `https://pub.smpte.org/pub/st12-1/st0012-1-2014.pdf`);
 //! cite that file, not this comment, as the oracle.
 //!
 //! # What it does / what it does not

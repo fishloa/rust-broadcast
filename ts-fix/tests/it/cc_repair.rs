@@ -68,7 +68,7 @@ fn has_discontinuity(pkt: &[u8]) -> bool {
 /// Whether `curr` is a legal §2.4.3.3 duplicate of `prev` (same PID
 /// implied by caller, same CC, byte-identical except a re-encoded PCR).
 /// Delegates to the single shared implementation in `broadcast-common` —
-/// see its module docs (cited from `mpeg-ts/docs/README.md` §2.4.3.3) for
+/// see its module docs (cited from `private/specs-verified/mpeg/mpeg-ts/` §2.4.3.3) for
 /// the exact rule. This test file used to hand-roll its own
 /// `hash_payload_skip_pcr`, a fourth independent copy of the same rule
 /// alongside `dvb-conformance`, `media-doctor`, and this crate's own

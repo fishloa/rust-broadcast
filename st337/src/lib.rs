@@ -4,8 +4,8 @@
 //! payload, `no_std` + `alloc`.
 //!
 //! The field semantics follow the curated transcription at
-//! `st337/docs/st337.md` (from `https://pub.smpte.org/latest/st337/st0337-2015.pdf`);
-//! see also `st337/docs/st337-PROVENANCE.md` for a real-fixture,
+//! `private/specs-verified/smpte/st337/st337.md` (from `https://pub.smpte.org/latest/st337/st0337-2015.pdf`);
+//! see also `private/specs-verified/smpte/st337/st337-PROVENANCE.md` for a real-fixture,
 //! independent-oracle (`ffmpeg -f spdif`) cross-check of the constants and
 //! bit layout.
 //!

@@ -7,7 +7,7 @@
 # encode_hamming_8_4/encode_odd_parity (proven correct by exhaustive
 # round-trip + single/double-bit-error tests in
 # timed-metadata/src/webvtt/teletext.rs) -- not a captured broadcast stream.
-# See timed-metadata/docs/teletext-subtitles.md for the full spec citations.
+# See private/specs-verified/dvb/timed-metadata/teletext-subtitles.md for the full spec citations.
 #
 # CORRECTED for issue #1041 (TM-C3): the 42-byte txt_data_block portion of
 # each line below is now stored bit-reversed (each byte run through

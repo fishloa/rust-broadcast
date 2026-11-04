@@ -1762,7 +1762,7 @@ impl Driver {
         // new first-time data appended later this cycle, reproducing the
         // sans-IO engine's "loss list before first transmission" priority
         // (see `arq::sender`'s module doc). Feed LiveCC the same as a
-        // first-time send (`specs/rules/srt-livecc.md` §5.1.2, L3216-3217:
+        // first-time send (`private/specs-verified/rules/srt-livecc.md` §5.1.2, L3216-3217:
         // "original or retransmitted") and tag them `is_data` so pacing
         // applies. The payload length is the datagram less its fixed header —
         // no need to re-parse the packet just to learn it.
@@ -1841,7 +1841,7 @@ impl Driver {
     /// Send every outbound item that is due right now, in order, without
     /// blocking on the pacing delay itself (issue #1061).
     ///
-    /// `specs/rules/srt-livecc.md` §5.1.2: `PKT_SND_PERIOD` paces DATA
+    /// `private/specs-verified/rules/srt-livecc.md` §5.1.2: `PKT_SND_PERIOD` paces DATA
     /// packets only — control feedback (ACK/NAK/ACKACK/Keep-Alive) must go
     /// out immediately, or loss recovery (which rides on that same control
     /// traffic) would be throttled right along with the data it is meant to
@@ -2943,7 +2943,7 @@ fn random_u32() -> Result<u32> {
 /// The largest SRT Socket ID this adapter will ever generate.
 ///
 /// `draft-sharabayko-srt-01` §3/§4.3.1.1 gives the wire field only as "32
-/// bits" (this crate's own `specs/ietf_draft_sharabayko_srt_01.txt`, e.g. its
+/// bits" (this crate's own `private/specs-verified/ietf/specs/ietf_draft_sharabayko_srt_01.txt`, e.g. its
 /// Handshake Packet description — no transcription in this crate's `docs/`
 /// narrows that range further; there is no `docs/` directory at all yet). A
 /// real libsrt peer, though, only ever *allocates* an ID in `1..=`

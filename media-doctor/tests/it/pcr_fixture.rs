@@ -59,7 +59,7 @@ fn pcr_signalled_discontinuity_not_flagged() {
 // -------------------------------------------------------------------------
 
 /// TR 101 290 v1.4.1 Table 5.0b, transcribed at
-/// `dvb-conformance/docs/tr_101_290.md:51-52`:
+/// `private/specs-verified/dvb/dvb-conformance/tr_101_290.md:51-52`:
 ///
 /// - **2.3a `PCR_repetition_error`**: "Time interval between two consecutive
 ///   PCR values more than 100 ms" (note 2: the 40 ms limitation was removed

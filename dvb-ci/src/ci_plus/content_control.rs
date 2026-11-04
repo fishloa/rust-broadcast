@@ -1,5 +1,5 @@
 //! Content Control resource — multi-stream extensions — ETSI TS 103 205 V1.4.1
-//! §6.4.3, Tables 6-13 (PDF pp. 34-38). See `docs/ts_103_205/content-control.md`.
+//! §6.4.3, Tables 6-13 (PDF pp. 34-38). See `private/specs-verified/dvb/dvb-ci/ts_103_205/content-control.md`.
 //!
 //! Resource ID `0x008C1041` (Class 140, Type 65, Version 1). For multi-stream
 //! reception the Content Control APDUs are extended with the Local TS identifier

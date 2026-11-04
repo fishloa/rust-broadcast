@@ -5,7 +5,7 @@
 //! (ETSI TR 101 290 v1.4.1 Table 5.0c). Every buffer size, leak rate, and
 //! threshold is a **named constant** citing its H.222.0 clause — transcribed
 //! from the vendored PDF at `private/specs/itu_t_h222_0_202308_mpeg2_systems.pdf`.
-//! The transcription lives at [`docs/h222_0-tstd-buffer-model.md`].
+//! The transcription lives at [`private/specs-verified/dvb/dvb-conformance/h222_0-tstd-buffer-model.md`].
 //!
 //! # Architecture
 //!
@@ -39,7 +39,7 @@
 //! - **ETSI TR 101 290 v1.4.1 Table 5.0c for conformance thresholds**:
 //!   DATA_DELAY_LIMIT_SECS, TB_EMPTY_INTERVAL_SECS, TB_SYS_EMPTY_INTERVAL_SECS.
 //!
-//! See [`docs/h222_0-tstd-buffer-model.md`] for the full transcription.
+//! See [`private/specs-verified/dvb/dvb-conformance/h222_0-tstd-buffer-model.md`] for the full transcription.
 //!
 //! | Constant | Value | Source |
 //! |----------|-------|--------|

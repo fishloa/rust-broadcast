@@ -33,7 +33,7 @@ fn walk(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
 }
 
 /// Reserved bits of each byte (masked) per descriptor under survey, from the
-/// spec tables in `docs/descriptors/iso_13818_1/`.
+/// spec tables in `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/`.
 fn masks(tag: u8, body: &[u8]) -> Option<Vec<u8>> {
     let b = |i: usize| body.get(i).copied();
     match tag {

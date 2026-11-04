@@ -1,8 +1,8 @@
 //! SRT payload encryption — `draft-sharabayko-srt-01` §6 ("Encryption").
 //!
-//! Spec grounding: `specs/rules/srt-crypto.md` (curated §6, external-algorithm
+//! Spec grounding: `private/specs-verified/rules/srt-crypto.md` (curated §6, external-algorithm
 //! references grep-verified against RFC 3394 / RFC 8018 / RFC 2104 / FIPS 197
-//! / NIST SP 800-38A). Cross-refs: `specs/rules/srt-rules.md` §"Key Material
+//! / NIST SP 800-38A). Cross-refs: `private/specs-verified/rules/srt-rules.md` §"Key Material
 //! message — §3.2.2" (wire layout of `Salt`/`ICV`/`xSEK`/`oSEK`/`KLen`, all
 //! carried opaquely by [`crate::packet::KeyMaterial`]) and §"Data packet —
 //! §3.1" (`KK` field, [`crate::packet::EncryptionKeyField`]).

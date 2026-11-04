@@ -11,7 +11,7 @@ impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
 const SOGI_PRIORITY_BITS: u32 = 12;
 /// Spec default of the 1-bit `reserved_future_use` in each SOGI entry (bit 4
 /// of its first byte): 1 (EN 300 468 Table 162c, V1.19.1/V1.20.1;
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
 pub const SOGI_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x01;
 const SOGI_RESERVED_MASK: u8 = 0x01;
 

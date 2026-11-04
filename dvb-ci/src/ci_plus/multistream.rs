@@ -1,5 +1,5 @@
 //! Multi-stream resource objects — ETSI TS 103 205 V1.4.1 §6.4.2, Tables 2-5
-//! (PDF pp. 31-33). See `docs/ts_103_205/multi-stream-resource.md`.
+//! (PDF pp. 31-33). See `private/specs-verified/dvb/dvb-ci/ts_103_205/multi-stream-resource.md`.
 //!
 //! Resource ID `0x00900041` (Class 144, Type 1, Version 1) — a **new** CI Plus
 //! resource with no EN 50221 equivalent. The CICAM advertises its multi-stream

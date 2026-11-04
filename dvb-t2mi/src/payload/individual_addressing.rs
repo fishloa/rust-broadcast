@@ -236,7 +236,7 @@ pub struct FrequencyBody {
 // ── Existing TS 101 191 §6.1 function bodies (Tables 7–13) ─────────────────
 //
 // Referenced by TS 102 773 §5.2.8.1 / Table 5.  Transcribed and verified on
-// the rendered pages in `docs/tables/ts_101_191/`.
+// the rendered pages in `private/specs-verified/dvb/dvb-t2mi/tables/ts_101_191/6-1-existing-individual-addressing-functions.md/`.
 
 /// Transmitter time offset function body — ETSI TS 101 191 §6.1.1, Table 7
 /// (function_tag 0x00).
@@ -388,7 +388,7 @@ impl EnableBody {
 ///
 /// The spec prose calls `ch_bandwidth` an "8-bit field" while Table 13 gives
 /// it 7 bits; the table width is implemented (see
-/// `docs/tables/ts_101_191/`).
+/// `private/specs-verified/dvb/dvb-t2mi/tables/ts_101_191/6-1-existing-individual-addressing-functions.md/`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -836,7 +836,7 @@ fn try_parse_typed_body(
 
 /// Range-check `value` against a `bits`-wide wire field before it is narrowed
 /// and written, so a value that does not fit is rejected instead of silently
-/// wrapped (see `dvb-t2mi/docs/README.md`).
+/// wrapped (see `private/specs-verified/dvb/dvb-t2mi/`).
 fn check_bits(value: u64, bits: u32, field: &'static str) -> Result<(), crate::error::Error> {
     broadcast_common::len::fit_bits(value, bits, field)
         .map(|_| ())
@@ -1925,7 +1925,7 @@ mod tests {
     // ── TS 101 191 §6.1 functions (tags 0x00–0x06) ─────────────────────────
     //
     // Spec vectors: every byte below is hand-derived from the bit layout in
-    // `docs/tables/ts_101_191/6-1-existing-individual-addressing-functions.md`.
+    // `private/specs-verified/dvb/dvb-t2mi/tables/ts_101_191/6-1-existing-individual-addressing-functions.md`.
     // The one real-capture vector lives in `tests/it/real_capture.rs`.
 
     /// Wrap one function (`tag`, `body`) in a one-transmitter payload

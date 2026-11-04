@@ -7,7 +7,7 @@
 //! bytes and the record is carried in a **FullBox** (a 4-byte version + flags
 //! prefix precedes the record body).
 //!
-//! # Wire layout — ISO/IEC 14496-15:2022 §11.3.2.1, `transmux/docs/codec/vvc-h266.md`
+//! # Wire layout — ISO/IEC 14496-15:2022 §11.3.2.1, `private/specs-verified/mpeg/transmux/codec/vvc-h266.md`
 //!
 //! ```text
 //! aligned(8) class VvcDecoderConfigurationRecord {
@@ -62,7 +62,7 @@
 //!
 //! `nal_unit_type` occupies bits `[7:3]` of the second NAL-header byte. The
 //! parameter-set / config types are `OPI=12`, `DCI=13`, `VPS=14`, `SPS=15`,
-//! `PPS=16`, `PREFIX_APS=17`. (The `transmux/docs/codec/vvc-h266.md` numbering
+//! `PPS=16`, `PREFIX_APS=17`. (The `private/specs-verified/mpeg/transmux/codec/vvc-h266.md` numbering
 //! predates the final H.266 assignments; the values here follow the published
 //! ITU-T H.266 Table 5 and are validated against the committed real fixture.)
 

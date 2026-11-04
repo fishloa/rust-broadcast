@@ -112,7 +112,7 @@ editcap -F pcap window.pcap rist-simple-loss25pct-loopback.pcap  # classic pcap
 
 - Port **3234** = RTP data (even port `P`); port **3235** = RTCP feedback
   (`P+1`) — this observed port pairing matches TR-06-1 §5.1.1's unicast port
-  assignment rule (`docs/tr-06-1-simple-profile.md` §2.1) exactly; it is not
+  assignment rule (`private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md` §2.1) exactly; it is not
   asserted from the spec, it is what librist actually put on the wire.
 - The 400 ms window was chosen because it already contains a rich, verified
   sample of every packet class needed (below) at ~1/33rd the size of the
@@ -131,7 +131,7 @@ committed file itself, not the pre-trim capture)
   Ethernet), 0.399 s of wall-clock capture.
 - **617 RTP data packets** on UDP port 3234, split by the SSRC LSB
   retransmission marker described in TR-06-1 §5.3.3
-  (`docs/tr-06-1-simple-profile.md` §4.3):
+  (`private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md` §4.3):
   - **458** with SSRC `0xd5615604` (LSB=0, original transmissions)
   - **159** with SSRC `0xd5615605` (LSB=1, **retransmissions** — same 31
     upper bits as the original-flow SSRC, exactly as the spec states)
@@ -150,7 +150,7 @@ committed file itself, not the pre-trim capture)
   needs a bitmask-format fixture too, it will need a different source (a
   RIST implementation that emits Generic NACK, or a hand-built wire-format
   vector per TR-06-1 Appendix A, already transcribed in
-  `docs/tr-06-1-simple-profile.md`).
+  `private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md`).
 - Standard compound-RTCP framing throughout: every RTCP packet observed is
   `SR/RR + SDES + [APP]`, matching §3 of the transcription (3 Sender
   Reports, 65 Receiver Reports, 68 SDES blocks).
@@ -165,7 +165,7 @@ Retransmission Request. Its raw APP payload bytes are:
 80 cc 00 05 d5 61 56 04 52 49 53 54 05 45 00 00 06 02 00 00 06 06 00 00
 ```
 
-Decoded per the §4.2.2 layout in `docs/tr-06-1-simple-profile.md`:
+Decoded per the §4.2.2 layout in `private/specs-verified/vsf/rist-runtime/tr-06-1-simple-profile.md`:
 - `80 cc` → V=2,P=0,Subtype=0; PT=0xCC=204 (APP)
 - `00 05` → Length=5 → (5+1)×4 = 24 bytes total (header+SSRC+name+3 range
   fields)

@@ -7,7 +7,7 @@
 **Posture:** `#![no_std]` + `alloc`; `serde` feature-gated.
 **Spec grounding (UPGRADED):** cite **ITU-T H.222.0 (08/2023) = ISO/IEC 13818-1** —
 MPEG-2 Systems is a joint ITU-T|ISO/IEC text and the free ITU-T twin (08/23 edition)
-is now **vendored** at `specs/itu_t_h222_0_202308_mpeg2_systems.pdf`. So mpeg-ts cites
+is now **vendored** at `private/specs/itu_t_h222_0_202308_mpeg2_systems.pdf`. So mpeg-ts cites
 a free, in-repo **primary source** rather than the paid "consult-locally, never-vendor"
 ISO posture used until now. (The TS/PES/PSI/section syntax is stable across editions, so
 the superseded 08/23 free edition is authoritative for these layouts. Bonus: dvb-si /

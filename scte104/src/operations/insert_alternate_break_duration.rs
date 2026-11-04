@@ -4,7 +4,7 @@
 //! Supplemental usage. A single 32-bit `alternate_break_duration` in
 //! **milliseconds** that replaces the `break_duration` of the associated SCTE 35
 //! section (zero means "use the `break_duration()`"). Transcription:
-//! `docs/ansi_scte_104/audio-and-alternate-break.md`.
+//! `private/specs-verified/scte/scte104/ansi_scte_104/audio-and-alternate-break.md`.
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;

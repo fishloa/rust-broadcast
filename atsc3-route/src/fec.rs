@@ -1,5 +1,5 @@
 //! ROUTE FEC Payload ID layouts — A/331 Annex A §A.3.5.1 (source flows) and
-//! §A.3.5.2 (repair flows), transcribed at `atsc3/docs/a331-route.md` §3.
+//! §A.3.5.2 (repair flows), transcribed at `private/specs-verified/atsc/atsc3/a331-route.md` §3.
 //!
 //! The 32-bit "FEC Payload ID" that follows the LCT header in every ROUTE
 //! ALC packet ([`rmt_flute::AlcPacket::fec_payload_id`] carries it as an

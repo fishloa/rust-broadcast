@@ -4,8 +4,8 @@
 //! ## Provenance
 //!
 //! Every byte vector below is **computed directly from the ANSI/SCTE 104 2023
-//! syntax tables** (`scte104/docs/ansi_scte_104/operations.md` for Tables
-//! 8-1/8-2/9-5, `scte104/docs/ansi_scte_104/pams_operations.md` for Tables
+//! syntax tables** (`private/specs-verified/scte/scte104/ansi_scte_104/operations.md` for Tables
+//! 8-1/8-2/9-5, `private/specs-verified/scte/scte104/ansi_scte_104/pams_operations.md` for Tables
 //! 10-1/10-3/10-5), independently of this crate's own serializer — mirroring
 //! the pattern (and closing the exact gap) named in `rtcp-packet/tests/it/spec_vectors.rs`
 //! and issue #936: every other test in this crate builds via the typed API,

@@ -18,10 +18,10 @@
 //!
 //! [`DtsCoreFrameInfo::from_es`] parses a DTS **core substream** frame header
 //! (ETSI TS 102 114 §5.3/§5.4, sync `0x7FFE8001`) from a raw elementary stream
-//! (e.g. a TS PES payload) — see `docs/codec/dts-core-frame.md`. It recovers
+//! (e.g. a TS PES payload) — see `private/specs-verified/mpeg/transmux/codec/dts-core-frame.md`. It recovers
 //! sample rate, channel count, and samples/frame, and [`into_ddts`] builds a
 //! core-only [`DtsSpecificBox`] from it (§E.2.2.3.2, Tables E-2/E-3/E-5) —
-//! see `docs/codec/dts-isobmff-etsi102114.md`. [`split_dts_core_frames`]
+//! see `private/specs-verified/mpeg/transmux/codec/dts-isobmff-etsi102114.md`. [`split_dts_core_frames`]
 //! splits a concatenated PES payload into individual core frames using each
 //! frame's own `FSIZE` (mirrors [`crate::ac3::split_ac3_syncframes`]).
 //!
@@ -33,7 +33,7 @@ use broadcast_common::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------
 // DTS core substream frame header — ETSI TS 102 114 §5.3/§5.4, Tables 5-1/5-2/
-// 5-4/5-5/5-7 (docs/codec/dts-core-frame.md)
+// 5-4/5-5/5-7 (private/specs-verified/mpeg/transmux/codec/dts-core-frame.md)
 // ---------------------------------------------------------------------------
 
 /// Core-substream synchronization word — ETSI TS 102 114 §5.3 (big-endian,
@@ -270,14 +270,14 @@ impl DtsCoreFrameInfo {
     }
 
     /// Build a core-only [`DtsSpecificBox`] (`dtsc`) from the parsed header —
-    /// ETSI TS 102 114 §E.2.2.3.2, Tables E-2/E-3/E-5 (docs/codec/dts-core-frame.md
+    /// ETSI TS 102 114 §E.2.2.3.2, Tables E-2/E-3/E-5 (private/specs-verified/mpeg/transmux/codec/dts-core-frame.md
     /// `into_ddts` derivation table).
     ///
     /// `channel_layout` is `0` both when `core_layout` names the arrangement
     /// (channel config is then carried by `CoreLayout`) and for the
     /// `CoreLayout == 31` fallback: Table E-5's full `AMODE`→mask
     /// correspondence is not completely transcribed in
-    /// `docs/codec/dts-core-frame.md` (only 5 of its bit roles are cited), so
+    /// `private/specs-verified/mpeg/transmux/codec/dts-core-frame.md` (only 5 of its bit roles are cited), so
     /// this is deferred rather than guessed for the arrangements it would
     /// cover.
     pub fn into_ddts(&self) -> DtsSpecificBox {

@@ -22,7 +22,7 @@
 //! | RFC 5775 — Asynchronous Layered Coding (ALC) Protocol Instantiation | April 2010 | §3 ALC packet (LCT header + FEC Payload ID + payload), EXT_FTI (HET 64), PSI SPI bit | Partial | FEC Payload ID and FTI body are scheme-dependent and opaque; [`FecPayloadId128`] provided as one layout. |
 //! | RFC 6726 — FLUTE: File Delivery over Unidirectional Transport | November 2012 | EXT_FDT (HET 192), EXT_CENC (HET 193), TOI 0 FDT-Instance convention, FLUTE version and Instance-ID limit | Partial | The FDT Instance XML itself is not parsed. |
 //! | RFC 5740 — NACK-Oriented Reliable Multicast (NORM) Protocol | November 2009 | §4 common header, NORM_INFO, NORM_DATA, NORM_CMD (typed per sub-type), NORM_NACK / NORM_ACK feedback, sender-word, header extensions (EXT_AUTH, EXT_CC, EXT_RATE, EXT_FTI) | Partial | NORM_REPORT has no defined wire format in the RFC (§4.4.1) and is exposed as opaque content. FEC Payload IDs opaque. |
-//! | RFC 5052 — Forward Error Correction (FEC) Building Block | Revision referenced by the code (`fec.rs` cites §9.1) | §9.1 Block Partitioning Algorithm only | Partial | Edition not vendored under `specs/`: unverified. |
+//! | RFC 5052 — Forward Error Correction (FEC) Building Block | Revision referenced by the code (`fec.rs` cites §9.1) | §9.1 Block Partitioning Algorithm only | Partial | Edition not vendored under `private/specs-verified/`: unverified. |
 //!
 //! ## Feature flags
 //!

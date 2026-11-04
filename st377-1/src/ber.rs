@@ -1,5 +1,5 @@
 //! BER-encoded KLV Length (ISO/IEC 8825-1 Basic Encoding Rules, as
-//! constrained for MXF by `docs/st377-1.md` §6.3.4).
+//! constrained for MXF by `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4).
 //!
 //! - **Short form**: one byte, high bit clear (`0x00`-`0x7F`) — the length
 //!   itself.
@@ -7,7 +7,7 @@
 //!   following big-endian length bytes. MXF forbids the "unspecified
 //!   length" token (`0x80` alone, i.e. long-form claiming zero following
 //!   bytes) and caps the encoding at 9 bytes total (1 header + up to 8
-//!   length bytes) — `docs/st377-1.md` §6.3.4.
+//!   length bytes) — `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4.
 
 use crate::error::{Error, Result};
 
@@ -21,7 +21,7 @@ const BER_SHORT_FORM_MAX: u64 = 0x7F;
 const BER_MAX_TOKEN_LEN: usize = 9;
 
 /// The BER length-field width to serialize a value's length with (issue
-/// #1047 / audit MX-C1). `docs/st377-1.md` §6.3.4 permits any valid BER
+/// #1047 / audit MX-C1). `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4 permits any valid BER
 /// form for a length token; real MXF encoders routinely write a longer,
 /// fixed-width long form (rather than the shortest one that fits) so a
 /// pack can be rewritten in place later without shifting every later

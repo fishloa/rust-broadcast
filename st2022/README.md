@@ -18,7 +18,7 @@ Typical users: SDI-over-IP monitors, capture analysers, and test tooling for con
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
 | SMPTE ST 2022-6 "Transport of High Bit Rate Media Signals over IP Networks (HBRMT)" | 2012 (vendored) | §6.4 High Bit Rate Media Payload Header (fixed 4 bytes, video source format, video timestamp, extension). §6.2/§6.3/§6.5 are transcribed in `docs/` but are RTP framing and opaque media payload | Full for the payload header | Reserved-bit and defined-code policy is documented on `PayloadHeader::validate` |
-| SMPTE ST 2022-7 "Seamless Protection Switching of RTP Datagrams" | 2019 (vendored) | Only the `VSID` field it relies on | Not implemented | Spec grounding in `docs/st2022-7-hitless.md` |
+| SMPTE ST 2022-7 "Seamless Protection Switching of RTP Datagrams" | 2019 (vendored) | Only the `VSID` field it relies on | Not implemented | Spec grounding in `private/specs-verified/smpte/st2022/st2022-7-hitless.md` |
 | SMPTE ST 2022-5 (FEC) | n/a | Referenced by ST 2022-6 §7.1 for interoperability limits only | Not implemented | |
 | IETF RFC 3550 (RTP) | RFC 3550 | RTP fixed header | Not implemented here | Use `rtp-packet` |
 

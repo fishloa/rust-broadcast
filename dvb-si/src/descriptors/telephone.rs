@@ -37,7 +37,7 @@ const BYTE2_RESERVED_MASK: u8 = 0x80;
 const BYTE2_RESERVED_SHIFT: u8 = 7;
 /// Spec default of the 2-bit `reserved_future_use` in byte 0: all ones
 /// (EN 300 468 V1.3.1-V1.20.1 Table 100, TS 102 006 V1.2.1-V1.4.1, EN 301 192
-/// V1.3.1-V1.8.1; audit `dvb-si/docs/reserved-bits-edition-audit.md` §6.1,
+/// V1.3.1-V1.8.1; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1,
 /// class A. The V1.17.1 erratum that prints a 5-bit reserved is corrected in
 /// V1.18.1).
 pub const RESERVED_FUTURE_USE_BYTE0_DEFAULT: u8 = 0b11;

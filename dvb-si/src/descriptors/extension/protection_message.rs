@@ -8,7 +8,7 @@ impl<'a> ExtensionBodyDef<'a> for ProtectionMessage<'a> {
 
 /// Spec default of the 4-bit `reserved` field: all ones (ETSI TS 102 809
 /// Table 40, V1.3.1 and earlier editions;
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
 pub const PROTECTION_MESSAGE_RESERVED_DEFAULT: u8 = 0x0F;
 const RESERVED_MASK: u8 = 0x0F;
 

@@ -1,5 +1,5 @@
 //! Copy Protection objects — ETSI TS 101 699 V1.1.1 §6.6, Tables 69-73
-//! (PDF pp. 62-63). See `docs/ci_plus/copy-protection.md`.
+//! (PDF pp. 62-63). See `private/specs-verified/dvb/dvb-ci/ci_plus/copy-protection.md`.
 //!
 //! Resource ID `0x00041ii1` (`ii` = Module ID). Generic control of a host's
 //! copy-protection function; the detailed semantics are CP-system-specific.

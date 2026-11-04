@@ -1,12 +1,12 @@
 //! SRT File Transfer Congestion Control (FileCC) — window-based congestion
 //! control, `draft-sharabayko-srt-01` §5.2 (curated at
-//! `specs/rules/srt-congestion.md`).
+//! `private/specs-verified/rules/srt-congestion.md`).
 //!
 //! This is the **file/bulk-transfer mode** sibling of [`crate::livecc::LiveCC`]
 //! (§5.1, the **live/streaming mode**'s pacing-only model). Unlike LiveCC,
 //! which only paces `PKT_SND_PERIOD` from a configured `MAX_BW`, FileCC is "a
 //! hybrid Additive Increase Multiplicative Decrease (AIMD) algorithm"
-//! (`specs/rules/srt-congestion.md` L3294-3295) that also grows/shrinks a
+//! (`private/specs-verified/rules/srt-congestion.md` L3294-3295) that also grows/shrinks a
 //! congestion window (`CWND_SIZE`), in two strictly-sequential phases: Slow
 //! Start (§5.2.1.1), then Congestion Avoidance (§5.2.1.2) — see [`Phase`].
 //! `PKT_SND_PERIOD` and `CWND_SIZE` are computed independently of and do not
@@ -41,18 +41,18 @@
 //!
 //! ## Shared state, not redefined here
 //!
-//! Per `specs/rules/srt-congestion.md`'s header note, the following are
+//! Per `private/specs-verified/rules/srt-congestion.md`'s header note, the following are
 //! cross-referenced, not redefined by this module:
 //! - `RC_INTERVAL` / `SYN` = 10 ms — reused from [`crate::arq::FULL_ACK_PERIOD`]
-//!   (`specs/rules/srt-arq.md` rule 11), which is the same 10 ms value
+//!   (`private/specs-verified/rules/srt-arq.md` rule 11), which is the same 10 ms value
 //!   (L3421-3425).
 //! - The initial `RTT` estimate (100 ms) — reused from
-//!   [`crate::arq::rtt::INITIAL_RTT`] (`specs/rules/srt-arq.md` rule 31)
+//!   [`crate::arq::rtt::INITIAL_RTT`] (`private/specs-verified/rules/srt-arq.md` rule 31)
 //!   before the first ACK sample is fed.
 //!
 //! ## Two implementation-defined gaps, flagged (not fabricated)
 //!
-//! `specs/rules/srt-congestion.md` explicitly flags two points the draft
+//! `private/specs-verified/rules/srt-congestion.md` explicitly flags two points the draft
 //! text leaves unspecified. Both are resolved here with a documented choice:
 //!
 //! 1. **EWMA weight for `RECEIVING_RATE`/`EST_LINK_CAPACITY` smoothing**
@@ -94,7 +94,7 @@
 //! (`1 == 1*DecRandom`) fails — i.e. whenever the drawn `DecRandom != 1` —
 //! neither counter ever moves again for the rest of the period, and Step 4
 //! goes silent until the next congestion period redraws `DecRandom`. This is
-//! a property of the draft text as transcribed (`specs/rules/srt-congestion.md`,
+//! a property of the draft text as transcribed (`private/specs-verified/rules/srt-congestion.md`,
 //! confirmed against the actual reference implementation, `libsrt`
 //! `congctl.cpp`, which uses a different formulation — `NAKCount % DecRandom
 //! == 0` with both counters incrementing on every same-period NAK
@@ -109,82 +109,82 @@ use crate::arq::FULL_ACK_PERIOD;
 use crate::arq::rtt::INITIAL_RTT;
 use crate::arq::seq::{seq_diff, seq_gt};
 
-/// `RC_INTERVAL` = `SYN` = 10 ms (`specs/rules/srt-congestion.md` L3421-3425),
+/// `RC_INTERVAL` = `SYN` = 10 ms (`private/specs-verified/rules/srt-congestion.md` L3421-3425),
 /// reused from [`crate::arq::FULL_ACK_PERIOD`] (same value, `srt-arq.md` rule
 /// 11) rather than redefined here.
 const RC_INTERVAL: Duration = FULL_ACK_PERIOD;
 
 /// `S` — "the SRT packet size (in terms of IP payload) in bytes. SRT treats
-/// 1500 bytes as a standard packet size." (`specs/rules/srt-congestion.md`
+/// 1500 bytes as a standard packet size." (`private/specs-verified/rules/srt-congestion.md`
 /// L3539-3540, verbatim). A different quantity from LiveCC's EWMA-derived
 /// `PktSize` — see the module doc's header note.
 const S_BYTES: f64 = 1500.0;
 
 /// Slow start's fixed `PKT_SND_PERIOD` — "1 microsecond ... in order to send
 /// packets as fast as possible, but not at an infinite rate"
-/// (`specs/rules/srt-congestion.md` L3338-3340, verbatim; rule 6).
+/// (`private/specs-verified/rules/srt-congestion.md` L3338-3340, verbatim; rule 6).
 const SLOW_START_PKT_SND_PERIOD_US: f64 = 1.0;
 
-/// Slow start's initial `CWND_SIZE` — 16 packets (`specs/rules/srt-congestion.md`
+/// Slow start's initial `CWND_SIZE` — 16 packets (`private/specs-verified/rules/srt-congestion.md`
 /// L3340-3341, rule 7).
 const INITIAL_CWND_SIZE: f64 = 16.0;
 
-/// `LastDecPeriod`'s initial value — 1 microsecond (`specs/rules/srt-congestion.md`
+/// `LastDecPeriod`'s initial value — 1 microsecond (`private/specs-verified/rules/srt-congestion.md`
 /// L3521-3524).
 const INITIAL_LAST_DEC_PERIOD_US: f64 = 1.0;
 
 /// Default `MAX_CWND_SIZE` — the spec suggests "the maximum receiver buffer
-/// size (12 MB)" as the threshold (`specs/rules/srt-congestion.md` L3344-3345,
+/// size (12 MB)" as the threshold (`private/specs-verified/rules/srt-congestion.md` L3344-3345,
 /// rule 8), worded as settable/recommended, not a hardwired constant.
 /// Expressed here in packets at the standard packet size `S` (1500 bytes):
 /// `12_000_000 / 1500 = 8000` packets. Override with [`FileCc::set_max_cwnd_size`].
 const DEFAULT_MAX_CWND_SIZE: f64 = 8_000.0;
 
 /// The NAK-tolerance loss-ratio threshold — "less than 2%"
-/// (`specs/rules/srt-congestion.md` L3572-3579, rule 16).
+/// (`private/specs-verified/rules/srt-congestion.md` L3572-3579, rule 16).
 const LOSS_RATIO_TOLERANCE: f64 = 0.02;
 
 /// The repeat-decrease rate-backoff multiplier — `1.03`
-/// (`specs/rules/srt-congestion.md` L3602-3604 / L3652-3654, rules 19 & 27).
+/// (`private/specs-verified/rules/srt-congestion.md` L3602-3604 / L3652-3654, rules 19 & 27).
 const RATE_BACKOFF_FACTOR: f64 = 1.03;
 
 /// The `AvgNAKNum` EWMA weights — `0.97`/`0.03`
-/// (`specs/rules/srt-congestion.md` L3606-3608, rule 20, verbatim).
+/// (`private/specs-verified/rules/srt-congestion.md` L3606-3608, rule 20, verbatim).
 const AVG_NAK_NUM_OLD_WEIGHT: f64 = 0.97;
 const AVG_NAK_NUM_NEW_WEIGHT: f64 = 0.03;
 
 /// The repeat-decrease `DecCount` ceiling — decreases stop once `DecCount`
-/// exceeds 5 within a congestion period (`specs/rules/srt-congestion.md`
+/// exceeds 5 within a congestion period (`private/specs-verified/rules/srt-congestion.md`
 /// L3652-3658, rule "Step 4").
 const MAX_DEC_COUNT: u32 = 5;
 
-/// `inc`'s multiplier in the Step 5 rate-increase formula (`specs/rules/srt-congestion.md`
+/// `inc`'s multiplier in the Step 5 rate-increase formula (`private/specs-verified/rules/srt-congestion.md`
 /// L3498-3517, verbatim: `0.0000015`).
 const INC_SCALE: f64 = 0.0000015;
 
 /// Microseconds per second — the units conversion every `PKT_SND_PERIOD`/rate
-/// formula in this module divides or multiplies by (`specs/rules/srt-congestion.md`,
+/// formula in this module divides or multiplies by (`private/specs-verified/rules/srt-congestion.md`,
 /// recurring throughout §5.2.1.2's Steps 3/5/6, sourced from the same
 /// L3498-3517 code block as [`INC_SCALE`]).
 const US_PER_SEC: f64 = 1_000_000.0;
 
 /// `lossBandwidth`'s doubling factor in the Step 5 rate-increase formula
-/// (`specs/rules/srt-congestion.md` L3498-3517 code block, verbatim:
+/// (`private/specs-verified/rules/srt-congestion.md` L3498-3517 code block, verbatim:
 /// `lossBandwidth = 2 * (1000000 / LastDecPeriod)`).
 const LOSS_BANDWIDTH_FACTOR: f64 = 2.0;
 
 /// The `linkCapacity / 9` clamp divisor in the Step 5 rate-increase formula
-/// (`specs/rules/srt-congestion.md` L3498-3517 code block, verbatim:
+/// (`private/specs-verified/rules/srt-congestion.md` L3498-3517 code block, verbatim:
 /// `if (... && (linkCapacity / 9) < B) B = linkCapacity / 9;`) — a
 /// spec-mandated tuning constant, not independently derived.
 const LINK_CAPACITY_CLAMP_DIVISOR: f64 = 9.0;
 
 /// Bits per byte, used to convert `S` (packet size in bytes) to bits in the
-/// Step 5 rate-increase formula (`specs/rules/srt-congestion.md` L3498-3517
+/// Step 5 rate-increase formula (`private/specs-verified/rules/srt-congestion.md` L3498-3517
 /// code block, verbatim: `inc = pow(10.0, ceil(log10(B * S * 8))) * 0.0000015 / S`).
 const BITS_PER_BYTE: f64 = 8.0;
 
-/// FileCC algorithm phase (`specs/rules/srt-congestion.md` rules 4-5). Slow
+/// FileCC algorithm phase (`private/specs-verified/rules/srt-congestion.md` rules 4-5). Slow
 /// Start (§5.2.1.1) runs exactly once at the start of a connection; it
 /// transitions to Congestion Avoidance (§5.2.1.2) on the first loss,
 /// `CWND_SIZE` exceeding its maximum, or a timeout — and never transitions
@@ -271,7 +271,7 @@ fn fround(x: f64) -> f64 {
 }
 
 /// `pow(10.0, ceil(log10(x)))` for `x > 0` — the smallest power of 10 that is
-/// `>= x` (`specs/rules/srt-congestion.md` Step 5, L3506, verbatim source:
+/// `>= x` (`private/specs-verified/rules/srt-congestion.md` Step 5, L3506, verbatim source:
 /// `pow(10.0, ceil(log10(B * S * 8))) * 0.0000015 / S`).
 ///
 /// Implemented via repeated multiplication/division instead of calling
@@ -478,7 +478,7 @@ impl FileCc {
         self.last_dec_period_us
     }
 
-    /// On full-ACK packet reception (`specs/rules/srt-congestion.md`,
+    /// On full-ACK packet reception (`private/specs-verified/rules/srt-congestion.md`,
     /// §5.2.1.1 "(1) On ACK packet reception" / §5.2.1.2 "(1) On ACK packet
     /// reception"). Only full ACKs trigger a rate increase (rule 3,
     /// L3313-3314) — a light ACK must not be passed to this method.
@@ -887,7 +887,7 @@ mod tests {
     }
 
     /// Documents a genuine quirk of the draft's own literal Step 4
-    /// pseudocode (verified against `specs/rules/srt-congestion.md`, not
+    /// pseudocode (verified against `private/specs-verified/rules/srt-congestion.md`, not
     /// assumed): `NAKCount`/`DecCount` are reset to 1 on a new congestion
     /// period and are ONLY ever touched again *inside* Step 4's own
     /// `NAKCount == DecCount * DecRandom` conditional (rule 28: "Increase

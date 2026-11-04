@@ -11,11 +11,11 @@
 //! - **H.264 VUI**: ITU-T H.264 §E.1.1 (vui_parameters), §E.2.1 (timing_info
 //!   `time_scale / (2 × num_units_in_tick)`. Tier rules (normative vs.
 //!   convention) and the HEVC HRD fixed-pic-rate / ClockTick derivation are
-//!   transcribed in `transmux/docs/codec/vui-timing-frame-rate.md`.
+//!   transcribed in `private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md`.
 //! - **H.265 SPS + PTL**: ITU-T H.265 §7.3.2.2 (SPS) + §7.3.3 (profile_tier_level).
 //! - **H.265 VPS timing**: ITU-T H.265 §7.3.2.1 (VPS) — `vps_timing_info_present_flag`,
 //!   `vps_num_units_in_tick`, `vps_time_scale`; inheritance into the SPS VUI per
-//!   `transmux/docs/codec/hevc-vps-timing.md` (§3-§4).
+//!   `private/specs-verified/mpeg/transmux/codec/hevc-vps-timing.md` (§3-§4).
 //! - **Coded dimensions**: see `fixtures/ts/CODEC-ORACLE.md`.
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
 //!   §7.4.1 NAL semantics (emulation_prevention_three_byte); H.265 §7.4.2.1.
@@ -186,7 +186,7 @@ pub struct AvcSliceSps {
     /// How to read `pic_struct` out of a picture timing SEI for this SPS, or
     /// `None` when `pic_struct_present_flag` is 0, there is no VUI, the VUI was
     /// truncated, or the NAL and VCL HRD delay lengths disagree (see
-    /// `docs/codec/h264-vui-pic-timing.md`).
+    /// `private/specs-verified/mpeg/transmux/codec/h264-vui-pic-timing.md`).
     pub pic_timing: Option<AvcPicTimingLayout>,
 }
 
@@ -807,7 +807,7 @@ pub struct HevcSpsInfo {
     /// Legacy f32 estimate kept for compatibility; only the convention tier
     /// (`vui_time_scale / vui_num_units_in_tick`) applies and only when the
     /// normative HRD path does not. See
-    /// `transmux/docs/codec/vui-timing-frame-rate.md` §2.7.
+    /// `private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md` §2.7.
     pub fps: Option<f32>,
 }
 
@@ -867,7 +867,7 @@ pub struct HevcVuiTiming {
 }
 
 /// The interlace-relevant facts of an H.265 SPS (ITU-T H.265 §E.3.1; see
-/// `docs/codec/h265-vui-pic-timing.md`).
+/// `private/specs-verified/mpeg/transmux/codec/h265-vui-pic-timing.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HevcInterlaceSps {
     /// `field_seq_flag`: the CVS conveys pictures that represent fields
@@ -881,7 +881,7 @@ pub struct HevcInterlaceSps {
 
 /// VPS timing facts for an H.265 VPS (ITU-T H.265 §7.3.2.1), carrying
 /// `vps_num_units_in_tick` / `vps_time_scale` when `vps_timing_info_present_flag`
-/// is 1. Per `transmux/docs/codec/hevc-vps-timing.md` §3-§4, these are
+/// is 1. Per `private/specs-verified/mpeg/transmux/codec/hevc-vps-timing.md` §3-§4, these are
 /// inherited by an SPS VUI that lacks its own timing (or by an SPS with no VUI
 /// at all — an inference of this derivation, see doc §4). The VPS contributes
 /// only these two values; VPS HRD is not used.
@@ -1587,7 +1587,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
     let ts = r.read_bits(32, "vui_time_scale")? as u32;
 
     // vui_poc_proportional_to_timing_flag  u(1) — parsed past, not used for
-    // frame rate (transmux/docs/codec/vui-timing-frame-rate.md §2.7).
+    // frame rate (private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md §2.7).
     let poc_prop = r.read_flag("vui_poc_proportional_to_timing_flag")?;
     if poc_prop {
         let _ = r.read_ue("vui_num_ticks_poc_diff_one_minus1")?;
@@ -3249,7 +3249,7 @@ mod tests {
     // -----------------------------------------------------------------
     // Colour signalling: overscan + video_signal_type() (H.264 §E.1.1 /
     // H.265 §E.2.1; Tables E-2..E-5 / E.2..E.5, transcribed in
-    // `docs/codec/vui-colour-tables.md`).
+    // `private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md`).
     // -----------------------------------------------------------------
 
     use crate::ir::{
@@ -4160,7 +4160,7 @@ mod tests {
     #[test]
     fn hevc_vps_layer_set_bound_is_exactly_1023() {
         // Semantics: "The value of vps_num_layer_sets_minus1 shall be in the range of 0 to 1 023,
-        // inclusive" (docs/codec/hevc-vps-timing.md §2): 1023 parses, 1024 is rejected, with full
+        // inclusive" (private/specs-verified/mpeg/transmux/codec/hevc-vps-timing.md §2): 1023 parses, 1024 is rejected, with full
         // data present in both so only the bound decides.
         let ok = decode_hevc_vps_timing(&synth_vps(1023, 7, 9)).expect("1023 is in range");
         let t = ok.expect("timing present");

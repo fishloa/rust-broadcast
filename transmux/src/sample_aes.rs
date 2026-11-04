@@ -18,7 +18,7 @@
 //!
 //! - **Apple "MPEG-2 Stream Encryption Format for HTTP Live Streaming"** — the
 //!   Sample-AES sample byte patterns and IV rules; transcribed in
-//!   `transmux/docs/drm/hls-sample-aes.md` (§2 AES-128, §3 H.264, §4 AAC,
+//!   `private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` (§2 AES-128, §3 H.264, §4 AAC,
 //!   §5 AC-3, §6 E-AC-3, §9 EXT-X-KEY, §10 IV derivation, §11 cipher details).
 //! - **ffmpeg `libavformat/hls_sample_aes.c`** — the CBC chaining the H.264 and
 //!   E-AC-3 fixtures pin (chained across a NAL's blocks, reset per NAL; reset
@@ -46,39 +46,39 @@ type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 /// AES-128-CBC decryptor (NIST SP 800-38A).
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
-/// AES-128 key length, in bytes (`docs/drm/hls-sample-aes.md` §11).
+/// AES-128 key length, in bytes (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §11).
 pub const KEY_LEN: usize = 16;
-/// AES block size, in bytes (`docs/drm/hls-sample-aes.md` §11).
+/// AES block size, in bytes (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §11).
 pub const BLOCK_LEN: usize = 16;
 
-// --- H.264 SAMPLE-AES (docs/drm/hls-sample-aes.md §3) ---------------------
+// --- H.264 SAMPLE-AES (private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md §3) ---------------------
 
 /// H.264 NAL unit type carried in the low 5 bits of the NAL header byte:
-/// coded slice of a non-IDR picture (`docs/drm/hls-sample-aes.md` §3.1).
+/// coded slice of a non-IDR picture (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.1).
 pub const NAL_TYPE_NON_IDR_SLICE: u8 = 1;
 /// H.264 NAL unit type: coded slice of an IDR picture
-/// (`docs/drm/hls-sample-aes.md` §3.1).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.1).
 pub const NAL_TYPE_IDR_SLICE: u8 = 5;
 /// Mask selecting the 5-bit `nal_unit_type` from the NAL header byte.
 pub const NAL_TYPE_MASK: u8 = 0x1F;
 /// Minimum NAL length (bytes, header included) for encryption to apply; NALs of
-/// this length or shorter are left entirely clear (`docs/drm/hls-sample-aes.md` §3.1).
+/// this length or shorter are left entirely clear (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.1).
 pub const H264_MIN_ENCRYPTED_NAL_LEN: usize = 48;
 /// Clear prefix of an encrypted H.264 NAL: 1 NAL-header byte + 31 payload bytes
-/// (`docs/drm/hls-sample-aes.md` §3.2).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.2).
 pub const H264_CLEAR_PREFIX_LEN: usize = 32;
 /// Bytes left clear after each encrypted block: up to 9 blocks = 144 bytes
-/// (`docs/drm/hls-sample-aes.md` §3.3).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.3).
 pub const H264_SKIP_LEN: usize = 144;
 
-// --- Audio SAMPLE-AES (docs/drm/hls-sample-aes.md §4–§6) ------------------
+// --- Audio SAMPLE-AES (private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md §4–§6) ------------------
 
 /// Clear leader after the ADTS header for AAC / after the syncframe start for
-/// AC-3 / E-AC-3 (`docs/drm/hls-sample-aes.md` §4.1, §5, §6).
+/// AC-3 / E-AC-3 (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1, §5, §6).
 pub const AUDIO_CLEAR_LEADER_LEN: usize = 16;
-/// ADTS fixed+variable header length with no CRC (`docs/drm/hls-sample-aes.md` §4.1).
+/// ADTS fixed+variable header length with no CRC (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
 pub const ADTS_HEADER_LEN_NO_CRC: usize = 7;
-/// ADTS header length with CRC protection (`docs/drm/hls-sample-aes.md` §4.1).
+/// ADTS header length with CRC protection (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
 pub const ADTS_HEADER_LEN_WITH_CRC: usize = 9;
 
 // --------------------------------------------------------------------------
@@ -121,7 +121,7 @@ fn cbc_decrypt_blocks_in_place(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], data: 
 ///
 /// Used by the H.264 skip-pattern ([`h264_transform_pattern`]), whose CBC
 /// chain runs across the encrypted blocks *within one NAL* and is reset per NAL
-/// (`docs/drm/hls-sample-aes.md` §3.4; verified against ffmpeg's
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.4; verified against ffmpeg's
 /// `hls_sample_aes.c` decryptor). The E-AC-3 path does **not** use these: it
 /// resets the IV at every syncframe (§6).
 fn cbc_encrypt_blocks_chained(
@@ -174,11 +174,11 @@ fn cbc_decrypt_blocks_chained(
 }
 
 // --------------------------------------------------------------------------
-// AES-128 full-segment mode (docs/drm/hls-sample-aes.md §2).
+// AES-128 full-segment mode (private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md §2).
 // --------------------------------------------------------------------------
 
 /// Encrypt a whole segment with AES-128-CBC and PKCS#7 padding
-/// (`METHOD=AES-128`, `docs/drm/hls-sample-aes.md` §2).
+/// (`METHOD=AES-128`, `private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §2).
 ///
 /// The output length is `plaintext.len()` rounded up to the next multiple of
 /// [`BLOCK_LEN`] (a full padding block is appended when already aligned).
@@ -192,7 +192,7 @@ pub fn aes128_encrypt_segment(
 }
 
 /// Decrypt an AES-128 full-segment ciphertext, stripping PKCS#7 padding
-/// (`docs/drm/hls-sample-aes.md` §2).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §2).
 ///
 /// Returns [`Error::InvalidInput`] if the ciphertext length is not a positive
 /// multiple of [`BLOCK_LEN`] or the padding is malformed.
@@ -212,12 +212,12 @@ pub fn aes128_decrypt_segment(
 }
 
 // --------------------------------------------------------------------------
-// H.264 SAMPLE-AES (docs/drm/hls-sample-aes.md §3).
+// H.264 SAMPLE-AES (private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md §3).
 // --------------------------------------------------------------------------
 
 /// Whether a single H.264 NAL unit (header byte included, no start code, no
 /// emulation-prevention bytes) is a Sample-AES-encryptable slice
-/// (`docs/drm/hls-sample-aes.md` §3.1): NAL type 1 or 5 with length `> 48`.
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.1): NAL type 1 or 5 with length `> 48`.
 pub fn h264_nal_is_encrypted(nal: &[u8]) -> bool {
     if nal.len() <= H264_MIN_ENCRYPTED_NAL_LEN || nal.is_empty() {
         return false;
@@ -228,7 +228,7 @@ pub fn h264_nal_is_encrypted(nal: &[u8]) -> bool {
 
 /// Remove H.264 emulation-prevention bytes (unescape `00 00 03 XX` → `00 00 XX`
 /// for `XX ∈ {00,01,02,03}`) from a raw byte-stream NAL
-/// (`docs/drm/hls-sample-aes.md` §3.5).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.5).
 fn h264_unescape(escaped: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(escaped.len());
     let mut i = 0;
@@ -254,7 +254,7 @@ fn h264_unescape(escaped: &[u8]) -> Vec<u8> {
 
 /// Re-insert H.264 emulation-prevention bytes (escape `00 00 XX` → `00 00 03 XX`
 /// for `XX ∈ {00,01,02,03}`, and a trailing `00 00`) over a raw NAL
-/// (`docs/drm/hls-sample-aes.md` §3.5).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.5).
 fn h264_escape(unescaped: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(unescaped.len());
     let mut zero_run = 0usize; // consecutive 0x00 bytes already emitted
@@ -273,7 +273,7 @@ fn h264_escape(unescaped: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Apply the H.264 skip-encrypt pattern (`docs/drm/hls-sample-aes.md` §3.2–§3.3)
+/// Apply the H.264 skip-encrypt pattern (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.2–§3.3)
 /// to the *unescaped* NAL bytes in place. `encrypt = true` encrypts, `false`
 /// decrypts; the same clear/encrypted block partition is used for both.
 ///
@@ -299,7 +299,7 @@ fn h264_transform_pattern(
     while offset < nal.len() {
         let remaining = nal.len() - offset;
         // Encrypt one 16-byte block only when MORE than a whole block
-        // remains (`docs/drm/hls-sample-aes.md` §3.2: `bytes_remaining() >
+        // remains (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.2: `bytes_remaining() >
         // 16`, strictly greater). A remainder of exactly 16 bytes is the
         // trailing block and stays clear — using `>=` here encrypted it,
         // corrupting the last 16 bytes of ~1/160 slice NALs (issue #1014).
@@ -322,7 +322,7 @@ fn h264_transform_pattern(
 
 /// Sample-AES-encrypt one H.264 NAL unit (header byte first, no Annex B start
 /// code) given as *raw byte-stream* bytes (emulation-prevention bytes present),
-/// returning the re-escaped encrypted NAL (`docs/drm/hls-sample-aes.md` §3).
+/// returning the re-escaped encrypted NAL (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3).
 ///
 /// NALs that are not encryptable (type not 1/5, or `len <= 48` after
 /// unescaping) are returned unchanged. The CBC chain is reset to `iv` at the
@@ -337,7 +337,7 @@ pub fn h264_encrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -
 }
 
 /// Sample-AES-decrypt one H.264 NAL unit produced by [`h264_encrypt_nal`],
-/// returning the re-escaped cleartext NAL (`docs/drm/hls-sample-aes.md` §3).
+/// returning the re-escaped cleartext NAL (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3).
 ///
 /// The CBC chain is reset to `iv` at the start of each NAL, then carried across
 /// that NAL's encrypted blocks (see [`h264_encrypt_nal`] for the chaining rule).
@@ -351,7 +351,7 @@ pub fn h264_decrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -
 }
 
 // --------------------------------------------------------------------------
-// Audio SAMPLE-AES: shared leader + block loop (docs/drm/hls-sample-aes.md §4–§6).
+// Audio SAMPLE-AES: shared leader + block loop (private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md §4–§6).
 // --------------------------------------------------------------------------
 
 /// Encrypt the whole-block region of an audio frame after `clear_prefix` clear
@@ -380,7 +380,7 @@ fn audio_transform(
 }
 
 /// The ADTS header length (7 or 9 bytes) implied by the `protection_absent` bit
-/// (bit 0 of byte 1) of an ADTS frame (`docs/drm/hls-sample-aes.md` §4.1).
+/// (bit 0 of byte 1) of an ADTS frame (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
 ///
 /// Returns [`Error::InvalidInput`] if `frame` is too short to hold the header.
 pub fn adts_header_len(frame: &[u8]) -> Result<usize> {
@@ -398,7 +398,7 @@ pub fn adts_header_len(frame: &[u8]) -> Result<usize> {
 
 /// Sample-AES-encrypt one AAC ADTS frame: ADTS header + 16-byte leader clear,
 /// then 16-byte CBC blocks, `< 16` trailer clear
-/// (`docs/drm/hls-sample-aes.md` §4). IV is reset per frame (§4.2).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4). IV is reset per frame (§4.2).
 pub fn aac_encrypt_frame(
     key: &[u8; KEY_LEN],
     iv: &[u8; BLOCK_LEN],
@@ -411,7 +411,7 @@ pub fn aac_encrypt_frame(
 }
 
 /// Sample-AES-decrypt one AAC ADTS frame produced by [`aac_encrypt_frame`]
-/// (`docs/drm/hls-sample-aes.md` §4).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4).
 pub fn aac_decrypt_frame(
     key: &[u8; KEY_LEN],
     iv: &[u8; BLOCK_LEN],
@@ -425,7 +425,7 @@ pub fn aac_decrypt_frame(
 
 /// Sample-AES-encrypt one AC-3 or E-AC-3 frame: 16-byte leader clear, then
 /// 16-byte CBC blocks, `< 16` trailer clear
-/// (`docs/drm/hls-sample-aes.md` §5, §6). IV is reset per frame.
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §5, §6). IV is reset per frame.
 pub fn ac3_encrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]) -> Vec<u8> {
     let mut out = frame.to_vec();
     audio_transform(key, iv, &mut out, AUDIO_CLEAR_LEADER_LEN, true);
@@ -433,7 +433,7 @@ pub fn ac3_encrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]
 }
 
 /// Sample-AES-decrypt one AC-3 or E-AC-3 frame produced by [`ac3_encrypt_frame`]
-/// (`docs/drm/hls-sample-aes.md` §5, §6).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §5, §6).
 pub fn ac3_decrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]) -> Vec<u8> {
     let mut out = frame.to_vec();
     audio_transform(key, iv, &mut out, AUDIO_CLEAR_LEADER_LEN, false);
@@ -503,7 +503,7 @@ fn eac3_transform(
 
 /// Sample-AES-encrypt one E-AC-3 audio frame, walking its syncframes with a
 /// 16-byte clear leader each and resetting the IV at every syncframe
-/// (`docs/drm/hls-sample-aes.md` §6).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §6).
 ///
 /// Prefer this over [`ac3_encrypt_frame`] for any E-AC-3 stream: a frame with
 /// more than one syncframe (the norm for 5.1 at 1536 samples) needs a leader
@@ -531,7 +531,7 @@ pub fn eac3_encrypt_frame(
 }
 
 /// Sample-AES-decrypt one E-AC-3 audio frame produced by
-/// [`eac3_encrypt_frame`] (`docs/drm/hls-sample-aes.md` §6).
+/// [`eac3_encrypt_frame`] (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §6).
 ///
 /// Same unverified corner and error contract as [`eac3_encrypt_frame`]: the IV
 /// resets at every syncframe, and a payload that is not a clean run of
@@ -545,11 +545,11 @@ pub fn eac3_decrypt_frame(
 }
 
 // --------------------------------------------------------------------------
-// EXT-X-KEY tag rendering (RFC 8216 §4.3.2.4, docs/drm/hls-sample-aes.md §9).
+// EXT-X-KEY tag rendering (RFC 8216 §4.3.2.4, private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md §9).
 // --------------------------------------------------------------------------
 
 /// HLS encryption method for the `EXT-X-KEY` `METHOD` attribute
-/// (RFC 8216 §4.3.2.4, `docs/drm/hls-sample-aes.md` §9).
+/// (RFC 8216 §4.3.2.4, `private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -573,19 +573,19 @@ impl HlsEncryptionMethod {
 broadcast_common::impl_spec_display!(HlsEncryptionMethod);
 
 /// Format a 16-byte IV as the `0x`-prefixed 32-hex-digit `EXT-X-KEY` `IV`
-/// attribute value (`docs/drm/hls-sample-aes.md` §9).
+/// attribute value (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §9).
 pub fn format_iv(iv: &[u8; BLOCK_LEN]) -> String {
     format!("0x{}", ::hex::encode(iv))
 }
 
 /// Derive the implicit IV from the media sequence number: the sequence number
 /// as a 128-bit big-endian integer, zero-padded to 16 bytes
-/// (`docs/drm/hls-sample-aes.md` §10).
+/// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §10).
 pub fn iv_from_sequence_number(media_sequence: u128) -> [u8; BLOCK_LEN] {
     media_sequence.to_be_bytes()
 }
 
-/// An `EXT-X-KEY` tag (RFC 8216 §4.3.2.4, `docs/drm/hls-sample-aes.md` §9).
+/// An `EXT-X-KEY` tag (RFC 8216 §4.3.2.4, `private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §9).
 ///
 /// Renders to the tag line via [`to_tag`](ExtXKey::to_tag), which validates
 /// `uri`/`keyformat`/`keyformatversions` (issue #1140).
@@ -608,7 +608,7 @@ pub struct ExtXKey {
 impl ExtXKey {
     /// A `METHOD=SAMPLE-AES` FairPlay tag with `skd://` URI and the
     /// `com.apple.streamingkeydelivery` key format
-    /// (`docs/drm/hls-sample-aes.md` §9).
+    /// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §9).
     pub fn fairplay_sample_aes(skd_uri: impl Into<String>) -> Self {
         Self {
             method: HlsEncryptionMethod::SampleAes,
@@ -620,7 +620,7 @@ impl ExtXKey {
     }
 
     /// A `METHOD=AES-128` full-segment tag with the given key `URI` and explicit
-    /// `IV` (`docs/drm/hls-sample-aes.md` §2, §9).
+    /// `IV` (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §2, §9).
     pub fn aes128(uri: impl Into<String>, iv: [u8; BLOCK_LEN]) -> Self {
         Self {
             method: HlsEncryptionMethod::Aes128,
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn h264_exact_16_byte_trailer_left_clear() {
-        // Oracle: `docs/drm/hls-sample-aes.md` §3.2 (transcribed from Apple's
+        // Oracle: `private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.2 (transcribed from Apple's
         // "MPEG-2 Stream Encryption Format for HTTP Live Streaming" §3.2),
         // `while (bytes_remaining() > 0) { if (bytes_remaining() > 16) {
         // encrypted_block } unencrypted_block [min(144, bytes_remaining())] }`

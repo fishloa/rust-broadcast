@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-minimal (fixed-width long-form) BER length token** (issue #1047 /
   audit MX-C1). Previously every serializer here always re-emitted the
   canonical *minimal* BER length form on `serialize_into`, even when the
-  original file used a longer, fixed-width one — `docs/st377-1.md` §6.3.4
+  original file used a longer, fixed-width one — `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4
   permits any valid form, and real encoders routinely use a fixed width so
   a pack can be rewritten in place (e.g. Open -> Closed) without shifting
   every later absolute offset. Measured directly against the crate's real
@@ -172,7 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonical `item_len=16` regardless of count.
 
 ### Documented
-- README, crate-root docs, and `docs/st378-op1a.md` now describe the OP1a
+- README, crate-root docs, and `private/specs-verified/smpte/st377-1/st378-op1a.md` now describe the OP1a
   additions above (they previously said Packages/Tracks/Sequences were
   "identified but generic … not individually decoded" — no longer true) and
   state plainly that OP1a support is **structural-metadata-only**: this
@@ -228,7 +228,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not plain "Req" — a real MXF file legitimately omitting it was previously
   rejected with `MissingRequiredProperty`. Now defaults to an empty `Vec` if
   absent on parse.
-- `docs/st377-1.md`: fixed 4 collapsed 15-byte Key hex-string shorthands
+- `private/specs-verified/smpte/st377-1/st377-1.md`: fixed 4 collapsed 15-byte Key hex-string shorthands
   (Partition Pack, Primer Pack, Local Set common Key, Random Index Pack) each
   missing one of two adjacent `0x01` bytes (Structure Version vs Structure
   Kind); fixed Preface's `Identifications` Req column (`Req` → `E/req`).
@@ -277,7 +277,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SingularPartitionUsage`/`FollowingIndexTable`/`IsSparse` on
   `EssenceContainerData`) are preserved byte-for-byte in a `dark`
   catch-all rather than individually typed in this first pass — see
-  `docs/st377-1.md`'s Scope section for the full typed-vs-generic
+  `private/specs-verified/smpte/st377-1/st377-1.md`'s Scope section for the full typed-vs-generic
   breakdown with citations.
 - `RandomIndexPack`/`PartitionLocation` — the optional file-trailer
   Partition index (§12, Tables 29-30): one `{BodySID, ByteOffset}` pair
@@ -292,7 +292,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `decode_utf16_be`/`encode_utf16_be` (§4.3 String, big-endian UTF-16 via
   `char::decode_utf16`), `parse_uid_batch`/`serialize_uid_batch` (§4.3
   Batch/Array of 16-byte UL/StrongRef elements).
-- `docs/st377-1.md` — curated transcription of SMPTE ST 377-1:2019
+- `private/specs-verified/smpte/st377-1/st377-1.md` — curated transcription of SMPTE ST 377-1:2019
   (fetched directly from `pub.smpte.org`, free per SMPTE's 2026-06-17
   catalog release), including this crate's scope decision in full: what
   is fully typed (the format's own backbone + the four Root Metadata

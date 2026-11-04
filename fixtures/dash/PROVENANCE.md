@@ -43,7 +43,7 @@ for every MPD tried here (the on-demand, SegmentList and live ones and ffmpeg's 
 ### `annex-g/`
 
 `example-F1.mpd` ... `example-F9.mpd` and `example-F8.patch.mpp`: the fresh minimal example MPDs written for this repository in
-`docs/specs/dash/23009-1/annex-g-examples.md` (section "Fresh minimal example MPDs"), extracted verbatim from the code
+`private/specs-verified/dash/docs-specs/23009-1/annex-g-examples.md` (section "Fresh minimal example MPDs"), extracted verbatim from the code
 fences by script with an XML declaration prepended. Our own text, so licence MIT OR Apache-2.0. No media: the URLs use
 the reserved `.test` TLD or dangling relative names. All nine MPDs validate against the Ed.6 XSD; the patch document is checked for
 well-formedness only (its XSD includes a remote IANA schema).

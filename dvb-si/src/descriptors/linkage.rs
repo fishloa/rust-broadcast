@@ -33,7 +33,7 @@ const RESERVED_HANDOVER_MASK: u8 = 0x0E;
 const RESERVED_HANDOVER_SHIFT: u8 = 1;
 /// Spec default of the mobile hand-over `reserved_future_use`(3): all ones
 /// (EN 300 468 V1.12.1-V1.20.1 Table 61; audit
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class A).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A).
 pub const RESERVED_HANDOVER_DEFAULT: u8 = 0b111;
 
 const TARGET_LISTED_MASK: u8 = 0x80;
@@ -41,7 +41,7 @@ const EVENT_SIMULCAST_MASK: u8 = 0x40;
 const RESERVED_EVENT_MASK: u8 = 0x3F;
 /// Spec default of the event-linkage `reserved_future_use`(6) (`reserved`
 /// before V1.17.1): all ones (EN 300 468 V1.12.1-V1.20.1 Table 64; audit
-/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
+/// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
 pub const RESERVED_EVENT_DEFAULT: u8 = 0x3F;
 
 const EXT_TARGET_LISTED_MASK: u8 = 0x80;

@@ -1,6 +1,6 @@
 //! `CcAnomalyCheck` — flags continuity_counter anomalies per PID.
 //!
-//! ITU-T H.222.0 §2.4.3.3 (cited via `mpeg-ts/docs/README.md`): the 4-bit
+//! ITU-T H.222.0 §2.4.3.3 (cited via `private/specs-verified/mpeg/mpeg-ts/`): the 4-bit
 //! continuity_counter increments by 1 (mod 16) for each payload-bearing
 //! packet (adaptation_field_control `01` or `11`) of the same PID. A repeat
 //! of the same CC is legal only as "two, and only two" consecutive

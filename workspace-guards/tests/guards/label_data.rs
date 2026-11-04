@@ -1475,7 +1475,7 @@ pub const TABLE: &[Crate] = &[
     // `st337` defines exactly one spec/field `pub enum`, [`st337::DataMode`]
     // (SMPTE ST 337 §7.2.4.3 Table 8), which carries `name()` +
     // `impl_spec_display!(DataMode)`. `data_type` is deliberately **not** an
-    // enum (see `docs/st337.md` scope decision 3 — the type -> codec mapping is
+    // enum (see `private/specs-verified/smpte/st337/st337.md` scope decision 3 — the type -> codec mapping is
     // registered in SMPTE ST 338, not independently verified here), so this
     // test also guards against a future contributor introducing an unlabelled
     // `data_type` enum without reading that decision first.

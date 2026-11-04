@@ -1,7 +1,7 @@
 //! WebVTT cue serialization: cue-block formatting, the `WEBVTT` document
 //! header, and HLS segmented output with `X-TIMESTAMP-MAP` (RFC 8216 §3.5).
 //!
-//! Cites `specs/rules/webvtt-rules.md` (curated W3C WebVTT §4 + RFC 8216
+//! Cites `private/specs-verified/rules/webvtt-rules.md` (curated W3C WebVTT §4 + RFC 8216
 //! §3.5). First-pass writer: plain-cue-only (no `STYLE`/`REGION`/`NOTE`
 //! header blocks, no cue-identifier lines, no cue settings) — see
 //! `crate::webvtt` module docs for the full list of documented losses.

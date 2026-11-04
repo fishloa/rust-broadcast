@@ -209,7 +209,7 @@
 //! # Spec
 //!
 //! - **PAT / PMT section syntax**: ITU-T H.222.0 (= ISO/IEC 13818-1) §2.4.4.3 /
-//!   §2.4.4.8 — see `docs/codec/ts-demux-13818-1.md`.
+//!   §2.4.4.8 — see `private/specs-verified/mpeg/transmux/codec/ts-demux-13818-1.md`.
 //! - **stream_type → codec / carriage**: ISO/IEC 13818-1 §2.4.4.8, Table 2-34
 //!   (PES- vs section-carried `stream_type`s) + ETSI TS 101 154 §G (DVB
 //!   user-private AC-3/E-AC-3/DTS assignments).
@@ -1139,7 +1139,7 @@ const ADTS_BLOCK_POSITION_SIZE: usize = 2;
 /// `number_of_raw_data_blocks_in_frame`, only when `n > 0`) and the 16-bit
 /// `crc_check` (`adts_error_check()` for `n == 0`, `adts_header_error_check()`
 /// otherwise — ISO/IEC 13818-7 §6.2, Tables 5/6/10; C11, #1012). See
-/// `transmux/docs/codec/adts-error-check.md`.
+/// `private/specs-verified/mpeg/transmux/codec/adts-error-check.md`.
 fn adts_header_len(hdr: &AdtsHeader) -> usize {
     if hdr.protection_absent {
         ADTS_HEADER_SIZE
@@ -13149,7 +13149,7 @@ pub(crate) mod tests {
         f
     }
 
-    /// DTS core frame header (ETSI TS 102 114 Table 5-1; docs/codec/
+    /// DTS core frame header (ETSI TS 102 114 Table 5-1; private/specs-verified/mpeg/transmux/codec/
     /// dts-core-frame.md): `SYNC | FTYPE=1 SHORT=31 CPF=0 NBLKS=15 FSIZE |
     /// AMODE=2 SFREQ=13 RATE=15 | FixedBit..HFLAG=0`, then `body` filler.
     /// A frame is `FSIZE + 1` bytes and decodes `32 * (NBLKS + 1)` = 512 samples.

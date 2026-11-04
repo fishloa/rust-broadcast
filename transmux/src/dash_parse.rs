@@ -1058,7 +1058,7 @@ impl SegmentTimeline {
     /// Expand every `<S>` run into one [`TimelineSegment`] per segment, in
     /// presentation order (ISO/IEC 23009-1 §5.3.9.6; the derivation below is
     /// the one DASH-IF IOP v4.3 §3.10.2.2.4 transcribes, see
-    /// `specs/rules/dash-mpd-rules.md`).
+    /// `private/specs-verified/rules/dash-mpd-rules.md`).
     ///
     /// * `number` starts at `start_number` (the enclosing
     ///   [`SegmentTemplate::start_number`]) and increments per segment.

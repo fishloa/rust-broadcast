@@ -1,5 +1,5 @@
 //! `CA_PMT` builder — project a `dvb-si` PMT into the `ca_pmt` object handed to
-//! a CICAM — ETSI EN 50221 §8.4.3.4 (Table 25), per `docs/en_50221/ca-pmt.md`.
+//! a CICAM — ETSI EN 50221 §8.4.3.4 (Table 25), per `private/specs-verified/dvb/dvb-ci/en_50221/ca-pmt.md`.
 //!
 //! The host extracts the PMT, strips every descriptor that is not a
 //! `CA_descriptor()` (ISO/IEC 13818-1 §2.6.16, tag `0x09`), and keeps the

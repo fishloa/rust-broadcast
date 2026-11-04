@@ -1,6 +1,6 @@
 //! MPEG-4 text descriptor — Rec. ITU-T H.222.0 (08/2023) | ISO/IEC 13818-1:2023
 //! §2.6.70–2.6.71, Table 2-96 (tag 0x2D); syntax in
-//! `docs/descriptors/iso_13818_1/2d-2e-mpeg-4-text-and-audio-extension-descriptors.md`.
+//! `private/specs-verified/dvb/dvb-si/descriptors/iso_13818_1/2d-2e-mpeg-4-text-and-audio-extension-descriptors.md`.
 //!
 //! The whole body is `textConfig()`, the `TextConfig()` of ISO/IEC 14496-17
 //! (not vendored): it is carried as one opaque byte run, by design.

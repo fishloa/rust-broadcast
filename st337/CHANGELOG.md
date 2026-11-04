@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always interprets `length_code` as bits (ST 337's own literal text) even
   though a real IEC 61937 E-AC-3 capture writes it as a byte count, and why
   the wire byte order is little-endian-per-16-bit-word (#1118). No behaviour
-  change — see `docs/st337.md` scope decision 4, already in place.
+  change — see `private/specs-verified/smpte/st337/st337.md` scope decision 4, already in place.
 
 ## [0.3.0] - 2026-08-11
 
@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Burst::new` (`Error::UnsupportedDataMode` otherwise) — the 20-/24-bit
   modes imply differently-sized physical preamble words that don't fit this
   crate's uniform 2-bytes-per-word byte-stream abstraction; see
-  `docs/st337.md`'s "Scope decisions" for the reasoning. Carries the
+  `private/specs-verified/smpte/st337/st337.md`'s "Scope decisions" for the reasoning. Carries the
   `name()`/`Display` label pair per the workspace's #204 convention.
 - `ExtendedPreamble` — `Pe` (`extended_data_type`) + `Pf` (reserved,
   preserved verbatim on round-trip rather than forced to zero). Required
@@ -83,10 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which was not available to independently verify (per this project's
   "no implementation without a truthful source" discipline) — `data_type`
   is a plain validated `u8`.
-- `docs/st337.md` — curated transcription of SMPTE ST 337:2015 §1-§8 +
+- `private/specs-verified/smpte/st337/st337.md` — curated transcription of SMPTE ST 337:2015 §1-§8 +
   Annexes A-C (fetched directly from `pub.smpte.org`), the implementation/
   audit oracle for this crate, including the crate's scope decisions.
-- `docs/st337-PROVENANCE.md` — a real-fixture + independent-oracle
+- `private/specs-verified/smpte/st337/st337-PROVENANCE.md` — a real-fixture + independent-oracle
   (`ffmpeg -f spdif`, IEC 61937) cross-check of the `Pa`/`Pb` sync-word
   constants, byte-order convention, and `Pc` bit layout against real running
   software wrapping a real E-AC-3 elementary stream — including a genuine,

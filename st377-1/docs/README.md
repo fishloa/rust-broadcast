@@ -1,1 +1,0 @@
-Spec transcriptions, notes and registries for this crate live only in the private repository at `private/specs-verified/smpte/st377-1/` (old-path map: [`docs/specs/PRIVATE-MAP.md`](../../docs/specs/PRIVATE-MAP.md)).

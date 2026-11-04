@@ -19,7 +19,7 @@
 //!
 //! Source gap (no value is guessed), verified on the rendered pages of T/AI
 //! 109.3-2023 (PDF pp.128-129 Table A.6, p.131 semantics; transcription in
-//! `docs/av3a-aatf-frame-header.md`): the lossless (`audio_codec_id` 1) header
+//! `private/specs-verified/rtp/rtp-packet/av3a-aatf-frame-header.md`): the lossless (`audio_codec_id` 1) header
 //! carries `channel_number` as `{4; 8}` bits, and the only rule given is the
 //! semantics sentence "When audio_codec_id is 1 and the number of channels is
 //! less than 16, this field contains 4 bits. 0xf indicates extension, and others

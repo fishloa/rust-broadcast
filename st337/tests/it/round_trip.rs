@@ -11,7 +11,7 @@
 //! ecosystem to pull from, unlike e.g. TS/RTP). Per this project's
 //! documented fallback for such cases (`docs/CRATE-ACCEPTANCE.md`), every
 //! vector below is derived directly from the spec's own field/range
-//! definitions (`st337/docs/st337.md` §7.2.4/§7.2.5), independently of this
+//! definitions (`private/specs-verified/smpte/st337/st337.md` §7.2.4/§7.2.5), independently of this
 //! crate's own serializer, so a bug that made `serialize`/`parse` agree with
 //! each other but disagree with the spec would still be caught.
 
@@ -126,7 +126,7 @@ fn extended_preamble_length_code_includes_pe_pf_bits() {
 #[test]
 fn extended_preamble_nonzero_reserved_pf_is_preserved_verbatim() {
     // Pf is "reserved" per Table 6, not "must be zero" -- a real value here
-    // must survive round-trip unchanged (docs/st337.md scope decision 5).
+    // must survive round-trip unchanged (private/specs-verified/smpte/st337/st337.md scope decision 5).
     let ext = ExtendedPreamble {
         extended_data_type: 0x0001,
         reserved_pf: 0xFFFF,

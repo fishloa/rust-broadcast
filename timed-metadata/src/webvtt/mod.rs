@@ -1,6 +1,6 @@
 //! CEA-608/708 -> WebVTT cue conversion (issue #568).
 //!
-//! Cite: `specs/rules/webvtt-rules.md` (curated W3C WebVTT §4 cue syntax +
+//! Cite: `private/specs-verified/rules/webvtt-rules.md` (curated W3C WebVTT §4 cue syntax +
 //! RFC 8216 §3.5 `X-TIMESTAMP-MAP`), and CTA-608-E / CTA-708-E for the
 //! caption semantics (decode owned entirely by the `cc-data` crate, feature
 //! `cc-data`).
