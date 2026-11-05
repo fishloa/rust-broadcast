@@ -58,7 +58,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
     transition planning across a join: a PTS-rebase offset for timeline
     continuity, and a discontinuity flag on codec-config change. Verified
     against a real, non-IDR-aligned SCTE-35 cue
-    (`fixtures/scte35/`, DASH-IF `livesim2`, Apache-2.0).
+    (`fixtures/scte35-ssai/`, DASH-IF `livesim2`, Apache-2.0).
   - `scte35::build_splice_insert` / `scte35::to_section` /
     `scte35::BreakEdge` — build and serialize the `splice_insert()` a
     transition implies, with its target instant conditioned via

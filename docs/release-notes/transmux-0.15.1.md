@@ -15,7 +15,7 @@ changes, no new API surface.
   MP2/AAC config-probe backlog scans, now resync forward to the next valid
   frame header instead of bailing on the first byte that isn't one.
 
-  New fixture `fixtures/ts/legacy/mpeg2-mp2-pes-misaligned.ts`: the same 39
+  New fixture `fixtures/ts/legacy/mpeg2_mp2_pes_misaligned.ts`: the same 39
   real MP2 frames already captured in `mpeg2_mp2.ts`, re-chunked into
   PES-payload-sized pieces with no regard for frame length — reproducing the
   misalignment `mpeg2_mp2.ts`'s own frame-aligned packetization never

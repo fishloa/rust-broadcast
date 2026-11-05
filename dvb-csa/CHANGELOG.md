@@ -110,7 +110,7 @@ below, alongside the new bitsliced feature.
     of "the gate". The fixture is committed but the control word it was
     scrambled with was never recorded, so it cannot be decrypted and no test
     references it. The claim is removed and the situation is now recorded in
-    `../fixtures/crypto/PROVENANCE.md`, including how to make it a real oracle.
+    `../fixtures/csa/PROVENANCE.md`, including how to make it a real oracle.
   - The remaining oracle — byte-exact known-answer vectors from libdvbcsa
     1.1.0, in `tests/golden_vectors.rs` — is genuine and unchanged.
 

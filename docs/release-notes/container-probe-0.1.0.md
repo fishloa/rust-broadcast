@@ -51,7 +51,7 @@ Two real cases forced this, and both are pinned by regression tests:
   lanes, three consecutive `0x47` bytes aligned by chance and it was
   confidently identified as MPEG-TS. A real transport stream syncs at ~100% of
   its lane positions; random noise at ~2.5%.
-- **An elementary stream needs a frame-length chain.** `fixtures/ts/h264-aac.ts`
+- **An elementary stream needs a frame-length chain.** `fixtures/ts/h264_aac.ts`
   contains **18,239 MP3 syncwords** — 34× the count in the actual MP3 fixture.
   Counting syncwords identifies every container as an elementary stream.
   Following each frame header's own length field to the next expected syncword

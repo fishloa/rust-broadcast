@@ -95,8 +95,8 @@ Expected ~75 lines. The signature changes in this plan that reach multimux: `Srt
 ### Task 1: Goldens from main (WHIP/WHEP HTTP output, HLS client output)
 
 **Files:**
-- Create: `webrtc-runtime/tests/golden_http.rs`, `fixtures/golden/webrtc/whip-whep-http.golden`, `webrtc-runtime/tests/golden/README.md`
-- Create: `hls-runtime/tests/golden_client.rs`, `fixtures/golden/hls/client-urls.golden`, `hls-runtime/tests/golden/README.md`
+- Create: `webrtc-runtime/tests/golden_http.rs`, `webrtc-runtime/tests/golden/whip_whep_http.golden`, `webrtc-runtime/tests/golden/README.md`
+- Create: `hls-runtime/tests/golden_client.rs`, `hls-runtime/tests/golden/client_urls.golden`, `hls-runtime/tests/golden/README.md`
 - No SRT golden: this plan changes no SRT packet bytes (`git diff $BASE --stat -- srt-runtime/src/packet srt-runtime/src/handshake_sm.rs srt-runtime/src/arq/*.rs` must show only the additive `next_timeout` methods of Task 4; the libsrt interop suites are the oracle for the wire).
 
 **Interfaces:** none new. Each test compares to its golden; `GOLDEN_UPDATE=1` rewrites it. Task 9 re-targets the webrtc test to the typed API and compares to the SAME file; Task 11 compares the hls golden and regenerates it once, for exactly the three reviewed fragment rows described there.
@@ -2164,7 +2164,7 @@ Expected: all ok EXCEPT `golden_client`, which differs in exactly three lines: t
 ```bash
 GOLDEN_UPDATE=1 cargo test --locked -p hls-runtime --all-features --test golden_client 2>&1 | grep 'test result'
 git diff --stat hls-runtime/tests/golden
-git diff fixtures/golden/hls/client-urls.golden | grep '^[-+] ' | wc -l
+git diff hls-runtime/tests/golden/client_urls.golden | grep '^[-+] ' | wc -l
 ```
 
 Expected: one file, 6 changed lines (3 old, 3 new), and every `base ...` / `request_url` row from the engine unchanged. Any other difference is a normalisation difference to be listed in the report and CHANGELOG with an example, or a bug to fix. Commit the regenerated golden in this task's commit and paste the old/new lines into the report. The thumb build must still pass.

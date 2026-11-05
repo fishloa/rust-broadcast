@@ -97,8 +97,8 @@ Expected: both build. Record. (The gate script has no thumbv7em step, so this is
 **Files:**
 - Create: `media-doctor/tests/watch_metrics_golden.rs`
 - Create: `media-doctor/tests/golden/watch/README.md`
-- Create: `fixtures/golden/http/watch/m6-single.prom` (generated)
-- Create: `fixtures/golden/http/watch/http-response-head.txt` (generated)
+- Create: `media-doctor/tests/golden/watch/m6-single.prom` (generated)
+- Create: `media-doctor/tests/golden/watch/http-response-head.txt` (generated)
 
 **Interfaces:** none (tests only). Task 9 replaces the first test, Task 12 the second.
 
@@ -1909,7 +1909,7 @@ git commit -m "feat(media-doctor): socket2 UDP/multicast bind with configurable 
 - Modify: `media-doctor/src/bin/media-doctor.rs`: imports 3–10; `run_watch` 230–291; delete `bind_udp` 293–312, `MetricsConfig` 313–320, `serve_metrics` 322–383, `ACCEPT_ERROR_BACKOFF`, `refuse_connection`, `MIN_SOCKET_TIMEOUT`, `HEADER_TERMINATOR`, `MAX_REQUEST_BYTES`, `SERVICE_UNAVAILABLE_RESPONSE`, `reserve_connection`, `ConnectionGuard`, `handle_metrics_request` (to end of file, 541)
 - Modify: `media-doctor/src/cli.rs` (`WatchArgs` 43–66, plus a `udp_config()` helper)
 - Replace: `media-doctor/tests/watch_metrics_server.rs` (439 lines) with a binary smoke test
-- Delete: `media-doctor/tests/watch_metrics_golden.rs` and `fixtures/golden/http/watch/http-response-head.txt` stays (used by Task 10's test)
+- Delete: `media-doctor/tests/watch_metrics_golden.rs` and `media-doctor/tests/golden/watch/http-response-head.txt` stays (used by Task 10's test)
 - Modify: `media-doctor/README.md` lines 46–92
 
 **Interfaces:** new CLI flags on `watch` (all named, per `docs/CLI-STANDARD.md`):

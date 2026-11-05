@@ -919,7 +919,7 @@ Proves the whole feature on a real broadcast fixture: demux `h264_aac.ts` (real 
 
 **Files:**
 - Create: `transmux/tests/rtp_stream.rs`
-- Uses fixture: `transmux/fixtures/ts/h264-aac.ts` (already committed)
+- Uses fixture: `transmux/fixtures/ts/h264_aac.ts` (already committed)
 
 **Interfaces:**
 - Consumes: the crate's existing TS demux entry point and `RtpPacketizer::package` (as used by `transmux/tests/rtp.rs` — reuse the exact same calls that file uses to obtain a `Media` and an `RtpOutput`), plus `RtpStreamDepacketizer`, `avc_config_from_sprop`, `aac_config_from_fmtp`.
@@ -955,7 +955,7 @@ fn fmtp_value<'a>(sdp: &'a str, key: &str) -> Option<&'a str> {
 #[test]
 fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     // --- Step 0: obtain `media` (demux h264_aac.ts) and `out` (packetize) ---
-    // let media = /* demux transmux/fixtures/ts/h264-aac.ts, per rtp.rs */;
+    // let media = /* demux transmux/fixtures/ts/h264_aac.ts, per rtp.rs */;
     // let out = /* packetize(&media), per rtp.rs → RtpOutput { streams, sdp } */;
 
     // Original per-track truth from the demuxed Media.

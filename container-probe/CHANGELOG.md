@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than guessing. `Fragmented` is definitive on sight, since only a fragmented
   file carries a `moof`.
 
-  The major brand cannot substitute for this: `fixtures/mp4/cmaf/av-frag.mp4`
+  The major brand cannot substitute for this: `fixtures/mp4/cmaf/av_frag.mp4`
   is fragmented yet carries the `isom` brand, identical to every progressive
   fixture. A test pins that shared brand so the box walk is not later
   "optimised" into a brand lookup.

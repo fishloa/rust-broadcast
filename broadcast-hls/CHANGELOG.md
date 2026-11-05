@@ -472,7 +472,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   firing the moment `EXT-X-DEFINE` became typed, since a parsed tag no longer
   reaches `extra_tags`. Rows 7/12/13 still scan `extra_tags` — they are
   attributes of `EXT-X-MEDIA`, which this crate still does not model.
-  `fixtures/hls/PROVENANCE.md`'s per-fixture version derivations are now
+  `fixtures/hls/MANIFEST.md`'s per-fixture version derivations are now
   asserted by `tests/spec_fixture_version.rs`, making that table executable.
 - **Known gap (documented, tested):** §8 row 12 (`REQ-` attribute) is matched
   only on tags that reach `extra_tags`. A `REQ-` attribute on a tag this

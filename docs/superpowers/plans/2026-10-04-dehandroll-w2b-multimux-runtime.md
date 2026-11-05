@@ -83,7 +83,7 @@ git diff Cargo.lock | grep -E '^[-+]name' | sort | uniq   # expect only jiff + i
 
 - [ ] **Step 2: Golden the DASH/LL-DASH MPDs with `now` frozen**
 
-The `dash_mpd`/`ll_dash_mpd` goldens freeze the `now`-dependent `availabilityStartTime`. `render_mpd` uses `route.created_at()` (a `SystemTime`); add `#[doc(hidden)] pub fn render_mpd_at(route, now: SystemTime)` so the golden is deterministic, and `render_mpd` delegates with `SystemTime::now()`. Golden `fixtures/golden/dash/dash-mpd.golden` + `ll_dash_mpd.golden` via the `GOLDEN_BLESS` pattern (`output/smooth.rs:972`).
+The `dash_mpd`/`ll_dash_mpd` goldens freeze the `now`-dependent `availabilityStartTime`. `render_mpd` uses `route.created_at()` (a `SystemTime`); add `#[doc(hidden)] pub fn render_mpd_at(route, now: SystemTime)` so the golden is deterministic, and `render_mpd` delegates with `SystemTime::now()`. Golden `multimux/tests/golden/dash_mpd.golden` + `ll_dash_mpd.golden` via the `GOLDEN_BLESS` pattern (`output/smooth.rs:972`).
 
 - [ ] **Step 3: Commit**
 

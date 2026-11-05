@@ -9,7 +9,7 @@
 //! (`srat`, §12.2.3.1), inside an `stsd` whose version is 1.
 //!
 //! Fixtures and their generator commands are described in
-//! `audio/srat/README.md`.
+//! `fixtures/audio/srat/PROVENANCE.md`.
 //!
 //! The strongest test here is
 //! [`our_muxed_192k_output_is_read_back_by_external_tools`]: it muxes our own

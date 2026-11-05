@@ -85,7 +85,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
     (no HTTP client, no VAST/VMAP in this crate).
   - `splice::condition_splice_point` — splice-point conditioning against
     real candidate boundaries, verified against a real, non-IDR-aligned
-    SCTE-35 cue (`fixtures/scte35/`, DASH-IF `livesim2`, Apache-2.0).
+    SCTE-35 cue (`fixtures/scte35-ssai/`, DASH-IF `livesim2`, Apache-2.0).
   - `playlist::InterstitialDateRange` / `playlist::render_session_playlist` —
     per-session HLS Interstitial (`EXT-X-DATERANGE
     CLASS="com.apple.hls.interstitial"`) playlist rendering over

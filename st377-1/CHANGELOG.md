@@ -300,7 +300,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wholly out of scope (Essence Container payload, Index Table contents,
   Operational-Pattern-specific constraints) — each judgment cited against
   the spec section it narrows.
-- Spec-derived synthetic fixture (`../fixtures/mxf/smpte-st377/synthetic-minimal.mxf`,
+- Spec-derived synthetic fixture (`../fixtures/mxf/st377-1/synthetic_minimal.mxf`,
   `tests/fixture_synthetic.rs`): no real captured `.mxf` file exists
   anywhere in this workspace (this is the first MXF-touching crate here),
   so a minimal valid Header Partition (Primer Pack + all four typed Root

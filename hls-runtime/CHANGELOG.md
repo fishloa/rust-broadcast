@@ -681,7 +681,7 @@ Security fix. Upgrade if you use `client::tokio_client::TokioClient` with
     golden gate. `transmux/tests/golden_gate.rs` (#569) validates only the
     origin half — transmux's own muxer output handed to an independent
     decoder (`ffprobe`). This closes the other half: demuxes the workspace's
-    real `fixtures/ts/h264-aac.ts` capture (Main profile, 320x240, 25fps, 75
+    real `fixtures/ts/h264_aac.ts` capture (Main profile, 320x240, 25fps, 75
     real video frames) via `TsDemux`, live-paces those real samples through
     the same `LlHlsSegmenter`/`MediaStore`/`LlHlsOutput` origin stack
     `glass_to_glass.rs` uses, drives a real `TokioClient` against it over
