@@ -45,4 +45,4 @@ the spec transcriptions in its `docs/` directory.
 | [superpowers/](superpowers/) | Design specs and implementation plans. |
 ## Specifications
 
-All specification material (RFC/IETF/W3C texts, PDFs, Markdown transcriptions, notes, registries) lives only in the private `private/` submodule (maintainers only), under `private/specs-verified/`. The [STANDARDS.md](STANDARDS.md) coverage table names the standards each crate implements.
+All specification material (RFC/IETF/W3C texts, PDFs, Markdown transcriptions, notes, registries) lives only in `private/` submodule (maintainers only), under `private/specs-verified/`. The [STANDARDS.md](STANDARDS.md) coverage table names the standards each crate implements.

@@ -2,7 +2,7 @@
 
 Every committed test fixture in `fixtures/` must have a documented
 source and a clear legal basis for redistribution. Non-redistributable
-material lives in the private `private/` git submodule, never here.
+material lives in `private/` git submodule, never here.
 
 ## HLS manifest fixtures (`fixtures/hls/`)
 

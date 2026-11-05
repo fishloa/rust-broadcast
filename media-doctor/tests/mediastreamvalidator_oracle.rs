@@ -193,7 +193,7 @@ impl std::fmt::Display for Finding {
 /// that a static fixture file will never produce).
 fn run_validator(dir: &Path, entry: &str, parse_only: bool, timeout_secs: u32) -> Vec<Finding> {
     // The JSON output path (`-O`) is deliberately OUTSIDE `dir`: for the
-    // calibration test `dir` is the private `private/fixtures/hls/spec/` tree, and
+    // calibration test `dir` is `private/fixtures/hls/spec/` tree, and
     // writing scratch output into a source directory would dirty a fixture
     // tree the test run itself doesn't own. Unique per call (a monotonic
     // counter) since `cargo test` runs test functions concurrently by

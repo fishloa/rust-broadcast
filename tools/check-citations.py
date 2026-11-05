@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
 def _load_workspace_members():
     members = set()
     cargo = ROOT / "Cargo.toml"
@@ -35,20 +36,19 @@ def _load_workspace_members():
             members.add(item)
     return members
 
-WORKSPACE_MEMBERS = _load_workspace_members()
 
-def workspace_members():
-    return WORKSPACE_MEMBERS
+
+WORKSPACE_MEMBERS = _load_workspace_members()
 
 DOC_SUFFIXES = (".md", ".txt", ".pdf", ".tsv", ".toml", ".html")
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)|^\[[^\]]+\]:\s*(\S+)", re.M)
 # fixture citations: fixtures/ or private/fixtures/ with any extension (or a directory)
 FIXTURE_CITE = re.compile(
-    r"(?<![\w./-])((?:fixtures|private/fixtures)(?:/[\w.+*?\[\]-]*)+/?)" 
+    r"(?<![\w./-])((?:fixtures|private/fixtures)(?:/[\w.+*?\[\]-]*)+/?)"
 )
 # crate-local fixture citations: <member>/fixtures/... or <member>/tests/fixtures/...
 MEMBER_FIXTURE_CITE = re.compile(
-    r"(?<![\w./-])(( [\w.+-]+)/(?:tests/)?fixtures(?:/[\w.+*?\[\]-]*)*/?)" .replace(" ", "")
+    r"(?<![\w./-])(([\w.+-]+)/(?:tests/)?fixtures(?:/[\w.+*?\[\]-]*)*/?)"
 )
 # citations: path containing docs/specs/fixtures root, ending in a doc suffix
 CITE = re.compile(
@@ -380,7 +380,6 @@ def main() -> int:
                         if matched:
                             break
                     if not matched:
-                        # also directories
                         if not any((ROOT / c).is_dir() for c in pats):
                             errors.append(f"{rel}: citation does not resolve: {cite}")
                 else:

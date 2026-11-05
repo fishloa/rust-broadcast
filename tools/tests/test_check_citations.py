@@ -125,7 +125,6 @@ def test_fixture_private_mp4_missing_fails_when_present(tmp_path, monkeypatch) -
     monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
     (tmp_path / "private" / "specs-verified").mkdir(parents=True, exist_ok=True)
     _scratch(tmp_path, {"good.md": "see private/fixtures/x/missing.mp4\n"})
-    (tmp_path / "private" / "specs-verified").mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     assert _run(monkeypatch, tmp_path) == 1
 
