@@ -12,12 +12,12 @@
 //! Skips itself LOUDLY (prints why, `--nocapture`) when `srt-live-transmit` is
 //! not on `PATH`; set `SRT_REQUIRE_LIBSRT=1` to make the skip a failure.
 //!
-//! No test sleeps to wait for a process to come up: the Caller's handshake
-//! retransmits every 250 ms until libsrt answers, a libsrt Caller retries by
-//! itself, and the UDP source libsrt reads is bound before it connects, so
-//! feeding it after the connection is accepted cannot race. The one deliberate
-//! wait is the idle window, whose elapsed wall-clock time *is* the thing under
-//! test.
+//! No test sleeps to wait for a process to come up: a libsrt listener is
+//! started through `support/libsrt_spawn.rs`, which returns once libsrt reports
+//! its port bound, a libsrt Caller retries by itself, and the UDP source libsrt
+//! reads is bound before it connects, so feeding it after the connection is
+//! accepted cannot race. The one deliberate wait is the idle window, whose
+//! elapsed wall-clock time *is* the thing under test.
 
 #![cfg(feature = "tokio")]
 
@@ -35,6 +35,7 @@ use srt_runtime::packet::{ControlPacket, HandshakeType, SrtPacket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
+include!("support/libsrt_spawn.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PAYLOAD_LEN: usize = 1316;
@@ -42,14 +43,6 @@ const PAYLOAD_LEN: usize = 1316;
 /// Keep-Alive periods (§3.2.3, one second each), during which real
 /// Keep-Alive/ACK traffic crosses the wire in both directions.
 const IDLE_WINDOW: Duration = Duration::from_secs(4);
-
-fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .expect("bind free port")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
 
 fn pattern(n: usize, seed: u8) -> Vec<u8> {
     (0..n).map(|i| seed.wrapping_add(i as u8)).collect()
@@ -78,19 +71,20 @@ fn spawn(cmd: &mut Command) -> KillOnDrop {
     )
 }
 
-/// A libsrt listener forwarding to a UDP discard socket this test reads.
+/// A libsrt listener forwarding to a UDP discard socket this test reads;
+/// returns it with the port it bound.
 fn spawn_libsrt_listener(
-    listen_port: u16,
     discard_port: u16,
     options: &str,
     extra_args: &[&str],
-) -> KillOnDrop {
-    let mut cmd = Command::new("srt-live-transmit");
-    cmd.arg("-loglevel:error");
-    cmd.args(extra_args);
-    cmd.arg(format!("srt://:{listen_port}?{options}"));
-    cmd.arg(format!("udp://127.0.0.1:{discard_port}"));
-    spawn(&mut cmd)
+) -> (KillOnDrop, u16) {
+    let (child, port) = spawn_libsrt_ready(|port| {
+        let mut args: Vec<String> = extra_args.iter().map(|a| (*a).to_string()).collect();
+        args.push(format!("srt://:{port}?{options}"));
+        args.push(format!("udp://127.0.0.1:{discard_port}"));
+        args
+    });
+    (KillOnDrop(child), port)
 }
 
 async fn recv_at_least(discard: &TokioUdpSocket, want_len: usize, timeout: Duration) -> Vec<u8> {
@@ -182,15 +176,12 @@ async fn our_caller_completes_real_handshake_and_data_with_libsrt_listener() {
     skip_unless_tools!("srt-live-transmit" => "-version");
 
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let listen_port = free_udp_port();
         let discard = TokioUdpSocket::bind("127.0.0.1:0")
             .await
             .expect("bind discard socket");
         let discard_port = discard.local_addr().unwrap().port();
-        let _listener_proc = spawn_libsrt_listener(listen_port, discard_port, "latency=120", &[]);
+        let (_listener_proc, listen_port) = spawn_libsrt_listener(discard_port, "latency=120", &[]);
 
-        // No wait for the process to bind: the handshake retransmits every
-        // 250 ms until libsrt answers.
         let mut caller = tokio::time::timeout(
             Duration::from_secs(10),
             SrtSocket::connect(
@@ -291,15 +282,10 @@ async fn libsrt_refusal_reaches_the_caller_as_a_typed_rejection() {
     skip_unless_tools!("srt-live-transmit" => "-version");
 
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let listen_port = free_udp_port();
         let discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let discard_port = discard.local_addr().unwrap().port();
-        let _listener_proc = spawn_libsrt_listener(
-            listen_port,
-            discard_port,
-            "passphrase=0123456789abcdef&pbkeylen=16",
-            &[],
-        );
+        let (_listener_proc, listen_port) =
+            spawn_libsrt_listener(discard_port, "passphrase=0123456789abcdef&pbkeylen=16", &[]);
         let err = tokio::time::timeout(
             Duration::from_secs(10),
             SrtSocket::connect(
@@ -335,11 +321,10 @@ async fn libsrt_closes_promptly_when_our_socket_is_dropped() {
     skip_unless_tools!("srt-live-transmit" => "-version");
 
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let listen_port = free_udp_port();
         let discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let discard_port = discard.local_addr().unwrap().port();
-        let mut libsrt =
-            spawn_libsrt_listener(listen_port, discard_port, "latency=120", &["-autoreconnect:no"]);
+        let (mut libsrt, listen_port) =
+            spawn_libsrt_listener(discard_port, "latency=120", &["-autoreconnect:no"]);
         let mut caller = tokio::time::timeout(
             Duration::from_secs(10),
             SrtSocket::connect(

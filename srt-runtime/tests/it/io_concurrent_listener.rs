@@ -26,23 +26,11 @@
 use core::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{IoConfig, SrtListener, SrtSocket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 const NUM_PAYLOADS: usize = 30;
-
-/// Grab a free local port by binding then dropping (see `libsrt_interop.rs`
-/// for the same trick), so each caller can be given a distinct, known local
-/// address up front — letting the accepted connections' `peer_addr()` be
-/// matched back to "caller A" / "caller B" deterministically instead of by
-/// arrival order (which the very bug under test can scramble).
-async fn free_local_addr() -> std::net::SocketAddr {
-    let s = TokioUdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("bind free port");
-    s.local_addr().expect("local addr")
-}
 
 /// A recognizable, position- and stream-dependent payload — not all-zero, so
 /// a cross-talk (wrong stream) or corruption is detectable byte-for-byte.
@@ -61,9 +49,6 @@ async fn two_concurrent_callers_do_not_cross_talk() {
             .expect("listener bind");
         let bound_addr = listener.local_addr().expect("listener local addr");
 
-        let local_a = free_local_addr().await;
-        let local_b = free_local_addr().await;
-
         // Accept exactly two connections (whichever handshake completes
         // first goes first — order doesn't matter, `peer_addr()` resolves
         // identity below).
@@ -73,9 +58,28 @@ async fn two_concurrent_callers_do_not_cross_talk() {
             (c1, c2, listener)
         });
 
+        let sock_a = TokioUdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind free port");
+        let sock_b = TokioUdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind free port");
+        let local_a = sock_a.local_addr().expect("local addr");
+        let local_b = sock_b.local_addr().expect("local addr");
+
         let (caller_a, caller_b) = tokio::join!(
-            SrtSocket::connect_from(local_a, bound_addr, HandshakeConfig::default()),
-            SrtSocket::connect_from(local_b, bound_addr, HandshakeConfig::default()),
+            SrtSocket::connect_from_socket(
+                sock_a,
+                bound_addr,
+                HandshakeConfig::default(),
+                IoConfig::default()
+            ),
+            SrtSocket::connect_from_socket(
+                sock_b,
+                bound_addr,
+                HandshakeConfig::default(),
+                IoConfig::default()
+            ),
         );
         let mut caller_a = caller_a.expect("caller A connect");
         let mut caller_b = caller_b.expect("caller B connect");

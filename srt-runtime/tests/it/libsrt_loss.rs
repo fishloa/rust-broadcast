@@ -35,6 +35,7 @@ use srt_runtime::packet::{ControlPacket, SrtPacket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
+include!("support/libsrt_spawn.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// Small payloads, so that a thousand of them fit a kernel UDP buffer in one
@@ -61,14 +62,6 @@ fn spawn(cmd: &mut Command) -> KillOnDrop {
             .spawn()
             .expect("spawn srt-live-transmit"),
     )
-}
-
-fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .expect("bind free port")
-        .local_addr()
-        .expect("local addr")
-        .port()
 }
 
 fn chunk(index: u32) -> Vec<u8> {
@@ -244,15 +237,15 @@ async fn libsrt_listener_naks_are_served_by_our_sender() {
     skip_unless_tools!("srt-live-transmit" => "-version");
     tokio::time::timeout(TEST_TIMEOUT, async {
         const CHUNKS: u32 = 60;
-        let listen_port = free_udp_port();
         let discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let discard_port = discard.local_addr().unwrap().port();
-        let _libsrt = spawn(
-            Command::new("srt-live-transmit")
-                .arg("-loglevel:error")
-                .arg(format!("srt://:{listen_port}"))
-                .arg(format!("udp://127.0.0.1:{discard_port}")),
-        );
+        let (libsrt, listen_port) = spawn_libsrt_ready(|port| {
+            vec![
+                format!("srt://:{port}"),
+                format!("udp://127.0.0.1:{discard_port}"),
+            ]
+        });
+        let _libsrt = KillOnDrop(libsrt);
         let relay = Relay::spawn(
             format!("127.0.0.1:{listen_port}").parse().unwrap(),
             drop_pattern,

@@ -559,13 +559,29 @@ impl SrtSocket {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let socket = bounded(io.connect, "bind", async {
             UdpSocket::bind(local_addr)
                 .await
                 .map_err(|e| io_err("bind", e))
         })
         .await?;
+        Self::connect_from_socket(socket, remote_addr, config, io).await
+    }
+
+    /// Like [`Self::connect_from_with`], but takes an already-bound UDP socket
+    /// instead of binding one. The socket's own local address is used as the
+    /// connection's local endpoint, which lets a caller hold the port from
+    /// bind to use and avoid a bind/read/drop/rebind race.
+    ///
+    /// # Errors
+    /// Same as [`Self::connect_from_with`].
+    pub async fn connect_from_socket<A: tokio::net::ToSocketAddrs>(
+        socket: tokio::net::UdpSocket,
+        remote_addr: A,
+        config: HandshakeConfig,
+        io: IoConfig,
+    ) -> Result<Self> {
+        let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let peer = bounded(io.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
 
@@ -780,13 +796,29 @@ impl SrtSocket {
         config: HandshakeConfig,
         io: IoConfig,
     ) -> Result<Self> {
-        let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let socket = bounded(io.connect, "bind", async {
             UdpSocket::bind(local_addr)
                 .await
                 .map_err(|e| io_err("bind", e))
         })
         .await?;
+        Self::rendezvous_from_socket(socket, remote_addr, config, io).await
+    }
+
+    /// Like [`Self::rendezvous_with`], but takes an already-bound UDP socket
+    /// instead of binding one. The socket's own local address is used as the
+    /// connection's local endpoint, which lets a caller hold the port from
+    /// bind to use and avoid a bind/read/drop/rebind race.
+    ///
+    /// # Errors
+    /// Same as [`Self::rendezvous_with`].
+    pub async fn rendezvous_from_socket<A: tokio::net::ToSocketAddrs>(
+        socket: tokio::net::UdpSocket,
+        remote_addr: A,
+        config: HandshakeConfig,
+        io: IoConfig,
+    ) -> Result<Self> {
+        let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let peer = bounded(io.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
 
