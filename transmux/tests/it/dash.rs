@@ -2,7 +2,7 @@
 //!
 //! Oracle: `fixtures/dash/manifest.mpd` is a real ffmpeg-generated DASH MPD for
 //! a 2-track (video + audio) CMAF. The input IR is built by `TsDemux`-ing the
-//! deterministic 2-track `fixtures/ts/h264_aac.ts` (H.264 video + AAC audio)
+//! deterministic 2-track `fixtures/ts/h264-aac.ts` (H.264 video + AAC audio)
 //! and fed to [`DashPackager`].
 //!
 //! Every test bites: the produced XML is parsed with `quick-xml` into an element
@@ -30,10 +30,10 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn demux_media() -> transmux::media::Media {
-    let ts = std::fs::read(fixtures_dir().join("ts/h264_aac.ts"))
-        .expect("h264_aac.ts fixture must exist");
+    let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts"))
+        .expect("h264-aac.ts fixture must exist");
     let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264_aac.ts")
+    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
 }
 
 fn build_mpd() -> String {

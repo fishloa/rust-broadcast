@@ -25,7 +25,7 @@ pub mod wire_host;
 use broadcast_client::{Action, Event, Session};
 
 pub fn read_tf1_headers() -> Option<(u16, Vec<(String, String)>)> {
-    let path = test_fixtures::require("zenith-http/tf1.headers.txt", "support")?;
+    let path = test_fixtures::require("http/live-channels/tf1.headers.txt", "support")?;
     let text = std::fs::read_to_string(path).unwrap();
     let status: u16 = text
         .lines()
@@ -49,11 +49,11 @@ pub fn read_tf1_headers() -> Option<(u16, Vec<(String, String)>)> {
 }
 
 pub fn read_tf1_bytes() -> Option<Vec<u8>> {
-    test_fixtures::require_bytes("zenith-http/tf1-live.ts", "support")
+    test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "support")
 }
 
 pub fn read_missing_headers() -> Option<(u16, Vec<(String, String)>)> {
-    let path = test_fixtures::require("zenith-http/missing.headers.txt", "support")?;
+    let path = test_fixtures::require("http/live-channels/missing.headers.txt", "support")?;
     let text = std::fs::read_to_string(path).unwrap();
     let status: u16 = text
         .lines()

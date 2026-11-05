@@ -14,7 +14,7 @@
 use crate::{Confidence, Detail, Evidence, Outcome};
 
 /// The ID3v2 tag signature (ID3v2 §3.1; the tag precedes the audio in
-/// `fixtures/container-probe/audio.mp3`: `49 44 33 04`, version 2.4).
+/// `fixtures/audio/audio.mp3`: `49 44 33 04`, version 2.4).
 const ID3_SIGNATURE: [u8; 3] = *b"ID3";
 /// Fixed portion of an ID3v2 tag header before the syncsafe size: `"ID3"`(3) +
 /// version(2) + flags(1) = 6, plus the 4 syncsafe size bytes = 10.
@@ -213,15 +213,15 @@ mod tests {
     /// threshold to 1 (raw frame counting) misidentifies the same file as Mp3.
     /// Observed under the mutation (`MP3_MIN_CHAIN_WEAK = 1`):
     /// ```
-    /// h264_aac.ts must NOT match MP3 at the real threshold,
+    /// h264-aac.ts must NOT match MP3 at the real threshold,
     ///   got Match(Evidence { confidence: Confidence(96), detail: None })
     /// ```
     #[test]
     fn chain_threshold_keeps_a_container_out() {
-        let data = fixture_bytes("fixtures/ts/h264_aac.ts");
+        let data = fixture_bytes("fixtures/ts/h264-aac.ts");
         match probe(&data, data.len()) {
             Outcome::None => {}
-            other => panic!("h264_aac.ts must NOT match MP3 at the real threshold, got {other:?}"),
+            other => panic!("h264-aac.ts must NOT match MP3 at the real threshold, got {other:?}"),
         }
     }
 
@@ -243,7 +243,7 @@ mod tests {
     /// ```
     #[test]
     fn audio_mp3_id3_skip_is_correct() {
-        let data = fixture_bytes("fixtures/container-probe/audio.mp3");
+        let data = fixture_bytes("fixtures/audio/audio.mp3");
         let skip = id3_skip(&data).expect("audio.mp3 is ID3-prefixed");
         assert_eq!(skip, 45);
         assert!(
@@ -263,7 +263,7 @@ mod tests {
     /// 4-byte frame header) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/container-probe/audio.mp3");
+        let data = fixture_bytes("fixtures/audio/audio.mp3");
         let region = &data[..MP3_HEADER_LEN - 1];
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, MP3_HEADER_LEN),

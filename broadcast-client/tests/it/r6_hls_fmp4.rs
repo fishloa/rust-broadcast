@@ -86,17 +86,17 @@ fn encrypted_track_is_reported_once_while_audio_plays(fixture: &str) {
 
 #[test]
 fn a_cenc_video_track_in_a_plain_playlist_is_reported_not_dropped_silently() {
-    encrypted_track_is_reported_once_while_audio_plays("transmux/h264_cenc.mp4");
+    encrypted_track_is_reported_once_while_audio_plays("mp4/h264-cenc.mp4");
 }
 
 #[test]
 fn a_cbcs_video_track_in_a_plain_playlist_is_reported_not_dropped_silently() {
-    encrypted_track_is_reported_once_while_audio_plays("transmux/h264_cbcs.mp4");
+    encrypted_track_is_reported_once_while_audio_plays("mp4/h264-cbcs.mp4");
 }
 
 #[test]
 fn a_stream_whose_every_track_is_skipped_ends_fatal_not_ended() {
-    let events = play_split("transmux/h264_cenc.mp4", Some(AUDIO_TRACK));
+    let events = play_split("mp4/h264-cenc.mp4", Some(AUDIO_TRACK));
     let errs = errors(&events);
     assert!(
         errs.iter()
@@ -143,8 +143,8 @@ fn split_counts(events: &[Event]) -> (Vec<Vec<u32>>, [std::collections::BTreeMap
 
 #[test]
 fn each_segment_is_decoded_with_the_init_of_its_own_map_run() {
-    const FIRST: &str = "transmux/h264_aac_frag.mp4";
-    const SECOND: &str = "transmux/hevc_frag.mp4";
+    const FIRST: &str = "mp4/h264-aac-frag.mp4";
+    const SECOND: &str = "mp4/hevc-frag.mp4";
     let first_bytes = test_fixtures::read(FIRST);
     let second_bytes = test_fixtures::read(SECOND);
     let first = split(&first_bytes).unwrap();

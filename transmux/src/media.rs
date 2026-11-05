@@ -1356,7 +1356,7 @@ mod tests {
     use crate::subtitle_entries::WvttSampleEntry;
 
     /// ffmpeg's `mov` muxer cannot produce a `wvtt` sample entry (only
-    /// `stpp`/TTML — see `../fixtures/transmux/mp4/cmaf/PROVENANCE.md`), so WebVTT
+    /// `stpp`/TTML — see `../fixtures/mp4/cmaf-av-subtitle/PROVENANCE.md`), so WebVTT
     /// demux coverage is exercised directly here: synthesise a real `wvtt`
     /// sample entry with the crate's own builder (already covered by
     /// `subtitle_entries::tests::wvtt_sample_entry_round_trip`) and feed it

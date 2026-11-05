@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use broadcast_client::{Action, Config, Event, Session, Status};
 
 const INDEX: &str = "http://h/index.m3u8";
-const FIXTURE: &str = "zenith-http/tf1-live.ts";
+const FIXTURE: &str = "http/live-channels/tf1-live.ts";
 const REAL_SHAPE_SEGMENTS: usize = 3;
 const LONG_LIVED_SEGMENTS: usize = 5;
 const TS_PACKET: usize = 188;

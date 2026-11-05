@@ -297,7 +297,7 @@ const H264_AAC_AUDIO_PID: u16 = 0x0101;
 
 #[test]
 fn aac_exact_pes_boundary_pts_and_absolute_video_timing() {
-    let data = read_fixture("h264_aac.ts");
+    let data = read_fixture("h264-aac.ts");
     let video_pes = collect_pes(&data, H264_AAC_VIDEO_PID);
     let audio_pes = collect_pes(&data, H264_AAC_AUDIO_PID);
     assert!(!video_pes.is_empty());
@@ -711,17 +711,17 @@ fn pcr_timeline_france_discontinuity() {
 
 #[test]
 fn pcr_timeline_clean_stream_monotonic() {
-    // h264_aac.ts carries real PCR (39 observations on PID 0x100, verified
+    // h264-aac.ts carries real PCR (39 observations on PID 0x100, verified
     // independently); a clean stream's PCR timeline must be non-empty,
     // match the oracle, and be monotonic (no discontinuities).
-    let data = read_fixture("h264_aac.ts");
+    let data = read_fixture("h264-aac.ts");
     let media = demux(&data);
     let oracle = collect_pcr_oracle(&data);
-    assert!(!oracle.is_empty(), "h264_aac.ts must carry PCR");
+    assert!(!oracle.is_empty(), "h264-aac.ts must carry PCR");
     assert_eq!(media.pcr, oracle);
     assert!(
         find_discontinuity(&media.pcr).is_none(),
-        "h264_aac.ts PCR must be monotonic throughout"
+        "h264-aac.ts PCR must be monotonic throughout"
     );
 
     // m6-single.ts is PID-filtered such that no adaptation field carries PCR

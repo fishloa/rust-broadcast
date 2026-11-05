@@ -96,7 +96,7 @@
 
 **Interfaces:** Consumes Tasks 2+3 (encrypt + mux); `CencDecryptor::from_fmp4`+`decrypt` (existing).
 
-- [ ] Step 1: full self round-trip per scheme — cleartext `Media` → encrypt → mux CMAF → `CencDecryptor::from_fmp4` + `decrypt(KeyMap)` → byte-identical samples. (Fragmented source: ../fixtures/transmux/h264_aac_frag.mp4; progressive: ../fixtures/ts/h264/main.ts via ts→cmaf.)
+- [ ] Step 1: full self round-trip per scheme — cleartext `Media` → encrypt → mux CMAF → `CencDecryptor::from_fmp4` + `decrypt(KeyMap)` → byte-identical samples. (Fragmented source: ../fixtures/mp4/h264-aac-frag.mp4; progressive: ../fixtures/ts/h264/main.ts via ts→cmaf.)
 - [ ] Step 2: golden interop per scheme — write our encrypted CMAF to a temp file, run `mp4decrypt --key <kid_hex>:<key_hex> in out` (skip test cleanly if binary absent, mirroring existing pattern), parse `out`, assert samples byte-identical to cleartext. Fixtures & key material reuse `cenc_fragmented_fixture.rs`.
 - [ ] Step 3: Commit `test(transmux): CENC encrypt e2e round-trip + mp4decrypt interop (#564)`.
 

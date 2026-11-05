@@ -184,12 +184,12 @@ fn assert_seam_costs_only_the_tail(bytes: &[u8], what: &str) {
 #[test]
 fn a_discontinuity_costs_one_pes_tail_not_a_track_france_tnt() {
     let Some(b) = test_fixtures::require_bytes(
-        "ts/france-tnt-uhf32-video-head-6MB.ts",
+        "ts/france-tnt-uhf32-video-head-6-mb.ts",
         "discontinuity_france_tnt",
     ) else {
         return;
     };
-    assert_seam_costs_only_the_tail(&b, "france-tnt-uhf32-video-head-6MB");
+    assert_seam_costs_only_the_tail(&b, "france-tnt-uhf32-video-head-6-mb");
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn a_discontinuity_costs_one_pes_tail_not_a_track_france2() {
 
 #[test]
 fn a_discontinuity_in_a_two_pid_stream_loses_nothing() {
-    let b = test_fixtures::read("ts/h264_aac_40s.ts");
+    let b = test_fixtures::read("ts/h264-aac-40s.ts");
     let segs = split_at_pat(&b[..b.len() / TS_PACKET * TS_PACKET], SEGMENTS);
     let plain = run(&segs, None);
     let cut = run(&segs, Some(DISCONTINUITY_AT));
@@ -210,7 +210,8 @@ fn a_discontinuity_in_a_two_pid_stream_loses_nothing() {
 #[test]
 fn pat_aligned_segments_deliver_the_whole_file_demux_byte_for_byte() {
     use broadcast_common::Unpackage;
-    let Some(b) = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "pat_aligned_segments")
+    let Some(b) =
+        test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "pat_aligned_segments")
     else {
         return;
     };

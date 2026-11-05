@@ -14,7 +14,7 @@ use mpeg_ts::pusi::PusiReassembler;
 const TS_FIXTURE: &str = "ts/emsg-pid4.ts";
 
 /// Path to the known-good emsg box bytes (98 bytes, version 1, SCTE-35).
-const EMSG_FIXTURE: &str = "shared/emsg_v1_scte35_livesim.bin";
+const EMSG_FIXTURE: &str = "scte35/emsg-v1-scte35-livesim.bin";
 
 #[test]
 fn reassemble_emsg_from_ts() {

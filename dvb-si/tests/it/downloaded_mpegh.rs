@@ -1,6 +1,6 @@
 //! Real-capture test: the MPEG-H 3D audio descriptors in the PMT of the
 //! Fraunhofer-IIS `mpegh-test-content` transport-layer streams
-//! (`private/fixtures/ts/mpegh-*.ts`; provenance in its `PROVENANCE.md`,
+//! (`private/fixtures/audio/mpegh/mpegh-cicp-*.ts`; provenance in its `PROVENANCE.md`,
 //! re-fetch via `tools/fetch-test-streams.sh mpegh-cicp01-baseline ...`).
 //!
 //! The streams are CC BY-NC-ND 4.0, so they live only in the private fixtures
@@ -20,7 +20,7 @@ use mpeg_ts::ts::TS_PACKET_SIZE;
 
 /// `(file, expected ES_info loop bytes of the 0x2D stream)`.
 fn pmt_es_descriptor_bytes(name: &str) -> Option<(StreamType, Vec<Vec<u8>>)> {
-    let data = test_fixtures::require_bytes(&format!("ts/{name}.ts"), "downloaded_mpegh")?;
+    let data = test_fixtures::require_bytes(&format!("audio/mpegh/{name}.ts"), "downloaded_mpegh")?;
     let mut demux = SiDemux::builder().build();
     for chunk in data.chunks(TS_PACKET_SIZE) {
         if chunk.len() != TS_PACKET_SIZE || chunk[0] != 0x47 {
@@ -74,7 +74,7 @@ fn check(name: &str, expected: &[u8], profile: u8, layout: u8, compat: Option<&[
 #[test]
 fn cicp01_baseline() {
     check(
-        "mpegh-cicp01-baseline",
+        "mpegh-cicp-01-baseline-32kbps-single",
         &[0x3F, 0x04, 0x08, 0x10, 0x7F, 0xC1],
         0x10,
         1,
@@ -85,7 +85,7 @@ fn cicp01_baseline() {
 #[test]
 fn cicp01_low_complexity_with_baseline_compatible_set() {
     check(
-        "mpegh-cicp01-lc",
+        "mpegh-cicp-01-lc-baseline-compatible-32kbps-single",
         &[0x3F, 0x06, 0x08, 0x0B, 0x3F, 0xC1, 0x01, 0x10],
         0x0B,
         1,
@@ -96,7 +96,7 @@ fn cicp01_low_complexity_with_baseline_compatible_set() {
 #[test]
 fn cicp06_lc() {
     check(
-        "mpegh-cicp06-lc",
+        "mpegh-cicp-06-lc-baseline-compatible-32kbps-single",
         &[0x3F, 0x06, 0x08, 0x0C, 0x3F, 0xC6, 0x01, 0x11],
         0x0C,
         6,
@@ -107,7 +107,7 @@ fn cicp06_lc() {
 #[test]
 fn cicp13_baseline() {
     check(
-        "mpegh-cicp13-baseline",
+        "mpegh-cicp-13-baseline-32kbps-single",
         &[0x3F, 0x04, 0x08, 0x13, 0x7F, 0xCD],
         0x13,
         13,

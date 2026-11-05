@@ -1,7 +1,7 @@
 //! Oracle consumer: H.264 HLS Sample-AES CBC chaining (audit r05-W1).
 //!
 //! Consumes the committed, independently-generated fixtures under
-//! `../fixtures/transmux/sample_aes_h264/` — see that directory's `README.md` and
+//! `../fixtures/ts/sample_aes_h264/` — see that directory's `README.md` and
 //! `ORACLES.md`. The claim they pin:
 //!
 //! * AES-128-CBC **chains across the encrypted 16-byte blocks within one NAL**;
@@ -15,7 +15,7 @@
 //!   ciphertext contains `00 00 0[0-3]`).
 //!
 //! Proven by three independent implementations (python reference, Bento4
-//! `mp4hls`, ffmpeg decryptor); `enc_reset.h264` (IV reset per block — the
+//! `mp4hls`, ffmpeg decryptor); `enc-reset.h264` (IV reset per block — the
 //! pre-#1080 behaviour) is the negative control.
 #![cfg(all(feature = "sample-aes", feature = "std"))]
 
@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use transmux::annexb::{iter_annexb_nals, length_prefixed_to_annexb};
 use transmux::sample_aes::{BLOCK_LEN, KEY_LEN, h264_decrypt_nal, h264_encrypt_nal};
 
-/// `fixtures/transmux/sample_aes_h264/key.bin`.
+/// `fixtures/crypto/sample-aes-h264/key.bin`.
 const KEY: [u8; KEY_LEN] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 ];
@@ -34,7 +34,7 @@ const IV: [u8; BLOCK_LEN] = [
 ];
 
 fn fx(name: &str) -> PathBuf {
-    test_fixtures::path("transmux/sample_aes_h264").join(name)
+    test_fixtures::path("crypto/sample-aes-h264").join(name)
 }
 
 fn read(name: &str) -> Vec<u8> {
@@ -65,13 +65,13 @@ fn decrypt_es(annexb: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The core oracle: our encryptor must reproduce `enc_chained.h264`
-/// byte-for-byte, and must NOT reproduce `enc_reset.h264`.
+/// The core oracle: our encryptor must reproduce `enc-chained.h264`
+/// byte-for-byte, and must NOT reproduce `enc-reset.h264`.
 #[test]
 fn encrypt_matches_chained_reference_bytes() {
     let clear = read("clear.h264");
-    let want = read("enc_chained.h264");
-    let reset = read("enc_reset.h264");
+    let want = read("enc-chained.h264");
+    let reset = read("enc-reset.h264");
 
     let got = encrypt_es(&clear);
     assert_eq!(
@@ -95,7 +95,7 @@ fn encrypt_matches_chained_reference_bytes() {
 #[test]
 fn decrypt_chained_reference_recovers_clear() {
     let clear = read("clear.h264");
-    let enc = read("enc_chained.h264");
+    let enc = read("enc-chained.h264");
     let got = decrypt_es(&enc);
     assert_eq!(
         norm_ep(&got),
@@ -108,9 +108,9 @@ fn decrypt_chained_reference_recovers_clear() {
 /// `tailprobe_enc_ge` (the wrong rule) must not match.
 #[test]
 fn tail_rule_gt16_is_the_shipped_behaviour() {
-    let clear = read("tailprobe_clear.h264");
-    let want = read("tailprobe_enc_gt.h264");
-    let wrong = read("tailprobe_enc_ge.h264");
+    let clear = read("tailprobe-clear.h264");
+    let want = read("tailprobe-enc-gt.h264");
+    let wrong = read("tailprobe-enc-ge.h264");
 
     let got = encrypt_es(&clear);
     assert_eq!(got, want, "the `>16` tail rule must match the reference");
@@ -118,12 +118,12 @@ fn tail_rule_gt16_is_the_shipped_behaviour() {
 }
 
 /// Emulation prevention is re-applied after encryption: our output must equal
-/// `escprobe_enc.h264` byte-for-byte (its ciphertext block starts `00 00 01`,
+/// `escprobe-enc.h264` byte-for-byte (its ciphertext block starts `00 00 01`,
 /// forcing an inserted `0x03`).
 #[test]
 fn emulation_prevention_is_reapplied() {
-    let clear = read("escprobe_clear.h264");
-    let want = read("escprobe_enc.h264");
+    let clear = read("escprobe-clear.h264");
+    let want = read("escprobe-enc.h264");
     let got = encrypt_es(&clear);
     assert_eq!(
         got, want,
@@ -135,13 +135,13 @@ fn emulation_prevention_is_reapplied() {
 /// (extracted as Bento4 wrote it) must carry the same encrypted **slice** NALs
 /// as the reference chained ES — Bento4 emits them differently packaged (its
 /// file has 16 extra non-slice NALs, e.g. repeated AUD/SPS), so the comparison
-/// is over the slice NALs (types 1/5), which is what `compare_es.py` compares.
+/// is over the slice NALs (types 1/5), which is what `compare-es.py` compares.
 /// Our decryptor must then recover the clear slices from it.
 #[test]
 fn bento4_encrypted_slices_match_and_decrypt() {
     let clear = read("clear.h264");
-    let reference = read("enc_chained.h264");
-    let bento4 = read("bento4_sample_aes/clear/bento4_encrypted.h264");
+    let reference = read("enc-chained.h264");
+    let bento4 = read("bento4-sample-aes/clear/bento4-encrypted.h264");
 
     let ref_slices = slice_nals(&reference);
     let bento4_slices = slice_nals(&bento4);
@@ -181,7 +181,7 @@ fn slice_nals(annexb: &[u8]) -> Vec<Vec<u8>> {
 #[test]
 fn epclear_round_trips_spec_derived() {
     // NO independent oracle: this is the python reference's Apple-text rule.
-    let clear = read("epclear_clear.h264");
+    let clear = read("epclear-clear.h264");
     let got = decrypt_es(&encrypt_es(&clear));
     assert_eq!(
         norm_ep(&got),
@@ -190,14 +190,14 @@ fn epclear_round_trips_spec_derived() {
     );
 }
 
-/// `escprobe_enc.h264`'s ciphertext contains an inserted `0x03` (the escape
+/// `escprobe-enc.h264`'s ciphertext contains an inserted `0x03` (the escape
 /// pass re-inserted it after `00 00 01`). Decrypting it must remove that byte
 /// before the cipher runs and reproduce the clear wire bytes **exactly** — not
 /// merely modulo EP.
 #[test]
 fn escprobe_decrypt_removes_inserted_escape_byte() {
-    let clear = read("escprobe_clear.h264");
-    let enc = read("escprobe_enc.h264");
+    let clear = read("escprobe-clear.h264");
+    let enc = read("escprobe-enc.h264");
     let got = decrypt_es(&enc);
     assert_eq!(
         got, clear,
@@ -208,7 +208,7 @@ fn escprobe_decrypt_removes_inserted_escape_byte() {
 }
 
 /// Normalise NALs for comparison: unescape emulation-prevention triplets and
-/// re-serialise as 4-byte-length-prefixed frames (mirrors `compare_es.py`).
+/// re-serialise as 4-byte-length-prefixed frames (mirrors `compare-es.py`).
 fn norm_ep(annexb: &[u8]) -> Vec<u8> {
     let mut lp = Vec::with_capacity(annexb.len());
     for nal in iter_annexb_nals(annexb) {

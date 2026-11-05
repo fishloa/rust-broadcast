@@ -1,7 +1,7 @@
 //! Local-archive evidence for reserved-bit defaults (audit §3 / #1197 item d).
 //!
 //! Keyed on the TSDuck BSD-2 corpus files mirrored in
-//! `private/fixtures/tsduck/` (live-captured streams: kept private, never in
+//! `private/fixtures/suites/tsduck/` (live-captured streams: kept private, never in
 //! the public tree). Without `private/` checked out the test skips loudly,
 //! like `downloaded_lcn.rs`.
 //!

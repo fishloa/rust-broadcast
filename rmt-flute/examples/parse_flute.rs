@@ -10,13 +10,13 @@ use std::fs;
 use rmt_flute::{AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128, HET_EXT_FDT};
 
 fn main() {
-    // Fixtures live in the workspace-shared `fixtures/rmt-flute/` directory,
+    // Fixtures live in the workspace-shared `fixtures/flute/` directory,
     // not under the crate. This example previously pointed at a
     // `tests/fixtures/` path that has never existed, and its "nothing to do"
     // fallback silently swallowed the failure — so it never actually ran.
     // Missing fixture is now a hard error: an example that quietly does
     // nothing is worse than one that fails.
-    let path = test_fixtures::path("rmt-flute/flute_fdt.bin");
+    let path = test_fixtures::path("flute/flute-fdt.bin");
     let data = fs::read(&path).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",

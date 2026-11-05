@@ -122,11 +122,7 @@ mod tests {
             state.feed_datagram(datagram, clock);
             clock += Duration::from_millis(1);
         }
-        let golden = std::fs::read_to_string(format!(
-            "{}/tests/golden/watch/{golden_name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap();
+        let golden = std::fs::read_to_string(test_fixtures::path(golden_name)).unwrap();
         let (mut golden_meta, golden_series) = parse_exposition(&golden);
         drop_header_only_families(&mut golden_meta, &golden_series);
         let (new_meta, new_series) = parse_exposition(&render(&state));
@@ -139,15 +135,13 @@ mod tests {
 
     /// The exposition of the committed capture equals, semantically, the
     /// golden the OLD renderer produced on `main` (see
-    /// `tests/golden/watch/README.md` for the accepted, neutral differences).
+    /// `fixtures/golden/http/PROVENANCE.md` for the accepted, neutral differences).
     #[test]
     fn real_fixture_exposition_equals_the_main_golden_semantically() {
-        assert_matches_main_golden("m6-single.ts", "m6-single.prom");
-        let golden = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/golden/watch/m6-single.prom"
-        ))
-        .unwrap();
+        assert_matches_main_golden("m6-single.ts", "golden/http/watch/m6-single.prom");
+        let golden =
+            std::fs::read_to_string(test_fixtures::path("golden/http/watch/m6-single.prom"))
+                .unwrap();
         assert_eq!(
             parse_exposition(&golden)
                 .1
@@ -162,12 +156,10 @@ mod tests {
     /// ordering, none of which `m6-single` has.
     #[test]
     fn per_pid_exposition_equals_the_main_golden_semantically() {
-        assert_matches_main_golden("h264_aac.ts", "h264_aac.prom");
-        let golden = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/golden/watch/h264_aac.prom"
-        ))
-        .unwrap();
+        assert_matches_main_golden("h264-aac.ts", "golden/http/watch/h264-aac.prom");
+        let golden =
+            std::fs::read_to_string(test_fixtures::path("golden/http/watch/h264-aac.prom"))
+                .unwrap();
         assert!(
             golden.contains("media_doctor_codec_signalling_mismatch{pid=\"0x0100\"} 0"),
             "the golden must carry per-PID series"

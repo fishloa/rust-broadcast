@@ -372,7 +372,7 @@ async fn open_gop_public_capture_falls_back_after_the_bound() {
 
 #[tokio::test]
 async fn zenith_arte_falls_back_by_default() {
-    let Some(path) = test_fixtures::require("zenith-live/arte-8MB.ts", "ts_hls_idr_fallback")
+    let Some(path) = test_fixtures::require("ts/live-channels/arte-8-mb.ts", "ts_hls_idr_fallback")
     else {
         return;
     };
@@ -389,7 +389,7 @@ async fn zenith_arte_falls_back_by_default() {
 
 #[tokio::test]
 async fn zenith_tf1_falls_back_by_default() {
-    let Some(path) = test_fixtures::require("zenith-live/tf-1-8MB.ts", "ts_hls_idr_fallback")
+    let Some(path) = test_fixtures::require("ts/live-channels/tf-1-8-mb.ts", "ts_hls_idr_fallback")
     else {
         return;
     };
@@ -406,7 +406,8 @@ async fn zenith_tf1_falls_back_by_default() {
 
 #[tokio::test]
 async fn zenith_tf1_live_capture_falls_back_after_a_short_bound() {
-    let Some(path) = test_fixtures::require("zenith-http/tf1-live.ts", "ts_hls_idr_fallback")
+    let Some(path) =
+        test_fixtures::require("http/live-channels/tf1-live.ts", "ts_hls_idr_fallback")
     else {
         return;
     };
@@ -621,7 +622,8 @@ async fn assert_validator_finds_no_duration_mismatch(tag: &str, input: InputSpec
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn validator_accepts_segment_durations_of_an_open_gop_capture() {
-    let Some(path) = test_fixtures::require("zenith-http/tf1-live.ts", "ts_hls_idr_fallback")
+    let Some(path) =
+        test_fixtures::require("http/live-channels/tf1-live.ts", "ts_hls_idr_fallback")
     else {
         return;
     };

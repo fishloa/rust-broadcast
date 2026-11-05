@@ -182,7 +182,7 @@ struct CsvRow {
 }
 
 fn load_csv() -> Vec<CsvRow> {
-    let raw = fixture(&["ts", "legacy", "mpeg2_mp2.packets.csv"]);
+    let raw = fixture(&["ts", "legacy", "mpeg2-mp2.packets.csv"]);
     let text = String::from_utf8(raw).unwrap();
     text.lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
@@ -201,7 +201,7 @@ fn load_csv() -> Vec<CsvRow> {
 
 #[test]
 fn ts_demux_broadcast_pair() {
-    let ts = fixture(&["ts", "legacy", "mpeg2_mp2.ts"]);
+    let ts = fixture(&["ts", "legacy", "mpeg2-mp2.ts"]);
     let mut demux = TsDemux::new();
     let media = demux.demux(&ts).expect("demux ts");
 
@@ -310,7 +310,7 @@ fn ts_demux_broadcast_pair() {
 
 #[test]
 fn ts_config_from_real_es() {
-    let ts = fixture(&["ts", "legacy", "mpeg2_mp2.ts"]);
+    let ts = fixture(&["ts", "legacy", "mpeg2-mp2.ts"]);
     let mut demux = TsDemux::new();
     let media = demux.demux(&ts).expect("demux ts");
     let video = &media.tracks[0];
@@ -382,14 +382,14 @@ fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 
 // ── Test: MP2 PES payloads that don't start on a frame sync must resync ────
 // (issue #638). A real DVB-S broadcast multiplexer routinely splits PES
-// payloads without regard to audio frame boundaries -- `mpeg2_mp2.ts`'s own
+// payloads without regard to audio frame boundaries -- `mpeg2-mp2.ts`'s own
 // PES packetization happens to be frame-aligned, so it never exercises this.
-// `mpeg2_mp2_pes_misaligned.ts` takes the same 39 real captured MP2 frames
+// `mpeg2-mp2-pes-misaligned.ts` takes the same 39 real captured MP2 frames
 // and re-chunks them into fixed 2000-byte PES payloads with no regard for
 // the ~1253/1254-byte frame length, reproducing the misalignment.
 #[test]
 fn mpeg_audio_resyncs_across_pes_boundaries() {
-    let ts = fixture(&["ts", "legacy", "mpeg2_mp2_pes_misaligned.ts"]);
+    let ts = fixture(&["ts", "legacy", "mpeg2-mp2-pes-misaligned.ts"]);
     let mut demux = TsDemux::new();
     let media = demux.demux(&ts).expect("demux misaligned ts");
 

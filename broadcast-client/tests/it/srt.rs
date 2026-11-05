@@ -8,7 +8,7 @@ use broadcast_client::{
 };
 
 const URL: &str = "srt://127.0.0.1:9000";
-const SMALL: &str = "ts/h264_aac.ts";
+const SMALL: &str = "ts/h264-aac.ts";
 const PASS: &str = "correct horse battery";
 const LATENCY_MS: u16 = 120;
 const DATA_INTERVAL_US: u64 = 2_000;

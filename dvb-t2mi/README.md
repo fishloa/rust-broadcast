@@ -63,7 +63,7 @@ use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::T2miPump;
 use mpeg_ts::pid::Pid;
 
-let data = std::fs::read("../fixtures/dvb-t2mi/colombia-capital-t2mi.ts").unwrap();
+let data = std::fs::read("../fixtures/t2mi/colombia-capital-t2mi.ts").unwrap();
 let mut pump = T2miPump::new(Pid::try_new(0x0040).unwrap()); // T2-MI PID from the PMT
 let (mut bbframes, mut l1) = (0u32, 0u32);
 for packet in data.chunks_exact(188) {
@@ -89,7 +89,7 @@ carry-over) with `inner_ts::InnerTsRecovery`:
 use dvb_t2mi::inner_ts::InnerTsRecovery;
 use mpeg_ts::pid::Pid;
 
-let data = std::fs::read("../fixtures/dvb-t2mi/colombia-capital-t2mi.ts").unwrap();
+let data = std::fs::read("../fixtures/t2mi/colombia-capital-t2mi.ts").unwrap();
 let mut rec = InnerTsRecovery::new(Pid::try_new(0x0040).unwrap());
 let mut inner = 0usize;
 for outer in data.chunks_exact(188) {

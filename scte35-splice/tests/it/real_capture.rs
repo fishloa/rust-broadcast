@@ -12,7 +12,7 @@
 //! * Committed fixtures (`fixtures/ts/scte35-*.ts`, `fixtures/scte35-ssai`)
 //!   always run.
 //! * The TSDuck BSD-2 test corpus files are mirrored in the private fixtures
-//!   repo (`private/fixtures/tsduck/`, resolved by `test_fixtures::tsduck`);
+//!   repo (`private/fixtures/suites/tsduck/`, resolved by `test_fixtures::tsduck`);
 //!   those cases skip loudly when `private/` is not checked out. Its `test-091.ts` carries `splice_command_length = 0xFFF`, which
 //!   SCTE 35 9.6.1 says receivers shall ignore (parse the command by its own
 //!   structure) - the crate used to reject such sections outright.
@@ -147,7 +147,7 @@ fn committed_scte35_other_pid_ts() {
 #[test]
 fn committed_ssai_splice_insert_with_pts_adjustment() {
     let ts = std::fs::read(repo(
-        "fixtures/scte35-ssai/ts/video_with_scte35_splice_insert.ts",
+        "fixtures/scte35/ts/video-with-scte35-splice-insert.ts",
     ))
     .unwrap();
     let secs = scte35_sections(&ts);
@@ -162,7 +162,7 @@ fn committed_ssai_splice_insert_with_pts_adjustment() {
     assert_eq!(bd.duration, 1_800_000);
 }
 
-/// The TSDuck test corpus (pinned clone or `private/fixtures/tsduck/` mirror).
+/// The TSDuck test corpus (pinned clone or `private/fixtures/suites/tsduck/` mirror).
 /// `None` after a loud skip when the private repo is not checked out.
 fn tsduck(name: &str) -> Option<Vec<u8>> {
     let p = test_fixtures::tsduck(name, "real_capture")?;

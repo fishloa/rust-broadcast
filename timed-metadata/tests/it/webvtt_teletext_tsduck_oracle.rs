@@ -9,7 +9,7 @@
 //! DVB Teletext subtitle service) through **TSDuck 3.44's own independent
 //! Teletext demux** (`tsp -P teletext`, which implements EN 300 472/706 from
 //! scratch, including its own `REVERSE_8` bit-reversal table -- see
-//! `fixtures/teletext/README.md` for the exact commands) and asserts this
+//! `fixtures/subtitles/PROVENANCE.md` for the exact commands) and asserts this
 //! crate's decode of the *same* TS bytes agrees.
 //!
 //! ## One documented, deliberate difference from TSDuck's own output
@@ -37,7 +37,7 @@ use timed_metadata::webvtt::TeletextCueExtractor;
 use transmux::{CodecConfig, TsDemux};
 
 fn fixtures_dir() -> PathBuf {
-    test_fixtures::path("teletext")
+    test_fixtures::path("subtitles")
 }
 
 /// Teletext PID declared in the fixture's PMT (`teletext_descriptor`, tag
@@ -95,10 +95,10 @@ fn oracle_srt_text_lines(srt: &str) -> Vec<&str> {
 
 #[test]
 fn matches_tsduck_teletext_plugin_oracle() {
-    let ts_bytes = fs::read(fixtures_dir().join("teletext_subtitle_boxed.ts"))
+    let ts_bytes = fs::read(fixtures_dir().join("teletext-subtitle-boxed.ts"))
         .expect("read committed TSDuck-oracle Teletext TS fixture");
     let oracle_srt =
-        fs::read_to_string(fixtures_dir().join("teletext_subtitle_boxed.tsduck-oracle.srt"))
+        fs::read_to_string(fixtures_dir().join("teletext-subtitle-boxed.tsduck-oracle.srt"))
             .expect("read committed tsp -P teletext oracle SRT");
 
     let cues = decode_via_this_crate(&ts_bytes);
@@ -115,6 +115,6 @@ fn matches_tsduck_teletext_plugin_oracle() {
     assert_eq!(
         got, want,
         "this crate's decode must match TSDuck's independent Teletext demux \
-         (fixtures/teletext/teletext_subtitle_boxed.tsduck-oracle.srt)"
+         (fixtures/subtitles/teletext-subtitle-boxed.tsduck-oracle.srt)"
     );
 }

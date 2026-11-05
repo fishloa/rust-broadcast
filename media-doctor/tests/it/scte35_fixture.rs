@@ -15,7 +15,7 @@
 //!   event_id 200.
 //!
 //! - `fixtures/ts/scte35-other-pid.ts` (issue #1046 / audit MD-C1) — a real
-//!   TSDuck-built stream (see `fixtures/ts/scte35-other-pid-PROVENANCE.md` for
+//!   TSDuck-built stream (see `fixtures/ts/scte35-other-pid-provenance.md` for
 //!   the exact `tsp`/`tstabcomp` commands) whose PMT declares the SCTE-35 PID
 //!   as `0x0150` (`stream_type=0x86` + a `registration_descriptor` for
 //!   `"CUEI"`) — deliberately **not** the conventional `0x01F0` — carrying a

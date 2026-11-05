@@ -55,7 +55,7 @@ fn main() {
         // Absolute, via CARGO_MANIFEST_DIR: a bare relative path only resolves
         // when the example happens to be run from the workspace root, so it
         // turns "wrong working directory" into "fixture missing".
-        test_fixtures::path("container-probe/m2ts_192.m2ts")
+        test_fixtures::path("ts/m2ts-192.m2ts")
             .to_string_lossy()
             .into_owned()
     });

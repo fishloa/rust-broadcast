@@ -114,9 +114,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
     dropped.
   - `no_std` + `alloc` (default features add `std`); `cc-data`/`teletext`
     features gate the two extractor backends independently.
-  - Fixture-driven tests throughout (`fixtures/cc/cea608_cc1_synthetic.txt`,
-    `fixtures/teletext/teletext_subtitle_synthetic.txt`,
-    `fixtures/sub/cap.vtt` — all three **synthetic/hand-authored**, see
+  - Fixture-driven tests throughout (`fixtures/captions/cea608-cc1-synthetic.txt`,
+    `fixtures/subtitles/teletext-subtitle-synthetic.txt`,
+    `fixtures/subtitles/cap.vtt` — all three **synthetic/hand-authored**, see
     `fixtures/PROVENANCE.md`), with mutation coverage: flipping the EOC wire
     bytes drops the expected cue, XORing a Teletext parity bit yields
     U+FFFD, and corrupting the `WEBVTT` signature returns a typed
@@ -124,7 +124,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 - Not reached, reported rather than implied: the DVB bitmap -> IMSC Image
   pipeline, TTML/IMSC source conversions, and the file/stream service wrapper
   issue #931 also mentions.
-- A **real** fixture, `fixtures/sub/sintel-en.srt` -- the official English
+- A **real** fixture, `fixtures/subtitles/sintel-en.srt` -- the official English
   dialogue subtitles for Blender Foundation's *Sintel* (CC BY 3.0; see
   `fixtures/PROVENANCE.md` for the exact Wikimedia Commons source/revision) --
   plus a new `tests/srt_real_fixture.rs` exercising it (real-structure

@@ -4,7 +4,7 @@
 //!
 //! Real artifacts: `fixtures/ts/heaac/heaac_v{1,2}_adts.ts` (macOS AudioToolbox
 //! HE-AAC / HE-AAC v2, core rate 22050 Hz, output rate 44100 Hz; commands in
-//! `fixtures/ts/GENERATE.md`) and `fixtures/ts/h264_aac.ts` (plain AAC-LC).
+//! `fixtures/ts/PROVENANCE.md`) and `fixtures/ts/h264-aac.ts` (plain AAC-LC).
 //! The ASC layout is `private/specs-verified/mpeg/transmux/codec/heaac-asc.md`
 //! (ISO/IEC 14496-3 §1.6.2). The DVB descriptor path builds its PMT only
 //! through `dvb-si`'s serializer and the TS muxer.
@@ -85,14 +85,14 @@ fn remux_with_aac_descriptor(fixture: &str, aac_type: u8) -> TrackSpec {
 }
 
 fn plain_init() -> Vec<u8> {
-    let media = demux("ts/h264_aac.ts");
+    let media = demux("ts/h264-aac.ts");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     build_init_segment(&specs, MOVIE_TIMESCALE).expect("init")
 }
 
 #[test]
 fn heaac_v1_override_writes_explicit_sbr_asc() {
-    let plain = audio_spec(&demux("ts/heaac/heaac_v1_adts.ts"));
+    let plain = audio_spec(&demux("ts/heaac/heaac-v1-adts.ts"));
     assert_eq!(rfc6381_codec_string(&plain.config).unwrap(), "mp4a.40.2");
     let spec = plain
         .with_explicit_he_aac(HeAacProfile::V1)
@@ -115,7 +115,7 @@ fn heaac_v1_override_writes_explicit_sbr_asc() {
 
 #[test]
 fn heaac_override_keeps_presentation_time_unchanged() {
-    let media = demux("ts/heaac/heaac_v1_adts.ts");
+    let media = demux("ts/heaac/heaac-v1-adts.ts");
     let track = media
         .tracks
         .into_iter()
@@ -160,7 +160,7 @@ fn heaac_override_keeps_presentation_time_unchanged() {
 
 #[test]
 fn heaac_descriptor_demux_emits_output_rate_timescale() {
-    let mut media = demux("ts/heaac/heaac_v1_adts.ts");
+    let mut media = demux("ts/heaac/heaac-v1-adts.ts");
     let plain: Vec<(f64, u32)> = media
         .tracks
         .iter()
@@ -218,7 +218,7 @@ fn heaac_descriptor_demux_emits_output_rate_timescale() {
 
 #[test]
 fn heaac_v2_override_writes_explicit_ps_asc() {
-    let spec = audio_spec(&demux("ts/heaac/heaac_v2_adts.ts"))
+    let spec = audio_spec(&demux("ts/heaac/heaac-v2-adts.ts"))
         .with_explicit_he_aac(HeAacProfile::V2)
         .expect("override applies");
     let asc = asc_in_init(&spec);
@@ -243,7 +243,7 @@ fn heaac_v2_override_writes_explicit_ps_asc() {
 
 #[test]
 fn heaac_descriptor_marks_track_he_aac() {
-    let v2 = remux_with_aac_descriptor("ts/heaac/heaac_v2_adts.ts", AAC_TYPE_HE_V2_STEREO);
+    let v2 = remux_with_aac_descriptor("ts/heaac/heaac-v2-adts.ts", AAC_TYPE_HE_V2_STEREO);
     assert_eq!(v2.audio_metadata().he_aac, Some(HeAacProfile::V2));
     assert_eq!(rfc6381_codec_string(&v2.config).unwrap(), "mp4a.40.29");
     let asc = asc_in_init(&v2);
@@ -252,7 +252,7 @@ fn heaac_descriptor_marks_track_he_aac() {
     assert_eq!(asc.core_audio_object_type(), AudioObjectType::AacLc);
     assert_eq!(dsi_bytes(&v2), V2_ASC);
     for ct in AAC_TYPES_HE_V2 {
-        let spec = remux_with_aac_descriptor("ts/heaac/heaac_v2_adts.ts", ct);
+        let spec = remux_with_aac_descriptor("ts/heaac/heaac-v2-adts.ts", ct);
         assert_eq!(
             rfc6381_codec_string(&spec.config).unwrap(),
             "mp4a.40.29",
@@ -263,9 +263,9 @@ fn heaac_descriptor_marks_track_he_aac() {
 
 #[test]
 fn heaac_v1_descriptor_alone_leaves_track_aac_lc() {
-    let plain = dsi_bytes(&audio_spec(&demux("ts/heaac/heaac_v1_adts.ts")));
+    let plain = dsi_bytes(&audio_spec(&demux("ts/heaac/heaac-v1-adts.ts")));
     for ct in AAC_TYPES_HE_V1 {
-        let spec = remux_with_aac_descriptor("ts/heaac/heaac_v1_adts.ts", ct);
+        let spec = remux_with_aac_descriptor("ts/heaac/heaac-v1-adts.ts", ct);
         assert_eq!(
             spec.audio_metadata().he_aac,
             None,
@@ -280,31 +280,31 @@ fn heaac_v1_descriptor_alone_leaves_track_aac_lc() {
 
 #[test]
 fn heaac_descriptor_that_cannot_tell_v1_from_v2_changes_nothing() {
-    let spec = remux_with_aac_descriptor("ts/heaac/heaac_v1_adts.ts", AAC_TYPE_HE_OR_V2_SAOC_DE);
+    let spec = remux_with_aac_descriptor("ts/heaac/heaac-v1-adts.ts", AAC_TYPE_HE_OR_V2_SAOC_DE);
     assert_eq!(spec.audio_metadata().he_aac, None);
     assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.2");
 }
 
 #[test]
 fn plain_aac_without_signal_is_unchanged() {
-    let golden = include_bytes!("../golden/heaac/h264_aac_init_origin_main.bin");
+    let golden = test_fixtures::read("golden/mp4/heaac/h264-aac-init-origin-main.bin");
     assert_eq!(
         plain_init(),
         golden.as_slice(),
-        "init of h264_aac.ts must stay byte-identical to origin/main (3ee2808eb)"
+        "init of h264-aac.ts must stay byte-identical to origin/main (3ee2808eb)"
     );
 }
 
 #[test]
 fn heaac_fixture_without_signal_stays_implicit() {
-    let spec = audio_spec(&demux("ts/heaac/heaac_v1_adts.ts"));
+    let spec = audio_spec(&demux("ts/heaac/heaac-v1-adts.ts"));
     assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.2");
     assert_eq!(spec.audio_metadata().he_aac, None);
 }
 
 #[test]
 fn explicit_he_aac_is_rewritable_and_rejects_what_it_cannot_express() {
-    let spec = audio_spec(&demux("ts/heaac/heaac_v1_adts.ts"));
+    let spec = audio_spec(&demux("ts/heaac/heaac-v1-adts.ts"));
     let v1 = spec
         .clone()
         .with_explicit_he_aac(HeAacProfile::V1)
@@ -320,7 +320,7 @@ fn explicit_he_aac_is_rewritable_and_rejects_what_it_cannot_express() {
     assert_eq!(dsi_bytes(&back), dsi_bytes(&v1));
     assert_eq!(back.config, v1.config);
 
-    let video = demux("ts/h264_aac.ts")
+    let video = demux("ts/h264-aac.ts")
         .tracks
         .iter()
         .map(|t| t.spec.clone())

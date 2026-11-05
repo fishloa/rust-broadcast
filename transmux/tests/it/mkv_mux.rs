@@ -1,7 +1,7 @@
 //! Matroska (MKV) muxer round-trip integration tests (issue #915).
 //!
 //! Each fixture is demuxed with [`WebmDemux`] (real ffmpeg captures — see
-//! `fixtures/mkv/GENERATE.md`), packaged back to bytes with [`MkvMux`], then
+//! `fixtures/mkv/PROVENANCE.md`), packaged back to bytes with [`MkvMux`], then
 //! re-demuxed with the same [`WebmDemux`]. The two [`Media`] values (original
 //! demux vs. demux-of-the-remux) are compared field-by-field: track count,
 //! codec identity/config, sample count, PTS/DTS, keyframe flags, and the
@@ -13,13 +13,13 @@ use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
 use transmux::{Media, MkvMux};
 
-/// H.264 (`fixtures/ts/h264_aac.ts`, `-c copy`'d to Matroska) + AAC.
-const H264_AAC: &str = "mkv/h264_aac.mkv";
+/// H.264 (`fixtures/ts/h264-aac.ts`, `-c copy`'d to Matroska) + AAC.
+const H264_AAC: &str = "mkv/h264-aac.mkv";
 /// HEVC (`fixtures/ts/hevc/main.ts`) video muxed with the same real AAC audio
-/// as [`H264_AAC`] (`fixtures/ts/h264_aac.ts`) — two genuine captures, one file.
-const HEVC_AAC: &str = "mkv/hevc_aac.mkv";
-/// VP9 + Opus (`fixtures/webm/vp9_opus.webm`, `-c copy`'d to Matroska).
-const VP9_OPUS: &str = "mkv/vp9_opus.mkv";
+/// as [`H264_AAC`] (`fixtures/ts/h264-aac.ts`) — two genuine captures, one file.
+const HEVC_AAC: &str = "mkv/hevc-aac.mkv";
+/// VP9 + Opus (`fixtures/mkv/vp9-opus.webm`, `-c copy`'d to Matroska).
+const VP9_OPUS: &str = "mkv/vp9-opus.mkv";
 
 fn demux(path: &str) -> Media {
     let bytes =

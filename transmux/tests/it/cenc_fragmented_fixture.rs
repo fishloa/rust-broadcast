@@ -1,11 +1,11 @@
 //! Fragmented CENC/CBCS fixture tests (issue #564).
 //!
-//! Oracle: `fixtures/transmux/h264_{cenc,cbcs}.mp4` — real fragmented CMAF
+//! Oracle: `fixtures/ts/h264_{cenc,cbcs}.mp4` — real fragmented CMAF
 //! files produced by **Bento4's `mp4encrypt`** (an independent, third-party
 //! tool, not this project's own code) against the already-committed real
-//! fixture `fixtures/transmux/h264_aac_frag.mp4`. Full provenance + the exact
+//! fixture `fixtures/mp4/h264-aac-frag.mp4`. Full provenance + the exact
 //! key/IV/KID material used below is in
-//! `fixtures/transmux/h264_cenc-PROVENANCE.md`.
+//! `fixtures/mp4/h264-cenc-provenance.md`.
 //!
 //! Both fixtures are genuinely fragmented (`moov` + 3 `moof`/`mdat` pairs,
 //! `mp4dump`-verified): track 1 (H.264 video) is protected, track 2 (AAC
@@ -32,10 +32,10 @@ use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
 use transmux::{CodecConfig, Fmp4Demux, Sample};
 
-const CENC_MP4: &str = "transmux/h264_cenc.mp4";
-const CBCS_MP4: &str = "transmux/h264_cbcs.mp4";
+const CENC_MP4: &str = "mp4/h264-cenc.mp4";
+const CBCS_MP4: &str = "mp4/h264-cbcs.mp4";
 
-// Key material from `fixtures/transmux/h264_cenc-PROVENANCE.md`: the same
+// Key material from `fixtures/mp4/h264-cenc-provenance.md`: the same
 // 16 bytes serve as both the KID and the AES-128 content key (a fixture
 // convenience, not real-world practice). The provenance file's third value
 // (`100102030405060708090a0b0c0d0e0f`) is the encryption-time IV passed to

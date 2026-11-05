@@ -8,7 +8,7 @@
 //! `AST + (N - startNumber + 1) * duration`), so once the window slid a player
 //! computed segment numbers that were never published and got 404s.
 //!
-//! Here real H.264 access units (the committed `h264_aac_40s.ts` fixture) are
+//! Here real H.264 access units (the committed `h264-aac-40s.ts` fixture) are
 //! cut by the real `LlHlsSegmenter` into far more segments than the window
 //! holds. After each new segment the MPD is fetched through the real router,
 //! the segment numbers a DASH client derives from it AT THAT MOMENT (live edge
@@ -94,7 +94,7 @@ fn derivable(e: &Edge, elapsed: f64) -> std::ops::RangeInclusive<u64> {
 /// Run one output (`manifest_path`) through the sliding-window scenario.
 async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
     let media = TsDemux::new()
-        .unpackage(&std::fs::read(test_fixtures::path("ts/h264_aac_40s.ts")).expect("fixture"))
+        .unpackage(&std::fs::read(test_fixtures::path("ts/h264-aac-40s.ts")).expect("fixture"))
         .expect("demux fixture");
     let mut track = media
         .tracks

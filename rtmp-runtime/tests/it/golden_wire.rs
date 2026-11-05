@@ -54,10 +54,7 @@ fn client_publish_transcript_is_byte_identical() {
         .unwrap();
     hex("metadata", &m, &mut out);
 
-    let path = format!(
-        "{}/tests/golden/client_publish.golden",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = test_fixtures::path("golden/rtmp/client-publish.golden");
     if std::env::var_os("GOLDEN_UPDATE").is_some() {
         std::fs::write(&path, &out).unwrap();
         return;
@@ -65,6 +62,6 @@ fn client_publish_transcript_is_byte_identical() {
     assert_eq!(
         out,
         std::fs::read_to_string(&path).expect("golden"),
-        "client_publish.golden differs"
+        "client-publish.golden differs"
     );
 }

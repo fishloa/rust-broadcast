@@ -10,7 +10,7 @@
 //!
 //! Run this, then in another terminal drive a real RTMP publisher at it, e.g.:
 //! ```text
-//! ffmpeg -re -i fixtures/ts/h264_aac.ts -t 2 -c copy -f flv rtmp://127.0.0.1:1935/live/testkey
+//! ffmpeg -re -i fixtures/ts/h264-aac.ts -t 2 -c copy -f flv rtmp://127.0.0.1:1935/live/testkey
 //! ```
 //!
 //! `required-features = ["tokio"]` (see `Cargo.toml`) — the sans-IO core

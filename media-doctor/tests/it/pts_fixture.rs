@@ -103,15 +103,15 @@ fn forbidden_pts_dts_flags_detected() {
 // Real-capture negatives (regression): the fault-detector must NOT false-positive
 // on clean real broadcast/encoded streams. Before the DTS-based + PES-PID-gated
 // fix, PtsCheck flagged legal B-frame PTS reordering as `pts-backward` (dozens of
-// errors on h264_aac.ts) and misread EIT section bytes on PID 0x0012 as a PES
-// header (`pts-forbidden-flags` on france-tnt-pcr.ts).
+// errors on h264-aac.ts) and misread EIT section bytes on PID 0x0012 as a PES
+// header (`pts-forbidden-flags` on ts/france-tnt-pcr.ts).
 // ---------------------------------------------------------------------------
 
-/// `h264_aac.ts` — a clean real H.264 (with B-frames) + AAC capture. Its video
+/// `h264-aac.ts` — a clean real H.264 (with B-frames) + AAC capture. Its video
 /// PTS reorders vs decode order, but DTS is monotonic → zero PtsCheck errors.
 #[test]
 fn real_h264_aac_no_false_positives() {
-    let ts = read("ts/h264_aac.ts");
+    let ts = read("ts/h264-aac.ts");
     let mut report = Report::new();
     PtsCheck.run(&ts, &mut report);
     let errs = pts_errors(&report);
@@ -124,12 +124,12 @@ fn real_h264_aac_no_false_positives() {
     );
 }
 
-/// `france-tnt-pcr.ts` — a real multi-programme DVB capture (video PIDs with
+/// `ts/france-tnt-pcr.ts` — a real multi-programme DVB capture (video PIDs with
 /// B-frame reorder + PSI/SI PIDs like EIT 0x0012). Must yield no PtsCheck errors:
 /// DTS is monotonic and non-PES PIDs are skipped.
 #[test]
 fn real_france_capture_no_false_positives() {
-    let ts = read("france-tnt-pcr.ts");
+    let ts = read("ts/france-tnt-pcr.ts");
     let mut report = Report::new();
     PtsCheck.run(&ts, &mut report);
     let errs = pts_errors(&report);

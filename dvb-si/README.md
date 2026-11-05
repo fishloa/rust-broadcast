@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Any aligned 188-byte TS works; this is the capture committed in this repository.
     let ts = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
+        "/../fixtures/ts/tnt-5w-12732v-isi6-10s.ts"
     ))?;
 
     // Follows the PAT to every PMT PID; emits each *changed* CRC-valid section once.

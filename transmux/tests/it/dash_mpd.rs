@@ -10,7 +10,7 @@
 //! `tfdt`/`trun` box fields), and the [`DashPackager`]'s emitted XML vs. that
 //! re-parse.
 //!
-//! Oracle input: `fixtures/ts/h264_aac.ts` (the same deterministic 2-track
+//! Oracle input: `fixtures/ts/h264-aac.ts` (the same deterministic 2-track
 //! H.264 + AAC capture `tests/it/dash.rs` uses), whose video keyframes are
 //! spaced exactly 1.0 s apart — so a 1.0 s target [`Segmenter`] reliably cuts
 //! 3 video segments (matching the shape of the real ffmpeg oracle
@@ -43,9 +43,9 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn demux_media() -> Media {
-    let ts = std::fs::read(fixtures_dir().join("ts/h264_aac.ts")).expect("h264_aac.ts fixture");
+    let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
     let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264_aac.ts")
+    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
 }
 
 /// Cut `media` into real CMAF media segments with [`Segmenter`], pushing

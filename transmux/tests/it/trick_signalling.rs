@@ -37,7 +37,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::trickplay::derive_iframe_track;
 
 fn av_frag_fixture() -> Vec<u8> {
-    let path = test_fixtures::path("transmux/mp4/cmaf/av_frag.mp4");
+    let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-frag.mp4");
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 
@@ -325,7 +325,7 @@ fn dash_trick_mode_adaptation_set() {
 fn ir_trick_track_wired_to_signalling() {
     let file = av_frag_fixture();
     let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("demux av_frag.mp4");
+    let media = demux.unpackage(&file).expect("demux av-frag.mp4");
 
     // Find the video track.
     let video = media

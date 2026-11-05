@@ -102,7 +102,7 @@ assert!(tag.contains("X-ASSET-URI=\"https://ads.example/ad-1.m3u8\""));
 
 ### Splice-point conditioning: a real, non-IDR-aligned cue
 
-`fixtures/scte35-ssai/` (Apache-2.0, a genuine DASH-IF `livesim2` capture; see its
+`fixtures/scte35/` (Apache-2.0, a genuine DASH-IF `livesim2` capture; see its
 `PROVENANCE.md`) carries a real `splice_insert()` whose nominal presentation time
 is not on a video keyframe: the nearest keyframe lands 6000 ticks (67 ms) after
 the cue, measured independently from the fragment's own `moof`/`traf`/`tfdt`/`trun`

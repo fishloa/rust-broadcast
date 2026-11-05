@@ -1,12 +1,12 @@
 //! Byte-for-byte golden gate: the parse result (as a `Debug` dump) and the
 //! serialized XML of every committed fixture must equal the files in
-//! `tests/golden/`, which were generated from the pre-quick-xml code on
-//! `origin/main` (see `tests/golden/README.md`). Set `GOLDEN_BLESS=<dir>` to
+//! `fixtures/golden/mabr/`, which were generated from the pre-quick-xml code on
+//! `origin/main` (see `fixtures/golden/mabr/PROVENANCE.md`). Set `GOLDEN_BLESS=<dir>` to
 //! write the files instead of comparing.
 #![cfg(feature = "std")]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use dvb_mabr::{MulticastGatewayConfiguration, MulticastServerConfiguration};
 
@@ -17,15 +17,13 @@ fn check(name: &str, actual: &str) {
         fs::write(&path, actual).expect("write golden");
         return;
     }
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(name);
+    let path = test_fixtures::path(&format!("golden/mabr/{}", name));
     let expected = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }
 
 fn fixture(name: &str) -> String {
-    test_fixtures::read_to_string(&format!("dvb-mabr/{name}"))
+    test_fixtures::read_to_string(&format!("mabr/{name}"))
 }
 
 #[test]

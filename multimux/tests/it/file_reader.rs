@@ -6,7 +6,7 @@
 //! workspace-relative and resolved against `CARGO_MANIFEST_DIR`:
 //!
 //! ```
-//! format!("{}/../{}", test_fixtures::root(), "fixtures/ts/h264_aac.ts")
+//! format!("{}/../{}", test_fixtures::root(), "fixtures/ts/h264-aac.ts")
 //! ```
 //!
 //! The tests cover the design spec's `multimux/src/source/file_reader.rs`
@@ -25,7 +25,7 @@ use multimux::source::file_reader::{
 };
 use transmux::{DemuxEvent, StreamingTsDemux};
 
-/// Workspace-root fixture path for a `rel` path like `"fixtures/ts/h264_aac.ts"`.
+/// Workspace-root fixture path for a `rel` path like `"fixtures/ts/h264-aac.ts"`.
 fn fixture(rel: &str) -> PathBuf {
     test_fixtures::path(rel.trim_start_matches("fixtures/"))
 }
@@ -81,7 +81,7 @@ fn probe_fixture(rel: &str) -> (container_probe::Format, container_probe::Detail
 
 #[test]
 fn ts_fixture_selects_streaming_ts_demuxer() {
-    let (format, detail) = probe_fixture("fixtures/ts/h264_aac.ts");
+    let (format, detail) = probe_fixture("fixtures/ts/h264-aac.ts");
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::StreamingTs,
@@ -91,7 +91,7 @@ fn ts_fixture_selects_streaming_ts_demuxer() {
 
 #[test]
 fn progressive_mp4_selects_progressive_demuxer() {
-    let (format, detail) = probe_fixture("fixtures/mp4/h264_high.mp4");
+    let (format, detail) = probe_fixture("fixtures/mp4/h264-high.mp4");
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::Progressive,
@@ -101,7 +101,7 @@ fn progressive_mp4_selects_progressive_demuxer() {
 
 #[test]
 fn fragmented_mp4_selects_fmp4_demuxer() {
-    let (format, detail) = probe_fixture("fixtures/mp4/cmaf/av_frag.mp4");
+    let (format, detail) = probe_fixture("fixtures/mp4/cmaf/av-frag.mp4");
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::Fmp4,
@@ -111,7 +111,7 @@ fn fragmented_mp4_selects_fmp4_demuxer() {
 
 #[test]
 fn mkv_selects_webm_demuxer() {
-    let (format, detail) = probe_fixture("fixtures/mkv/h264_aac.mkv");
+    let (format, detail) = probe_fixture("fixtures/mkv/h264-aac.mkv");
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::Webm,
@@ -121,7 +121,7 @@ fn mkv_selects_webm_demuxer() {
 
 #[test]
 fn ps_fixture_selects_ps_demuxer() {
-    let (format, detail) = probe_fixture("fixtures/ps/h264_ac3.ps");
+    let (format, detail) = probe_fixture("fixtures/ps/h264-ac3.ps");
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::Ps,
@@ -142,7 +142,7 @@ fn flv_fixture_selects_streaming_flv_demuxer() {
 #[test]
 fn unsupported_fixtures_yield_distinct_format_errors() {
     // Mxf → unsupported-format error naming Mxf.
-    let (format, detail) = probe_fixture("fixtures/mxf/op1a_mpeg2_pcm.mxf");
+    let (format, detail) = probe_fixture("fixtures/mxf/op1a-mpeg2-pcm.mxf");
     match select_demuxer(format, detail) {
         Err(FileReaderError::UnsupportedFormat { format: f }) => {
             assert_eq!(
@@ -154,7 +154,7 @@ fn unsupported_fixtures_yield_distinct_format_errors() {
     }
 
     // Wav → unsupported-format error naming Wav.
-    let (format, detail) = probe_fixture("fixtures/container-probe/pcm_s16le.wav");
+    let (format, detail) = probe_fixture("fixtures/audio/pcm-s16le.wav");
     match select_demuxer(format, detail) {
         Err(FileReaderError::UnsupportedFormat { format: f }) => {
             assert_eq!(
@@ -166,7 +166,7 @@ fn unsupported_fixtures_yield_distinct_format_errors() {
     }
 
     // ADTS AAC → unsupported-format error naming AdtsAac.
-    let (format, detail) = probe_fixture("fixtures/container-probe/aac.adts");
+    let (format, detail) = probe_fixture("fixtures/audio/aac.adts");
     match select_demuxer(format, detail) {
         Err(FileReaderError::UnsupportedFormat { format: f }) => {
             assert_eq!(
@@ -318,7 +318,7 @@ async fn timeline_dts_is_monotonic_and_matches_source_decode_order() {
     let trunk = trunk();
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
-        reader(fixture("fixtures/ts/h264_aac.ts"), false, false, None, t)
+        reader(fixture("fixtures/ts/h264-aac.ts"), false, false, None, t)
             .run()
             .await
     });
@@ -357,7 +357,7 @@ async fn timeline_dts_is_monotonic_and_matches_source_decode_order() {
         // The source's own per-track DTS sequence (decode order, unsorted)
         // equals exactly what the reader wrote — the reader preserves decode
         // order per track and loses nothing.
-        let source = source_track_dts("fixtures/ts/h264_aac.ts", *track_id);
+        let source = source_track_dts("fixtures/ts/h264-aac.ts", *track_id);
         assert_eq!(
             &source, seq,
             "track {track_id} decode order must match the source's own DTS sequence"
@@ -368,7 +368,7 @@ async fn timeline_dts_is_monotonic_and_matches_source_decode_order() {
     // carries.
     assert_eq!(
         drained.len(),
-        source_sample_count("fixtures/ts/h264_aac.ts"),
+        source_sample_count("fixtures/ts/h264-aac.ts"),
         "reader must write every source sample"
     );
 }
@@ -395,7 +395,7 @@ async fn loop_preserves_dts_monotonicity_across_boundary() {
     let trunk = trunk();
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
-        reader(fixture("fixtures/ts/h264_aac.ts"), true, false, Some(2), t)
+        reader(fixture("fixtures/ts/h264-aac.ts"), true, false, Some(2), t)
             .run()
             .await
     });
@@ -420,7 +420,7 @@ async fn loop_preserves_dts_monotonicity_across_boundary() {
     for (track_id, seq) in &by_track {
         // Source's own per-loop DTS sequence for this track, to locate the
         // loop boundary in its published seq.
-        let source = source_track_dts("fixtures/ts/h264_aac.ts", *track_id);
+        let source = source_track_dts("fixtures/ts/h264-aac.ts", *track_id);
         let per_loop = source.len();
 
         assert!(
@@ -484,13 +484,13 @@ fn source_sample_count(rel: &str) -> usize {
 /// would dump every sample instantly).
 #[tokio::test]
 async fn pacing_does_not_dump_the_whole_file_instantly() {
-    let total = source_sample_count("fixtures/ts/h264_aac.ts");
+    let total = source_sample_count("fixtures/ts/h264-aac.ts");
     assert!(total > 0);
 
     let trunk = trunk();
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
-        reader(fixture("fixtures/ts/h264_aac.ts"), false, true, None, t)
+        reader(fixture("fixtures/ts/h264-aac.ts"), false, true, None, t)
             .run()
             .await
     });
@@ -661,7 +661,7 @@ fn fixture_content_duration_secs(rel: &str) -> f64 {
 /// advance (and a `touch`) makes it pass again.
 #[tokio::test]
 async fn paced_loop_second_pass_waits_for_content_duration() {
-    let content = fixture_content_duration_secs("fixtures/ts/h264_aac.ts");
+    let content = fixture_content_duration_secs("fixtures/ts/h264-aac.ts");
     assert!(
         content > 0.0,
         "fixture must carry a positive content duration"
@@ -671,7 +671,7 @@ async fn paced_loop_second_pass_waits_for_content_duration() {
     let t = trunk.clone();
     let started = std::time::Instant::now();
     let handle = tokio::spawn(async move {
-        reader(fixture("fixtures/ts/h264_aac.ts"), true, true, Some(2), t)
+        reader(fixture("fixtures/ts/h264-aac.ts"), true, true, Some(2), t)
             .run()
             .await
     });
@@ -701,7 +701,7 @@ async fn second_reader_over_same_trunk_fails_with_writer_unavailable() {
     let _writer = trunk.writer().expect("first writer must be claimable");
 
     let result = reader(
-        fixture("fixtures/ts/h264_aac.ts"),
+        fixture("fixtures/ts/h264-aac.ts"),
         false,
         false,
         None,
@@ -768,7 +768,7 @@ async fn directory_path_yields_not_a_regular_file() {
 // ---------------------------------------------------------------------------
 // Decode-order invariant on a genuinely B-frame-bearing fixture — the reader
 // must publish each track in DTS (decode) order, never presentation order.
-// `fixtures/mp4/progressive/av_prog.mp4` carries video with `dts != pts`
+// `fixtures/mp4/progressive/av-prog.mp4` carries video with `dts != pts`
 // (B-frame reordering) and audio with `dts == pts`, so a presentation-order
 // publish would emit referenced P-frames after the B-frames that reference
 // them and produce a non-monotonic DTS sequence `transmux` would mux wrong.
@@ -794,7 +794,7 @@ async fn b_frame_fixture_publishes_decode_order_dts() {
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
         reader(
-            fixture("fixtures/mp4/progressive/av_prog.mp4"),
+            fixture("fixtures/mp4/progressive/av-prog.mp4"),
             false,
             false,
             None,

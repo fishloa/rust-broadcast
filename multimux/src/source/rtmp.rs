@@ -923,12 +923,11 @@ mod tests {
 
     /// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
     /// H.264+AAC) — copied into this crate for hermeticity, see
-    /// `../fixtures/multimux/PROVENANCE.md`. Original: `../fixtures/multimux/rtmp-obs-publish.bin`.
-    const FIXTURE: &str = "multimux/rtmp-obs-publish.bin";
+    /// `../fixtures/ts/PROVENANCE.md`. Original: `../fixtures/rtmp/obs-publish.bin`.
+    const FIXTURE: &str = "rtmp/obs-publish.bin";
 
     fn load_fixture() -> Vec<u8> {
-        std::fs::read(test_fixtures::path(FIXTURE))
-            .expect("read ../fixtures/multimux/rtmp-obs-publish.bin")
+        std::fs::read(test_fixtures::path(FIXTURE)).expect("read ../fixtures/rtmp/obs-publish.bin")
     }
 
     /// Reserves a free loopback TCP port then immediately releases it, so a

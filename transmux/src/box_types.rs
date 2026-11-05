@@ -1196,7 +1196,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_known_boxes() {
-        let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
+        let path = test_fixtures::path("mp4/h264-aac-frag.mp4");
         let data = std::fs::read(path).expect("fixture file must exist");
         let original_len = data.len();
 
@@ -1434,7 +1434,7 @@ mod largesize_tests {
     }
 
     fn fixture(name: &str) -> Vec<u8> {
-        test_fixtures::read(&format!("transmux/{name}"))
+        test_fixtures::read(&format!("mp4/{name}"))
     }
 
     fn top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
@@ -1461,7 +1461,7 @@ mod largesize_tests {
     /// and re-serializes in the compact form to the original bytes.
     #[test]
     fn moov_round_trips_through_the_largesize_form() {
-        let data = fixture("h264_aac_prog.mp4");
+        let data = fixture("h264-aac-prog.mp4");
         let orig = top_box(&data, b"moov");
         let moov = MovieBox::parse(orig).unwrap();
 
@@ -1508,7 +1508,7 @@ mod largesize_tests {
     /// Same for a fragment's `moof` (mfhd/traf/trun).
     #[test]
     fn moof_round_trips_through_the_largesize_form() {
-        let data = fixture("h264_aac_frag.mp4");
+        let data = fixture("h264-aac-frag.mp4");
         let orig = top_box(&data, b"moof");
         let moof = MovieFragmentBox::parse_body(&orig[box_header_len(orig).unwrap()..]).unwrap();
         let forced = {
@@ -1540,17 +1540,17 @@ mod largesize_tests {
     fn every_fixture_moov_round_trips_through_the_largesize_form() {
         let mut checked = 0;
         for rel in [
-            "../fixtures/transmux/h264_aac_prog.mp4",
-            "../fixtures/transmux/h264_aac_frag.mp4",
-            "../fixtures/transmux/h264_cenc.mp4",
-            "../fixtures/transmux/h264_cbcs.mp4",
-            "../fixtures/transmux/hevc_frag.mp4",
-            "../fixtures/transmux/mp4/cmaf/av_frag.mp4",
-            "../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4",
-            "../fixtures/transmux/mp4/cmaf/av_aac_subtitle_frag.mp4",
-            "../fixtures/transmux/mp4/cenc_boxes/aac_cenc.mp4",
-            "../fixtures/transmux/mp4/cenc_boxes/pcm_clear.mp4",
-            "../fixtures/transmux/mp4/cenc_boxes/v1_mvhd.mp4",
+            "../fixtures/mp4/h264-aac-prog.mp4",
+            "../fixtures/mp4/h264-aac-frag.mp4",
+            "../fixtures/mp4/h264-cenc.mp4",
+            "../fixtures/mp4/h264-cbcs.mp4",
+            "../fixtures/mp4/hevc-frag.mp4",
+            "../fixtures/mp4/cmaf-av-subtitle/av-frag.mp4",
+            "../fixtures/mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
+            "../fixtures/mp4/cmaf-av-subtitle/av-aac-subtitle-frag.mp4",
+            "../fixtures/mp4/cenc-boxes/aac-cenc.mp4",
+            "../fixtures/mp4/cenc-boxes/pcm-clear.mp4",
+            "../fixtures/mp4/cenc-boxes/v1-mvhd.mp4",
         ] {
             let data = read_path(rel);
             let Some(orig) = find_top_box(&data, b"moov") else {
@@ -1584,12 +1584,12 @@ mod largesize_tests {
     fn every_fixture_moof_round_trips_through_the_largesize_form() {
         let mut checked = 0;
         for rel in [
-            "../fixtures/transmux/h264_aac_frag.mp4",
-            "../fixtures/transmux/h264_cenc.mp4",
-            "../fixtures/transmux/h264_cbcs.mp4",
-            "../fixtures/transmux/hevc_frag.mp4",
-            "../fixtures/transmux/mp4/cmaf/av_frag.mp4",
-            "../fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4",
+            "../fixtures/mp4/h264-aac-frag.mp4",
+            "../fixtures/mp4/h264-cenc.mp4",
+            "../fixtures/mp4/h264-cbcs.mp4",
+            "../fixtures/mp4/hevc-frag.mp4",
+            "../fixtures/mp4/cmaf-av-subtitle/av-frag.mp4",
+            "../fixtures/mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
         ] {
             let data = read_path(rel);
             let Some(orig) = find_top_box(&data, b"moof") else {

@@ -24,7 +24,7 @@ used elsewhere in the workspace.
   job.
 - `splice::condition_splice_point` — splice-point conditioning against real
   candidate boundaries, verified against a real, non-IDR-aligned SCTE-35 cue
-  (`fixtures/scte35-ssai/`, DASH-IF `livesim2`, Apache-2.0).
+  (`fixtures/scte35/`, DASH-IF `livesim2`, Apache-2.0).
 - `playlist::InterstitialDateRange` / `playlist::render_session_playlist` —
   per-session HLS Interstitial (`EXT-X-DATERANGE
   CLASS="com.apple.hls.interstitial"`, draft-pantos-hls-rfc8216bis Appendix D)

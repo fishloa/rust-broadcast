@@ -110,7 +110,7 @@ More: `cargo run -p st377-1 --example parse_partition`, `--example build_preface
   `ProductVersion`, `UlBytes` and UTF-16BE helpers.
 - **`op1a`**: `OP1A_UL_PREFIX`, `Op1aQualifier`, `is_op1a`, `op1a_ul`.
 - Validated against a real ffmpeg-muxed OP1a file
-  (`../fixtures/mxf/st377-1/op1a_mpeg2_pcm.mxf`: all 25 partition packs round-trip
+  (`../fixtures/mxf/smpte-st377/op1a-mpeg2-pcm.mxf`: all 25 partition packs round-trip
   byte-identically) and a small synthetic file.
 
 ## Design notes

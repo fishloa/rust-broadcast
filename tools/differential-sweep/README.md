@@ -45,7 +45,7 @@ Every probe runs in its own thread under `catch_unwind` and a per-probe timeout
 | `dvb-t2mi.pump` | dvb-t2mi | every PID with T2-MI-looking traffic: packet counts, per-type counts, parse errors, individual addressing, `InnerTsRecovery` output SHA-256 |
 | `mpeg-ts.packets` | mpeg-ts | packet/PID/PCR/CC counts, `TsResync` counts at three chunkings |
 | `scte35.sections` | scte35-splice | every SCTE-35 section (PMT 0x86 PIDs, or a `.bin`): parse ok/err, re-serialize identity |
-| `st291.parse` | st291 | `anc.bin`, `anc_rtp.bin` |
+| `st291.parse` | st291 | `anc.bin`, `anc-rtp.bin` |
 | `media-doctor.findings` | media-doctor | the ten TS diagnostics over TS files; ISOBMFF/HLS/MPD checkers: findings by rule + SHA-256 of the list |
 | `hls.playlist` / `dash.mpd` | broadcast-hls, transmux | `.m3u8` parse + re-render identity, `.mpd` parse |
 | `cli.dvb-tools` / `cli.ts-fix` | dvb-tools, ts-fix | only with `--bin-dir`: subprocess runs (`dump --json`, `services`, `epg`, `pids`, `t2mi`; `--repair-continuity`, `--regen-psi`, `--drop-nulls`, combo, `--restamp-pcr-interpolate`) with exit code + stdout/output SHA-256, for TS files up to 30 MB |

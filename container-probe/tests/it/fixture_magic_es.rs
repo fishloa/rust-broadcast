@@ -45,7 +45,7 @@ fn flv_is_flv() {
 #[test]
 fn wav_is_wav() {
     assert_identified_as(
-        "fixtures/container-probe/pcm_s16le.wav",
+        "fixtures/audio/pcm-s16le.wav",
         Format::Wav,
         Confidence::STRONG,
     );
@@ -53,17 +53,13 @@ fn wav_is_wav() {
 
 #[test]
 fn ogg_is_ogg() {
-    assert_identified_as(
-        "fixtures/container-probe/opus.ogg",
-        Format::Ogg,
-        Confidence::STRONG,
-    );
+    assert_identified_as("fixtures/audio/opus.ogg", Format::Ogg, Confidence::STRONG);
 }
 
 #[test]
 fn asf_is_asf() {
     assert_identified_as(
-        "fixtures/container-probe/video.asf",
+        "fixtures/candidates/video.asf",
         Format::Asf,
         Confidence::STRONG,
     );
@@ -76,7 +72,7 @@ fn asf_is_asf() {
 #[test]
 fn aac_adts_is_adts() {
     assert_identified_as(
-        "fixtures/container-probe/aac.adts",
+        "fixtures/audio/aac.adts",
         Format::AdtsAac,
         Confidence::LATTICE_STRONG,
     );
@@ -85,7 +81,7 @@ fn aac_adts_is_adts() {
 #[test]
 fn mp3_is_mp3() {
     assert_identified_as(
-        "fixtures/container-probe/audio.mp3",
+        "fixtures/audio/audio.mp3",
         Format::Mp3,
         Confidence::LATTICE_STRONG,
     );
@@ -94,7 +90,7 @@ fn mp3_is_mp3() {
 #[test]
 fn annexb_is_annexb() {
     assert_identified_as(
-        "fixtures/container-probe/h264.annexb",
+        "fixtures/candidates/h264.annexb",
         Format::AnnexB,
         Confidence::LATTICE_STRONG,
     );
@@ -107,7 +103,7 @@ fn annexb_is_annexb() {
 
 #[test]
 fn suppression_ts_carries_adts_and_mp3() {
-    assert_identified("fixtures/ts/h264_aac.ts", Format::MpegTs);
+    assert_identified("fixtures/ts/h264-aac.ts", Format::MpegTs);
 }
 
 #[test]
@@ -117,24 +113,24 @@ fn suppression_big_ts() {
 
 #[test]
 fn suppression_mp4() {
-    assert_identified("fixtures/mp4/h264_high.mp4", Format::Isobmff);
+    assert_identified("fixtures/mp4/h264-high.mp4", Format::Isobmff);
 }
 
 #[test]
 fn suppression_mkv() {
-    assert_identified("fixtures/mkv/h264_aac.mkv", Format::Matroska);
+    assert_identified("fixtures/mkv/h264-aac.mkv", Format::Matroska);
 }
 
 /// MPEG-PS begins `00 00 01 BA` — a start code whose NAL header `0xBA` has
 /// `forbidden_zero_bit` set, so it must NOT be Annex B. It is MpegPs (STRUCTURAL).
 #[test]
 fn suppression_ps_starts_with_start_code_but_is_not_annexb() {
-    assert_identified("fixtures/ps/h264_ac3.ps", Format::MpegPs);
+    assert_identified("fixtures/ps/h264-ac3.ps", Format::MpegPs);
 }
 
 #[test]
 fn suppression_mxf_carries_annexb_start_codes() {
-    assert_identified("fixtures/mxf/op1a_mpeg2_pcm.mxf", Format::Mxf);
+    assert_identified("fixtures/mxf/op1a-mpeg2-pcm.mxf", Format::Mxf);
 }
 
 /// The assembly-level half of the "an ES prober fires directly on a container's

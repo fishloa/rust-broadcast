@@ -18,9 +18,9 @@
 //! and byte-identical sample round-trip, both checked in this crate without
 //! an external decoder), but not decodable by a real one. This harness needs
 //! `ffprobe` to genuinely *decode* the reconstruction, so it demuxes the
-//! workspace's real captured fixture (`fixtures/ts/h264_aac.ts` — Main
+//! workspace's real captured fixture (`fixtures/ts/h264-aac.ts` — Main
 //! profile, 320x240, 25 fps, 75 real video frames, ISO/IEC 13818-1; see
-//! `fixtures/ts/CODEC-ORACLE.md`) via `TsDemux` and feeds those real samples
+//! `fixtures/ts/PROVENANCE.md`) via `TsDemux` and feeds those real samples
 //! through the exact same `LlHlsSegmenter` -> `RouteHandle` -> `LlHlsOutput`
 //! origin stack `glass_to_glass.rs` uses, live-paced at the fixture's own
 //! frame rate. Audio is left out: `multimux::output::llhls::LlHlsOutput`
@@ -60,7 +60,7 @@ use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec, TsDemux};
 // ── Fixture + scratch-dir plumbing (mirrors transmux/tests/golden_gate.rs) ──
 
 fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264_aac.ts")
+    test_fixtures::path("ts/h264-aac.ts")
 }
 
 fn scratch_dir(name: &str) -> PathBuf {
@@ -72,19 +72,19 @@ fn scratch_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// Demux the real `h264_aac.ts` fixture's AVC video track, forcing its
+/// Demux the real `h264-aac.ts` fixture's AVC video track, forcing its
 /// `track_id` to [`DEFAULT_TRACK_ID`] — the fixed single track
 /// `multimux::output::llhls::LlHlsOutput` renders regardless of the
 /// source's own PID-derived track_id (see `glass_to_glass.rs`'s
 /// `TRACK_ID` const, which matches for the same reason).
 fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
-    let ts = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
-    let media = TsDemux::new().demux(&ts).expect("demux h264_aac.ts");
+    let ts = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
+    let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
     let video = media
         .tracks
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-        .expect("h264_aac.ts must carry an AVC video track");
+        .expect("h264-aac.ts must carry an AVC video track");
     let mut spec = video.spec;
     spec.track_id = DEFAULT_TRACK_ID;
     (spec, video.samples)
@@ -212,8 +212,8 @@ const PART_TARGET_MS: u32 = 120;
 const WINDOW_SEGMENTS: usize = 8;
 
 /// Feed every sample in `samples` into `store` via a real
-/// `transmux::ll_hls::LlHlsSegmenter`, paced at `h264_aac.ts`'s own real
-/// frame rate (25 fps, `fixtures/ts/CODEC-ORACLE.md`) — a live-shaped
+/// `transmux::ll_hls::LlHlsSegmenter`, paced at `h264-aac.ts`'s own real
+/// frame rate (25 fps, `fixtures/ts/PROVENANCE.md`) — a live-shaped
 /// producer, not a batch dump, exactly as `glass_to_glass.rs`'s own
 /// `run_live_producer`.
 async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Vec<Sample>) {
@@ -229,7 +229,7 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init segment builds"));
 
-    // h264_aac.ts is a real 25 fps capture (CODEC-ORACLE.md) -> 40ms/frame.
+    // h264-aac.ts is a real 25 fps capture (CODEC-ORACLE.md) -> 40ms/frame.
     let frame_interval = Duration::from_millis(40);
     for sample in samples {
         seg.push(track_id, sample).expect("push succeeds");
@@ -303,14 +303,14 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
     let fed_count = fed_samples.len();
     assert!(
         fed_count > 0,
-        "h264_aac.ts must demux to at least one video sample"
+        "h264-aac.ts must demux to at least one video sample"
     );
 
     let (store, playlist_url, server) = start_ll_origin(spec.clone()).await;
     let producer = tokio::spawn(run_live_producer(store, spec.clone(), fed_samples.clone()));
 
     // HANG GUARD (issue #807): 20s on a ~3s real-time-paced fixture playback
-    // (h264_aac.ts, 25fps). No latency claim here — this file's job is
+    // (h264-aac.ts, 25fps). No latency claim here — this file's job is
     // decode-correctness via ffprobe, not timing; only fails a genuine
     // deadlock rather than hanging CI forever.
     let (init_bytes, got_samples, stats) = tokio::time::timeout(Duration::from_secs(20), async {

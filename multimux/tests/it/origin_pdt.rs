@@ -463,7 +463,7 @@ fn file_config(
         routes: vec![Route {
             name: "cam".to_string(),
             input: InputSpec::File {
-                path: test_fixtures::path("ts/h264_aac.ts")
+                path: test_fixtures::path("ts/h264-aac.ts")
                     .to_string_lossy()
                     .into_owned(),
                 loop_file: false,

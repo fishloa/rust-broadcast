@@ -1,6 +1,6 @@
 //! Fixture-driven EBU Teletext -> WebVTT test (issue #666).
 //!
-//! Fixture: `fixtures/teletext/teletext_subtitle_synthetic.txt` — a
+//! Fixture: `fixtures/subtitles/teletext-subtitle-synthetic.txt` — a
 //! synthetic-but-spec-real EN 300 706 Teletext subtitle page (magazine 8,
 //! page 0x88, header + two display rows), generated once and committed (see
 //! the fixture file's own header comment for the exact page plan, the
@@ -19,14 +19,14 @@ use timed_metadata::event::MediaTime;
 use timed_metadata::webvtt::{Cue, TeletextCueExtractor, write_document};
 
 fn fixture_path() -> std::path::PathBuf {
-    test_fixtures::path("teletext/teletext_subtitle_synthetic.txt")
+    test_fixtures::path("subtitles/teletext-subtitle-synthetic.txt")
 }
 
 /// Parse the fixture into `(pts_90k, 44-byte TeletextDataField wire)` frames,
 /// skipping comment/blank lines.
 fn load_frames() -> Vec<(u64, Vec<u8>)> {
     let text =
-        fs::read_to_string(fixture_path()).expect("read teletext_subtitle_synthetic.txt fixture");
+        fs::read_to_string(fixture_path()).expect("read teletext-subtitle-synthetic.txt fixture");
     let mut frames = Vec::new();
     for line in text.lines() {
         let line = line.trim();

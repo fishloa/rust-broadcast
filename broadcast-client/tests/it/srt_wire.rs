@@ -15,8 +15,8 @@ use broadcast_client::{Config, Event, SrtEncryption, SrtKeyLength};
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::SrtListener;
 
-const SMALL: &str = "ts/h264_aac.ts";
-const LIVE_CAPTURE: &str = "zenith-live/tf-1-8MB.ts";
+const SMALL: &str = "ts/h264-aac.ts";
+const LIVE_CAPTURE: &str = "ts/live-channels/tf-1-8-mb.ts";
 const LIVE_PREFIX_BYTES: usize = 1_500_000;
 const FAST_BPS: u64 = 100_000_000;
 const SEND_INTERVAL: Duration = Duration::from_millis(2);

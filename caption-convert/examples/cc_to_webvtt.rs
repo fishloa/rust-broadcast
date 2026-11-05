@@ -1,4 +1,4 @@
-//! Convert the real CEA-608 CC1 fixture (`fixtures/cc/cea608_cc1_synthetic.txt`)
+//! Convert the real CEA-608 CC1 fixture (`fixtures/captions/cea608-cc1-synthetic.txt`)
 //! to a standalone WebVTT document, using `caption_convert::Cea608ToWebVtt`
 //! -- a raw-`cc_data()`-bytes-in wrapper over `timed-metadata`'s
 //! roll-up/pop-on/paint-on cue extraction (issue #568).
@@ -10,14 +10,14 @@ use cc_data::decode::Cea608Channel;
 use std::fs;
 
 fn fixture_path() -> std::path::PathBuf {
-    test_fixtures::path("cc/cea608_cc1_synthetic.txt")
+    test_fixtures::path("captions/cea608-cc1-synthetic.txt")
 }
 
 /// Parse the fixture into `(pts_90k, cc_data_bytes)` frames, skipping
 /// comment/blank lines -- the same format `timed-metadata`'s own fixture
 /// test uses (see its doc comment for the fixture's provenance).
 fn load_frames() -> Vec<(u64, Vec<u8>)> {
-    let text = fs::read_to_string(fixture_path()).expect("read cea608_cc1_synthetic.txt fixture");
+    let text = fs::read_to_string(fixture_path()).expect("read cea608-cc1-synthetic.txt fixture");
     let mut frames = Vec::new();
     for line in text.lines() {
         let line = line.trim();

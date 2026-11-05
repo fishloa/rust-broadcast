@@ -1527,7 +1527,7 @@ mod loop_tests {
 
     /// Demux a real TS fixture into a `ParsedFile`.
     pub(super) async fn demux_fixture() -> ParsedFile {
-        let path = test_fixtures::path("ts/h264_aac.ts");
+        let path = test_fixtures::path("ts/h264-aac.ts");
         let trunk_cfg = crate::source::driver_trunk_config(8);
         let scratch = media_plane::trunk::Trunk::new(trunk_cfg);
         let reader = FileReader::new(
@@ -1716,7 +1716,7 @@ mod playout_tests {
     /// going), not resolve to `Cancelled`.
     #[tokio::test]
     async fn dropping_a_spawned_reader_cancels_the_run() {
-        let fixture = test_fixtures::path("ts/h264_aac.ts");
+        let fixture = test_fixtures::path("ts/h264-aac.ts");
         let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
         let reader = FileReader::new(
             FileReaderConfig::new(fixture, true, trunk)
@@ -1747,7 +1747,7 @@ mod playout_tests {
     /// `impl Drop for SpawnedReader` makes the task run forever and times out.
     #[tokio::test]
     async fn dropping_a_spawned_reader_without_cancel_stops_the_run() {
-        let fixture = test_fixtures::path("ts/h264_aac.ts");
+        let fixture = test_fixtures::path("ts/h264-aac.ts");
         let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
         let reader = FileReader::new(
             // `loop_file = true`: a detached task would never end on its own.

@@ -674,7 +674,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     exception.
   - Two real-fixture examples (`examples/ingest_trunk_playback.rs`,
     `examples/byte_tap_wire_observer.rs`), both reading the shared
-    `fixtures/ts/h264_aac.ts` real broadcast capture via `std::fs`, not
+    `fixtures/ts/h264-aac.ts` real broadcast capture via `std::fs`, not
     `include_bytes!` or synthetic bytes.
   - `.github/workflows/release-media-plane.yml`: this crate's own release
     lane, modelled on `release-transmux.yml`.

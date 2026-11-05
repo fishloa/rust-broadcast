@@ -896,7 +896,7 @@ fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
 
     // AVC + AAC: `fixtures/ts/h264/main.ts` is video-only, so this test needs
     // the A/V capture.
-    let path = test_fixtures::path("ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264-aac.ts");
     if !path.exists() {
         eprintln!("cenc_mux tests: SKIPPED — {path:?} not found.");
         return;
@@ -904,7 +904,7 @@ fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
     let bytes = std::fs::read(&path).expect("read fixture");
     let media = TsDemux::new()
         .unpackage(bytes.as_slice())
-        .expect("demux h264_aac.ts");
+        .expect("demux h264-aac.ts");
     // AVC video + AAC audio: two tracks, so the moof carries two trafs.
     let mut media = media
         .select_tracks_by(|t| {
@@ -1064,7 +1064,7 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
 /// player fed ciphertext to the AAC decoder. Both entries must stay protected.
 #[test]
 fn two_protect_calls_keep_both_enca_and_encv_entries() {
-    let path = test_fixtures::path("ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264-aac.ts");
     if !path.exists() {
         eprintln!("cenc_mux tests: SKIPPED — {path:?} not found.");
         return;
@@ -1072,7 +1072,7 @@ fn two_protect_calls_keep_both_enca_and_encv_entries() {
     let bytes = std::fs::read(&path).expect("read fixture");
     let media = TsDemux::new()
         .unpackage(bytes.as_slice())
-        .expect("demux h264_aac.ts");
+        .expect("demux h264-aac.ts");
     let mut media = media
         .select_tracks_by(|t| {
             matches!(t.spec.config, CodecConfig::Avc { .. })

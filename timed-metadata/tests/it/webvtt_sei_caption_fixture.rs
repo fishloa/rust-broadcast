@@ -13,7 +13,7 @@
 //!
 //! - **Synthetic (always runs):** the *same* per-frame `cc_data()` byte
 //!   sequence as `webvtt_cc_fixture.rs`'s committed
-//!   `fixtures/cc/cea608_cc1_synthetic.txt` (#568's pop-on "HELLO" / roll-up
+//!   `fixtures/captions/cea608-cc1-synthetic.txt` (#568's pop-on "HELLO" / roll-up
 //!   "HI"/"BYE" / paint-on "OK" plan), each frame re-wrapped in an ATSC A/53
 //!   caption SEI NAL here instead of being fed as raw `cc_data()`. Decoding
 //!   through the SEI-unwrap step must reproduce **exactly** the same cues as
@@ -116,12 +116,12 @@ fn assert_valid_webvtt(doc: &str) {
 // ---------------------------------------------------------------------------
 
 fn synthetic_fixture_path() -> PathBuf {
-    test_fixtures::path("cc/cea608_cc1_synthetic.txt")
+    test_fixtures::path("captions/cea608-cc1-synthetic.txt")
 }
 
 fn load_synthetic_frames() -> Vec<(u64, Vec<u8>)> {
     let text = fs::read_to_string(synthetic_fixture_path())
-        .expect("read cea608_cc1_synthetic.txt fixture (shared with issue #568)");
+        .expect("read cea608-cc1-synthetic.txt fixture (shared with issue #568)");
     let mut frames = Vec::new();
     for line in text.lines() {
         let line = line.trim();

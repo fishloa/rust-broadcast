@@ -4,12 +4,58 @@
 //! 2. no `.rs` outside test-fixtures reads the retired `.test-streams/` tier;
 //! 3. no `.rs` outside test-fixtures include_bytes!/include_str!s a fixture;
 //! 4. no `.rs` outside test-fixtures/fuzz/tools/workspace-guards builds a
-//!    fixture path by hand.
+//!    fixture path by hand;
+//! 5. the directories directly under `fixtures/` and `private/fixtures/` are
+//!    a subset of `TOPIC_DIRS` (see `docs/FIXTURES.md`);
+//! 6. no tracked file matches `*/tests/golden/*` (goldens live under
+//!    `fixtures/golden/<topic>/`).
 
 use std::fs;
 use std::path::Path;
 
 const MANIFEST_DIR_NEEDLE: &str = concat!("CARGO", "_MANIFEST_DIR");
+
+const FIXTURE_TIERS: &[&str] = &["fixtures", "private/fixtures"];
+
+const TOPIC_DIRS: &[&str] = &[
+    "ts",
+    "ps",
+    "pes",
+    "mp4",
+    "mkv",
+    "flv",
+    "mxf",
+    "hls",
+    "dash",
+    "smooth",
+    "si",
+    "scte35",
+    "simulcrypt",
+    "mabr",
+    "atsc3",
+    "cpix",
+    "rtp",
+    "rtsp",
+    "rtmp",
+    "srt",
+    "rist",
+    "webrtc",
+    "flute",
+    "ule",
+    "t2mi",
+    "bbframe",
+    "http",
+    "audio",
+    "video",
+    "captions",
+    "subtitles",
+    "crypto",
+    "tls",
+    "logs",
+    "suites",
+    "candidates",
+    "golden",
+];
 
 fn skip_dir(name: &str) -> bool {
     matches!(
@@ -236,6 +282,42 @@ pub fn scan_include_bytes_fixtures(root: &Path) -> Vec<String> {
     bad
 }
 
+pub fn scan_fixture_topic_dirs(root: &Path) -> Vec<String> {
+    let mut bad = Vec::new();
+    for tier in FIXTURE_TIERS {
+        let Ok(rd) = fs::read_dir(root.join(tier)) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.path().is_dir() && !TOPIC_DIRS.contains(&name.as_str()) {
+                bad.push(format!("{tier}/{name}"));
+            }
+        }
+    }
+    bad.sort();
+    bad
+}
+
+pub fn scan_tests_golden_paths(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    walk_files(root, &mut files);
+    let mut bad = Vec::new();
+    for p in files {
+        let rel = p
+            .strip_prefix(root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let parts: Vec<&str> = rel.split('/').collect();
+        if parts.windows(2).any(|w| w == ["tests", "golden"]) {
+            bad.push(rel);
+        }
+    }
+    bad.sort();
+    bad
+}
+
 #[test]
 fn no_tracked_files_under_crate_tests_fixtures() {
     let root = workspace_guards::workspace_root();
@@ -278,6 +360,53 @@ fn no_include_bytes_fixtures_outside_test_fixtures() {
         ".rs files outside test-fixtures must not include_bytes!/include_str! a fixture:\n{}",
         bad.join("\n")
     );
+}
+
+#[test]
+fn fixture_topic_dirs_are_subset_of_allowed_topics() {
+    let root = workspace_guards::workspace_root();
+    let bad = scan_fixture_topic_dirs(&root);
+    assert!(
+        bad.is_empty(),
+        "directories directly under fixtures/ or private/fixtures/ must be in the allowed topic list:\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
+fn no_tracked_file_under_tests_golden() {
+    let root = workspace_guards::workspace_root();
+    let bad = scan_tests_golden_paths(&root);
+    assert!(
+        bad.is_empty(),
+        "no tracked file may match */tests/golden/* (goldens live under fixtures/golden/<topic>/):\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
+fn detector_bites_fixture_topic_dir() {
+    let tmp = std::env::temp_dir().join("fixtures_one_home_bite_topic");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("fixtures/ts")).unwrap();
+    fs::create_dir_all(tmp.join("fixtures/transmux")).unwrap();
+    fs::create_dir_all(tmp.join("private/fixtures/csa")).unwrap();
+    let bad = scan_fixture_topic_dirs(&tmp);
+    assert_eq!(bad, ["fixtures/transmux", "private/fixtures/csa"]);
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn detector_bites_tests_golden_path() {
+    let tmp = std::env::temp_dir().join("fixtures_one_home_bite_golden");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("foo/tests/golden")).unwrap();
+    fs::write(tmp.join("foo/tests/golden/x.txt"), b"x").unwrap();
+    fs::create_dir_all(tmp.join("fixtures/golden/hls")).unwrap();
+    fs::write(tmp.join("fixtures/golden/hls/y.txt"), b"y").unwrap();
+    let bad = scan_tests_golden_paths(&tmp);
+    assert_eq!(bad, ["foo/tests/golden/x.txt"]);
+    let _ = fs::remove_dir_all(&tmp);
 }
 
 #[test]

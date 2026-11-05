@@ -20,7 +20,7 @@
 //!
 //! Reuses the exact same real, ffmpeg-encoded fixture and live-paced
 //! producer shape as `hls-runtime/tests/golden_gate.rs`
-//! (`fixtures/ts/h264_aac.ts`, 320x240 Main-profile H.264 @ 25 fps, 3.0 s /
+//! (`fixtures/ts/h264-aac.ts`, 320x240 Main-profile H.264 @ 25 fps, 3.0 s /
 //! 75 frames, demuxed via `TsDemux`) fed through the same real
 //! `transmux::ll_hls::LlHlsSegmenter` that feeds the shared `RouteHandle` in
 //! production -- so a real browser must genuinely decode real video, not an
@@ -66,7 +66,7 @@ const MIN_CURRENT_TIME_SECS: f64 = 1.8;
 const HARNESS_TIMEOUT_MS: u64 = 20_000;
 
 fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264_aac.ts")
+    test_fixtures::path("ts/h264-aac.ts")
 }
 
 fn assets_dir() -> PathBuf {
@@ -94,19 +94,19 @@ fn harness_ready() -> bool {
         && assets_dir().join("node_modules/playwright").is_dir()
 }
 
-/// Demux `h264_aac.ts`'s real AVC video track -- same fixture/shape
+/// Demux `h264-aac.ts`'s real AVC video track -- same fixture/shape
 /// `hls-runtime/tests/golden_gate.rs` uses, forced onto
 /// `hls_runtime::server::DEFAULT_TRACK_ID` so the shared store's
 /// filenames (`init-1.mp4`/`seg-1-<N>.m4s`) match what the LL-DASH
 /// `SegmentTemplate` addresses.
 fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
-    let ts = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
-    let media = TsDemux::new().demux(&ts).expect("demux h264_aac.ts");
+    let ts = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
+    let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
     let video = media
         .tracks
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-        .expect("h264_aac.ts must carry an AVC video track");
+        .expect("h264-aac.ts must carry an AVC video track");
     let mut spec = video.spec;
     spec.track_id = hls_runtime::server::DEFAULT_TRACK_ID;
     (spec, video.samples)
@@ -251,7 +251,7 @@ async fn dashjs_low_latency_playback_against_real_ll_dash_origin() {
     let (spec, fed_samples) = real_video_track_and_samples();
     assert!(
         !fed_samples.is_empty(),
-        "h264_aac.ts must demux to at least one video sample"
+        "h264-aac.ts must demux to at least one video sample"
     );
 
     let (store, manifest_url, server) = start_ll_dash_origin(spec.clone()).await;

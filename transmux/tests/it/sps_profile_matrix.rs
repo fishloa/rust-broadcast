@@ -24,7 +24,7 @@
 //! | h264/high10.ts                   | 110     | 13    | 320x240   | yuv420p10le   | progressive |
 //! | h264/high422.ts                  | 122     | 13    | 320x240   | yuv422p       | progressive |
 //! | h264/high444.ts                  | 244     | 13    | 320x240   | yuv444p       | progressive |
-//! | h264/high_1080_cropped.ts        | 100     | 40    | 1920x1080 | yuv420p       | progressive |
+//! | h264/high-1080-cropped.ts        | 100     | 40    | 1920x1080 | yuv420p       | progressive |
 //! | h264/interlaced.ts               | 100     | 30    | 720x576   | yuv420p       | tt (interlaced) |
 //! | hevc/main.ts                     | Main(1) | 60    | 320x240   | yuv420p       | unknown     |
 //! | hevc/main10.ts                   | Main10(2)| 60   | 320x240   | yuv420p10le   | unknown     |
@@ -142,7 +142,7 @@ const H264_ORACLE: &[Oracle] = &[
         interlaced: false,
     },
     Oracle {
-        file: "high_1080_cropped.ts",
+        file: "high-1080-cropped.ts",
         profile: 100,
         level: 40,
         width: 1920,

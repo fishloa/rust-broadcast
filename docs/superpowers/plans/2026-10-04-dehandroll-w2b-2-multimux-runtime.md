@@ -1289,7 +1289,7 @@ git add multimux && git commit -m "refactor(multimux): one generic ingest scaffo
 
 **What is actually unbounded on main (verified, so the tests target the right thing).** `drive_push` already bounds a stalled FLUSH at `PUSH_FLUSH_TIMEOUT` = 10 s and reconnects (main push/mod.rs:407, 599; exercised by `push::egress::tests::a_push_stalled_on_a_live_peer_times_out_and_reconnects`). What has NO bound at all is inside `RtspTransport` itself: `connect`'s OPTIONS exchange and `setup`'s ANNOUNCE/SETUP/RECORD exchanges (`roundtrip`'s `stream.read` at push/rtsp.rs:243 waits forever for a peer that accepted TCP and never answers) and each `write_all` (:213, :234). The migration puts every one of those under `RtspTimeouts`, and exposes the bound as a config knob so a test can use 300 ms instead of the 10 s/30 s defaults.
 
-- [ ] **Step 1: Golden the ANNOUNCE SDP body first** (it is wire output): add `multimux/tests/golden/rtsp_announce.sdp` via the `GOLDEN_BLESS` pattern (`output/smooth.rs:972`), generated from the current `build_sdp` on main, plus the README entry. Commit separately:
+- [ ] **Step 1: Golden the ANNOUNCE SDP body first** (it is wire output): add `fixtures/golden/rtsp/rtsp-announce.sdp` via the `GOLDEN_BLESS` pattern (`output/smooth.rs:972`), generated from the current `build_sdp` on main, plus the README entry. Commit separately:
 
 ```bash
 GOLDEN_BLESS=multimux/tests/golden cargo test -p multimux --all-features --locked --lib push::rtsp::tests::announce_sdp_golden 2>&1 | grep -E 'test result|FAILED'

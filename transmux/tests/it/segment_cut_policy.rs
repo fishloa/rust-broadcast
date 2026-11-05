@@ -224,8 +224,8 @@ fn hevc_stream_with_irap(nal_type: u8) -> (Video, Vec<Sample>) {
 }
 
 const PUBLIC_FIXTURES: &[&str] = &[
-    "ts/h264_aac.ts",
-    "ts/h264_aac_40s.ts",
+    "ts/h264-aac.ts",
+    "ts/h264-aac-40s.ts",
     "ts/gulli-opengop.ts",
     "ts/france2.ts",
     "ts/h264/baseline.ts",
@@ -278,8 +278,8 @@ fn any_rap_cut_points_equal_the_pre_change_predicate() {
         .map(|rel| ((*rel).to_owned(), require_video(rel)))
         .collect();
     for rel in [
-        "ts/france-tnt-uhf32-video-head-6MB.ts",
-        "ts/hotbird-mhp-video-head-6MB.ts",
+        "ts/france-tnt-uhf32-video-head-6-mb.ts",
+        "ts/hotbird-mhp-video-head-6-mb.ts",
     ] {
         if let Some(v) = test_fixtures::private(rel).and_then(|p| video_at(&p)) {
             fixtures.push((format!("private:{rel}"), v));

@@ -4,7 +4,7 @@
 //! transmux: [`Fmp4Demux`] ([`Unpackage`]) and [`CmafMux`] ([`Package`]).
 //!
 //! EXIT CRITERIA (all bite):
-//! 1. `Fmp4Demux.unpackage(av_frag.mp4)` → `Media` with exactly 2 tracks
+//! 1. `Fmp4Demux.unpackage(av-frag.mp4)` → `Media` with exactly 2 tracks
 //!    (AVC video track_id=1, AAC audio track_id=2) with the same per-track
 //!    sample counts computed independently from the raw `moof`/`trun` boxes.
 //! 2. `CmafMux.package(&media)` → re-`unpackage` → identical track/sample
@@ -24,7 +24,7 @@ use transmux::pipeline::{
 };
 
 fn fixture() -> Vec<u8> {
-    let path = test_fixtures::path("transmux/mp4/cmaf/av_frag.mp4");
+    let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-frag.mp4");
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 
@@ -60,7 +60,7 @@ fn fmp4_demux_unpackage_two_tracks_correct_counts() {
     assert_eq!(expected.len(), 2, "fixture must carry exactly 2 tracks");
 
     let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage av_frag.mp4");
+    let media = demux.unpackage(&file).expect("unpackage av-frag.mp4");
 
     assert_eq!(media.tracks.len(), 2, "Media must have 2 tracks");
 

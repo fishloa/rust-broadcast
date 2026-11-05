@@ -481,7 +481,7 @@ fn a_finite_ts_that_is_looped_with_reconnect_starts_the_gate_again() {
 
 #[test]
 fn a_looped_small_finite_ts_is_not_paused_by_the_hosts_stale_position() {
-    finite_loop(&test_fixtures::read("ts/h264_aac.ts"));
+    finite_loop(&test_fixtures::read("ts/h264-aac.ts"));
 }
 
 fn finite_loop(file: &[u8]) {

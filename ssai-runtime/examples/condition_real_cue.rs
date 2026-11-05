@@ -1,8 +1,8 @@
 //! Condition the real SCTE-35 cue in
-//! `fixtures/scte35-ssai/emsg_splice_insert.bin` against the same capture's
+//! `fixtures/scte35/emsg-splice-insert.bin` against the same capture's
 //! real, independently-measured nearest video keyframe.
 //!
-//! Per `fixtures/scte35-ssai/PROVENANCE.md`, this DASH-IF `livesim2` capture's
+//! Per `fixtures/scte35/PROVENANCE.md`, this DASH-IF `livesim2` capture's
 //! cue is genuinely NOT IDR-aligned: the nearest video keyframe lands 6000
 //! ticks (67 ms) after the cue's nominal presentation time on the shared
 //! 90 kHz clock. This example re-derives that gap through
@@ -21,7 +21,7 @@ use ssai_runtime::splice::condition_splice_point;
 use std::fs;
 
 fn main() {
-    let path = test_fixtures::path("scte35-ssai/emsg_splice_insert.bin");
+    let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
     let emsg_bytes = fs::read(path).expect("read real emsg fixture (see PROVENANCE.md)");
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     assert!(emsg.is_scte35(), "fixture must carry a SCTE-35 emsg");

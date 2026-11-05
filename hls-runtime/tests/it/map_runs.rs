@@ -14,8 +14,8 @@ use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
 use transmux::sample_aes::aes128_encrypt_segment;
 
 const URL: &str = "http://o/v/index.m3u8";
-const H264_AAC: &str = "transmux/h264_aac_frag.mp4";
-const HEVC: &str = "transmux/hevc_frag.mp4";
+const H264_AAC: &str = "mp4/h264-aac-frag.mp4";
+const HEVC: &str = "mp4/hevc-frag.mp4";
 const KEY: [u8; 16] = [0x5a; 16];
 const IV: [u8; 16] = [0x11; 16];
 

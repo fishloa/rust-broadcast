@@ -71,7 +71,7 @@ Per protected track, per sample: build the subsample map (video → walk NAL uni
 Structured `Error`: reject IV > 16 bytes, `Explicit` IV count ≠ sample count, subsample range exceeding sample, missing `default_constant_IV` for `cbcs` iv_size==0, unknown scheme. `#[non_exhaustive]` on public config enums.
 
 ## Testing (the gate — ungameable)
-1. **Self round-trip** (per scheme): demux a committed cleartext fixture (`ts/h264/main.ts` progressive; `transmux/h264_aac_frag.mp4` fragmented) → `encrypt` → mux to CMAF → `CencDecryptor::from_fmp4` + `decrypt` → **byte-identical** cleartext samples.
+1. **Self round-trip** (per scheme): demux a committed cleartext fixture (`ts/h264/main.ts` progressive; `mp4/h264-aac-frag.mp4` fragmented) → `encrypt` → mux to CMAF → `CencDecryptor::from_fmp4` + `decrypt` → **byte-identical** cleartext samples.
 2. **Golden interop** (per scheme): pipe our encrypted CMAF through `mp4decrypt --key <kid>:<key>` (Bento4, verified present) → byte-identical to the cleartext samples. Skips cleanly if `mp4decrypt` absent (CI/public).
 3. **Box byte-exact**: build `encv`/`sinf`/`senc`/`saio`/`saiz` structs → serialize → parse → equal, and serialize twice → identical.
 4. Decrypt regression: existing `cenc*.rs` tests unchanged and green (cipher-core refactor guard).

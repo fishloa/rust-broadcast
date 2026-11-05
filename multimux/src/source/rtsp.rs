@@ -1840,16 +1840,16 @@ mod tests {
         use std::time::Duration;
         use tokio::net::TcpListener;
 
-        /// Self-signed `CN=localhost` cert/key fixture, shared byte-for-byte
-        /// with `rtsp-runtime/fixtures/multimux/localhost-{cert,key}.der` (see
-        /// `fixtures/multimux/PROVENANCE.md`) — the same pair
+        /// Self-signed `CN=localhost` cert/key fixture
+        /// (`fixtures/tls/localhost-{cert,key}.der`, see
+        /// `fixtures/tls/PROVENANCE.md`) — the same pair
         /// `rtsp-runtime`'s own `tests/io_loopback.rs::tls_full_session_over_loopback`
         /// uses to run a real TLS handshake over `127.0.0.1` loopback.
         fn cert_der() -> Vec<u8> {
-            test_fixtures::read("multimux/localhost-cert.der")
+            test_fixtures::read("tls/localhost-cert.der")
         }
         fn key_der() -> Vec<u8> {
-            test_fixtures::read("multimux/localhost-key.der")
+            test_fixtures::read("tls/localhost-key.der")
         }
 
         /// A hang guard, not a speed assertion (issue #807): every

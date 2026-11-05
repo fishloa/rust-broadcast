@@ -3,7 +3,7 @@ use transmux::ir::DemuxEvent;
 use transmux::ts_demux::StreamingTsDemux;
 
 fn load() -> Vec<u8> {
-    std::fs::read(test_fixtures::path("ts/h264_aac.ts")).unwrap()
+    std::fs::read(test_fixtures::path("ts/h264-aac.ts")).unwrap()
 }
 
 fn first_video_pusi_index(bytes: &[u8]) -> usize {

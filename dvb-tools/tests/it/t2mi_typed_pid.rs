@@ -6,7 +6,7 @@
 use std::process::Command;
 
 fn fixture() -> String {
-    test_fixtures::path("dvb-t2mi/colombia-capital-t2mi.ts")
+    test_fixtures::path("t2mi/colombia-capital-t2mi.ts")
         .to_string_lossy()
         .into_owned()
 }
@@ -55,11 +55,11 @@ fn the_captures_t2mi_pid_decodes_and_another_pid_yields_nothing() {
 /// feed must not merge them into one output. The fixture has two PLPs (ids
 /// zero and one) on T2-MI PID 0x1000, each carrying one real TS packet split
 /// across two BBFrames (built from `fixtures/ts/scte35-real.ts` and
-/// `fixtures/mpeg-ts/af-pcr-stuffing.ts` by `dvb-t2mi`'s
+/// `fixtures/ts/af-pcr-stuffing.ts` by `dvb-t2mi`'s
 /// `inner_ts_plp_carryover` test, which pins this file byte-for-byte).
 #[test]
 fn inner_on_multi_plp_feed_requires_plp_selection() {
-    let path = test_fixtures::path("dvb-t2mi/two-plp-synthetic.ts");
+    let path = test_fixtures::path("t2mi/two-plp-synthetic.ts");
 
     let (ok, stdout, stderr) = run(&["t2mi", path.to_str().unwrap(), "--pid", "0x1000", "--inner"]);
     assert!(!ok, "multi-PLP --inner without --plp must fail");

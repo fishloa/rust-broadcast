@@ -10,8 +10,8 @@ use transmux::pipeline::CodecConfig;
 use transmux::{StreamingTsHlsSegmenter, TsDemux, UpdateTrackOutcome};
 
 fn load_ts() -> Vec<u8> {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    std::fs::read(path).expect("h264_aac.ts fixture must exist")
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    std::fs::read(path).expect("h264-aac.ts fixture must exist")
 }
 
 fn demux(ts: &[u8]) -> Media {

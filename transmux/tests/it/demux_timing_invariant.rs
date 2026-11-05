@@ -41,7 +41,7 @@
 //! in `assert_timing_invariant` green. `fmp4_demux_timing_invariant_holds`
 //! therefore also checks `Fmp4Demux`'s output against an **external**
 //! oracle — `ffprobe`'s own independent parse of the same file, committed as
-//! `fixtures/mp4/frag/demux-oracle/h264_high.frag.packets.csv` — which does
+//! `fixtures/mp4/frag/demux-oracle/h264-high.frag.packets.csv` — which does
 //! not go anywhere near this crate's summing code and so cannot move in
 //! lockstep with a scaling bug in it.
 
@@ -116,7 +116,7 @@ fn assert_timing_invariant(media: &Media, what: &str) -> usize {
 
 #[test]
 fn ts_demux_timing_invariant_holds() {
-    let ts = workspace_fixture("ts/h264_aac.ts");
+    let ts = workspace_fixture("ts/h264-aac.ts");
     let media = TsDemux::new().unpackage(&ts[..]).expect("TS demux");
     let checked = assert_timing_invariant(&media, "TsDemux");
     assert!(
@@ -128,7 +128,7 @@ fn ts_demux_timing_invariant_holds() {
 // ── 2. Fmp4Demux ─────────────────────────────────────────────────────────
 
 /// One `ffprobe -show_packets` oracle row, in decode order, in the stream's
-/// own `time_base` ticks (90 kHz for `h264_high.frag.mp4`'s video stream —
+/// own `time_base` ticks (90 kHz for `h264-high.frag.mp4`'s video stream —
 /// verified via `ffprobe -show_entries stream=time_base`, which matches this
 /// fixture's `mdhd`/`mvhd` timescale, so oracle ticks compare directly
 /// against the IR's ticks with no unit conversion).
@@ -137,12 +137,12 @@ struct OracleRow {
     duration: u32,
 }
 
-/// Parse the committed `ffprobe` CSV oracle for `h264_high.frag.mp4`
+/// Parse the committed `ffprobe` CSV oracle for `h264-high.frag.mp4`
 /// (columns: `codec_type,stream_index,pts,dts,duration,size,keyframe`),
 /// generated independently of this crate by
 /// `ffprobe -select_streams v:0 -show_entries packet=pts,dts,duration,size,flags`.
 fn load_fmp4_oracle() -> Vec<OracleRow> {
-    let path = test_fixtures::path("mp4/frag/demux-oracle/h264_high.frag.packets.csv");
+    let path = test_fixtures::path("mp4/frag/demux-oracle/h264-high.frag.packets.csv");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read oracle {}: {e}", path.display()));
     let mut rows: Vec<OracleRow> = text
@@ -162,7 +162,7 @@ fn load_fmp4_oracle() -> Vec<OracleRow> {
 
 #[test]
 fn fmp4_demux_timing_invariant_holds() {
-    let file = workspace_fixture("mp4/frag/h264_high.frag.mp4");
+    let file = workspace_fixture("mp4/frag/h264-high.frag.mp4");
     let media = Fmp4Demux::new().unpackage(&file).expect("fMP4 demux");
     let checked = assert_timing_invariant(&media, "Fmp4Demux");
     assert!(checked >= 1, "expected at least one timed track checked");
@@ -208,7 +208,7 @@ fn fmp4_demux_timing_invariant_holds() {
 
 #[test]
 fn progressive_demux_timing_invariant_holds() {
-    let file = workspace_fixture("transmux/h264_aac_prog.mp4");
+    let file = workspace_fixture("mp4/h264-aac-prog.mp4");
     let media = ProgressiveDemux::new(1024 * 1024)
         .expect("non-zero cap must construct")
         .unpackage(&file)
@@ -234,7 +234,7 @@ fn flv_demux_timing_invariant_holds() {
 
 #[test]
 fn webm_demux_timing_invariant_holds() {
-    let webm = workspace_fixture("webm/vp9_opus.webm");
+    let webm = workspace_fixture("mkv/vp9-opus.webm");
     let media = WebmDemux::new().unpackage(&webm[..]).expect("WebM demux");
     let checked = assert_timing_invariant(&media, "WebmDemux");
     assert!(
@@ -247,7 +247,7 @@ fn webm_demux_timing_invariant_holds() {
 
 #[test]
 fn ps_demux_timing_invariant_holds() {
-    let ps = workspace_fixture("ps/h264_ac3.ps");
+    let ps = workspace_fixture("ps/h264-ac3.ps");
     let media = PsDemux::new().unpackage(&ps[..]).expect("PS demux");
     let checked = assert_timing_invariant(&media, "PsDemux");
     assert!(
@@ -274,7 +274,7 @@ fn rtmp_demux_timing_invariant_holds() {
 
 #[test]
 fn rtp_depacketiser_timing_invariant_holds() {
-    let ts = workspace_fixture("ts/h264_aac.ts");
+    let ts = workspace_fixture("ts/h264-aac.ts");
     let ir = TsDemux::new().unpackage(&ts[..]).expect("TS demux");
     let out = RtpPacketiser {
         mtu: 1400,

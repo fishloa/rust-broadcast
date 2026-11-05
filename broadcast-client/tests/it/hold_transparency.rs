@@ -141,10 +141,10 @@ fn the_private_corpus_is_complete() {
 
 const HOST_TICK_US: u64 = 20_000;
 const LIVE_CAPTURES: [&str; 4] = [
-    "zenith-live/rai-gulp-8MB.ts",
-    "zenith-live/rai-news-24-8MB.ts",
-    "zenith-live/arte-8MB.ts",
-    "zenith-live/tf-1-8MB.ts",
+    "ts/live-channels/rai-gulp-8-mb.ts",
+    "ts/live-channels/rai-news-24-8-mb.ts",
+    "ts/live-channels/arte-8-mb.ts",
+    "ts/live-channels/tf-1-8-mb.ts",
 ];
 
 #[test]

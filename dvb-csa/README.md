@@ -30,7 +30,7 @@ conformance tools.
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| DVB-CSA (version 1/2) | none public: the algorithm was confidential, licensed through ETSI | Block cipher, stream cipher, chained mode, short-payload pass-through | Full (oracle-validated) | Correctness is established by byte-exact agreement with libdvbcsa 1.1.0: 18 committed golden vectors (`../fixtures/csa/libdvbcsa-vectors.hex`, 13 full 184-byte TS payloads plus 8, 16, 32, 64 and 100 byte payloads) |
+| DVB-CSA (version 1/2) | none public: the algorithm was confidential, licensed through ETSI | Block cipher, stream cipher, chained mode, short-payload pass-through | Full (oracle-validated) | Correctness is established by byte-exact agreement with libdvbcsa 1.1.0: 18 committed golden vectors (`../fixtures/crypto/libdvbcsa-vectors.hex`, 13 full 184-byte TS payloads plus 8, 16, 32, 64 and 100 byte payloads) |
 | ISO/IEC 13818-1 (MPEG-2 Systems) | as cited in `src/ts.rs` | §2.4.3.3 `transport_scrambling_control`, §2.4.3.4 adaptation field: payload location in a 188-byte packet | Full | Packets with no payload return `Error::NoPayload` |
 | ETSI TS 100 289 V1.1.1 (2011-09), Support for use of the DVB Scrambling Algorithm version 3 | V1.1.1 (`etsi_ts_100_289_v01.01.01_dvb_scrambling_ca`, in `private/specs-md/INDEX.md`) | §5.1 Table 1 even/odd `transport_scrambling_control` values (`KeyParity`) | Partial | Only the even/odd signalling is used; the CSA3 cipher it describes is Not implemented |
 

@@ -1136,15 +1136,15 @@ mod tests {
 
     /// C9 (#1010): a real `sidx` box from `MP4Box -dash` (onDemand profile),
     /// extracted verbatim from `in_dashinit.mp4` — see
-    /// `fixtures/mp4/GENERATE.md`. Oracle: GPAC's own `MP4Box -diso` XML dump
+    /// `fixtures/mp4/PROVENANCE.md`. Oracle: GPAC's own `MP4Box -diso` XML dump
     /// of the same file (`reference_ID=1`, `timescale=12800`, 2 references).
     /// Before the fix, parse read `reference_count == 0` (mistaking the
     /// `reserved` field's bytes for it) and returned zero references; every
     /// sidx this type serialized was 2 bytes short of a conformant one.
     #[test]
     fn sidx_real_fixture_oracle() {
-        let path = test_fixtures::path("mp4/sidx_real.bin");
-        let data = std::fs::read(path).expect("fixtures/mp4/sidx_real.bin must exist");
+        let path = test_fixtures::path("mp4/sidx-real.bin");
+        let data = std::fs::read(path).expect("fixtures/mp4/sidx-real.bin must exist");
 
         let sidx = SegmentIndexBox::parse(&data).expect("parse real sidx");
         assert_eq!(sidx.version, 0);

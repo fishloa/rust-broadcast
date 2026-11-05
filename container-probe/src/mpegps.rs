@@ -131,7 +131,7 @@ mod tests {
     /// the 14-byte pack header) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/ps/h264_ac3.ps");
+        let data = fixture_bytes("fixtures/ps/h264-ac3.ps");
         let region = &data[..PACK_HEADER_MIN_LEN - 1];
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, PACK_HEADER_MIN_LEN),

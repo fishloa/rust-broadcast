@@ -23,7 +23,7 @@
 //! luminance tables, `ApplicationIdentifier` 4, `ApplicationVersion` 0 or 1).
 //! The `ApplicationVersion` 1 value constraints (9 distribution entries, at
 //! most 9 Bezier anchors, Table 1 `V1`/`V2`) are NOT enforced: the committed
-//! real stream (`private/fixtures/hdr10plus/`) violates Table 1 and a parser
+//! real stream (`private/fixtures/video/hdr10plus/`) violates Table 1 and a parser
 //! that rejected it would drop signalling real encoders emit. Serialization is
 //! symmetric: every parsed value, including the alignment padding bits, is
 //! re-emitted unchanged.

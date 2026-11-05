@@ -8,7 +8,7 @@
 //! field changes the serialized bytes (no raw passthrough).
 //!
 //! Fixtures: `fixtures/mp4/{av1,opus,flac,vp9}.mp4`, `fixtures/ts/heaac/heaac_v{1,2}.mp4`.
-//! Oracle refs: `fixtures/mp4/FMP4-GAPS-ORACLE.md`, `fixtures/ts/ac4/DAC4-ORACLE.md`.
+//! Oracle refs: `fixtures/mp4/PROVENANCE.md`, `fixtures/ts/ac4/dac4-oracle.md`.
 
 use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
@@ -268,7 +268,7 @@ fn vpcc_mutation_changes_bytes() {
 // ---------------------------------------------------------------------------
 
 /// The `dac4` (AC4SpecificBox = ac4_dsi_v1) oracle body from
-/// `fixtures/ts/ac4/DAC4-ORACLE.md` (29 bytes, real Dolby AC-4 init segment).
+/// `fixtures/ts/ac4/dac4-oracle.md` (29 bytes, real Dolby AC-4 init segment).
 const DAC4_ORACLE: &[u8] = &[
     0x20, 0xa4, 0x01, 0x40, 0x00, 0x00, 0x00, 0x1f, 0xff, 0xff, 0xff, 0xe0, 0x01, 0x0f, 0xf8, 0x80,
     0x00, 0x00, 0x42, 0x00, 0x00, 0x25, 0x01, 0x00, 0x00, 0x00, 0x30, 0x08, 0x00,
@@ -334,7 +334,7 @@ fn asc_from_esds(esds_box: &[u8]) -> Vec<u8> {
 
 #[test]
 fn heaac_v1_sbr_signaling_and_esds_round_trip() {
-    let data = fixture("ts/heaac/heaac_v1.mp4");
+    let data = fixture("ts/heaac/heaac-v1.mp4");
     let esds_box = find_full_box(&data, b"esds");
 
     // Byte-exact esds round-trip.
@@ -374,7 +374,7 @@ fn heaac_v1_sbr_signaling_and_esds_round_trip() {
 
 #[test]
 fn heaac_v2_ps_signaling_and_esds_round_trip() {
-    let data = fixture("ts/heaac/heaac_v2.mp4");
+    let data = fixture("ts/heaac/heaac-v2.mp4");
     let esds_box = find_full_box(&data, b"esds");
 
     let esds = EsdsBox::parse_box(esds_box).expect("parse esds v2");

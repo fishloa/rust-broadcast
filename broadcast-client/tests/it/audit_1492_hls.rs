@@ -182,7 +182,7 @@ const FIRST_RESERVED_ID: u32 = AUDIO_TRACK_ID_OFFSET + 1;
 const MOVIE_TIMESCALE: u32 = 1_000;
 
 fn cmaf_with_track_ids(first_id: u32) -> (Vec<u8>, Vec<u8>) {
-    let data = test_fixtures::read("ts/h264_aac.ts");
+    let data = test_fixtures::read("ts/h264-aac.ts");
     let mut media = TsDemux::new().unpackage(&data[..]).expect("demux");
     for (n, track) in media.tracks.iter_mut().enumerate() {
         track.spec.track_id = TrackId::new(first_id + u32::try_from(n).expect("small"));

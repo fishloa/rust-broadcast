@@ -2,7 +2,7 @@
 //!
 //! Drives [`transmux::build_init_segment`] / [`transmux::build_media_segment`]
 //! with the **real** codec configs (avcC/esds) and **real** coded samples taken
-//! from `h264_aac_frag.mp4`, then re-parses the produced segments with the
+//! from `h264-aac-frag.mp4`, then re-parses the produced segments with the
 //! crate's own parsers and asserts structure, `trun.data_offset`, `tfdt`, and
 //! byte-exact sample survival. A raw-passthrough or wrong-offset implementation
 //! cannot pass this.
@@ -15,7 +15,7 @@ use transmux::{
 };
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("transmux/h264_aac_frag.mp4")
+    test_fixtures::read("mp4/h264-aac-frag.mp4")
 }
 
 /// Find a top-level box, returning (absolute offset, full bytes).

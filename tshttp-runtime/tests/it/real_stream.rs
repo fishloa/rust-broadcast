@@ -1,7 +1,7 @@
 use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
 fn samples_for(chunk_size: usize) -> Option<(usize, usize, usize)> {
-    let bytes = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream")?;
+    let bytes = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "real_stream")?;
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(200, &[], 0);
@@ -35,7 +35,8 @@ fn chunking_identical() {
 
 #[test]
 fn bare_demuxer_oracle() {
-    let Some(bytes) = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream") else {
+    let Some(bytes) = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "real_stream")
+    else {
         return;
     };
     let mut d = transmux::StreamingTsDemux::new();
@@ -59,7 +60,8 @@ fn bare_demuxer_oracle() {
 
 #[test]
 fn first_sample_moves_to_playing() {
-    let Some(bytes) = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "real_stream") else {
+    let Some(bytes) = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "real_stream")
+    else {
         return;
     };
     let mut c = TsHttpClient::new("u", Config::default(), 0);
@@ -94,7 +96,8 @@ fn eof_before_any_sample_backs_off() {
 
 #[test]
 fn missing_headers_404() {
-    let Some(path) = test_fixtures::require("zenith-http/missing.headers.txt", "real_stream")
+    let Some(path) =
+        test_fixtures::require("http/live-channels/missing.headers.txt", "real_stream")
     else {
         return;
     };
@@ -120,7 +123,8 @@ fn missing_headers_404() {
 
 #[test]
 fn tf1_headers_200_connected() {
-    let Some(path) = test_fixtures::require("zenith-http/tf1.headers.txt", "real_stream") else {
+    let Some(path) = test_fixtures::require("http/live-channels/tf1.headers.txt", "real_stream")
+    else {
         return;
     };
     let hdr = std::fs::read_to_string(path).unwrap();

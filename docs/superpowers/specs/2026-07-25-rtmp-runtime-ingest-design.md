@@ -61,7 +61,7 @@ rtmp-runtime emits **FLV bytes** (`ServerEvent::Media { flv }`); the consumer fe
 - `multimux` depends on `rtmp-runtime` (+ existing `transmux`).
 
 ## Real-fixture gate (CRATE-ACCEPTANCE hard bar)
-Generate a **real RTMP publish capture**: run a tiny capturing TCP listener on `:1935` and `ffmpeg -re -i fixtures/ts/h264_aac.ts -c copy -f flv rtmp://127.0.0.1:1935/live/testkey`, recording the exact inbound bytes (handshake C0/C1/C2 + connect/createStream/publish AMF + the first Audio/Video messages) to `rtmp-runtime/fixtures/obs-publish.bin` (+ a PROVENANCE note with the exact ffmpeg command). Biting tests:
+Generate a **real RTMP publish capture**: run a tiny capturing TCP listener on `:1935` and `ffmpeg -re -i fixtures/ts/h264-aac.ts -c copy -f flv rtmp://127.0.0.1:1935/live/testkey`, recording the exact inbound bytes (handshake C0/C1/C2 + connect/createStream/publish AMF + the first Audio/Video messages) to `rtmp-runtime/fixtures/obs-publish.bin` (+ a PROVENANCE note with the exact ffmpeg command). Biting tests:
 - `ServerSession::handle_data` fed the captured stream reaches `Publishing`, emits `Connected{app:"live"}` + `Publish{stream_key:"testkey"}` + ≥1 `Media`, and the concatenated `Media.flv` feeds `transmux::FlvDemux` (as a dev-dependency in the test) to yield a `Media` with the expected track kinds.
 - **Byte-identical round-trip** on the chunk/message/AMF0/handshake wire types (parse → serialize == input) over the fixture's frames — the hard invariant.
 - Mutation-checks: a neutered chunk assembler / AMF parser fails these.

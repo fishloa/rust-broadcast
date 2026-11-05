@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 
 #[test]
 fn inner_from_a_pipe_recovers_the_same_packets_as_from_the_file() {
-    let path = test_fixtures::path("dvb-t2mi/colombia-capital-t2mi.ts");
+    let path = test_fixtures::path("t2mi/colombia-capital-t2mi.ts");
     let data = std::fs::read(&path).expect("fixture");
     let bin = env!("CARGO_BIN_EXE_dvb-tools");
 

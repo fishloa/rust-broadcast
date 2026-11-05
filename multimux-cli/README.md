@@ -75,13 +75,13 @@ multimux --config routes.json
 
 ### 3. A local file as a live source (no camera needed)
 
-Verified against the committed capture `fixtures/ts/h264_aac.ts`:
+Verified against the committed capture `fixtures/ts/h264-aac.ts`:
 
 ```bash
 cat > slate.json <<'EOF'
 { "bind": "127.0.0.1:18080",
   "routes": [ { "name": "slate",
-                "input": { "type": "file", "path": "fixtures/ts/h264_aac.ts" },
+                "input": { "type": "file", "path": "fixtures/ts/h264-aac.ts" },
                 "outputs": ["llhls", "dash"] } ] }
 EOF
 multimux --config slate.json &

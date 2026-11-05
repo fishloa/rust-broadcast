@@ -10,10 +10,10 @@
 //! |---|---|
 //! | Sintel AC-3 5.1 (`sintel-ac3-eac3-aligned.ts`) | ac3, 48000 Hz, 6 ch, 448000 b/s |
 //! | Sintel E-AC-3 5.1 (same file) | eac3, 48000 Hz, 6 ch, 256000 b/s |
-//! | `aac-5_1-640k.ts` | aac, 48000 Hz, 6 ch, bit_rate N/A in the container |
-//! | `h264_aac.ts` | aac, 44100 Hz, 1 ch |
-//! | `legacy/mpeg2_mp2.ts` | mp2, 44100 Hz, 1 ch, 384000 b/s |
-//! | `dts/dts_core.ts` | dts, 48000 Hz, 2 ch, 768000 b/s |
+//! | `aac-5-1-640k.ts` | aac, 48000 Hz, 6 ch, bit_rate N/A in the container |
+//! | `h264-aac.ts` | aac, 44100 Hz, 1 ch |
+//! | `legacy/mpeg2-mp2.ts` | mp2, 44100 Hz, 1 ch, 384000 b/s |
+//! | `dts/dts-core.ts` | dts, 48000 Hz, 2 ch, 768000 b/s |
 //! | `dolby/ac3.ts` | ac3, 44100 Hz, 1 ch, 192000 b/s |
 
 use broadcast_common::Unpackage;
@@ -35,7 +35,7 @@ fn track(m: &Media, pick: impl Fn(&CodecConfig) -> bool) -> &CodecConfig {
         .config
 }
 
-const SINTEL: &str = "../fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts";
+const SINTEL: &str = "../fixtures/ts/audio-pes-straddle/sintel-ac3-eac3-aligned.ts";
 
 #[test]
 fn ac3_5_1_counts_lfe_and_keeps_full_bandwidth_count() {
@@ -62,7 +62,7 @@ fn eac3_5_1() {
 
 #[test]
 fn aac_5_1_has_rate_and_channels_but_no_nominal_bitrate() {
-    let m = demux("../fixtures/ts/aac-5_1-640k.ts");
+    let m = demux("../fixtures/ts/aac-5-1-640k.ts");
     let c = track(&m, |c| matches!(c, CodecConfig::Aac { .. }));
     // ISO/IEC 14496-3 Table 1.19: channelConfiguration 6 = 5.1 = 6 channels.
     assert_eq!(c.channels_with_lfe(), Some(6));
@@ -73,7 +73,7 @@ fn aac_5_1_has_rate_and_channels_but_no_nominal_bitrate() {
 
 #[test]
 fn aac_mono() {
-    let m = demux("../fixtures/ts/h264_aac.ts");
+    let m = demux("../fixtures/ts/h264-aac.ts");
     let c = track(&m, |c| matches!(c, CodecConfig::Aac { .. }));
     assert_eq!(c.channels_with_lfe(), Some(1));
     assert_eq!(c.audio_sample_rate(), Some(44_100));
@@ -81,7 +81,7 @@ fn aac_mono() {
 
 #[test]
 fn mpeg_audio_layer2_bitrate_from_header() {
-    let m = demux("../fixtures/ts/legacy/mpeg2_mp2.ts");
+    let m = demux("../fixtures/ts/legacy/mpeg2-mp2.ts");
     let c = track(&m, |c| matches!(c, CodecConfig::MpegAudio { .. }));
     assert_eq!(c.channels_with_lfe(), Some(1));
     assert_eq!(c.audio_sample_rate(), Some(44_100));
@@ -90,7 +90,7 @@ fn mpeg_audio_layer2_bitrate_from_header() {
 
 #[test]
 fn dts_core() {
-    let m = demux("../fixtures/ts/dts/dts_core.ts");
+    let m = demux("../fixtures/ts/dts/dts-core.ts");
     let c = track(&m, |c| matches!(c, CodecConfig::Dts { .. }));
     assert_eq!(c.channels_with_lfe(), Some(2));
     assert_eq!(c.audio_sample_rate(), Some(48_000));
@@ -108,7 +108,7 @@ fn ac3_mono_fixture() {
 
 #[test]
 fn video_track_has_no_audio_facts() {
-    let m = demux("../fixtures/ts/h264_aac.ts");
+    let m = demux("../fixtures/ts/h264-aac.ts");
     let v = track(&m, |c| matches!(c, CodecConfig::Avc { .. }));
     assert_eq!(v.audio_sample_rate(), None);
     assert_eq!(v.channels_with_lfe(), None);

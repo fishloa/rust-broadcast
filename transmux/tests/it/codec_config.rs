@@ -2,7 +2,7 @@
 //!
 //! EXIT CRITERIA:
 //! 1. Every H.264 fixture in fixtures/ts/h264/ decodes to the exact oracle values.
-//! 2. h264_aac.ts at the repo root decodes correctly.
+//! 2. h264-aac.ts at the repo root decodes correctly.
 //! 3. Every HEVC fixture decodes with correct profile / bit-depth / dimensions.
 //! 4. Scaling-matrix skip path verified (unit test in transmux::sps).
 //! 5. avcC round-trip: SPS decode → build AVCDecoderConfigurationRecord → verify
@@ -251,7 +251,7 @@ fn h264_interlaced_sps() {
 
 #[test]
 fn h264_high_1080_cropped_sps() {
-    let path = fixture_path("fixtures/ts/h264/high_1080_cropped.ts");
+    let path = fixture_path("fixtures/ts/h264/high-1080-cropped.ts");
     let nals = demux_annexb_nals(path, 0x0100);
     let sps_nal = find_first_sps(&nals).expect("must find SPS");
     let info = decode_sps(&sps_nal);
@@ -269,7 +269,7 @@ fn h264_high_1080_cropped_sps() {
 
 #[test]
 fn h264_aac_ts_sps() {
-    let path = fixture_path("fixtures/ts/h264_aac.ts");
+    let path = fixture_path("fixtures/ts/h264-aac.ts");
     let nals = demux_annexb_nals(path, 0x0100);
     let sps_nal = find_first_sps(&nals).expect("must find SPS");
     let info = decode_sps(&sps_nal);

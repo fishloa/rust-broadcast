@@ -62,7 +62,7 @@
 //! vectors are the gate.
 //!
 //! A second oracle (a TSDuck-scrambled capture) is **not** currently wired
-//! up: `../fixtures/csa/france-tnt-scrambled-0x02d0.ts` is committed, but the
+//! up: `../fixtures/crypto/france-tnt-scrambled-0x02d0.ts` is committed, but the
 //! control word it was scrambled with was never recorded, so the fixture
 //! cannot be decrypted and no test references it. See its `PROVENANCE.md`.
 //!

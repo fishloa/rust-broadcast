@@ -11,7 +11,7 @@ Initial release. `dvb-mabr` is a DVB multicast ABR (ETSI TS 103 769 V1.2.1) sess
 - `MulticastGatewayConfigurationTransportSession` (clause 10.2.5) for the in-band gateway-configuration carousel bootstrap method, including its macro-expansion elements.
 - Document- and session-level reporting-destination declarations (clause 10.2.1.0/10.2.2.3).
 - Round-trip test: `parse_str → serialize → reparse` yields an equal document (the serialized XML is not byte-identical to the input — attribute order, whitespace, and dropped extension elements differ; see the crate-root doc comment's enumerated list).
-- Fixtures in `fixtures/dvb-mabr/`: three hand-authored XML documents (a multi-service server configuration, a gateway bootstrap document, and a full gateway configuration) — this crate's own worked examples, not a transcription of the ETSI TS 103 769 Annex C worked examples, which remain under ETSI copyright.
+- Fixtures in `fixtures/mabr/`: three hand-authored XML documents (a multi-service server configuration, a gateway bootstrap document, and a full gateway configuration) — this crate's own worked examples, not a transcription of the ETSI TS 103 769 Annex C worked examples, which remain under ETSI copyright.
 
 ## Out of scope
 

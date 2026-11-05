@@ -9,7 +9,7 @@
 //! (`srat`, §12.2.3.1), inside an `stsd` whose version is 1.
 //!
 //! Fixtures and their generator commands are described in
-//! `transmux/audio_srat/README.md`.
+//! `audio/srat/README.md`.
 //!
 //! The strongest test here is
 //! [`our_muxed_192k_output_is_read_back_by_external_tools`]: it muxes our own
@@ -32,7 +32,7 @@ use transmux::{FlacSpecificBox, ProgressiveDemux, TrackSpec};
 // ── Fixture plumbing ────────────────────────────────────────────────────────
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let path = test_fixtures::path(&format!("transmux/audio_srat/{rel}"));
+    let path = test_fixtures::path(&format!("audio/srat/{rel}"));
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
@@ -198,9 +198,9 @@ fn our_muxed_192k_output_is_read_back_by_external_tools() {
     }
 
     let source_path = temp_path("source-192k.mp4");
-    std::fs::write(&source_path, fixture("flac_192000.mp4")).expect("write source");
+    std::fs::write(&source_path, fixture("flac-192000.mp4")).expect("write source");
     let ours_path = temp_path("ours-192k.mp4");
-    std::fs::write(&ours_path, mux_retargeted("flac_192000.mp4", 192_000)).expect("write ours");
+    std::fs::write(&ours_path, mux_retargeted("flac-192000.mp4", 192_000)).expect("write ours");
 
     // MP4Box reads the sample entry itself, so it is the tool that actually
     // discriminates the v1+srat form from the wrapping v0 form: on the v0
@@ -244,9 +244,9 @@ fn our_muxed_96k_output_is_read_back_by_external_tools() {
     }
 
     let source_path = temp_path("source-96k.mp4");
-    std::fs::write(&source_path, fixture("flac_96000.mp4")).expect("write source");
+    std::fs::write(&source_path, fixture("flac-96000.mp4")).expect("write source");
     let ours_path = temp_path("ours-96k.mp4");
-    std::fs::write(&ours_path, mux_retargeted("flac_96000.mp4", 96_000)).expect("write ours");
+    std::fs::write(&ours_path, mux_retargeted("flac-96000.mp4", 96_000)).expect("write ours");
 
     assert_eq!(ffprobe_sample_rate(&ours_path), "96000");
     assert_eq!(decoded_md5(&ours_path), decoded_md5(&source_path));
@@ -262,8 +262,8 @@ fn our_muxed_44k_output_stays_v0_and_reads_back_correctly() {
     }
 
     let source_path = temp_path("source-44k.mp4");
-    std::fs::write(&source_path, fixture("flac_44100.mp4")).expect("write source");
-    let ours = mux_retargeted("flac_44100.mp4", 44_100);
+    std::fs::write(&source_path, fixture("flac-44100.mp4")).expect("write source");
+    let ours = mux_retargeted("flac-44100.mp4", 44_100);
     let ours_path = temp_path("ours-44k.mp4");
     std::fs::write(&ours_path, &ours).expect("write ours");
 
@@ -295,7 +295,7 @@ fn our_muxed_44k_output_stays_v0_and_reads_back_correctly() {
 /// carries 192000 — and that the 16.16 field alone does not.
 #[test]
 fn real_fixture_entry_is_v1_with_srat_192000() {
-    let bytes = fixture("ipcm_v1_192k.mp4");
+    let bytes = fixture("ipcm-v1-192k.mp4");
     let stsd_at = box_start(&bytes, b"stsd");
     let stsd = SampleDescriptionBox::parse(&bytes[stsd_at..]).expect("parse stsd");
     assert_eq!(stsd.version, AudioSampleEntryV1::STSD_VERSION);
@@ -324,7 +324,7 @@ fn real_fixture_entry_is_v1_with_srat_192000() {
 /// 16.16 field truncating `192000 << 16` to 60928 Hz.
 #[test]
 fn wrapped_v0_fixture_loses_the_rate_to_the_16_bit_field() {
-    let bytes = fixture("ipcm_v0_192k_wrapped.mp4");
+    let bytes = fixture("ipcm-v0-192k-wrapped.mp4");
     let stsd_at = box_start(&bytes, b"stsd");
     let stsd = SampleDescriptionBox::parse(&bytes[stsd_at..]).expect("parse stsd");
     assert_eq!(stsd.version, 0);
@@ -349,7 +349,7 @@ fn wrapped_v0_fixture_loses_the_rate_to_the_16_bit_field() {
 /// discard on re-serialize.
 #[test]
 fn quicktime_v1_fixture_has_a_non_zero_compression_id() {
-    let bytes = fixture("qt_alac_v1.mov");
+    let bytes = fixture("qt-alac-v1.mov");
     let stsd_at = box_start(&bytes, b"stsd");
     let stsd_size = u32::from_be_bytes(bytes[stsd_at..stsd_at + 4].try_into().unwrap()) as usize;
     let entry = &bytes[stsd_at + 16..stsd_at + stsd_size];
@@ -385,7 +385,7 @@ fn quicktime_v1_fixture_has_a_non_zero_compression_id() {
 /// entry: the version is no longer re-derived as 0-or-1 on serialize.
 #[test]
 fn quicktime_v2_entry_version_round_trips_verbatim() {
-    let bytes = fixture("qt_alac_v2_synthetic.mov");
+    let bytes = fixture("qt-alac-v2-synthetic.mov");
     let stsd_at = box_start(&bytes, b"stsd");
     let stsd_size = u32::from_be_bytes(bytes[stsd_at..stsd_at + 4].try_into().unwrap()) as usize;
     let entry = &bytes[stsd_at + 16..stsd_at + stsd_size];

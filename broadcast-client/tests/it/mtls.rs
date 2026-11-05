@@ -7,7 +7,7 @@ use broadcast_client::{
     Action, ClientIdentity, ClientIdentityScope, Config, Error, Event, Session, Status,
 };
 
-const SMALL: &str = "ts/h264_aac.ts";
+const SMALL: &str = "ts/h264-aac.ts";
 const FAST_BPS: u64 = 100_000_000;
 const STEP_US: u64 = 1_000;
 const CHUNK: usize = 7 * TS_PACKET;

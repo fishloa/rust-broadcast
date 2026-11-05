@@ -13,7 +13,7 @@ fn samples_by_track(events: &[Event]) -> BTreeMap<u32, usize> {
 
 #[test]
 fn eof_flushes_held_back_samples() {
-    let bytes = match test_fixtures::require_bytes("zenith-http/tf1-live.ts", "flush") {
+    let bytes = match test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "flush") {
         Some(b) => b,
         None => return,
     };
@@ -68,7 +68,7 @@ fn eof_flushes_held_back_samples() {
 
 #[test]
 fn flush_events_precede_reconnect_action() {
-    let bytes = match test_fixtures::require_bytes("zenith-http/tf1-live.ts", "flush") {
+    let bytes = match test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "flush") {
         Some(b) => b,
         None => return,
     };
@@ -106,7 +106,7 @@ fn flush_events_precede_reconnect_action() {
 
 #[test]
 fn eof_with_only_flushed_sample_counts_as_played() {
-    let bytes = match test_fixtures::require_bytes("zenith-http/tf1-live.ts", "flush") {
+    let bytes = match test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "flush") {
         Some(b) => b,
         None => return,
     };

@@ -1,10 +1,10 @@
 //! Byte-for-byte golden gate for broadcast-auth's wire output. The expected
-//! files in `tests/golden/` were generated from unmodified `main` (commit in
-//! `tests/golden/README.md`). `GOLDEN_BLESS=<dir>` writes instead of comparing.
+//! files in `fixtures/golden/http/` were generated from unmodified `main` (commit in
+//! `fixtures/golden/http/PROVENANCE.md`). `GOLDEN_BLESS=<dir>` writes instead of comparing.
 
 use std::fs;
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use broadcast_auth::{Credentials, RequestContext, SignedUrlKeySet, Verifier, respond};
 
@@ -14,9 +14,7 @@ fn check(name: &str, actual: &str) {
         fs::write(Path::new(&dir).join(name), actual).expect("write golden");
         return;
     }
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(name);
+    let path = test_fixtures::path(&format!("golden/http/{}", name));
     let expected = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }
@@ -53,7 +51,7 @@ fn signed_url_query_strings_match_golden() {
         let query = k.sign(kid, path, exp, ip).unwrap();
         out.push_str(&format!("{kid}\t{path}\t{exp}\t{ip_text}\t{query}\n"));
     }
-    check("signed_url_sign.txt", &out);
+    check("signed-url-sign.txt", &out);
 }
 
 /// The Digest nonce embeds a per-verifier random secret, so its hex is masked
@@ -103,7 +101,7 @@ fn client_authorization_matches_golden() {
     .unwrap();
     let bearer = respond("", &ctx, Credentials::bearer("mytoken123")).unwrap();
     check(
-        "client_authorization.txt",
+        "client-authorization.txt",
         &format!("basic\t{basic}\nbearer\t{bearer}\n"),
     );
 }

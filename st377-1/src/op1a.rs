@@ -25,7 +25,7 @@
 //! - bit 3 (`0x08`): multi-track (0 = single-track, default)
 //!
 //! Verified against the crate's own real `ffmpeg`-muxed fixture
-//! (`../fixtures/mxf/st377-1/op1a_mpeg2_pcm.mxf`, one interleaved MPEG-2 video + PCM
+//! (`../fixtures/mxf/smpte-st377/op1a-mpeg2-pcm.mxf`, one interleaved MPEG-2 video + PCM
 //! audio Essence Container): its qualifier byte is `0x09` (marker +
 //! multi-track), matching a file whose essence is internal, streamable, and
 //! carries more than one track (issue #1048).

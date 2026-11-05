@@ -51,7 +51,7 @@ fn extract_nal(path_rel: &str, nut: u8) -> Vec<u8> {
 
 #[test]
 fn hevc_vps_timing_fixture_decodes() {
-    let vps = extract_nal("mp4/hevc_vps_timing.mp4", 32);
+    let vps = extract_nal("mp4/hevc-vps-timing.mp4", 32);
     let t = decode_hevc_vps_timing(&vps)
         .expect("parse")
         .expect("timing present");
@@ -61,8 +61,8 @@ fn hevc_vps_timing_fixture_decodes() {
 
 #[test]
 fn hevc_vps_timing_fixture_nominal_rate() {
-    let sps = extract_nal("mp4/hevc_vps_timing.mp4", 33);
-    let vps = extract_nal("mp4/hevc_vps_timing.mp4", 32);
+    let sps = extract_nal("mp4/hevc-vps-timing.mp4", 33);
+    let vps = extract_nal("mp4/hevc-vps-timing.mp4", 32);
     let record = HEVCDecoderConfigurationRecord {
         configuration_version: 1,
         general_profile_space: 0,
@@ -108,11 +108,11 @@ fn hevc_vps_timing_fixture_nominal_rate() {
 #[test]
 fn hevc_vps_timing_other_fixtures_none() {
     for name in [
-        "mp4/hevc_main.mp4",
-        "mp4/hevc_vui_hrd.mp4",
-        "mp4/hevc_vui_ntsc.mp4",
-        "mp4/hevc_vui_field.mp4",
-        "mp4/hevc_vui_field_hrd.mp4",
+        "mp4/hevc-main.mp4",
+        "mp4/hevc-vui-hrd.mp4",
+        "mp4/hevc-vui-ntsc.mp4",
+        "mp4/hevc-vui-field.mp4",
+        "mp4/hevc-vui-field-hrd.mp4",
     ] {
         if let Some(vps) = extract_vps_optional(name) {
             let r = decode_hevc_vps_timing(&vps).expect("parse");
@@ -145,7 +145,7 @@ fn extract_vps_optional(path_rel: &str) -> Option<Vec<u8>> {
 
 #[test]
 fn hevc_vps_timing_truncated_never_panics() {
-    let vps = extract_nal("mp4/hevc_vps_timing.mp4", 32);
+    let vps = extract_nal("mp4/hevc-vps-timing.mp4", 32);
     for i in 0..=vps.len() {
         let r = std::panic::catch_unwind(|| decode_hevc_vps_timing(&vps[..i]));
         assert!(r.is_ok(), "panicked at prefix len {}", i);

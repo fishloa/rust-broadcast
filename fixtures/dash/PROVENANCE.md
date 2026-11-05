@@ -9,8 +9,8 @@ written by hand; the only hand-written documents are the Annex G example MPDs (o
 
 | Source | Origin | Licence |
 | --- | --- | --- |
-| `fixtures/ts/h264_aac_40s.ts` | `fixtures/ts/h264_aac.ts` (this workspace's own H.264 + AAC capture) looped to about 48 s (`fixtures/PROVENANCE.md`, "Smooth Streaming segment fixture") | Own work, MIT OR Apache-2.0 (quoted from `fixtures/PROVENANCE.md`) |
-| `fixtures/ts/h264_aac.ts` | this workspace's own H.264 + AAC capture (`fixtures/PROVENANCE.md`) | Own work, MIT OR Apache-2.0 |
+| `fixtures/ts/h264-aac-40s.ts` | `fixtures/ts/h264-aac.ts` (this workspace's own H.264 + AAC capture) looped to about 48 s (`fixtures/PROVENANCE.md`, "Smooth Streaming segment fixture") | Own work, MIT OR Apache-2.0 (quoted from `fixtures/PROVENANCE.md`) |
+| `fixtures/ts/h264-aac.ts` | this workspace's own H.264 + AAC capture (`fixtures/PROVENANCE.md`) | Own work, MIT OR Apache-2.0 |
 
 Every derived file below inherits that licence (MIT OR Apache-2.0). No third-party media is included.
 
@@ -24,9 +24,9 @@ Tools: `ffmpeg 8.1.2` (libx264, native aac), `MP4Box`/`gpac` `GPAC 26.07-revrele
 ENC="-c:v libx264 -preset medium -profile:v main -g 50 -keyint_min 50 -sc_threshold 0 \
      -force_key_frames expr:gte(t,n_forced*2) -bf 0 -b:v 120k -c:a aac -b:a 48k -ar 44100"
 # src-raw.mp4: 12 s, 2 s GOPs, video starts at 0.040 s (the TS had a 24 ms A/V start offset)
-ffmpeg -y -i $R/fixtures/ts/h264_aac_40s.ts -t 12 $ENC $W/src-raw.mp4
+ffmpeg -y -i $R/fixtures/ts/h264-aac-40s.ts -t 12 $ENC $W/src-raw.mp4
 # src.mp4: same with both streams re-based to start at 0
-ffmpeg -y -i $R/fixtures/ts/h264_aac_40s.ts -t 12 -vf setpts=PTS-STARTPTS -af asetpts=PTS-STARTPTS $ENC $W/src.mp4
+ffmpeg -y -i $R/fixtures/ts/h264-aac-40s.ts -t 12 -vf setpts=PTS-STARTPTS -af asetpts=PTS-STARTPTS $ENC $W/src.mp4
 for s in src-raw src; do
   ffmpeg -y -i $W/$s.mp4 -map 0:v -c copy $W/$s-v.mp4
   ffmpeg -y -i $W/$s.mp4 -map 0:a -c copy $W/$s-a.mp4
@@ -120,7 +120,7 @@ continuity fixture needs exact numbers. Written by hand from the GPAC output, in
 ### `timeline-ffmpeg-quirk/` (reproduces the `S@t` vs `tfdt` offset of `manifest.mpd`)
 
 ```bash
-ffmpeg -y -i $R/fixtures/ts/h264_aac.ts -c copy -tag:v avc1 -tag:a mp4a -seg_duration 1 -f dash manifest.mpd
+ffmpeg -y -i $R/fixtures/ts/h264-aac.ts -c copy -tag:v avc1 -tag:a mp4a -seg_duration 1 -f dash manifest.mpd
 ```
 
 The same command family as the committed `manifest.mpd`, re-run with ffmpeg 8.1.2. It reproduces the quirk: the video
@@ -131,7 +131,7 @@ time (it equals the `sidx` value), not the `tfdt`. The audio timeline is exact (
 ### `live-number/` and `live-timeline/` (real dynamic MPDs, 4-segment window)
 
 ```bash
-ffmpeg -y -re -i $R/fixtures/ts/h264_aac_40s.ts -c copy -tag:v avc1 -tag:a mp4a -f dash \
+ffmpeg -y -re -i $R/fixtures/ts/h264-aac-40s.ts -c copy -tag:v avc1 -tag:a mp4a -f dash \
   -use_template 1 -use_timeline <0|1> -seg_duration 2 -window_size 4 -extra_window_size 0 \
   -adaptation_sets "id=0,streams=v id=1,streams=a" \
   -init_seg_name 'init-$RepresentationID$.m4s' -media_seg_name 'seg-$RepresentationID$-$Number%03d$.m4s' live.mpd
@@ -162,3 +162,63 @@ are old; without the shift gpac looks for segments that no longer exist).
 `python3 tools/check-dash-fixtures.py` checks `SHA256SUMS`, XML well-formedness of every `.mpd`/`.mpp`/`.xml`, and that every
 file an MPD in a media-bearing directory references exists. `python3 tools/check-dash-fixtures.py --update` rewrites
 `SHA256SUMS` after an intentional change.
+
+
+## Folded note: README.md
+
+# `fixtures/dash/` — DASH MPD fixtures
+
+- `manifest.mpd` + the `init-stream*.m4s` / `chunk-stream*-*.m4s` segments — a
+  real ffmpeg-generated DASH presentation (`ffmpeg -i fixtures/ts/h264-aac.ts
+  -c copy -f dash`), one video and one audio `AdaptationSet`, each
+  `Representation` carrying its own `SegmentTemplate` +
+  `SegmentTimeline`. Used by `transmux/tests/dash.rs`, `dash_mpd.rs`,
+  `dash_parse.rs`.
+
+- `manifest-inheritance.mpd` — **derived** from `manifest.mpd` above (same
+  segments, same codec/geometry/timing values; nothing invented), restructured
+  into the `SegmentTemplate`-inheritance layouts the standard itself uses:
+
+  | level | declares | inherits |
+  | --- | --- | --- |
+  | Period | `BaseURL`, `@timescale`, `@startNumber`, `@presentationTimeOffset`, `SegmentTimeline` | — |
+  | video AdaptationSet | `@media` | `@timescale`, `@startNumber`, `SegmentTimeline` |
+  | video Representation | `@initialization` | all of the above |
+  | audio AdaptationSet | `@timescale`, `@startNumber`, `@media` | `SegmentTimeline` |
+  | audio Representation | `@initialization`, `SegmentTimeline` | `@timescale`, `@startNumber`, `@media` |
+
+  This is ISO/IEC 23009-1 §5.3.9.1's attribute-by-attribute inheritance: Annex
+  G.13's shape (a `Representation` `SegmentTemplate` declaring one attribute
+  and inheriting the rest from the `AdaptationSet`) plus G.12's (the level
+  above carrying `@media` while the level below carries `@timescale`). The
+  audio `Representation` additionally carries its own `SegmentTimeline`, which
+  must override the Period's (the "lowest level that declares one wins"
+  element-level rule). MP4Box and ffmpeg only ever emit
+  `Representation`-level templates, and DASH-IF livesim2 rejects any other
+  shape outright, so no real-world capture of this layout could be pulled —
+  hence a derivation from the real file rather than a fabricated one.
+  Released under the workspace licence.
+
+## P0 fixture sets (DASH runtime groundwork)
+
+Real external-muxer output (ffmpeg 8.1.2, GPAC 26.07) derived from this workspace's own TS fixtures; exact commands,
+licence and the real-world quirks each set carries are in [`PROVENANCE.md`](PROVENANCE.md), the external-oracle output
+for each is in its `oracle.txt`, and `python3 tools/check-dash-fixtures.py` re-verifies checksums, XML and references.
+
+| Directory | Addressing | What it is |
+| --- | --- | --- |
+| `annex-g/` | n/a (no media) | the nine fresh example MPDs of `private/specs-verified/dash/docs-specs/23009-1/annex-g-examples.md` plus the F8 patch |
+| `ondemand-sidx/` | `SegmentBase` + `sidx` | on-demand profile, one single-file fMP4 per Representation |
+| `ondemand-gpac-pto-quirk/` | `SegmentBase` + `sidx` | same, with GPAC's nonsense `presentationTimeOffset` |
+| `segmentlist/` | `SegmentList` | ffmpeg, `Initialization@sourceURL` + `SegmentURL`s |
+| `timeline-gpac/` | `SegmentTimeline`, `$Number$` | static; audio timeline disagrees with the media |
+| `timeline-ffmpeg-quirk/` | `SegmentTimeline`, `$Number%05d$` | reproduces `S@t` != `tfdt` of `manifest.mpd` |
+| `multiperiod-restart/` | `SegmentTemplate@duration` | two Periods, each Period's media restarts at tfdt 0 |
+| `multiperiod-continuous/` | `SegmentTimeline`, PTO, continuity | two Periods over one continuous timeline (derived MPD) |
+| `live-number/` | `$Number$` + `@duration`, dynamic | real ffmpeg live capture, 4-segment window |
+| `live-timeline/` | `SegmentTimeline`, dynamic | real ffmpeg live capture, 4-segment window, `S@t` != `tfdt` |
+
+
+## `chunk-stream1-0000N.m4s` duplicates
+
+`chunk-stream1-00001.m4s` to `chunk-stream1-00004.m4s` here are byte-identical to the copies in `timeline-ffmpeg-quirk/`. They are kept because `manifest.mpd` addresses both representations with one `SegmentTemplate` shape and `golden/dash/parse-manifest.txt` pins that manifest's parsed form byte for byte, so the segment URLs cannot move without re-blessing that golden.

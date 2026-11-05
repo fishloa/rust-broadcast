@@ -54,7 +54,7 @@ fn avc_dims(specs: &[TrackSpec]) -> Option<(u16, u16)> {
 
 fn ts_dims() -> (u16, u16) {
     let media = TsDemux::new()
-        .unpackage(&test_fixtures::read("ts/h264_aac.ts"))
+        .unpackage(&test_fixtures::read("ts/h264-aac.ts"))
         .expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     avc_dims(&specs).expect("ts video spec")

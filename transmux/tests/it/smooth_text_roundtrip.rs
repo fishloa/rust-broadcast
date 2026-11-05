@@ -1,6 +1,6 @@
 //! `SmoothPackager` -> `SmoothManifest::parse` for a `Type="text"` stream
 //! ([MS-SSTR] §2.2.2.3 / §2.2.2.5): the packager writes the text stream the
-//! parser must read back (real artifact: ffmpeg CMAF `av_subtitle_frag.mp4`,
+//! parser must read back (real artifact: ffmpeg CMAF `av-subtitle-frag.mp4`,
 //! AVC + `stpp`/TTML).
 
 use broadcast_common::{Package, Unpackage};
@@ -10,7 +10,7 @@ use transmux::{Fmp4Demux, SmoothPackager};
 
 #[test]
 fn packager_text_stream_parses_back() {
-    let path = test_fixtures::path("transmux/mp4/cmaf/av_subtitle_frag.mp4");
+    let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let media = Fmp4Demux::new().unpackage(&bytes).expect("demux fixture");
     let out = SmoothPackager::default().package(&media).expect("smooth");

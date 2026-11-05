@@ -118,7 +118,7 @@ fn hls_segments_each_carry_audio_and_video() {
         return;
     }
     let dir = scratch("hls-av");
-    let input = fixtures().join("ts/h264_aac.ts");
+    let input = fixtures().join("ts/h264-aac.ts");
     let m3u8 = dir.join("pl.m3u8");
     run_cli(&input, &m3u8, "hls", &["--segment-duration", "2"]);
 
@@ -236,7 +236,7 @@ fn hls_playlist_durations_are_real_and_segments_are_media_only() {
         return;
     }
     let dir = scratch("hls-durations");
-    let input = fixtures().join("ts/h264_aac.ts");
+    let input = fixtures().join("ts/h264-aac.ts");
     let m3u8 = dir.join("pl.m3u8");
     run_cli(&input, &m3u8, "hls", &["--segment-duration", "2"]);
 
@@ -314,7 +314,7 @@ fn hls_passes_mediastreamvalidator() {
         return;
     };
     let dir = scratch("hls-msv");
-    let input = fixtures().join("ts/h264_aac.ts");
+    let input = fixtures().join("ts/h264-aac.ts");
     let m3u8 = dir.join("pl.m3u8");
     run_cli(&input, &m3u8, "hls", &["--segment-duration", "2"]);
 
@@ -358,7 +358,7 @@ fn xmllint_ok(path: &std::path::Path) -> Option<bool> {
 #[test]
 fn ll_dash_mpd_is_static_and_utc_timing_is_opt_in() {
     let dir = scratch("ll-dash");
-    let input = fixtures().join("ts/h264_aac.ts");
+    let input = fixtures().join("ts/h264-aac.ts");
 
     // 1. Default: static, VOD duration, no UTCTiming.
     let default_mpd = dir.join("default.mpd");
@@ -495,7 +495,7 @@ fn ffprobe_dash_demuxer_availability_is_reported() {
 
     // A dash demuxer exists: our MPD must resolve.
     let dir = scratch("dash-ffprobe");
-    let input = fixtures().join("ts/h264_aac.ts");
+    let input = fixtures().join("ts/h264-aac.ts");
     let mpd = dir.join("d.mpd");
     run_cli(&input, &mpd, "dash", &["--segment-duration", "2"]);
     let out = Command::new("ffprobe")
@@ -536,7 +536,7 @@ fn dash_representations_are_aligned_and_never_zero_duration() {
         return;
     }
     let dir = scratch("dash-aligned");
-    let input = fixtures().join("ts/h264_aac.ts");
+    let input = fixtures().join("ts/h264-aac.ts");
     let mpd = dir.join("d.mpd");
     run_cli(&input, &mpd, "dash", &["--segment-duration", "2"]);
     let text = std::fs::read_to_string(&mpd).expect("mpd");
@@ -699,7 +699,7 @@ fn which(tool: &str) -> Option<&'static str> {
 #[test]
 fn dash_mpd_ids_are_unique_and_xml_is_well_formed() {
     let dir = scratch("dash-ids");
-    let input = fixtures().join("ts/h264_aac.ts");
+    let input = fixtures().join("ts/h264-aac.ts");
     let mpd = dir.join("d.mpd");
     run_cli(&input, &mpd, "dash", &["--segment-duration", "2"]);
     let text = std::fs::read_to_string(&mpd).expect("mpd");

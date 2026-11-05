@@ -16,7 +16,7 @@ use transmux::{CodecConfig, StreamingTsDemux, TsDemux};
 // ── Fixtures (shared /fixtures/ts/) ─────────────────────────────────────────
 
 /// Real H.264 broadcast captures.
-const FIXTURES: [&str; 3] = ["france2.ts", "gulli-opengop.ts", "h264_aac_40s.ts"];
+const FIXTURES: [&str; 3] = ["france2.ts", "gulli-opengop.ts", "h264-aac-40s.ts"];
 
 fn fixture(name: &str) -> Vec<u8> {
     test_fixtures::read(&format!("ts/{name}"))

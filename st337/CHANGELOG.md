@@ -94,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and IEC 61937's for the AC-3/E-AC-3 data type (bytes).
 - Real-fixture test (`tests/fixture_eac3.rs`) wrapping a real 834-byte E-AC-3
   syncframe (extracted from this workspace's `fixtures/ts/dolby/eac3.ts`,
-  committed as `../fixtures/eac3-dep/eac3_frame0.bin`) in a hand-built ST 337
+  committed as `../fixtures/audio/eac3-dependent/eac3-frame0.bin`) in a hand-built ST 337
   burst, with byte-identical parse/serialize round-trip coverage and a
   mutation test guarding against a `self.raw`-style passthrough serializer.
 - Spec-derived edge-case round-trip tests (`tests/round_trip.rs`): zero-length

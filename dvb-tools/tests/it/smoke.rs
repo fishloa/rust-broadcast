@@ -51,7 +51,7 @@ fn dump_m6_single() {
 
 #[test]
 fn dump_tnt_isi6() {
-    let path = fixture("/dvb-si/tnt-5w-12732v-isi6-10s.ts");
+    let path = fixture("/ts/tnt-5w-12732v-isi6-10s.ts");
     let (ok, stdout, stderr) = run(&["dump", &path]);
     assert!(ok, "dump tnt-isi6 failed: stderr={stderr}");
     assert!(

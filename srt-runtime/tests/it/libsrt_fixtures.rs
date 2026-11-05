@@ -19,7 +19,7 @@ fn fixture(name: &str) -> Vec<u8> {
 
 #[test]
 fn real_libsrt_keepalive_parses_and_round_trips_byte_exact() {
-    let bytes = fixture("libsrt_keepalive.bin");
+    let bytes = fixture("libsrt-keepalive.bin");
     assert_eq!(
         bytes.len(),
         20,
@@ -55,7 +55,7 @@ fn real_libsrt_keepalive_parses_and_round_trips_byte_exact() {
 
 #[test]
 fn real_libsrt_ackack_parses_and_round_trips_byte_exact() {
-    let bytes = fixture("libsrt_ackack.bin");
+    let bytes = fixture("libsrt-ackack.bin");
     assert_eq!(
         bytes.len(),
         20,

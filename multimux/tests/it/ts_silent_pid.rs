@@ -142,7 +142,7 @@ fn fixture(rel: &str) -> Vec<u8> {
 }
 
 fn assert_released_by_time(rate: u64, position: Position) {
-    let ts = with_silent_pid(&fixture("ts/h264_aac_40s.ts"), position);
+    let ts = with_silent_pid(&fixture("ts/h264-aac-40s.ts"), position);
     let out = drive(&ts, Some(rate), Some(Duration::from_secs(10)));
     let at = out.first_program_at.unwrap_or_else(|| {
         panic!("no program within 10 s of arrival at {rate} B/s: the silent PID held it")
@@ -168,7 +168,7 @@ fn silent_pid_does_not_hold_a_mid_bitrate_spts() {
 #[test]
 fn control_without_the_silent_pid_resolves_immediately() {
     let out = drive(
-        &fixture("ts/h264_aac_40s.ts"),
+        &fixture("ts/h264-aac-40s.ts"),
         Some(31_000),
         Some(Duration::from_secs(10)),
     );
@@ -176,8 +176,8 @@ fn control_without_the_silent_pid_resolves_immediately() {
 }
 
 const HAPPY_PATH_FIXTURES: &[&str] = &[
-    "ts/h264_aac.ts",
-    "ts/h264_aac_40s.ts",
+    "ts/h264-aac.ts",
+    "ts/h264-aac-40s.ts",
     "ts/gulli-opengop.ts",
     "ts/france2.ts",
     "ts/h264/baseline.ts",
@@ -185,7 +185,7 @@ const HAPPY_PATH_FIXTURES: &[&str] = &[
     "ts/h264/main.ts",
     "ts/hevc/main.ts",
     "ts/m6-single.ts",
-    "ts/aac-5_1-640k.ts",
+    "ts/aac-5-1-640k.ts",
 ];
 
 #[test]

@@ -3,7 +3,7 @@
 //! the master playlist `CODECS` says `mp4a.40.5` / `mp4a.40.29`.
 //!
 //! Real artifacts: `fixtures/ts/heaac/heaac_v{1,2}_adts.ts` (macOS AudioToolbox
-//! encoder; commands in `fixtures/ts/GENERATE.md`). Every test drives the
+//! encoder; commands in `fixtures/ts/PROVENANCE.md`). Every test drives the
 //! production path: `RouteHandle::set_track_specs` + `ProgramSegmenter::pump`
 //! over a `Trunk`, read back through the axum router as a player would.
 
@@ -38,8 +38,8 @@ const RING: usize = 1 << 16;
 const PUMP_EVERY: usize = 64;
 const STREAM: &str = "cam";
 const DECLARED_BPS: u64 = 4_000_000;
-const V1_FIXTURE: &str = "ts/heaac/heaac_v1_adts.ts";
-const V2_FIXTURE: &str = "ts/heaac/heaac_v2_adts.ts";
+const V1_FIXTURE: &str = "ts/heaac/heaac-v1-adts.ts";
+const V2_FIXTURE: &str = "ts/heaac/heaac-v2-adts.ts";
 const V1_ASC: [u8; 4] = [0x2B, 0x92, 0x08, 0x00];
 const OUTPUT_HZ: u32 = 44_100;
 const AAC_FRAME_OUTPUT_TICKS: u32 = 2048;

@@ -34,7 +34,7 @@ const LATTICE_STRONG: Confidence = Confidence::LATTICE_STRONG;
 /// as the no-candidate branch changed.) The stride was restored.
 #[test]
 fn m2ts_192_stride() {
-    let p = probe_fixture("fixtures/container-probe/m2ts_192.m2ts");
+    let p = probe_fixture("fixtures/ts/m2ts-192.m2ts");
     assert_identical_ts(p, 192, 4, LATTICE_STRONG);
 }
 
@@ -56,19 +56,19 @@ fn m2ts_192_stride() {
 /// changed.) The loop was restored.
 #[test]
 fn ts_midpacket_phase() {
-    let p = probe_fixture("fixtures/container-probe/ts_midpacket_phase.ts");
+    let p = probe_fixture("fixtures/ts/ts-midpacket-phase.ts");
     assert_identical_ts(p, 188, 111, LATTICE_STRONG);
 }
 
 #[test]
 fn ts_204_stride_synthetic() {
-    let p = probe_fixture("fixtures/container-probe/ts_204_stride_SYNTHETIC.ts");
+    let p = probe_fixture("fixtures/ts/ts-204-stride-synthetic.ts");
     assert_identical_ts(p, 204, 0, LATTICE_STRONG);
 }
 
 #[test]
 fn h264_aac_188_stride() {
-    let p = probe_fixture("fixtures/ts/h264_aac.ts");
+    let p = probe_fixture("fixtures/ts/h264-aac.ts");
     assert_identical_ts(p, 188, 0, LATTICE_STRONG);
 }
 
@@ -88,7 +88,7 @@ fn gulli_opengop_capture() {
 
 #[test]
 fn tnt5w_capture() {
-    let p = probe_fixture("fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts");
+    let p = probe_fixture("fixtures/ts/tnt-5w-12732v-isi6-10s.ts");
     assert_identical_ts(p, 188, 0, LATTICE_STRONG);
 }
 
@@ -104,22 +104,22 @@ fn assert_format(rel: &str, format: Format) {
 
 #[test]
 fn mp4_is_not_ts() {
-    assert_format("fixtures/mp4/h264_high.mp4", Format::Isobmff);
+    assert_format("fixtures/mp4/h264-high.mp4", Format::Isobmff);
 }
 
 #[test]
 fn wav_is_not_ts() {
-    assert_format("fixtures/container-probe/pcm_s16le.wav", Format::Wav);
+    assert_format("fixtures/audio/pcm-s16le.wav", Format::Wav);
 }
 
 #[test]
 fn ogg_is_not_ts() {
-    assert_format("fixtures/container-probe/opus.ogg", Format::Ogg);
+    assert_format("fixtures/audio/opus.ogg", Format::Ogg);
 }
 
 #[test]
 fn mkv_is_not_ts() {
-    assert_format("fixtures/mkv/h264_aac.mkv", Format::Matroska);
+    assert_format("fixtures/mkv/h264-aac.mkv", Format::Matroska);
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn flv_is_not_ts() {
 
 #[test]
 fn asf_is_not_ts() {
-    assert_format("fixtures/container-probe/video.asf", Format::Asf);
+    assert_format("fixtures/candidates/video.asf", Format::Asf);
 }
 
 /// Regression guard for the CENC **TS-misidentification** false positive
@@ -204,37 +204,37 @@ fn av1_mp4_is_not_ts() {
 
 #[test]
 fn vp9_opus_mkv_is_not_ts() {
-    assert_format("fixtures/mkv/vp9_opus.mkv", Format::Matroska);
+    assert_format("fixtures/mkv/vp9-opus.mkv", Format::Matroska);
 }
 
 #[test]
 fn vp8_opus_webm_is_not_ts() {
-    assert_format("fixtures/webm/vp8_opus.webm", Format::WebM);
+    assert_format("fixtures/mkv/vp8-opus.webm", Format::WebM);
 }
 
 #[test]
 fn ps_is_not_ts() {
-    assert_format("fixtures/ps/h264_ac3.ps", Format::MpegPs);
+    assert_format("fixtures/ps/h264-ac3.ps", Format::MpegPs);
 }
 
 #[test]
 fn mxf_is_not_ts() {
-    assert_format("fixtures/mxf/op1a_mpeg2_pcm.mxf", Format::Mxf);
+    assert_format("fixtures/mxf/op1a-mpeg2-pcm.mxf", Format::Mxf);
 }
 
 #[test]
 fn adts_aac_is_not_ts() {
-    assert_format("fixtures/container-probe/aac.adts", Format::AdtsAac);
+    assert_format("fixtures/audio/aac.adts", Format::AdtsAac);
 }
 
 #[test]
 fn mp3_is_not_ts() {
-    assert_format("fixtures/container-probe/audio.mp3", Format::Mp3);
+    assert_format("fixtures/audio/audio.mp3", Format::Mp3);
 }
 
 #[test]
 fn annexb_is_not_ts() {
-    assert_format("fixtures/container-probe/h264.annexb", Format::AnnexB);
+    assert_format("fixtures/candidates/h264.annexb", Format::AnnexB);
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +305,7 @@ fn zeros_with_single_sync_byte() {
 }
 
 /// A short but complete-looking transport stream: the first 600 bytes of
-/// `h264_aac.ts` is 4 whole 188-byte packets, every lattice position a sync
+/// `h264-aac.ts` is 4 whole 188-byte packets, every lattice position a sync
 /// byte. That is a **match** — weakly, since it is below the 8 confirmations
 /// `LATTICE_STRONG` needs — never `Insufficient`.
 ///
@@ -315,14 +315,14 @@ fn zeros_with_single_sync_byte() {
 /// unproven. A sweep of all 145 media files in the repo showed what that
 /// actually did: eleven real and *complete* TS files of 188 B - 1.1 KB
 /// (`fixtures/ts/scte35-*.ts`, `fixtures/ts/pts-*.ts`,
-/// `fixtures/mpeg-ts/af-*.ts`) answered `Insufficient { need_at_least: 1504 }`
+/// `fixtures/ts/af-*.ts`) answered `Insufficient { need_at_least: 1504 }`
 /// — telling a caller to read past the end of a file it had fully read.
 ///
 /// MUTATION VERIFIED: restoring the `could_reach_strong` downgrade turns this
 /// red with `Insufficient { need_at_least: 1504 }`.
 #[test]
 fn short_but_complete_ts_is_a_weak_match_not_insufficient() {
-    let data = fixture("fixtures/ts/h264_aac.ts");
+    let data = fixture("fixtures/ts/h264-aac.ts");
     let p = probe(&data[..600]);
     assert_identical_ts(p, 188, 0, Confidence::LATTICE_WEAK);
 }
@@ -334,7 +334,7 @@ fn short_but_complete_ts_is_a_weak_match_not_insufficient() {
 /// simply delete the `Insufficient` path.
 #[test]
 fn a_single_ts_packet_is_insufficient() {
-    let data = fixture("fixtures/ts/h264_aac.ts");
+    let data = fixture("fixtures/ts/h264-aac.ts");
     match probe(&data[..188]) {
         Probe::Insufficient { need_at_least, .. } => {
             assert!(
@@ -361,11 +361,11 @@ fn a_single_ts_packet_is_insufficient() {
 #[test]
 fn small_complete_ts_fixtures_all_identify() {
     for path in [
-        "fixtures/mpeg-ts/af-transport-private-data.ts", // 752 B — 4 packets
-        "fixtures/ts/pcr-wrap.ts",                       // 940 B — 5 packets
-        "fixtures/ts/pts-backward.ts",                   // 940 B — 5 packets
-        "fixtures/ts/pts-wrap.ts",                       // 940 B — 5 packets
-        "fixtures/ts/scte35-pcr.ts",                     // 1128 B — 6 packets
+        "fixtures/ts/af-transport-private-data.ts", // 752 B — 4 packets
+        "fixtures/ts/pcr-wrap.ts",                  // 940 B — 5 packets
+        "fixtures/ts/pts-backward.ts",              // 940 B — 5 packets
+        "fixtures/ts/pts-wrap.ts",                  // 940 B — 5 packets
+        "fixtures/ts/scte35-pcr.ts",                // 1128 B — 6 packets
     ] {
         let data = fixture(path);
         let p = probe(&data);
@@ -399,11 +399,11 @@ fn small_complete_ts_fixtures_all_identify() {
 #[test]
 fn tiny_ts_fixtures_below_the_weak_threshold_are_insufficient() {
     for path in [
-        "fixtures/ts/emsg-pid4.ts",            // 188 B — 1 packet
-        "fixtures/ts/scte35-balanced.ts",      // 188 B — 1 packet
-        "fixtures/ts/scte35-real.ts",          // 188 B — 1 packet
-        "fixtures/ts/scte35-unbalanced.ts",    // 188 B — 1 packet
-        "fixtures/mpeg-ts/af-pcr-stuffing.ts", // 376 B — 2 packets
+        "fixtures/ts/emsg-pid4.ts",         // 188 B — 1 packet
+        "fixtures/ts/scte35-balanced.ts",   // 188 B — 1 packet
+        "fixtures/ts/scte35-real.ts",       // 188 B — 1 packet
+        "fixtures/ts/scte35-unbalanced.ts", // 188 B — 1 packet
+        "fixtures/ts/af-pcr-stuffing.ts",   // 376 B — 2 packets
     ] {
         let data = fixture(path);
         match probe(&data) {
@@ -448,7 +448,7 @@ fn all_sync_bytes() {
 /// shows the budget is actually clamped.
 #[test]
 fn budget_caps_the_read() {
-    let data = fixture("fixtures/ts/h264_aac.ts");
+    let data = fixture("fixtures/ts/h264-aac.ts");
     let p = probe_with_budget(&data, 512);
     match p {
         Probe::Identified {
@@ -483,7 +483,7 @@ fn budget_caps_the_read() {
 /// "supply 10 MB more" — the budget was the constraint, not a short file.
 #[test]
 fn budget_sizes_the_insufficient_hint() {
-    let data = fixture("fixtures/ts/h264_aac.ts");
+    let data = fixture("fixtures/ts/h264-aac.ts");
     let p = probe_with_budget(&data, 64);
     match p {
         Probe::Insufficient { need_at_least, .. } => {

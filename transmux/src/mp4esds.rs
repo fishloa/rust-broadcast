@@ -1359,7 +1359,7 @@ mod tests {
     }
 
     /// A real `esds` box, extracted by muxing the audio of
-    /// `fixtures/ts/h264_aac.ts` (AAC-LC, 44.1 kHz, mono) to MP4 with ffmpeg.
+    /// `fixtures/ts/h264-aac.ts` (AAC-LC, 44.1 kHz, mono) to MP4 with ffmpeg.
     /// It carries the 4-byte-expanded (`80 80 80 xx`) descriptor size form and
     /// real max/avg bitrates — value-verifying the parser against 14496-1 §7.2.6
     /// on data this crate did not author.

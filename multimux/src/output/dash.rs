@@ -488,15 +488,13 @@ mod tests {
             .expect("add_segment");
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let actual = render_mpd_at(&route, now).expect("renders");
-        let file = "dash_mpd.golden";
+        let file = "golden/dash/dash-mpd.golden";
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");
             std::fs::write(std::path::Path::new(&dir).join(file), &actual).expect("write");
             return;
         }
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden")
-            .join(file);
+        let path = test_fixtures::path(file);
         let expected = std::fs::read_to_string(&path).expect("read golden");
         assert_eq!(actual, expected, "{file} differs from the golden output");
     }
@@ -528,27 +526,25 @@ mod tests {
             actual.contains("timeShiftBufferDepth=\"PT1M\""),
             "a 60 s window must spell the balanced jiff xs:duration PT1M: {actual}"
         );
-        let file = "dash_mpd_window60.golden";
+        let file = "golden/dash/dash-mpd-window60.golden";
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");
             std::fs::write(std::path::Path::new(&dir).join(file), &actual).expect("write");
             return;
         }
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden")
-            .join(file);
+        let path = test_fixtures::path(file);
         let expected = std::fs::read_to_string(&path).expect("read golden");
         assert_eq!(actual, expected, "{file} differs from the golden output");
     }
 
     /// The deliberate >= 60 s wire change vs main, pinned against a golden
-    /// **captured from `origin/main`** (`dash_mpd_window60_main.golden`): main
+    /// **captured from `origin/main`** (`dash-mpd-window60-main.golden`): main
     /// prints `PT60S`, this crate prints the balanced `PT1M` — and the two
     /// golden files must differ by EXACTLY that one token, nothing else. This
     /// is the "pin the intended difference" gate: a future change that alters
     /// any other byte, or that silently reverts to `PT60S`, fails here.
     /// A FRACTIONAL target duration (`0.1` s x 3 segments) pinned against
-    /// main's captured bytes (`dash_mpd_frac_main.golden`): main printed raw
+    /// main's captured bytes (`dash-mpd-frac-main.golden`): main printed raw
     /// `f64` (`timeShiftBufferDepth="PT0.30000000000000004S"`), this crate's
     /// jiff form prints `PT0.3S`. The integral-second goldens above cannot see
     /// this, so this is the fractional-target guard — the two must differ by
@@ -573,16 +569,17 @@ mod tests {
             ours.contains("timeShiftBufferDepth=\"PT0.3S\""),
             "a 0.3 s window must spell the jiff PT0.3S, not main's raw f64: {ours}"
         );
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
-        let file = "dash_mpd_frac.golden";
+        let file = "golden/dash/dash-mpd-frac.golden";
         if let Ok(bless) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&bless).expect("create golden dir");
             std::fs::write(std::path::Path::new(&bless).join(file), &ours).expect("write");
             return;
         }
-        let ours_file = std::fs::read_to_string(dir.join(file)).expect("read our frac golden");
-        let main = std::fs::read_to_string(dir.join("dash_mpd_frac_main.golden"))
-            .expect("read main's frac golden");
+        let ours_file =
+            std::fs::read_to_string(test_fixtures::path(file)).expect("read our frac golden");
+        let main =
+            std::fs::read_to_string(test_fixtures::path("golden/dash/dash-mpd-frac-main.golden"))
+                .expect("read main's frac golden");
         assert_eq!(
             ours, ours_file,
             "the live render must match our frac golden"
@@ -624,11 +621,13 @@ mod tests {
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let ours = render_mpd_at(&route, now).expect("renders");
 
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
-        let ours_file = std::fs::read_to_string(dir.join("dash_mpd_window60.golden"))
-            .expect("read our window60 golden");
-        let main = std::fs::read_to_string(dir.join("dash_mpd_window60_main.golden"))
-            .expect("read main's window60 golden");
+        let ours_file =
+            std::fs::read_to_string(test_fixtures::path("golden/dash/dash-mpd-window60.golden"))
+                .expect("read our window60 golden");
+        let main = std::fs::read_to_string(test_fixtures::path(
+            "golden/dash/dash-mpd-window60-main.golden",
+        ))
+        .expect("read main's window60 golden");
         assert_eq!(ours, ours_file, "the live render must match our golden");
         assert_ne!(
             ours, main,
@@ -671,10 +670,9 @@ mod tests {
             ours.contains("timeShiftBufferDepth=\"PT1H\""),
             "a 3600 s window must spell PT1H: {ours}"
         );
-        let main = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/golden/dash_mpd_window3600_main.golden"),
-        )
+        let main = std::fs::read_to_string(test_fixtures::path(
+            "golden/dash/dash-mpd-window3600-main.golden",
+        ))
         .expect("read main's window3600 golden");
         assert!(
             main.contains("timeShiftBufferDepth=\"PT3600S\""),

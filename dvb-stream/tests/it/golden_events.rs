@@ -22,10 +22,7 @@ async fn section_stream_events_are_byte_identical_to_golden() {
         stream.stats(),
         stream.resync_stats()
     ));
-    let path = format!(
-        "{}/tests/golden/m6_single_events.golden",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = test_fixtures::path("golden/ts/m6-single-events.golden");
     if std::env::var_os("GOLDEN_UPDATE").is_some() {
         std::fs::write(&path, &out).unwrap();
         return;

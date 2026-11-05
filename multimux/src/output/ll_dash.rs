@@ -444,15 +444,13 @@ mod tests {
             .expect("add_segment");
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let actual = render_ll_dash_mpd_at(&route, now).expect("renders");
-        let file = "ll_dash_mpd.golden";
+        let file = "golden/dash/ll-dash-mpd.golden";
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");
             std::fs::write(std::path::Path::new(&dir).join(file), &actual).expect("write");
             return;
         }
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden")
-            .join(file);
+        let path = test_fixtures::path(file);
         let expected = std::fs::read_to_string(&path).expect("read golden");
         assert_eq!(actual, expected, "{file} differs from the golden output");
     }

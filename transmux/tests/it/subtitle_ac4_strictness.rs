@@ -17,11 +17,11 @@
 //! single-track file (can only prove "not fatal, and named") and a
 //! multi-track one (proves the OTHER tracks survive too).
 //!
-//! Fixtures: `fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4` (real ffmpeg-generated
-//! CMAF with an AVC + `stpp` track), `fixtures/transmux/mp4/cmaf/av_aac_subtitle_frag.mp4`
+//! Fixtures: `fixtures/mp4/cmaf-av-subtitle/av-subtitle-frag.mp4` (real ffmpeg-generated
+//! CMAF with an AVC + `stpp` track), `fixtures/mp4/cmaf-av-subtitle/av-aac-subtitle-frag.mp4`
 //! (real ffmpeg-generated CMAF with AVC + AAC + `stpp` — the multi-track skip
 //! test's fixture, mutated in-test) — see `PROVENANCE.md` in that directory —
-//! and `fixtures/mp4/cmaf/av_frag.mp4` (existing real AVC+AAC CMAF fixture,
+//! and `fixtures/mp4/cmaf/av-frag.mp4` (existing real AVC+AAC CMAF fixture,
 //! reused here to get a real `avcC` config for the single-track skip test
 //! without hand-fabricating one).
 
@@ -33,7 +33,7 @@ use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};
 use transmux::{Ac4SpecificBox, CmafMux, Fmp4Demux, Media, Sample, Track, TrackSpec};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = test_fixtures::path(&format!("transmux/mp4/cmaf/{name}"));
+    let path = test_fixtures::path(&format!("mp4/cmaf-av-subtitle/{name}"));
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 
@@ -41,7 +41,7 @@ fn fixture(name: &str) -> Vec<u8> {
 
 #[test]
 fn ordering_guard_subtitle_track_present_after_demux() {
-    let file = fixture("av_subtitle_frag.mp4");
+    let file = fixture("av-subtitle-frag.mp4");
 
     let mut demux = Fmp4Demux::new();
     let media = demux
@@ -119,11 +119,11 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
     // "repackage this real subtitle-bearing CMAF asset" pipeline always
     // failed. `is_muxable_in_bmff()` (new in this fix) covers both `Data`
     // and `Subtitle`, so filtering with it is the fix.
-    let file = fixture("av_subtitle_frag.mp4");
+    let file = fixture("av-subtitle-frag.mp4");
     let mut demux = Fmp4Demux::new();
     let media = demux
         .unpackage(&file)
-        .expect("demux av_subtitle_frag.mp4 (AVC + stpp)");
+        .expect("demux av-subtitle-frag.mp4 (AVC + stpp)");
     assert_eq!(media.tracks.len(), 2, "AVC video + stpp subtitle track");
 
     // Since #1186 the demuxed `stpp` track carries its sample entry, so
@@ -254,7 +254,7 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
 
 #[test]
 fn fmp4_demux_skips_a_genuinely_unsupported_sample_entry_naming_it_not_failing_the_file() {
-    // Start from a real, previously-demuxed AVC config (av_frag.mp4) so the
+    // Start from a real, previously-demuxed AVC config (av-frag.mp4) so the
     // surrounding bytes (avcC/SPS/PPS) are genuine, not hand-fabricated —
     // only the sample entry's four-CC is deliberately mutated to a value no
     // `SampleEntryVariant` matches, simulating a codec this crate has no
@@ -267,14 +267,14 @@ fn fmp4_demux_skips_a_genuinely_unsupported_sample_entry_naming_it_not_failing_t
     // single-track `Media` with zero tracks looks the same either way). The
     // multi-track test below (`fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest`)
     // is the one that actually bites that distinction.
-    let file = fixture("av_frag.mp4");
+    let file = fixture("av-frag.mp4");
     let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("demux av_frag.mp4");
+    let media = demux.unpackage(&file).expect("demux av-frag.mp4");
     let avc_spec = media
         .tracks
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-        .expect("av_frag.mp4 must have an AVC track")
+        .expect("av-frag.mp4 must have an AVC track")
         .spec
         .clone();
 
@@ -319,7 +319,7 @@ fn fmp4_demux_skips_a_genuinely_unsupported_sample_entry_naming_it_not_failing_t
 #[test]
 fn fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest() {
     // The bite the single-track test above cannot provide: a real 3-track
-    // CMAF (AVC + AAC + `stpp` subtitle, `av_aac_subtitle_frag.mp4` — see
+    // CMAF (AVC + AAC + `stpp` subtitle, `av-aac-subtitle-frag.mp4` — see
     // PROVENANCE.md) with ONLY the subtitle track's sample-entry four-CC
     // mutated to something no `SampleEntryVariant` matches. If a demuxer
     // were fatal on one bad track (the pre-fix `Fmp4Demux` behaviour), this
@@ -328,11 +328,11 @@ fn fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest() {
     // `skipped` would stay empty. Only "2 tracks survive, the third is
     // named in `skipped`" proves DEMUX = lenient but loud actually holds
     // across more than one track.
-    let file = fixture("av_aac_subtitle_frag.mp4");
+    let file = fixture("av-aac-subtitle-frag.mp4");
     let mut probe = Fmp4Demux::new();
     let media = probe
         .unpackage(&file)
-        .expect("demux av_aac_subtitle_frag.mp4 unmutated");
+        .expect("demux av-aac-subtitle-frag.mp4 unmutated");
     assert_eq!(
         media.tracks.len(),
         3,

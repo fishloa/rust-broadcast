@@ -9,7 +9,7 @@ use std::fs;
 use timed_metadata::event::{EventKind, MediaDuration, MediaTime, TimedEvent};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = test_fixtures::path(&format!("timed-metadata/scte35/{name}"));
+    let path = test_fixtures::path(&format!("scte35/{name}"));
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path:?}: {e}"))
 }
 
@@ -19,7 +19,7 @@ fn fixture(name: &str) -> Vec<u8> {
 /// `pts_time`.
 #[test]
 fn splice_insert_applies_pts_adjustment() {
-    let raw = fixture("splice_insert_pts_adjustment.bin");
+    let raw = fixture("splice-insert-pts-adjustment.bin");
     let section = scte35_splice::SpliceInfoSection::parse(&raw).unwrap();
     let ev = TimedEvent::from_scte35(&section, &raw).unwrap();
     assert_eq!(ev.id, Some(2002));
@@ -40,7 +40,7 @@ fn splice_insert_applies_pts_adjustment() {
 /// unfixed code produces for every `time_signal`.
 #[test]
 fn time_signal_reads_segmentation_descriptor() {
-    let raw = fixture("time_signal_segmentation.bin");
+    let raw = fixture("time-signal-segmentation.bin");
     let section = scte35_splice::SpliceInfoSection::parse(&raw).unwrap();
     let ev = TimedEvent::from_scte35(&section, &raw).unwrap();
     assert_eq!(ev.at, Some(MediaTime(1_234_567)), "time_signal pts_time");

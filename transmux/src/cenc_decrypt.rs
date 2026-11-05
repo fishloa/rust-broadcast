@@ -1610,15 +1610,12 @@ mod tests {
     /// default-base-is-moof / the omit carry and the implicit-trun rule all
     /// bite. The clear reference is `clear.mp4` demuxed with the crate's own
     /// `Fmp4Demux` (whose addressing is the shared `frag_offsets` resolver);
-    /// `clear_samples.txt` is its per-sample hash manifest.
+    /// `clear-samples.txt` is its per-sample hash manifest.
     #[test]
     fn all_layouts_decrypt_audio_to_clear() {
         let read = |name: &str| {
-            std::fs::read(test_fixtures::path(&format!(
-                "transmux/cenc_frag_layouts/{}",
-                name
-            )))
-            .unwrap_or_else(|e| panic!("read {name}: {e}"))
+            std::fs::read(test_fixtures::path(&format!("mp4/cenc-layouts/{}", name)))
+                .unwrap_or_else(|e| panic!("read {name}: {e}"))
         };
         // Independent-of-this-test oracle: the clear file's own audio samples,
         // read with the plain (unencrypted) `Fmp4Demux`.
@@ -1637,15 +1634,15 @@ mod tests {
         assert_eq!(clear_audio.len(), 95, "clear audio has 95 samples");
 
         let files = [
-            "enc_default_none.mp4",
-            "enc_default_explicit.mp4",
-            "enc_default_implicit.mp4",
-            "enc_base_moof_none.mp4",
-            "enc_base_moof_explicit.mp4",
-            "enc_base_moof_implicit.mp4",
-            "enc_omit_none.mp4",
-            "enc_omit_explicit.mp4",
-            "enc_omit_implicit.mp4",
+            "enc-default-none.mp4",
+            "enc-default-explicit.mp4",
+            "enc-default-implicit.mp4",
+            "enc-base-moof-none.mp4",
+            "enc-base-moof-explicit.mp4",
+            "enc-base-moof-implicit.mp4",
+            "enc-omit-none.mp4",
+            "enc-omit-explicit.mp4",
+            "enc-omit-implicit.mp4",
         ];
         // Key/KID for these fixtures (their README).
         const FKID: [u8; KEY_LEN] = [
@@ -1749,10 +1746,10 @@ mod tests {
     fn shared_box_nav_agrees_with_removed_private_copies_on_real_fixtures() {
         let mut files = Vec::new();
         for dir in [
-            test_fixtures::path("transmux/cenc_frag_layouts"),
-            test_fixtures::path("transmux/mp4/cmaf"),
-            test_fixtures::path("transmux/mp4/cenc_boxes"),
-            test_fixtures::path("transmux"),
+            test_fixtures::path("mp4/cenc-layouts"),
+            test_fixtures::path("mp4/cmaf-av-subtitle"),
+            test_fixtures::path("mp4/cenc-boxes"),
+            test_fixtures::path("mp4"),
         ] {
             if let Ok(rd) = std::fs::read_dir(&dir) {
                 for e in rd.flatten() {

@@ -111,14 +111,15 @@ fn a_multi_stream_live_ts_announces_every_track_in_the_first_tracks_event() {
 
 #[test]
 fn a_two_track_live_ts_announces_both_tracks_in_the_first_tracks_event() {
-    assert_whole_set_announced_once("ts/h264_aac.ts");
+    assert_whole_set_announced_once("ts/h264-aac.ts");
 }
 
 #[test]
 fn a_live_multiplex_announces_a_coalesced_initial_set_then_every_later_track() {
-    let Some(bytes) =
-        test_fixtures::require_bytes("ts/france-tnt-uhf32-video-head-6MB.ts", "r5_ts_http_tracks")
-    else {
+    let Some(bytes) = test_fixtures::require_bytes(
+        "ts/france-tnt-uhf32-video-head-6-mb.ts",
+        "r5_ts_http_tracks",
+    ) else {
         return;
     };
     let run = live_run(&bytes);
@@ -251,7 +252,7 @@ fn an_undeclared_gap_releases_the_hold_at_the_media_limit() {
 
 #[test]
 fn a_connection_that_ends_while_holding_delivers_everything_in_order() {
-    let mut bytes = without_pid(&test_fixtures::read("ts/h264_aac.ts"), 0x101);
+    let mut bytes = without_pid(&test_fixtures::read("ts/h264-aac.ts"), 0x101);
     bytes.truncate(EOF_PREFIX_PACKETS * TS_PACKET);
     let (mut s, c) = open_live(0);
     s.on_data(c, &bytes, STEP_US);

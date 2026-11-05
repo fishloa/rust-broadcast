@@ -16,7 +16,7 @@ fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under the
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
-    let path = test_fixtures::path("dvb-t2mi/colombia-capital-t2mi.ts");
+    let path = test_fixtures::path("t2mi/colombia-capital-t2mi.ts");
     let data = std::fs::read(&path).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",

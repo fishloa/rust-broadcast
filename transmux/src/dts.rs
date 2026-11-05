@@ -686,7 +686,7 @@ mod tests {
         hdr
     }
 
-    // Fixture-derived parameters (`fixtures/ts/dts/dts_core.ts`): stereo 48 kHz
+    // Fixture-derived parameters (`fixtures/ts/dts/dts-core.ts`): stereo 48 kHz
     // core, NBLKS=15 (512 samples/frame), FSIZE=1023 (1024-byte frames),
     // AMODE=0b000010 (stereo), SFREQ=0b1101 (48 kHz), RATE=15 (768 kbps), LFF=0.
     const FX_NBLKS: u8 = 15;

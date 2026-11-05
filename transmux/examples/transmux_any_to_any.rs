@@ -54,7 +54,7 @@ fn describe(config: &CodecConfig) -> String {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = fixture_path("webm/vp9_opus.webm");
+    let path = fixture_path("mkv/vp9-opus.webm");
     let webm = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(err) => {

@@ -18,7 +18,7 @@ use transmux::{Fmp4Demux, TrackFragmentRunBox};
 #[global_allocator]
 static ALLOC: ThreadCapped<{ 256 << 20 }> = ThreadCapped::new();
 
-const FIXTURE: &str = "mp4/llcmaf/ll_chunked.mp4";
+const FIXTURE: &str = "mp4/llcmaf/ll-chunked.mp4";
 
 /// Offset of the `trun` box's `version|flags` word (just after its fourcc).
 fn trun_flags_offset(data: &[u8]) -> usize {

@@ -76,7 +76,7 @@ Playing.
 
 ## Fixtures
 
-Real: `private/fixtures/zenith-http/tf1-live.ts` (TF1 off-air, broadcaster copyright, private only;
+Real: `private/fixtures/http/live-channels/tf1-live.ts` (TF1 off-air, broadcaster copyright, private only;
 PROVENANCE.md carries the capture text), `tf1.headers.txt`, `missing.headers.txt`,
 `missing.body.txt` (zenith's own output, 404 `text/plain`). Public CC BY alternative:
 zenith-player-demo TS files. Tests load them only through `test_fixtures`.

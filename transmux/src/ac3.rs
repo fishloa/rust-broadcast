@@ -755,7 +755,7 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
 /// Distinct from [`split_eac3_syncframes`], which folds dependent syncframes
 /// into their independent access unit. Sample-AES needs the syncframe ranges,
 /// not the access units: the protected block is a single syncframe, and the
-/// independent oracle (`../fixtures/transmux/sample_aes_eac3/`) shows the CBC IV is
+/// independent oracle (`../fixtures/ts/sample_aes_eac3/`) shows the CBC IV is
 /// **reset at every syncframe** (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §6).
 ///
 /// Stops at the first bad sync word / truncated tail (mirrors
@@ -1648,7 +1648,7 @@ pub(crate) mod tests {
         assert_eq!(b.channels_with_lfe(), 6);
     }
 
-    // Oracle bytes from DOLBY-ORACLE.md (ffmpeg-generated)
+    // Oracle bytes from dolby-oracle.md (ffmpeg-generated)
     const DAC3_ORACLE: [u8; 3] = [0x50, 0x09, 0x40];
     const DEC3_ORACLE: [u8; 5] = [0x06, 0x00, 0x60, 0x02, 0x00];
 

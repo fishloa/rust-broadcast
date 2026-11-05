@@ -8,7 +8,7 @@
 //! decode error and (b) reports the track count / codec / dimensions /
 //! sample-rate the source fixture itself reports — not a value we hardcode.
 //!
-//! Cases (all driven from `fixtures/ts/h264_aac.ts`, a real 2-track H.264 +
+//! Cases (all driven from `fixtures/ts/h264-aac.ts`, a real 2-track H.264 +
 //! AAC MPEG-2 TS capture, ISO/IEC 13818-1):
 //!   1. TS → CMAF/fMP4 (`CmafMux`)
 //!   2. TS → progressive MP4 (`ProgressiveMux`)
@@ -42,8 +42,8 @@ use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
 // ── Fixture + scratch-dir plumbing ──────────────────────────────────────────
 
 fn ts_fixture() -> Vec<u8> {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    std::fs::read(path).expect("h264_aac.ts fixture must exist")
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    std::fs::read(path).expect("h264-aac.ts fixture must exist")
 }
 
 /// A fresh, empty scratch directory under the workspace `target/` (already

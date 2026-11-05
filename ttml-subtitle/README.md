@@ -86,7 +86,7 @@ cargo run -p ttml-subtitle --example from_scratch
   `ValidationResult` listing every violation found (not just the first).
 - **Errors:** `Error` / `Result`.
 - **Real-fixture tests:** 11 W3C IMSC conformance documents under
-  `../fixtures/ttml/` (provenance in `../fixtures/ttml/PROVENANCE.md`) plus golden
+  `../fixtures/subtitles/` (provenance in `../fixtures/subtitles/PROVENANCE.md`) plus golden
   files, truncation and XML-escaping tests.
 
 ## Design notes

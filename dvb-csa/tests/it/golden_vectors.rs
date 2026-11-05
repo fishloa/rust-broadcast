@@ -1,6 +1,6 @@
 //! Golden-vector tests — bit-exact validation against libdvbcsa 1.1.0.
 //!
-//! The committed vectors in `../fixtures/csa/libdvbcsa-vectors.hex` were
+//! The committed vectors in `../fixtures/crypto/libdvbcsa-vectors.hex` were
 //! generated with libdvbcsa (VideoLAN's reference free implementation).
 //! This test requires byte-identical scramble output AND byte-identical
 //! descramble recovery for every vector.
@@ -105,7 +105,7 @@ mod bitsliced {
 
     #[test]
     fn golden_vectors_scramble_batch() {
-        let path = test_fixtures::path("csa/libdvbcsa-vectors.hex");
+        let path = test_fixtures::path("crypto/libdvbcsa-vectors.hex");
         let vectors = load_vectors(path.to_str().unwrap());
         run(
             scramble_batch,
@@ -118,7 +118,7 @@ mod bitsliced {
 
     #[test]
     fn golden_vectors_descramble_batch() {
-        let path = test_fixtures::path("csa/libdvbcsa-vectors.hex");
+        let path = test_fixtures::path("crypto/libdvbcsa-vectors.hex");
         let vectors = load_vectors(path.to_str().unwrap());
         run(
             descramble_batch,
@@ -132,7 +132,7 @@ mod bitsliced {
 
 #[test]
 fn golden_vectors_scramble() {
-    let path = test_fixtures::path("csa/libdvbcsa-vectors.hex");
+    let path = test_fixtures::path("crypto/libdvbcsa-vectors.hex");
     let vectors = load_vectors(path.to_str().unwrap());
 
     assert!(!vectors.is_empty(), "no vectors loaded");
@@ -156,7 +156,7 @@ fn golden_vectors_scramble() {
 
 #[test]
 fn golden_vectors_descramble() {
-    let path = test_fixtures::path("csa/libdvbcsa-vectors.hex");
+    let path = test_fixtures::path("crypto/libdvbcsa-vectors.hex");
     let vectors = load_vectors(path.to_str().unwrap());
 
     assert!(!vectors.is_empty(), "no vectors loaded");

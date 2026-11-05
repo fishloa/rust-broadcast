@@ -181,7 +181,7 @@
   violates the definition, each confirmed by an independent re-parse
   (`media-doctor/tests/tools/max_pcr_step.py`), and the same verdict is
   cross-checked against TSDuck 3.44 for the worst case
-  (`fixtures/scte35-ssai/ts/video_with_scte35_splice_insert.ts`: 260 PCRs,
+  (`fixtures/scte35/ts/video-with-scte35-splice-insert.ts`: 260 PCRs,
   every step exactly 100 ms, no repetition error in either tool)
   (issue #1112).
 - `Scte35Check` and `media-doctor watch` no longer report an auto-return
@@ -563,7 +563,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   like EIT (0x0012) are no longer misread as PES headers, and (b) validates the
   **decode timestamp** (DTS when present, else PTS) rather than PTS — legal
   B-frame PTS reordering is no longer flagged as `pts-backward`. Verified against
-  real captures (`h264_aac.ts`, `france-tnt-pcr.ts`) which now yield zero findings.
+  real captures (`h264_aac.ts`, `ts/france-tnt-pcr.ts`) which now yield zero findings.
 - The CLI now runs the full diagnostic set (`SyncByteCheck`, `PatPmtVersionCheck`,
   `CcAnomalyCheck`, `PcrCheck`, `PtsCheck`, `Scte35Check`) — previously only
   `SyncByteCheck` ran.

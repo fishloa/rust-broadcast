@@ -8,7 +8,7 @@
 //! Fixture: `fixtures/ts/france2.ts` — one PMT (PID `0x6E`), 6 elementary
 //! streams: H.264 video (`0x78`), 3× audio with ISO-639 + E-AC-3 descriptors
 //! (`0x82`/`0x83`/`0x84`, languages `fre`/`qad`/`qaa`), 2× DVB-subtitled
-//! streams (`0x8C`/`0x8E`). See `fixtures/ts/france2-PROVENANCE.md`.
+//! streams (`0x8C`/`0x8E`). See `fixtures/ts/france2-provenance.md`.
 //!
 //! This test's PAT/PMT walk is entirely independent of `transmux::ts_demux`'s
 //! internal `parse_pmt` — it re-implements the byte-level walk from scratch so

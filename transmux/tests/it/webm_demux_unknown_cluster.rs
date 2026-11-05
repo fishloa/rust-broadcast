@@ -9,8 +9,8 @@
 //! flagged rather than silently skipped).
 //!
 //! Instead this test takes the already-committed **real** fixture
-//! `fixtures/webm/vp9_opus.webm` (real ffmpeg VP9+Opus WebM, oracle
-//! `fixtures/webm/vp9_opus.packets.csv`, 151 total blocks: 1 `Timestamp` +
+//! `fixtures/mkv/vp9-opus.webm` (real ffmpeg VP9+Opus WebM, oracle
+//! `fixtures/mkv/vp9-opus.packets.csv`, 151 total blocks: 1 `Timestamp` +
 //! 150... see below) and re-frames its single real Cluster into two Clusters
 //! at a real `SimpleBlock` boundary — every payload byte stays exactly as
 //! ffmpeg wrote it; only the Cluster-level EBML framing is edited, and the
@@ -20,7 +20,7 @@
 //! spec clause rather than an unavailable tool.
 //!
 //! The oracle is the fixture's own already-verified total block count and
-//! per-block byte lengths (`fixtures/webm/vp9_opus.packets.csv`, used
+//! per-block byte lengths (`fixtures/mkv/vp9-opus.packets.csv`, used
 //! identically by `transmux/tests/it/webm_demux.rs`): re-framing must not change
 //! how many blocks exist or their contents, only whether the demuxer finds
 //! all of them.
@@ -29,8 +29,8 @@ use broadcast_common::Package;
 use transmux::webm_demux::WebmDemux;
 use transmux::{CmafMux, Media, parse_box};
 
-const FIXTURE: &str = "webm/vp9_opus.webm";
-const ORACLE: &str = "webm/vp9_opus.packets.csv";
+const FIXTURE: &str = "mkv/vp9-opus.webm";
+const ORACLE: &str = "mkv/vp9-opus.packets.csv";
 
 const CLUSTER_ID: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
 const SEGMENT_ID: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
@@ -88,7 +88,7 @@ fn unknown_size(width: usize) -> Vec<u8> {
     out
 }
 
-/// Rebuild `fixtures/webm/vp9_opus.webm` with its single real Cluster split
+/// Rebuild `fixtures/mkv/vp9-opus.webm` with its single real Cluster split
 /// into two Clusters at a real `SimpleBlock` boundary, the first marked
 /// unknown-size. Returns the rebuilt bytes.
 fn split_into_two_clusters(data: &[u8]) -> Vec<u8> {

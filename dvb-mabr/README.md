@@ -121,7 +121,7 @@ serialized XML is not byte-identical to the input:
 
 ## Fixtures
 
-`fixtures/dvb-mabr/` holds three hand-authored XML documents exercising the
+`fixtures/mabr/` holds three hand-authored XML documents exercising the
 data model (a multi-service server configuration, a gateway bootstrap
 document, a full gateway configuration); provenance in `fixtures/PROVENANCE.md`.
 They are this crate's own worked examples, not a transcription of the ETSI

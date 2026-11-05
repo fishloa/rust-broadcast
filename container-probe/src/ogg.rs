@@ -45,7 +45,7 @@ mod tests {
     /// 4-byte `"OggS"` pattern) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/container-probe/opus.ogg");
+        let data = fixture_bytes("fixtures/audio/opus.ogg");
         let region = &data[..OGG_CAPTURE_PATTERN.len() - 1];
         match probe(region, region.len()) {
             Outcome::Insufficient(n) => assert_eq!(n, OGG_CAPTURE_PATTERN.len()),

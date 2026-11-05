@@ -1,6 +1,6 @@
 //! DTS Transport-Stream spoke gate — TS→IR demux + IR→TS mux (issue #560).
 //!
-//! Fixture: `fixtures/ts/dts/dts_core.ts` — a real ffmpeg `dca` encode (DTS
+//! Fixture: `fixtures/ts/dts/dts-core.ts` — a real ffmpeg `dca` encode (DTS
 //! core substream, sync `0x7FFE8001`), stream_type `0x82`, 48 kHz stereo, 1170
 //! whole 188-byte TS packets (see the fixture's `GENERATE.md`).
 //!
@@ -17,12 +17,12 @@ use transmux::{DtsSpecificBox, Fmp4Demux, TsDemux, TsMux};
 const TS: usize = 188;
 
 fn load_fixture() -> Vec<u8> {
-    test_fixtures::read("ts/dts/dts_core.ts")
+    test_fixtures::read("ts/dts/dts-core.ts")
 }
 
 fn demux_fixture() -> Media {
     let data = load_fixture();
-    TsDemux::new().unpackage(&data).expect("demux dts_core.ts")
+    TsDemux::new().unpackage(&data).expect("demux dts-core.ts")
 }
 
 fn dts_track(media: &Media) -> &transmux::media::Track {

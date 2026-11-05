@@ -8,7 +8,7 @@
 //! segmenter needs a "every currently-known track is ready" signal instead of
 //! guessing from the first `TrackAdded` alone.
 //!
-//! Real fixture: `fixtures/ts/h264_aac.ts` (2-track H.264 + AAC MPEG-2 TS),
+//! Real fixture: `fixtures/ts/h264-aac.ts` (2-track H.264 + AAC MPEG-2 TS),
 //! fed in chunks well under one 188-byte TS packet so video's and audio's
 //! `TrackAdded` are essentially guaranteed to land in separate `feed()`
 //! calls, mirroring the real timing race. Asserts `TracksResolved` fires
@@ -19,7 +19,7 @@
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn fixture_bytes() -> Vec<u8> {
-    test_fixtures::read("ts/h264_aac.ts")
+    test_fixtures::read("ts/h264-aac.ts")
 }
 
 /// Feed `data` through `demux` in `chunk_size`-byte pieces, draining and
@@ -65,7 +65,7 @@ fn tracks_resolved_fires_once_after_both_tracks_added_no_spam() {
     assert_eq!(
         track_added_positions.len(),
         2,
-        "h264_aac.ts must yield exactly 2 TrackAdded events (video + audio)"
+        "h264-aac.ts must yield exactly 2 TrackAdded events (video + audio)"
     );
 
     let resolved_positions: Vec<usize> = events

@@ -1,6 +1,6 @@
 //! Low-latency DASH gate (issue #461): chunked CMAF + LL-DASH MPD.
 //!
-//! Input IR: `TsDemux`-ing the deterministic 2-track `fixtures/ts/h264_aac.ts`
+//! Input IR: `TsDemux`-ing the deterministic 2-track `fixtures/ts/h264-aac.ts`
 //! (H.264 video + AAC audio — 75 video + 131 audio samples).
 //!
 //! Every test bites: chunk bytes are parsed with a std-only top-level box walker
@@ -26,10 +26,10 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn demux_media() -> Media {
-    let ts = std::fs::read(fixtures_dir().join("ts/h264_aac.ts"))
-        .expect("h264_aac.ts fixture must exist");
+    let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts"))
+        .expect("h264-aac.ts fixture must exist");
     let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264_aac.ts")
+    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
 }
 
 fn video_track(media: &Media) -> &transmux::media::Track {

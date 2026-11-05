@@ -269,7 +269,7 @@ mod tests {
         for rel in [
             "ts/h264/baseline.ts",
             "ts/hevc/main.ts",
-            "ts/h264_aac.ts",
+            "ts/h264-aac.ts",
             "ts/france-pcr-discontinuity.ts",
             "ts/m6-single.ts",
         ] {

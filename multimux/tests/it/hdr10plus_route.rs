@@ -4,7 +4,7 @@
 //! byte-identical, and external readers (ffprobe, Apple `mediastreamvalidator`)
 //! agree.
 //!
-//! Real artifact: `private/fixtures/hdr10plus/` (PROVENANCE.md). Every test
+//! Real artifact: `private/fixtures/video/hdr10plus/` (PROVENANCE.md). Every test
 //! drives the production path: `RouteHandle` + `ProgramSegmenter::pump` over a
 //! `Trunk`, read back through the axum router. External tools skip loudly when
 //! absent.
@@ -37,9 +37,9 @@ const RING: usize = 1 << 16;
 const PUMP_EVERY: usize = 64;
 const STREAM: &str = "cam";
 const DECLARED_BPS: u64 = 4_000_000;
-const HDR10PLUS: &str = "hdr10plus/tos-256x144-hdr10plus.ts";
-const HDR10: &str = "hdr10/meridian-hdr10-60f.ts";
-const HLG: &str = "hlg/sollevante-hlg-derived-1080p24-10s.ts";
+const HDR10PLUS: &str = "video/hdr10plus/tos-256x144-hdr10plus.ts";
+const HDR10: &str = "video/hdr10/meridian-hdr10-60f.ts";
+const HLG: &str = "video/hlg/sollevante-hlg-derived-1080p24-10s.ts";
 const SDR: &str = "ts/hevc/main10.ts";
 const FRAMES: usize = 259;
 

@@ -730,7 +730,7 @@ mod tests {
     use broadcast_common::Unpackage;
     use transmux::{LiveJoin, TsDemux};
 
-    const FIXTURE: &str = "ts/h264_aac.ts";
+    const FIXTURE: &str = "ts/h264-aac.ts";
     const FAR_PTS_DURATION: u32 = 3_000;
 
     struct Streams {

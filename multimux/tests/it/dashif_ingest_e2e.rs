@@ -26,7 +26,7 @@ struct Presentation {
 }
 
 fn presentation() -> Presentation {
-    let ts = test_fixtures::read("ts/h264_aac.ts");
+    let ts = test_fixtures::read("ts/h264-aac.ts");
     let mut demux = TsDemux::new();
     let media = demux.unpackage(&ts[..]).expect("demux");
     let mut packager = DashPackager::default();

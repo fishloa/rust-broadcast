@@ -454,21 +454,19 @@ mod tests {
     use super::*;
 
     /// Byte-for-byte golden (SP4.1): the ANNOUNCE SDP body the transport
-    /// sends equals `tests/golden/rtsp_announce.sdp`, captured from the
+    /// sends equals `golden/rtsp/rtsp-announce.sdp`, captured from the
     /// pre-`sdp-types` `format!` on `origin/main`. `GOLDEN_BLESS=<dir>`
     /// writes instead.
     #[test]
     fn announce_sdp_golden() {
         let actual = build_sdp().expect("build_sdp");
-        let file = "rtsp_announce.sdp";
+        let file = "golden/rtsp/rtsp-announce.sdp";
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");
             std::fs::write(std::path::Path::new(&dir).join(file), &actual).expect("write");
             return;
         }
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden")
-            .join(file);
+        let path = test_fixtures::path(file);
         let expected = std::fs::read_to_string(&path).expect("read golden");
         assert_eq!(actual, expected, "{file} differs from the golden output");
     }

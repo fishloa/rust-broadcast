@@ -1,6 +1,6 @@
 //! Integration test: build a `ca_pmt` from a real broadcast PMT section.
 //!
-//! `real-pmt.bin` is a genuine TSDuck-captured PMT section (table_id 0x02) with
+//! `tsduck-mpeg-descriptors-pmt.bin` is a genuine TSDuck-captured PMT section (table_id 0x02) with
 //! several MPEG descriptors but no CA_descriptor. The builder must parse it
 //! through `dvb-si`, strip every (non-CA) descriptor, and emit a well-formed,
 //! round-trippable `ca_pmt` carrying the full component list with empty CA loops.
@@ -13,8 +13,8 @@ use dvb_ci::objects::ca_pmt::{CaPmt, CaPmtCmdId, CaPmtListManagement};
 use dvb_si::tables::pmt::PmtSection;
 
 fn real_pmt() -> Vec<u8> {
-    let path = test_fixtures::path("shared/real-pmt.bin");
-    fs::read(path).expect("fixture real-pmt.bin must be present")
+    let path = test_fixtures::path("si/tsduck-mpeg-descriptors-pmt.bin");
+    fs::read(path).expect("fixture tsduck-mpeg-descriptors-pmt.bin must be present")
 }
 
 #[test]

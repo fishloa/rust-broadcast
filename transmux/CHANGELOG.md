@@ -84,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`StreamingTsHlsSegmenter` holds a cut for lagging audio.** A live multiplex delivers audio after the video it accompanies, so cutting the instant the anchor reached its next sync sample closed each segment with however much audio had arrived (1.15 s to 1.34 s of audio against 1.28 s of video on the zenith captures), which Apple's `mediastreamvalidator` reports as "Playlist vs segment duration mismatch". The cut is now held until every audio track that has delivered media holds a sample at or past the boundary, bounded by one second of further anchor media (`CATCH_UP_MAX_SECS`); a segment `EXTINF` still equals its video span. Pushes that already interleave by time cut exactly as before.
 - **Box walkers no longer panic on an untrusted `largesize` that overflows `usize` arithmetic.** `find_config_box` (`off += size`, libFuzzer `transmux_sample_entries` crash), the `stsd`/`dref` entry walks, and the `stsd`/`dref`/`cenc`/subtitle/`webm` child walkers now clamp every extent to the bytes present (`box_types::child_extent_in`) and use checked/saturating advances; `parse_box` no longer truncates a `u64` size on 32-bit targets; the progressive chunk cursor saturates. Reachable through hls-runtime init validation (so `broadcast-client`).
 - `LlHlsSegmenter` keeps cutting parts after a segment passes its target duration while it waits for the next keyframe. The part boundary used to be suppressed past the target, so every sample until the next IDR piled into the segment's final part (0.28-6.04 s against a 0.2 s `PART-TARGET` on real TS captures), breaking RFC 8216bis §4.4.4.9. The final part is now the short remainder. A single source sample longer than the part target still cannot be split.
-- **`StreamingTsDemux` no longer holds every resolved track back behind one stuck PID until `finish()`.** A `Probing` head used to stop `try_promote_ready` for all later PIDs of the whole multiplex, so a short or sparse multi-program capture (`private/fixtures/csa/csa2-plain.ts`, tsduck `test-062.ts`) emitted nothing until `finish()` and a live source stayed `Establishing` forever. An unresolved head now blocks only the PIDs of its own program (PMT order within a program is unchanged), and a head that cannot be a legitimate wait is stepped over, still probing and announced by a later `TrackAdded` if it resolves: `STUCK_HEAD_OWN_BYTES` (2 MiB of its own payload without a single access unit: scrambled or unframeable video never grows the byte-capped backlog) and, for non-video heads only, `STUCK_HEAD_INPUT_PACKETS` (4 MiB of input since the PID was declared). A video head that does produce access units is still bounded by `MAX_PROBE_BACKLOG_BYTES`. **Behaviour change for live consumers:** track ids follow resolution order across programs, not PMT order. The batch `TsDemux` (`demux`/`unpackage`) keeps strict PMT order, so `track_id_baseline` is untouched.
+- **`StreamingTsDemux` no longer holds every resolved track back behind one stuck PID until `finish()`.** A `Probing` head used to stop `try_promote_ready` for all later PIDs of the whole multiplex, so a short or sparse multi-program capture (`private/fixtures/crypto/csa2-plain.ts`, tsduck `test-062.ts`) emitted nothing until `finish()` and a live source stayed `Establishing` forever. An unresolved head now blocks only the PIDs of its own program (PMT order within a program is unchanged), and a head that cannot be a legitimate wait is stepped over, still probing and announced by a later `TrackAdded` if it resolves: `STUCK_HEAD_OWN_BYTES` (2 MiB of its own payload without a single access unit: scrambled or unframeable video never grows the byte-capped backlog) and, for non-video heads only, `STUCK_HEAD_INPUT_PACKETS` (4 MiB of input since the PID was declared). A video head that does produce access units is still bounded by `MAX_PROBE_BACKLOG_BYTES`. **Behaviour change for live consumers:** track ids follow resolution order across programs, not PMT order. The batch `TsDemux` (`demux`/`unpackage`) keeps strict PMT order, so `track_id_baseline` is untouched.
 - **A `DisplayChanged` parked for an access unit was released before the *previous* access unit's sample.** `PendingOneBehind::pending_events`' doc (and design §6.5) say a change is released with its own sample; `advance_one_behind` instead pushed it immediately, before the sample of the access unit already in the one-behind slot, labelling one picture with the new state (the MPEG-2 per-AU tracker is the first consumer that parks a change on every event). It now stays parked on the new slot. The equally early `TrackUpdated` push is a separate, pre-existing behaviour and is unchanged here.
 - **Documentation and regression test for `TrackUpdated` at a programme/slate switch (#1380).** The 0.27.7 release note described the two `TrackUpdated` events seen on the slate-switch captures as a pre-existing duplicate caused by the track re-probe. That diagnosis was wrong: they are two *independent* events. The broadcaster's PMT lists fewer `es_info` descriptors on the slate (9 vs 3 on the real captures), which raises the descriptors-only `TrackUpdated` (#774, codec config unchanged) when the PMT is processed; the new SPS/PPS then raises the config-change `TrackUpdated` (r04-W51) immediately before `DisplayChanged` and the first new-geometry sample. Both are correct and each carries the full current `TrackSpec`; nothing is emitted twice. `DemuxEvent::TrackUpdated` now documents all three causes (it previously omitted the TS in-band config change), `docs/display-geometry/DESIGN.md` §6.1/§6.5 name the PMT cause, and `tests/track_updated_causes.rs` pins the behaviour on the three real captures (the two events, their order, their contents, and the strict placement of the config one) and on the public `h264-two-resolutions.ts` (exactly one).
 - DASH `Representation@codecs` of a Dolby Vision profile 5 track was the hvcC string (`hvc1.2.4.L153.B0`) while the init segment carried a `dvh1` sample entry; it is now `dvh1.05.LL` (`private/specs-verified/dolby/vision/dolby-vision-streams-in-mpeg-dash-v2.0-2018-11.md` 4.3.2). Profile 8.x keeps `hvc1` and gains a companion `AdaptationSet` with `codecs="dvh1.08.LL"` over the same Representation, as in the Dolby DASH example 4.3.1.
@@ -197,7 +197,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An AC-3 syncframe (`bsid` <= 8) is now an independent substream 0 of an E-AC-3 stream (ETSI TS 102 366 §E.1.3.1.2; Annex J.1.5.2.2 allows `bsid` 6 or 8 with a dependent substream). `Ec3SyncframeInfo`, `ac3::split_eac3_syncframes` and `StreamingTsDemux` recognised E-AC-3 syntax only, so a real Dolby Digital Plus 7.1 stream (AC-3 core + dependent E-AC-3 frame, FFmpeg FATE `the_great_wall_7.1.eac3`) produced no track from MPEG-2 TS (`stream_type` 0x87, or 0x06 + descriptor 0x7A) and no access units.
 - `Ec3SpecificBox::from_syncframes`: `num_dep_sub` is the number of dependent substreams (highest dependent `substreamid` + 1). It was the last dependent frame's `substreamid`, which is 0 for the first (dependent substreams are numbered from 0), so a lone dependent substream gave `num_dep_sub` 0 and no `chan_loc`. MP4Box (GPAC 26.07) and ffmpeg 8.1.2 both write 1; the resulting `dec3` for the real stream matches MP4Box's byte for byte (`24 00 0c 0f 02 02`).
 - Track counts on the three `m6-*` captures: track 1 (PID 0x82, signalled `stream_type 0x06` + Enhanced AC-3 descriptor) gains one real E-AC-3 frame (7 -> 8 samples): a `0B 77` pair in the payload whose byte 5 read as bsid <= 8 used to be parsed as an E-AC-3 header with a garbage length and swallow it; an AC-3-shaped candidate is now judged by its AC-3 CRC. Codec, track ids and the other tracks are unchanged; plain AC-3 PIDs are unaffected (`track_id_baseline` golden updated with this justification).
-- Real-stream tests (`tests/eac3_real_dependent_substreams.rs`; the stream has an unstated licence so it is in the private submodule `private/fixtures/eac3-dep/` and the tests skip loudly without it) against the tools' own output: gpac's per-sample CRC32 of MP4Box's file, MP4Box's `dec3`, MPEG-2 TS from ffmpeg and from gpac (PES boundaries inside access units), both producers' MP4s through demux and CMAF. ffmpeg's `dec3` for the same stream disagrees (data_rate 576, `chan_loc` bit 4); the dependent frame's own `chanmap` (Lrs/Rrs) supports MP4Box.
+- Real-stream tests (`tests/eac3_real_dependent_substreams.rs`; the stream has an unstated licence so it is in the private submodule `private/fixtures/audio/eac3-dependent/` and the tests skip loudly without it) against the tools' own output: gpac's per-sample CRC32 of MP4Box's file, MP4Box's `dec3`, MPEG-2 TS from ffmpeg and from gpac (PES boundaries inside access units), both producers' MP4s through demux and CMAF. ffmpeg's `dec3` for the same stream disagrees (data_rate 576, `chan_loc` bit 4); the dependent frame's own `chanmap` (Lrs/Rrs) supports MP4Box.
 
 ### Changed (BREAKING) / Added (real wvtt producers, #1249)
 - **BREAKING:** `VttCueBox` gains `extra_children` (every `vttc` child other than `payl`/`sttg`/`iden`, e.g. `vsid`/`ctim`, kept verbatim) and remembers the wire order of its children. Before, a parsed cue was written back `payl, sttg, iden` and unknown children were dropped, so it did not serialize to the bytes it was parsed from; MP4Box and gpac both write `iden, sttg, payl`, which is now also the order of a cue built with `VttCueBox::new` (after any extras). The struct literal can no longer be built outside the crate; use `VttCueBox::new` and set the public fields.
@@ -266,7 +266,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Over-range version-0 box fields are rejected instead of wrapped (#1129).** `mvhd`/`tkhd`/`mdhd` `creation_time`/`modification_time`/`duration` and `prft` `media_time` above `u32::MAX` now return `Error::FieldOverflow` when `version == 0` (they were written as `value as u32`); `mp4esds` `bufferSizeDB` over 24 bits and `progressive` `stsz` sizes/counts over `u32` likewise. `flv_frame_payloads` (the RTMP payload path) now applies the same 32-bit-millisecond and signed-24-bit `CompositionTime` checks as `FlvMux::package` instead of `as u32`/`as i32`. Tests: `tests/serializer_length_truncation.rs` (also a lexical guard against unchecked `.len() as uN`), `tests/flv.rs::frame_payloads_reject_out_of_range_timestamps`.
-- **`trun` with no per-sample fields can no longer drive an unbounded allocation (#1130).** Every entry of such a `trun` is zero bytes wide, so the remaining-bytes bound never limited `sample_count`: four overwritten bytes of `fixtures/mp4/llcmaf/ll_chunked.mp4` made `Fmp4Demux` request a 10 GB `Vec`. `sample_count` is now capped at `MAX_ZERO_WIDTH_TRUN_SAMPLES` (2^20) and `bounded_entry_count` never sizes an up-front allocation from a zero-width count. Found by a hostile-count sweep that is now committed (`tests/hostile_count_sweep.rs`, 21 702 inflated-count parses of every committed MP4 fixture under a 128 MiB live-byte cap) next to the pinned repro (`tests/trun_zero_width_alloc_bound.rs`).
+- **`trun` with no per-sample fields can no longer drive an unbounded allocation (#1130).** Every entry of such a `trun` is zero bytes wide, so the remaining-bytes bound never limited `sample_count`: four overwritten bytes of `fixtures/mp4/llcmaf/ll-chunked.mp4` made `Fmp4Demux` request a 10 GB `Vec`. `sample_count` is now capped at `MAX_ZERO_WIDTH_TRUN_SAMPLES` (2^20) and `bounded_entry_count` never sizes an up-front allocation from a zero-width count. Found by a hostile-count sweep that is now committed (`tests/hostile_count_sweep.rs`, 21 702 inflated-count parses of every committed MP4 fixture under a 128 MiB live-byte cap) next to the pinned repro (`tests/trun_zero_width_alloc_bound.rs`).
 - **ADTS multi-block frames with CRC (#1012).** A frame with `protection_absent == 0` and `number_of_raw_data_blocks_in_frame > 0` now has its `raw_data_block_position[]` table and every `crc_check` word (header-level and per-block, ISO/IEC 13818-7:2004 §6.2 Tables 5-7) stripped; the AAC sample is the concatenated `raw_data_block()` payloads. A self-inconsistent position table degrades to stripping only the header CRC and table instead of rejecting the frame. CRC values are not validated. Layout transcribed in `private/specs-verified/mpeg/transmux/codec/adts-error-check.md`. Single-block and unprotected frames are byte-identical to before.
 
 ### Changed
@@ -344,7 +344,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.25.3] - 2026-10-12
 ### Fixed
 
-- `TsDemux`/`StreamingTsDemux`: field-coded (PAFF) H.264 now yields **one sample per complementary field pair** instead of one per field (#1161). Broadcast PAFF (TF1, M6, Gulli, arte, ...) sends one PES per field; ISO/IEC 14496-15 samples are whole access units, and a per-field sample decodes to half-filled frames. The second field (opposite parity, same `frame_num`, both reference or both non-reference, not an IDR; ITU-T H.264 §3.35-3.37) is merged into the pending first field's sample, which keeps the first field's PTS/DTS (its AUD is dropped, so the sample holds one AUD). An unpaired field, or a second field arriving more than one second after the first (discontinuity), is emitted alone. MBAFF (`field_pic_flag = 0`), progressive and PAFF-free streams are unchanged. The only golden hash that moved is `ts/gulli-opengop.ts`, a real PAFF capture (293 fields -> 147 samples). Verified bit-exact against `ffmpeg` on spec-built TFF/BFF fixtures (`../fixtures/transmux/paff/`).
+- `TsDemux`/`StreamingTsDemux`: field-coded (PAFF) H.264 now yields **one sample per complementary field pair** instead of one per field (#1161). Broadcast PAFF (TF1, M6, Gulli, arte, ...) sends one PES per field; ISO/IEC 14496-15 samples are whole access units, and a per-field sample decodes to half-filled frames. The second field (opposite parity, same `frame_num`, both reference or both non-reference, not an IDR; ITU-T H.264 §3.35-3.37) is merged into the pending first field's sample, which keeps the first field's PTS/DTS (its AUD is dropped, so the sample holds one AUD). An unpaired field, or a second field arriving more than one second after the first (discontinuity), is emitted alone. MBAFF (`field_pic_flag = 0`), progressive and PAFF-free streams are unchanged. The only golden hash that moved is `ts/gulli-opengop.ts`, a real PAFF capture (293 fields -> 147 samples). Verified bit-exact against `ffmpeg` on spec-built TFF/BFF fixtures (`../fixtures/ts/paff/`).
 
 ### Added
 
@@ -439,7 +439,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   the version-0 form, no `srat`). Verified end-to-end: our own muxer's output
   is parsed back by MP4Box (which reads the sample entry's rate, 192000, and
   reports 60928 without the fix) and ffprobe, and its decoded PCM is
-  md5-identical to the ffmpeg-made source (`../fixtures/transmux/audio_srat/`).
+  md5-identical to the ffmpeg-made source (`../fixtures/ts/audio_srat/`).
 
 - **A parsed audio sample entry re-serializes byte-identically** (#1081, audit
   r05-W31). The writer re-derived `entry_version` as 0-or-1 and zeroed the two
@@ -665,7 +665,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   re-emitted. A child written in the compact form round-trips byte-identically;
   one written with `largesize` also does, because the 8 `largesize` bytes are
   *excluded* from the stored payload (the serializer writes its own). Fixtures:
-  `../fixtures/transmux/mp4/uuid_boxes/` (real ffmpeg output with real `uuid`
+  `../fixtures/ts/mp4/uuid_boxes/` (real ffmpeg output with real `uuid`
   children spliced in — see its README for the generator and the `mp4dump`
   verification), consumed by `tests/uuid_child_roundtrip.rs`.
 - **`protect_media_segment` counts a `moof`'s opaque children, refuses a `traf`
@@ -740,7 +740,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   the wrong transcription/claim corrected** (#1080, audit r05-W1/W2). The
   repo's own `private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.4 contradicted §11 on H.264 CBC
   chaining, and `sample_aes/README.md` claimed the E-AC-3 IV was carried across
-  syncframes. `transmux/../fixtures/transmux/ORACLES.md` now pins both with three
+  syncframes. `transmux/../fixtures/mp4/PROVENANCE.md` now pins both with three
   independent implementations (a pycryptodome reference, Bento4 `mp4hls`, and
   ffmpeg's decryptor): H.264 chains across a NAL's encrypted blocks with the IV
   reset per NAL; E-AC-3 resets the IV at every syncframe. See the two
@@ -770,7 +770,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   base** (never the previous run's end), continues a run with no `data_offset`
   after the previous run, and bounds every sample range to an `mdat` payload
   with a total cap of the file length. Verified against all nine
-  `../fixtures/transmux/cenc_frag_layouts/enc_*.mp4` (three base rules × explicit /
+  `../fixtures/ts/cenc_frag_layouts/enc_*.mp4` (three base rules × explicit /
   implicit multi-trun) for **both** the video and the audio traf
   (`all_layouts_decrypt_to_clear_video_samples`, `all_layouts_decrypt_audio_to_clear`),
   and against the clear variants
@@ -1018,7 +1018,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   missing — the timeline used to be taken from the parent unconditionally, which
   silently cancelled the child's own `@duration`). Covered by a derived
   `fixtures/dash/manifest-inheritance.mpd` (the real ffmpeg fixture
-  restructured into the G.12/G.13 shapes; see `fixtures/dash/README.md`), whose
+  restructured into the G.12/G.13 shapes; see `fixtures/dash/PROVENANCE.md`), whose
   resolved URLs are checked against the committed segment files (#1079).
 - **`dash_parse` resolves `BaseURL` chains and segment URLs** (audit r04-W11).
   `Mpd::try_resolve_segment_url` is the same as `resolve_segment_url` but
@@ -1060,7 +1060,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   than emitted truncated or oversized, since the header states the AU's full size
   (§3.2.3.2). Previously such a packet was
   rejected as `BufferTooShort` and the whole stream failed. Covered by a new real
-  5.1 640 kb/s fixture, `fixtures/ts/aac-5_1-640k.ts`, whose frames are 785 bytes
+  5.1 640 kb/s fixture, `fixtures/ts/aac-5-1-640k.ts`, whose frames are 785 bytes
   — far over the stereo fixtures' access units that fit one packet.
 - **`RtpDepacketiser` reads that timestamp back as `pts`, and reconstructs `dts`
   from the whole stream.** RTP carries no decode time, so for a reordered stream
@@ -1110,7 +1110,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   are overwhelmingly High profile) was four bytes short of what ffmpeg writes for
   the same stream, and a strict reader mis-parses the record. Verified byte-exact
   against ffmpeg 8.1's own `avcC` for `fixtures/ts/h264/high.ts`, committed as
-  `../fixtures/transmux/rtp/high-ffmpeg.*` with provenance. A non-High profile still
+  `../fixtures/ts/rtp/high-ffmpeg.*` with provenance. A non-High profile still
   omits the trailer, as the spec requires: the gate is the record's own
   `{100, 110, 122, 244}` set, not the wider H.264 Table A-1 list the SPS *parser*
   uses, so a profile in the wider list but outside that set is left alone. An SPS
@@ -1397,7 +1397,7 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   tail is clear (`ac3_encrypt_frame` applies one leader over whatever slice it is
   handed, which skips the later leaders in a multi-syncframe frame). The IV is
   **reset at every syncframe**, per the independent oracle
-  (`transmux/../fixtures/transmux/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
+  (`transmux/../fixtures/ts/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
   audio frames and a carried chain 1/9, and Bento4's encryptor is byte-identical
   to the reset reference). Both return `Result`: a payload that is not a clean
   run of syncframes (no sync word, or a truncated / trailing-junk syncframe) is
@@ -1600,7 +1600,7 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
   ffmpeg's `libavformat/hls_sample_aes.c` `decrypt_nal_unit` does: a chained
   stream decodes identically to clear (10/10 frames) while the old per-block
   reset decodes to nothing (0/10). Pinned by the independent fixtures in
-  `transmux/../fixtures/transmux/sample_aes_h264/` (python reference, Bento4
+  `transmux/../fixtures/ts/sample_aes_h264/` (python reference, Bento4
   `mp4hls`, ffmpeg) — see `ORACLES.md`. **Output bytes change**, so any
   SAMPLE-AES H.264 output produced by this crate before this fix must be
   re-encrypted. The transcription (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.4/§11) and
@@ -2858,7 +2858,7 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   cancels the keystream and yields the XOR of the two plaintexts — both
   disclosed without the key. ISO/IEC 23001-7 §9.2 requires the IV to be unique
   per *key*; "unique per track" is not sufficient when one key covers every
-  track. Measured on the two-track `fixtures/ts/h264_aac.ts`: 75 of 206
+  track. Measured on the two-track `fixtures/ts/h264-aac.ts`: 75 of 206
   per-sample IVs collided. Every pre-existing test narrowed its fixture to a
   single track, which is why a green suite shipped it. An adversarial review
   of the first fix (below) found it incomplete in two further ways, both
@@ -3313,7 +3313,7 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   cross-subsample reset rule was corrected after this fix originally shipped),
   with the IV resolved from either the per-sample `senc` entry or the track's
   `tenc.default_constant_IV`.
-  New fixtures `fixtures/transmux/h264_cenc.mp4` / `h264_cbcs.mp4` (real,
+  New fixtures `fixtures/mp4/h264-cenc.mp4` / `h264_cbcs.mp4` (real,
   fragmented, Bento4 `mp4encrypt`-produced) back
   `tests/cenc_fragmented_fixture.rs`, including a golden-interop cross-check
   against Bento4's own `mp4decrypt`.
@@ -3521,7 +3521,7 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   TS clock, not an audio sample count). No MPEG-H audio bitstream decode —
   config/sample passthrough only, mirroring the existing AC-3/DTS TS
   carriage and the crate's existing ISOBMFF `mha1`/`mhaC` support. Gated on
-  `private/fixtures/ts/mpegh-cicp01-baseline.ts` fixture
+  `private/fixtures/audio/mpegh/mpegh-cicp-01-baseline-32kbps-single.ts` fixture
   (`transmux/tests/mpegh_ts.rs`, skips cleanly when the private submodule
   isn't checked out).
 - **`nal::caption_cc_data`** — extract ATSC A/53 caption SEI (in-band
@@ -3542,7 +3542,7 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   `tools/fetch-test-streams.sh transformers-eia608-h264`) plus a full
   `TsDemux` round trip on the same capture.
 - **Player-validated golden gate** (#569): `tests/golden_gate.rs` packages the
-  real `fixtures/ts/h264_aac.ts` fixture through `transmux::cli::run_bytes`
+  real `fixtures/ts/h264-aac.ts` fixture through `transmux::cli::run_bytes`
   (the same code path the `transmux` binary uses) into CMAF/fMP4, progressive
   MP4, classic TS-HLS (segment + `.m3u8` playlist), and DASH MPD, then hands
   each artefact to an **independent** decoder — `ffprobe` — asserting it
@@ -3745,7 +3745,7 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   (§8.6.2, absent ⇒ all sync), and each sample's coded bytes are sliced
   directly out of the input via `stsc` + `stco`/`co64` chunk offsets
   (§8.7.4/§8.7.5, already file-absolute) and `stsz` sizes (§8.7.3). Verified
-  against `fixtures/transmux/h264_aac_prog.mp4` (real interleaved,
+  against `fixtures/mp4/h264-aac-prog.mp4` (real interleaved,
   multi-chunk H.264 High + AAC-LC capture) with sample counts/PTS/DTS/sync
   flags cross-checked against `ffprobe -show_packets -ignore_editlist 1`,
   and a demux → `CmafMux` → `Fmp4Demux` round-trip proving byte-identical
@@ -4431,7 +4431,7 @@ folded in here for a complete record, newest first).
 ## [0.1.0] — 2026-07-01
 ### Added
 - End-to-end `tests/ts_to_cmaf.rs`: demux a real H.264+AAC MPEG-TS
-  (`fixtures/ts/h264_aac.ts`), synthesize `avcC` from the stream's SPS/PPS and
+  (`fixtures/ts/h264-aac.ts`), synthesize `avcC` from the stream's SPS/PPS and
   `esds` from the AAC ADTS header, build init + media segments, then re-parse —
   asserting **byte-identical** avcC SPS/PPS + esds AudioSpecificConfig fidelity,
   75 video access units, the computed ADTS frame count, and first-sample

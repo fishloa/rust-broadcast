@@ -10,11 +10,15 @@ use ttml_subtitle::{Document, Error};
 
 #[test]
 fn every_fixture_truncation_errors() {
-    let dir = test_fixtures::path("ttml");
+    let dir = test_fixtures::path("subtitles");
     let mut checked = 0;
     for entry in fs::read_dir(&dir).expect("fixtures dir") {
         let path = entry.expect("entry").path();
-        if path.extension().is_none_or(|e| e != "ttml") {
+        if path.extension().is_none_or(|e| e != "ttml")
+            || !path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("imsc"))
+        {
             continue;
         }
         let text = fs::read_to_string(&path).expect("read fixture");

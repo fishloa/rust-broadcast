@@ -142,7 +142,7 @@ where
 
 #[test]
 fn hevc_config_reconstructs_byte_identical() {
-    let file = fixture("hevc_main.frag.mp4");
+    let file = fixture("hevc-main.frag.mp4");
     // The fixture's HEVC sample entry is `hev1` (in-band-capable); config in hvcC.
     let want = extract_config_box(&file, b"hev1", VISUAL_FIXED, b"hvcC");
 
@@ -216,7 +216,7 @@ fn flac_config_reconstructs_byte_identical() {
 #[test]
 fn avc_config_reconstructs_byte_identical() {
     // Regression: avc1 reconstruction must still work.
-    let file = fixture("h264_high.frag.mp4");
+    let file = fixture("h264-high.frag.mp4");
     // `AVCConfigurationBox` serializes to the full `avcC` box (header + record).
     let want = extract_config_box(&file, b"avc1", VISUAL_FIXED, b"avcC");
     let mut demux = Fmp4Demux::new();
@@ -279,12 +279,12 @@ fn assert_sample_fidelity(name: &str) {
 #[test]
 fn sample_fidelity_all_codecs() {
     for name in [
-        "hevc_main.frag.mp4",
+        "hevc-main.frag.mp4",
         "av1.frag.mp4",
         "vp9.frag.mp4",
         "opus.frag.mp4",
         "flac.frag.mp4",
-        "h264_high.frag.mp4",
+        "h264-high.frag.mp4",
     ] {
         assert_sample_fidelity(name);
     }
@@ -296,7 +296,7 @@ fn sample_fidelity_all_codecs() {
 
 #[test]
 fn hevc_output_path_emits_hvc1_with_source_hvcc() {
-    let file = fixture("hevc_main.frag.mp4");
+    let file = fixture("hevc-main.frag.mp4");
     let want_hvcc_body = extract_config_body(&file, b"hev1", VISUAL_FIXED, b"hvcC");
 
     let mut demux = Fmp4Demux::new();
@@ -337,14 +337,14 @@ type VariantCase = (&'static str, fn(&CodecConfig) -> bool);
 #[test]
 fn enumeration_yields_expected_variants() {
     let cases: &[VariantCase] = &[
-        ("hevc_main.frag.mp4", |c| {
+        ("hevc-main.frag.mp4", |c| {
             matches!(c, CodecConfig::Hevc { .. })
         }),
         ("av1.frag.mp4", |c| matches!(c, CodecConfig::Av1 { .. })),
         ("vp9.frag.mp4", |c| matches!(c, CodecConfig::Vp9 { .. })),
         ("opus.frag.mp4", |c| matches!(c, CodecConfig::Opus { .. })),
         ("flac.frag.mp4", |c| matches!(c, CodecConfig::Flac { .. })),
-        ("h264_high.frag.mp4", |c| {
+        ("h264-high.frag.mp4", |c| {
             matches!(c, CodecConfig::Avc { .. })
         }),
     ];

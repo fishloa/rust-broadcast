@@ -100,9 +100,9 @@ Goldens are generated from `main` BEFORE any behaviour change, committed, and co
 
 **Files:**
 - Create: `rtsp-runtime/tests/golden_wire.rs`
-- Create: `rtsp-runtime/tests/golden/session_transcript.golden`, `rtsp-runtime/tests/golden/transport_parsed.golden`, `rtsp-runtime/tests/golden/transport_header.golden`, `rtsp-runtime/tests/golden/README.md`
-- Create: `rtmp-runtime/tests/golden_wire.rs`, `rtmp-runtime/tests/golden/client_publish.golden`, `rtmp-runtime/tests/golden/README.md`
-- Create: `dvb-stream/tests/golden_events.rs`, `dvb-stream/tests/golden/m6_single_events.golden`, `dvb-stream/tests/golden/README.md`
+- Create: `fixtures/golden/rtsp/session-transcript.golden`, `fixtures/golden/rtsp/transport-parsed.golden`, `fixtures/golden/rtsp/transport-header.golden`, `rtsp-runtime/tests/golden/README.md`
+- Create: `rtmp-runtime/tests/golden_wire.rs`, `fixtures/golden/rtmp/client-publish.golden`, `rtmp-runtime/tests/golden/README.md`
+- Create: `dvb-stream/tests/golden_events.rs`, `fixtures/golden/ts/m6-single-events.golden`, `dvb-stream/tests/golden/README.md`
 
 **Interfaces:** none new. The tests use only the existing public API. Each test compares to its golden file; with `GOLDEN_UPDATE=1` it rewrites the file instead. Later tasks never set `GOLDEN_UPDATE` except Task 4, which regenerates exactly one file (`transport_header.golden`) after a reviewed diff.
 
@@ -660,7 +660,7 @@ The public `Transport`/`TransportSpec`/`LowerTransport`/`Delivery` types and the
 
 **Files:**
 - Modify: `rtsp-runtime/src/transport.rs` lines 126-210 (`parse_spec`), 213-256 (`to_header_value`), 286-305 (`Transport::parse/to_header_value`), 312-346 (helpers); keep the type definitions (lines 17-123) and the tests (348-421).
-- Modify: `rtsp-runtime/tests/golden/transport_header.golden` (regenerated once, after review).
+- Modify: `fixtures/golden/rtsp/transport-header.golden` (regenerated once, after review).
 
 **Interfaces:** unchanged public signatures:
 
@@ -923,8 +923,8 @@ Expected: `transport_parsed.golden` test... `transport_parse_and_header_goldens`
 ```bash
 GOLDEN_UPDATE=1 cargo test --locked -p rtsp-runtime --all-features --test golden_wire transport_parse_and_header_goldens 2>&1 | grep -E 'test result'
 git diff --stat rtsp-runtime/tests/golden
-git diff rtsp-runtime/tests/golden/transport_header.golden
-git diff --exit-code rtsp-runtime/tests/golden/transport_parsed.golden rtsp-runtime/tests/golden/session_transcript.golden
+git diff fixtures/golden/rtsp/transport-header.golden
+git diff --exit-code fixtures/golden/rtsp/transport-parsed.golden fixtures/golden/rtsp/session-transcript.golden
 ```
 
 Expected: the last command exits 0 (the semantic golden and the SETUP/PLAY transcript are unchanged... the transcript contains `Transport: RTP/AVP/TCP;unicast;interleaved=0-1` which has no reordered parameters, so it must be byte-identical). In `transport_header.golden` only lines with 2+ non-trivial parameters may differ; paste each changed line (old vs new) into the report; they become the CHANGELOG example list in Task 14.
@@ -936,7 +936,7 @@ Restore the old implementation for one run: `git checkout $BASE -- rtsp-runtime/
 - [ ] **Step 6: Commit**
 
 ```bash
-git add rtsp-runtime/src/transport.rs rtsp-runtime/tests/golden/transport_header.golden
+git add rtsp-runtime/src/transport.rs fixtures/golden/rtsp/transport-header.golden
 git commit -m "refactor(rtsp-runtime): Transport header parse/build via rtsp_types typed Transports (parameter order changes only)"
 ```
 

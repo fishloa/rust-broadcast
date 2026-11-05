@@ -1,10 +1,10 @@
 # cmaf-fmp4 fixture provenance
 
 Real ffmpeg fragmented-MP4 HLS output generated from the workspace's own
-committed `fixtures/ts/h264_aac.ts` capture (no external source), via:
+committed `fixtures/ts/h264-aac.ts` capture (no external source), via:
 
 ```bash
-ffmpeg -i fixtures/ts/h264_aac.ts -c copy -bsf:a aac_adtstoasc -f hls -hls_time 1 \
+ffmpeg -i fixtures/ts/h264-aac.ts -c copy -bsf:a aac_adtstoasc -f hls -hls_time 1 \
   -hls_segment_type fmp4 -hls_playlist_type vod -hls_list_size 0 index.m3u8
 ```
 

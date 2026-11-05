@@ -367,7 +367,7 @@ fn hex(b: &[u8]) -> String {
 
 /// Primary real-data evidence for the adaptation-field extension: three
 /// specific packets of TSDuck's BSD-2 test streams (pinned `tsduck-test` clone
-/// or the `private/fixtures/tsduck/` mirror; skips loudly only when the private
+/// or the `private/fixtures/suites/tsduck/` mirror; skips loudly only when the private
 /// repo is not checked out). Each must re-serialize byte-exactly.
 ///
 /// * `reference/test-147/test-147.ts` pkt 8098: flags `0x87`

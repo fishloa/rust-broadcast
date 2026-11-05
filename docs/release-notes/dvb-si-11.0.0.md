@@ -127,7 +127,7 @@ Parsing defects (wrong values for conformant input):
 - `content_labeling_descriptor` 33-bit `content_time_base_value` / `metadata_time_base_value` read from the wrong bit position (`FE 00 00 00 01` decoded as 8522825728, not 1) (#1004).
 - `J2K_video_descriptor` extended-capability body had `still_mode`/`interlaced_video` in the wrong position, misreading every later field when `extended_capability_flag = 1` (#1005).
 - `Metadata_STD_descriptor` 22-bit leak-rate/buffer-size fields folded 2 reserved bits into the value (`C0 00 01` decoded as 12,582,913, not 1) (#1006).
-- `FlexMuxTiming_descriptor` rejected every conformant descriptor (#1053). The four items above are verified against a `tstabcomp`-compiled PMT fixture (`fixtures/dvb-si/tsduck-w4-spec-misread-pmt.{xml,bin}`).
+- `FlexMuxTiming_descriptor` rejected every conformant descriptor (#1053). The four items above are verified against a `tstabcomp`-compiled PMT fixture (`fixtures/si/tsduck-w4-spec-misread-pmt.{xml,bin}`).
 - `EitCollector` schedule-range reset dropped already-completed sub-tables permanently; it now re-feeds them.
 - `dsmcc` `private_indicator` is round-tripped instead of forced to 0 when `section_syntax_indicator` is set.
 - `descriptors::hierarchy::HierarchyType::from_u8` panicked for values over 15; it now masks to 4 bits.

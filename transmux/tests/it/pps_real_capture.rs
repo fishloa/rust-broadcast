@@ -55,7 +55,7 @@ fn head(path: &std::path::Path, n: u64) -> Option<Vec<u8>> {
 fn real_captures_track_update_counts() {
     let mut checked = 0usize;
     for name in [
-        "h264_aac.ts",
+        "h264-aac.ts",
         "gulli-opengop.ts",
         "france2.ts",
         "m6-single.ts",
@@ -67,8 +67,8 @@ fn real_captures_track_update_counts() {
         checked += 1;
     }
     for name in [
-        "france-tnt-uhf32-video-head-6MB.ts",
-        "hotbird-mhp-video-head-6MB.ts",
+        "france-tnt-uhf32-video-head-6-mb.ts",
+        "hotbird-mhp-video-head-6-mb.ts",
         "transformers-eia608-h264.ts",
     ] {
         let Some(path) = test_fixtures::require(&format!("ts/{name}"), "pps_real_capture") else {

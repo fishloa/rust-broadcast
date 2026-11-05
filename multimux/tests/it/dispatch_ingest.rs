@@ -21,10 +21,10 @@
 //!
 //! # Real fixture, not synthetic bytes
 //!
-//! Streams the workspace's real, ffmpeg-encoded `fixtures/ts/h264_aac.ts`
+//! Streams the workspace's real, ffmpeg-encoded `fixtures/ts/h264-aac.ts`
 //! capture (320x240 Main-profile H.264 @ 25 fps + AAC, ~3.0 s / 75 real
 //! video frames with keyframes roughly every second -- see
-//! `fixtures/ts/CODEC-ORACLE.md`) verbatim over the wire, exactly as a real
+//! `fixtures/ts/PROVENANCE.md`) verbatim over the wire, exactly as a real
 //! camera/HTTP origin would -- not `ts_program::test_support::build_ts_bytes`
 //! (a muxed-but-hand-faked NAL payload used by this crate's own unit tests).
 //!
@@ -56,7 +56,7 @@
 //! below covers that shape through the *exact* dispatch path a real `Custom`
 //! route uses (`InputSpec::Custom` -> `SchemeRegistry` -> `InputCtx` -> a
 //! factory that spawns `supervise_driver`), replaying the real
-//! `h264_aac.ts` fixture (demuxed, not synthetic) through a small
+//! `h264-aac.ts` fixture (demuxed, not synthetic) through a small
 //! `IngestSession` of its own -- so a regression of
 //! `crate::source::report_driver_progress`'s registry-publish call (or
 //! `crate::source::segment::drive_program_segmenters`'s segmenting) is
@@ -81,13 +81,13 @@ use crate::support::listener;
 use listener::{bind_tcp, bind_udp};
 
 fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264_aac.ts")
+    test_fixtures::path("ts/h264-aac.ts")
 }
 
 /// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
-/// H.264+AAC) -- see `../fixtures/multimux/PROVENANCE.md`.
+/// H.264+AAC) -- see `../fixtures/ts/PROVENANCE.md`.
 fn rtmp_fixture_path() -> PathBuf {
-    test_fixtures::path("multimux/rtmp-obs-publish.bin")
+    test_fixtures::path("rtmp/obs-publish.bin")
 }
 
 /// Reserves a free TCP port, then immediately releases it -- the same
@@ -239,7 +239,7 @@ async fn ts_udp_dispatch_serves_real_media_end_to_end() {
         SchemeRegistry::new(),
     ));
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
     // Resend the whole fixture on a loop (rather than once) so the (async,
     // therefore not synchronized with this test) socket bind inside
     // `serve_with_registry`'s spawned ingest task has ample opportunity to
@@ -305,7 +305,7 @@ async fn ts_http_dispatch_serves_real_media_end_to_end() {
     use axum::response::IntoResponse;
     use axum::routing::get;
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
 
     async fn handler(body: axum::extract::State<Vec<u8>>) -> axum::response::Response {
         let chunks: Vec<std::result::Result<Vec<u8>, std::io::Error>> =
@@ -470,19 +470,19 @@ mod custom_dispatch_driver_backed {
         NonZeroUsize::new(n).expect("non-zero capacity")
     }
 
-    /// Demux the real `h264_aac.ts` fixture's AVC video track into a
+    /// Demux the real `h264-aac.ts` fixture's AVC video track into a
     /// `TrackSpec` + its real, decoded `Sample`s -- mirrors
     /// `tests/lldash_dashjs.rs`'s own `real_video_track_and_samples`: real
     /// bytes in, not `ts_program::test_support::build_ts_bytes`'s
     /// hand-faked NAL payload.
     fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
-        let ts = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
-        let media = TsDemux::new().demux(&ts).expect("demux h264_aac.ts");
+        let ts = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
+        let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .into_iter()
             .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-            .expect("h264_aac.ts must carry an AVC video track");
+            .expect("h264-aac.ts must carry an AVC video track");
         (video.spec, video.samples)
     }
 
@@ -624,7 +624,7 @@ mod custom_dispatch_driver_backed {
     /// `serve_with_registry` resolves `Custom`'s `type_tag` through a
     /// `SchemeRegistry`, builds an `InputCtx`, and calls the registered
     /// factory -- this factory spawns `multimux::supervise_driver` over its
-    /// own small `Dialer`/`IngestSession` fed the real `h264_aac.ts`
+    /// own small `Dialer`/`IngestSession` fed the real `h264-aac.ts`
     /// fixture, exactly as a real embedding application's factory would
     /// spawn its own transport-fed driver loop (see
     /// `examples/custom_scheme.rs`). If [`advance_route`]'s internal
@@ -654,7 +654,7 @@ mod custom_dispatch_driver_backed {
         let (spec, samples) = real_video_track_and_samples();
         assert!(
             !samples.is_empty(),
-            "h264_aac.ts must demux to at least one video sample"
+            "h264-aac.ts must demux to at least one video sample"
         );
 
         let mut registry = SchemeRegistry::new();
@@ -1051,7 +1051,7 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
         SchemeRegistry::new(),
     ));
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
     let stop = Arc::new(AtomicBool::new(false));
     let sender_stop = Arc::clone(&stop);
     let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
@@ -1120,7 +1120,7 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
         SchemeRegistry::new(),
     ));
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
     let stop = Arc::new(AtomicBool::new(false));
     let sender_stop = Arc::clone(&stop);
     let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")

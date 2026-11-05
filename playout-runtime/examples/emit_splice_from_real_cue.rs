@@ -1,8 +1,8 @@
 //! End-to-end: plan a programme -> ad transition against the real,
-//! non-IDR-aligned SCTE-35 cue in `fixtures/scte35-ssai/`, and emit the
+//! non-IDR-aligned SCTE-35 cue in `fixtures/scte35/`, and emit the
 //! `splice_insert()` that transition implies.
 //!
-//! Per `fixtures/scte35-ssai/PROVENANCE.md`, this DASH-IF `livesim2` capture
+//! Per `fixtures/scte35/PROVENANCE.md`, this DASH-IF `livesim2` capture
 //! carries a genuine `splice_insert()` whose nominal target instant is 6000
 //! ticks (67 ms) before the nearest real video keyframe — real encoder
 //! behaviour, not a hand-built happy path. This example conditions against
@@ -23,11 +23,11 @@ use std::fs;
 
 /// The real nearest video keyframe's PTS, independently measured from this
 /// same capture's `moof`/`traf`/`tfdt`/`trun` boxes — see
-/// `fixtures/scte35-ssai/PROVENANCE.md`, "Cue-to-IDR alignment".
+/// `fixtures/scte35/PROVENANCE.md`, "Cue-to-IDR alignment".
 const NEAREST_KEYFRAME_PTS: u64 = 160_767_315_906_000;
 
 fn main() {
-    let path = test_fixtures::path("scte35-ssai/emsg_splice_insert.bin");
+    let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
     let emsg_bytes = fs::read(path).expect("read real emsg fixture (see PROVENANCE.md)");
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     assert!(emsg.is_scte35(), "fixture must carry a SCTE-35 emsg");

@@ -1,7 +1,7 @@
 //! Synthetic NM BBFrame with ISSYI=1 *and* NPD=1 simultaneously active
 //! (issue #1033).
 //!
-//! Neither committed real capture (`fixtures/dvb-bbframe/{tnt,rai}-*.ts`,
+//! Neither committed real capture (`fixtures/bbframe/{tnt,rai}-*.ts`,
 //! exercised in `tests/it/integration_fixture.rs`) has NPD active — both are
 //! confirmed NPD=0 there. No local independent tool (TSDuck/ffmpeg/GPAC)
 //! generates a raw DVB-S2/T2 BBFrame, let alone one with ISSY+DNP, so per the

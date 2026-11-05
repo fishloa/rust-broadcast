@@ -218,7 +218,7 @@ fn decrypt_via_trait() {
 /// first protected track whose `frma` is not `avc1`, so such a file could not
 /// be demuxed at all — nor could a protected HEVC file. The non-AVC protected
 /// track is now skipped, with the AVC one still reconstructed.
-const CENC_AV_ENCA_MP4: &str = "mp4/cenc_av_enca.mp4";
+const CENC_AV_ENCA_MP4: &str = "mp4/cenc-av-enca.mp4";
 
 #[test]
 fn demux_skips_non_avc_protected_track() {
@@ -297,11 +297,11 @@ fn demux_skips_non_avc_protected_track() {
 /// reported in `Media::skipped` (audit r05-W6 follow-up) — dropping it silently
 /// is what made the earlier "never silent" claim false.
 ///
-/// `cenc_mixed_tracks.mp4` is one `encv` (video, CENC-protected) + one clear
+/// `cenc-mixed-tracks.mp4` is one `encv` (video, CENC-protected) + one clear
 /// `mp4a` (audio) — GPAC `MP4Box -crypt` with only track 1 encrypted.
 #[test]
 fn demux_reports_unprotected_track_as_skipped() {
-    const MIXED: &str = "transmux/cenc_mixed_tracks.mp4";
+    const MIXED: &str = "mp4/cenc-mixed-tracks.mp4";
     let file = read(MIXED);
     let dec = CencDecryptor::from_fmp4(&file).expect("harvest");
     let media = dec
@@ -339,7 +339,7 @@ fn demux_reports_unprotected_track_as_skipped() {
 /// W6 follow-up: the reconstructed AVC track's decrypted samples must equal
 /// what the independent decryptor (`mp4decrypt`) produces from the **same**
 /// file. Uses the W7 layout fixture (a Bento4-encrypted file mp4decrypt is
-/// known to handle; the ffmpeg-muxed `cenc_av_enca.mp4` is rejected, see the
+/// known to handle; the ffmpeg-muxed `cenc-av-enca.mp4` is rejected, see the
 /// W7 fixture README C6). Skips loudly when the tool is absent.
 #[test]
 fn demux_avc_track_matches_mp4decrypt() {
@@ -349,8 +349,8 @@ fn demux_avc_track_matches_mp4decrypt() {
         );
         return;
     }
-    const LAY: &str = "transmux/cenc_frag_layouts";
-    let path = test_fixtures::path(&format!("{}/enc_base_moof_none.mp4", LAY));
+    const LAY: &str = "mp4/cenc-layouts";
+    let path = test_fixtures::path(&format!("{}/enc-base-moof-none.mp4", LAY));
     let file = std::fs::read(&path).expect("read layout fixture");
 
     // Ours.

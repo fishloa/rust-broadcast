@@ -44,7 +44,7 @@ fn build(spec: TrackSpec) -> Vec<u8> {
 }
 #[test]
 fn pasp_fills_unspecified_sar() {
-    let Some(mut spec) = avc_spec("tsduck/input/test-062.ts") else {
+    let Some(mut spec) = avc_spec("suites/tsduck/input/test-062.ts") else {
         return;
     };
     let (w, h) = dims(&spec);

@@ -1,7 +1,7 @@
 use tshttp_runtime::{Config, TsHttpClient};
 
 static DATA: std::sync::LazyLock<Vec<u8>> =
-    std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
 
 fn main() {
     let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);

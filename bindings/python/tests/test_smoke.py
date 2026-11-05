@@ -10,7 +10,7 @@ import pytest
 import dvb_si_py as dvb
 
 # Repo-relative path to a real DVB capture, committed in the PUBLIC `fixtures/`
-# tree (it moved there from `fixtures/dvb-si/`; the old path no longer
+# tree (it moved there from `fixtures/si/`; the old path no longer
 # exists, and a `skipif` on it silently turned these tests into no-ops). The
 # file must exist: its absence is a failure, never a skip.
 FIXTURE = os.path.join(

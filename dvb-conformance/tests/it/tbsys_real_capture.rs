@@ -2,7 +2,7 @@
 //! raise `Buffer_error` (TR 101 290 indicator 3.3).
 //!
 //! Uses the real French TNT UHF-32 off-air multiplex from the private
-//! fixtures repo: `private/fixtures/ts/france-tnt-uhf32-video-w30MB-10MB.ts`, a
+//! fixtures repo: `private/fixtures/ts/france-tnt-uhf32-video-w30-mb-10-mb.ts`, a
 //! 10 MiB video-intact window of the capture opening at a PAT packet (the test
 //! skips loudly when `private/` is not checked out). Window choice is measured:
 //! with the #1035 fix reverted the first `Buffer_error` appears 38-39 MiB into
@@ -42,7 +42,7 @@ fn pcr_of(p: &[u8]) -> Option<(u16, u64)> {
 #[test]
 fn real_multiplex_raises_no_buffer_error() {
     let Some(path) = test_fixtures::require(
-        "ts/france-tnt-uhf32-video-w30MB-10MB.ts",
+        "ts/france-tnt-uhf32-video-w30-mb-10-mb.ts",
         "tbsys_real_capture",
     ) else {
         return;

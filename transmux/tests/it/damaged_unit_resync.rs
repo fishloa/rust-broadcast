@@ -26,7 +26,7 @@ fn total_bytes(m: &Media) -> usize {
 
 #[test]
 fn ps_damaged_pack_header_in_the_middle_is_skipped_and_reported() {
-    let clean_bytes = fixture("ps/h264_ac3.ps");
+    let clean_bytes = fixture("ps/h264-ac3.ps");
     let clean = PsDemux::new().unpackage(&clean_bytes).unwrap();
     assert!(clean.degraded.is_empty(), "a clean stream reports nothing");
 
@@ -86,7 +86,7 @@ fn ps_with_no_recoverable_pack_is_still_an_error() {
 }
 
 fn packetised() -> (Media, transmux::RtpOutput) {
-    let ts = fixture("ts/h264_aac.ts");
+    let ts = fixture("ts/h264-aac.ts");
     let media = transmux::TsDemux::new()
         .unpackage(&ts[..])
         .expect("demux TS");
@@ -212,7 +212,7 @@ fn rtp_audio_malformed_packet_in_the_middle_is_skipped_and_reported() {
 #[test]
 fn fmp4_corrupt_moof_in_the_middle_is_skipped_and_reported() {
     use transmux::media::Fmp4Demux;
-    let clean_bytes = fixture("mp4/cmaf/av_frag.mp4");
+    let clean_bytes = fixture("mp4/cmaf/av-frag.mp4");
     let clean = Fmp4Demux::new().unpackage(&clean_bytes[..]).unwrap();
     assert!(clean.degraded.is_empty());
 
@@ -259,7 +259,7 @@ fn fmp4_corrupt_moof_in_the_middle_is_skipped_and_reported() {
 #[test]
 fn fmp4_trun_pointing_outside_the_file_skips_that_traf_and_reports() {
     use transmux::media::Fmp4Demux;
-    let clean_bytes = fixture("mp4/cmaf/av_frag.mp4");
+    let clean_bytes = fixture("mp4/cmaf/av-frag.mp4");
     let clean = Fmp4Demux::new().unpackage(&clean_bytes[..]).unwrap();
 
     let mut moofs = Vec::new();

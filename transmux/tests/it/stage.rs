@@ -60,7 +60,7 @@ use broadcast_common::Unpackage;
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
 static PROGRESSIVE_MP4: std::sync::LazyLock<Vec<u8>> =
-    std::sync::LazyLock::new(|| test_fixtures::read("transmux/h264_aac_prog.mp4"));
+    std::sync::LazyLock::new(|| test_fixtures::read("mp4/h264-aac-prog.mp4"));
 
 fn fixtures_ts_dir() -> PathBuf {
     test_fixtures::path("ts")
@@ -231,7 +231,7 @@ where
 #[test]
 fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
     // --- StreamingTsDemux ---------------------------------------------------
-    let ts_bytes = read(&fixtures_ts_dir().join("h264_aac.ts"));
+    let ts_bytes = read(&fixtures_ts_dir().join("h264-aac.ts"));
     let oracle_ts: Media = TsDemux::new().unpackage(&ts_bytes).expect("batch TS demux");
 
     let ts_chunks: Vec<&[u8]> = ts_bytes.chunks(317).collect();

@@ -8,9 +8,9 @@ const PRIVATE_PREFIX_BYTES: usize = 1_000_000;
 
 #[test]
 fn a_reconnect_to_another_stream_announces_only_the_new_connections_tracks() {
-    let first = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "r6_ts_tracks");
+    let first = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "r6_ts_tracks");
     let Some(first) = first else { return };
-    let second = test_fixtures::read("ts/h264_aac.ts");
+    let second = test_fixtures::read("ts/h264-aac.ts");
     let mut host = Host::open(Config::default());
     host.feed(&first[..PRIVATE_PREFIX_BYTES], CHUNK);
     let old = host.announced().expect("tracks announced");
@@ -26,8 +26,8 @@ fn a_reconnect_to_another_stream_announces_only_the_new_connections_tracks() {
 
 #[test]
 fn a_track_that_vanishes_across_a_reconnect_is_no_longer_a_default_rendered_phantom() {
-    let first = test_fixtures::read("ts/h264_aac_40s.ts");
-    let second = test_fixtures::read("ts/h264/high_1080_cropped.ts");
+    let first = test_fixtures::read("ts/h264-aac-40s.ts");
+    let second = test_fixtures::read("ts/h264/high-1080-cropped.ts");
     let mut host = Host::open(Config::default());
     host.feed(&first[..first.len() / 3], CHUNK);
     assert_eq!(host.announced(), Some(vec![1, 2]));
@@ -75,7 +75,7 @@ fn unknown_reports(host: &Host) -> Vec<u32> {
 }
 
 fn run_declared(declared: Option<&[u32]>) -> Host {
-    let bytes = test_fixtures::read("ts/h264_aac_40s.ts");
+    let bytes = test_fixtures::read("ts/h264-aac-40s.ts");
     let mut host = Host::open(Config::default());
     host.feed_playing(&bytes[..CHUNK * 3], CHUNK);
     if let Some(ids) = declared {
@@ -135,7 +135,7 @@ fn an_unknown_id_beside_a_real_one_is_ignored_and_reported_once() {
 
 #[test]
 fn a_declaration_made_before_the_first_announcement_applies_when_it_arrives_without_noise() {
-    let bytes = test_fixtures::read("ts/h264_aac_40s.ts");
+    let bytes = test_fixtures::read("ts/h264-aac-40s.ts");
     let mut host = Host::open(Config::default());
     host.session
         .set_rendered_tracks(&[TrackId::new(1), TrackId::new(2)]);
@@ -152,7 +152,7 @@ const DROP_AT: f64 = 0.4;
 const RESTORE_AT: f64 = 0.7;
 
 fn flipped_h264_aac() -> Vec<u8> {
-    let bytes = test_fixtures::read("ts/h264_aac_40s.ts");
+    let bytes = test_fixtures::read("ts/h264-aac-40s.ts");
     let pmt = support::ts_pmt::find(&bytes).expect("a PMT");
     assert_eq!(pmt.es.len(), 2);
     let all = pmt.es.clone();

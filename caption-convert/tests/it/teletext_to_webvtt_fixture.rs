@@ -1,7 +1,7 @@
 //! Fixture-driven EBU Teletext -> WebVTT/SRT test, exercising
 //! `caption_convert::TeletextToWebVtt` end to end against the same real
 //! fixture `timed-metadata`'s own #666 test uses:
-//! `fixtures/teletext/teletext_subtitle_synthetic.txt` (magazine 8, page
+//! `fixtures/subtitles/teletext-subtitle-synthetic.txt` (magazine 8, page
 //! 0x88; see that fixture's header comment for its provenance and page
 //! plan -- header/erase, "HELLO WORLD" row, "THIS IS A TEST" row, then a
 //! second erase).
@@ -21,12 +21,12 @@ use caption_convert::TeletextToWebVtt;
 use std::fs;
 
 fn fixture_path() -> std::path::PathBuf {
-    test_fixtures::path("teletext/teletext_subtitle_synthetic.txt")
+    test_fixtures::path("subtitles/teletext-subtitle-synthetic.txt")
 }
 
 fn load_frames() -> Vec<(u64, Vec<u8>)> {
     let text =
-        fs::read_to_string(fixture_path()).expect("read teletext_subtitle_synthetic.txt fixture");
+        fs::read_to_string(fixture_path()).expect("read teletext-subtitle-synthetic.txt fixture");
     let mut frames = Vec::new();
     for line in text.lines() {
         let line = line.trim();

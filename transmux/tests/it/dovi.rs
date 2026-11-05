@@ -1,5 +1,5 @@
 //! Dolby Vision profile 5 and 8.1 on the real Sol Levante captures
-//! (`private/fixtures/dolby-vision/`, PROVENANCE.md): the record read from the
+//! (`private/fixtures/video/dolby-vision/`, PROVENANCE.md): the record read from the
 //! TS `DOVI_video_stream_descriptor` and from the MP4 `dvcC` / `dvvC` box, the
 //! sample entry and box written into the init segment, and RPU NAL units
 //! (type 62) surviving a repackage unchanged.
@@ -16,14 +16,14 @@ use transmux::{
     ProgressiveDemux, build_init_segment,
 };
 
-const P81_TS: &str = "dolby-vision/sollevante-dv-p8.1-1080p24-10s.ts";
-const P81_MP4: &str = "dolby-vision/sollevante-dv-p8.1-1080p24-10s.mp4";
-const P5_TS: &str = "dolby-vision/sollevante-dv-p5-1080p24-10s.ts";
-const P5_MP4: &str = "dolby-vision/sollevante-dv-p5-1080p24-10s.mp4";
-const P84_TS: &str = "dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.ts";
-const P84_MP4: &str = "dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.mp4";
+const P81_TS: &str = "video/dolby-vision/sollevante-dv-p8.1-1080p24-10s.ts";
+const P81_MP4: &str = "video/dolby-vision/sollevante-dv-p8.1-1080p24-10s.mp4";
+const P5_TS: &str = "video/dolby-vision/sollevante-dv-p5-1080p24-10s.ts";
+const P5_MP4: &str = "video/dolby-vision/sollevante-dv-p5-1080p24-10s.mp4";
+const P84_TS: &str = "video/dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.ts";
+const P84_MP4: &str = "video/dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.mp4";
 const P84_FRAMES: usize = 209;
-const HLG_TS: &str = "hlg/sollevante-hlg-derived-1080p24-10s.ts";
+const HLG_TS: &str = "video/hlg/sollevante-hlg-derived-1080p24-10s.ts";
 
 const HEVC_RPU_NUT: u8 = 62;
 const FRAMES: usize = 241;

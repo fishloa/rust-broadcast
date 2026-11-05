@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn ftyp_round_trip() {
-        // From h264_aac_frag.mp4: iso5 / minor 512 / [iso5, iso6, mp41]
+        // From h264-aac-frag.mp4: iso5 / minor 512 / [iso5, iso6, mp41]
         let bytes = [
             0x00, 0x00, 0x00, 0x1c, b'f', b't', b'y', b'p', b'i', b's', b'o', b'5', 0x00, 0x00,
             0x02, 0x00, b'i', b's', b'o', b'5', b'i', b's', b'o', b'6', b'm', b'p', b'4', b'1',

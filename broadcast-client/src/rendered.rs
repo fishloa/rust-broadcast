@@ -134,7 +134,7 @@ mod tests {
     use broadcast_common::Unpackage;
 
     fn specs() -> (TrackSpec, TrackSpec) {
-        let data = test_fixtures::read("ts/h264_aac.ts");
+        let data = test_fixtures::read("ts/h264-aac.ts");
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let mut video = None;
         let mut audio = None;

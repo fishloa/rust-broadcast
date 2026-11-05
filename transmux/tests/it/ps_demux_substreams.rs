@@ -2,7 +2,7 @@
 //! gate (audit r04-W19, r04-W20, r04-W21).
 //!
 //! Fixture: `./fixtures/ps/ffmpeg-mpeg2video-2xac3.ps` — see
-//! `fixtures/ps/README.md` for the exact ffmpeg command. It is the real shape
+//! `fixtures/ps/PROVENANCE.md` for the exact ffmpeg command. It is the real shape
 //! the three warnings describe: one MPEG-2 video stream plus **two**
 //! AC-3 audio substreams multiplexed into a single `private_stream_1` (0xBD)
 //! `stream_id`, told apart only by the `substream_id` byte at the front of each
@@ -674,8 +674,8 @@ fn dts_substream_is_skipped_without_disturbing_ac3() {
 /// real stream. Named here rather than in `fixtures/ps/` because it is the
 /// existing TS fixture, read only for its codec bytes.
 fn h264_ts() -> Vec<u8> {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    std::fs::read(&path).expect("fixtures/ts/h264_aac.ts must exist")
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    std::fs::read(&path).expect("fixtures/ts/h264-aac.ts must exist")
 }
 
 /// Build a Program Stream whose single video PES carries `es` (an Annex B

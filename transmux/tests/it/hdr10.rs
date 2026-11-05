@@ -12,8 +12,8 @@ use transmux::ir::{CodecConfig, TrackSpec};
 use transmux::ts_demux::TsDemux;
 use transmux::{ChromaticityXy, HdrStaticMetadata, build_init_segment};
 
-const TS: &str = "hdr10/meridian-hdr10-60f.ts";
-const GPAC_MP4: &str = "hdr10/meridian-hdr10-60f-hvc1-mdcv-clli.mp4";
+const TS: &str = "video/hdr10/meridian-hdr10-60f.ts";
+const GPAC_MP4: &str = "video/hdr10/meridian-hdr10-60f-hvc1-mdcv-clli.mp4";
 const NO_HDR_TS: &str = "ts/hevc/main10.ts";
 
 const COLR: [u8; 4] = *b"colr";

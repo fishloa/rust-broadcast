@@ -23,7 +23,7 @@
 //!
 //! # Fixture choice (documented per the issue's requirement)
 //!
-//! The base is `fixtures/ts/h264_aac.ts` — a real H.264/AVC + AAC MPEG-2 TS
+//! The base is `fixtures/ts/h264-aac.ts` — a real H.264/AVC + AAC MPEG-2 TS
 //! capture (25 fps, 320x240, 3 real keyframes) already used by
 //! [`transmux_hub`](../README.md). No fixture in this workspace carries
 //! a genuine embedded SCTE-35 cue *and* real audio/video content on a matching
@@ -213,19 +213,19 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // ------------------------------------------------------------------
     // 1. Read the real base fixture and demux it once.
     // ------------------------------------------------------------------
-    let base_ts_bytes = fs::read(fixture_path("ts/h264_aac.ts"))?;
+    let base_ts_bytes = fs::read(fixture_path("ts/h264-aac.ts"))?;
     let source: Media = TsDemux::new().unpackage(&base_ts_bytes[..])?;
 
     let video_idx = source
         .tracks
         .iter()
         .position(|t| is_avc(&t.spec.config))
-        .expect("h264_aac.ts must have an H.264/AVC video track");
+        .expect("h264-aac.ts must have an H.264/AVC video track");
     let audio_idx = source
         .tracks
         .iter()
         .position(|t| !is_avc(&t.spec.config))
-        .expect("h264_aac.ts must have an audio track");
+        .expect("h264-aac.ts must have an audio track");
     let video = &source.tracks[video_idx];
     let audio = &source.tracks[audio_idx];
 

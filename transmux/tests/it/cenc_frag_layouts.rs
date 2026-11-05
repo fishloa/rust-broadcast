@@ -1,7 +1,7 @@
 //! Oracle consumer: CENC fragmented-MP4 addressing (audit r05-W7,
 //! ISO/IEC 14496-12 §8.8.7 / §8.8.8).
 //!
-//! Consumes `../fixtures/transmux/cenc_frag_layouts/` — see its `README.md` and
+//! Consumes `../fixtures/ts/cenc_frag_layouts/` — see its `README.md` and
 //! `ORACLES.md`. Nine encrypted files cover every combination of the three base
 //! rules (`base_data_offset` present / `default-base-is-moof` / neither) and two
 //! trun addressing modes (explicit `data_offset` / implicit, continuing after
@@ -25,7 +25,7 @@ const KEY: [u8; 16] = [
     0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
 ];
 
-const DIR: &str = "transmux/cenc_frag_layouts";
+const DIR: &str = "mp4/cenc-layouts";
 
 fn read(name: &str) -> Vec<u8> {
     let p = test_fixtures::path(&format!("{}/{}", DIR, name));
@@ -71,15 +71,15 @@ fn all_layouts_decrypt_to_clear_video_samples() {
     assert_eq!(clear.len(), 20, "fixture has 20 video samples");
 
     let files = [
-        "enc_default_none.mp4",
-        "enc_default_explicit.mp4",
-        "enc_default_implicit.mp4",
-        "enc_base_moof_none.mp4",
-        "enc_base_moof_explicit.mp4",
-        "enc_base_moof_implicit.mp4",
-        "enc_omit_none.mp4",
-        "enc_omit_explicit.mp4",
-        "enc_omit_implicit.mp4",
+        "enc-default-none.mp4",
+        "enc-default-explicit.mp4",
+        "enc-default-implicit.mp4",
+        "enc-base-moof-none.mp4",
+        "enc-base-moof-explicit.mp4",
+        "enc-base-moof-implicit.mp4",
+        "enc-omit-none.mp4",
+        "enc-omit-explicit.mp4",
+        "enc-omit-implicit.mp4",
     ];
     for f in files {
         let got = decrypt_video(f);

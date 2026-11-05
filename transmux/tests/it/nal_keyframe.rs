@@ -1,7 +1,7 @@
 //! Gate for the public NAL-type / IDR-IRAP keyframe helper (issue #517).
 //!
 //! Real fixtures only for the positive cases:
-//! - `fixtures/ts/h264_aac.ts` (AVC) — demuxed via [`TsDemux`]; the helper's
+//! - `fixtures/ts/h264-aac.ts` (AVC) — demuxed via [`TsDemux`]; the helper's
 //!   verdict on each length-prefixed sample must agree with the demuxer's own
 //!   `is_sync` flag AND with the committed ffprobe keyframe oracle.
 //! - `fixtures/ts/hevc/main.ts` (HEVC) — access units reassembled by PES
@@ -23,7 +23,7 @@ fn fixtures_dir() -> PathBuf {
 
 /// Count keyframes in the ffprobe oracle CSV's `video` rows (7th column == 1).
 fn oracle_video_keyframe_count() -> usize {
-    let text = std::fs::read_to_string(fixtures_dir().join("ts/demux-oracle/h264_aac.packets.csv"))
+    let text = std::fs::read_to_string(fixtures_dir().join("ts/demux-oracle/h264-aac.packets.csv"))
         .expect("packets.csv oracle must exist");
     let mut count = 0usize;
     for line in text.lines() {
@@ -41,8 +41,8 @@ fn oracle_video_keyframe_count() -> usize {
 
 #[test]
 fn avc_keyframes_agree_with_demuxer_and_oracle() {
-    let ts = std::fs::read(fixtures_dir().join("ts/h264_aac.ts")).expect("h264_aac.ts fixture");
-    let media = TsDemux::new().demux(&ts).expect("demux h264_aac.ts");
+    let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
+    let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
 
     // Find the AVC video track.
     let video = media

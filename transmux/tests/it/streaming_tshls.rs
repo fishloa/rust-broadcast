@@ -1,8 +1,8 @@
 //! `StreamingTsHlsSegmenter` gate — incremental/live classic-HLS segmentation
 //! (issue #571), verified against the existing batch `TsHlsPackager` on the
-//! same real fixture (`fixtures/ts/h264_aac.ts`, demuxed via `TsDemux`).
+//! same real fixture (`fixtures/ts/h264-aac.ts`, demuxed via `TsDemux`).
 //!
-//! Pipeline: `ir = TsDemux(h264_aac.ts)` → push every sample of `ir` through
+//! Pipeline: `ir = TsDemux(h264-aac.ts)` → push every sample of `ir` through
 //! `StreamingTsHlsSegmenter` in global decode-time order → compare the
 //! resulting `.ts` segments against `TsHlsPackager::package(&ir)`'s batch
 //! output. Byte-identical segments prove the streaming cut/partition logic
@@ -21,8 +21,8 @@ use transmux::{
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
 fn load_ts() -> Vec<u8> {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    std::fs::read(path).expect("h264_aac.ts fixture must exist")
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    std::fs::read(path).expect("h264-aac.ts fixture must exist")
 }
 
 fn demux(ts: &[u8]) -> Media {

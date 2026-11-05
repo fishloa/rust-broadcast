@@ -1,4 +1,4 @@
-//! FLUTE FDT-packet fixture: parse the committed `flute_fdt.bin` (an ALC/LCT
+//! FLUTE FDT-packet fixture: parse the committed `flute-fdt.bin` (an ALC/LCT
 //! packet built to the RFC 6726 §3.4 FDT-packet shape — TOI = 0, an EXT_FDT
 //! extension at HET 192, an 8-byte Small-Block-Systematic FEC Payload ID, and a
 //! truncated FDT-Instance XML payload), assert the decoded LCT flag-driven
@@ -9,7 +9,7 @@ use rmt_flute::{
 };
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("rmt-flute/flute_fdt.bin")
+    test_fixtures::read("flute/flute-fdt.bin")
 }
 
 #[test]

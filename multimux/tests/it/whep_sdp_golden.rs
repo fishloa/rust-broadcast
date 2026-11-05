@@ -3,7 +3,7 @@
 //! `sdp_types::Session::write` (deterministic: the offer, local address, ICE
 //! credentials, codec config, fingerprint and candidate lines are all caller
 //! supplied). Pins the `o=`/`c=`/attribute line ordering, which differs from
-//! main's hand-built text (see the CHANGELOG and `tests/golden/README.md`).
+//! main's hand-built text (see the CHANGELOG and `fixtures/golden/webrtc/PROVENANCE.md`).
 
 use webrtc_runtime::media::SetupRole;
 
@@ -56,15 +56,13 @@ fn whep_answer_matches_golden() {
          00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff",
         &["0 1 udp 2130706431 127.0.0.1 54321 typ host".to_string()],
     );
-    let file = "whep_answer.golden";
+    let file = "golden/webrtc/whep-answer.golden";
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
         std::fs::create_dir_all(&dir).expect("create golden dir");
         std::fs::write(std::path::Path::new(&dir).join(file), &answer).expect("write");
         return;
     }
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(file);
+    let path = test_fixtures::path(file);
     let expected = std::fs::read_to_string(&path).expect("read golden");
     assert_eq!(
         answer, expected,

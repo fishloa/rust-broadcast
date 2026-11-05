@@ -5,7 +5,7 @@
 //!
 //! Runs [`CodecSignallingCheck`], [`FpsCadenceCheck`], [`ParamSetsCheck`],
 //! [`InterlaceCheck`], and [`check_container_codec`] against every `.ts`
-//! under `fixtures/ts/**` and every file under `fixtures/transmux/`.
+//! under `fixtures/ts/**` and every file under `fixtures/ts/`.
 //!
 //! `avc-interlaced-content` / `interlaced-content` are excluded from the
 //! "mismatch" set on purpose: `fixtures/ts/h264/interlaced.ts` is genuinely

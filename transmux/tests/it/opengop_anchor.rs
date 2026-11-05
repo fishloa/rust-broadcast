@@ -11,7 +11,7 @@
 //! Fixtures:
 //! - `fixtures/ts/gulli-opengop.ts` — real open-GOP Gulli DVB-T capture
 //!   (H.264 PID `0x100`): **zero IDR**; 5 SPS-led GOP starts, each carrying a
-//!   `recovery_point` SEI (see `fixtures/ts/gulli-opengop-PROVENANCE.md`).
+//!   `recovery_point` SEI (see `fixtures/ts/gulli-opengop-provenance.md`).
 //! - `fixtures/ts/h264/main.ts` — closed-GOP IDR fixture (H.264 PID `0x100`):
 //!   proves IDR-based anchoring is unchanged.
 //!

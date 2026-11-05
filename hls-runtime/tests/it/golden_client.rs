@@ -61,10 +61,7 @@ fn client_actions_and_request_urls_match_golden() {
             ));
         }
     }
-    let path = format!(
-        "{}/tests/golden/client_urls.golden",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = test_fixtures::path("golden/hls/client-urls.golden");
     if std::env::var_os("GOLDEN_UPDATE").is_some() {
         std::fs::write(&path, &out).unwrap();
         return;

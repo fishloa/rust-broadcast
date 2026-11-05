@@ -4,10 +4,10 @@
 //! (`tests/it/webm_demux.rs`). Two real ffmpeg-produced fixtures, each with a
 //! per-frame ffprobe oracle:
 //!
-//! - `fixtures/webm/vp8_opus.webm` — VP8 video (25 frames) + Opus audio (51).
-//! - `fixtures/webm/vorbis.webm` — Vorbis audio (45 frames).
+//! - `fixtures/mkv/vp8-opus.webm` — VP8 video (25 frames) + Opus audio (51).
+//! - `fixtures/mkv/vorbis.webm` — Vorbis audio (45 frames).
 //!
-//! Oracle CSV columns (`fixtures/webm/*.packets.csv`):
+//! Oracle CSV columns (`fixtures/mkv/*.packets.csv`):
 //!
 //! ```text
 //! codec_type,stream_index,pts,dts,duration,size,keyframe(K=1)
@@ -24,13 +24,13 @@ use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
 
 /// VP8+Opus fixture (video track 0, audio track 1).
-const VP8_FIXTURE: &str = "webm/vp8_opus.webm";
+const VP8_FIXTURE: &str = "mkv/vp8-opus.webm";
 /// VP8+Opus ffprobe oracle.
-const VP8_ORACLE: &str = "webm/vp8_opus.packets.csv";
+const VP8_ORACLE: &str = "mkv/vp8-opus.packets.csv";
 /// Vorbis-only fixture (audio track 0).
-const VORBIS_FIXTURE: &str = "webm/vorbis.webm";
+const VORBIS_FIXTURE: &str = "mkv/vorbis.webm";
 /// Vorbis ffprobe oracle.
-const VORBIS_ORACLE: &str = "webm/vorbis.packets.csv";
+const VORBIS_ORACLE: &str = "mkv/vorbis.packets.csv";
 
 /// One ffprobe oracle row.
 #[derive(Debug)]
@@ -190,7 +190,7 @@ fn vorbis_frame_oracle() {
 /// the expected VP9 + Opus configs (the existing WebM path is unaffected).
 #[test]
 fn vp9_opus_still_demuxes() {
-    let path = test_fixtures::path("webm/vp9_opus.webm");
+    let path = test_fixtures::path("mkv/vp9-opus.webm");
     let m = demux(path.to_str().unwrap());
     assert_eq!(m.tracks.len(), 2, "VP9 video + Opus audio");
     assert!(

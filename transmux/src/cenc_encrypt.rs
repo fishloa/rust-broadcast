@@ -1041,15 +1041,15 @@ mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         let mut demux = TsDemux::new();
         let media = demux
             .unpackage(bytes.as_slice())
-            .expect("demux fixtures/ts/h264_aac.ts");
+            .expect("demux fixtures/ts/h264-aac.ts");
         assert!(
             media.tracks.len() > 1,
-            "h264_aac.ts must be a multi-track fixture (got {})",
+            "h264-aac.ts must be a multi-track fixture (got {})",
             media.tracks.len()
         );
         media

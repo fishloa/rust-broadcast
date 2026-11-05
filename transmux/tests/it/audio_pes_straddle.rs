@@ -8,12 +8,12 @@
 //!
 //! PROVENANCE. Every input is a committed fixture, none is hand-made bytes:
 //!
-//! * `fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts` — the AC-3 5.1 and
+//! * `fixtures/ts/audio-pes-straddle/sintel-ac3-eac3-aligned.ts` — the AC-3 5.1 and
 //!   E-AC-3 5.1 tracks of a 10 s excerpt of the Sintel soundtrack
 //!   (CC BY 3.0, see `ATTRIBUTION.txt` beside it), encoded and muxed with
 //!   ffmpeg, trimmed to ~3 s of each (94 AC-3 PES of one syncframe, 47 E-AC-3 PES of two). Frame-aligned PES.
-//! * `fixtures/ts/h264_aac.ts`, `fixtures/ts/legacy/mpeg2_mp2.ts`,
-//!   `fixtures/ts/dts/dts_core.ts` — the workspace's existing ffmpeg-generated
+//! * `fixtures/ts/h264-aac.ts`, `fixtures/ts/legacy/mpeg2-mp2.ts`,
+//!   `fixtures/ts/dts/dts-core.ts` — the workspace's existing ffmpeg-generated
 //!   AAC, MP2 and DTS-core streams.
 //!
 //! The straddling variant of each is produced **in this test** by
@@ -40,7 +40,7 @@ fn fixture(rel: &str) -> Vec<u8> {
 }
 
 fn local_fixture(rel: &str) -> Vec<u8> {
-    let p = test_fixtures::path("transmux/audio_pes_straddle").join(rel);
+    let p = test_fixtures::path("ts/audio-pes-straddle").join(rel);
     std::fs::read(&p).unwrap_or_else(|e| panic!("read fixture {}: {e}", p.display()))
 }
 
@@ -369,10 +369,10 @@ fn sintel_plain_ac3_stays_ac3_and_eac3_stays_eac3() {
 #[test]
 fn aac_mp2_and_dts_straddling_pes_match_the_aligned_demux() {
     for rel in [
-        "ts/h264_aac.ts",
-        "ts/legacy/mpeg2_mp2.ts",
-        "ts/dts/dts_core.ts",
-        "ts/aac-5_1-640k.ts",
+        "ts/h264-aac.ts",
+        "ts/legacy/mpeg2-mp2.ts",
+        "ts/dts/dts-core.ts",
+        "ts/aac-5-1-640k.ts",
     ] {
         let aligned = fixture(rel);
         let tracks = assert_straddle_invariant(rel, &aligned);

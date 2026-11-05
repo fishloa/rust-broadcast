@@ -71,7 +71,7 @@ has a regression test:
 
 ## Fixtures
 
-`fixtures/sub/sintel-en.srt` is real: the Blender Foundation's official English
+`fixtures/subtitles/sintel-en.srt` is real: the Blender Foundation's official English
 subtitles for *Sintel*, CC BY 3.0, fetched verbatim from Wikimedia Commons with
 the source URL, revision id and quoted licence recorded in
 `fixtures/PROVENANCE.md`. Attribution: © Blender Foundation, www.sintel.org.

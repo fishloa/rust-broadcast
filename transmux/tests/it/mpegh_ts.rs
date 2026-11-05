@@ -1,7 +1,7 @@
 //! MPEG-H 3D Audio Transport-Stream spoke gate — TS→IR demux + IR→TS mux
 //! (issue #579).
 //!
-//! Fixture: `private/fixtures/ts/mpegh-cicp01-baseline.ts` — a real
+//! Fixture: `private/fixtures/audio/mpegh/mpegh-cicp-01-baseline-32kbps-single.ts` — a real
 //! Fraunhofer-IIS `mpegh-test-content` capture (CICP_01, baseline profile,
 //! 32 kbps, single-stream), `stream_type 0x2D`, ES_info carrying the
 //! `MPEG-H_3dAudio_descriptor` (`0x3F` extension descriptor). CC BY-NC-ND —
@@ -27,7 +27,10 @@ const TS: usize = 188;
 /// Load the fixture (private repo: `private/fixtures/ts/`), or return `None`
 /// after a loud SKIPPED line when the private repo is not checked out.
 fn try_load_fixture() -> Option<Vec<u8>> {
-    test_fixtures::require_bytes("ts/mpegh-cicp01-baseline.ts", "mpegh_ts")
+    test_fixtures::require_bytes(
+        "audio/mpegh/mpegh-cicp-01-baseline-32kbps-single.ts",
+        "mpegh_ts",
+    )
 }
 
 /// Run `body` with the fixture bytes, or skip the test cleanly.
@@ -40,7 +43,7 @@ fn with_fixture(body: impl FnOnce(&[u8])) {
 fn demux_fixture(data: &[u8]) -> Media {
     TsDemux::new()
         .unpackage(data)
-        .expect("demux mpegh-cicp01-baseline.ts")
+        .expect("demux mpegh-cicp-01-baseline-32kbps-single.ts")
 }
 
 fn mpegh_track(media: &Media) -> &transmux::media::Track {

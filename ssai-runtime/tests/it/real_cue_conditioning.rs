@@ -1,5 +1,5 @@
 //! Real-fixture bite test (issue #929 prep;
-//! `fixtures/scte35-ssai/PROVENANCE.md`).
+//! `fixtures/scte35/PROVENANCE.md`).
 //!
 //! Reads the committed, genuine DASH-IF `livesim2` SCTE-35 `emsg` capture,
 //! decodes the real cue's `presentation_time`, and conditions it against the
@@ -30,7 +30,7 @@ const NEAREST_KEYFRAME_PTS: u64 = 160_767_315_906_000;
 const MEASURED_GAP_TICKS: u64 = 6_000;
 
 fn real_cue_presentation_time() -> u64 {
-    let path = test_fixtures::path("scte35-ssai/emsg_splice_insert.bin");
+    let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
     let bytes = std::fs::read(path).expect("read committed real emsg fixture");
     let emsg = EmsgBox::parse(&bytes).expect("parse real emsg box");
     assert!(emsg.is_scte35(), "fixture must carry a SCTE-35 emsg");

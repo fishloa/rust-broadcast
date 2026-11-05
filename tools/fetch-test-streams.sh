@@ -35,7 +35,7 @@ MANIFEST=(
 )
 
 # TSDuck test corpus: a 1.6 GB BSD-2-Clause git repo. NOT mirrored wholesale;
-# only the files tests reference are in `private/fixtures/tsduck/`. Clone it at
+# only the files tests reference are in `private/fixtures/suites/tsduck/`. Clone it at
 # this exact commit to run the full-corpus (#[ignore]) scans.
 TSDUCK_TEST_URL="https://github.com/tsduck/tsduck-test"
 TSDUCK_TEST_SHA="100c8b6301437caebe1f2881389170e77389393b"

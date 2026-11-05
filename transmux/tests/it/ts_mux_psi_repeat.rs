@@ -126,7 +126,7 @@ fn assert_cc_valid(ts: &[u8]) {
     }
 }
 
-const FIXTURES: &[&str] = &["h264_aac.ts", "h264_aac_40s.ts"];
+const FIXTURES: &[&str] = &["h264-aac.ts", "h264-aac-40s.ts"];
 
 #[test]
 fn default_repeats_pat_and_pmt_within_the_interval() {
@@ -149,7 +149,7 @@ fn default_repeats_pat_and_pmt_within_the_interval() {
 
 #[test]
 fn configured_interval_is_honoured() {
-    let media = demux(&fixture("h264_aac_40s.ts"));
+    let media = demux(&fixture("h264-aac-40s.ts"));
     let mux = |iv| {
         TsMux::new()
             .with_psi_interval_ms(iv)
@@ -167,7 +167,7 @@ fn configured_interval_is_honoured() {
 
 #[test]
 fn repeats_are_identical_sections_with_unchanged_pmt_version() {
-    let media = demux(&fixture("h264_aac_40s.ts"));
+    let media = demux(&fixture("h264-aac-40s.ts"));
     let out = TsMux::new().package(&media).unwrap();
     for pid in [PAT_PID, PMT_PID] {
         let occ = psi_occurrences(&out, pid);
@@ -217,7 +217,7 @@ fn whole_file_round_trip_is_unchanged_but_for_psi_repeats() {
 
 #[test]
 fn stream_cut_at_packet_aligned_offsets_still_yields_all_tracks() {
-    let media = demux(&fixture("h264_aac_40s.ts"));
+    let media = demux(&fixture("h264-aac-40s.ts"));
     let want = media.tracks.len();
     assert!(want >= 2);
     let out = TsMux::new().package(&media).unwrap();

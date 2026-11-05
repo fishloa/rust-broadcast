@@ -1,6 +1,6 @@
 //! Ungameable gate test for AC-3/E-AC-3 fMP4 carriage (#426).
 //!
-//! Oracle bytes come from ffmpeg's own MP4 muxer (DOLBY-ORACLE.md).
+//! Oracle bytes come from ffmpeg's own MP4 muxer (dolby-oracle.md).
 //! The test demuxes real TS fixtures, parses the syncframe BSI, builds the
 //! config box, and asserts byte-exact match with ffmpeg's output.
 
@@ -12,7 +12,7 @@ use transmux::{
     box_iter, build_init_segment,
 };
 
-// Oracle bytes from DOLBY-ORACLE.md
+// Oracle bytes from dolby-oracle.md
 const DAC3_ORACLE: [u8; 3] = [0x50, 0x09, 0x40];
 const DEC3_ORACLE: [u8; 5] = [0x06, 0x00, 0x60, 0x02, 0x00];
 
@@ -217,15 +217,15 @@ fn ec3_init_segment_sample_entry() {
 
 // ── Test: DVB stream_type 0x06 + enhanced_AC3_descriptor must classify as ──
 // ── E-AC-3, not opaque data (issue #641) ────────────────────────────────────
-// `eac3_dvb_0x06.ts` re-muxes the same real E-AC-3 syncframes already
+// `eac3-dvb-0x06.ts` re-muxes the same real E-AC-3 syncframes already
 // captured in `eac3.ts` (there declared via native `stream_type 0x87`) under
 // `stream_type 0x06` (PES private data) + a real enhanced_AC3_descriptor
 // (tag 0x7A) -- the standard DVB signalling for E-AC-3 that `eac3.ts`'s own
 // native-stream_type packetization never exercises.
 #[test]
 fn dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3() {
-    let ts = std::fs::read("../fixtures/ts/dolby/eac3_dvb_0x06.ts")
-        .expect("read eac3_dvb_0x06.ts fixture");
+    let ts = std::fs::read("../fixtures/ts/dolby/eac3-dvb-0x06.ts")
+        .expect("read eac3-dvb-0x06.ts fixture");
     let mut demux = transmux::ts_demux::TsDemux::new();
     let media = demux.demux(&ts).expect("demux dvb 0x06 ts");
 

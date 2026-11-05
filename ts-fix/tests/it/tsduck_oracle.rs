@@ -16,12 +16,12 @@
 //! entry in their PAT (checked all of them with `tsp -P tables --pid 0`).
 //! Per the W4 fixture-first fallback (no independent tool authors a whole
 //! *broadcast capture* with a chosen NIT PID from scratch), this fixture is
-//! `fixtures/ts/h264_aac.ts` (a real, already-committed capture) transformed
+//! `fixtures/ts/h264-aac.ts` (a real, already-committed capture) transformed
 //! by TSDuck's own `pat` plugin — not our code — to add a `network_pid`
 //! entry:
 //!
 //! ```text
-//! tsp -I file fixtures/ts/h264_aac.ts -P pat --nit 16 -O file ../fixtures/ts/pat-with-nit.ts
+//! tsp -I file fixtures/ts/h264-aac.ts -P pat --nit 16 -O file ../fixtures/ts/pat-with-nit.ts
 //! ```
 //!
 //! (TSDuck 3.44-4676.) The result is still a real capture's actual PES/PSI
@@ -187,7 +187,7 @@ fn regen_psi_pat_continuity_is_clean_per_tsanalyze() {
 fn regen_psi_pmt_continuity_is_clean_per_tsanalyze() {
     skip_unless_tsduck_available!();
 
-    const PMT_PID: Pid = Pid::new(4096); // fixtures/ts/h264_aac.ts's program_map_PID.
+    const PMT_PID: Pid = Pid::new(4096); // fixtures/ts/h264-aac.ts's program_map_PID.
     let out_path = run_regen_psi_to_temp_file();
     let pmt_line = normalized_pid_line(&out_path, PMT_PID);
 

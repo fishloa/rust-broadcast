@@ -9,12 +9,12 @@
 //! `usertype` replaced by the first 8 payload bytes.
 //!
 //! Fixtures: real ffmpeg output with real `uuid` children spliced in —
-//! see `../fixtures/transmux/mp4/uuid_boxes/README.md`.
+//! see `../fixtures/mp4/uuid-boxes/PROVENANCE.md`.
 
 use broadcast_common::{Parse, Serialize, Unpackage};
 use transmux::{Fmp4Demux, MovieBox};
 
-const DIR: &str = "transmux/mp4/uuid_boxes";
+const DIR: &str = "mp4/uuid-boxes";
 
 fn read(name: &str) -> Vec<u8> {
     let p = test_fixtures::path(&format!("{}/{}", DIR, name));
@@ -37,11 +37,11 @@ fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
     panic!("box not found");
 }
 
-/// The `moov` of `moov_uuid.mp4` carries a `uuid` child (a PlayReady/ISMV
+/// The `moov` of `moov-uuid.mp4` carries a `uuid` child (a PlayReady/ISMV
 /// `pssh`). Parsing and re-serialising must be byte-identical.
 #[test]
 fn moov_uuid_child_round_trips_byte_exact() {
-    let data = read("moov_uuid.mp4");
+    let data = read("moov-uuid.mp4");
     let moov_bytes = find_top_box(&data, b"moov");
     let moov = MovieBox::parse(moov_bytes).expect("parses");
     let uuid_child = moov
@@ -63,7 +63,7 @@ fn moov_uuid_child_round_trips_byte_exact() {
 /// strip them; this pins the parse side against the real fixture.
 #[test]
 fn moof_and_traf_uuid_children_are_preserved_on_parse() {
-    let data = read("segment_uuid.mp4");
+    let data = read("segment-uuid.mp4");
     let media = Fmp4Demux::new()
         .unpackage(data.as_slice())
         .expect("the segment demuxes");
@@ -121,7 +121,7 @@ fn round_tripped_uuid_is_mp4dump_readable() {
         eprintln!("SKIP round_tripped_uuid_is_mp4dump_readable: mp4dump not on PATH");
         return;
     }
-    let data = read("moov_uuid.mp4");
+    let data = read("moov-uuid.mp4");
     let moov_bytes = find_top_box(&data, b"moov");
     let offset = moov_bytes.as_ptr() as usize - data.as_ptr() as usize;
     let moov = MovieBox::parse(moov_bytes).expect("parses");

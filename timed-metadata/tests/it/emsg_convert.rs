@@ -7,12 +7,12 @@ use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    test_fixtures::read(&format!("shared/{name}"))
+    test_fixtures::read(&format!("scte35/{name}"))
 }
 
 #[test]
 fn v1_fixture_round_trips_through_v0_and_back_byte_identical() {
-    let raw = read_fixture("emsg_v1_scte35_livesim.bin");
+    let raw = read_fixture("emsg-v1-scte35-livesim.bin");
     let v1 = EmsgBox::parse(&raw).unwrap();
 
     // timescale 90_000, presentation_time Absolute(160_391_675_700_000),
@@ -59,7 +59,7 @@ fn v1_fixture_round_trips_through_v0_and_back_byte_identical() {
 
 #[test]
 fn v0_fixture_round_trips_through_v1_and_back_byte_identical() {
-    let raw = read_fixture("scte35_emsg_v0.bin");
+    let raw = read_fixture("scte35-emsg-v0.bin");
     let v0 = EmsgBox::parse(&raw).unwrap();
     assert_eq!(v0.timescale, 90_000);
     assert_eq!(v0.presentation_time, PresentationTime::Delta(0));
@@ -88,7 +88,7 @@ fn v0_fixture_round_trips_through_v1_and_back_byte_identical() {
 
 #[test]
 fn timescale_mismatch_errors() {
-    let raw = read_fixture("emsg_v1_scte35_livesim.bin");
+    let raw = read_fixture("emsg-v1-scte35-livesim.bin");
     let v1 = EmsgBox::parse(&raw).unwrap();
     let timing = SegmentTiming {
         earliest_presentation_time: 0,
@@ -101,7 +101,7 @@ fn timescale_mismatch_errors() {
 
 #[test]
 fn v0_with_past_start_errors() {
-    let raw = read_fixture("scte35_emsg_v0.bin"); // Delta(0)
+    let raw = read_fixture("scte35-emsg-v0.bin"); // Delta(0)
     let v0 = EmsgBox::parse(&raw).unwrap();
 
     // Convert v0→v1 first to get v1 with T = 500_000

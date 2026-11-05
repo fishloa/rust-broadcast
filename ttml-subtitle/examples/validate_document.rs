@@ -10,7 +10,7 @@ use ttml_subtitle::{
 };
 
 fn main() {
-    let fixture = test_fixtures::path("ttml/imsc1.1-ruby-001.ttml");
+    let fixture = test_fixtures::path("subtitles/imsc1.1-ruby-001.ttml");
 
     let xml = fs::read_to_string(&fixture).expect("failed to read fixture");
 

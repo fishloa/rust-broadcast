@@ -88,7 +88,7 @@ fn report(name: &str, r: &Run) {
 
 #[test]
 fn csa2_plain_delivers_before_finish() {
-    let Some(data) = test_fixtures::require_bytes("csa/csa2-plain.ts", "csa2_plain_delivers")
+    let Some(data) = test_fixtures::require_bytes("crypto/csa2-plain.ts", "csa2_plain_delivers")
     else {
         return;
     };
@@ -144,7 +144,7 @@ fn per_source_pid(data: &[u8], strict: bool, chunk: usize) -> PerPid {
 
 #[test]
 fn live_policy_loses_nothing_and_keeps_per_track_order_versus_strict() {
-    for (rel, tsduck) in [("csa/csa2-plain.ts", false), ("input/test-062.ts", true)] {
+    for (rel, tsduck) in [("crypto/csa2-plain.ts", false), ("input/test-062.ts", true)] {
         let who = "live_policy_loses_nothing";
         let path = if tsduck {
             test_fixtures::tsduck(rel, who)
@@ -167,7 +167,8 @@ fn live_policy_loses_nothing_and_keeps_per_track_order_versus_strict() {
 
 #[test]
 fn strict_pmt_order_keeps_the_head_of_line_wait() {
-    let Some(data) = test_fixtures::require_bytes("csa/csa2-plain.ts", "strict_pmt_order") else {
+    let Some(data) = test_fixtures::require_bytes("crypto/csa2-plain.ts", "strict_pmt_order")
+    else {
         return;
     };
     let mut d = StreamingTsDemux::new().with_strict_pmt_order();
@@ -191,7 +192,7 @@ fn samples_after(demux: &mut StreamingTsDemux) -> usize {
 
 #[test]
 fn release_silent_heads_unblocks_a_unit_whose_declared_video_never_came() {
-    for rel in ["ts/m6-single.ts", "dvb-si/tnt-5w-12732v-isi6-10s.ts"] {
+    for rel in ["ts/m6-single.ts", "ts/tnt-5w-12732v-isi6-10s.ts"] {
         let data = test_fixtures::read(rel);
         let data = &data[..data.len() / 188 * 188];
 
@@ -215,7 +216,7 @@ fn release_silent_heads_unblocks_a_unit_whose_declared_video_never_came() {
 
 #[test]
 fn restart_timeline_keeps_tracks_and_ids_across_the_seam() {
-    let data = test_fixtures::read("ts/h264_aac_40s.ts");
+    let data = test_fixtures::read("ts/h264-aac-40s.ts");
     let data = &data[..data.len() / 188 * 188];
     let half = data.len() / 188 / 2 * 188;
 

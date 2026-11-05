@@ -38,10 +38,10 @@ fn confidence_has_named_tiers() {
 /// constructed.
 #[test]
 fn detail_display_is_lossless() {
-    let data = fixture("fixtures/container-probe/m2ts_192.m2ts");
+    let data = fixture("fixtures/ts/m2ts-192.m2ts");
     let detail = match container_probe::probe(&data) {
         Probe::Identified { detail, .. } => detail,
-        other => panic!("m2ts_192.m2ts must identify, got {other:?}"),
+        other => panic!("m2ts-192.m2ts must identify, got {other:?}"),
     };
     let rendered = detail.to_string();
     assert!(
@@ -57,24 +57,24 @@ fn detail_display_is_lossless() {
 /// `Identified` objects expose the ISOBMFF major brand as a string.
 #[test]
 fn major_brand_str_returns_the_brand() {
-    let data = fixture("fixtures/mp4/h264_high.mp4");
+    let data = fixture("fixtures/mp4/h264-high.mp4");
     match container_probe::probe(&data) {
         Probe::Identified { detail, .. } => {
             assert_eq!(detail.major_brand_str(), Some("isom"));
         }
-        other => panic!("h264_high.mp4 must identify, got {other:?}"),
+        other => panic!("h264-high.mp4 must identify, got {other:?}"),
     }
 }
 
 /// The accessor returns `None` for non-ISOBMFF results (here a TS lattice).
 #[test]
 fn major_brand_str_is_none_for_ts() {
-    let data = fixture("fixtures/ts/h264_aac.ts");
+    let data = fixture("fixtures/ts/h264-aac.ts");
     match container_probe::probe(&data) {
         Probe::Identified { detail, .. } => {
             assert_eq!(detail.major_brand_str(), None);
         }
-        other => panic!("h264_aac.ts must identify, got {other:?}"),
+        other => panic!("h264-aac.ts must identify, got {other:?}"),
     }
 }
 
@@ -112,7 +112,7 @@ fn flv_mxf_mpegps_report_detail() {
     }
 
     // MXF: PartitionKind byte.
-    let mxf = container_probe::probe(&fixture("fixtures/mxf/op1a_mpeg2_pcm.mxf"));
+    let mxf = container_probe::probe(&fixture("fixtures/mxf/op1a-mpeg2-pcm.mxf"));
     match mxf {
         Probe::Identified { detail, .. } => match detail {
             Detail::Mxf { partition_kind, .. } => {
@@ -137,14 +137,14 @@ fn flv_mxf_mpegps_report_detail() {
     }
 
     // MPEG-PS: structural marker bits validated.
-    let ps = container_probe::probe(&fixture("fixtures/ps/h264_ac3.ps"));
+    let ps = container_probe::probe(&fixture("fixtures/ps/h264-ac3.ps"));
     match ps {
         Probe::Identified { detail, .. } => match detail {
             Detail::MpegPs {
                 structurally_valid, ..
-            } => assert!(structurally_valid, "h264_ac3.ps markers validate"),
+            } => assert!(structurally_valid, "h264-ac3.ps markers validate"),
             other => panic!("MPEG-PS must report Detail::MpegPs, got {other:?}"),
         },
-        other => panic!("h264_ac3.ps must identify, got {other:?}"),
+        other => panic!("h264-ac3.ps must identify, got {other:?}"),
     }
 }

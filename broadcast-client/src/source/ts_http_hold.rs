@@ -15,7 +15,7 @@ use mpeg_ts::ts::TsHeader;
 /// How long, after the last stream resolved (or the hold began), the hold still waits for a
 /// stream that has not sent a packet yet, in media time and on the session clock. Measured on the
 /// committed captures as the gap between consecutive stream resolutions: audio resolves 0.16 s to
-/// 0.48 s of media after the first video (`ts/h264_aac_40s.ts` 0.48 s, `ts/france2.ts` 0.32 s,
+/// 0.48 s of media after the first video (`ts/h264-aac-40s.ts` 0.48 s, `ts/france2.ts` 0.32 s,
 /// the TF1 capture 0.16 s) and the slowest later stream, a sparse stream_type 6 PID, resolves
 /// 0.44 s after the previous one (`ts/france2.ts`, 0.32 s to 0.76 s); `zenith-live` rai-gulp and
 /// rai-news-24 resolve the audio 0.32 s after the video. Half a second covers every measured gap.
@@ -24,13 +24,13 @@ pub(crate) const SETTLE_US: u64 = 500_000;
 /// Limits on the initial-track hold, counted from the first media of a connection. Measured on
 /// the committed captures, every declared stream had resolved within 0.76 s of media and 0.9 MB
 /// for a single programme (`ts/france2.ts`, the TF1 capture) and within 1.76 s and 1.5 MB for a
-/// 30-stream multiplex (`ts/france-tnt-uhf32-video-head-6MB.ts`); the defaults in
+/// 30-stream multiplex (`ts/france-tnt-uhf32-video-head-6-mb.ts`); the defaults in
 /// [`crate::events`] leave roughly 1.7x headroom over the worst case and stay below the 5 s stall
 /// notice. The quiet limit is input bytes without any further stream resolving after which the
 /// hold gives up on the streams still unresolved (scrambled or mis-framed, or sparse data that
 /// never completes an access unit): the longest gap between two resolutions on the committed
 /// captures is 0.46 MB (`ts/france2.ts`) and 0.92 MB between the first two bursts of the
-/// 30-stream multiplex, which then announces in two steps; `csa/csa2-plain.ts` resolves nothing
+/// 30-stream multiplex, which then announces in two steps; `crypto/csa2-plain.ts` resolves nothing
 /// for 0.56 MB.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct HoldLimits {

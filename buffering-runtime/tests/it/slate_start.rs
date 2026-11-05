@@ -2,7 +2,7 @@
 //! rai-gulp 600 s clean baseline, replayed verbatim through the current
 //! controller (`PolicyConfig::DEFAULT`, `initial_us` 500 ms, no seed; format
 //! `kind,now_us,a,b` as in `apple_tv_input_logs.rs`; fixtures in
-//! `private/fixtures/buffering-runtime/`, see PROVENANCE.md).
+//! `private/fixtures/logs/buffering/`, see PROVENANCE.md).
 //!
 //! The slate log: a programme with audio + video, then a PCR discontinuity
 //! (hint 4) and a video-only still-image slate, one I-picture every 2.29 s
@@ -66,7 +66,7 @@ fn config(f: impl FnOnce(ControllerConfig) -> ControllerConfig) -> ControllerCon
 
 fn replay(name: &str, cfg: ControllerConfig, unregister_audio_at_hint: bool) -> Option<Replay> {
     let path = test_fixtures::require(
-        &format!("buffering-runtime/{name}.lb.csv"),
+        &format!("logs/buffering/{name}.lb.csv"),
         "buffering-runtime slate_start",
     )?;
     let text = std::fs::read_to_string(path).unwrap();

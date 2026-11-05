@@ -20,7 +20,7 @@ fn sar(s: &transmux::Sample) -> (u16, u16) {
 
 #[test]
 fn melodie_avc3_all_samples_sar_64_45() {
-    let Some(bytes) = test_fixtures::require_bytes("fmp4/melodie-avc3.mp4", "display_fmp4_inband")
+    let Some(bytes) = test_fixtures::require_bytes("mp4/melodie-avc3.mp4", "display_fmp4_inband")
     else {
         return;
     };
@@ -39,8 +39,7 @@ fn melodie_avc3_all_samples_sar_64_45() {
 
 #[test]
 fn sarswitch_avc3_switch_at_sps_change() {
-    let Some(bytes) =
-        test_fixtures::require_bytes("fmp4/sarswitch-avc3.mp4", "display_fmp4_inband")
+    let Some(bytes) = test_fixtures::require_bytes("mp4/sarswitch-avc3.mp4", "display_fmp4_inband")
     else {
         return;
     };
@@ -113,7 +112,7 @@ fn sarswitch_avc3_switch_at_sps_change() {
 #[test]
 fn avc1_out_of_band_keeps_display_none() {
     let Some(bytes) =
-        test_fixtures::require_bytes("mp4/frag/h264_high.frag.mp4", "display_fmp4_inband")
+        test_fixtures::require_bytes("mp4/frag/h264-high.frag.mp4", "display_fmp4_inband")
     else {
         return;
     };
@@ -134,7 +133,7 @@ fn avc1_out_of_band_keeps_display_none() {
 
 #[test]
 fn hostile_overrun_length_prefix_does_not_panic() {
-    let Some(bytes) = test_fixtures::require_bytes("fmp4/melodie-avc3.mp4", "display_fmp4_inband")
+    let Some(bytes) = test_fixtures::require_bytes("mp4/melodie-avc3.mp4", "display_fmp4_inband")
     else {
         return;
     };

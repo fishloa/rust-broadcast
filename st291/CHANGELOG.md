@@ -120,9 +120,9 @@ name — see below).
     header, §3.1/§4 media type + clock rate); reuses the already-audited
     `anc_packet_291.md` (per-ANC-packet fields + parity/checksum) unchanged.
   - Two new runnable examples (`build_anc_rtp`, `parse_anc_rtp`) and a
-    fixture (`fixtures/st291/anc_rtp.bin`, built from the existing audited
+    fixture (`fixtures/rtp/anc-rtp.bin`, built from the existing audited
     `anc.bin` content bytes wrapped in fresh RFC-8331 framing — see
-    `fixtures/st291/anc_rtp-PROVENANCE.md`).
+    `fixtures/rtp/PROVENANCE.md`).
   - The libfuzzer fuzz target now also exercises `AncRtpPayload::parse` and
     `AncRtpPayload::parse_rtp_packet`.
 - `Error::ReservedNotZero` and `Error::LengthMismatch` — new error variants

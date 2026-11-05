@@ -1,4 +1,4 @@
-//! RFC 4326 Appendix B test vector: parse the committed `appendix_b.bin` (an
+//! RFC 4326 Appendix B test vector: parse the committed `appendix-b.bin` (an
 //! ICMPv6-over-IPv6 SNDU with D=0, NPA 00:01:02:03:04:05, Type 0x86DD, and the
 //! RFC's stated CRC-32 `0x7C171763`), assert the decoded fields, verify a
 //! byte-exact round-trip, and confirm the CRC matches `broadcast_common::crc32_mpeg2`.
@@ -6,7 +6,7 @@
 use ule::{Sndu, TypeField};
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("ule/appendix_b.bin")
+    test_fixtures::read("ule/appendix-b.bin")
 }
 
 #[test]

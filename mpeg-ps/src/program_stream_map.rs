@@ -567,7 +567,7 @@ mod tests {
 
     /// #1050 regression: a conformant PSM with a non-empty program
     /// descriptor loop. TSDuck cannot generate PS, and the committed
-    /// ffmpeg fixture (`fixtures/mpeg-ps/ffmpeg-mpeg2-ps.mpg`) carries no
+    /// ffmpeg fixture (`fixtures/ps/ffmpeg-mpeg2-ps.mpg`) carries no
     /// PSM at all (VOB/MPEG-PS from ffmpeg's muxer omits it), so this is
     /// hand-built directly from ISO/IEC 13818-1 Table 2-41's field order —
     /// the oracle: `program_stream_info_length(16)`, `descriptor()×N`,

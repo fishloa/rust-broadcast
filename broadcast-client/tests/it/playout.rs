@@ -635,7 +635,7 @@ fn finite_session(config: Config) -> Session {
 }
 
 fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Event> {
-    let bytes = test_fixtures::read("ts/h264_aac.ts");
+    let bytes = test_fixtures::read("ts/h264-aac.ts");
     let headers = vec![("Content-Length".to_string(), bytes.len().to_string())];
     let conn = match session.poll(0).expect("request") {
         Action::HttpRequest { conn, .. } => conn,

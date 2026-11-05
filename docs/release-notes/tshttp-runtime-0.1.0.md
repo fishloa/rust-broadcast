@@ -55,7 +55,7 @@ This is the README snippet (a `no_run` doctest). `examples/live_loop.rs` replays
 
 ## Validation
 
-Named HTTP statuses and header names are constants in the policy core (the `http` crate needs `std`, this crate is `no_std`). Public state-machine tests for every transition of the design table (`tests/transitions.rs`, `timers.rs`, `vod.rs`, `policy.rs`), audit regressions (`tests/audit_*`), a real-capture run over the committed `ts/h264_aac.ts` fixture (`tests/vod_real.rs`), a run over a live TV capture (`tests/real_stream.rs`) held in the private fixtures repository (CI checks it out with a read-only deploy key and fails on a missing fixture; a source checkout without it skips loudly), the policy-core equivalence test, and the label-coverage, `#[non_exhaustive]` and no-hand-roll guards.
+Named HTTP statuses and header names are constants in the policy core (the `http` crate needs `std`, this crate is `no_std`). Public state-machine tests for every transition of the design table (`tests/transitions.rs`, `timers.rs`, `vod.rs`, `policy.rs`), audit regressions (`tests/audit_*`), a real-capture run over the committed `ts/h264-aac.ts` fixture (`tests/vod_real.rs`), a run over a live TV capture (`tests/real_stream.rs`) held in the private fixtures repository (CI checks it out with a read-only deploy key and fails on a missing fixture; a source checkout without it skips loudly), the policy-core equivalence test, and the label-coverage, `#[non_exhaustive]` and no-hand-roll guards.
 
 ## Dependencies
 

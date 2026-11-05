@@ -219,11 +219,15 @@ fn multiple_foreign_children_keep_order() {
 /// an identical tree.
 #[test]
 fn committed_fixtures_round_trip_through_to_xml() {
-    let dir = test_fixtures::path("ttml");
+    let dir = test_fixtures::path("subtitles");
     let mut n = 0;
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().is_none_or(|e| e != "ttml") {
+        if path.extension().is_none_or(|e| e != "ttml")
+            || !path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("imsc"))
+        {
             continue;
         }
         let src = fs::read_to_string(&path).unwrap();

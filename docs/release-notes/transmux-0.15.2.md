@@ -16,7 +16,7 @@ changes, no new API surface.
   `stream_type`s and reclassifies to the matching audio codec, reaching the
   existing `ConfigProbe::Ac3`/`Eac3`/`Dts` syncframe recovery unchanged.
 
-  New fixture `fixtures/ts/dolby/eac3_dvb_0x06.ts`: real E-AC-3 syncframes
+  New fixture `fixtures/ts/dolby/eac3-dvb-0x06.ts`: real E-AC-3 syncframes
   (already captured in `eac3.ts`) re-muxed under `stream_type 0x06` + a real
   `enhanced_AC3_descriptor` instead of the native `0x87`. Independently
   verified structurally valid with TSDuck's `tstables`.

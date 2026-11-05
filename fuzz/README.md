@@ -53,10 +53,10 @@ Seed corpora live under `fuzz/corpus/<target>/`. They are derived from
 real broadcast captures in the workspace fixtures:
 
 - `fixtures/ts/m6-single.ts`
-- `fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts`
-- `fixtures/dvb-t2mi/colombia-capital-t2mi.ts`
-- `fixtures/dvb-bbframe/rai-5w-12606v-bbframe.ts`
-- `fixtures/dvb-bbframe/tnt-5w-12732v-bbframe.ts`
+- `fixtures/ts/tnt-5w-12732v-isi6-10s.ts`
+- `fixtures/t2mi/colombia-capital-t2mi.ts`
+- `fixtures/bbframe/rai-5w-12606v-bbframe.ts`
+- `fixtures/bbframe/tnt-5w-12732v-bbframe.ts`
 
 ### Re-seeding from fixtures
 

@@ -1,8 +1,8 @@
 //! Byte-for-byte golden gate for the XML renderers and parsers: DASH MPD,
 //! LL-DASH MPD, Smooth manifest, PlayReady WRMHEADER, and the parse results
 //! (`Debug` dumps) of the committed MPD fixtures. The expected files in
-//! `tests/golden/` were generated from the pre-quick-xml code on `origin/main`
-//! (see `tests/golden/README.md`). Set `GOLDEN_BLESS=<dir>` to write the files
+//! `fixtures/golden/dash/` were generated from the pre-quick-xml code on `origin/main`
+//! (see `fixtures/golden/dash/PROVENANCE.md`). Set `GOLDEN_BLESS=<dir>` to write the files
 //! instead of comparing.
 #![cfg(feature = "std")]
 
@@ -25,9 +25,7 @@ fn check(name: &str, actual: &str) {
         fs::write(&path, actual).expect("write golden");
         return;
     }
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(name);
+    let path = test_fixtures::path(name);
     let expected = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }
@@ -37,7 +35,7 @@ fn fixtures() -> PathBuf {
 }
 
 fn media() -> transmux::media::Media {
-    let ts = fs::read(fixtures().join("ts/h264_aac.ts")).expect("ts fixture");
+    let ts = fs::read(fixtures().join("ts/h264-aac.ts")).expect("ts fixture");
     TsDemux::new().unpackage(&ts[..]).expect("demux")
 }
 
@@ -131,7 +129,7 @@ fn dash_mpd_variants_match_golden() {
         let mpd = pkg
             .package(&media)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
-        check(&format!("dash-{name}.mpd"), &mpd);
+        check(&format!("golden/dash/dash-{name}.mpd"), &mpd);
     }
 }
 
@@ -158,16 +156,16 @@ fn ll_dash_mpd_variants_match_golden() {
         let mpd = pkg
             .package(&media)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
-        check(&format!("lldash-{name}.mpd"), &mpd);
+        check(&format!("golden/dash/lldash-{name}.mpd"), &mpd);
     }
 }
 
 #[test]
 fn smooth_manifest_matches_golden() {
     let out = SmoothPackager::default().package(&media()).expect("smooth");
-    check("smooth.manifest.xml", &out.manifest);
+    check("golden/smooth/smooth.manifest.xml", &out.manifest);
     let parsed = SmoothManifest::parse(&out.manifest).expect("parse own manifest");
-    check("smooth.parse.txt", &format!("{parsed:#?}\n"));
+    check("golden/smooth/smooth.parse.txt", &format!("{parsed:#?}\n"));
 }
 
 #[test]
@@ -175,12 +173,15 @@ fn playready_wrmheader_matches_golden() {
     let kid_a = [0x11u8; 16];
     let kid_b: [u8; 16] = core::array::from_fn(|i| i as u8);
     check(
-        "wrm-two-kids.xml",
+        "golden/smooth/wrm-two-kids.xml",
         &playready_wrmheader(&[kid_a, kid_b], Some("https://la.example.com/x?a=1&b=2")),
     );
-    check("wrm-no-url.xml", &playready_wrmheader(&[kid_a], None));
     check(
-        "wrm-specials.xml",
+        "golden/smooth/wrm-no-url.xml",
+        &playready_wrmheader(&[kid_a], None),
+    );
+    check(
+        "golden/smooth/wrm-specials.xml",
         &playready_wrmheader(&[kid_a], Some("a&b<c>d\"e'f")),
     );
 }
@@ -191,9 +192,12 @@ fn mpd_parse_results_match_golden() {
         let text =
             fs::read_to_string(fixtures().join(format!("dash/{name}.mpd"))).expect("fixture");
         let parsed = Mpd::parse(&text).expect("parse");
-        check(&format!("parse-{name}.txt"), &format!("{parsed:#?}\n"));
+        check(
+            &format!("golden/dash/parse-{name}.txt"),
+            &format!("{parsed:#?}\n"),
+        );
     }
     let own = DashPackager::default().package(&media()).expect("mpd");
     let parsed = Mpd::parse(&own).expect("parse own mpd");
-    check("parse-own-mpd.txt", &format!("{parsed:#?}\n"));
+    check("golden/dash/parse-own-mpd.txt", &format!("{parsed:#?}\n"));
 }

@@ -1,7 +1,7 @@
 //! Independent-oracle test for `parse_webvtt`'s header handling (issue
 //! #1109, reopens #974 — audit finding CV-W1).
 //!
-//! `fixtures/sub/header_meta.vtt` (see that directory's README for
+//! `fixtures/subtitles/header-meta.vtt` (see that directory's README for
 //! provenance) carries a `WEBVTT` header followed by `Kind:`/`Language:`
 //! metadata text lines before the first blank line — W3C WebVTT SS4.1's own
 //! header-text convention, distinct from the `X-TIMESTAMP-MAP` header this
@@ -16,14 +16,14 @@
 use std::fs;
 
 fn fixture_path() -> std::path::PathBuf {
-    test_fixtures::path("sub/header_meta.vtt")
+    test_fixtures::path("subtitles/header-meta.vtt")
 }
 
 #[test]
 fn header_metadata_lines_do_not_fail_the_document() {
-    let vtt = fs::read_to_string(fixture_path()).expect("read header_meta.vtt fixture");
+    let vtt = fs::read_to_string(fixture_path()).expect("read header-meta.vtt fixture");
 
-    // ffmpeg 8.1.2 oracle (`ffmpeg -v error -i header_meta.vtt -f srt -`):
+    // ffmpeg 8.1.2 oracle (`ffmpeg -v error -i header-meta.vtt -f srt -`):
     //   1
     //   00:00:01,000 --> 00:00:03,000
     //   Hello header test
@@ -61,7 +61,7 @@ fn header_metadata_lines_do_not_fail_the_document() {
 
 #[test]
 fn header_metadata_document_converts_to_srt_matching_ffmpeg_oracle() {
-    let vtt = fs::read_to_string(fixture_path()).expect("read header_meta.vtt fixture");
+    let vtt = fs::read_to_string(fixture_path()).expect("read header-meta.vtt fixture");
     let (srt, lossy) =
         caption_convert::webvtt_to_srt(&vtt).expect("header text must not fail conversion");
     assert!(lossy, "header text loss must be reported");

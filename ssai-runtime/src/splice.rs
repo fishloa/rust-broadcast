@@ -3,7 +3,7 @@
 //! `emsg`'s `presentation_time`) against the primary content's actual
 //! segment/keyframe boundaries.
 //!
-//! Real cues are frequently **not** IDR-aligned. `fixtures/scte35-ssai/PROVENANCE.md`
+//! Real cues are frequently **not** IDR-aligned. `fixtures/scte35/PROVENANCE.md`
 //! documents a genuine DASH-IF `livesim2` capture whose nearest video
 //! keyframe lands 6000 ticks (67 ms) *after* the cue's nominal presentation
 //! time at the shared 90 kHz clock — see `ssai-runtime/examples/condition_real_cue.rs`,

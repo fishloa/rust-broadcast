@@ -391,7 +391,7 @@ mod tests {
     /// must be told to read more, never to stop.
     #[test]
     fn short_magic_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/mkv/h264_aac.mkv");
+        let data = fixture_bytes("fixtures/mkv/h264-aac.mkv");
         let region = &data[..EBML_MAGIC.len() - 1];
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, EBML_MAGIC.len()),
@@ -505,7 +505,7 @@ mod tests {
     /// "read more", so the fix above did not simply turn EBML into "stop".
     #[test]
     fn a_truncated_legal_header_still_asks_for_more() {
-        let full = test_fixtures::read("mkv/h264_aac.mkv");
+        let full = test_fixtures::read("mkv/h264-aac.mkv");
         // Long enough to carry the magic, too short to reach DocType.
         let prefix = &full[..12];
         match probe(prefix, prefix.len()) {

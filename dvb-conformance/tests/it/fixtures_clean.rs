@@ -44,12 +44,7 @@ const TS_PACKET_SIZE: usize = 188;
 const INTER_PACKET_US: u64 = 40;
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    let rel = if name == "m6-single.ts" {
-        format!("ts/{name}")
-    } else {
-        format!("dvb-si/{name}")
-    };
-    let path = test_fixtures::path(&rel);
+    let path = test_fixtures::path(&format!("ts/{name}"));
     let mut f = File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {e}", path.display()));
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).unwrap();

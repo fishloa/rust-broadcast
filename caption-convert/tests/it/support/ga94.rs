@@ -2,7 +2,7 @@
 //! MPEG-2 TS, using the workspace crates (`mpeg-ts` for TS framing, `mpeg-pes`
 //! for PES reassembly and PTS). The committed reference lists in
 //! `fixtures/captions/**/*.cc_data.txt` were produced by an independent Python
-//! extractor (`fixtures/captions/gen_cc_data_reference.py`); the tests demand the
+//! extractor (`fixtures/captions/gen-cc-data-reference.py`); the tests demand the
 //! two agree byte for byte.
 //!
 //! Spec: ITU-T H.264 §7.3.2.3 (SEI message framing), §7.4.1.2.3 (NAL unit

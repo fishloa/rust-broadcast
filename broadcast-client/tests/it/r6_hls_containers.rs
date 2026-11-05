@@ -81,12 +81,12 @@ fn damaged_reports(events: &[Event]) -> usize {
 const ABSOLUTE_OFFSET_FIXTURES: [&str; 3] = [
     "mp4/prft.mp4",
     "mp4/frag/mpeg2video.frag.mp4",
-    "mp4/llcmaf/ll_chunked.mp4",
+    "mp4/llcmaf/ll-chunked.mp4",
 ];
 
 #[test]
 fn a_progressive_mp4_served_as_hls_ends_fatal_not_empty() {
-    let prog = test_fixtures::read("transmux/h264_aac_prog.mp4");
+    let prog = test_fixtures::read("mp4/h264-aac-prog.mp4");
     let mut h = Host::new(PLAYLIST_URL, hls_config());
     h.ok(PLAYLIST_URL, vod(1));
     h.ok(&format!("{BASE}/init.mp4"), prog.clone());
@@ -166,7 +166,7 @@ fn an_oversized_playlist_names_the_cap_that_was_hit() {
 
 #[test]
 fn an_oversized_segment_names_the_cap_that_was_hit_once() {
-    let bytes = test_fixtures::read("transmux/h264_aac_frag.mp4");
+    let bytes = test_fixtures::read("mp4/h264-aac-frag.mp4");
     let parts = split(&bytes).unwrap();
     let mut h = Host::new(PLAYLIST_URL, tiny_cap_config(false));
     h.ok(PLAYLIST_URL, vod(parts.segments.len()));

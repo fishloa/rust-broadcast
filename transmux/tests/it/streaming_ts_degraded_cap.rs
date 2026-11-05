@@ -5,7 +5,7 @@
 //! opt-in (`with_max_degraded_events`), counts what it drops, never touches any
 //! other event kind, and leaves the default (uncapped) behaviour unchanged.
 //!
-//! Real fixture: `fixtures/ts/h264_aac.ts` with every 7th packet's sync byte
+//! Real fixture: `fixtures/ts/h264-aac.ts` with every 7th packet's sync byte
 //! broken (about 14% loss), so the demuxer emits a real stream of `SyncLoss`
 //! (and downstream `ContinuityGap`) degradations.
 
@@ -15,7 +15,7 @@ const PACKET: usize = 188;
 const BREAK_EVERY: usize = 7;
 
 fn lossy_input() -> Vec<u8> {
-    let mut data = test_fixtures::read("ts/h264_aac.ts");
+    let mut data = test_fixtures::read("ts/h264-aac.ts");
     for (i, pkt) in data.chunks_exact_mut(PACKET).enumerate() {
         if i % BREAK_EVERY == 3 {
             pkt[0] = 0x00;

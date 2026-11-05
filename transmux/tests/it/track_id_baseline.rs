@@ -1,7 +1,7 @@
 //! Real-data gate for the typed-id migration (#1159): demuxes every committed
 //! fixture (and, when present, every real capture of the private corpus up to 40 MB) and
 //! compares the per-track `track_id` values and sample counts with
-//! `tests/golden/track_ids.txt`, which was captured when `track_id` was a bare
+//! `golden/mp4/track-ids.txt`, which was captured when `track_id` was a bare
 //! `u32`. A `TrackId` newtype must render and number identically.
 //!
 //! Intentional changes since the capture (each justified; do not re-bless casually):
@@ -24,7 +24,7 @@
 //!   carries 1920x1080 H.264 on PID 0x140 (ffprobe agrees), which the 512-AU skip used
 //!   to step over and drop; a video head now blocks until it resolves, so it is track 1.
 //!   Both are real PMT-declared elementary streams (ISO/IEC 13818-1 Table 2-33,
-//!   `elementary_PID`). Both captures are mirrored in `private/fixtures/tsduck/`.
+//!   `elementary_PID`). Both captures are mirrored in `private/fixtures/suites/tsduck/`.
 //!
 //! Regenerate (only for an intentional behaviour change):
 //! `RUST_BROADCAST_SOAK=1 TRACK_ID_BLESS=1 cargo test -p transmux --all-features --test track_id_baseline`
@@ -111,7 +111,7 @@ fn summarize(root: &Path, key: impl Fn(&str) -> Option<String>) -> String {
 }
 
 fn golden_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/track_ids.txt")
+    test_fixtures::path("golden/mp4/track-ids.txt")
 }
 
 fn lines(s: &str) -> BTreeMap<String, String> {
@@ -192,7 +192,7 @@ fn private_corpus_track_ids_match_pre_typed_golden() {
         } else if let Some(x) = r.strip_prefix("tsduck/") {
             Some(format!("test-streams/tsduck-test/{x}"))
         } else {
-            r.strip_prefix("mpegh/")
+            r.strip_prefix("audio/mpegh/")
                 .map(|x| format!("test-streams/mpegh/{x}"))
         }
     });

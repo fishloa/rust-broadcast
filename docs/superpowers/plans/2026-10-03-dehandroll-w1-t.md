@@ -399,7 +399,7 @@ The MPD/Smooth/PlayReady goldens already exist (`transmux/tests/golden.rs`, gene
 
 **Files:**
 - Create: `transmux/tests/golden_wire.rs`
-- Create: `transmux/tests/golden/rtp-sdp-h264-aac.sdp`, `rtp-sdp-conn-v4.sdp`, `rtp-sdp-conn-v6.sdp`, `hls-iv.txt`
+- Create: `fixtures/golden/rtp/rtp-sdp-h264-aac.sdp`, `rtp-sdp-conn-v4.sdp`, `rtp-sdp-conn-v6.sdp`, `hls-iv.txt`
 - Modify: `transmux/tests/golden/README.md` (append a section)
 
 **Interfaces:** none (test-only). NOTE for Task 14: the connection-address cases call `build_sdp_with_connection(addr, "<str>")` (current signature); Task 14 changes the second parameter to `Vec<sdp_types::Media>` and updates this file in the same commit.
@@ -431,7 +431,7 @@ fn check(name: &str, actual: &str) {
 
 #[test]
 fn rtp_session_sdp_matches_golden() {
-    let ts = fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts"))
+    let ts = fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264-aac.ts"))
         .expect("ts fixture");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
     let mut p = RtpPacketiser {
@@ -479,7 +479,7 @@ fn hls_iv_text_matches_golden() {
 
 ```bash
 GOLDEN_BLESS=$PWD/transmux/tests/golden cargo test -p transmux --all-features --locked --test golden_wire 2>&1 | grep -E 'test result'
-cat transmux/tests/golden/rtp-sdp-h264-aac.sdp transmux/tests/golden/rtp-sdp-conn-v6.sdp transmux/tests/golden/hls-iv.txt
+cat fixtures/golden/rtp/rtp-sdp-h264-aac.sdp fixtures/golden/rtp/rtp-sdp-conn-v6.sdp fixtures/golden/hls/hls-iv.txt
 cargo test -p transmux --all-features --locked --test golden_wire 2>&1 | grep -E 'test result|FAILED'
 ```
 
@@ -492,7 +492,7 @@ Add a section "RTP SDP and HLS IV (W1-T)": the baseline commit, the bless comman
 - [ ] **Step 4: Commit**
 
 ```bash
-git add transmux/tests/golden_wire.rs transmux/tests/golden/rtp-sdp-h264-aac.sdp transmux/tests/golden/rtp-sdp-conn-v4.sdp transmux/tests/golden/rtp-sdp-conn-v6.sdp transmux/tests/golden/hls-iv.txt transmux/tests/golden/README.md
+git add transmux/tests/golden_wire.rs fixtures/golden/rtp/rtp-sdp-h264-aac.sdp fixtures/golden/rtp/rtp-sdp-conn-v4.sdp fixtures/golden/rtp/rtp-sdp-conn-v6.sdp fixtures/golden/hls/hls-iv.txt transmux/tests/golden/README.md
 git commit -m "test(transmux): golden RTP SDP and HLS IV text from main"
 ```
 
@@ -501,8 +501,8 @@ git commit -m "test(transmux): golden RTP SDP and HLS IV text from main"
 ### Task 4: Goldens from main — timed-metadata DATERANGE/RFC 3339 and scte35-splice base64
 
 **Files:**
-- Create: `timed-metadata/tests/golden_wire.rs`, `timed-metadata/tests/golden/daterange.txt`, `timed-metadata/tests/golden/rfc3339.txt`, `timed-metadata/tests/golden/README.md`
-- Create: `scte35-splice/tests/golden_base64.rs`, `scte35-splice/tests/golden/base64.txt`, `scte35-splice/tests/golden/README.md`
+- Create: `timed-metadata/tests/golden_wire.rs`, `fixtures/golden/hls/daterange.txt`, `fixtures/golden/hls/rfc3339.txt`, `timed-metadata/tests/golden/README.md`
+- Create: `scte35-splice/tests/golden_base64.rs`, `fixtures/golden/scte35/base64.txt`, `scte35-splice/tests/golden/README.md`
 
 **Interfaces:** none (test-only). Public items used: `timed_metadata::daterange::{DateRange, Scte35Attr}` (check the exact path with `grep -n "pub mod\|pub use" timed-metadata/src/lib.rs`), `timed_metadata::anchor::format_rfc3339_ms`, `scte35_splice::dvb_ta::base64_encode`.
 
@@ -620,7 +620,7 @@ fn base64_encode_matches_golden() {
 ```bash
 GOLDEN_BLESS=$PWD/timed-metadata/tests/golden cargo test -p timed-metadata --all-features --locked --test golden_wire 2>&1 | grep -E 'test result'
 GOLDEN_BLESS=$PWD/scte35-splice/tests/golden cargo test -p scte35-splice --all-features --locked --test golden_base64 2>&1 | grep -E 'test result'
-cat timed-metadata/tests/golden/rfc3339.txt scte35-splice/tests/golden/base64.txt
+cat fixtures/golden/hls/rfc3339.txt fixtures/golden/scte35/base64.txt
 cargo test --locked --all-features -p timed-metadata --test golden_wire -p scte35-splice --test golden_base64 2>&1 | grep -E 'test result|FAILED'
 ```
 
@@ -1256,7 +1256,7 @@ Defect 6: `sign` builds `format!("exp={exp}&kid={kid}&sig={sig}")` with `kid` ra
 **Files:**
 - Modify: `broadcast-auth/Cargo.toml` (`form_urlencoded = "1"`)
 - Modify: `broadcast-auth/src/signed_url.rs:145-157` (`sign`), `:196-216` (`split_path_and_query` stays, `query_get` replaced), `:240-290` (`verify`), `:550-556` (test `query_get_skips_malformed_pairs_without_panicking`), module docs `:6-30` (wire form: percent-encoded, `application/x-www-form-urlencoded`)
-- Modify: `broadcast-auth/tests/golden/signed_url_sign.txt` (the IPv6 line only)
+- Modify: `fixtures/golden/http/signed-url-sign.txt` (the IPv6 line only)
 - Test: `broadcast-auth/tests/signed_url_kid.rs` (new, public API only)
 
 **Interfaces:**
@@ -1407,7 +1407,7 @@ Expected: all `ok` (`signed_url_kid` 6 passed, `golden_wire` with the one edited
 Revert `sign` to `format!("exp={exp}&kid={kid}&sig={sig}")` + `push_str(&format!("&ip={ip}"))` (keep the new `verify`), run `--test signed_url_kid`: `kid_with_reserved_characters_round_trips`, `kid_cannot_inject…` and `ipv6_binding…` FAIL; then revert only `verify`'s `query_get` to the `split('&')` version: `percent_encoded_kid_minted_elsewhere_verifies` FAILS. Record both, `git checkout -- broadcast-auth/src/signed_url.rs`, re-run PASS.
 
 ```bash
-git add broadcast-auth/Cargo.toml Cargo.lock broadcast-auth/src/signed_url.rs broadcast-auth/tests/signed_url_kid.rs broadcast-auth/tests/golden/signed_url_sign.txt
+git add broadcast-auth/Cargo.toml Cargo.lock broadcast-auth/src/signed_url.rs broadcast-auth/tests/signed_url_kid.rs fixtures/golden/http/signed-url-sign.txt
 git commit -m "fix(broadcast-auth)!: signed-URL query via form_urlencoded; kid and ip are percent-encoded (defect 6)"
 ```
 
@@ -2266,7 +2266,7 @@ fn media_time_arithmetic_saturates_instead_of_wrapping_or_panicking() {
 #[test]
 fn the_converter_errors_instead_of_emitting_an_unrepresentable_start_date() {
     let line = fs::read_to_string(format!(
-        "{}/../fixtures/timed-metadata/daterange_2002.txt",
+        "{}/../fixtures/hls/daterange/daterange_2002.txt",
         env!("CARGO_MANIFEST_DIR")
     ))
     .expect("fixture");
@@ -2569,7 +2569,7 @@ Sites: `dash.rs:722` (`"PT2.0S"` literal), `:763` (`xs_duration_tenths(max_tenth
 
 **Files:**
 - Modify: `transmux/src/dash.rs:722,763,771,1119-1123`
-- Modify (golden, same commit): `transmux/tests/golden/dash-default.mpd`, `dash-dynamic.mpd`, `dash-protected.mpd`, `dash-timeline.mpd`, `dash-trick.mpd`, `lldash-plain.mpd`, `lldash-rate.mpd`, `lldash-timeline.mpd`, `lldash-utc.mpd`
+- Modify (golden, same commit): `fixtures/golden/dash/dash-default.mpd`, `dash-dynamic.mpd`, `dash-protected.mpd`, `dash-timeline.mpd`, `dash-trick.mpd`, `lldash-plain.mpd`, `lldash-rate.mpd`, `lldash-timeline.mpd`, `lldash-utc.mpd`
 - Test: `transmux/tests/golden.rs` (existing, byte-for-byte) + `transmux/src/dash.rs` unit test
 
 **Interfaces:** private `fn xs_duration(d: core::time::Duration) -> String` (`jiff::fmt::temporal::SpanPrinter` over `jiff::SignedDuration`). Output differences, each to be listed in the CHANGELOG `### Changed` section with this example: `minBufferTime="PT2.0S"` → `"PT2S"`, `Period@start="PT0.0S"` → `"PT0S"`, `mediaPresentationDuration="PT3.0S"` → `"PT3S"`, and durations of a minute or more regroup (`"PT90.0S"` → `"PT1M30S"`). All are equal xs:durations.
@@ -2625,7 +2625,7 @@ Expected: the diff shows ONLY `PT2.0S→PT2S`, `PT0.0S→PT0S`, `PT3.0S→PT3S` 
 ```bash
 grep -rn 'PT[0-9]*\.[0-9]S' multimux/tests media-doctor/tests hls-runtime/tests 2>/dev/null | head
 cargo check -p multimux -p media-doctor --all-features --locked 2>&1 | grep -E '^error|Finished'
-git add transmux/src/dash.rs transmux/tests/golden/dash-default.mpd transmux/tests/golden/dash-dynamic.mpd transmux/tests/golden/dash-protected.mpd transmux/tests/golden/dash-timeline.mpd transmux/tests/golden/dash-trick.mpd transmux/tests/golden/lldash-plain.mpd transmux/tests/golden/lldash-rate.mpd transmux/tests/golden/lldash-timeline.mpd transmux/tests/golden/lldash-utc.mpd
+git add transmux/src/dash.rs fixtures/golden/dash/dash-default.mpd fixtures/golden/dash/dash-dynamic.mpd fixtures/golden/dash/dash-protected.mpd fixtures/golden/dash/dash-timeline.mpd fixtures/golden/dash/dash-trick.mpd fixtures/golden/dash/lldash-plain.mpd fixtures/golden/dash/lldash-rate.mpd fixtures/golden/dash/lldash-timeline.mpd fixtures/golden/dash/lldash-utc.mpd
 git commit -m "refactor(transmux)!: xs:duration output via jiff (PT2.0S becomes PT2S); goldens updated, differences listed in CHANGELOG"
 ```
 
@@ -3291,7 +3291,7 @@ git commit -m "test: dehandroll tripwire guards for transmux, timed-metadata, sc
 
 **Files:**
 - Modify: `broadcast-common/CHANGELOG.md`, `scte35-splice/CHANGELOG.md`, `timed-metadata/CHANGELOG.md`, `transmux/CHANGELOG.md`, `broadcast-auth/CHANGELOG.md` (each `## [Unreleased]`)
-- Modify: `transmux/README.md`, `broadcast-auth/README.md`, crate-root `//!` docs and any `docs/` mention of the removed/changed APIs found by the greps below
+- Modify: `mp4/README.md`, `broadcast-auth/README.md`, crate-root `//!` docs and any `docs/` mention of the removed/changed APIs found by the greps below
 - Modify: `.delegate/w1-t-report.md`
 
 - [ ] **Step 1: CHANGELOG `[Unreleased]` entries (exact content; breaking ones marked)**
@@ -3387,7 +3387,7 @@ Also record: the Task 0 baseline counts, the SP2.4 verification evidence, all re
 
 ```bash
 git add broadcast-common/CHANGELOG.md scte35-splice/CHANGELOG.md timed-metadata/CHANGELOG.md transmux/CHANGELOG.md broadcast-auth/CHANGELOG.md
-git add -u transmux/README.md broadcast-auth/README.md transmux/src/lib.rs
+git add -u mp4/README.md broadcast-auth/README.md transmux/src/lib.rs
 git add .delegate/w1-t-report.md
 git commit -m "docs: W1-T CHANGELOG entries, version notes and report"
 git log --oneline origin/main..HEAD

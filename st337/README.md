@@ -75,7 +75,7 @@ More: `cargo run -p st337 --example build_burst`, `--example parse_burst`.
 - `DataMode`: the Table 8 values (`Mode16`, `Mode20`, `Mode24`, `Reserved`).
 - Constants: `SYNC_WORD_PA`, `SYNC_WORD_PB`, `MAX_5_BIT_FIELD`,
   `MAX_DATA_STREAM_NUMBER`, `MAX_LENGTH_CODE_BITS`.
-- A real committed E-AC-3 burst (`../fixtures/eac3-dep/eac3_frame0.bin`) round-trips
+- A real committed E-AC-3 burst (`../fixtures/audio/eac3-dependent/eac3-frame0.bin`) round-trips
   byte-exact in `tests/it/fixture_eac3.rs`.
 
 ## Design notes

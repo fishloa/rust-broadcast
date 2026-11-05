@@ -60,7 +60,7 @@ fn many_zero_width_truns_in_one_moof_stay_bounded() {
 
 #[test]
 fn many_zero_width_truns_through_fmp4_demux_stay_bounded() {
-    let path = test_fixtures::path("mp4/llcmaf/ll_chunked.mp4");
+    let path = test_fixtures::path("mp4/llcmaf/ll-chunked.mp4");
     let mut data = std::fs::read(path).expect("fixture");
     // Insert TRUNS zero-width truns right after the first real trun, growing
     // the enclosing traf and moof (both compact headers in this fixture).

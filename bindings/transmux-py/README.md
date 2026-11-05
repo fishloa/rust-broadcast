@@ -133,7 +133,7 @@ follow-up if fMP4-sourced ML pipelines need it.
 - Rebuilt against `transmux` 0.27 / `broadcast-common` 10 (`mpeg-ts` 0.6).
   `track_id` (`transmux::TrackId`) and `source_pid` (`mpeg_ts::pid::Pid`) are
   typed newtypes in Rust; the returned dict still exposes plain ints, so the
-  Python output shape is unchanged (verified on `fixtures/ts/h264_aac.ts`: same
+  Python output shape is unchanged (verified on `fixtures/ts/h264-aac.ts`: same
   keys, 75 video / 131 audio samples).
 
 ## Build from source
@@ -144,7 +144,7 @@ $ maturin develop          # build + install into the active virtualenv
 $ maturin build --release  # build a wheel
 ```
 
-Run the test suite (uses a real committed fixture, `fixtures/ts/h264_aac.ts`):
+Run the test suite (uses a real committed fixture, `fixtures/ts/h264-aac.ts`):
 
 ```console
 $ maturin develop

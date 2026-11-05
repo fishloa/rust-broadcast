@@ -1,6 +1,6 @@
 //! Real-fixture tests for [`ProgressiveDemux`] (issue #561).
 //!
-//! Ground truth for `h264_aac_prog.mp4` was cross-checked two independent
+//! Ground truth for `h264-aac-prog.mp4` was cross-checked two independent
 //! ways: (1) a standalone Python parser walking the file's own
 //! `moov→trak→mdia→minf→stbl` boxes (`stts`/`ctts`/`stss`/`stsz`/`stsc`/
 //! `stco`) directly, and (2) `ffprobe -show_packets -ignore_editlist 1`
@@ -19,13 +19,13 @@ use broadcast_common::{Package, Unpackage};
 use transmux::{CmafMux, CodecConfig, Fmp4Demux, ProgressiveDemux, SegmentIndexBox};
 
 fn prog_fixture() -> Vec<u8> {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
-    std::fs::read(path).expect("h264_aac_prog.mp4 fixture must exist")
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
+    std::fs::read(path).expect("h264-aac-prog.mp4 fixture must exist")
 }
 
 fn sidx_fixture() -> Vec<u8> {
-    let path = test_fixtures::path("transmux/h264_sidx.mp4");
-    std::fs::read(path).expect("h264_sidx.mp4 fixture must exist")
+    let path = test_fixtures::path("mp4/h264-sidx.mp4");
+    std::fs::read(path).expect("h264-sidx.mp4 fixture must exist")
 }
 
 /// Running (dts, pts) pairs for a track, derived the same way the IR encodes
@@ -43,7 +43,7 @@ fn dts_pts(samples: &[transmux::Sample]) -> Vec<(u64, i64)> {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Demux h264_aac_prog.mp4 — counts + ffprobe/box-table ground truth
+// 1. Demux h264-aac-prog.mp4 — counts + ffprobe/box-table ground truth
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -288,7 +288,7 @@ fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. sidx byte-exact round-trip (h264_sidx.mp4)
+// 3. sidx byte-exact round-trip (h264-sidx.mp4)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -312,7 +312,7 @@ fn sidx_byte_exact_round_trip_and_mutation_bites() {
         }
         offset += size;
     }
-    let sidx_bytes = sidx_box.expect("sidx box must be present in h264_sidx.mp4");
+    let sidx_bytes = sidx_box.expect("sidx box must be present in h264-sidx.mp4");
 
     let parsed = SegmentIndexBox::parse(sidx_bytes).expect("parse sidx");
     assert!(

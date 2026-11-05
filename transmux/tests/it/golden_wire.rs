@@ -1,10 +1,10 @@
 //! Goldens for the RTP SDP and the HLS IV text, generated from unmodified
-//! `main` (see `tests/golden/README.md`). `GOLDEN_BLESS=<dir>` writes.
+//! `main` (see `fixtures/golden/<topic>/PROVENANCE.md`). `GOLDEN_BLESS=<dir>` writes.
 #![cfg(feature = "std")]
 
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::{RtpPacketiser, TsDemux, build_sdp_with_connection};
@@ -15,16 +15,14 @@ fn check(name: &str, actual: &str) {
         fs::write(Path::new(&dir).join(name), actual).expect("write golden");
         return;
     }
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(name);
+    let path = test_fixtures::path(name);
     let expected = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }
 
 #[test]
 fn rtp_session_sdp_matches_golden() {
-    let ts = fs::read(test_fixtures::path("ts/h264_aac.ts")).expect("ts fixture");
+    let ts = fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts fixture");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
     let mut p = RtpPacketiser {
         mtu: 1400,
@@ -32,7 +30,7 @@ fn rtp_session_sdp_matches_golden() {
         ..RtpPacketiser::default()
     };
     let out = p.package(&media).expect("packetise");
-    check("rtp-sdp-h264-aac.sdp", &out.sdp);
+    check("golden/rtp/rtp-sdp-h264-aac.sdp", &out.sdp);
 }
 
 /// A parseable session whose only role is to give the test an `sdp_types::Media`.
@@ -52,8 +50,8 @@ fn connection_address_sdp_matches_golden() {
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
         Vec::new(),
     );
-    check("rtp-sdp-conn-v4.sdp", &v4);
-    check("rtp-sdp-conn-v6.sdp", &v6);
+    check("golden/rtp/rtp-sdp-conn-v4.sdp", &v4);
+    check("golden/rtp/rtp-sdp-conn-v6.sdp", &v6);
 }
 
 #[cfg(feature = "sample-aes")]
@@ -71,5 +69,5 @@ fn hls_iv_text_matches_golden() {
         text.push_str(&transmux::sample_aes::format_iv(&iv));
         text.push('\n');
     }
-    check("hls-iv.txt", &text);
+    check("golden/hls/hls-iv.txt", &text);
 }

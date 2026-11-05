@@ -29,10 +29,10 @@ const IV: [u8; 16] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
 ];
 const TS_SOURCES: [&[u8]; 4] = [
-    include_bytes!("../../fixtures/ts/h264_aac.ts"),
-    include_bytes!("../../fixtures/ts/legacy/mpeg2_mp2.ts"),
+    include_bytes!("../../fixtures/ts/h264-aac.ts"),
+    include_bytes!("../../fixtures/ts/legacy/mpeg2-mp2.ts"),
     include_bytes!("../../fixtures/ts/hevc/main.ts"),
-    include_bytes!("../../fixtures/ts/aac-5_1-640k.ts"),
+    include_bytes!("../../fixtures/ts/aac-5-1-640k.ts"),
 ];
 const PMT_FLIP_SOURCE: usize = TS_SOURCES.len();
 const TS_SOURCE_COUNT: usize = TS_SOURCES.len() + 1;

@@ -4,7 +4,7 @@
 //!
 //! ## Fixture provenance
 //!
-//! `../fixtures/eac3-dep/eac3_frame0.bin` is 834 real bytes: the same first
+//! `../fixtures/audio/eac3-dependent/eac3-frame0.bin` is 834 real bytes: the same first
 //! E-AC-3 syncframe already extracted, cross-checked, and committed for
 //! `st337`'s own real-fixture test (`st337/tests/it/fixture_eac3.rs`,
 //! `private/specs-verified/smpte/st337/st337-PROVENANCE.md`) — itself pulled from this workspace's
@@ -24,8 +24,8 @@ use rdd29::{
 };
 
 fn real_eac3_frame() -> Vec<u8> {
-    std::fs::read(test_fixtures::path("eac3-dep/eac3_frame0.bin"))
-        .expect("eac3_frame0.bin fixture must exist")
+    std::fs::read(test_fixtures::path("audio/eac3-dependent/eac3-frame0.bin"))
+        .expect("eac3-frame0.bin fixture must exist")
 }
 
 fn build_frame(payload: &[u8]) -> AtmosFrame<'_> {

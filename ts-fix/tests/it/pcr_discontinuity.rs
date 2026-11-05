@@ -29,7 +29,7 @@ use ts_fix::{PcrRestamp, TsFix};
 
 const PKT: usize = 188;
 const FIXTURE: &str = "ts/france-pcr-discontinuity.ts";
-const CLEAN_FIXTURE: &str = "ts/h264_aac.ts";
+const CLEAN_FIXTURE: &str = "ts/h264-aac.ts";
 
 /// Independently-determined offset of the fixture's only PCR discontinuity
 /// (documented in the module doc above).

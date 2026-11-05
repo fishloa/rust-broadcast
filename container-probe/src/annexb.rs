@@ -16,7 +16,7 @@
 //! header too. `>= 16` consecutive valid NAL headers -> `LATTICE_STRONG`,
 //! `>= 4` -> `LATTICE_WEAK`, fewer -> no match.
 //!
-//! Validating the NAL header is what excludes MPEG-PS: `fixtures/ps/h264_ac3.ps`
+//! Validating the NAL header is what excludes MPEG-PS: `fixtures/ps/h264-ac3.ps`
 //! begins `00 00 01 BA`, where `0xBA` has `forbidden_zero_bit` SET (`0x80`),
 //! which is illegal — so it is not Annex B, while `h264.annexb`'s first NAL
 //! byte `0x67` (type 7 SPS) passes.
@@ -255,15 +255,15 @@ mod tests {
     /// lets the Annex B walker accept `0xBA` (and the stream's other start-code
     /// NALs), misidentifying the PS as Annex B. Observed under the mutation:
     /// ```
-    /// h264_ac3.ps must NOT match AnnexB (forbidden bit),
+    /// h264-ac3.ps must NOT match AnnexB (forbidden bit),
     ///   got Match(Evidence { confidence: Confidence(128), detail: None })
     /// ```
     #[test]
     fn forbidden_zero_bit_keeps_ps_out_of_annexb() {
-        let data = fixture_bytes("fixtures/ps/h264_ac3.ps");
+        let data = fixture_bytes("fixtures/ps/h264-ac3.ps");
         match probe(&data, data.len()) {
             Outcome::None => {}
-            other => panic!("h264_ac3.ps must NOT match AnnexB (forbidden bit), got {other:?}"),
+            other => panic!("h264-ac3.ps must NOT match AnnexB (forbidden bit), got {other:?}"),
         }
     }
 
@@ -271,7 +271,7 @@ mod tests {
     /// of a start code + NAL header) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/container-probe/h264.annexb");
+        let data = fixture_bytes("fixtures/candidates/h264.annexb");
         let region = &data[..ANNEXB_MIN_LEN - 1];
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, ANNEXB_MIN_LEN),

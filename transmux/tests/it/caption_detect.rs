@@ -3,7 +3,7 @@
 //! The expected sets were derived independently of the detector by a Python
 //! walk over the per-SEI `cc_data()` reference lists
 //! (`private/fixtures/captions/*.cc_data.txt`, written by
-//! `fixtures/captions/gen_cc_data_reference.py`): per field, the channel bit of
+//! `fixtures/captions/gen-cc-data-reference.py`): per field, the channel bit of
 //! the last control code routes each text pair, XDS is skipped, and DTVCC
 //! packets are split into service blocks.
 
@@ -84,7 +84,7 @@ fn detects_cc1_and_dtvcc_service_1_in_shaka_capture() {
 #[test]
 fn no_captions_detected_in_fixture_without_cc() {
     let Some(found) = detect(
-        "ts/h264_aac.ts",
+        "ts/h264-aac.ts",
         "no_captions_detected_in_fixture_without_cc",
     ) else {
         return;
@@ -92,7 +92,7 @@ fn no_captions_detected_in_fixture_without_cc() {
     assert!(found.is_empty(), "unexpected captions: {found:?}");
 }
 
-const ATSC_DECLARED: &str = "tsduck/input/test-040.ts";
+const ATSC_DECLARED: &str = "suites/tsduck/input/test-040.ts";
 
 fn atsc_video_descriptors(test: &str) -> Option<Vec<u8>> {
     let data = test_fixtures::require_bytes(ATSC_DECLARED, test)?;

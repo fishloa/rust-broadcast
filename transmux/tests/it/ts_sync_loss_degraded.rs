@@ -165,7 +165,7 @@ fn streaming_demux_reports_the_same_losses_at_any_chunking() {
 }
 
 fn small() -> Vec<u8> {
-    test_fixtures::read("ts/h264_aac.ts")
+    test_fixtures::read("ts/h264-aac.ts")
 }
 
 #[test]

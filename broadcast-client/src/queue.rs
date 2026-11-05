@@ -248,7 +248,7 @@ mod tests {
     fn base_sample() -> Sample {
         static BASE: std::sync::OnceLock<Sample> = std::sync::OnceLock::new();
         BASE.get_or_init(|| {
-            let data = test_fixtures::read("ts/h264_aac.ts");
+            let data = test_fixtures::read("ts/h264-aac.ts");
             let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
             media.tracks[0].samples[0].clone()
         })

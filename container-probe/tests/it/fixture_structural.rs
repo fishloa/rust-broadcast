@@ -107,13 +107,13 @@ fn isobmff_brand_isom() {
     // Breaking the box-chain threshold (changing `boxes >= 2` to `boxes >= 99`
     // in `isobmff::probe`) makes every MP4 here probe to `Unknown`:
     // ```
-    // fixtures/mp4/h264_high.mp4: expected Isobmff STRUCTURAL brand="isom",
+    // fixtures/mp4/h264-high.mp4: expected Isobmff STRUCTURAL brand="isom",
     //     got Unknown
     // ```
     // The count-and-chain walk is the prober's real structural check.
     for f in [
-        "fixtures/mp4/h264_high.mp4",
-        "fixtures/mp4/hevc_main.mp4",
+        "fixtures/mp4/h264-high.mp4",
+        "fixtures/mp4/hevc-main.mp4",
         "fixtures/mp4/av1.mp4",
         "fixtures/mp4/vp9.mp4",
         "fixtures/mp4/opus.mp4",
@@ -121,10 +121,10 @@ fn isobmff_brand_isom() {
         "fixtures/mp4/cenc.mp4",
         "fixtures/mp4/stpp.mp4",
         "fixtures/mp4/prft.mp4",
-        "fixtures/mp4/colr_hdr.mp4",
-        "fixtures/mp4/aac_sgpd.mp4",
-        "fixtures/mp4/cmaf/av_frag.mp4",
-        "fixtures/mp4/progressive/av_prog.mp4",
+        "fixtures/mp4/colr-hdr.mp4",
+        "fixtures/mp4/aac-sgpd.mp4",
+        "fixtures/mp4/cmaf/av-frag.mp4",
+        "fixtures/mp4/progressive/av-prog.mp4",
     ] {
         assert_isobmff(f, b"isom");
     }
@@ -153,14 +153,14 @@ fn matroska_mkv() {
     // constant `false` in `ebml::find_doc_type`) collapses these to the
     // magic-only STRONG verdict rather than CERTAIN-with-a-DocType:
     // ```
-    // fixtures/mkv/h264_aac.mkv: expected Matroska CERTAIN DocType::Matroska,
+    // fixtures/mkv/h264-aac.mkv: expected Matroska CERTAIN DocType::Matroska,
     //     got Identified { format: Matroska, confidence: Confidence(192),
     //                      detail: Ebml { doc_type: Other } }
     // ```
     for f in [
-        "fixtures/mkv/h264_aac.mkv",
-        "fixtures/mkv/hevc_aac.mkv",
-        "fixtures/mkv/vp9_opus.mkv",
+        "fixtures/mkv/h264-aac.mkv",
+        "fixtures/mkv/hevc-aac.mkv",
+        "fixtures/mkv/vp9-opus.mkv",
     ] {
         assert_matroska(f);
     }
@@ -176,14 +176,14 @@ fn webm() {
     // a real "webm" probe to `Matroska` + `DocType::Other` at confidence 192
     // (STRONG, magic-only) instead of `WebM`/`Webm` at 240:
     // ```
-    // fixtures/webm/vorbis.webm: expected WebM CERTAIN DocType::Webm, got
+    // fixtures/mkv/vorbis.webm: expected WebM CERTAIN DocType::Webm, got
     //     Identified { format: Matroska, confidence: Confidence(192),
     //                  detail: Ebml { doc_type: Other } }
     // ```
     for f in [
-        "fixtures/webm/vorbis.webm",
-        "fixtures/webm/vp8_opus.webm",
-        "fixtures/webm/vp9_opus.webm",
+        "fixtures/mkv/vorbis.webm",
+        "fixtures/mkv/vp8-opus.webm",
+        "fixtures/mkv/vp9-opus.webm",
     ] {
         assert_webm(f);
     }
@@ -200,11 +200,11 @@ fn mxf() {
     // Forcing `ber_length_well_formed` to always return `false` drops MXF from
     // CERTAIN to the magic-only STRONG, failing this test:
     // ```
-    // fixtures/mxf/op1a_mpeg2_pcm.mxf: expected Mxf CERTAIN, got
+    // fixtures/mxf/op1a-mpeg2-pcm.mxf: expected Mxf CERTAIN, got
     //     Identified { format: Mxf, confidence: Confidence(192), detail: None }
     // ```
-    assert_mxf("fixtures/mxf/op1a_mpeg2_pcm.mxf");
-    assert_mxf("fixtures/mxf/st377-1/synthetic_minimal.mxf");
+    assert_mxf("fixtures/mxf/op1a-mpeg2-pcm.mxf");
+    assert_mxf("fixtures/mxf/smpte-st377/synthetic-minimal.mxf");
 }
 
 // ---------------------------------------------------------------------------
@@ -219,12 +219,12 @@ fn mxf() {
 /// Forcing `markers_valid` to always return `false` drops MPEG-PS to the bare
 /// start-code HEURISTIC, failing this test:
 /// ```
-/// fixtures/ps/h264_ac3.ps: expected MpegPs STRUCTURAL, got
+/// fixtures/ps/h264-ac3.ps: expected MpegPs STRUCTURAL, got
 ///     Identified { format: MpegPs, confidence: Confidence(64), detail: None }
 /// ```
 #[test]
 fn mpeg_ps() {
-    let p = container_probe::probe(&fixture("fixtures/ps/h264_ac3.ps"));
+    let p = container_probe::probe(&fixture("fixtures/ps/h264-ac3.ps"));
     assert!(
         matches!(
             p,
@@ -234,7 +234,7 @@ fn mpeg_ps() {
                 ..
             }
         ),
-        "fixtures/ps/h264_ac3.ps: expected MpegPs STRUCTURAL, got {p:?}"
+        "fixtures/ps/h264-ac3.ps: expected MpegPs STRUCTURAL, got {p:?}"
     );
 }
 
@@ -258,11 +258,11 @@ fn assert_layout(rel: &str, expect: IsobmffLayout) {
 #[test]
 fn progressive_mp4s_report_progressive_layout() {
     for rel in [
-        "fixtures/mp4/h264_high.mp4",
+        "fixtures/mp4/h264-high.mp4",
         "fixtures/mp4/cenc.mp4",
         "fixtures/mp4/av1.mp4",
-        "fixtures/mp4/progressive/av_prog.mp4",
-        "fixtures/mp4/progressive/av_faststart.mp4",
+        "fixtures/mp4/progressive/av-prog.mp4",
+        "fixtures/mp4/progressive/av-faststart.mp4",
     ] {
         assert_layout(rel, IsobmffLayout::Progressive);
     }
@@ -271,7 +271,7 @@ fn progressive_mp4s_report_progressive_layout() {
 /// Fragmented files — `moof` movie fragments. These are what
 /// `transmux::Fmp4Demux` handles.
 ///
-/// `cmaf/av_frag.mp4` is the fixture that proves the walk is necessary: its
+/// `cmaf/av-frag.mp4` is the fixture that proves the walk is necessary: its
 /// major brand is `isom`, exactly the same brand every progressive file above
 /// carries, yet it is fragmented. **The brand cannot discriminate** — only
 /// seeing a `moof` box can.
@@ -280,8 +280,8 @@ fn fragmented_mp4s_report_fragmented_layout() {
     for rel in [
         "fixtures/mp4/frag/av1.frag.mp4",
         "fixtures/mp4/frag/vvc.frag.mp4",
-        "fixtures/mp4/cmaf/av_frag.mp4",
-        "fixtures/mp4/llcmaf/ll_chunked.mp4",
+        "fixtures/mp4/cmaf/av-frag.mp4",
+        "fixtures/mp4/llcmaf/ll-chunked.mp4",
     ] {
         assert_layout(rel, IsobmffLayout::Fragmented);
     }
@@ -301,8 +301,8 @@ fn major_brand_alone_cannot_discriminate_layout() {
             other => panic!("{rel}: {other:?}"),
         }
     };
-    let progressive = brand_of("fixtures/mp4/h264_high.mp4");
-    let fragmented = brand_of("fixtures/mp4/cmaf/av_frag.mp4");
+    let progressive = brand_of("fixtures/mp4/h264-high.mp4");
+    let fragmented = brand_of("fixtures/mp4/cmaf/av-frag.mp4");
     assert_eq!(
         progressive, fragmented,
         "these two fixtures must share a brand for this test to mean anything"
@@ -328,7 +328,7 @@ fn major_brand_alone_cannot_discriminate_layout() {
 /// red with `left: Progressive, right: Unknown`.
 #[test]
 fn a_prefix_without_moof_or_moov_reports_unknown_layout() {
-    let data = fixture("fixtures/mp4/cmaf/av_frag.mp4");
+    let data = fixture("fixtures/mp4/cmaf/av-frag.mp4");
     // 64 bytes covers `ftyp` and lands inside the following box, well before
     // any `moof`.
     match container_probe::probe(&data[..64]) {

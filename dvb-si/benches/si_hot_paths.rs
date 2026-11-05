@@ -19,7 +19,7 @@ use dvb_si::text::DvbText;
 static M6_FIXTURE: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("ts/m6-single.ts"));
 static TNT_FIXTURE: std::sync::LazyLock<Vec<u8>> =
-    std::sync::LazyLock::new(|| test_fixtures::read("dvb-si/tnt-5w-12732v-isi6-10s.ts"));
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/tnt-5w-12732v-isi6-10s.ts"));
 
 const TS_PACKET_SIZE: usize = 188;
 

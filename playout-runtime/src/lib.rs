@@ -113,7 +113,7 @@
 //! Sans-IO, `no_std` + `alloc`, `#![forbid(unsafe_code)]`, structured [`Error`]s.
 //! "A schedule that plays the right thing at the wrong timestamp is worse than no
 //! scheduler" — timeline correctness is the primary tested property (including a
-//! real, non-IDR-aligned cue from `fixtures/scte35-ssai/`). Units are 90 kHz ticks.
+//! real, non-IDR-aligned cue from `fixtures/scte35/`). Units are 90 kHz ticks.
 //!
 //! # Related crates
 //!

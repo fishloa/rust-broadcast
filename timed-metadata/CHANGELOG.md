@@ -106,10 +106,10 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   reversing them first. EN 300 706 transmits each byte LSB-first, so a real
   DVB Teletext stream decoded to garbage or produced no cues at all. Bytes
   are now bit-reversed before FEC decode; the fixture
-  (`fixtures/teletext/teletext_subtitle_synthetic.txt`) is regenerated in
+  (`fixtures/subtitles/teletext-subtitle-synthetic.txt`) is regenerated in
   the corrected (wire) bit order. Independently verified against TSDuck
   3.44's own Teletext demux (`tsp -P teletext`) over a from-scratch real
-  PAT/PMT/PES TS fixture (`fixtures/teletext/teletext_subtitle_boxed.ts`,
+  PAT/PMT/PES TS fixture (`fixtures/subtitles/teletext-subtitle-boxed.ts`,
   `tests/webvtt_teletext_tsduck_oracle.rs`).
 - A cancelled `splice_insert` (`splice_event_cancel_indicator == true`) was
   classified as `BreakEnd` (spurious `SCTE35-IN`); it is now `Unspecified`.
@@ -205,7 +205,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   images in the PDF and were read visually, not machine-extracted) and the
   architectural rationale for placing this decode in `timed-metadata`
   rather than `dvb-vbi`. Validated against a synthetic-but-spec-real fixture
-  (`fixtures/teletext/teletext_subtitle_synthetic.txt` — no real DVB
+  (`fixtures/subtitles/teletext-subtitle-synthetic.txt` — no real DVB
   VBI-teletext capture or spec worked example was available; the fixture is
   constructed via this crate's own verified Hamming/parity encoders) with
   mutation-bite tests proving both FEC paths (Hamming correction, parity
@@ -217,7 +217,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   proves and tests the second carriage source, `transmux::nal::caption_cc_data`
   (ATSC A/53 caption SEI in H.264/HEVC access units), converges on the exact
   same cues as the PES `cc_data()` path (#568): the same committed
-  `fixtures/cc/cea608_cc1_synthetic.txt` frames, re-wrapped in an SEI NAL
+  `fixtures/captions/cea608-cc1-synthetic.txt` frames, re-wrapped in an SEI NAL
   instead of fed raw, produce byte-identical `Cue`s. Also validated against a
   real ATSC A/53 caption SEI capture (dev-dependency on `transmux` for its
   `TsDemux` + `caption_cc_data`, test-only), decoded text cross-checked
@@ -240,7 +240,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   settings and no inline styling (`<i>`/`<u>`/`<c>`) are emitted in this first
   pass — see the module docs for the full list of documented losses.
   Validated against a synthetic-but-spec-real CEA-608 CC1 fixture
-  (`fixtures/cc/cea608_cc1_synthetic.txt`, CTA-608-E control/PAC/char codes)
+  (`fixtures/captions/cea608-cc1-synthetic.txt`, CTA-608-E control/PAC/char codes)
   covering pop-on, roll-up, and paint-on; emitted WebVTT additionally
   cross-checked against `ffmpeg` when available.
 

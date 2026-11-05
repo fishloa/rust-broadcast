@@ -1,7 +1,7 @@
 //! Independent oracle for the Smooth Streaming output (MS-SSTR) — audit run
 //! 7, W13.
 //!
-//! The committed `fixtures/ts/h264_aac.ts` capture (real H.264 + AAC) is
+//! The committed `fixtures/ts/h264-aac.ts` capture (real H.264 + AAC) is
 //! pushed through `InputSpec::TsUdp` into a `smooth` route served by
 //! `serve_with_registry`; the client Manifest and every advertised fragment
 //! are then fetched back over real loopback HTTP.
@@ -39,7 +39,7 @@ use listener::bind_tcp;
 use transmux::smooth_parse::SmoothManifest;
 
 fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264_aac_40s.ts")
+    test_fixtures::path("ts/h264-aac-40s.ts")
 }
 
 fn have_oracle(bin: &str) -> bool {
@@ -142,7 +142,7 @@ async fn serve_smooth_until_fragment(min_chunks: usize) -> Served {
         SchemeRegistry::new(),
     ));
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac_40s.ts fixture must exist");
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac-40s.ts fixture must exist");
     let stop = Arc::new(AtomicBool::new(false));
     let sender_stop = Arc::clone(&stop);
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")

@@ -1,4 +1,4 @@
-//! RTP spoke gate — packetise/depacketise the demuxed `fixtures/ts/h264_aac.ts`
+//! RTP spoke gate — packetise/depacketise the demuxed `fixtures/ts/h264-aac.ts`
 //! IR (75 video + 131 audio samples) and verify RFC 3550/6184/3640/4566 fidelity
 //! against the real demuxed NALs / config (issue #469).
 //!
@@ -20,8 +20,8 @@ const RTP_HEADER_LEN: usize = 12;
 // ── Fixture demux ────────────────────────────────────────────────────────────
 
 fn demux_fixture() -> Media {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    let data = std::fs::read(path).expect("h264_aac.ts fixture must exist");
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    let data = std::fs::read(path).expect("h264-aac.ts fixture must exist");
     let mut demux = transmux::TsDemux::new();
     demux.unpackage(&data[..]).expect("demux TS → IR")
 }
@@ -125,7 +125,7 @@ fn valid_rtp_headers_and_marker_semantics() {
 
     // The fixture's own access-unit timestamps, in presentation order: the
     // demuxed samples' `pts`, rescaled to the RTP 90 kHz clock and relative to
-    // the first. `h264_aac.ts` is a B-frame encode, so this series is NOT a
+    // the first. `h264-aac.ts` is a B-frame encode, so this series is NOT a
     // uniform +3600 step — asserting one would be asserting that the
     // packetiser stamped decode times (audit r04-W29).
     let video_track = media
@@ -587,10 +587,9 @@ fn zero_clock_rate_is_rejected() {
 #[test]
 fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
     static SDP: std::sync::LazyLock<String> =
-        std::sync::LazyLock::new(|| test_fixtures::read_to_string("transmux/rtp/high-ffmpeg.sdp"));
-    static AVCC_HEX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        test_fixtures::read_to_string("transmux/rtp/high-ffmpeg.avcc.txt")
-    });
+        std::sync::LazyLock::new(|| test_fixtures::read_to_string("rtp/high-ffmpeg.sdp"));
+    static AVCC_HEX: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| test_fixtures::read_to_string("rtp/high-ffmpeg.avcc.txt"));
     let oracle = hex_decode(AVCC_HEX.as_str().trim()).expect("ffmpeg avcC hex");
     // Strip the 8-byte box header (`size` + `avcC`), leaving the record.
     let record = &oracle[8..];
@@ -625,9 +624,8 @@ fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
 /// (ISO/IEC 14496-15 §5.3.3.1.2 conditions it on the profile).
 #[test]
 fn baseline_profile_sdp_writes_no_trailer() {
-    static SDP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        test_fixtures::read_to_string("transmux/rtp/baseline-ffmpeg.sdp")
-    });
+    static SDP: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| test_fixtures::read_to_string("rtp/baseline-ffmpeg.sdp"));
     let fmtp = SDP
         .as_str()
         .lines()
@@ -937,18 +935,18 @@ fn fua_continuation_without_start_does_not_fail_the_stream() {
 /// packetise (RFC 3640 §3.2.3.1) and reassembled on depacketise, byte for
 /// byte.
 ///
-/// Uses the real 5.1 640 kb/s fixture (`fixtures/ts/aac-5_1-640k.ts`), whose
+/// Uses the real 5.1 640 kb/s fixture (`fixtures/ts/aac-5-1-640k.ts`), whose
 /// frames are ~785 bytes, and a 400-byte MTU so every access unit must split
 /// over several packets. The oracle is the demuxed track's own access-unit
 /// bytes.
 #[test]
 fn fragmented_aac_access_units_round_trip() {
     static REF: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
     let mut demux = transmux::TsDemux::new();
     let media = demux
         .unpackage(REF.as_slice())
-        .expect("demux aac-5_1-640k.ts");
+        .expect("demux aac-5-1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1040,11 +1038,11 @@ fn fragmented_aac_access_units_round_trip() {
 #[test]
 fn incomplete_aac_fragments_are_not_emitted_truncated() {
     static REF: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
     let mut demux = transmux::TsDemux::new();
     let media = demux
         .unpackage(REF.as_slice())
-        .expect("demux aac-5_1-640k.ts");
+        .expect("demux aac-5-1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1710,11 +1708,11 @@ fn lost_middle_fu_a_fragment_never_emits_a_truncated_nal() {
 #[test]
 fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
     static REF: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
     let mut demux = transmux::TsDemux::new();
     let media = demux
         .unpackage(REF.as_slice())
-        .expect("demux aac-5_1-640k.ts");
+        .expect("demux aac-5-1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1783,11 +1781,11 @@ fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
 #[test]
 fn missing_audio_fragment_drops_the_whole_au() {
     static REF: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
     let mut demux = transmux::TsDemux::new();
     let media = demux
         .unpackage(REF.as_slice())
-        .expect("demux aac-5_1-640k.ts");
+        .expect("demux aac-5-1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1888,11 +1886,11 @@ fn reordered_video_and_audio_share_one_epoch() {
 
     // Audio: a real AAC stream, packetised at a small MTU too.
     static AUDIO_TS: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5_1-640k.ts"));
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
     let mut ademux = transmux::TsDemux::new();
     let audio_media = ademux
         .unpackage(AUDIO_TS.as_slice())
-        .expect("demux aac-5_1-640k.ts");
+        .expect("demux aac-5-1-640k.ts");
     let aout = {
         let mut p = RtpPacketiser {
             mtu: MTU,

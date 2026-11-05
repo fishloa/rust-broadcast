@@ -9,7 +9,7 @@
 //! none of it can be faked (a raw-passthrough serialize would not parse back as
 //! valid TS with in-segment PAT/PMT + keyframe starts).
 //!
-//! Pipeline: `ir = TsDemux(h264_aac.ts)` → `out = TsHlsPackager(ir)` →
+//! Pipeline: `ir = TsDemux(h264-aac.ts)` → `out = TsHlsPackager(ir)` →
 //! demux `out.segments` (concat and per-segment) → compare.
 
 use broadcast_common::{Package, Serialize, Unpackage};
@@ -20,8 +20,8 @@ use transmux::{TsDemux, TsHlsOutput, TsHlsPackager};
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
 fn load_ts() -> Vec<u8> {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    std::fs::read(path).expect("h264_aac.ts fixture must exist")
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    std::fs::read(path).expect("h264-aac.ts fixture must exist")
 }
 
 fn demux(ts: &[u8]) -> Media {
@@ -574,7 +574,7 @@ fn fnv1a(bytes: &[u8]) -> String {
 /// That version recomputed each segment's base DTS by re-walking every earlier
 /// sample (O(segments × samples)); the fix carries a running base instead. The
 /// literals below were produced by running this exact fixture through
-/// `main`'s `TsHlsPackager::new(2).package(&TsDemux(h264_aac.ts))` in a detached
+/// `main`'s `TsHlsPackager::new(2).package(&TsDemux(h264-aac.ts))` in a detached
 /// `main` worktree (`git worktree add --detach <dir> main`) and hashing the
 /// result with the same function — no `git stash` was used. The playlist hash
 /// covers the `#EXTINF` durations, so every segment's duration is pinned too.

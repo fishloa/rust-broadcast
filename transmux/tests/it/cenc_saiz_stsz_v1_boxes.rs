@@ -4,7 +4,7 @@
 //! `mvhd`/`tkhd` wrong size/offsets (#1015, #1016).
 //!
 //! Every fixture here is generated with an independent tool (ffmpeg and/or
-//! GPAC's MP4Box — see `../fixtures/transmux/mp4/cenc_boxes/README.md` for the exact
+//! GPAC's MP4Box — see `../fixtures/mp4/cenc-boxes/PROVENANCE.md` for the exact
 //! commands) and the expected values are recorded from that tool's own
 //! inspector (`MP4Box -diso`), never derived from this crate's own
 //! serializer.
@@ -15,7 +15,7 @@ use transmux::cenc::SampleAuxInfoSizesBox;
 use transmux::init_segment::{MovieHeaderBox, Mp4aSampleEntry, SampleSizeBox, TrackHeaderBox};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = test_fixtures::path(&format!("transmux/mp4/cenc_boxes/{name}"));
+    let path = test_fixtures::path(&format!("mp4/cenc-boxes/{name}"));
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
@@ -53,7 +53,7 @@ fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
 /// and `<SampleEncryptionBox ... sampleCount="88">`.
 #[test]
 fn saiz_uniform_sample_count_matches_mp4box_diso() {
-    let data = fixture("aac_cenc.mp4");
+    let data = fixture("aac-cenc.mp4");
     let saiz_bytes = find_box(&data, b"saiz");
 
     let saiz = SampleAuxInfoSizesBox::parse_box(saiz_bytes).expect("parse saiz");
@@ -84,7 +84,7 @@ fn saiz_uniform_sample_count_matches_mp4box_diso() {
 /// Oracle (`MP4Box -diso`): `<AudioSampleDescriptionBox ... Type="enca" ...>`.
 #[test]
 fn enca_sample_entry_keeps_its_four_cc() {
-    let data = fixture("aac_cenc.mp4");
+    let data = fixture("aac-cenc.mp4");
     let enca_bytes = find_box(&data, b"enca");
 
     let entry = Mp4aSampleEntry::parse(enca_bytes).expect("parse enca sample entry");
@@ -114,7 +114,7 @@ fn enca_sample_entry_keeps_its_four_cc() {
 /// Oracle (`MP4Box -diso`): `<SampleSizeBox ... SampleCount="8000" ConstantSampleSize="2">`.
 #[test]
 fn stsz_uniform_sample_count_matches_mp4box_diso() {
-    let data = fixture("pcm_clear.mp4");
+    let data = fixture("pcm-clear.mp4");
     let stsz_bytes = find_box(&data, b"stsz");
 
     let stsz = SampleSizeBox::parse(stsz_bytes).expect("parse stsz");
@@ -147,7 +147,7 @@ fn stsz_uniform_sample_count_matches_mp4box_diso() {
 /// `<MovieHeaderBox Size="120" Version="1" TimeScale="2000000000" Duration="6000000000" NextTrackID="2">`.
 #[test]
 fn mvhd_v1_matches_mp4box_diso() {
-    let data = fixture("v1_mvhd.mp4");
+    let data = fixture("v1-mvhd.mp4");
     let mvhd_bytes = find_box(&data, b"mvhd");
     assert_eq!(mvhd_bytes.len(), 120, "real v1 mvhd is 120 bytes, not 124");
 
@@ -176,7 +176,7 @@ fn mvhd_v1_matches_mp4box_diso() {
 /// `<TrackHeaderBox Size="104" Version="1" Duration="6000000000" Width="64.00" Height="64.00">`.
 #[test]
 fn tkhd_v1_matches_mp4box_diso() {
-    let data = fixture("v1_mvhd.mp4");
+    let data = fixture("v1-mvhd.mp4");
     let tkhd_bytes = find_box(&data, b"tkhd");
     assert_eq!(tkhd_bytes.len(), 104);
 

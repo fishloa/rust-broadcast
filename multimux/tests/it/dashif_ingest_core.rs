@@ -9,7 +9,7 @@ use transmux::dash_parse::SegmentTemplate;
 use transmux::ts_demux::TsDemux;
 
 fn demux_media() -> transmux::media::Media {
-    let ts = test_fixtures::read("ts/h264_aac.ts");
+    let ts = test_fixtures::read("ts/h264-aac.ts");
     let mut demux = TsDemux::new();
     demux.unpackage(&ts[..]).expect("demux")
 }
@@ -60,7 +60,7 @@ fn committed_mpds() {
     assert!(matches!(err, IngestError::MpdBaseUrlPresent));
 
     // accepted: scte35-ssai manifest template
-    let p = test_fixtures::path("scte35-ssai/dash/manifest-template.mpd");
+    let p = test_fixtures::path("scte35/dash/manifest-template.mpd");
     let bytes = std::fs::read(&p).unwrap();
     let _g = ManifestGrouping::from_mpd(&bytes).expect("template accepted");
 }

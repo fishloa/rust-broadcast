@@ -116,12 +116,12 @@ fn check(bad: &mut Vec<String>, name: &str, got: u64, want: u64) {
 }
 
 const PS_FIXTURES: &[(&str, u64)] = &[
-    ("ps/h264_ac3.ps", 0xe24863d1ee914de7),
+    ("ps/h264-ac3.ps", 0xe24863d1ee914de7),
     ("ps/ffmpeg-h264-noaud.ps", 0x0f41a64caef35ce5),
     ("ps/ffmpeg-mpeg2video-mp2.ps", 0x8310cf8cecaa56f7),
     ("ps/ffmpeg-mpeg2video-2xac3.ps", 0xa7dbc0815658589c),
     ("ps/ffmpeg-ac3-dts.ps", 0x4f5d8d8a7f521ba2),
-    ("mpeg-ps/ffmpeg-mpeg2-ps.mpg", 0x008239034562de4c),
+    ("ps/ffmpeg-mpeg2-ps.mpg", 0x008239034562de4c),
 ];
 
 #[test]
@@ -138,18 +138,18 @@ fn ps_demux_output_is_unchanged() {
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
 
-// Note: `webm/vp9_opus.webm` and `mkv/vp9_opus.mkv` hash identically on purpose.
+// Note: `mkv/vp9-opus.webm` and `mkv/vp9-opus.mkv` hash identically on purpose.
 // The two files carry the same VP9 + Opus content (same encode, remuxed between
 // the WebM and Matroska container flavours), and the demuxer's `Media` IR (which
 // is what is hashed) holds codec config + samples + timing only, nothing about
 // the container flavour, so the `Debug` rendering is genuinely identical.
 const WEBM_FIXTURES: &[(&str, u64)] = &[
-    ("webm/vp9_opus.webm", 0xfec110a63d715331),
-    ("webm/vp8_opus.webm", 0x44663f064ecc766b),
-    ("webm/vorbis.webm", 0x67143f51c09cf65e),
-    ("mkv/h264_aac.mkv", 0x9847beadbf70bead),
-    ("mkv/vp9_opus.mkv", 0xfec110a63d715331),
-    ("mkv/hevc_aac.mkv", 0xd77d3469e7e72cf3),
+    ("mkv/vp9-opus.webm", 0xfec110a63d715331),
+    ("mkv/vp8-opus.webm", 0x44663f064ecc766b),
+    ("mkv/vorbis.webm", 0x67143f51c09cf65e),
+    ("mkv/h264-aac.mkv", 0x9847beadbf70bead),
+    ("mkv/vp9-opus.mkv", 0xfec110a63d715331),
+    ("mkv/hevc-aac.mkv", 0xd77d3469e7e72cf3),
 ];
 
 #[test]
@@ -168,7 +168,7 @@ fn webm_demux_output_is_unchanged() {
 
 const TS_FIXTURES: &[(&str, u64)] = &[
     ("ts/h264/main.ts", 0xe8a04393ee137ee8),
-    ("ts/h264_aac.ts", 0x51871212618d1ded),
+    ("ts/h264-aac.ts", 0x51871212618d1ded),
     // Re-captured for #1160: the real capture's three E-AC-3 tracks gain the
     // syncframes that straddled PES boundaries (4/5/1 -> 7/6/3 samples).
     // Re-blessed for #1186 (0x3f5fdf623443b19f before): ONLY the second E-AC-3
@@ -201,8 +201,8 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // one per field. Every other fixture is unchanged.
     ("ts/gulli-opengop.ts", 0xb0b2ccb9bf3c83e7),
     ("ts/pts-wrap.ts", 0x446b6222520c1313),
-    ("ts/aac-5_1-640k.ts", 0x0c69bd29aae724c7),
-    ("ts/dts/dts_core.ts", 0x049622d2b28d2388),
+    ("ts/aac-5-1-640k.ts", 0x0c69bd29aae724c7),
+    ("ts/dts/dts-core.ts", 0x049622d2b28d2388),
     // Re-captured for #1160 (cross-PES audio carry): this fixture re-chunks 39
     // real MP2 frames at 2000-byte PES payloads, so the old per-PES splitter
     // dropped every straddling frame; the carry now recovers all 39 (see
@@ -211,7 +211,7 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // Re-captured again for #1162 R2: the MPEG audio `esds` now carries
     // `maxBitrate`/`avgBitrate` from the first frame header (was 0), so the
     // IR `Debug` text changes; the samples are unchanged.
-    ("ts/legacy/mpeg2_mp2_pes_misaligned.ts", 0x3459220532f49676),
+    ("ts/legacy/mpeg2-mp2-pes-misaligned.ts", 0x3459220532f49676),
 ];
 
 #[test]
@@ -263,8 +263,8 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
     use transmux::{RtpPacketiser, RtpStreamDepacketiser, RtpStreamTrack};
-    let Some(data) = fixture("ts/h264_aac.ts") else {
-        eprintln!("SKIPPED ts/h264_aac.ts");
+    let Some(data) = fixture("ts/h264-aac.ts") else {
+        eprintln!("SKIPPED ts/h264-aac.ts");
         return;
     };
     let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
@@ -305,7 +305,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
 }
 
 fn h264_aac_media() -> Option<transmux::Media> {
-    let data = fixture("ts/h264_aac.ts")?;
+    let data = fixture("ts/h264-aac.ts")?;
     Some(TsDemux::new().unpackage(data.as_slice()).unwrap())
 }
 
@@ -314,7 +314,7 @@ fn muxer_outputs_are_unchanged() {
     use broadcast_common::Package;
     use transmux::{MkvMux, ProgressiveMux, TsMux};
     let Some(media) = h264_aac_media() else {
-        eprintln!("SKIPPED ts/h264_aac.ts");
+        eprintln!("SKIPPED ts/h264-aac.ts");
         return;
     };
     let mut bad = Vec::new();
@@ -351,7 +351,7 @@ fn fragment_writer_outputs_are_unchanged() {
     use broadcast_common::Package;
     use transmux::{CmafMux, LlSegmenter, SmoothPackager};
     let Some(media) = h264_aac_media() else {
-        eprintln!("SKIPPED ts/h264_aac.ts");
+        eprintln!("SKIPPED ts/h264-aac.ts");
         return;
     };
     let mut bad = Vec::new();
@@ -493,7 +493,7 @@ fn dash_mpd_output_is_unchanged() {
     use broadcast_common::Package;
     use transmux::DashPackager;
     let mut bad = Vec::new();
-    for (i, rel) in ["ts/h264_aac.ts", "ts/hevc/main.ts", "ts/dolby/ac3.ts"]
+    for (i, rel) in ["ts/h264-aac.ts", "ts/hevc/main.ts", "ts/dolby/ac3.ts"]
         .into_iter()
         .enumerate()
     {

@@ -26,7 +26,7 @@ Typical users: a DASH/CMAF packager injecting ad-cue events, a player or monitor
 | DASH-IF IOP Part 10 "Events and Timed Metadata" | v5.0.0 (vendored `dashif_iop_part10_v5.0.0_emsg`) | §6.1 and Table 6-2 field semantics | Full | Transcribed in `private/specs-verified/mpeg/mp4-emsg/emsg.md` |
 | ANSI/SCTE 35 and SCTE 214 scheme URIs | SCTE 35 2023r1 vendored (`ansi_scte_35_2023r1_dpi_cueing`); SCTE 214 not vendored | Only the `urn:scte:scte35` prefix test | Typed-opaque | `message_data` is returned as bytes |
 
-Verified against a real version 1 `emsg` extracted from the DASH-IF livesim2 simulator (`fixtures/shared/emsg_v1_scte35_livesim.bin`) and a constructed version 0 box.
+Verified against a real version 1 `emsg` extracted from the DASH-IF livesim2 simulator (`fixtures/scte35/emsg-v1-scte35-livesim.bin`) and a constructed version 0 box.
 
 ## Features
 
@@ -43,7 +43,7 @@ Read the real livesim2 version 1 box, then build a version 0 box from typed fiel
 use mp4_emsg::{EMSG_FLAGS, EmsgBox, EmsgVersion, PresentationTime};
 
 // A genuine v1 emsg from a live DASH segment (SCTE 35 splice).
-let wire = std::fs::read("../fixtures/shared/emsg_v1_scte35_livesim.bin").unwrap();
+let wire = std::fs::read("../fixtures/scte35/emsg-v1-scte35-livesim.bin").unwrap();
 let real = EmsgBox::parse(&wire).unwrap();
 assert_eq!(real.version(), EmsgVersion::RepresentationRelative);
 assert!(real.is_scte35());

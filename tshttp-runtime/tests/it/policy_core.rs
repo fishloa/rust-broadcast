@@ -149,7 +149,7 @@ fn assert_same(name: &str, script: &[Timed], payload: &[u8]) -> Trace {
 }
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("ts/h264_aac.ts")
+    test_fixtures::read("ts/h264-aac.ts")
 }
 
 fn contains(trace: &Trace, needle: &str) -> bool {

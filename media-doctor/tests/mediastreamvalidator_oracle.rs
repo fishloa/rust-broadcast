@@ -98,7 +98,7 @@ fn repo_fixture(rel: &str) -> PathBuf {
 }
 
 fn ts_fixture_bytes() -> Vec<u8> {
-    fs::read(repo_fixture("fixtures/ts/h264_aac.ts")).expect("h264_aac.ts fixture must exist")
+    fs::read(repo_fixture("fixtures/ts/h264-aac.ts")).expect("h264-aac.ts fixture must exist")
 }
 
 /// A fresh, empty scratch directory under the workspace `target/` (already
@@ -377,7 +377,7 @@ fn is_known_standalone_artifact(f: &Finding) -> bool {
 }
 
 /// The 8 committed `private/fixtures/hls/spec/*.m3u8` files that actually parse (see
-/// `fixtures/hls/MANIFEST.md`'s Tier 1 table). `9.10-daterange-scte35.m3u8`
+/// `fixtures/hls/PROVENANCE.md`'s Tier 1 table). `9.10-daterange-scte35.m3u8`
 /// and `9.11-low-latency-playlist.m3u8` are excluded on purpose: both embed
 /// the RFC's own bare `...` elision line mid-playlist, which is not
 /// `#`-prefixed and so parses as a Media Segment URI with no preceding

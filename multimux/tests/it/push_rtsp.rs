@@ -50,7 +50,7 @@ use transmux::{CodecConfig, TsDemux};
 const GUARD: Duration = Duration::from_secs(20);
 
 fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264_aac.ts")
+    test_fixtures::path("ts/h264-aac.ts")
 }
 
 /// Workspace-convention scratch dir (mirrors `golden_gate.rs`'s own
@@ -262,7 +262,7 @@ fn ffprobe_read(url: &str) -> (bool, String, String) {
     )
 }
 
-/// Pushes the real `h264_aac.ts` fixture to `push_url` via [`RtspTransport`],
+/// Pushes the real `h264-aac.ts` fixture to `push_url` via [`RtspTransport`],
 /// then reads it back from `read_url` with `ffprobe`, asserting both codecs
 /// come back. Runs the push and the read concurrently: `mediamtx` only
 /// serves a path once a publisher has completed RECORD, and (being a live
@@ -276,8 +276,8 @@ async fn push_and_read_back(
     push_url: String,
     read_url: String,
 ) {
-    let ts = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
-    let media = TsDemux::new().demux(&ts).expect("demux h264_aac.ts");
+    let ts = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
+    let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
     assert!(
         media
             .tracks

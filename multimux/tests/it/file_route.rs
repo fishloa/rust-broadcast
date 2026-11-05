@@ -22,13 +22,13 @@ use multimux::serve_with_registry_on;
 use crate::support::listener;
 use listener::bind_tcp;
 
-/// Length of `h264_aac.ts` (video PTS 133200 -> 399600 at 90 kHz), and the
+/// Length of `h264-aac.ts` (video PTS 133200 -> 399600 at 90 kHz), and the
 /// tolerance (one part) for segmenter boundary rounding.
 const FIXTURE_SECS: f64 = 2.955;
 const TAIL_TOLERANCE_SECS: f64 = 0.1;
 
 fn fixture_path() -> String {
-    test_fixtures::path("ts/h264_aac.ts")
+    test_fixtures::path("ts/h264-aac.ts")
         .to_string_lossy()
         .into_owned()
 }
