@@ -12,15 +12,7 @@
 #![cfg(feature = "tokio")]
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocket};
-
-async fn free_local_addr() -> std::net::SocketAddr {
-    tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("bind free port")
-        .local_addr()
-        .expect("local addr")
-}
+use srt_runtime::io::{IoConfig, SrtListener, SrtSocket};
 
 #[tokio::test]
 async fn caller_drop_releases_its_local_port_for_reuse() {
@@ -28,15 +20,24 @@ async fn caller_drop_releases_its_local_port_for_reuse() {
         .await
         .expect("bind listener");
     let listener_addr = listener.local_addr().expect("listener local addr");
-    let local = free_local_addr().await;
-
     let accept_jh = tokio::spawn(async move {
         let s = listener.accept().await.expect("accept");
         (listener, s)
     });
-    let caller = SrtSocket::connect_from(local, listener_addr, HandshakeConfig::default())
+
+    let sock = tokio::net::UdpSocket::bind("127.0.0.1:0")
         .await
-        .expect("connect_from");
+        .expect("bind free port");
+    let local = sock.local_addr().expect("local addr");
+
+    let caller = SrtSocket::connect_from_socket(
+        sock,
+        listener_addr,
+        HandshakeConfig::default(),
+        IoConfig::default(),
+    )
+    .await
+    .expect("connect_from");
     let (_listener, accepted) = accept_jh.await.expect("join accept");
 
     drop(caller);

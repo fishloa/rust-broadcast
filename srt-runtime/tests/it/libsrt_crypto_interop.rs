@@ -44,6 +44,7 @@ use srt_runtime::packet::{
 };
 
 include!("support/skip.rs");
+include!("support/libsrt_spawn.rs");
 
 /// libsrt requires a passphrase of 10..=79 characters.
 const PASSPHRASE: &str = "0123456789abcdef";
@@ -68,14 +69,6 @@ impl Drop for KillOnDrop {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .expect("bind free port")
-        .local_addr()
-        .expect("local addr")
-        .port()
 }
 
 fn payload(index: u32) -> Vec<u8> {
@@ -141,20 +134,14 @@ fn drive_caller(hs: &mut CallerHandshake, sock: &UdpSocket, peer: SocketAddr) ->
     panic!("handshake with libsrt did not finish within {HANDSHAKE_DEADLINE:?}");
 }
 
-fn spawn_libsrt_listener(listen_port: u16, discard_port: u16, passphrase: &str) -> KillOnDrop {
-    KillOnDrop(
-        Command::new("srt-live-transmit")
-            .arg("-loglevel:error")
-            .arg(format!(
-                "srt://:{listen_port}?passphrase={passphrase}&pbkeylen=16"
-            ))
-            .arg(format!("udp://127.0.0.1:{discard_port}"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn srt-live-transmit listener"),
-    )
+fn spawn_libsrt_listener(discard_port: u16, passphrase: &str) -> (KillOnDrop, u16) {
+    let (child, port) = spawn_libsrt_ready(|port| {
+        vec![
+            format!("srt://:{port}?passphrase={passphrase}&pbkeylen=16"),
+            format!("udp://127.0.0.1:{discard_port}"),
+        ]
+    });
+    (KillOnDrop(child), port)
 }
 
 /// Our caller offers a KM; libsrt must accept it (SE = MPEG-TS/SRT) and then
@@ -163,11 +150,10 @@ fn spawn_libsrt_listener(listen_port: u16, discard_port: u16, passphrase: &str) 
 fn libsrt_listener_accepts_our_key_material_and_decrypts_our_data() {
     skip_unless_tools!("srt-live-transmit" => "-version");
 
-    let listen_port = free_udp_port();
     let discard = UdpSocket::bind("127.0.0.1:0").expect("bind discard");
     let discard_port = discard.local_addr().unwrap().port();
     discard.set_read_timeout(Some(RECV_DEADLINE)).unwrap();
-    let _libsrt = spawn_libsrt_listener(listen_port, discard_port, PASSPHRASE);
+    let (_libsrt, listen_port) = spawn_libsrt_listener(discard_port, PASSPHRASE);
 
     let sock = UdpSocket::bind("127.0.0.1:0").expect("bind caller socket");
     let peer: SocketAddr = format!("127.0.0.1:{listen_port}").parse().unwrap();
@@ -227,10 +213,9 @@ fn libsrt_listener_accepts_our_key_material_and_decrypts_our_data() {
 fn libsrt_listener_rejects_a_wrong_passphrase_with_badsecret() {
     skip_unless_tools!("srt-live-transmit" => "-version");
 
-    let listen_port = free_udp_port();
     let discard = UdpSocket::bind("127.0.0.1:0").expect("bind discard");
     let discard_port = discard.local_addr().unwrap().port();
-    let _libsrt = spawn_libsrt_listener(listen_port, discard_port, PASSPHRASE);
+    let (_libsrt, listen_port) = spawn_libsrt_listener(discard_port, PASSPHRASE);
 
     let sock = UdpSocket::bind("127.0.0.1:0").expect("bind caller socket");
     let peer: SocketAddr = format!("127.0.0.1:{listen_port}").parse().unwrap();

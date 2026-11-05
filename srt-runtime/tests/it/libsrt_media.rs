@@ -22,7 +22,7 @@
 
 #![cfg(feature = "tokio")]
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -32,6 +32,7 @@ use srt_runtime::io::{SrtListener, SrtSocket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
+include!("support/libsrt_spawn.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// Live-mode SRT payload: seven 188-byte TS packets.
@@ -63,14 +64,6 @@ fn spawn(cmd: &mut Command) -> KillOnDrop {
             .spawn()
             .expect("spawn srt-live-transmit"),
     )
-}
-
-fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .expect("bind free port")
-        .local_addr()
-        .expect("local addr")
-        .port()
 }
 
 fn work_dir(name: &str) -> PathBuf {
@@ -160,15 +153,15 @@ async fn our_caller_to_libsrt_listener() {
         let (input, output) = (dir.join("in.ts"), dir.join("out.ts"));
         let original = make_ts(&input);
 
-        let listen_port = free_udp_port();
         let discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let discard_port = discard.local_addr().unwrap().port();
-        let _libsrt = spawn(
-            Command::new("srt-live-transmit")
-                .arg("-loglevel:error")
-                .arg(format!("srt://:{listen_port}?latency={LATENCY_MS}"))
-                .arg(format!("udp://127.0.0.1:{discard_port}")),
-        );
+        let (libsrt, listen_port) = spawn_libsrt_ready(|port| {
+            vec![
+                format!("srt://:{port}?latency={LATENCY_MS}"),
+                format!("udp://127.0.0.1:{discard_port}"),
+            ]
+        });
+        let _libsrt = KillOnDrop(libsrt);
         let mut caller = SrtSocket::connect(
             format!("127.0.0.1:{listen_port}")
                 .parse::<SocketAddr>()

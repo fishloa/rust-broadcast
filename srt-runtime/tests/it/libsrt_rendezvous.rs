@@ -20,8 +20,8 @@
 
 #![cfg(feature = "tokio")]
 
-use std::net::{SocketAddr, UdpSocket};
-use std::process::{Child, Command, Stdio};
+use std::net::SocketAddr;
+use std::process::Child;
 use std::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
@@ -29,6 +29,7 @@ use srt_runtime::io::{IoConfig, SrtSocket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
+include!("support/libsrt_spawn.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(120);
 const PAYLOAD_LEN: usize = 1316;
@@ -49,14 +50,6 @@ fn patient_io() -> IoConfig {
     IoConfig::default().with_handshake(Duration::from_secs(20))
 }
 
-fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .expect("bind free port")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
-
 fn pattern(n: usize, seed: u8) -> Vec<u8> {
     (0..n).map(|i| seed.wrapping_add(i as u8)).collect()
 }
@@ -70,16 +63,6 @@ impl Drop for KillOnDrop {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-fn spawn(cmd: &mut Command) -> KillOnDrop {
-    KillOnDrop(
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn srt-live-transmit"),
-    )
 }
 
 /// libsrt rendezvous URI: its remote is `peer_port`, its own bound port
@@ -120,27 +103,26 @@ async fn our_rendezvous_completes_real_handshake_and_data_with_libsrt() {
 
     tokio::time::timeout(TEST_TIMEOUT, async {
         for iteration in 0..ITERATIONS {
-            let our_port = free_udp_port();
-            let lib_port = free_udp_port();
+            let our_sock = TokioUdpSocket::bind("127.0.0.1:0")
+                .await
+                .expect("bind our socket");
+            let our_port = our_sock.local_addr().unwrap().port();
             let discard = TokioUdpSocket::bind("127.0.0.1:0")
                 .await
                 .expect("bind discard socket");
             let discard_port = discard.local_addr().unwrap().port();
-            let _libsrt = spawn(
-                Command::new("srt-live-transmit")
-                    .arg("-loglevel:error")
-                    .arg(libsrt_rdv_uri(our_port, lib_port, "&latency=120"))
-                    .arg(format!("udp://127.0.0.1:{discard_port}")),
-            );
+            let (libsrt, lib_port) = spawn_libsrt_ready(|lib_port| {
+                vec![
+                    libsrt_rdv_uri(our_port, lib_port, "&latency=120"),
+                    format!("udp://127.0.0.1:{discard_port}"),
+                ]
+            });
+            let _libsrt = KillOnDrop(libsrt);
 
-            // No wait for the libsrt process to come up: both sides
-            // retransmit their WAVEAHAND until the other answers.
             let mut ours = tokio::time::timeout(
                 Duration::from_secs(25),
-                SrtSocket::rendezvous_with(
-                    format!("127.0.0.1:{our_port}")
-                        .parse::<SocketAddr>()
-                        .unwrap(),
+                SrtSocket::rendezvous_from_socket(
+                    our_sock,
                     format!("127.0.0.1:{lib_port}")
                         .parse::<SocketAddr>()
                         .unwrap(),
@@ -177,21 +159,24 @@ async fn real_libsrt_rendezvous_sender_delivers_data_to_our_rendezvous_side() {
 
     tokio::time::timeout(TEST_TIMEOUT, async {
         for iteration in 0..ITERATIONS {
-            let our_port = free_udp_port();
-            let lib_port = free_udp_port();
+            let our_sock = TokioUdpSocket::bind("127.0.0.1:0")
+                .await
+                .expect("bind our socket");
+            let our_port = our_sock.local_addr().unwrap().port();
             let src_port = free_udp_port();
-            let _libsrt = spawn(
-                Command::new("srt-live-transmit")
-                    .arg("-loglevel:error")
-                    .arg(format!("-chunk:{PAYLOAD_LEN}"))
-                    .arg(format!("udp://:{src_port}"))
-                    .arg(libsrt_rdv_uri(our_port, lib_port, "&latency=120")),
-            );
+            let (libsrt, lib_port) = spawn_libsrt_ready(|lib_port| {
+                vec![
+                    format!("-chunk:{PAYLOAD_LEN}"),
+                    format!("udp://:{src_port}"),
+                    libsrt_rdv_uri(our_port, lib_port, "&latency=120"),
+                ]
+            });
+            let _libsrt = KillOnDrop(libsrt);
 
             let mut ours = tokio::time::timeout(
                 Duration::from_secs(25),
-                SrtSocket::rendezvous_with(
-                    format!("127.0.0.1:{our_port}").parse::<SocketAddr>().unwrap(),
+                SrtSocket::rendezvous_from_socket(
+                    our_sock,
                     format!("127.0.0.1:{lib_port}")
                         .parse::<SocketAddr>()
                         .unwrap(),

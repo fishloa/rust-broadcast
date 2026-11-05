@@ -5,29 +5,32 @@
 //! oracle for the same flow is `libsrt_rendezvous.rs`.
 #![cfg(feature = "tokio")]
 
-use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{IoConfig, SrtSocket};
-
-fn free_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
+use tokio::net::UdpSocket;
 
 #[tokio::test]
 async fn two_rendezvous_sockets_connect_and_exchange_data() {
     for _ in 0..4 {
-        let (pa, pb) = (free_port(), free_port());
-        let a_addr: SocketAddr = format!("127.0.0.1:{pa}").parse().unwrap();
-        let b_addr: SocketAddr = format!("127.0.0.1:{pb}").parse().unwrap();
-        let a = SrtSocket::rendezvous(a_addr, b_addr, HandshakeConfig::default());
-        let b = SrtSocket::rendezvous(b_addr, a_addr, HandshakeConfig::default());
+        let sock_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let a_addr = sock_a.local_addr().unwrap();
+        let sock_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b_addr = sock_b.local_addr().unwrap();
+        let a = SrtSocket::rendezvous_from_socket(
+            sock_a,
+            b_addr,
+            HandshakeConfig::default(),
+            IoConfig::default(),
+        );
+        let b = SrtSocket::rendezvous_from_socket(
+            sock_b,
+            a_addr,
+            HandshakeConfig::default(),
+            IoConfig::default(),
+        );
         let (a, b) = tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(a, b) })
             .await
             .expect("rendezvous never completed");
@@ -54,10 +57,14 @@ async fn two_rendezvous_sockets_connect_and_exchange_data() {
 /// hang.
 #[tokio::test]
 async fn rendezvous_without_a_peer_times_out() {
-    let (pa, pb) = (free_port(), free_port());
-    let err = SrtSocket::rendezvous_with(
-        format!("127.0.0.1:{pa}").parse().unwrap(),
-        format!("127.0.0.1:{pb}").parse::<SocketAddr>().unwrap(),
+    let sock_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    // The peer address is a port we release on purpose: nothing answers there.
+    let sock_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let b_addr = sock_b.local_addr().unwrap();
+    drop(sock_b);
+    let err = SrtSocket::rendezvous_from_socket(
+        sock_a,
+        b_addr,
         HandshakeConfig::default(),
         IoConfig::default().with_handshake(Duration::from_millis(600)),
     )

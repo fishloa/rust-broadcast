@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `SrtSocket::connect_from_socket` and `SrtSocket::rendezvous_from_socket`: connect or rendezvous over an already-bound `tokio::net::UdpSocket`, so a caller can hold its local port from bind to use. `connect_from_with` and `rendezvous_with` now bind and delegate to them (#1671).
 
 ## [0.7.0] - 2026-11-03
 ### Added
