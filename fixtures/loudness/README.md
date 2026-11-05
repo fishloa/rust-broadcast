@@ -1,4 +1,4 @@
-# `broadcast-loudness/fixtures/` — provenance
+# `fixtures/loudness/` — provenance
 
 ## `programme_dynamic.wav`
 

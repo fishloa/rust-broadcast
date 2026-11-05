@@ -94,7 +94,7 @@ non-Rust fixture checks — Python's standard-library `xml.etree.ElementTree`, a
   committed file) and compared byte-for-byte: **identical**, 56 bytes,
   `000000387073736800000000edef8ba979d64acea3c827dcd51d21ed000000181210b4c3188beddd453d9bc21cbca756623948e3dc959b06`.
 
-## LL-HLS test fixture (`hls-runtime/fixtures/ts-hls/`)
+## LL-HLS test fixture (`fixtures/hls/ts-hls/`)
 
 | File | Source | Date | Licence |
 |---|---|---|---|

@@ -4,7 +4,7 @@
 //! Every other version test in this crate compares the derivation against
 //! *our* reading of the §8 transcription in `private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`.
 //! This one is the only genuinely **independent** check: the playlists in
-//! `fixtures/hls/spec/` were written by the spec authors themselves
+//! `private/fixtures/hls/spec/` were written by the spec authors themselves
 //! (draft-pantos-hls-rfc8216bis-22 §9, extracted verbatim by issue #877), so
 //! where one of them declares an `EXT-X-VERSION`, that number is the spec
 //! authors' own answer to the question our derivation is trying to answer.

@@ -17,8 +17,8 @@
 //! single-track file (can only prove "not fatal, and named") and a
 //! multi-track one (proves the OTHER tracks survive too).
 //!
-//! Fixtures: `fixtures/mp4/cmaf/av_subtitle_frag.mp4` (real ffmpeg-generated
-//! CMAF with an AVC + `stpp` track), `fixtures/mp4/cmaf/av_aac_subtitle_frag.mp4`
+//! Fixtures: `fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4` (real ffmpeg-generated
+//! CMAF with an AVC + `stpp` track), `fixtures/transmux/mp4/cmaf/av_aac_subtitle_frag.mp4`
 //! (real ffmpeg-generated CMAF with AVC + AAC + `stpp` — the multi-track skip
 //! test's fixture, mutated in-test) — see `PROVENANCE.md` in that directory —
 //! and `fixtures/mp4/cmaf/av_frag.mp4` (existing real AVC+AAC CMAF fixture,

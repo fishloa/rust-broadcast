@@ -4971,7 +4971,7 @@ mod tests {
     /// row at all, and the derivation could be entirely broken while the
     /// test stayed green. Real segmenters cut on keyframes, not whole
     /// seconds, so a fractional `#EXTINF` is also the realistic shape --
-    /// cf. `fixtures/hls/spec/9.1-simple-media-playlist.m3u8` (`#EXTINF:9.009`,
+    /// cf. `private/fixtures/hls/spec/9.1-simple-media-playlist.m3u8` (`#EXTINF:9.009`,
     /// `#EXT-X-VERSION:3`).
     fn assert_version_present_and_matches_derivation(body: &str) -> u8 {
         assert_version_matches_broadcast_hls_derivation(body).unwrap_or_else(|| {

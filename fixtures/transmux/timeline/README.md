@@ -1,4 +1,4 @@
-# `fixtures/timeline/`
+# `fixtures/transmux/timeline/`
 
 Fixtures for the output-timeline tests in `tests/it/timeline_oracle.rs` (issues
 #1019-#1023). Every file here is generated from synthetic input and is released

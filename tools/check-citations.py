@@ -19,8 +19,37 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def _load_workspace_members():
+    members = set()
+    cargo = ROOT / "Cargo.toml"
+    try:
+        text = cargo.read_text(encoding="utf-8")
+    except OSError:
+        return members
+    m = re.search(r"members\s*=\s*\[(.*?)\]", text, re.S)
+    if not m:
+        return members
+    for item in re.findall(r"\"([^\"]+)\"", m.group(1)):
+        item = item.strip().rstrip("/")
+        if item:
+            members.add(item)
+    return members
+
+WORKSPACE_MEMBERS = _load_workspace_members()
+
+def workspace_members():
+    return WORKSPACE_MEMBERS
+
 DOC_SUFFIXES = (".md", ".txt", ".pdf", ".tsv", ".toml", ".html")
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)|^\[[^\]]+\]:\s*(\S+)", re.M)
+# fixture citations: fixtures/ or private/fixtures/ with any extension (or a directory)
+FIXTURE_CITE = re.compile(
+    r"(?<![\w./-])((?:fixtures|private/fixtures)(?:/[\w.+*?\[\]-]*)+/?)" 
+)
+# crate-local fixture citations: <member>/fixtures/... or <member>/tests/fixtures/...
+MEMBER_FIXTURE_CITE = re.compile(
+    r"(?<![\w./-])(( [\w.+-]+)/(?:tests/)?fixtures(?:/[\w.+*?\[\]-]*)*/?)" .replace(" ", "")
+)
 # citations: path containing docs/specs/fixtures root, ending in a doc suffix
 CITE = re.compile(
     r"(?<![\w./-])((?:[\w.+-]+/)*?(?:docs|specs|fixtures)(?:/[\w.+*?\[\]-]+)*\."
@@ -313,6 +342,69 @@ def main() -> int:
                 else:
                     if not (ROOT / cite).is_file():
                         errors.append(f"{rel}: private citation does not exist: {cite}")
+
+        # e. fixture citations (any extension) under fixtures/ or private/fixtures/
+        for m in FIXTURE_CITE.finditer(text):
+            cite = m.group(1).rstrip()
+            cite_stripped = cite.rstrip("/")
+            if cite_stripped.endswith(DOC_SUFFIXES):
+                continue
+            base = cite_stripped.rsplit("/", 1)[-1]
+            if not (cite.endswith("/") or "." in base):
+                continue
+            if spans and in_spans(m.start(1), spans):
+                continue
+            if cite.startswith("private/"):
+                if skip_private:
+                    continue
+                if any(ch in cite for ch in GLOB_CHARS):
+                    if "**" in cite:
+                        continue
+                    if not any(fnmatch.fnmatch(f, cite) for f in private_files):
+                        errors.append(f"{rel}: private citation does not exist: {cite}")
+                else:
+                    target = ROOT / cite
+                    if not (target.is_file() or target.is_dir()):
+                        errors.append(f"{rel}: private citation does not exist: {cite}")
+            else:
+                if any(ch in cite for ch in GLOB_CHARS):
+                    if "**" in cite:
+                        continue
+                    pats = [cite, f"{crate}/{cite}", posixpath.normpath(posixpath.join(d, cite))]
+                    matched = False
+                    for pat in pats:
+                        for cand in present:
+                            if fnmatch.fnmatch(cand, pat):
+                                matched = True
+                                break
+                        if matched:
+                            break
+                    if not matched:
+                        # also directories
+                        if not any((ROOT / c).is_dir() for c in pats):
+                            errors.append(f"{rel}: citation does not resolve: {cite}")
+                else:
+                    cands = [cite, f"{crate}/{cite}", posixpath.normpath(posixpath.join(d, cite))]
+                    if not any(c in present for c in cands):
+                        if not any((ROOT / c).is_file() or (ROOT / c).is_dir() for c in cands):
+                            errors.append(f"{rel}: citation does not resolve: {cite}")
+
+        # f. crate-local fixture citations are never allowed
+        for m in MEMBER_FIXTURE_CITE.finditer(text):
+            cite = m.group(1).rstrip()
+            member = m.group(2)
+            if member not in WORKSPACE_MEMBERS:
+                continue
+            cite_stripped = cite.rstrip("/")
+            base = cite_stripped.rsplit("/", 1)[-1]
+            if not (cite.endswith("/") or "." in base):
+                continue
+            if spans and in_spans(m.start(1), spans):
+                continue
+            errors.append(
+                f"{rel}: citation points at a crate-local fixtures path; "
+                f"cite fixtures/<topic>/... or private/fixtures/<topic>/... instead: {cite}"
+            )
 
         # c. markdown links into private/
         for m in MD_LINK.finditer(text):

@@ -58,7 +58,7 @@ done
 above, and nothing else:
 
 ```sh
-python3 transmux/fixtures/audio_srat/gen.py
+python3 fixtures/transmux/audio_srat/gen.py
 ```
 
 - **`ipcm_v0_192k_wrapped.mp4`** — the same PCM written the *wrapping* way:

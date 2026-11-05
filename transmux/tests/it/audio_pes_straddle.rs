@@ -8,7 +8,7 @@
 //!
 //! PROVENANCE. Every input is a committed fixture, none is hand-made bytes:
 //!
-//! * `fixtures/audio_pes_straddle/sintel-ac3-eac3-aligned.ts` — the AC-3 5.1 and
+//! * `fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts` — the AC-3 5.1 and
 //!   E-AC-3 5.1 tracks of a 10 s excerpt of the Sintel soundtrack
 //!   (CC BY 3.0, see `ATTRIBUTION.txt` beside it), encoded and muxed with
 //!   ffmpeg, trimmed to ~3 s of each (94 AC-3 PES of one syncframe, 47 E-AC-3 PES of two). Frame-aligned PES.

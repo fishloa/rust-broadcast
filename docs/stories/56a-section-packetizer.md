@@ -104,7 +104,7 @@ The hard project invariant is byte-identical round-trip. Write:
    begins, and `pointer_field` equals the tail length before it.
 4. **Stuffing:** asserts the final packet's unused tail is `0xFF` and that the
    reassembler discards it (no extra section, `is_empty()` afterwards).
-5. **Fixture round-trip:** parse the sections out of `dvb-si/fixtures/m6-single.ts`
+5. **Fixture round-trip:** parse the sections out of `fixtures/ts/m6-single.ts`
    via the existing demux/reassembler, re-`packetize` them on their PID, feed the
    result through `SiDemux`, and assert zero malformed/dropped sections and the
    same `AnyTableSection` set. (If wiring `SiDemux` here is heavy, a
