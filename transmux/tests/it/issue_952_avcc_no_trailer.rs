@@ -4,7 +4,7 @@
 //! (`chroma_format`/`bit_depth_*`/`sps_ext`) as mandatory whenever
 //! `profile_indication` was in the High-profile family (100/110/122/244).
 //!
-//! Fixture: `fixtures/scte35/dash/V300/{init.mp4,3.m4s}` — a real
+//! Fixture: `fixtures/scte35/dash/v300/{init.mp4,3.m4s}` — a real
 //! DASH-IF `livesim2` capture (Apache-2.0, see
 //! `fixtures/scte35/PROVENANCE.md`). Its `avcC` is exactly 41 bytes,
 //! profile 100 (High), and the SPS+PPS arrays consume every byte — there is

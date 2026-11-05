@@ -301,7 +301,7 @@ fixture.** Root cause, isolated:
 Reproducer (against the committed fixture, no scratch files needed):
 
 ```rust
-// cat fixtures/scte35/dash/V300/{init.mp4,0.m4s,1.m4s,...,12.m4s} > combined.mp4
+// cat fixtures/scte35/dash/v300/{init.mp4,0.m4s,1.m4s,...,12.m4s} > combined.mp4
 use broadcast_common::Unpackage;
 use transmux::Fmp4Demux;
 let data = std::fs::read("combined.mp4").unwrap();
