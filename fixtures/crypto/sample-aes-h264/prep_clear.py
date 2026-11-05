@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""prep-clear.py IN.h264 OUT_clear.h264 OUT_tailprobe_clear.h264 [OUT_escprobe KEYHEX IVHEX [OUT_epclear]]
+"""prep_clear.py IN.h264 OUT_clear.h264 OUT_tailprobe_clear.h264 [OUT_escprobe KEYHEX IVHEX [OUT_epclear]]
 
 1. OUT_clear: IN renormalised to 4-byte start codes (so byte comparisons with
    the encryptor's output are not confused by 3- vs 4-byte start codes).

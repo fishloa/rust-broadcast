@@ -21,7 +21,7 @@ no tool we have emits >1 trun per traf).  `explicit` = the second trun carries i
 data_offset; `implicit` = it omits data_offset and continues after the previous trun's data.
 The first trun keeps first_sample_flags; the second uses the tfhd default sample flags.
 `mfra` is dropped (its moof offsets would be stale; it is optional).
-Correctness is checked independently by frag-samples.py (spec-derived) + mp4decrypt/ffmpeg."""
+Correctness is checked independently by frag_samples.py (spec-derived) + mp4decrypt/ffmpeg."""
 import struct, sys
 
 def boxes(b):

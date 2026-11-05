@@ -6,7 +6,7 @@ spec tables (page images of V1.2.1 pp.27-28, "No. of Bits" column), sharing no
 code with the scte35-splice crate. Prints Rust `const` byte arrays for
 `scte35-splice/tests/it/dvb_ta_compact_vectors.rs`. Re-run to regenerate:
 
-    python3 scte35-splice/tests/fixtures/dvb_ta/gen-compact-vectors.py
+    python3 fixtures/scte35/dvb-ta/gen_compact_vectors.py
 
 Table 6 (compact_time_signal), in order:
   encrypted_packet 1 | encryption_algorithm 6 | cw_index 8 | pts_time 33 |

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ts-swap-es.py CLEAR.ts NEWES.bin OUT.ts PID
+"""ts_swap_es.py CLEAR.ts NEWES.bin OUT.ts PID
 
 Replace the PES payload (elementary-stream bytes) of one PID in a TS with NEWES
 (must be exactly as long as the original ES). Needed because ffmpeg cannot mux

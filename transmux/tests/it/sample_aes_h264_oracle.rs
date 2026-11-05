@@ -135,7 +135,7 @@ fn emulation_prevention_is_reapplied() {
 /// (extracted as Bento4 wrote it) must carry the same encrypted **slice** NALs
 /// as the reference chained ES — Bento4 emits them differently packaged (its
 /// file has 16 extra non-slice NALs, e.g. repeated AUD/SPS), so the comparison
-/// is over the slice NALs (types 1/5), which is what `compare-es.py` compares.
+/// is over the slice NALs (types 1/5), which is what `compare_es.py` compares.
 /// Our decryptor must then recover the clear slices from it.
 #[test]
 fn bento4_encrypted_slices_match_and_decrypt() {
@@ -208,7 +208,7 @@ fn escprobe_decrypt_removes_inserted_escape_byte() {
 }
 
 /// Normalise NALs for comparison: unescape emulation-prevention triplets and
-/// re-serialise as 4-byte-length-prefixed frames (mirrors `compare-es.py`).
+/// re-serialise as 4-byte-length-prefixed frames (mirrors `compare_es.py`).
 fn norm_ep(annexb: &[u8]) -> Vec<u8> {
     let mut lp = Vec::with_capacity(annexb.len());
     for nal in iter_annexb_nals(annexb) {

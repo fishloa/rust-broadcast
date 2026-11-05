@@ -7,11 +7,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 KEYIV=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
 IV=101112131415161718191a1b1c1d1e1f
-OUT=bento4_sample_aes
+OUT=bento4-sample-aes
 rm -rf $OUT/*; mkdir -p $OUT
 xxd -r -p <<< ${KEYIV:0:32} > $OUT/key.bin
 {
-for name in clear tailprobe_clear escprobe_clear epclear_clear; do
+for name in clear tailprobe-clear escprobe-clear epclear-clear; do
   d=$OUT/$name; mkdir -p $d
   ffmpeg -v error -y -r 10 -f h264 -i $name.h264 -c copy $d/in.mp4
   mp4hls -f -o $d/hls --segment-duration 2 --encryption-mode SAMPLE-AES \
@@ -25,15 +25,15 @@ for name in clear tailprobe_clear escprobe_clear epclear_clear; do
   ffmpeg -v error -y -allowed_extensions ALL -i $d/stream.m3u8 -f framemd5 $d/bento4-decoded.framemd5 2>/dev/null
   rm -rf $d/hls $d/in.mp4
   echo "## $name.h264 -> Bento4 SAMPLE-AES"
-  python3 cmp-framemd5.py $name.framemd5 $d/bento4-decoded.framemd5 10 || true
+  python3 cmp_framemd5.py $name.framemd5 $d/bento4-decoded.framemd5 10 || true
   case $name in
     clear)           ref=enc-chained.h264 ;;
-    tailprobe_clear) ref=tailprobe-enc-gt.h264 ;;
-    escprobe_clear)  ref=escprobe-enc.h264 ;;
-    epclear_clear)   ref=epclear-enc.h264 ;;
+    tailprobe-clear) ref=tailprobe-enc-gt.h264 ;;
+    escprobe-clear)  ref=escprobe-enc.h264 ;;
+    epclear-clear)   ref=epclear-enc.h264 ;;
   esac
   echo "# Bento4 encrypted ES vs python reference $ref (first 10 pictures):"
-  python3 compare-es.py $ref $d/bento4-encrypted.h264 10 --raw || true
-  python3 compare-es.py $ref $d/bento4-encrypted.h264 10 || true
+  python3 compare_es.py $ref $d/bento4-encrypted.h264 10 --raw || true
+  python3 compare_es.py $ref $d/bento4-encrypted.h264 10 || true
 done
 } 2>&1 | tee $OUT/proof.log

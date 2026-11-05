@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cmp-framemd5.py REF.framemd5 OTHER.framemd5 [N] -> prints identical-frame count (first N frames if given)."""
+"""cmp_framemd5.py REF.framemd5 OTHER.framemd5 [N] -> prints identical-frame count (first N frames if given)."""
 import sys
 def h(p): return [l.split(',')[-1].strip() for l in open(p) if not l.startswith('#')]
 a, b = h(sys.argv[1]), h(sys.argv[2])

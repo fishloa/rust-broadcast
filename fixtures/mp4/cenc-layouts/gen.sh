@@ -17,7 +17,7 @@ ffmpeg -v error -y -i $T/src.mp4 -c copy $BX -movflags frag_keyframe+empty_moov 
 ffmpeg -v error -y -i $T/src.mp4 -c copy $BX -movflags frag_keyframe+empty_moov+default_base_moof      clear-ffmpeg-base-moof.mp4
 ffmpeg -v error -y -i $T/src.mp4 -c copy $BX -movflags frag_keyframe+empty_moov+omit_tfhd_offset       clear-ffmpeg-omit.mp4
 cp clear-ffmpeg-base-moof.mp4 clear.mp4
-python3 frag-samples.py clear.mp4 --dump | grep -v '^track' | awk '{print $NF, $(NF-1)}' > /dev/null
+python3 frag_samples.py clear.mp4 --dump | grep -v '^track' | awk '{print $NF, $(NF-1)}' > /dev/null
 python3 - > clear-samples.txt <<'PY'
 import hashlib, frag_samples as fs
 tr = fs.samples(open('clear.mp4', 'rb').read())
@@ -29,10 +29,10 @@ PY
 
 # (B) independent ENCRYPTOR: Bento4 mp4encrypt, CENC (aes-ctr, cenc scheme), both tracks, AVC NAL-aware subsamples.
 #     (Bento4 always writes default-base-is-moof; mfra in its output is stale)
-mp4encrypt --method MPEG-CENC --key 1:$KEY:$IV --key 2:$KEY:$IV --property 1:KID:$KID --property 2:KID:$KID clear.mp4 $T/enc_bento4.mp4
+mp4encrypt --method MPEG-CENC --key 1:$KEY:$IV --key 2:$KEY:$IV --property 1:KID:$KID --property 2:KID:$KID clear.mp4 $T/enc-bento4.mp4
 # (C) re-address the correctly-encrypted file into every 14496-12 §8.8.7/§8.8.8 form (no sample byte changes)
 for lay in default base_moof omit; do for sp in none explicit implicit; do
-  python3 relayout.py $T/enc_bento4.mp4 enc_${lay}_${sp}.mp4 --layout $lay --split $sp
+  python3 relayout.py $T/enc-bento4.mp4 enc-${lay//_/-}-${sp}.mp4 --layout $lay --split $sp
 done; done
 # hand-split CLEAR twin of one multi-trun file (for clear-side tests of the layouts)
 python3 relayout.py clear.mp4 clear-multitrun-base-moof-implicit.mp4 --layout base_moof --split implicit
@@ -40,7 +40,7 @@ python3 relayout.py clear.mp4 clear-multitrun-omit-implicit.mp4      --layout om
 
 # layout evidence: the first moof of each form (tfhd flags: 0x01 base_data_offset present, 0x20000 default-base-is-moof)
 {
-for f in clear_ffmpeg_default clear_ffmpeg_base_moof clear_ffmpeg_omit enc_default_none enc_base_moof_none enc_omit_none enc_default_explicit enc_default_implicit; do
+for f in clear-ffmpeg-default clear-ffmpeg-base-moof clear-ffmpeg-omit enc-default-none enc-base-moof-none enc-omit-none enc-default-explicit enc-default-implicit; do
   echo "=== $f.mp4"
   mp4dump --verbosity 3 $f.mp4 | awk '/\[moof\]/{c++} c==1' \
     | grep -E '^\s*\[(moof|traf|tfhd|trun|saio|senc)\]|track ID|base data offset|data offset|sample count|first sample flags' | grep -v 'sample info count'

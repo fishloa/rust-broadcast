@@ -3,11 +3,11 @@
 
 Run from the repository root:
 
-    python3 transmux/tests/fixtures/audio_srat/gen.py
+    python3 fixtures/audio/srat/gen.py
 
-The script performs the two byte patches the README documents, and nothing
+The script performs the two byte patches PROVENANCE.md documents, and nothing
 else. It never invents a file: `ipcm-v1-192k.mp4` and `qt-alac-v1.mov` come
-from ffmpeg (see the README for the exact commands), and the derived files
+from ffmpeg (see PROVENANCE.md for the exact commands), and the derived files
 differ from them only in the sample-entry rate/version signalling.
 """
 import struct
@@ -71,7 +71,7 @@ def make_synthetic_v2(src: Path, dst: Path) -> None:
     No locally-installed tool writes a QuickTime v2 entry (ffmpeg writes v0/v1),
     so this is derived from the real v1 file by patching the version field and
     the `revision_level`/`vendor` bytes that the crate used to discard. It
-    exists to pin the round-trip, and the README says so.
+    exists to pin the round-trip, and PROVENANCE.md says so.
     """
     data = bytearray(src.read_bytes())
     _, entry = stsd_entry(bytes(data))

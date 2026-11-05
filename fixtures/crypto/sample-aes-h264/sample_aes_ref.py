@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pure-python HLS Sample-AES H.264 reference encryptor (pycryptodome).
 
-usage: sample-aes-ref.py IN.h264 OUT.h264 KEYHEX IVHEX [--reset-per-block] [--tail ge|gt]
+usage: sample_aes_ref.py IN.h264 OUT.h264 KEYHEX IVHEX [--reset-per-block] [--tail ge|gt]
 
 Rule (Apple "MPEG-2 Stream Encryption Format for HLS", Sample-AES video):
   * NAL types 1 and 5 with more than 48 bytes are protected; all else clear.

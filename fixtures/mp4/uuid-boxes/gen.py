@@ -11,7 +11,7 @@ Widevine `pssh` body (from `fixtures/cpix/widevine-pssh-from-complex.bin`) at
 
 Sizes are patched by rebuilding the enclosing containers from their children,
 so the result is structurally exact. Verified with `mp4dump` (Bento4) — see
-README.md for the recorded output.
+PROVENANCE.md for the recorded output.
 
 Usage:
     python3 gen.py <in.mp4> <out.moov.mp4> <out.segment.mp4>
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[4]
+REPO = HERE.parents[2]
 WIDEVINE_PSSH = REPO / "fixtures" / "cpix" / "widevine-pssh-from-complex.bin"
 
 # [MS-SSTR] §2.2.4.4 — the `tfxd` uuid extended type.

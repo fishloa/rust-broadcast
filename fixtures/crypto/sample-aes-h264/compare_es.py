@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""compare-es.py REF.h264 OTHER.h264 [P]
+"""compare_es.py REF.h264 OTHER.h264 [P]
 
 Compare the slice NALs (types 1/5), emulation-prevention-normalised ,
 of the first P pictures (all if omitted). ffmpeg's Sample-AES decryptor emits

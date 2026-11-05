@@ -3,7 +3,7 @@
 //! The expected sets were derived independently of the detector by a Python
 //! walk over the per-SEI `cc_data()` reference lists
 //! (`private/fixtures/captions/*.cc_data.txt`, written by
-//! `fixtures/captions/gen-cc-data-reference.py`): per field, the channel bit of
+//! `fixtures/captions/gen_cc_data_reference.py`): per field, the channel bit of
 //! the last control code routes each text pair, XDS is skipped, and DTVCC
 //! packets are split into service blocks.
 

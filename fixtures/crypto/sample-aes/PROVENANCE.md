@@ -32,14 +32,14 @@ open('eac3-51-1024k.ec3', 'wb').write(d[:l * 4])
 PY
 ```
 
-This fixture is now **superseded** by `../sample_aes_eac3/` (the independent oracle).
+This fixture is now **superseded** by `../sample-aes-eac3/` (the independent oracle).
 It is kept only as the original provenance record; no test consumes it.
 
 ## Correction (independent oracle, see `../ORACLES.md` B1-B3)
 
 The "IV carried across the syncframes" claim above was checked against ffmpeg 8.1.2 (decryptor) and Bento4 `mp4hls`
 (encryptor). For **independent** syncframes (strmtyp 0, each its own audio frame) both **reset the IV at every
-syncframe** (`../sample_aes_eac3/`). Carrying across an independent syncframe + its *dependent* syncframes has no
+syncframe** (`../sample-aes-eac3/`). Carrying across an independent syncframe + its *dependent* syncframes has no
 independent oracle. This fixture concatenates two independent syncframes into one "frame"; the independent tools
 would treat them as two audio frames.
 

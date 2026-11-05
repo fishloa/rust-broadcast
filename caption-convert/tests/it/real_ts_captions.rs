@@ -5,7 +5,7 @@
 //!
 //! 1. The workspace extractor (`tests/support/ga94.rs`) reproduces, byte for
 //!    byte, the `cc_data()` list an independent Python extractor wrote
-//!    (`fixtures/captions/gen-cc-data-reference.py`).
+//!    (`fixtures/captions/gen_cc_data_reference.py`).
 //! 2. Every real `cc_data()` parses and serializes back byte-identical
 //!    (`cc-data`'s round-trip invariant on real wire bytes; the shaka frames
 //!    carry `process_em_data_flag = 0`, which a Table-B.9-only header check

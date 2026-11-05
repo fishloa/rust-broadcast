@@ -1,6 +1,6 @@
 """Independent oracle: extract ATSC A/53 GA94 cc_data() from the H.264 video of a TS.
 
-usage: ga94.py FILE.ts  -> prints `<pts_90k> <hex cc_data()>` per SEI in decode order.
+usage: gen_cc_data_reference.py FILE.ts  -> prints `<pts_90k> <hex cc_data()>` per SEI in decode order.
 Spec: ITU-T H.264 7.3.2.3 (SEI), Annex D.2.? user_data_registered_itu_t_t35 (payloadType 4),
 ATSC A/53 Part 4 6.2.3 / ANSI/SCTE 128-1 (GA94, user_data_type_code 0x03).
 """

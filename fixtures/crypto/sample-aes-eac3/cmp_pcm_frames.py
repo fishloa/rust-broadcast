@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cmp-pcm-frames.py REF.framemd5 OTHER.framemd5 [N] -- identical decoded audio frames (first N)."""
+"""cmp_pcm_frames.py REF.framemd5 OTHER.framemd5 [N] -- identical decoded audio frames (first N)."""
 import sys
 def h(p): return [l.split(',')[-1].strip() for l in open(p) if not l.startswith('#')]
 a, b = h(sys.argv[1]), h(sys.argv[2]); n = int(sys.argv[3]) if len(sys.argv) > 3 else len(a)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pure-python E-AC-3 HLS Sample-AES reference encryptor (pycryptodome).
 
-usage: sample-aes-eac3-ref.py IN.ec3 OUT.ec3 KEYHEX IVHEX [--reset-per-syncframe] [--leader N]
+usage: sample_aes_eac3_ref.py IN.ec3 OUT.ec3 KEYHEX IVHEX [--reset-per-syncframe] [--leader N]
 
 Syncframe boundaries come ONLY from the wire frmsiz field (ETSI TS 102 366
 E.1.3.1.3: bytes 2..3, 0x0B77 sync, frmsiz = ((b2&7)<<8|b3), frame bytes

@@ -20,13 +20,13 @@ d = open(sys.argv[1] + '/packed/segment-0.ec3', 'rb').read()
 n = 10 + ((d[6] << 21) | (d[7] << 14) | (d[8] << 7) | d[9])          # ID3v2 tag size (syncsafe)
 open(sys.argv[1] + '/packed/bento4-encrypted-es.ec3', 'wb').write(d[n:])
 PY
-python3 ts-extract-es.py $OUT/ts/segment-0.ts $OUT/ts/bento4-encrypted-es.ec3 0x101   # Bento4: PMT 0x100, audio 0x101, stream_type 0xC2 (+apad setup descriptor)
+python3 ts_extract_es.py $OUT/ts/segment-0.ts $OUT/ts/bento4-encrypted-es.ec3 0x101   # Bento4: PMT 0x100, audio 0x101, stream_type 0xC2 (+apad setup descriptor)
 for f in packed ts; do
   if cmp -s $OUT/$f/bento4-encrypted-es.ec3 enc-reset.ec3;   then echo "Bento4 $f ES == python reference (reset per syncframe): IDENTICAL ($(stat -f%z enc-reset.ec3 2>/dev/null || stat -c%s enc-reset.ec3) bytes)"; else echo "Bento4 $f ES != python reference (reset)"; fi
   if cmp -s $OUT/$f/bento4-encrypted-es.ec3 enc-carried.ec3; then echo "Bento4 $f ES == python reference (carried): IDENTICAL"; else echo "Bento4 $f ES != python reference (carried)"; fi
 done
 # ffmpeg (independent decryptor) decoding Bento4's TS
 ffmpeg -v error -y -allowed_extensions ALL -i $OUT/ts/stream.m3u8 -f framemd5 $OUT/ts/bento4-decoded.framemd5 2>/dev/null || true
-python3 cmp-pcm-frames.py clear.framemd5 $OUT/ts/bento4-decoded.framemd5 9
+python3 cmp_pcm_frames.py clear.framemd5 $OUT/ts/bento4-decoded.framemd5 9
 } 2>&1 | tee $OUT/proof.log
 rm -rf $T

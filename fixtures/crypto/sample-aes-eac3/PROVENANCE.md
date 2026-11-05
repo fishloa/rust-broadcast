@@ -37,13 +37,13 @@ chain (as the now-removed `sample_aes/eac3-51-1024k.ec3` unit test used to asser
 
 Other limits: AC-3 (non-E) was not built - ffmpeg's packed-audio SAMPLE-AES path does not decode encrypted
 AC-3/E-AC-3 (it probes the ciphertext), only its TS path decrypts E-AC-3; ffmpeg cannot mux encrypted E-AC-3 (muxer
-must decode), so `enc_*.ts` are built from the clear TS by swapping the PES payload (`ts-swap-es.py`, same
+must decode), so `enc-*.ts` are built from the clear TS by swapping the PES payload (`ts_swap_es.py`, same
 length). ffmpeg writes PMT `stream_type 0x87` + `EAC3` registration; Bento4 writes `stream_type 0xC2` with an
 `apad`/`zec3` setup descriptor on PID 0x101 - both are accepted by ffmpeg.
 
 ## Files
 
-`clear.ec3` (13 x 360-byte syncframes, stereo 48 kHz 90 kbit/s sine) - `sample-aes-eac3-ref.py` (reference, `--reset-per-syncframe`,
+`clear.ec3` (13 x 360-byte syncframes, stereo 48 kHz 90 kbit/s sine) - `sample_aes_eac3_ref.py` (reference, `--reset-per-syncframe`,
 `--leader N`) - `enc-reset.ec3`, `enc-carried.ec3` (+ `.ts` / `.m3u8`, playlist IV `101112..1f`, `key.bin` =
 `000102..0f`) - `*.framemd5` - `nokey.framemd5` (control: same TS without key tag does not decode) -
 `bento4/{ts,packed}/` (`segment-0.ts`/`.ec3`, `bento4-encrypted-es.ec3` = ES as Bento4 wrote it, `stream.m3u8`,

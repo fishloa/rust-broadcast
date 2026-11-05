@@ -17,7 +17,7 @@ unclear. See `private/fixtures/captions/PROVENANCE.md`.
 
 ## Derived reference files
 
-`gen-cc-data-reference.py` writes the per-SEI `<pts_90k> <hex cc_data()>` lists
+`gen_cc_data_reference.py` writes the per-SEI `<pts_90k> <hex cc_data()>` lists
 (kept with the media in the private submodule), an independent Python extractor (TS demux, PES
 reassembly, Annex B NAL split, emulation-prevention removal, SEI payloadType 4
 `itu_t_t35` with country 0xB5 / provider 0x0031 / `GA94` / user_data_type_code

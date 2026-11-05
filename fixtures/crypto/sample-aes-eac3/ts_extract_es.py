@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ts-extract-es.py IN.ts OUT.bin PID -- concatenate the PES payload bytes of one PID."""
+"""ts_extract_es.py IN.ts OUT.bin PID -- concatenate the PES payload bytes of one PID."""
 import sys
 d = open(sys.argv[1], 'rb').read(); pid = int(sys.argv[3], 0); out = bytearray()
 for p in range(0, len(d), 188):
