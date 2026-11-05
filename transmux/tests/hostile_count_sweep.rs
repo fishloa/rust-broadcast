@@ -10,7 +10,7 @@
 //!
 //! This is the sweep that found the zero-width `trun` hole (a 20-byte `trun`
 //! declaring `0x1000_0000` samples asked for a 10 GB `Vec` out of
-//! `ll_chunked.mp4`; see `trun_zero_width_alloc_bound.rs` for the pinned
+//! `ll-chunked.mp4`; see `trun_zero_width_alloc_bound.rs` for the pinned
 //! repro). It checks nothing about the *result* — only that no hostile count
 //! turns into an unbounded allocation or loop.
 

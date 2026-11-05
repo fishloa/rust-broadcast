@@ -7,7 +7,7 @@ use broadcast_client::{BufferEvent, Config, Event};
 use support::ts_host::Host;
 use support::ts_pmt::{Es, find, rewrite};
 
-const FIXTURE: &str = "ts/h264_aac_40s.ts";
+const FIXTURE: &str = "ts/h264-aac-40s.ts";
 const CHUNK: usize = 4 * TS_PACKET;
 const TS_PACKET: usize = 188;
 const PES_PRIVATE_DATA: u8 = 0x06;

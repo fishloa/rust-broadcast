@@ -157,11 +157,11 @@ pub fn is_private_checkout(dir: &Path) -> bool {
     }
 }
 
-/// Directory of the mirrored tsduck-test files under `private/fixtures/tsduck/`,
+/// Directory of the mirrored tsduck-test files under `private/fixtures/suites/tsduck/`,
 /// if the private repo is checked out.
 #[must_use]
 pub fn tsduck_dir() -> Option<PathBuf> {
-    private("tsduck")
+    private("suites/tsduck")
 }
 
 /// Where a located fixture came from.
@@ -274,13 +274,13 @@ pub fn spec_string(rel: &str, who: &str) -> Option<String> {
 }
 
 /// Locate `rel` (e.g. `input/test-002.ts`, `reference/test-147/test-147.ts`) in
-/// the `private/fixtures/tsduck/` mirror. Same skip/panic contract as [`require`].
+/// the `private/fixtures/suites/tsduck/` mirror. Same skip/panic contract as [`require`].
 ///
 /// # Panics
 /// If the private repo is checked out but `rel` is in neither location.
 #[must_use]
 pub fn tsduck(rel: &str, who: &str) -> Option<PathBuf> {
-    require(&format!("tsduck/{rel}"), who)
+    require(&format!("suites/tsduck/{rel}"), who)
 }
 
 /// Bytes of [`require`]`(rel, who)`, or `None` on a loud skip.

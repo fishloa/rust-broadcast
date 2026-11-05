@@ -7,8 +7,8 @@
 //! architecture from the crate-root docs, exercised with genuine samples
 //! rather than the one-byte synthetic samples the unit tests use.
 //!
-//! Reads `fixtures/ts/h264_aac.ts` (a real broadcast capture shared across
-//! this workspace's crates -- see `fixtures/ts/GENERATE.md`) via
+//! Reads `fixtures/ts/h264-aac.ts` (a real broadcast capture shared across
+//! this workspace's crates -- see `fixtures/ts/PROVENANCE.md`) via
 //! [`std::fs::read`].
 //!
 //! ```text
@@ -26,7 +26,7 @@ use media_plane::{
 };
 use transmux::{DemuxEvent, StreamingTsDemux};
 
-const FIXTURE: &str = "ts/h264_aac.ts";
+const FIXTURE: &str = "ts/h264-aac.ts";
 const TS_PACKET_SIZE: usize = 188;
 
 /// Adapts [`StreamingTsDemux`]'s [`DemuxEvent`] stream into the

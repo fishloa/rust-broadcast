@@ -210,7 +210,7 @@ pub type MhaCBox = MHADecoderConfigurationRecord;
 // The packet-type numbering and the three-tier "escaped value" header coding
 // are **empirically verified**, not printed in either vendored spec: every
 // access unit of the vendored Fraunhofer MPEG-H-in-TS fixture
-// (`private/fixtures/ts/mpegh-cicp01-baseline.ts`) parses end-to-end under
+// (`private/fixtures/audio/mpegh/mpegh-cicp-01-baseline-32kbps-single.ts`) parses end-to-end under
 // this scheme with no truncation/overrun, and the two random-access access
 // units decode to exactly the packet order ETSI TS 101 154 §6.8.4.1
 // mandates for a RAP (`PACTYP_MPEGH3DACFG`, then — directly following, per

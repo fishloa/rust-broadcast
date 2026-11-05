@@ -343,7 +343,7 @@ fn three_b_frame_fixture() -> Option<(MediaFixture, transmux::Media)> {
     let out: PathBuf = dir.join("source.ts");
     let status = Command::new("ffmpeg")
         .args(["-v", "error", "-y", "-stream_loop", GENERATED_LOOPS, "-i"])
-        .arg(test_fixtures::path("ts/h264_aac.ts"))
+        .arg(test_fixtures::path("ts/h264-aac.ts"))
         .args(["-t", GENERATED_SECONDS])
         .args(["-c:v", "libx264", "-preset", "veryfast", "-bf", "3"])
         .args(["-b_strategy", "0", "-g", "50", "-keyint_min", "50"])

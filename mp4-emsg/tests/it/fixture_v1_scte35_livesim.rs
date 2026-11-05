@@ -4,7 +4,7 @@
 //! (`livesim2.dashif.org/livesim2/scte35_2/testpic_2s`, `InbandEventStream`
 //! `urn:scte:scte35:2013:bin`).
 //!
-//! This complements the constructed v0 fixture (`scte35_emsg_v0.bin`): it is a
+//! This complements the constructed v0 fixture (`scte35-emsg-v0.bin`): it is a
 //! genuine packager-emitted v1 box (representation-relative timing,
 //! `presentation_time` as a u64), so it carries the real field values and the
 //! exact wire layout a DASH client encounters — the kind of coverage a
@@ -15,7 +15,7 @@
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("shared/emsg_v1_scte35_livesim.bin")
+    test_fixtures::read("scte35/emsg-v1-scte35-livesim.bin")
 }
 
 #[test]

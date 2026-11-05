@@ -69,8 +69,8 @@ example_args() {
     case "$1" in
         atsc3/parse_lls)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
         atsc3/parse_slt)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
-        st2022/parse_hbrmt)   echo "fixtures/st2022/st2022-6-hbrmt-payload-header.bin" ;;
-        dvb-mabr/parse_session) echo "fixtures/dvb-mabr/annex-c3-gateway-config.xml" ;;
+        st2022/parse_hbrmt)   echo "fixtures/rtp/st2022-6-hbrmt-payload-header.bin" ;;
+        dvb-mabr/parse_session) echo "fixtures/mabr/annex-c3-gateway-config.xml" ;;
         # Both directions are keystream transforms over opaque bytes, so each
         # runs standalone against the same input — no ordering dependency
         # between the two examples (cargo enumerates targets alphabetically,

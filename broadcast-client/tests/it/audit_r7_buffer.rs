@@ -5,7 +5,7 @@ use crate::support;
 use broadcast_client::{BufferEvent, Config, Event, Session};
 use support::replay::{TS_PACKET, open_live};
 
-const RAI: &str = "zenith-live/rai-gulp-8MB.ts";
+const RAI: &str = "ts/live-channels/rai-gulp-8-mb.ts";
 const AUDIO_PID: u16 = 0x130;
 const CHUNK: usize = 4_096;
 const CHUNK_STEP_US: u64 = 3_000;

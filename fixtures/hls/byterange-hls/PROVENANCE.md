@@ -1,10 +1,10 @@
 # byterange-hls fixture provenance
 
 Real ffmpeg single-file byte-range HLS playlist generated from the workspace's
-own `fixtures/ts/h264_aac_40s.ts` capture, via:
+own `fixtures/ts/h264-aac-40s.ts` capture, via:
 
 ```bash
-ffmpeg -i fixtures/ts/h264_aac_40s.ts -t 14 -c copy -f hls -hls_time 2 \
+ffmpeg -i fixtures/ts/h264-aac-40s.ts -t 14 -c copy -f hls -hls_time 2 \
   -hls_flags single_file -hls_playlist_type vod -hls_list_size 0 index.m3u8
 ```
 

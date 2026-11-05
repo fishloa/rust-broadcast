@@ -94,12 +94,12 @@ pid=0x0084  packets=351  27.77%
 ...
 -- total_packets=1264  bitrate=n/a (<=1 PCR seen)
 
-$ dvb-tools services fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts
+$ dvb-tools services fixtures/ts/tnt-5w-12732v-isi6-10s.ts
 LCN    1  onid=0x20FA tsid=0x0006 service=0x0601  H.264/AVC HD digital television service  "TF1"  running=running
 ...
 -- services=5 with_lcn=5 sdt_collected=1 nit_collected=1
 
-$ dvb-tools epg fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts
+$ dvb-tools epg fixtures/ts/tnt-5w-12732v-isi6-10s.ts
 service 0x0601  TF1
     event_id=0x7857  start=2026-04-11T00:45:00+00:00  duration=0h32m00s  "50' inside. "Le mag" (55/106)"
 ...
@@ -109,11 +109,11 @@ T2-MI: dump the packets of a capture, or extract the inner transport stream and
 analyse its SI in a pipeline:
 
 ```console
-$ dvb-tools t2mi fixtures/dvb-t2mi/colombia-capital-t2mi.ts --pid 0x0040
+$ dvb-tools t2mi fixtures/t2mi/colombia-capital-t2mi.ts --pid 0x0040
 type=BBFRAME (0x00) count=231 superframe_idx=15 stream_id=0 payload_bits=38712
 ...
 
-$ dvb-tools t2mi fixtures/dvb-t2mi/colombia-capital-t2mi.ts --pid 0x0040 --inner > inner.ts
+$ dvb-tools t2mi fixtures/t2mi/colombia-capital-t2mi.ts --pid 0x0040 --inner > inner.ts
 -- inner packets written: ts_packets=6000 t2mi_packets=258 crc_failures=0 malformed=0
 $ dvb-tools dump inner.ts
 ...

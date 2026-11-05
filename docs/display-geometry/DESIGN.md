@@ -598,12 +598,12 @@ prove recompilation, per the repo's mutation discipline):
 |---|---|---|---|
 | melodie: `TrackAdded.display.aspect_ratio == ExtendedSar{64,45}`, SAR 64:45, `video_signal` = format 5, limited, colour 5/5/5; output 720x576 | `private/fixtures/ts/melodie-anamorphic-sar-64-45-zenith-tv.ts` | ffmpeg `trace_headers`: idc 255, sar 64/45, video_format 5, full_range 0, primaries/transfer/matrix 5 | swap sar_width/sar_height reads; drop the Extended_SAR branch; drop colour read |
 | krone: `aspect_ratio == Sar16x11` (idc 4), `video_signal == None` | `private/fixtures/ts/krone-anamorphic-sar-16-11-zenith-tv.ts` | trace_headers idc 4, no video_signal_type | off-by-one in the idc table; treat absent VST as inferred-present |
-| two tracks, two SARs in one mux: 1440x1080 `Sar4x3` (idc 14) and 720x576 `Sar16x11` | tsduck `test-092.ts` (already mirrored in `private/fixtures/tsduck/input/`) | ffprobe per stream + trace_headers | geometry keyed to the wrong PID (>= 2 entities rule) |
-| crop, two CropUnitY values: 1920x1080 from 1088 rows via `frame_crop_bottom_offset` 4 (high_1080_cropped) and via offset 2 (transformers, 1080 reported by ffprobe => CropUnitY 4, i.e. field-capable) | public `fixtures/ts/h264/high_1080_cropped.ts`; `private/fixtures/ts/transformers-eia608-h264.ts` | trace_headers offsets + ffprobe height; confirm `frame_mbs_only_flag` in the test's own oracle note | CropUnitY without the `2 - frame_mbs_only` factor (one of the two files must then fail) |
+| two tracks, two SARs in one mux: 1440x1080 `Sar4x3` (idc 14) and 720x576 `Sar16x11` | tsduck `test-092.ts` (already mirrored in `private/fixtures/suites/tsduck/input/`) | ffprobe per stream + trace_headers | geometry keyed to the wrong PID (>= 2 entities rule) |
+| crop, two CropUnitY values: 1920x1080 from 1088 rows via `frame_crop_bottom_offset` 4 (high_1080_cropped) and via offset 2 (transformers, 1080 reported by ffprobe => CropUnitY 4, i.e. field-capable) | public `fixtures/ts/h264/high-1080-cropped.ts`; `private/fixtures/ts/transformers-eia608-h264.ts` | trace_headers offsets + ffprobe height; confirm `frame_mbs_only_flag` in the test's own oracle note | CropUnitY without the `2 - frame_mbs_only` factor (one of the two files must then fail) |
 | full range: `full_range() == true` | `private/fixtures/ts/transformers-eia608-h264.ts` | trace_headers video_full_range_flag 1 | ignore the flag |
-| HEVC colour: primaries 9, transfer 16 (PQ), limited | tsduck `test-074.hevc.ts` (must be mirrored into `private/fixtures/tsduck/`, BSD licence per the tsduck PROVENANCE) | trace_headers | HEVC walk reading the H.264 field order |
+| HEVC colour: primaries 9, transfer 16 (PQ), limited | tsduck `test-074.hevc.ts` (must be mirrored into `private/fixtures/suites/tsduck/`, BSD licence per the tsduck PROVENANCE) | trace_headers | HEVC walk reading the H.264 field order |
 | HEVC SAR / conformance window / default display window | **none real** | spec vectors from SN §1/§3, plus a derived fixture: real HEVC re-muxed with ffmpeg `hevc_metadata` (`sample_aspect_ratio=`, `crop_*`), provenance recorded | sign/offset errors in E-78..E-81 |
-| ordering: on `h264-two-resolutions.ts` the `TrackUpdated` arrives after the last 320x240 Sample and before the first 640x480 one | public `fixtures/transmux/ts/h264-two-resolutions.ts` | its README oracle (keyframe DTS 306000) | move the push back before `push_live_au` |
+| ordering: on `h264-two-resolutions.ts` the `TrackUpdated` arrives after the last 320x240 Sample and before the first 640x480 one | public `fixtures/ts/h264-two-resolutions.ts` | its README oracle (keyframe DTS 306000) | move the push back before `push_live_au` |
 | edge vectors: idc 0, 17, 254, Extended 0:45, 64:0, crop beyond picture, VUI truncated after SAR | spec vectors (inline, `#[cfg(test)]`) | SN §1/§3 | each guard removed |
 | fuzz: `from_avc_sps`/`from_hevc_sps` added to the existing `transmux_ts_demux*` targets' reach + a direct `sps_display` target | - | no panic, bounded | - |
 
@@ -718,11 +718,11 @@ and `GA94`+0x06 bar data.
 | H.264 table SAR 16:11 (idc 4), no video signal type | `private/fixtures/ts/krone-anamorphic-sar-16-11-zenith-tv.ts` | yes |
 | H.264 SAR 4:3 (1440x1080) and 16:11 in one mux | tsduck `test-092.ts` (mirrored) | yes |
 | H.264 SAR 12:11 | tsduck `test-084.ts` (mirrored) | yes |
-| H.264 frame cropping | public `fixtures/ts/h264/high_1080_cropped.ts`; `transformers-eia608-h264.ts` | yes |
+| H.264 frame cropping | public `fixtures/ts/h264/high-1080-cropped.ts`; `transformers-eia608-h264.ts` | yes |
 | H.264 full range | `private/fixtures/ts/transformers-eia608-h264.ts` | yes |
 | H.264 AFD (value 1000 only) | public `fixtures/ts/gulli-opengop.ts`; tsduck `test-065.m2ts`, `test-092.ts` | yes, one value |
 | MPEG-2 AFD 1000 / 1010 / 1110 | tsduck `test-040.ts`, `test-205.ts`, `test-128.*` (mirroring needed) | yes, three values |
-| MPEG-2 SAR 64:45 / 16:11 | `private/fixtures/ts/hotbird-mhp-video-head-6MB.ts`, tsduck `test-205.ts` | yes (Phase 1b) |
+| MPEG-2 SAR 64:45 / 16:11 | `private/fixtures/ts/hotbird-mhp-video-head-6-mb.ts`, tsduck `test-205.ts` | yes (Phase 1b) |
 | HEVC colour PQ / HLG (bt2020) | tsduck `test-074.hevc.ts`, `test-010.ts` (mirroring needed) | yes |
 | HEVC SAR != 1:1, conformance window, default display window | none (all HEVC fixtures are 3840x2160, idc 1, no windows) | **spec vector / derived only** |
 | HEVC AFD | none | **spec vector only** |
@@ -731,7 +731,7 @@ and `GA94`+0x06 bar data.
 | **SAR change within one PID (16:9 <-> 4:3)** | none (per-stream transition count 0 on every candidate) | **derived/synthetic only** until the recorder catches one |
 
 All new test references to tsduck files must go through `test_fixtures` and be
-mirrored under `private/fixtures/tsduck/` with the pinned SHA (only referenced
+mirrored under `private/fixtures/suites/tsduck/` with the pinned SHA (only referenced
 files are mirrored today). The worktree's pinned private gitlink (`724383c`)
 predates the zenith-tv captures; Phase 1 bumps it.
 

@@ -4,7 +4,7 @@
 //! and verify that parsing an existing `esds` box and serializing it back produces
 //! byte-identical output.
 //!
-//! The fixture `h264_aac_frag.mp4` contains an AAC audio track whose `mp4a` sample
+//! The fixture `h264-aac-frag.mp4` contains an AAC audio track whose `mp4a` sample
 //! entry carries an `esds` box with a full ES_Descriptor chain (ES_Descriptor,
 //! DecoderConfigDescriptor, DecoderSpecificInfo for AAC, SLConfigDescriptor).
 
@@ -29,7 +29,7 @@ fn find_esds_box(data: &[u8]) -> &[u8] {
 
 #[test]
 fn esds_real_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let esds_box_bytes = find_esds_box(&data);
 
@@ -112,7 +112,7 @@ fn esds_real_fixture_round_trip() {
 
 #[test]
 fn esds_oti_mutation_changes_bytes() {
-    let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let esds_box_bytes = find_esds_box(&data);
 
@@ -150,10 +150,10 @@ fn esds_real_fixtures_round_trip_box_and_public_parse() {
     const BOX_HEADER: usize = 8;
     const FULLBOX_EXTRA: usize = 4;
     let fixtures = [
-        "transmux/h264_aac_frag.mp4",
-        "ts/demux-oracle/h264_aac.ref.mp4",
-        "mp4/aac_sgpd.mp4",
-        "mp4/progressive/av_prog.mp4",
+        "mp4/h264-aac-frag.mp4",
+        "ts/demux-oracle/h264-aac.ref.mp4",
+        "mp4/aac-sgpd.mp4",
+        "mp4/progressive/av-prog.mp4",
     ];
     let mut seen: Vec<Vec<u8>> = Vec::new();
 

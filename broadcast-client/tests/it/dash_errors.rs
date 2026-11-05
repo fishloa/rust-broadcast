@@ -310,7 +310,7 @@ fn a_subtitle_set_is_dropped_once_with_a_track_dropped_error() {
 }
 
 fn progressive() -> Vec<u8> {
-    test_fixtures::read("mp4/progressive/av_prog.mp4")
+    test_fixtures::read("mp4/progressive/av-prog.mp4")
 }
 
 #[test]
@@ -777,7 +777,7 @@ fn an_unresolved_xlink_set_is_reported_as_the_xlink_feature() {
 #[test]
 fn a_stream_whose_only_track_is_encrypted_is_fatal_unsupported_encryption() {
     use dash_common::world::World as W;
-    let whole = test_fixtures::read("transmux/h264_cenc.mp4");
+    let whole = test_fixtures::read("mp4/h264-cenc.mp4");
     let split = fmp4_split::split(&whole).unwrap();
     let init = fmp4_split::drop_track(&split.init, 2);
     let segments = fmp4_split::group(&split.segments, 4);

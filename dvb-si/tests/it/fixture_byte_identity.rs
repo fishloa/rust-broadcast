@@ -11,10 +11,10 @@ use dvb_si::tables::AnyTableSection;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn read_fixture(filename: &str) -> Vec<u8> {
-    let subdir = if filename == "m6-single.ts" {
+    let subdir = if filename == "m6-single.ts" || filename.starts_with("tnt-5w") {
         "ts"
     } else {
-        "dvb-si"
+        "si"
     };
     let path = test_fixtures::path(&format!("{subdir}/{filename}"));
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))

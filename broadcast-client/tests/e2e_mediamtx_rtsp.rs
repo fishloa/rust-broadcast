@@ -1,4 +1,4 @@
-//! A real wire check against mediamtx fed by ffmpeg: `fixtures/ts/h264_aac.ts` published over RTSP/TCP
+//! A real wire check against mediamtx fed by ffmpeg: `fixtures/ts/h264-aac.ts` published over RTSP/TCP
 //! and played through a `Session` over a real TCP socket.
 //!
 //! Both tools are found on `PATH`. When either is missing the test SKIPS LOUDLY, and with
@@ -23,7 +23,7 @@ use support::truth::Truth;
 const REQUIRE_ENV: &str = "REQUIRE_MEDIAMTX_E2E";
 const MEDIAMTX: &str = "mediamtx";
 const FFMPEG: &str = "ffmpeg";
-const FIXTURE: &str = "ts/h264_aac.ts";
+const FIXTURE: &str = "ts/h264-aac.ts";
 const STREAM_PATH: &str = "live";
 const READY_DEADLINE: Duration = Duration::from_secs(10);
 static SERVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

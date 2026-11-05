@@ -1,7 +1,7 @@
 use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
 static D: std::sync::LazyLock<Vec<u8>> =
-    std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
 
 fn drain_actions(c: &mut TsHttpClient) -> Vec<Action> {
     let mut v = Vec::new();

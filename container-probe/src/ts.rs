@@ -175,7 +175,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
                 // stride (188 bytes), so a region of `TS_PACKET_SIZE` bytes or
                 // more with no sync byte at all can never be TS. A region
                 // shorter than one packet has simply not examined a full packet
-                // yet — e.g. `ts_midpacket_phase.ts` holds its first `0x47` at
+                // yet — e.g. `ts-midpacket-phase.ts` holds its first `0x47` at
                 // offset 111, so every prefix `16..=111` contains no sync but is
                 // still a prefix of a genuine TS. That is `Insufficient`, not
                 // `None`: the shared `Insufficient` vs `Unknown` decision.
@@ -207,7 +207,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     // reach `TS_CONFIRM_FOR_STRONG` at this lane, and reported `Insufficient`
     // otherwise. That was wrong, and a corpus sweep caught it: eleven real,
     // *complete* TS files of 188 B - 1.1 KB (`fixtures/ts/scte35-*.ts`,
-    // `fixtures/ts/pts-*.ts`, `fixtures/mpeg-ts/af-*.ts`) each answered
+    // `fixtures/ts/pts-*.ts`, `fixtures/ts/af-*.ts`) each answered
     // "supply more bytes" for a file the caller had already read to the end —
     // the same false-`Insufficient` class of bug as the sync-byte-presence
     // check this module used to make. `Insufficient` belongs to the

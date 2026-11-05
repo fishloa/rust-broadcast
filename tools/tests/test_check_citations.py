@@ -145,3 +145,13 @@ def test_crate_fixtures_fails(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"dvb-si"})
     _scratch(tmp_path, {"docs/good.md": "see dvb-si/fixtures/x.bin\n"})
     assert _run(monkeypatch, tmp_path) == 1
+
+
+def test_fixture_dir_wrong_case_fails(tmp_path, monkeypatch) -> None:
+    _scratch(tmp_path, {"docs/good.md": "see fixtures/scte35/V300/\n", "fixtures/scte35/v300/a.mpd": "x\n"})
+    assert _run(monkeypatch, tmp_path) == 1
+
+
+def test_fixture_dir_exact_case_passes(tmp_path, monkeypatch) -> None:
+    _scratch(tmp_path, {"docs/good.md": "see fixtures/scte35/v300/\n", "fixtures/scte35/v300/a.mpd": "x\n"})
+    assert _run(monkeypatch, tmp_path) == 0

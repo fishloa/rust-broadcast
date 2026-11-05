@@ -1502,7 +1502,7 @@ mod tests {
     #[test]
     fn a_tracks_event_without_a_track_removes_it_from_the_buffer_feeder() {
         use broadcast_common::Unpackage;
-        let data = test_fixtures::read("ts/h264_aac.ts");
+        let data = test_fixtures::read("ts/h264-aac.ts");
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
         assert_eq!(specs.len(), 2);
@@ -1523,7 +1523,7 @@ mod tests {
         use broadcast_common::Unpackage;
         const LOW_AUDIO: u32 = 20;
         const HIGH_AUDIO: u32 = 30;
-        let data = test_fixtures::read("ts/h264_aac.ts");
+        let data = test_fixtures::read("ts/h264-aac.ts");
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let video = media
             .tracks
@@ -1591,7 +1591,7 @@ mod tests {
         use broadcast_common::Unpackage;
         const TICKS_PER_FRAME: i64 = 3_600;
         const JUMP_TICKS: i64 = 30 * 90_000;
-        let data = test_fixtures::read("ts/h264_aac.ts");
+        let data = test_fixtures::read("ts/h264-aac.ts");
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let video = media
             .tracks

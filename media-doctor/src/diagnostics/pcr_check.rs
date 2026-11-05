@@ -26,7 +26,7 @@
 //!   the recorder's null-stripping and remuxing produced, which diverges
 //!   from the PCR cadence on exactly the sparse, low-bitrate streams where a
 //!   byte-derived clock would misreport (measured: on
-//!   `fixtures/scte35-ssai/ts/video_with_scte35_splice_insert.ts` the PCR
+//!   `fixtures/scte35/ts/video-with-scte35-splice-insert.ts` the PCR
 //!   values advance in exact 100 ms steps while the packet spacing between
 //!   them varies by 6x). The PCR *value step* is the only evidence a file
 //!   offers, and on an arrival-timed source it is a sound proxy — the

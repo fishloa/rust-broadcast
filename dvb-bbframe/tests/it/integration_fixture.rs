@@ -3,12 +3,12 @@
 use std::fs;
 
 fn tnt_fixture() -> Vec<u8> {
-    let path = test_fixtures::path("dvb-bbframe/tnt-5w-12732v-bbframe.ts");
+    let path = test_fixtures::path("bbframe/tnt-5w-12732v-bbframe.ts");
     fs::read(path).expect("fixture tnt-5w-12732v-bbframe.ts must be present")
 }
 
 fn rai_fixture() -> Vec<u8> {
-    let path = test_fixtures::path("dvb-bbframe/rai-5w-12606v-bbframe.ts");
+    let path = test_fixtures::path("bbframe/rai-5w-12606v-bbframe.ts");
     fs::read(path).expect("fixture rai-5w-12606v-bbframe.ts must be present")
 }
 

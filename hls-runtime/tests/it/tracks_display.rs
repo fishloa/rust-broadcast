@@ -63,7 +63,7 @@ fn drive_fmp4(playlist: &str) -> Vec<Output> {
 
 #[test]
 fn ts_emits_tracks_before_init() {
-    let bytes = test_fixtures::read("ts/h264_aac.ts");
+    let bytes = test_fixtures::read("ts/h264-aac.ts");
     let outputs = drive_ts(&bytes);
     assert!(outputs.len() >= 2, "{outputs:?}");
     assert!(matches!(outputs[0], Output::Tracks(_)), "{outputs:?}");
@@ -81,7 +81,7 @@ fn ts_emits_tracks_before_init() {
 
 #[test]
 fn ts_tracks_match_oracle() {
-    let bytes = test_fixtures::read("ts/h264_aac.ts");
+    let bytes = test_fixtures::read("ts/h264-aac.ts");
     let outputs = drive_ts(&bytes);
     let emitted = match outputs.iter().find_map(|o| {
         if let Output::Tracks(s) = o {
@@ -236,9 +236,9 @@ fn fmp4_new_init_with_changed_specs_re_emits_tracks() {
     fn read_res(name: &str) -> Vec<u8> {
         let rel = match name {
             "init.mp4" => "hls/cmaf-fmp4/init.mp4",
-            "a48-init.mp4" => "scte35-ssai/dash/A48/init.mp4",
+            "a48-init.mp4" => "scte35/dash/a48/init.mp4",
             "index0.m4s" => "hls/cmaf-fmp4/index0.m4s",
-            "a48-0.m4s" => "scte35-ssai/dash/A48/0.m4s",
+            "a48-0.m4s" => "scte35/dash/a48/0.m4s",
             _ => panic!("unexpected {name}"),
         };
         test_fixtures::read(rel)
@@ -321,7 +321,7 @@ fn fmp4_new_init_with_changed_specs_re_emits_tracks() {
 
 #[test]
 fn no_display_change_keeps_one_samples_batch_per_track() {
-    let bytes = test_fixtures::read("ts/aac-5_1-640k.ts");
+    let bytes = test_fixtures::read("ts/aac-5-1-640k.ts");
     let outputs = drive_ts(&bytes);
     // Count Samples outputs per track.
     assert!(

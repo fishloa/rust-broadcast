@@ -1,16 +1,16 @@
 //! A REAL E-AC-3 stream with a dependent substream through transmux.
 //!
-//! Source: FFmpeg FATE `eac3/the_great_wall_7.1.eac3` (Dolby Digital Plus 7.1):
+//! Source: FFmpeg FATE `eac3/the-great-wall-7.1.eac3` (Dolby Digital Plus 7.1):
 //! 157 access units, each an AC-3 core syncframe (bsid 6, independent substream 0
 //! per ETSI TS 102 366 §E.1.3.1.2 / Annex J.1.5.2.2) followed by a dependent
 //! E-AC-3 syncframe (`strmtyp` 1, `chanmap` = Ls, Rs, Lrs/Rrs). Its licence is not
-//! stated, so it lives in the private submodule (`private/fixtures/eac3-dep/`,
+//! stated, so it lives in the private submodule (`private/fixtures/audio/eac3-dependent/`,
 //! with `PROVENANCE.md` and `make.sh` for the derived MP4/TS files produced by
 //! MP4Box, ffmpeg and gpac); every test here skips loudly (`test_fixtures::require`)
 //! when the private repo is not checked out.
 //!
 //! Independent oracles: MP4Box's own `dec3` box and gpac's per-sample parse of
-//! MP4Box's MP4 (`gw_mp4box.gpac_inspect.txt`: size and CRC32 of each access
+//! MP4Box's MP4 (`gw-mp4box.gpac_inspect.txt`: size and CRC32 of each access
 //! unit). Before the AC-3-core fix transmux recognised no access unit at all in
 //! this stream (an AC-3 syncframe was not an independent substream), so the TS
 //! demux produced no track.
@@ -28,11 +28,11 @@ const AC3_CORE_LEN: usize = 2304;
 const AU_LEN: usize = 2 * AC3_CORE_LEN;
 const SAMPLES_PER_AU: u32 = 1536;
 
-/// `private/fixtures/eac3-dep/<rel>` through the shared resolver: `None` after a
+/// `private/fixtures/audio/eac3-dependent/<rel>` through the shared resolver: `None` after a
 /// loud SKIPPED line when the private repo is not checked out.
 fn local(rel: &str) -> Option<Vec<u8>> {
     test_fixtures::require_bytes(
-        &format!("eac3-dep/{rel}"),
+        &format!("audio/eac3-dependent/{rel}"),
         "transmux/tests/it/eac3_real_dependent_substreams.rs",
     )
 }
@@ -47,7 +47,7 @@ macro_rules! need {
 }
 
 fn es() -> Option<Vec<u8>> {
-    local("the_great_wall_7.1.eac3")
+    local("the-great-wall-7.1.eac3")
 }
 
 /// The CRC gpac prints per packet: its `gf_crc_32`, the MPEG-2 CRC-32.
@@ -85,7 +85,7 @@ fn dec3_of(t: &transmux::Track) -> &Ec3SpecificBox {
 
 #[test]
 fn the_real_stream_splits_into_ac3_core_plus_dependent_access_units() {
-    let es = need!("the_great_wall_7.1.eac3");
+    let es = need!("the-great-wall-7.1.eac3");
     let units = split_eac3_syncframes(&es);
     assert_eq!(units.len(), AU_COUNT);
     let mut rebuilt = Vec::new();
@@ -110,8 +110,8 @@ fn the_real_stream_splits_into_ac3_core_plus_dependent_access_units() {
 
 #[test]
 fn access_units_equal_gpacs_own_samples_of_mp4boxs_file() {
-    let es = need!("the_great_wall_7.1.eac3");
-    let oracle = need!("gw_mp4box.gpac_inspect.txt");
+    let es = need!("the-great-wall-7.1.eac3");
+    let oracle = need!("gw-mp4box.gpac_inspect.txt");
     let units = split_eac3_syncframes(&es);
     let text = String::from_utf8(oracle).unwrap();
     let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
@@ -146,9 +146,9 @@ fn access_units_equal_gpacs_own_samples_of_mp4boxs_file() {
 
 #[test]
 fn dec3_for_the_real_access_unit_matches_mp4box() {
-    let es = need!("the_great_wall_7.1.eac3");
-    let mp4box = need!("gw_mp4box.mp4");
-    let ffmpeg = need!("gw_ffmpeg.mp4");
+    let es = need!("the-great-wall-7.1.eac3");
+    let mp4box = need!("gw-mp4box.mp4");
+    let ffmpeg = need!("gw-ffmpeg.mp4");
     let first = split_eac3_syncframes(&es).remove(0);
     let frames = Ec3SyncframeInfo::from_es_all(&first.data);
     let ours = Ec3SpecificBox::from_syncframes(&frames)
@@ -233,28 +233,28 @@ fn need_ts(name: &str) -> Vec<u8> {
 
 #[test]
 fn ffmpeg_ts_stream_type_0x87_recovers_every_access_unit() {
-    if local("gw_ffmpeg.ts").is_none() {
+    if local("gw-ffmpeg.ts").is_none() {
         return;
     }
-    assert_ts_recovers_the_stream("gw_ffmpeg.ts");
+    assert_ts_recovers_the_stream("gw-ffmpeg.ts");
 }
 
 #[test]
 fn gpac_ts_with_pes_boundaries_inside_access_units_recovers_every_access_unit() {
-    if local("gw_gpac.ts").is_none() {
+    if local("gw-gpac.ts").is_none() {
         return;
     }
-    assert_ts_recovers_the_stream("gw_gpac.ts");
+    assert_ts_recovers_the_stream("gw-gpac.ts");
 }
 
 #[test]
 fn mp4s_from_both_producers_demux_and_remux_unchanged() {
-    let es = need!("the_great_wall_7.1.eac3");
+    let es = need!("the-great-wall-7.1.eac3");
     let want: Vec<Vec<u8>> = split_eac3_syncframes(&es)
         .into_iter()
         .map(|u| u.data)
         .collect();
-    for name in ["gw_mp4box.mp4", "gw_ffmpeg.mp4"] {
+    for name in ["gw-mp4box.mp4", "gw-ffmpeg.mp4"] {
         let bytes = need!(name);
         let media = ProgressiveDemux::new(usize::MAX)
             .unwrap()
@@ -282,7 +282,7 @@ fn mp4s_from_both_producers_demux_and_remux_unchanged() {
 
 #[test]
 fn a_real_orphan_dependent_frame_is_dropped() {
-    let es = need!("the_great_wall_7.1.eac3");
+    let es = need!("the-great-wall-7.1.eac3");
     // Start the stream on the first access unit's DEPENDENT frame: its core was
     // "lost". The orphan must not become an access unit of its own.
     let units = split_eac3_syncframes(&es[AC3_CORE_LEN..]);

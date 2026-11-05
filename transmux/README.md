@@ -101,7 +101,7 @@ Demux a real H.264 plus AAC broadcast capture once, then mux the same IR to CMAF
 use broadcast_common::{Package, Unpackage};
 use transmux::{CmafMux, DashPackager, Media, TsDemux, TsMux};
 
-let ts = std::fs::read("../fixtures/ts/h264_aac.ts").unwrap();
+let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
 let media: Media = TsDemux::new().unpackage(&ts[..]).unwrap();
 assert!(media.tracks.len() >= 2, "an H.264 video and an AAC audio track");
 

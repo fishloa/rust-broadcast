@@ -132,10 +132,7 @@ fn lost_bits(section: &[u8], has_crc: bool) -> Vec<(usize, u8)> {
 fn real_sections() -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
-    for (dir, name) in [
-        ("ts", "m6-single.ts"),
-        ("dvb-si", "tnt-5w-12732v-isi6-10s.ts"),
-    ] {
+    for (dir, name) in [("ts", "m6-single.ts"), ("ts", "tnt-5w-12732v-isi6-10s.ts")] {
         let path = test_fixtures::path(&format!("{}/{}", dir, name));
         let Ok(data) = std::fs::read(&path) else {
             continue;

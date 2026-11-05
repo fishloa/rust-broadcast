@@ -64,7 +64,7 @@ fn fixture_path() -> PathBuf {
 /// that can catch cross-track IV reuse (see
 /// [`counter_ivs_are_unique_across_every_track`]).
 fn multi_track_fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264_aac.ts")
+    test_fixtures::path("ts/h264-aac.ts")
 }
 
 /// The two-track cleartext fixture, demuxed with **every** track kept.
@@ -81,7 +81,7 @@ fn clear_multi_track_media() -> Option<Media> {
     Some(
         demux
             .unpackage(bytes.as_slice())
-            .expect("demux h264_aac.ts"),
+            .expect("demux h264-aac.ts"),
     )
 }
 

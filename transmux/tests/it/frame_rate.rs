@@ -96,27 +96,27 @@ fn hevc_vui_timing_and_nominal_rate_per_fixture() {
     use transmux::FrameRateBasis::{Convention, Normative};
     let rows = [
         VuiRow {
-            fixture: "hevc_vui_hrd",
+            fixture: "hevc-vui-hrd",
             vui: Some((1, 25, false, false, Some(1))),
             rate: Some((25_000, Normative)),
         },
         VuiRow {
-            fixture: "hevc_vui_ntsc",
+            fixture: "hevc-vui-ntsc",
             vui: Some((1001, 30000, false, false, None)),
             rate: Some((29_970, Convention)),
         },
         VuiRow {
-            fixture: "hevc_vui_field",
+            fixture: "hevc-vui-field",
             vui: Some((1, 25, true, true, None)),
             rate: None,
         },
         VuiRow {
-            fixture: "hevc_vui_field_hrd",
+            fixture: "hevc-vui-field-hrd",
             vui: Some((1, 25, true, true, Some(1))),
             rate: Some((12_500, Normative)),
         },
         VuiRow {
-            fixture: "hevc_main",
+            fixture: "hevc-main",
             vui: None,
             rate: Some((25_000, Convention)),
         },
@@ -142,7 +142,7 @@ fn hevc_vui_timing_and_nominal_rate_per_fixture() {
 
 #[test]
 fn real_h264_fixture_with_vui_timing() {
-    let data = test_fixtures::require_bytes("ts/h264_aac.ts", "frame_rate").expect("fixture");
+    let data = test_fixtures::require_bytes("ts/h264-aac.ts", "frame_rate").expect("fixture");
     let media = TsDemux::new().demux(&data).expect("demux");
     let spec = media
         .tracks

@@ -60,7 +60,7 @@ fn fixture_resolution_comes_from_display_geometry_or_coded_size() {
             "ts/krone-anamorphic-sar-16-11-zenith-tv.ts",
             Some((1047, 576)),
         ),
-        ("ts/h264_aac.ts", None),
+        ("ts/h264-aac.ts", None),
     ];
     for (fixture, want) in cases {
         let Some(specs) = specs_from_fixture(fixture) else {

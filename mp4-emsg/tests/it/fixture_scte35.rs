@@ -14,7 +14,7 @@
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("shared/scte35_emsg_v0.bin")
+    test_fixtures::read("scte35/scte35-emsg-v0.bin")
 }
 
 #[test]

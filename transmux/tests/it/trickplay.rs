@@ -7,7 +7,7 @@
 //!    durations unchanged FAILS the duration-conservation assert, and a raw
 //!    passthrough FAILS the sample-count assert.
 //!
-//! 2. **Real fixture**: `av_frag.mp4` (AVC+AAC fMP4) is demuxed into a
+//! 2. **Real fixture**: `av-frag.mp4` (AVC+AAC fMP4) is demuxed into a
 //!    [`Media`]; the video track is passed through [`derive_iframe_track`] and
 //!    the result is validated for count thinning, `is_sync` on every sample,
 //!    and total-duration conservation.
@@ -83,7 +83,7 @@ fn synthetic_track() -> Track {
 }
 
 fn av_frag_fixture() -> Vec<u8> {
-    let path = test_fixtures::path("transmux/mp4/cmaf/av_frag.mp4");
+    let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-frag.mp4");
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
 }
 
@@ -174,7 +174,7 @@ fn synthetic_duration_folding() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2 — Real fixture: demux av_frag.mp4 → derive trick track
+// Test 2 — Real fixture: demux av-frag.mp4 → derive trick track
 // ---------------------------------------------------------------------------
 
 /// Verify derive_iframe_track on the video track of a real fMP4 fixture.
@@ -189,7 +189,7 @@ fn synthetic_duration_folding() {
 fn real_fixture_video_trickplay() {
     let file = av_frag_fixture();
     let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("demux av_frag.mp4");
+    let media = demux.unpackage(&file).expect("demux av-frag.mp4");
 
     // The fixture has video as the first track.
     let video = media

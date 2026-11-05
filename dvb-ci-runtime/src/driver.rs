@@ -2009,7 +2009,7 @@ pub(crate) mod tests {
     /// audio ES.
     ///
     /// **Provenance:** no committed capture in this repo's fixture corpus
-    /// carries a scrambled PMT — `fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts`'s
+    /// carries a scrambled PMT — `fixtures/ts/tnt-5w-12732v-isi6-10s.ts`'s
     /// five PMTs (verified via `cargo run -p dvb-tools -- dump ... --json`)
     /// are all clear/FTA services, and no CA-descriptor-bearing capture exists
     /// under `private/fixtures/` either. This hand-rolls the wire bytes per

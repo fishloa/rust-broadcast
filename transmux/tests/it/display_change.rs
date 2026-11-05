@@ -399,14 +399,14 @@ fn single_geometry_captures_have_only_the_initial_event() {
     }
 }
 
-/// `tsduck/input/test-092.ts` is a six-program multiplex with six AVC tracks
+/// `suites/tsduck/input/test-092.ts` is a six-program multiplex with six AVC tracks
 /// (ffprobe, per stream: 1920x1080 1:1 on 0x2D0, 1440x1080 4:3 on 0x140,
 /// 1920x1080 1:1 on 0x78, 720x576 16:11 on 0x208, 1920x1080 1:1 on 0xDC).
 /// Each gets exactly one level-triggered event, carrying its own geometry —
 /// the per-track state is never shared.
 #[test]
 fn per_track_geometries_in_one_mux() {
-    let Some(data) = read("tsduck/input/test-092.ts") else {
+    let Some(data) = read("suites/tsduck/input/test-092.ts") else {
         return;
     };
     let seen = stream(&data);

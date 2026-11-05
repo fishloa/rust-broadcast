@@ -79,7 +79,7 @@ fn display_geometry_attrs_per_capture() {
             "16:11",
             "20:11",
         ),
-        ("ts/h264_aac.ts", "1:1", "4:3"),
+        ("ts/h264-aac.ts", "1:1", "4:3"),
     ];
     for (fixture, sar, dar) in rows {
         let Some(mpd) = mpd_for(fixture) else {

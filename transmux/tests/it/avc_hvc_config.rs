@@ -137,7 +137,7 @@ fn extract_config_body(
 
 #[test]
 fn test_avcc_real_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let avcc_body = extract_config_body(&data, b"avc1", b"avcC");
@@ -176,7 +176,7 @@ fn test_avcc_real_fixture_round_trip() {
 
 #[test]
 fn test_avcc_mutation_changes_bytes() {
-    let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let avcc_body = extract_config_body(&data, b"avc1", b"avcC");
 
@@ -198,7 +198,7 @@ fn test_avcc_mutation_changes_bytes() {
 
 #[test]
 fn test_hvcc_real_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/hevc_frag.mp4");
+    let path = test_fixtures::path("mp4/hevc-frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let hvcc_body = extract_config_body(&data, b"hvc1", b"hvcC");
@@ -240,7 +240,7 @@ fn test_hvcc_real_fixture_round_trip() {
 
 #[test]
 fn test_hvcc_mutation_changes_bytes() {
-    let path = test_fixtures::path("transmux/hevc_frag.mp4");
+    let path = test_fixtures::path("mp4/hevc-frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let hvcc_body = extract_config_body(&data, b"hvc1", b"hvcC");
 

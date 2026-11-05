@@ -40,7 +40,7 @@ impl AdDecisionProvider for FixedProvider {
 fn main() {
     // Decode the same real cue `condition_real_cue` uses, so this walkthrough
     // is grounded in genuine SCTE-35 fields rather than invented ones.
-    let path = test_fixtures::path("scte35-ssai/emsg_splice_insert.bin");
+    let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
     let emsg_bytes = fs::read(path).expect("read real emsg fixture (see PROVENANCE.md)");
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     let requested_pts = match emsg.presentation_time {

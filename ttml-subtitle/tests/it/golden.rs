@@ -1,12 +1,12 @@
 //! Byte-for-byte golden gate: the parse result (as a `Debug` dump) and the
 //! serialized XML of every committed fixture and a set of edge documents must
-//! equal the files in `tests/golden/`, which were generated from the
-//! pre-quick-xml code on `origin/main` (see `tests/golden/README.md`). Set
+//! equal the files in `fixtures/golden/subtitles/`, which were generated from the
+//! pre-quick-xml code on `origin/main` (see `fixtures/golden/subtitles/PROVENANCE.md`). Set
 //! `GOLDEN_BLESS=<dir>` to write the files instead of comparing.
 #![cfg(feature = "std")]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use ttml_subtitle::Document;
 
@@ -17,9 +17,7 @@ fn check(name: &str, actual: &str) {
         fs::write(&path, actual).expect("write golden");
         return;
     }
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(name);
+    let path = test_fixtures::path(&format!("golden/subtitles/{}", name));
     let expected = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }
@@ -32,11 +30,15 @@ fn golden_for(stem: &str, xml: &str) {
 
 #[test]
 fn committed_fixtures_match_golden() {
-    let dir = test_fixtures::path("ttml");
+    let dir = test_fixtures::path("subtitles");
     let mut names: Vec<_> = fs::read_dir(&dir)
         .expect("fixtures dir")
         .map(|e| e.expect("entry").path())
         .filter(|p| p.extension().is_some_and(|e| e == "ttml"))
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("imsc"))
+        })
         .collect();
     names.sort();
     assert_eq!(names.len(), 11);

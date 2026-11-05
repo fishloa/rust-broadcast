@@ -33,7 +33,7 @@ fn samples_of(m: &Media, track: usize) -> Vec<Vec<u8>> {
 
 #[test]
 fn corrupt_cluster_size_in_the_middle_resyncs_at_next_cluster() {
-    let clean_bytes = fixture("mkv/h264_aac.mkv");
+    let clean_bytes = fixture("mkv/h264-aac.mkv");
     let clean = WebmDemux::new().unpackage(&clean_bytes[..]).unwrap();
     assert!(clean.degraded.is_empty());
     let clusters = cluster_offsets(&clean_bytes);
@@ -65,7 +65,7 @@ fn corrupt_cluster_size_in_the_middle_resyncs_at_next_cluster() {
 
 #[test]
 fn corrupt_track_entry_is_dropped_and_the_other_track_survives() {
-    let clean_bytes = fixture("mkv/h264_aac.mkv");
+    let clean_bytes = fixture("mkv/h264-aac.mkv");
     let clean = WebmDemux::new().unpackage(&clean_bytes[..]).unwrap();
     assert_eq!(clean.tracks.len(), 2);
 
@@ -91,7 +91,7 @@ fn corrupt_track_entry_is_dropped_and_the_other_track_survives() {
 
 #[test]
 fn corrupt_block_inside_a_cluster_is_dropped_the_rest_of_the_cluster_survives() {
-    let clean_bytes = fixture("mkv/h264_aac.mkv");
+    let clean_bytes = fixture("mkv/h264-aac.mkv");
     let clean = WebmDemux::new().unpackage(&clean_bytes[..]).unwrap();
     let clusters = cluster_offsets(&clean_bytes);
     let victim = clusters[1];

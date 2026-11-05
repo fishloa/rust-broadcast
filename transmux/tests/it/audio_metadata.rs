@@ -1,7 +1,7 @@
 //! Typed PMT audio metadata + derived role (issue #1162 R1).
 //!
 //! Real artifact: `fixtures/ts/france2.ts` (committed DVB capture; PMT ES_info
-//! per `france2-PROVENANCE.md`: `fre`, `qad`, `qaa` E-AC-3 audio tracks).
+//! per `france2-provenance.md`: `fre`, `qad`, `qaa` E-AC-3 audio tracks).
 //! Synthetic cases are spec-valid descriptor loops built by hand from ETSI EN
 //! 300 468 §6.2.19/§6.4.11 and carried through a real `TsMux` -> `TsDemux`
 //! round trip so the descriptors travel inside a real PMT.
@@ -116,7 +116,7 @@ fn role_rules() {
 /// the metadata off the re-demuxed `TrackSpec`.
 #[test]
 fn synthetic_pmt_through_tsmux() {
-    let path = test_fixtures::path("ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264-aac.ts");
     let bytes = std::fs::read(path).unwrap();
     let mut france = iso639(b"qad", 0);
     france.extend(supplementary(true, 0x01, Some(b"fra")));

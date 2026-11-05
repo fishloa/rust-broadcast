@@ -11,7 +11,7 @@ name: Release st2022
 
 # The former publish block (no licensable real ST 2022-6 HBRMT capture) was
 # lifted by the owner on 2026-10-03: a BSD-3-Clause real capture is committed
-# under fixtures/st2022/ (see PROVENANCE.md) and exercised by
+# under fixtures/rtp/ (see PROVENANCE.md) and exercised by
 # st2022/tests/hbrmt_fixture_pcap.rs.
 
 on:

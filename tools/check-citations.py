@@ -247,6 +247,13 @@ def main() -> int:
     present = set(f for f in files if not f.startswith("private/"))
     # also private gitlink? exclude
     present = set(f for f in present if f != "private")
+    present_dirs = {posixpath.dirname(f) for f in present}
+    present_dirs |= {posixpath.dirname(d) for d in list(present_dirs)}
+    while True:
+        parents = {posixpath.dirname(d) for d in present_dirs} - present_dirs
+        if not parents:
+            break
+        present_dirs |= parents
 
     private_root = ROOT / "private" / "specs-verified"
     if os.environ.get("SKIP_PRIVATE_FIXTURES") == "1":
@@ -379,14 +386,12 @@ def main() -> int:
                                 break
                         if matched:
                             break
-                    if not matched:
-                        if not any((ROOT / c).is_dir() for c in pats):
-                            errors.append(f"{rel}: citation does not resolve: {cite}")
+                    if not matched and not any(posixpath.normpath(c) in present_dirs for c in pats):
+                        errors.append(f"{rel}: citation does not resolve: {cite}")
                 else:
                     cands = [cite, f"{crate}/{cite}", posixpath.normpath(posixpath.join(d, cite))]
-                    if not any(c in present for c in cands):
-                        if not any((ROOT / c).is_file() or (ROOT / c).is_dir() for c in cands):
-                            errors.append(f"{rel}: citation does not resolve: {cite}")
+                    if not any(c in present or posixpath.normpath(c) in present_dirs for c in cands):
+                        errors.append(f"{rel}: citation does not resolve: {cite}")
 
         # f. crate-local fixture citations are never allowed
         for m in MEMBER_FIXTURE_CITE.finditer(text):

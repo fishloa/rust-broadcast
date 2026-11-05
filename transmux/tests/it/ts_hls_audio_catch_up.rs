@@ -113,7 +113,7 @@ fn check(rel: &str, bytes: &[u8]) -> usize {
 #[test]
 fn live_order_audio_spans_match_video_on_real_captures() {
     let mut total = 0;
-    for rel in ["ts/h264_aac_40s.ts", "ts/gulli-opengop.ts"] {
+    for rel in ["ts/h264-aac-40s.ts", "ts/gulli-opengop.ts"] {
         let bytes = std::fs::read(test_fixtures::path(rel)).expect("fixture");
         total += check(rel, &bytes);
     }
@@ -123,9 +123,9 @@ fn live_order_audio_spans_match_video_on_real_captures() {
 #[test]
 fn zenith_capture_audio_spans_match_video() {
     for rel in [
-        "zenith-http/tf1-live.ts",
-        "zenith-live/rai-gulp-8MB.ts",
-        "zenith-live/rai-news-24-8MB.ts",
+        "http/live-channels/tf1-live.ts",
+        "ts/live-channels/rai-gulp-8-mb.ts",
+        "ts/live-channels/rai-news-24-8-mb.ts",
     ] {
         let Some(path) = test_fixtures::require(rel, "ts_hls_audio_catch_up") else {
             continue;

@@ -563,10 +563,10 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
 fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
     // `m6-single.ts` alone carries no video in this excerpt (see module
     // docs), so it cannot demonstrate "video survives" on its own. Combine
-    // it with a second real, committed fixture (`h264_aac.ts`, a genuine
+    // it with a second real, committed fixture (`h264-aac.ts`, a genuine
     // decoded H.264+AAC capture) that does — both halves are real captured
     // bytes, never hand-built/fabricated.
-    let av_media = demux(&read_fixture("h264_aac.ts"));
+    let av_media = demux(&read_fixture("h264-aac.ts"));
     assert!(
         av_media
             .tracks

@@ -14,7 +14,7 @@
 //!   parsing for the tag-vocabulary check, while `ffprobe` decodes a real
 //!   fetched segment to prove the media itself is genuine.
 //!
-//! The ingest path is the real one: the committed `fixtures/ts/h264_aac.ts`
+//! The ingest path is the real one: the committed `fixtures/ts/h264-aac.ts`
 //! capture (real H.264+AAC) is pushed through `InputSpec::TsUdp` into
 //! `serve_with_registry`, and everything is fetched back over a real loopback
 //! HTTP `GET`. Both oracles skip **loudly** (with a `--nocapture`-visible
@@ -49,7 +49,7 @@ use crate::support::listener;
 use listener::bind_tcp;
 
 fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264_aac.ts")
+    test_fixtures::path("ts/h264-aac.ts")
 }
 
 /// Locate `bin` on `PATH`, returning its full path.
@@ -182,7 +182,7 @@ async fn serve_ts_hls_until_extinf() -> Served {
         SchemeRegistry::new(),
     ));
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
     let stop = Arc::new(AtomicBool::new(false));
     let sender_stop = Arc::clone(&stop);
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")

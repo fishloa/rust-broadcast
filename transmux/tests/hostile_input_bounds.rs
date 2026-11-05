@@ -87,7 +87,7 @@ fn patch_fixture(
     file
 }
 
-const PROG_MP4: &str = "transmux/h264_aac_prog.mp4";
+const PROG_MP4: &str = "mp4/h264-aac-prog.mp4";
 const CENC_MP4: &str = "mp4/cenc.mp4";
 
 /// `stts`/`ctts`: header(8) + version/flags(4) + entry_count(4) -> first

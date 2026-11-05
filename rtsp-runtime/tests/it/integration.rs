@@ -17,7 +17,7 @@ fn wire(s: &str) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 1 — Client full-session replay (session_tcp_interleaved.md).
+// Gate 1 — Client full-session replay (session-tcp-interleaved.md).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -128,7 +128,7 @@ fn gate2_illegal_method_in_state_bites() {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3 — Digest auth bites (digest_auth.md).
+// Gate 3 — Digest auth bites (digest-auth.md).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -342,7 +342,7 @@ fn gate6_server_transitions_bite() {
 
 #[test]
 fn gate7_sdp_parse() {
-    let sdp = std::fs::read("../fixtures/rtsp/sdp_sample.sdp").expect("read sdp fixture");
+    let sdp = std::fs::read("../fixtures/rtsp/sdp-sample.sdp").expect("read sdp fixture");
     let session = sdp_types::Session::parse(&sdp).expect("parse SDP");
     assert_eq!(session.medias.len(), 2, "two media sections (video+audio)");
     assert_eq!(session.medias[0].media, "video");
@@ -416,7 +416,7 @@ fn rand_ish_ids() -> impl FnMut() -> u64 + Send + 'static {
 // already decoded in the same `handle_data` call.
 // ---------------------------------------------------------------------------
 
-/// A client session replayed through the `session_tcp_interleaved.md`
+/// A client session replayed through the `session-tcp-interleaved.md`
 /// handshake up to a pending PLAY (CSeq 3).
 fn session_awaiting_play() -> ClientSession {
     let base = "rtsp://video.example.com/stream";

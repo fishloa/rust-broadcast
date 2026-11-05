@@ -5,7 +5,7 @@
 //! - DSM-CC (table_id 0x3B, 0x3C) on PID 0x00AB (3 sections total)
 //!
 //! NIT fixtures (table_id 0x40/0x41 on PID 0x0010):
-//! - `../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts` — 2 NIT sections (primary fixture)
+//! - `../fixtures/ts/tnt-5w-12732v-isi6-10s.ts` — 2 NIT sections (primary fixture)
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};
@@ -135,7 +135,7 @@ fn fixture_m6_dsmcc_round_trip() {
 
 #[test]
 fn fixture_tnt_isi6_nit_sections_parse() {
-    let sections = extract_sections_for_pid("dvb-si/tnt-5w-12732v-isi6-10s.ts", 0x0010);
+    let sections = extract_sections_for_pid("ts/tnt-5w-12732v-isi6-10s.ts", 0x0010);
 
     assert!(
         !sections.is_empty(),
@@ -164,7 +164,7 @@ fn fixture_tnt_isi6_nit_sections_parse() {
 
 #[test]
 fn fixture_tnt_isi6_nit_round_trip() {
-    let sections = extract_sections_for_pid("dvb-si/tnt-5w-12732v-isi6-10s.ts", 0x0010);
+    let sections = extract_sections_for_pid("ts/tnt-5w-12732v-isi6-10s.ts", 0x0010);
 
     let mut round_tripped = 0;
     for sec in &sections {

@@ -48,7 +48,7 @@ fn build(fixture: &str) -> (DashSim, Vec<Vec<Sig>>) {
 
 #[test]
 fn a_muxed_representation_plays_every_track_of_its_init_with_consecutive_ids() {
-    let (mut sim, oracle) = build("transmux/h264_aac_frag.mp4");
+    let (mut sim, oracle) = build("mp4/h264-aac-frag.mp4");
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     assert!(sim.errors().is_empty(), "{:?}", sim.errors());
@@ -75,7 +75,7 @@ fn a_muxed_representation_plays_every_track_of_its_init_with_consecutive_ids() {
 
 #[test]
 fn an_encrypted_track_is_reported_and_the_clear_track_still_plays() {
-    let (mut sim, oracle) = build("transmux/h264_cenc.mp4");
+    let (mut sim, oracle) = build("mp4/h264-cenc.mp4");
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     assert_eq!(

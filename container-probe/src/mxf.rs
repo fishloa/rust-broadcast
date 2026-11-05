@@ -186,7 +186,7 @@ mod drift {
         );
 
         // Real fixture key (extracted from the file).
-        let real = test_fixtures::read("mxf/op1a_mpeg2_pcm.mxf");
+        let real = test_fixtures::read("mxf/op1a-mpeg2-pcm.mxf");
         let real_key: [u8; 16] = real[..16].try_into().expect("16 bytes");
         assert_eq!(
             super::is_partition_pack_key(&real_key),
@@ -225,7 +225,7 @@ mod tests {
     /// 16-byte Partition Pack Key) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/mxf/op1a_mpeg2_pcm.mxf");
+        let data = fixture_bytes("fixtures/mxf/op1a-mpeg2-pcm.mxf");
         let region = &data[..UL_KEY_LEN - 1];
         match probe(region, region.len()) {
             Outcome::Insufficient(n) => assert_eq!(n, UL_KEY_LEN),

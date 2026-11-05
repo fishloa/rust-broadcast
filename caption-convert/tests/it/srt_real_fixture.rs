@@ -1,11 +1,11 @@
 //! Fixture-driven SRT test using a **real** subtitle file: the official
 //! English dialogue subtitles for *Sintel* (Blender Foundation's 2010
-//! "Durian" open movie), `fixtures/sub/sintel-en.srt` -- see
+//! "Durian" open movie), `fixtures/subtitles/sintel-en.srt` -- see
 //! `fixtures/PROVENANCE.md` for the exact source, revision, and CC BY 3.0
 //! licence text this was fetched under.
 //!
-//! Unlike `fixtures/sub/cap.vtt` (a `transmux`-produced synthetic two-cue
-//! sample, or `fixtures/cc/cea608_cc1_synthetic.txt` / the teletext synthetic
+//! Unlike `fixtures/subtitles/cap.vtt` (a `transmux`-produced synthetic two-cue
+//! sample, or `fixtures/captions/cea608-cc1-synthetic.txt` / the teletext synthetic
 //! fixture), this is genuine hand-authored, professionally-timed dialogue
 //! text: real punctuation (apostrophes, ellipses, a question mark cue), a
 //! real multi-line cue, and non-round timestamps (`00:01:47,250`, not a
@@ -15,7 +15,7 @@
 use std::fs;
 
 fn fixture_path() -> std::path::PathBuf {
-    test_fixtures::path("sub/sintel-en.srt")
+    test_fixtures::path("subtitles/sintel-en.srt")
 }
 
 fn load_fixture() -> String {

@@ -2,7 +2,7 @@
 //! (`begin_segment` / `push_segment_bytes` / `finish_segment`, DASH-IF §6.2.4):
 //! samples must appear as soon as a CMAF chunk (`moof`+`mdat`) is complete,
 //! and the result must not depend on where the byte stream is split.
-//! Real data: the committed `h264_aac.ts` packaged by transmux's own writers.
+//! Real data: the committed `h264-aac.ts` packaged by transmux's own writers.
 
 use broadcast_common::{Package, Stage, Timestamp, Unpackage};
 use media_plane::ingress::SessionEvent;
@@ -26,7 +26,7 @@ struct Fixture {
 }
 
 fn presentation() -> Fixture {
-    let ts = test_fixtures::read("ts/h264_aac.ts");
+    let ts = test_fixtures::read("ts/h264-aac.ts");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
     let mpd = DashPackager::default().package(&media).expect("mpd");
     let mut inits = Vec::new();

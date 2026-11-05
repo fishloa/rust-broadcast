@@ -2,8 +2,8 @@
 //! committed ST 2038 and RFC 8331 fixtures.
 //!
 //! No real ST 2038 / ST 2110-40 capture exists in this repo:
-//! `fixtures/st291/anc.bin` is a synthetic, hand-constructed ST 2038 Table 2
-//! PES and `anc_rtp.bin` re-wraps the same ANC words. They are regenerated so
+//! `fixtures/rtp/anc.bin` is a synthetic, hand-constructed ST 2038 Table 2
+//! PES and `anc-rtp.bin` re-wraps the same ANC words. They are regenerated so
 //! that every ANC packet **conforms to ST 291-1** (`Data_Count` carries its
 //! parity bits `0x102`/`0x203`; `Checksum_Word` is the §6.7 sum `0x134`/`0x1AC`),
 //! so `is_valid()` is asserted on both. Parsing stays tolerant, so the bite
@@ -14,7 +14,7 @@ use st291::{AncDataPacket, AncPacket, ValidationReport};
 
 #[test]
 fn synthetic_st2038_fixture_conforms_to_st291() {
-    let data = test_fixtures::read("st291/anc.bin");
+    let data = test_fixtures::read("rtp/anc.bin");
     let pkt = AncDataPacket::parse(&data).unwrap();
     assert!(!pkt.anc_packets.is_empty());
     for (i, p) in pkt.anc_packets.iter().enumerate() {
@@ -66,7 +66,7 @@ fn synthetic_rtp_fixture_conforms_to_st291() {
     use broadcast_common::Parse;
     use st291::AncRtpPayload;
 
-    let data = test_fixtures::read("st291/anc_rtp.bin");
+    let data = test_fixtures::read("rtp/anc-rtp.bin");
     // 12-byte RTP header (no CSRC/extension) precedes the RFC 8331 payload.
     let payload = AncRtpPayload::parse(&data[12..]).unwrap();
     assert!(!payload.anc_packets.is_empty());

@@ -8367,7 +8367,7 @@ pub(crate) mod tests {
     /// AAC access unit raised `TrackUpdated` and told a consumer to rebuild
     /// its init segment thousands of times a stream.
     ///
-    /// Real AAC bitstream, twice over. First: `fixtures/ts/aac-5_1-640k.ts`
+    /// Real AAC bitstream, twice over. First: `fixtures/ts/aac-5-1-640k.ts`
     /// is a real 5.1 AAC-LC capture whose ADTS frame lengths vary (ffprobe:
     /// 742, 792, 763, 764, 767, 759 ...) and which must yield **zero**
     /// `TrackUpdated`. Second: its elementary stream re-headered with a
@@ -8380,7 +8380,7 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("aac-5_1-640k.ts");
+        path.push("aac-5-1-640k.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 
@@ -8925,7 +8925,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// Real Annex-B H.264 access units from the committed `h264_aac.ts`
+    /// Real Annex-B H.264 access units from the committed `h264-aac.ts`
     /// capture: the first sample carries the SPS/PPS, so a track resolves on
     /// the first one fed. Reused by every test that needs a decodable video
     /// elementary stream without hand-rolling one.
@@ -8934,15 +8934,15 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
-            .expect("h264_aac.ts has an AVC track");
+            .expect("h264-aac.ts has an AVC track");
         video
             .samples
             .iter()
@@ -9414,15 +9414,15 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
-            .expect("h264_aac.ts has an AVC track");
+            .expect("h264-aac.ts has an AVC track");
         let width = match video.config() {
             CodecConfig::Avc { width, .. } => *width,
             _ => unreachable!(),
@@ -9523,7 +9523,7 @@ pub(crate) mod tests {
         // A second, genuinely different SPS: the same bytes with the level_idc
         // byte altered is enough to be a different parameter set, but it must
         // still decode, so take a real SPS from another committed capture.
-        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
+        let path = test_fixtures::path("ts/h264-two-resolutions.ts");
         let other =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
         let media = TsDemux::new()
@@ -9960,7 +9960,7 @@ pub(crate) mod tests {
 
     /// The (SPS, PPS, width) of the fixture's first and second resolution.
     fn two_resolution_sets() -> [(Vec<u8>, Vec<u8>, u16); 2] {
-        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
+        let path = test_fixtures::path("ts/h264-two-resolutions.ts");
         let bytes = std::fs::read(&path).unwrap();
         let mut demux = StreamingTsDemux::new();
         demux.feed(&bytes);
@@ -10051,7 +10051,7 @@ pub(crate) mod tests {
     /// so the track kept the *first* `avcC` and the init segment described a
     /// stream that had stopped being sent; a decoder then fails from the change
     /// onwards. The fixture is a real two-resolution capture (see
-    /// `../fixtures/transmux/ts/README.md`), demuxed through the streaming core so the
+    /// `../fixtures/ts/PROVENANCE.md`), demuxed through the streaming core so the
     /// `TrackUpdated` event is observable.
     ///
     /// The second half is the anti-spam half: the same fixture shows the
@@ -10059,7 +10059,7 @@ pub(crate) mod tests {
     /// *unchanged* repeat must emit nothing.
     #[test]
     fn mid_stream_config_change_emits_track_updated_once_and_only_when_it_changes() {
-        let path = test_fixtures::path("transmux/ts/h264-two-resolutions.ts");
+        let path = test_fixtures::path("ts/h264-two-resolutions.ts");
         let bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 
@@ -10187,7 +10187,7 @@ pub(crate) mod tests {
     /// the IR's "samples in decode order with a non-decreasing absolute dts"
     /// invariant and making every downstream muxer write negative deltas.
     ///
-    /// Real elementary-stream bytes from the committed `h264_aac.ts` fixture,
+    /// Real elementary-stream bytes from the committed `h264-aac.ts` fixture,
     /// re-stamped onto two time bases 2 s apart, with the discontinuity
     /// signalled exactly as a muxer does it: the bit set on an
     /// adaptation-field-only packet, then the new base's PES packets.
@@ -10211,15 +10211,15 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
-            .expect("h264_aac.ts has an AVC track");
+            .expect("h264-aac.ts has an AVC track");
         assert!(
             video.samples.len() >= FRAMES * 2,
             "fixture too small for two time bases"
@@ -10372,15 +10372,15 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
-            .expect("h264_aac.ts has an AVC track");
+            .expect("h264-aac.ts has an AVC track");
         let annexb: Vec<Vec<u8>> = video
             .samples
             .iter()
@@ -10914,7 +10914,7 @@ pub(crate) mod tests {
     /// gap, producing zero-duration samples plus one long one.
     ///
     /// Real elementary-stream bytes: the H.264 access units are the real
-    /// `Media` samples recovered from `fixtures/ts/h264_aac.ts` and re-emitted
+    /// `Media` samples recovered from `fixtures/ts/h264-aac.ts` and re-emitted
     /// through the crate's own `TsMux` PES packetiser, with the timing flags
     /// of every second PES cleared. The frame period is a real one (the
     /// fixture's own 25 fps cadence, 3600 ticks of 90 kHz).
@@ -10925,10 +10925,10 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264_aac.ts");
+        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
 
         /// Frame period of the fixture's video track, in 90 kHz ticks — the
         /// real cadence `TsMux` stamps its PES headers from.
@@ -10957,7 +10957,7 @@ pub(crate) mod tests {
             .tracks
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
-            .expect("h264_aac.ts has an AVC track");
+            .expect("h264-aac.ts has an AVC track");
         let source_dts0 = video.samples[0]
             .dts
             .expect("the fixture's AVC track is stamped");
@@ -11062,7 +11062,7 @@ pub(crate) mod tests {
 
     /// PROVENANCE: synthesised, deliberately. The case under test is a
     /// **constant integer PES increment** at 44.1 kHz, and no committed
-    /// capture here carries one — `fixtures/ts/h264_aac.ts` is 48 kHz, where
+    /// capture here carries one — `fixtures/ts/h264-aac.ts` is 48 kHz, where
     /// 1024 samples is exactly 1920 ticks of 90 kHz and this class of drift
     /// cannot occur at all. The ADTS frames come from the crate's own
     /// spec-correct header builder, not hand-written bytes.
@@ -11184,7 +11184,7 @@ pub(crate) mod tests {
     /// on a frame sync (issue #638 — the same defect reported for MP2, see
     /// `mpeg_legacy.rs`'s `mpeg_audio_resyncs_across_pes_boundaries`, applies
     /// identically to ADTS). Builds a real ADTS elementary stream from the
-    /// real captured AAC frames in `fixtures/ts/h264_aac.ts` (re-synthesizing
+    /// real captured AAC frames in `fixtures/ts/h264-aac.ts` (re-synthesizing
     /// each frame's ADTS header from the track's real recovered config, the
     /// same way [`build_es_payload`] does for muxing), then re-chunks it at a
     /// fixed size that does not align to any real AAC frame length.
@@ -11194,17 +11194,17 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let ts_bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 
         let mut demux = TsDemux::new();
-        let media = demux.demux(&ts_bytes).expect("demux h264_aac.ts");
+        let media = demux.demux(&ts_bytes).expect("demux h264-aac.ts");
         let audio = media
             .tracks
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Aac { .. }))
-            .expect("h264_aac.ts has an AAC track");
+            .expect("h264-aac.ts has an AAC track");
         let esds = match audio.config() {
             CodecConfig::Aac { esds, .. } => esds,
             _ => unreachable!(),
@@ -11259,7 +11259,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// Loads the real AudioSpecificConfig recovered from `fixtures/ts/h264_aac.ts`
+    /// Loads the real AudioSpecificConfig recovered from `fixtures/ts/h264-aac.ts`
     /// plus its real per-frame AAC payloads, for building real (but
     /// re-headered) ADTS test frames — same real source `adts_resyncs_across_pes_boundaries`
     /// uses.
@@ -11268,16 +11268,16 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let ts_bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
         let mut demux = TsDemux::new();
-        let media = demux.demux(&ts_bytes).expect("demux h264_aac.ts");
+        let media = demux.demux(&ts_bytes).expect("demux h264-aac.ts");
         let audio = media
             .tracks
             .into_iter()
             .find(|t| matches!(t.config(), CodecConfig::Aac { .. }))
-            .expect("h264_aac.ts has an AAC track");
+            .expect("h264-aac.ts has an AAC track");
         let esds = match audio.config() {
             CodecConfig::Aac { esds, .. } => esds.clone(),
             _ => unreachable!(),
@@ -11305,7 +11305,7 @@ pub(crate) mod tests {
     /// spec-cited `build_adts_header`/`parse_adts_header` for every OTHER
     /// field (profile/sfi/channels/frame_length) and only overriding
     /// `protection_absent` — the real payload bytes are the genuine captured
-    /// AAC frames from `fixtures/ts/h264_aac.ts`.
+    /// AAC frames from `fixtures/ts/h264-aac.ts`.
     ///
     /// Before the fix, `emit_audio_au` always stripped a fixed 7 bytes, so
     /// the emitted sample began with the 2 CRC bytes glued in front of the
@@ -11517,7 +11517,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// #1012: real AAC frames from `h264_aac.ts` re-framed as multi-block
+    /// #1012: real AAC frames from `h264-aac.ts` re-framed as multi-block
     /// CRC-protected ADTS frames must demux to exactly the same bytes as the
     /// original single-block frames, concatenated.
     #[test]
@@ -11910,7 +11910,7 @@ pub(crate) mod tests {
         );
     }
 
-    // ── Clean fixture: h264_aac.ts produces zero InputDegraded ───────────────
+    // ── Clean fixture: h264-aac.ts produces zero InputDegraded ───────────────
 
     #[test]
     fn h264_aac_clean_fixture_produces_zero_input_degraded() {
@@ -11918,7 +11918,7 @@ pub(crate) mod tests {
         path.push("..");
         path.push("fixtures");
         path.push("ts");
-        path.push("h264_aac.ts");
+        path.push("h264-aac.ts");
         let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
         let mut demux = StreamingTsDemux::new();
@@ -11929,7 +11929,7 @@ pub(crate) mod tests {
             .collect();
         assert!(
             degraded.is_empty(),
-            "h264_aac.ts must produce zero InputDegraded events, got {degraded:?}"
+            "h264-aac.ts must produce zero InputDegraded events, got {degraded:?}"
         );
     }
 
@@ -12616,7 +12616,7 @@ pub(crate) mod tests {
     // confuse the *test oracle* (the false-sync behaviour has its own tests).
     // The one real-capture run is `tests/it/mpeg_legacy.rs`'s
     // `mpeg_audio_resyncs_across_pes_boundaries` over the committed
-    // `mpeg2_mp2_pes_misaligned.ts`.
+    // `mpeg2-mp2-pes-misaligned.ts`.
 
     /// PES `stream_id` of the first MPEG audio stream (ISO/IEC 13818-1
     /// Table 2-22, `110x xxxx`).

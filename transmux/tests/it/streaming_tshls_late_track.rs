@@ -7,7 +7,7 @@
 //! video keyframe used to get a permanently video-only segmenter with no way
 //! to add audio later.
 //!
-//! Real fixture: `fixtures/ts/h264_aac.ts` (2-track H.264 + AAC MPEG-2 TS).
+//! Real fixture: `fixtures/ts/h264-aac.ts` (2-track H.264 + AAC MPEG-2 TS).
 //! We deliberately SIMULATE the late-audio-resolution scenario: build the
 //! segmenter with only the video `TrackSpec`, push enough video samples to
 //! force at least one video-only segment cut, call `add_track` with the audio
@@ -22,8 +22,8 @@ use transmux::pipeline::{CodecConfig, Sample};
 use transmux::{StreamingTsHlsSegmenter, TsDemux, TsSegment};
 
 fn load_ts() -> Vec<u8> {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    std::fs::read(path).expect("h264_aac.ts fixture must exist")
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    std::fs::read(path).expect("h264-aac.ts fixture must exist")
 }
 
 fn demux(ts: &[u8]) -> Media {
@@ -51,7 +51,7 @@ fn is_aac(c: &CodecConfig) -> bool {
 #[test]
 fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
     let ir = demux(&load_ts());
-    assert_eq!(ir.tracks.len(), 2, "h264_aac.ts must be a 2-track fixture");
+    assert_eq!(ir.tracks.len(), 2, "h264-aac.ts must be a 2-track fixture");
 
     let video_pos = ir
         .tracks

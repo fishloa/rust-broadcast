@@ -1,6 +1,6 @@
 //! PES access-unit reconstruction tests on a real H.264+AAC broadcast capture.
 //!
-//! The fixture `fixtures/ts/h264_aac.ts` is known to contain:
+//! The fixture `fixtures/ts/h264-aac.ts` is known to contain:
 //! - H.264 video PES on PID 0x0100  (75 PUSI / 75 access units)
 //! - AAC audio PES on PID 0x0101    (14 PUSI / 14 access units)
 //! - Both streams carry PTS on every access unit.
@@ -14,7 +14,7 @@ use std::{fs, path::PathBuf};
 
 /// Path to the shared H.264+AAC fixture in the workspace root.
 fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264_aac.ts")
+    test_fixtures::path("ts/h264-aac.ts")
 }
 
 fn load_fixture() -> Vec<u8> {

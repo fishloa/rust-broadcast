@@ -1,9 +1,6 @@
 //! Golden for `dvb_ta::base64_encode`, generated from unmodified `main`.
 use scte35_splice::dvb_ta::base64_encode;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
@@ -11,9 +8,7 @@ fn check(name: &str, actual: &str) {
         fs::write(Path::new(&dir).join(name), actual).expect("write golden");
         return;
     }
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(name);
+    let path = test_fixtures::path(&format!("golden/scte35/{}", name));
     let expected = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }

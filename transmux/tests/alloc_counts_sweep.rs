@@ -74,16 +74,16 @@ mod ts_demux_copies {
     /// bytes allocated while demuxing, as a multiple of the input size.
     #[test]
     fn ts_demux_copies_of_the_payload() {
-        let p = test_fixtures::path("ts/h264_aac.ts");
+        let p = test_fixtures::path("ts/h264-aac.ts");
         let Ok(bytes) = std::fs::read(p) else {
-            eprintln!("SKIPPED ts/h264_aac.ts");
+            eprintln!("SKIPPED ts/h264-aac.ts");
             return;
         };
         let (media, allocated) =
             bytes_allocated(|| TsDemux::new().unpackage(bytes.as_slice()).unwrap());
         drop(media);
         let x100 = allocated * 100 / bytes.len();
-        eprintln!("ts demux h264_aac.ts: {allocated} bytes allocated = {x100}/100 x input");
+        eprintln!("ts demux h264-aac.ts: {allocated} bytes allocated = {x100}/100 x input");
         assert!(x100 <= TS_BUDGET_X100, "{x100}/100 x input");
     }
 
@@ -134,9 +134,9 @@ mod rtp_stream_copies {
     /// loop, as a multiple of the packet bytes pushed.
     #[test]
     fn rtp_push_copies_each_packet_once() {
-        let p = test_fixtures::path("ts/h264_aac.ts");
+        let p = test_fixtures::path("ts/h264-aac.ts");
         let Ok(data) = std::fs::read(p) else {
-            eprintln!("SKIPPED ts/h264_aac.ts");
+            eprintln!("SKIPPED ts/h264-aac.ts");
             return;
         };
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
@@ -240,9 +240,9 @@ mod muxer_buffering {
     /// Bytes allocated by `package`, as a multiple of the produced output size.
     #[test]
     fn muxers_copy_the_output_few_times() {
-        let p = test_fixtures::path("ts/h264_aac.ts");
+        let p = test_fixtures::path("ts/h264-aac.ts");
         let Ok(data) = std::fs::read(p) else {
-            eprintln!("SKIPPED ts/h264_aac.ts");
+            eprintln!("SKIPPED ts/h264-aac.ts");
             return;
         };
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();

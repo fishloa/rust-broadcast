@@ -8,7 +8,7 @@
 use dvb_mabr::{Error, MulticastGatewayConfiguration, MulticastServerConfiguration};
 
 fn fixture(name: &str) -> String {
-    test_fixtures::read_to_string(&format!("dvb-mabr/{name}"))
+    test_fixtures::read_to_string(&format!("mabr/{name}"))
 }
 
 fn assert_every_truncation_errors<T: std::fmt::Debug>(

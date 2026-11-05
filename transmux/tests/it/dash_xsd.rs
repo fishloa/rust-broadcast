@@ -20,17 +20,17 @@ fn fixtures() -> PathBuf {
 }
 
 fn media() -> Media {
-    let ts = fs::read(fixtures().join("ts/h264_aac.ts")).expect("ts fixture");
+    let ts = fs::read(fixtures().join("ts/h264-aac.ts")).expect("ts fixture");
     TsDemux::new().unpackage(&ts[..]).expect("demux")
 }
 
 fn four_audio_media() -> Media {
     let mut tracks = Vec::new();
     for rel in [
-        "ts/h264_aac.ts",
+        "ts/h264-aac.ts",
         "ts/dolby/ac3.ts",
-        "ts/dts/dts_core.ts",
-        "ts/legacy/mpeg2_mp2.ts",
+        "ts/dts/dts-core.ts",
+        "ts/legacy/mpeg2-mp2.ts",
     ] {
         let bytes = test_fixtures::read(rel);
         let m = TsDemux::new().unpackage(&bytes).expect("demux");

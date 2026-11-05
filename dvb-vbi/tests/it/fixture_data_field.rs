@@ -7,7 +7,7 @@
 use dvb_vbi::{DataField, DataUnitId, DataUnitPayload};
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("dvb-vbi/vbi_data_field.bin")
+    test_fixtures::read("subtitles/vbi-data-field.bin")
 }
 
 #[test]

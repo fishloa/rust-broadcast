@@ -5,7 +5,7 @@ use mp4_emsg::EmsgBox;
 use timed_metadata::convert::{EmsgConfig, emsg_to_scte35, scte35_to_emsg};
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    test_fixtures::read(&format!("shared/{name}"))
+    test_fixtures::read(&format!("scte35/{name}"))
 }
 
 fn rewrap_matches(emsg_bytes: &[u8]) {
@@ -28,10 +28,10 @@ fn rewrap_matches(emsg_bytes: &[u8]) {
 
 #[test]
 fn v0_scte35_emsg_round_trips() {
-    rewrap_matches(&read_fixture("scte35_emsg_v0.bin"));
+    rewrap_matches(&read_fixture("scte35-emsg-v0.bin"));
 }
 
 #[test]
 fn v1_livesim_scte35_emsg_round_trips() {
-    rewrap_matches(&read_fixture("emsg_v1_scte35_livesim.bin"));
+    rewrap_matches(&read_fixture("emsg-v1-scte35-livesim.bin"));
 }

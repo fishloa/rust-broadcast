@@ -85,7 +85,7 @@ Runnable examples: `cargo run -p dvb-vbi --example build_data_field` and
 ## Design notes
 
 - Symmetric `Parse` / `Serialize`; parse then serialize is byte-identical,
-  tested on a committed capture (`dvb-vbi/vbi_data_field.bin` via `test-fixtures`).
+  tested on a committed capture (`subtitles/vbi-data-field.bin` via `test-fixtures`).
 - No raw passthrough: reserved bits and stuffing are typed fields, so
   non-conformant input still round-trips; `Opaque`/`Stuffing` units that own
   their whole body reject a non-zero extra stuffing count on serialize.

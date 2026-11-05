@@ -17,7 +17,7 @@ use std::hint::black_box;
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 static TNT_FIXTURE: std::sync::LazyLock<Vec<u8>> =
-    std::sync::LazyLock::new(|| test_fixtures::read("dvb-bbframe/tnt-5w-12732v-bbframe.ts"));
+    std::sync::LazyLock::new(|| test_fixtures::read("bbframe/tnt-5w-12732v-bbframe.ts"));
 
 /// PID carrying BBFrames in the TNT fixture.
 const TNT_PID: u16 = 0x010E;

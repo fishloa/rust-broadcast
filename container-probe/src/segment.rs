@@ -172,7 +172,7 @@ mod tests {
             "hls/cmaf-fmp4/index0.m4s",
             "hls/cmaf-fmp4/index1.m4s",
             "dash/chunk-stream0-00001.m4s",
-            "mp4/llcmaf/ll_chunked.mp4",
+            "mp4/llcmaf/ll-chunked.mp4",
         ] {
             let bytes = test_fixtures::read(rel);
             assert!(media_fragment(&bytes), "{rel}");
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn a_real_progressive_mp4_is_progressive_and_not_a_fragment() {
-        let bytes = test_fixtures::read("mp4/progressive/av_faststart.mp4");
+        let bytes = test_fixtures::read("mp4/progressive/av-faststart.mp4");
         assert!(progressive_movie(&bytes));
         assert!(!media_fragment(&bytes));
     }
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn real_ts_is_structured_at_any_packet_phase() {
-        let whole = test_fixtures::read("ts/h264_aac.ts");
+        let whole = test_fixtures::read("ts/h264-aac.ts");
         const PROBE_PACKETS: usize = 40;
         const CUT: usize = 100;
         let aligned = &whole[..PROBE_PACKETS * TS_PACKET_SIZE];
@@ -307,13 +307,13 @@ mod tests {
         assert!(ts_structure(&junk));
         assert!(ts_structure(&whole[CUT..]));
         assert!(ts_structure(&test_fixtures::read(
-            "container-probe/ts_midpacket_phase.ts"
+            "ts/ts-midpacket-phase.ts"
         )));
     }
 
     #[test]
     fn tiny_ts_bodies_need_every_lane_synced() {
-        let whole = test_fixtures::read("ts/h264_aac.ts");
+        let whole = test_fixtures::read("ts/h264-aac.ts");
         assert!(ts_structure(&whole[..TS_PACKET_SIZE]), "one packet");
         assert!(ts_structure(&whole[..2 * TS_PACKET_SIZE]), "two packets");
         assert!(ts_structure(&null_packet().repeat(3)), "only null packets");

@@ -69,19 +69,19 @@ fn assert_well_formed(data: &[u8]) {
 #[test]
 fn no_panic_on_prefixes_of_every_real_fixture() {
     let fixtures = [
-        "fixtures/ts/h264_aac.ts",
-        "fixtures/mp4/h264_high.mp4",
-        "fixtures/mkv/h264_aac.mkv",
-        "fixtures/webm/vorbis.webm",
-        "fixtures/mxf/op1a_mpeg2_pcm.mxf",
-        "fixtures/ps/h264_ac3.ps",
+        "fixtures/ts/h264-aac.ts",
+        "fixtures/mp4/h264-high.mp4",
+        "fixtures/mkv/h264-aac.mkv",
+        "fixtures/mkv/vorbis.webm",
+        "fixtures/mxf/op1a-mpeg2-pcm.mxf",
+        "fixtures/ps/h264-ac3.ps",
         "fixtures/flv/av.flv",
-        "fixtures/container-probe/pcm_s16le.wav",
-        "fixtures/container-probe/opus.ogg",
-        "fixtures/container-probe/video.asf",
-        "fixtures/container-probe/aac.adts",
-        "fixtures/container-probe/audio.mp3",
-        "fixtures/container-probe/h264.annexb",
+        "fixtures/audio/pcm-s16le.wav",
+        "fixtures/audio/opus.ogg",
+        "fixtures/candidates/video.asf",
+        "fixtures/audio/aac.adts",
+        "fixtures/audio/audio.mp3",
+        "fixtures/candidates/h264.annexb",
     ];
     for rel in fixtures {
         let full = fixture(rel);

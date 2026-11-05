@@ -1,7 +1,7 @@
 //! Real-fixture test: plan a programme -> ad transition and emit the
 //! `splice_insert()` it implies, driven by the genuine, non-IDR-aligned cue
-//! in `fixtures/scte35-ssai/` (DASH-IF `livesim2` capture, Apache-2.0; see
-//! `fixtures/scte35-ssai/PROVENANCE.md`).
+//! in `fixtures/scte35/` (DASH-IF `livesim2` capture, Apache-2.0; see
+//! `fixtures/scte35/PROVENANCE.md`).
 //!
 //! This is the same real cue `ssai-runtime/examples/condition_real_cue.rs`
 //! conditions: the nearest video keyframe lands 6000 ticks (67 ms) *after*
@@ -23,7 +23,7 @@ use std::fs;
 
 /// The real nearest video keyframe's PTS, independently measured straight
 /// from this same capture's `moof`/`traf`/`tfdt`/`trun` boxes
-/// (`fixtures/scte35-ssai/PROVENANCE.md`, "Cue-to-IDR alignment"). Hard-coded
+/// (`fixtures/scte35/PROVENANCE.md`, "Cue-to-IDR alignment"). Hard-coded
 /// as the independently-verified ground truth, exactly as
 /// `ssai-runtime/examples/condition_real_cue.rs` does — re-deriving it needs
 /// a working `Fmp4Demux` track and this exact fixture currently defeats that
@@ -35,7 +35,7 @@ const NEAREST_KEYFRAME_PTS: u64 = 160_767_315_906_000;
 const MEASURED_GAP_TICKS: u64 = 6_000;
 
 fn real_cue_requested_pts() -> u64 {
-    let path = test_fixtures::path("scte35-ssai/emsg_splice_insert.bin");
+    let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
     let emsg_bytes = fs::read(path).expect("read real emsg fixture (see PROVENANCE.md)");
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     assert!(emsg.is_scte35(), "fixture must carry a SCTE-35 emsg");

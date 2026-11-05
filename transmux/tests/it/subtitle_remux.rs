@@ -2,7 +2,7 @@
 //! ISOBMFF sample entry (`stpp` / `wvtt`, ISO/IEC 14496-30) so a demuxed
 //! subtitle track re-muxes to CMAF instead of being rejected.
 //!
-//! Real artifact: `fixtures/transmux/mp4/cmaf/av_subtitle_frag.mp4` (ffmpeg CMAF,
+//! Real artifact: `fixtures/mp4/cmaf-av-subtitle/av-subtitle-frag.mp4` (ffmpeg CMAF,
 //! AVC + `stpp`/TTML; see PROVENANCE.md there). `wvtt` has no real producer
 //! available (ffmpeg cannot write it), so it is a spec-vector round trip.
 
@@ -11,7 +11,7 @@ use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec, WvttSampleEntry};
 
 fn fixture() -> Vec<u8> {
-    let path = test_fixtures::path("transmux/mp4/cmaf/av_subtitle_frag.mp4");
+    let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 

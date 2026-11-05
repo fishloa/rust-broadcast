@@ -1,7 +1,7 @@
 # `fixtures/smooth/` - Smooth Streaming (MS-SSTR) client fixtures
 
 Real output of ffmpeg's `smoothstreaming` muxer, never hand-built bytes. Source material is
-`fixtures/ts/h264_aac.ts`, this workspace's own H.264 + AAC capture (own work, MIT OR Apache-2.0),
+`fixtures/ts/h264-aac.ts`, this workspace's own H.264 + AAC capture (own work, MIT OR Apache-2.0),
 so the derived files carry the same licence.
 
 Tool: `ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers` (Homebrew, macOS arm64,
@@ -10,7 +10,7 @@ Tool: `ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers` (Home
 ## `av/` - stream copy, one video and one audio quality level
 
 ```sh
-ffmpeg -y -i fixtures/ts/h264_aac.ts -c copy -f flv mid.flv
+ffmpeg -y -i fixtures/ts/h264-aac.ts -c copy -f flv mid.flv
 ffmpeg -y -i mid.flv -c copy -bsf:v setts=ts=TS-STARTDTS -bsf:a setts=ts=TS-STARTDTS \
   -f smoothstreaming -window_size 0 -extra_window_size 0 -lookahead_count 0 \
   -min_frag_duration 1000000 av

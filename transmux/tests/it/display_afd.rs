@@ -339,7 +339,7 @@ fn afd_until_replaced_keeps_across_idr() {
 fn afd_reset_at_random_access() {
     let mut sei: Vec<Vec<Vec<u8>>> = vec![vec![]; 26];
     sei[0] = vec![afd_nal(9, true)];
-    let ts = build_avc_from_n("ts/h264_aac.ts", &sei, Some(26));
+    let ts = build_avc_from_n("ts/h264-aac.ts", &sei, Some(26));
     let items = run_stream(&ts, AfdPersistence::ResetAtRandomAccess);
     let changes: Vec<&Seen> = items
         .iter()
@@ -373,7 +373,7 @@ fn afd_reset_at_random_access_also_clears_bar_data() {
     // SameAsCodedFrame AND the bar data is cleared, one event raising both bits.
     let mut sei: Vec<Vec<Vec<u8>>> = vec![vec![]; 26];
     sei[0] = vec![afd_nal(9, true), bar_nal(0xC0, &[70, 506])];
-    let ts = build_avc_from_n("ts/h264_aac.ts", &sei, Some(26));
+    let ts = build_avc_from_n("ts/h264-aac.ts", &sei, Some(26));
     let items = run_stream(&ts, AfdPersistence::ResetAtRandomAccess);
     let first_state = items
         .iter()
@@ -426,7 +426,7 @@ fn afd_reset_idr_with_own_afd_keeps_value() {
     let mut sei: Vec<Vec<Vec<u8>>> = vec![vec![]; 26];
     sei[0] = vec![afd_nal(9, true)];
     sei[25] = vec![afd_nal(9, true)];
-    let ts = build_avc_from_n("ts/h264_aac.ts", &sei, Some(26));
+    let ts = build_avc_from_n("ts/h264-aac.ts", &sei, Some(26));
     let items = run_stream(&ts, AfdPersistence::ResetAtRandomAccess);
     let changes: Vec<&Seen> = items
         .iter()

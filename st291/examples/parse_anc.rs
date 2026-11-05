@@ -10,7 +10,7 @@ use st291::AncDataPacket;
 
 fn main() {
     // Resolve relative to the crate so it runs from any cwd.
-    let path = test_fixtures::path("st291/anc.bin");
+    let path = test_fixtures::path("rtp/anc.bin");
     let data = match fs::read(&path) {
         Ok(d) => d,
         Err(e) => {

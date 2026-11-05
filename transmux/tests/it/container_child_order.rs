@@ -13,7 +13,7 @@
 //! hold a header were ignored.
 //!
 //! The fixture is real, tool-generated media — see
-//! `../fixtures/transmux/mp4/cmaf/PROVENANCE.md`.
+//! `../fixtures/mp4/cmaf-av-subtitle/PROVENANCE.md`.
 
 use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
@@ -48,7 +48,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn subtitle_fixture() -> Vec<u8> {
-    let path = test_fixtures::path("transmux/mp4/cmaf/av_subtitle_frag.mp4");
+    let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
     std::fs::read(path).expect("fixture file must exist")
 }
 

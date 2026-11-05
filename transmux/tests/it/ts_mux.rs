@@ -7,7 +7,7 @@
 //! the mux is a faithful inverse — none of it can be faked (a raw-passthrough
 //! serialize would not parse back as valid TS).
 //!
-//! Pipeline: `ir = TsDemux(h264_aac.ts)` → `ts2 = TsMux(ir)` →
+//! Pipeline: `ir = TsDemux(h264-aac.ts)` → `ts2 = TsMux(ir)` →
 //! `ir2 = TsDemux(ts2)`.
 
 use broadcast_common::{Package, Serialize, Unpackage};
@@ -19,8 +19,8 @@ use transmux::{TsDemux, TsMux};
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
 fn load_ts() -> Vec<u8> {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    std::fs::read(path).expect("h264_aac.ts fixture must exist")
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    std::fs::read(path).expect("h264-aac.ts fixture must exist")
 }
 
 /// `ir` = the fixture demuxed; `ir2` = re-demux of `TsMux(ir)`; `ts2` = the mux
@@ -374,7 +374,7 @@ fn alloc_path(fixture: &str) -> std::path::PathBuf {
 /// Every AVC access unit begins with the canonical `00 00 00 01 09 F0` AUD.
 #[test]
 fn avc_access_units_get_a_leading_aud() {
-    let (pes, _) = mux_noaud_fixture("noaud/h264_noaud.mp4");
+    let (pes, _) = mux_noaud_fixture("noaud/h264-noaud.mp4");
     assert_eq!(pes.len(), 15, "one PES per AVC sample");
     for (i, p) in pes.iter().enumerate() {
         let es = pes_es(p);
@@ -407,7 +407,7 @@ fn avc_access_units_get_a_leading_aud() {
 /// Every HEVC access unit begins with the canonical `00 00 00 01 46 01 50` AUD.
 #[test]
 fn hevc_access_units_get_a_leading_aud() {
-    let (pes, _) = mux_noaud_fixture("noaud/hevc_noaud.mp4");
+    let (pes, _) = mux_noaud_fixture("noaud/hevc-noaud.mp4");
     assert_eq!(pes.len(), 15, "one PES per HEVC sample");
     for (i, p) in pes.iter().enumerate() {
         let es = pes_es(p);
@@ -437,7 +437,7 @@ fn hevc_access_units_get_a_leading_aud() {
 /// inserted (or already-present) AUD are exactly the source's NALs.
 #[test]
 fn aud_insertion_preserves_coded_nals() {
-    let path = alloc_path("noaud/h264_noaud.mp4");
+    let path = alloc_path("noaud/h264-noaud.mp4");
     let mp4 = std::fs::read(path).unwrap();
     let ir = transmux::Fmp4Demux::new().unpackage(&mp4).unwrap();
     let ts = TsMux::new().package(&ir).unwrap();
@@ -697,8 +697,8 @@ fn pcr_only_packets_do_not_advance_cc() {
 fn too_many_elementary_streams_is_refused() {
     use transmux::media::Track;
 
-    let fixture = std::fs::read(test_fixtures::path("ts/h264_aac.ts"))
-        .expect("h264_aac.ts fixture must exist");
+    let fixture = std::fs::read(test_fixtures::path("ts/h264-aac.ts"))
+        .expect("h264-aac.ts fixture must exist");
     let ir = TsDemux::new().unpackage(&fixture).expect("demux fixture");
     let video = ir
         .tracks
@@ -814,7 +814,7 @@ fn aud_output_matches_source_frame_count_and_delimits_every_au() {
         eprintln!("SKIP ts_mux AUD oracle: ffprobe not on PATH");
         return;
     }
-    let mp4 = std::fs::read(alloc_path("noaud/h264_noaud.mp4")).expect("noaud fixture");
+    let mp4 = std::fs::read(alloc_path("noaud/h264-noaud.mp4")).expect("noaud fixture");
     let ir = transmux::Fmp4Demux::new()
         .unpackage(&mp4)
         .expect("demux the AUD-less MP4");

@@ -466,9 +466,8 @@ mod tests {
             lines.sort();
             lines
         };
-        let golden = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/golden/watch/http-response-head.txt"
+        let golden = std::fs::read_to_string(test_fixtures::path(
+            "golden/http/watch/http-response-head.txt",
         ))
         .unwrap();
         assert_eq!(head.lines().next(), golden.lines().next(), "status line");

@@ -2759,14 +2759,13 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");
             std::fs::write(
-                std::path::Path::new(&dir).join("whep_response_headers.golden"),
+                std::path::Path::new(&dir).join("golden/webrtc/whep-response-headers.golden"),
                 &actual,
             )
             .expect("write golden");
             return;
         }
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/whep_response_headers.golden");
+        let path = test_fixtures::path("golden/webrtc/whep-response-headers.golden");
         let expected = std::fs::read_to_string(&path).expect("read whep header golden");
         assert_eq!(
             actual, expected,

@@ -40,7 +40,7 @@ use broadcast_common::{Parse, Serialize};
 use st2022::PayloadHeader;
 
 // First HBRMT payload header of the 1080i59.94 loopback capture.
-let bytes = std::fs::read("../fixtures/st2022/st2022-6-hbrmt-payload-header.bin").unwrap();
+let bytes = std::fs::read("../fixtures/rtp/st2022-6-hbrmt-payload-header.bin").unwrap();
 let header = PayloadHeader::parse(&bytes).unwrap();
 
 assert_eq!(header.fr_count, 0);

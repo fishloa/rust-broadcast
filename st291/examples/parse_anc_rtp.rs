@@ -1,4 +1,4 @@
-//! Parse the committed real-ish fixture (`fixtures/st291/anc_rtp.bin`) and
+//! Parse the committed real-ish fixture (`fixtures/rtp/anc-rtp.bin`) and
 //! print its decoded RFC 8331 ANC-over-RTP fields, then round-trip it back to
 //! bytes and confirm the output is byte-identical.
 //!
@@ -9,7 +9,7 @@ use broadcast_common::Serialize;
 use st291::AncRtpPayload;
 
 fn main() {
-    let path = test_fixtures::path("st291/anc_rtp.bin");
+    let path = test_fixtures::path("rtp/anc-rtp.bin");
     let bytes = std::fs::read(path).expect("fixture must exist");
 
     let (rtp, anc) = AncRtpPayload::parse_rtp_packet(&bytes).expect("parse ANC-over-RTP packet");

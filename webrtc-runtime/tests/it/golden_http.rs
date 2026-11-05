@@ -174,10 +174,7 @@ fn whip_whep_http_output_is_byte_identical_to_golden() {
     .unwrap();
     req!(out, "whep player terminate", p.terminate().unwrap());
 
-    let path = format!(
-        "{}/tests/golden/whip_whep_http.golden",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = test_fixtures::path("golden/webrtc/whip-whep-http.golden");
     if std::env::var_os("GOLDEN_UPDATE").is_some() {
         std::fs::write(&path, &out).unwrap();
         return;

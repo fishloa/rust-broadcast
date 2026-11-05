@@ -319,12 +319,12 @@ fn check_fixture(name: &str) {
 
 #[test]
 fn h264_aac_follower_aligns_with_leader() {
-    check_fixture("ts/h264_aac.ts");
+    check_fixture("ts/h264-aac.ts");
 }
 
 #[test]
 fn h264_aac_40s_follower_aligns_with_leader() {
-    check_fixture("ts/h264_aac_40s.ts");
+    check_fixture("ts/h264-aac-40s.ts");
 }
 
 #[test]
@@ -340,7 +340,7 @@ fn france2_each_eac3_track_aligns_with_leader() {
 }
 
 fn audio_template() -> (Track, u32) {
-    let ir = demux("ts/h264_aac.ts");
+    let ir = demux("ts/h264-aac.ts");
     let movie_ts = ir.movie_timescale;
     let mut track = ir
         .tracks
@@ -685,7 +685,7 @@ fn segment_after_a_silent_leader_segment_restarts_from_its_own_decode_time() {
 
 #[test]
 fn incremental_part_cuts_match_whole_segment() {
-    let ir = demux("ts/h264_aac.ts");
+    let ir = demux("ts/h264-aac.ts");
     let video = ir
         .tracks
         .iter()

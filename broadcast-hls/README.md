@@ -100,7 +100,7 @@ The workspace text-format rule is that a second parse of the rendered output equ
 
 ## Design notes
 
-Zero dependencies beyond `broadcast-common` and `thiserror`, `no_std` + `alloc`, symmetric parse and render, `#[non_exhaustive]` on `Error` and the open enums, label-coverage tests for spec enums, fixture corpus (`tests/it/hls_fixture_corpus.rs`) over Apple's BipBop playlists and every RFC 8216bis §9 example (provenance in `fixtures/hls/MANIFEST.md`), and a fuzz target.
+Zero dependencies beyond `broadcast-common` and `thiserror`, `no_std` + `alloc`, symmetric parse and render, `#[non_exhaustive]` on `Error` and the open enums, label-coverage tests for spec enums, fixture corpus (`tests/it/hls_fixture_corpus.rs`) over Apple's BipBop playlists and every RFC 8216bis §9 example (provenance in `fixtures/hls/PROVENANCE.md`), and a fuzz target.
 
 ## Related crates
 

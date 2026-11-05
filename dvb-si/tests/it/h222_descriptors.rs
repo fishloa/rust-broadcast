@@ -12,7 +12,7 @@
 //!
 //! # TSDuck provenance
 //!
-//! `../fixtures/dvb-si/tsduck-h222-descriptors-pmt.bin` is the output of TSDuck 3.44-4676 `tstabcomp -c
+//! `../fixtures/si/tsduck-h222-descriptors-pmt.bin` is the output of TSDuck 3.44-4676 `tstabcomp -c
 //! tsduck-h222-descriptors-pmt.xml -o tsduck-h222-descriptors-pmt.bin`
 //! (input XML sha256 `980ac471943900504245e182eb6e90fdc9d3611daa8b253ea43c65069cd3ec0d`,
 //! output `.bin` sha256 `0d18a0fbec41f46989eb48568fe62d243d0ae8853c57b0915a29149e7f8cc46c`,
@@ -44,10 +44,8 @@ use dvb_si::tables::pmt::PmtSection;
 
 /// The TSDuck-compiled PMT, committed next to its XML input.
 fn pmt_bytes() -> Vec<u8> {
-    std::fs::read(test_fixtures::path(
-        "dvb-si/tsduck-h222-descriptors-pmt.bin",
-    ))
-    .expect("committed TSDuck fixture")
+    std::fs::read(test_fixtures::path("si/tsduck-h222-descriptors-pmt.bin"))
+        .expect("committed TSDuck fixture")
 }
 
 /// Every descriptor of the PMT (program_info first, then each ES loop), raw.
@@ -384,7 +382,7 @@ fn virtual_segmentation_follows_the_spec_and_diverges_from_tsduck() {
     // partition 1 a dependent partition on PID 0x0200) carries:
     //   3f 0c 10 | 5f 00 03 23 | 8f 30 00 | 1f 5f 10 07
     let bin = std::fs::read(test_fixtures::path(
-        "dvb-si/tsduck-h222-virtual-segmentation-pmt.bin",
+        "si/tsduck-h222-virtual-segmentation-pmt.bin",
     ))
     .expect("committed TSDuck fixture");
     let b = [

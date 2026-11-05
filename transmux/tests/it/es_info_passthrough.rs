@@ -19,7 +19,7 @@
 //! Fixture: `fixtures/ts/france2.ts` — a real DVB capture, one PMT (PID
 //! `0x6E`), H.264 video + 3 E-AC-3 audio tracks (`fre`/`qad`/`qaa` ISO-639
 //! language) + 2 DVB-subtitled tracks (`fra`). See
-//! `fixtures/ts/france2-PROVENANCE.md`. Tracks 1/2 below deliberately collect
+//! `fixtures/ts/france2-provenance.md`. Tracks 1/2 below deliberately collect
 //! descriptors across the whole re-muxed `Media` rather than trusting a
 //! specific track's re-assigned PID/position, so the assertion isn't
 //! incidentally tied to `plan_elementary_streams`'s PID/ordering behaviour —

@@ -1,7 +1,7 @@
 //! Microsoft Smooth Streaming ([MS-SSTR]) output gate (issue #473) + the
 //! client-manifest parser / codec glue that inverts it (issue #759, T1).
 //!
-//! Input IR: `TsDemux`-of-`fixtures/ts/h264_aac.ts` (75 video + 131 audio
+//! Input IR: `TsDemux`-of-`fixtures/ts/h264-aac.ts` (75 video + 131 audio
 //! samples). Each test bites by parsing the produced outputs (manifest XML +
 //! fragment boxes) and asserting against what the crate itself demuxes — never
 //! a bare substring or a hardcoded offset. The manifest XML is walked with the
@@ -30,10 +30,10 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn demux_media() -> Media {
-    let ts = std::fs::read(fixtures_dir().join("ts/h264_aac.ts"))
-        .expect("h264_aac.ts fixture must exist");
+    let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts"))
+        .expect("h264-aac.ts fixture must exist");
     let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264_aac.ts")
+    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
 }
 
 fn build_smooth() -> (Media, SmoothOutput) {

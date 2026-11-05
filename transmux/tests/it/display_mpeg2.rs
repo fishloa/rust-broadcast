@@ -11,10 +11,10 @@
 //!
 //! | fixture | PID | coded | SAR (oracle) | AFD (oracle, per stream) |
 //! |---|---|---|---|---|
-//! | `tsduck/input/test-205.ts` | 0x1F5 | 704x576 | 16:11 | 14 on every picture |
-//! | `tsduck/input/test-108.ts` | 0x208 | 720x576 | 64:45 | 8; another MPEG-2 stream 0x201 carries 10 |
-//! | `tsduck/input/test-040.ts` | 0x51 | 704x480 | 10:11 | 10; 0x31 (1280x720, 1:1) carries 8 |
-//! | `ts/legacy/mpeg2_mp2.ts` | 0x100 | 320x240 | 1:1 | none |
+//! | `suites/tsduck/input/test-205.ts` | 0x1F5 | 704x576 | 16:11 | 14 on every picture |
+//! | `suites/tsduck/input/test-108.ts` | 0x208 | 720x576 | 64:45 | 8; another MPEG-2 stream 0x201 carries 10 |
+//! | `suites/tsduck/input/test-040.ts` | 0x51 | 704x480 | 10:11 | 10; 0x31 (1280x720, 1:1) carries 8 |
+//! | `ts/legacy/mpeg2-mp2.ts` | 0x100 | 320x240 | 1:1 | none |
 //!
 //! FFmpeg attaches the AFD as frame side data only where the stream carries
 //! `DTG1` in the picture's own `user_data()` (its MPEG-2 decoder does not
@@ -207,7 +207,7 @@ fn dts_at(items: &[Seen], index: usize) -> i64 {
 
 #[test]
 fn test_205_afd_14_and_16_11() {
-    let Some(ts) = read("tsduck/input/test-205.ts") else {
+    let Some(ts) = read("suites/tsduck/input/test-205.ts") else {
         return;
     };
     let media = TsDemux::new().demux(&ts).expect("batch demux");
@@ -308,7 +308,7 @@ fn test_205_afd_14_and_16_11() {
 
 #[test]
 fn test_108_two_afd_values_two_tracks() {
-    let Some(ts) = read("tsduck/input/test-108.ts") else {
+    let Some(ts) = read("suites/tsduck/input/test-108.ts") else {
         return;
     };
     let media = TsDemux::new().demux(&ts).expect("batch demux");
@@ -360,7 +360,7 @@ fn test_108_two_afd_values_two_tracks() {
 
 #[test]
 fn test_040_afd_10_and_afd_8_per_track() {
-    let Some(ts) = read("tsduck/input/test-040.ts") else {
+    let Some(ts) = read("suites/tsduck/input/test-040.ts") else {
         return;
     };
     let media = TsDemux::new().demux(&ts).expect("batch demux");
@@ -442,7 +442,7 @@ fn test_040_afd_10_and_afd_8_per_track() {
 
 #[test]
 fn mpeg2_without_afd_is_unchanged_behaviour() {
-    let Some(ts) = read("ts/legacy/mpeg2_mp2.ts") else {
+    let Some(ts) = read("ts/legacy/mpeg2-mp2.ts") else {
         return;
     };
     let media = TsDemux::new().demux(&ts).expect("batch demux");

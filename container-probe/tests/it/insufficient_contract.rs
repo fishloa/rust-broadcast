@@ -41,22 +41,22 @@ fn assert_that_prefix_is_insufficient(rel: &str, min: usize) {
 
 #[test]
 fn ebml_magic_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/mkv/h264_aac.mkv", 4);
+    assert_that_prefix_is_insufficient("fixtures/mkv/h264-aac.mkv", 4);
 }
 
 #[test]
 fn isobmff_box_header_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/mp4/h264_high.mp4", 8);
+    assert_that_prefix_is_insufficient("fixtures/mp4/h264-high.mp4", 8);
 }
 
 #[test]
 fn mxf_key_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/mxf/op1a_mpeg2_pcm.mxf", 16);
+    assert_that_prefix_is_insufficient("fixtures/mxf/op1a-mpeg2-pcm.mxf", 16);
 }
 
 #[test]
 fn mpeg_ps_pack_header_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/ps/h264_ac3.ps", 14);
+    assert_that_prefix_is_insufficient("fixtures/ps/h264-ac3.ps", 14);
 }
 
 #[test]
@@ -66,32 +66,32 @@ fn flv_header_prefix() {
 
 #[test]
 fn riff_wave_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/container-probe/pcm_s16le.wav", 12);
+    assert_that_prefix_is_insufficient("fixtures/audio/pcm-s16le.wav", 12);
 }
 
 #[test]
 fn ogg_capture_pattern_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/container-probe/opus.ogg", 4);
+    assert_that_prefix_is_insufficient("fixtures/audio/opus.ogg", 4);
 }
 
 #[test]
 fn asf_guid_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/container-probe/video.asf", 16);
+    assert_that_prefix_is_insufficient("fixtures/candidates/video.asf", 16);
 }
 
 #[test]
 fn adts_header_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/container-probe/aac.adts", 6);
+    assert_that_prefix_is_insufficient("fixtures/audio/aac.adts", 6);
 }
 
 #[test]
 fn mp3_frame_header_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/container-probe/audio.mp3", 4);
+    assert_that_prefix_is_insufficient("fixtures/audio/audio.mp3", 4);
 }
 
 #[test]
 fn annexb_start_code_prefix() {
-    assert_that_prefix_is_insufficient("fixtures/container-probe/h264.annexb", 4);
+    assert_that_prefix_is_insufficient("fixtures/candidates/h264.annexb", 4);
 }
 
 /// The empty slice is itself `Insufficient` — an undefined buffer could be
@@ -106,7 +106,7 @@ fn empty_is_insufficient_full_file_identifies() {
         other => panic!("the empty slice must be Insufficient, got {other:?}"),
     }
     // A full TS file still identifies as its container.
-    let data = fixture("fixtures/ts/h264_aac.ts");
+    let data = fixture("fixtures/ts/h264-aac.ts");
     match container_probe::probe(&data) {
         Probe::Identified { format, .. } => assert_eq!(format, Format::MpegTs),
         other => panic!("a full TS fixture must identify, got {other:?}"),
@@ -144,15 +144,15 @@ fn assert_es_prefix_is_insufficient(rel: &str, min: usize) {
 #[test]
 fn adts_64_byte_prefix_is_insufficient() {
     // 4 frames at the observed ~274-byte frame size.
-    assert_es_prefix_is_insufficient("fixtures/container-probe/aac.adts", 4 * 7);
+    assert_es_prefix_is_insufficient("fixtures/audio/aac.adts", 4 * 7);
 }
 
 #[test]
 fn mp3_64_byte_prefix_is_insufficient() {
-    assert_es_prefix_is_insufficient("fixtures/container-probe/audio.mp3", 4 * 4);
+    assert_es_prefix_is_insufficient("fixtures/audio/audio.mp3", 4 * 4);
 }
 
 #[test]
 fn annexb_64_byte_prefix_is_insufficient() {
-    assert_es_prefix_is_insufficient("fixtures/container-probe/h264.annexb", 4 * 4);
+    assert_es_prefix_is_insufficient("fixtures/candidates/h264.annexb", 4 * 4);
 }

@@ -45,7 +45,7 @@ struct Cmaf {
 }
 
 fn cmaf_from_real_ts() -> Cmaf {
-    let ts = std::fs::read(test_fixtures::path("ts/h264_aac_40s.ts")).expect("read fixture");
+    let ts = std::fs::read(test_fixtures::path("ts/h264-aac-40s.ts")).expect("read fixture");
     let media = transmux::TsDemux::new().demux(&ts).expect("demux fixture");
     let out = Repackage::new(SOURCE_SEGMENT_SECS)
         .run_media(&media)

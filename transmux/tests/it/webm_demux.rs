@@ -1,8 +1,8 @@
 //! WebM demuxer integration tests (issue #471) — oracle-driven.
 //!
-//! The fixture `fixtures/webm/vp9_opus.webm` is a real WebM (VP9 video + Opus
+//! The fixture `fixtures/mkv/vp9-opus.webm` is a real WebM (VP9 video + Opus
 //! audio, ffmpeg-produced, no lacing). Its per-frame ffprobe oracle lives in
-//! `fixtures/webm/vp9_opus.packets.csv`:
+//! `fixtures/mkv/vp9-opus.packets.csv`:
 //!
 //! ```text
 //! codec_type,stream_index,pts,dts,duration,size,keyframe(K=1)
@@ -28,9 +28,9 @@ use transmux::webm_demux::WebmDemux;
 use transmux::{CmafMux, Media, parse_box};
 
 /// Path to the committed WebM fixture, relative to this crate's manifest dir.
-const FIXTURE: &str = "webm/vp9_opus.webm";
+const FIXTURE: &str = "mkv/vp9-opus.webm";
 /// Path to the ffprobe per-frame oracle CSV.
-const ORACLE: &str = "webm/vp9_opus.packets.csv";
+const ORACLE: &str = "mkv/vp9-opus.packets.csv";
 
 /// Opus codec delay ffprobe applies to audio presentation times, in ms.
 /// (pre-skip 312 samples @ 48 kHz = 6.5 ms, rounded up to 7 ms.)
@@ -233,7 +233,7 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 // r04-W40: laced blocks must be unlaced, not rejected or concatenated
 // ---------------------------------------------------------------------------
 
-/// Rebuild `fixtures/webm/vp9_opus.webm` with the audio frames of several
+/// Rebuild `fixtures/mkv/vp9-opus.webm` with the audio frames of several
 /// consecutive blocks packed into one laced block, in each of the three lacing
 /// encodings of RFC 9559 §12.
 ///

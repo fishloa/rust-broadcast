@@ -1,5 +1,5 @@
 //! Fixture-driven WebVTT <-> SRT round trip, using the real
-//! `fixtures/sub/cap.vtt` fixture (a `transmux`-produced WebVTT sample, two
+//! `fixtures/subtitles/cap.vtt` fixture (a `transmux`-produced WebVTT sample, two
 //! cues).
 //!
 //! WebVTT <-> SRT is documented (issue #931) as "near-trivial" -- both are
@@ -12,7 +12,7 @@
 use std::fs;
 
 fn fixture_path() -> std::path::PathBuf {
-    test_fixtures::path("sub/cap.vtt")
+    test_fixtures::path("subtitles/cap.vtt")
 }
 
 fn load_fixture() -> String {

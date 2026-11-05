@@ -1,7 +1,7 @@
 //! Strict behaviour tests for `DashifIngestSession` (DASH-IF ingest P2a):
 //! exact event contents against an independent demux of the same bytes, exact
 //! error variants, duplicate/regression handling. Real data: the committed
-//! `h264_aac.ts` fixture packaged by transmux's own DASH writer.
+//! `h264-aac.ts` fixture packaged by transmux's own DASH writer.
 
 use broadcast_common::{Package, Stage, Timestamp, Unpackage};
 use media_plane::ingress::SessionEvent;
@@ -24,7 +24,7 @@ struct Presentation {
 }
 
 fn presentation() -> Presentation {
-    let ts = test_fixtures::read("ts/h264_aac.ts");
+    let ts = test_fixtures::read("ts/h264-aac.ts");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
     let mpd = DashPackager::default().package(&media).expect("mpd");
     let mut reps = Vec::new();

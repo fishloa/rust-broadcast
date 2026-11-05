@@ -377,7 +377,7 @@ mod tests {
     use broadcast_common::Unpackage;
     use transmux::{LiveJoin, TsDemux};
 
-    const FIXTURE: &str = "ts/h264_aac.ts";
+    const FIXTURE: &str = "ts/h264-aac.ts";
 
     #[test]
     fn sample_at_the_end_of_the_i64_range_clamps_instead_of_wrapping() {

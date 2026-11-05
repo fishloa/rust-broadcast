@@ -3,7 +3,7 @@
 //! Feeds a TS file through the pluggable [`Diagnostic`] harness
 //! (`run_all`): sync byte, PAT/PMT versioning, continuity-counter anomalies,
 //! PCR and PTS/DTS checks. Defaults to the committed
-//! `fixtures/ts/h264_aac.ts`; pass a path to check your own capture:
+//! `fixtures/ts/h264-aac.ts`; pass a path to check your own capture:
 //!
 //! ```text
 //! cargo run -p media-doctor --example check_ts [capture.ts]
@@ -25,7 +25,7 @@ const SHOWN: usize = 5;
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        test_fixtures::path("ts/h264_aac.ts")
+        test_fixtures::path("ts/h264-aac.ts")
             .to_string_lossy()
             .into_owned()
     });

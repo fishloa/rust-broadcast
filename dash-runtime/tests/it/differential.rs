@@ -33,16 +33,15 @@ fn is_mpd_text(text: &str) -> bool {
 }
 
 fn generator_goldens() -> Vec<PathBuf> {
-    let root = test_fixtures::root();
     let mut out = Vec::new();
-    let tm = root.join("../transmux/tests/golden");
+    let tm = test_fixtures::path("golden/dash");
     for e in std::fs::read_dir(&tm).unwrap() {
         let p = e.unwrap().path();
         if p.extension().is_some_and(|x| x == "mpd") {
             out.push(p);
         }
     }
-    let mm = root.join("../multimux/tests/golden");
+    let mm = test_fixtures::path("golden/dash");
     for e in std::fs::read_dir(&mm).unwrap() {
         let p = e.unwrap().path();
         if p.extension().is_some_and(|x| x == "golden")

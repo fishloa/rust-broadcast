@@ -9,7 +9,7 @@ const PROGRESSIVE_CAP: usize = 16 * 1024 * 1024;
 
 #[test]
 fn an_encrypted_video_track_skipped_by_fmp4_demux_carries_its_track_id() {
-    let bytes = test_fixtures::read("transmux/h264_cenc.mp4");
+    let bytes = test_fixtures::read("mp4/h264-cenc.mp4");
     let media = Fmp4Demux::new().unpackage(&bytes[..]).unwrap();
     let skipped: Vec<_> = media
         .skipped

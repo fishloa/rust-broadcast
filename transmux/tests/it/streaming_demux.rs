@@ -3,12 +3,12 @@
 //! and `finish()` trailing-flush semantics.
 //!
 //! Every fixture here is a real, committed broadcast capture (never
-//! hand-built bytes): `fixtures/ts/h264_aac.ts`, `fixtures/ts/dolby/*.ts`
+//! hand-built bytes): `fixtures/ts/h264-aac.ts`, `fixtures/ts/dolby/*.ts`
 //! (AC-3/E-AC-3), `fixtures/ts/m6-single.ts` (real DVB mux — subtitle/
 //! teletext data tracks, zero PCRs, one codec PID with no packets in this
 //! excerpt), and `fixtures/ts/france-pcr-discontinuity.ts` (a genuine PCR
 //! discontinuity). `m6-single.ts` lives in `fixtures/ts/` (not
-//! `fixtures/transmux/`) in this checkout — `transmux/tests/it/ir_timing.rs`
+//! `fixtures/ts/`) in this checkout — `transmux/tests/it/ir_timing.rs`
 //! already reads it from that path.
 
 use mpeg_ts::pid::Pid;
@@ -50,7 +50,7 @@ fn dolby_files() -> Vec<PathBuf> {
 
 fn equivalence_fixture_files() -> Vec<PathBuf> {
     let mut files = vec![
-        fixtures_ts_dir().join("h264_aac.ts"),
+        fixtures_ts_dir().join("h264-aac.ts"),
         fixtures_ts_dir().join("m6-single.ts"),
         fixtures_ts_dir().join("france-pcr-discontinuity.ts"),
     ];
@@ -241,11 +241,11 @@ fn france_discontinuity_fixture_fires_discontinuity_event() {
 
 #[test]
 fn h264_aac_pcr_event_count_matches_batch_media_pcr_len() {
-    let data = read(&fixtures_ts_dir().join("h264_aac.ts"));
+    let data = read(&fixtures_ts_dir().join("h264-aac.ts"));
     let batch: Media = TsDemux::new()
         .unpackage(&data)
-        .expect("batch demux of h264_aac.ts");
-    assert!(!batch.pcr.is_empty(), "h264_aac.ts must carry PCR");
+        .expect("batch demux of h264-aac.ts");
+    assert!(!batch.pcr.is_empty(), "h264-aac.ts must carry PCR");
 
     let mut demux = StreamingTsDemux::new();
     demux.feed(&data);
@@ -265,7 +265,7 @@ fn h264_aac_pcr_event_count_matches_batch_media_pcr_len() {
 
 // ── Test 3 — bounded-memory smoke: eager polling across a doubled input ─────
 
-/// Feed `h264_aac.ts` twice back-to-back (188-byte chunks), draining events
+/// Feed `h264-aac.ts` twice back-to-back (188-byte chunks), draining events
 /// after *every* `feed()` call (not just at the end). Continuity across the
 /// concatenation seam is not required to be seamless (a fresh PAT/PMT/PES
 /// cycle restarts mid-stream) — only that no `Sample` event is lost when the
@@ -273,7 +273,7 @@ fn h264_aac_pcr_event_count_matches_batch_media_pcr_len() {
 /// `finish()`: total sample count must be exactly 2x a single pass.
 #[test]
 fn bounded_memory_smoke_double_feed_eager_poll() {
-    let data = read(&fixtures_ts_dir().join("h264_aac.ts"));
+    let data = read(&fixtures_ts_dir().join("h264-aac.ts"));
     let mut doubled = data.clone();
     doubled.extend_from_slice(&data);
     assert_eq!(doubled.len() % 188, 0);
@@ -310,7 +310,7 @@ fn bounded_memory_smoke_double_feed_eager_poll() {
 
 // ── Test 4 — finish() flushes the trailing partial access unit ─────────────
 
-/// Truncate `h264_aac.ts` short of EOF (dropping the tail so a live track's
+/// Truncate `h264-aac.ts` short of EOF (dropping the tail so a live track's
 /// one-behind pending sample is never resolved by a following access unit)
 /// and assert: before `finish()`, strictly fewer samples than the full
 /// (finish()-included) demux of that same truncated input; after `finish()`,
@@ -318,7 +318,7 @@ fn bounded_memory_smoke_double_feed_eager_poll() {
 /// only once `finish()` is called.
 #[test]
 fn finish_flushes_trailing_partial_access_unit_only_at_finish() {
-    let data = read(&fixtures_ts_dir().join("h264_aac.ts"));
+    let data = read(&fixtures_ts_dir().join("h264-aac.ts"));
     let truncate_at = data.len() - (5 * 188);
     let truncated = data[..truncate_at].to_vec();
     assert_eq!(truncated.len() % 188, 0);

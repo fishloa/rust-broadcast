@@ -71,7 +71,7 @@ fn real_section(file: &str, tid: u8) -> Vec<u8> {
 /// `transport_stream_loop_length` reduced by 64 (section_length unchanged,
 /// CRC recomputed): the last 64 loop bytes are now outside the declared loop.
 fn nit_with_short_ts_loop() -> Vec<u8> {
-    let mut s = real_section("dvb-si/tnt-5w-12732v-isi6-10s.ts", 0x40);
+    let mut s = real_section("ts/tnt-5w-12732v-isi6-10s.ts", 0x40);
     let ndl = (usize::from(s[8] & 0x0F) << 8) | usize::from(s[9]);
     let at = 10 + ndl;
     let tsl = (usize::from(s[at] & 0x0F) << 8) | usize::from(s[at + 1]);

@@ -922,8 +922,8 @@ mod tests {
     use transmux::nalu_types::{AvcPps, AvcSps};
 
     /// Byte-for-byte golden: the rendered manifest equals the file in
-    /// `tests/golden/`, generated from the pre-quick-xml code on `origin/main`
-    /// (see `tests/golden/README.md`). `GOLDEN_BLESS=<dir>` writes instead.
+    /// `fixtures/golden/smooth/`, generated from the pre-quick-xml code on `origin/main`
+    /// (see `fixtures/golden/smooth/PROVENANCE.md`). `GOLDEN_BLESS=<dir>` writes instead.
     #[test]
     fn render_manifest_matches_golden() {
         fn chunks(n: u64, dur: u64) -> TrackChunks {
@@ -975,9 +975,7 @@ mod tests {
                 std::fs::write(std::path::Path::new(&dir).join(&file), &actual).expect("write");
                 continue;
             }
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/golden")
-                .join(&file);
+            let path = test_fixtures::path(&format!("golden/smooth/{file}"));
             let expected = std::fs::read_to_string(&path).expect("read golden");
             assert_eq!(actual, expected, "{file} differs from the golden output");
         }

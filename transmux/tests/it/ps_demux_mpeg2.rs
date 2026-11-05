@@ -2,7 +2,7 @@
 //! video (not H.264) must come out as `CodecConfig::Mpeg2Video`, not a garbage
 //! `avc1` track built from MPEG-2 slice start codes misread as H.264 NALs.
 //!
-//! Fixture: `fixtures/ps/ffmpeg-mpeg2video-mp2.ps` — see `fixtures/ps/README.md`
+//! Fixture: `fixtures/ps/ffmpeg-mpeg2video-mp2.ps` — see `fixtures/ps/PROVENANCE.md`
 //! for the exact ffmpeg command. Oracle: ffprobe on that same file.
 
 use broadcast_common::Unpackage;

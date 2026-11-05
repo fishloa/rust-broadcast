@@ -2,7 +2,7 @@
 //! says `VIDEO-RANGE=PQ`, the init segment carries `colr`/`mdcv`/`clli`, and
 //! external readers (ffprobe, GPAC, Apple `mediastreamvalidator`) agree.
 //!
-//! Real artifact: `private/fixtures/hdr10/meridian-hdr10-60f.ts` (see its
+//! Real artifact: `private/fixtures/video/hdr10/meridian-hdr10-60f.ts` (see its
 //! PROVENANCE.md). Every test drives the production path: `RouteHandle` +
 //! `ProgramSegmenter::pump` over a `Trunk`, read back through the axum router.
 //! External tools skip loudly when absent.
@@ -35,7 +35,7 @@ const RING: usize = 1 << 16;
 const PUMP_EVERY: usize = 64;
 const STREAM: &str = "cam";
 const DECLARED_BPS: u64 = 4_000_000;
-const HDR_FIXTURE: &str = "hdr10/meridian-hdr10-60f.ts";
+const HDR_FIXTURE: &str = "video/hdr10/meridian-hdr10-60f.ts";
 const SDR_FIXTURE: &str = "ts/hevc/main10.ts";
 
 struct Source {

@@ -37,13 +37,13 @@ rtp-packet = "0.5"
 
 ## Quick start
 
-Parse a real 324-byte packet (produced by `transmux`'s RTP packetiser over the committed `h264_aac.ts` capture) and write it back byte-for-byte:
+Parse a real 324-byte packet (produced by `transmux`'s RTP packetiser over the committed `h264-aac.ts` capture) and write it back byte-for-byte:
 
 ```rust
 use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
-let wire = std::fs::read("../fixtures/rtp/rtp_simple.bin").unwrap();
+let wire = std::fs::read("../fixtures/rtp/rtp-simple.bin").unwrap();
 let pkt = RtpPacket::parse(&wire).unwrap();
 assert!(pkt.extension.is_none() && pkt.csrc.is_empty());
 println!("pt={} seq={} ts={} ssrc={:#x}",

@@ -23,7 +23,7 @@ fn t2mi_sync_oracle(data: &[u8], pid: Pid) -> Vec<dvb_t2mi::pump::T2miEvent> {
 }
 
 fn t2mi_fixture_path() -> &'static str {
-    "dvb-t2mi/colombia-capital-t2mi.ts"
+    "t2mi/colombia-capital-t2mi.ts"
 }
 
 // ── test 1: differential against T2miPump on the T2-MI fixture ───────────────

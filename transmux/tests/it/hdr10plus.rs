@@ -1,11 +1,11 @@
 //! HDR10+ (ST 2094-40) dynamic metadata over the real Tears of Steel stream
-//! `private/fixtures/hdr10plus/` (see its PROVENANCE.md): typed parse of every
+//! `private/fixtures/video/hdr10plus/` (see its PROVENANCE.md): typed parse of every
 //! SEI against the x265/hdr10plus_tool JSON, byte-exact round trip of all 259
 //! SEI NAL units, and the multi-window / Bezier / peak-luminance branches the
 //! stream does not exercise, built from values chosen from the semantics (no
 //! real capture carries them).
 //!
-//! Spec inputs: `private/specs-verified/smpte/hdr10plus/`.
+//! Spec inputs: `private/specs-verified/smpte/video/hdr10plus/`.
 #![cfg(feature = "std")]
 
 use broadcast_common::mux::{Package, Unpackage};
@@ -18,9 +18,9 @@ use transmux::{
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
 };
 
-const HEVC: &str = "hdr10plus/tos-256x144-hdr10plus.hevc";
-const TS: &str = "hdr10plus/tos-256x144-hdr10plus.ts";
-const JSON: &str = "hdr10plus/tos-256x144-hdr10plus-metadata.json";
+const HEVC: &str = "video/hdr10plus/tos-256x144-hdr10plus.hevc";
+const TS: &str = "video/hdr10plus/tos-256x144-hdr10plus.ts";
+const JSON: &str = "video/hdr10plus/tos-256x144-hdr10plus-metadata.json";
 const FRAMES: usize = 259;
 
 fn hdr10plus_sei_nals(es: &[u8]) -> Vec<Vec<u8>> {
@@ -474,7 +474,7 @@ fn track_flag_is_set_from_the_first_access_unit_alongside_hdr10_static_metadata(
 
 #[test]
 fn track_flag_is_clear_for_streams_without_hdr10plus() {
-    for fixture in ["hdr10/meridian-hdr10-60f.ts", "ts/hevc/main10.ts"] {
+    for fixture in ["video/hdr10/meridian-hdr10-60f.ts", "ts/hevc/main10.ts"] {
         let Some(bytes) = test_fixtures::require_bytes(fixture, "hdr10plus") else {
             continue;
         };
@@ -560,7 +560,7 @@ fn dvb_dash_profile_adds_the_hdr_dmi_property() {
 
 #[test]
 fn dash_without_hdr10plus_carries_no_hdr_metadata_property() {
-    for fixture in ["hdr10/meridian-hdr10-60f.ts", "ts/hevc/main10.ts"] {
+    for fixture in ["video/hdr10/meridian-hdr10-60f.ts", "ts/hevc/main10.ts"] {
         let Some(bytes) = test_fixtures::require_bytes(fixture, "hdr10plus") else {
             continue;
         };

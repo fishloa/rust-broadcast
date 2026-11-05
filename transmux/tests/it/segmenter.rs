@@ -6,7 +6,7 @@
 //!     `tfdt` contiguity, keyframe-aligned segment starts, sample preservation, and
 //!     byte-identity of a single-segment run against [`build_media_segment`]. These
 //!     are properties a broken cut/accounting cannot satisfy.
-//!  2. A **real-fixture** test remuxes `fixtures/ts/h264_aac.ts` through the
+//!  2. A **real-fixture** test remuxes `fixtures/ts/h264-aac.ts` through the
 //!     segmenter and checks every emitted segment parses and preserves the stream.
 
 use broadcast_common::Serialize;
@@ -297,7 +297,7 @@ fn rejects_bad_construction() {
 }
 
 // ---------------------------------------------------------------------------
-// Real-fixture remux: h264_aac.ts → segmenter → structural validity.
+// Real-fixture remux: h264-aac.ts → segmenter → structural validity.
 // ---------------------------------------------------------------------------
 
 fn sfi_to_hz(sfi: u8) -> u32 {
@@ -330,7 +330,7 @@ fn split_adts_frames(payload: &[u8]) -> Vec<&[u8]> {
 
 #[test]
 fn real_fixture_remux_is_lossless_and_parseable() {
-    let path = test_fixtures::path("ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264-aac.ts");
     let ts = std::fs::read(path).expect("fixture exists");
 
     let mut vid_asm = PesAssembler::new();

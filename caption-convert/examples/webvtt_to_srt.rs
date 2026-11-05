@@ -1,4 +1,4 @@
-//! Convert the real WebVTT fixture (`fixtures/sub/cap.vtt`) to SRT, and
+//! Convert the real WebVTT fixture (`fixtures/subtitles/cap.vtt`) to SRT, and
 //! report whether the conversion was lossless.
 //!
 //! Run with `cargo run -p caption-convert --example webvtt_to_srt`.
@@ -6,7 +6,7 @@
 use std::fs;
 
 fn main() {
-    let path = test_fixtures::path("sub/cap.vtt");
+    let path = test_fixtures::path("subtitles/cap.vtt");
     let vtt = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
 
     let (srt, lossy) = caption_convert::webvtt_to_srt(&vtt).expect("valid WebVTT");

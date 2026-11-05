@@ -867,11 +867,11 @@ fn fixture_pcr(name: &str) -> Vec<u8> {
     fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", path.display()))
 }
 
-/// france-tnt-pcr.ts is a clean multi-PCR TS stream. PcrCheck must produce
+/// ts/france-tnt-pcr.ts is a clean multi-PCR TS stream. PcrCheck must produce
 /// zero PCR-error findings (Warning or Error severity on PCR rules).
 #[test]
 fn pcr_check_clean_fixture_no_errors() {
-    let ts = fixture_pcr("france-tnt-pcr.ts");
+    let ts = fixture_pcr("ts/france-tnt-pcr.ts");
     let mut report = Report::new();
     PcrCheck.run(&ts, &mut report);
 
@@ -932,7 +932,7 @@ fn pcr_check_discontinuity_not_flagged() {
 /// assert PcrCheck produces a PCR anomaly finding.
 #[test]
 fn pcr_check_corrupted_pcr_produces_finding() {
-    let mut ts = fixture_pcr("france-tnt-pcr.ts");
+    let mut ts = fixture_pcr("ts/france-tnt-pcr.ts");
 
     // Locate the first PCR-bearing packet on PID 0x0208.
     // PCR flag = 0x10 in adaptation field flags byte.

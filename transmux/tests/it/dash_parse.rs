@@ -25,9 +25,9 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn demux_media() -> transmux::media::Media {
-    let ts = std::fs::read(fixtures_dir().join("ts/h264_aac.ts")).expect("h264_aac.ts fixture");
+    let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
     let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264_aac.ts")
+    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
 }
 
 // ---------------------------------------------------------------------------

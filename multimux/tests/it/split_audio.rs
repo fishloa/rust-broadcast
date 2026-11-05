@@ -512,7 +512,7 @@ fn france2() -> &'static [Source] {
 }
 
 fn h264_aac() -> &'static [Source] {
-    shared::shared("sources:h264_aac", || by_role(load("ts/h264_aac.ts")))
+    shared::shared("sources:h264_aac", || by_role(load("ts/h264-aac.ts")))
 }
 
 /// A static (non-live, keep-everything) rig built once per distinct
@@ -654,7 +654,7 @@ async fn split_audio_france2_three_renditions_align_with_video() {
 #[tokio::test]
 async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
     let Some(hevc) =
-        test_fixtures::require_bytes("hdr10plus/tos-256x144-hdr10plus.ts", "split_audio")
+        test_fixtures::require_bytes("video/hdr10plus/tos-256x144-hdr10plus.ts", "split_audio")
     else {
         return;
     };
@@ -675,7 +675,7 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
                 .collect(),
         })
         .expect("video track");
-    let mut audio = by_role(load("ts/h264_aac.ts"))
+    let mut audio = by_role(load("ts/h264-aac.ts"))
         .into_iter()
         .find(Source::is_audio)
         .expect("audio track");
@@ -720,7 +720,7 @@ async fn split_audio_h264_aac_track_id_selector() {
 
 #[tokio::test]
 async fn split_audio_silent_stretch_becomes_gap_with_contiguous_msns() {
-    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let sources = by_role(load("ts/h264-aac-40s.ts"));
     let baseline = rig(&sources, decls(&["eng"]), index_selectors(1), &|_, _| true);
     let video = baseline.playlist("media.m3u8").await;
     assert!(video.segments.len() >= 6, "need six segments");
@@ -843,7 +843,7 @@ async fn split_audio_off_leaves_default_route_byte_identical() {
 
 #[tokio::test]
 async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
-    let mut sources = by_role(load("ts/h264_aac_40s.ts"));
+    let mut sources = by_role(load("ts/h264-aac-40s.ts"));
     let second = Source {
         spec: {
             let mut spec = sources[1].spec.clone();
@@ -1589,7 +1589,7 @@ async fn split_audio_blocking_reload_audio_reports_current() {
 /// unknown rendition report.
 #[tokio::test]
 async fn non_split_route_reports_follow_appendix_b1() {
-    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let sources = by_role(load("ts/h264-aac-40s.ts"));
     let (start, end) = media_range_secs(&sources);
     let mut at = start + 4.0;
     let rig = rig_live_aligned(
@@ -1665,7 +1665,7 @@ fn aac_rig_live(sources: &[Source], until: f64) -> Rig {
 
 #[tokio::test]
 async fn split_audio_live_edge_tracks_video_within_one_part_while_publishing() {
-    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let sources = by_role(load("ts/h264-aac-40s.ts"));
     let (start, end) = media_range_secs(&sources);
     let mut at = start + CHECKPOINT_STEP_SECS;
     let rig = aac_rig_live(&sources, at);
@@ -1724,7 +1724,7 @@ async fn split_audio_live_edge_tracks_video_within_one_part_while_publishing() {
 
 #[tokio::test]
 async fn split_audio_blocking_reload_returns_when_the_matching_audio_part_exists() {
-    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let sources = by_role(load("ts/h264-aac-40s.ts"));
     let (start, end) = media_range_secs(&sources);
     let mut at = start + BLOCKING_STEP_SECS;
     let rig = aac_rig_live(&sources, at);
@@ -1840,7 +1840,7 @@ fn all_parts(pl: &MediaPlaylist) -> Vec<&broadcast_hls::PartSpec> {
 /// video and the audio playlist at every step of a live feed.
 #[tokio::test]
 async fn split_audio_playlists_never_list_a_zero_duration_part_and_always_hint() {
-    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let sources = by_role(load("ts/h264-aac-40s.ts"));
     let (start, end) = media_range_secs(&sources);
     let mut at = start + BLOCKING_STEP_SECS;
     let rig = aac_rig_live(&sources, at);
@@ -1938,7 +1938,7 @@ fn directive(text: &str, tag: &str) -> Option<String> {
 /// carry the same attributes and values. Checked at every step of a live feed.
 #[tokio::test]
 async fn split_audio_playlists_share_target_duration_and_server_control_while_publishing() {
-    let sources = by_role(load("ts/h264_aac_40s.ts"));
+    let sources = by_role(load("ts/h264-aac-40s.ts"));
     let (start, end) = media_range_secs(&sources);
     let mut at = start + BLOCKING_STEP_SECS;
     let rig = aac_rig_live(&sources, at);

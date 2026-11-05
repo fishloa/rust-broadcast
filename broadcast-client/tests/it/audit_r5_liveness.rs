@@ -151,14 +151,14 @@ fn hls_live_m6_single_emits_without_endlist() {
 #[test]
 fn hls_live_isi6_emits_without_endlist() {
     hls_case(
-        test_fixtures::read("dvb-si/tnt-5w-12732v-isi6-10s.ts"),
+        test_fixtures::read("ts/tnt-5w-12732v-isi6-10s.ts"),
         "isi6-10s",
     );
 }
 
 #[test]
 fn hls_live_csa2_plain_emits_without_endlist() {
-    let Some(b) = test_fixtures::require_bytes("csa/csa2-plain.ts", "hls_live_csa2") else {
+    let Some(b) = test_fixtures::require_bytes("crypto/csa2-plain.ts", "hls_live_csa2") else {
         return;
     };
     hls_case(b, "csa2-plain");
@@ -166,7 +166,7 @@ fn hls_live_csa2_plain_emits_without_endlist() {
 
 #[test]
 fn ts_http_live_csa2_plain_emits_before_the_stream_ends() {
-    let Some(b) = test_fixtures::require_bytes("csa/csa2-plain.ts", "ts_http_live_csa2") else {
+    let Some(b) = test_fixtures::require_bytes("crypto/csa2-plain.ts", "ts_http_live_csa2") else {
         return;
     };
     ts_http_live(&aligned(b)).assert_flowing("csa2-plain");

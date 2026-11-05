@@ -38,12 +38,7 @@ use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 use std::fs;
 
 fn fixture(name: &str) -> Vec<u8> {
-    let subdir = if name == "m6-single.ts" {
-        "ts"
-    } else {
-        "mpeg-ts"
-    };
-    fs::read(test_fixtures::path(&format!("{subdir}/{name}")))
+    fs::read(test_fixtures::path(&format!("ts/{name}")))
         .unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
 }
 

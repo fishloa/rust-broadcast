@@ -234,7 +234,7 @@ mod tests {
     /// misidentified — the false positive the chaining rule exists to prevent.
     /// Observed under the mutation (`ADTS_MIN_CHAIN_WEAK = 1`):
     /// ```
-    /// h264_aac.ts must NOT match ADTS at the real threshold,
+    /// h264-aac.ts must NOT match ADTS at the real threshold,
     ///   got Match(Evidence { confidence: Confidence(96), detail: None })
     /// ```
     ///
@@ -249,14 +249,14 @@ mod tests {
     /// pins.
     #[test]
     fn chain_threshold_keeps_a_container_out() {
-        let data = fixture_bytes("fixtures/ts/h264_aac.ts");
+        let data = fixture_bytes("fixtures/ts/h264-aac.ts");
         assert!(
             adts_frame_count(&data) > 0,
             "container must carry ADTS frames"
         );
         match probe(&data, data.len()) {
             Outcome::None | Outcome::Insufficient(_) => {}
-            other => panic!("h264_aac.ts must NOT match ADTS at the real threshold, got {other:?}"),
+            other => panic!("h264-aac.ts must NOT match ADTS at the real threshold, got {other:?}"),
         }
     }
 
@@ -454,7 +454,7 @@ mod tests {
     /// 6-byte header the length decoder needs) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/container-probe/aac.adts");
+        let data = fixture_bytes("fixtures/audio/aac.adts");
         // 6 header bytes are the minimum the decoder reads; 5 is 1 short.
         let region = &data[..ADTS_HEADER_LEN - 1];
         match probe(region, region.len()) {

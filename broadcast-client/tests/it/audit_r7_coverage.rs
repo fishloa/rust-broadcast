@@ -18,7 +18,7 @@ use support::ts_pmt::{Es, find, rewrite};
 
 const BASE: &str = "http://origin.test/v";
 const PL: &str = "http://origin.test/v/index.m3u8";
-const FRAGMENT_FIXTURE: &str = "transmux/h264_aac_frag.mp4";
+const FRAGMENT_FIXTURE: &str = "mp4/h264-aac-frag.mp4";
 const SEGMENT_GROUP: usize = 3;
 const STEPS: usize = 20_000;
 const VOD_HEAD: &str =
@@ -256,7 +256,7 @@ fn key_tag(scheme: CencScheme) -> String {
 
 #[test]
 fn cenc_fmp4_without_an_ext_x_key_reports_the_track_and_plays_the_clear_audio() {
-    for fixture in ["transmux/h264_cenc.mp4", "transmux/h264_cbcs.mp4"] {
+    for fixture in ["mp4/h264-cenc.mp4", "mp4/h264-cbcs.mp4"] {
         let t = play_cenc(fixture, None);
         assert!(t.ended, "{fixture}: {t:?}");
         assert!(t.fatals.is_empty(), "{fixture}: {t:?}");
@@ -274,8 +274,8 @@ fn cenc_fmp4_without_an_ext_x_key_reports_the_track_and_plays_the_clear_audio() 
 #[test]
 fn cenc_fmp4_with_an_ext_x_key_is_one_fatal_unsupported_encryption_and_no_samples() {
     for (fixture, scheme) in [
-        ("transmux/h264_cenc.mp4", CencScheme::Cenc),
-        ("transmux/h264_cbcs.mp4", CencScheme::Cbcs),
+        ("mp4/h264-cenc.mp4", CencScheme::Cenc),
+        ("mp4/h264-cbcs.mp4", CencScheme::Cbcs),
     ] {
         let t = play_cenc(fixture, Some(&key_tag(scheme)));
         assert!(!t.ended, "{fixture}: {t:?}");
@@ -289,7 +289,7 @@ fn cenc_fmp4_with_an_ext_x_key_is_one_fatal_unsupported_encryption_and_no_sample
     }
 }
 
-const TS_FIXTURE: &str = "ts/h264_aac_40s.ts";
+const TS_FIXTURE: &str = "ts/h264-aac-40s.ts";
 const TS_PACKET: usize = 188;
 const SEGMENT_COUNT: usize = 8;
 const DISCONTINUITY_AT: usize = 4;

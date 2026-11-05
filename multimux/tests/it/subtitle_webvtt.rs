@@ -5,7 +5,7 @@
 //! TSDuck's `test-012.ts` (French teletext PID 0x42C: page 888 type 0x05, page
 //! 889 type 0x02) is the real teletext source, but the committed capture holds
 //! only the teletext PID with its PAT and PMT, no video. So the rig takes the
-//! video and audio of a real H.264 capture (`rai-gulp-8MB.ts`, one IDR per
+//! video and audio of a real H.264 capture (`rai-gulp-8-mb.ts`, one IDR per
 //! second) and adds `test-012.ts`'s teletext track, with its PMT descriptors
 //! and PES bytes untouched, on a PTS timeline shifted by a constant so that it
 //! starts shortly after the video. The shift is the only synthetic part, and
@@ -43,7 +43,7 @@ const TELETEXT_MUX_DELAY_SECS: f64 = 0.3;
 const DECLARED_BPS: u64 = 16_000_000;
 const STREAM: &str = "cam";
 const TELETEXT_FIXTURE: &str = "input/test-012.ts";
-const VIDEO_FIXTURE: &str = "zenith-live/rai-gulp-8MB.ts";
+const VIDEO_FIXTURE: &str = "ts/live-channels/rai-gulp-8-mb.ts";
 const TELETEXT_TRACK_ID: u32 = 99;
 const TELETEXT_STARTS_AFTER_VIDEO_TICKS: i64 = 27_000;
 const TIMING_REFERENCE: &str = "reference/test-012/test-012.tsp344.srt";
@@ -65,7 +65,7 @@ const VALIDATOR_BIN: &str = "/usr/local/bin/mediastreamvalidator";
 const VALIDATOR_DEADLINE: Duration = Duration::from_secs(60);
 const VALIDATOR_TARGET_SECS: &str = "5";
 const MUST_LEVEL: i64 = 1;
-/// Property of the interlaced real captures the rig uses (`rai-gulp-8MB.ts`,
+/// Property of the interlaced real captures the rig uses (`rai-gulp-8-mb.ts`,
 /// `transformers-eia608-h264.ts`), not of the origin; no issue.
 const KNOWN_INTERLACED_FIXTURE: &str = "Interlaced video detected - Must be progressive";
 /// Issue #1594: the validator reports this on a playlist without EXT-X-PART

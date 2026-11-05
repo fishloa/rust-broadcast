@@ -119,8 +119,8 @@ fn public_ps_fixtures_tagged() {
         assert_eq!(g.sample_aspect_ratio().unwrap(), (1, 1));
     }
 
-    // fixtures/mpeg-ps/ffmpeg-mpeg2-ps.mpg: mpeg2 64x48 DAR 4:3 (SAR 1:1)
-    let bytes = test_fixtures::read("mpeg-ps/ffmpeg-mpeg2-ps.mpg");
+    // fixtures/ps/ffmpeg-mpeg2-ps.mpg: mpeg2 64x48 DAR 4:3 (SAR 1:1)
+    let bytes = test_fixtures::read("ps/ffmpeg-mpeg2-ps.mpg");
     let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
     let track = video_track(&media, true);
     assert!(!track.samples.is_empty());

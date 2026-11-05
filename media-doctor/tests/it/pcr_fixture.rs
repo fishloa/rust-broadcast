@@ -24,13 +24,13 @@ fn pcr_errors(report: &Report) -> Vec<&media_doctor::Finding> {
 /// (the false-positive check synthetic packets can't give).
 #[test]
 fn pcr_clean_real_stream_no_errors() {
-    let ts = read("france-tnt-pcr.ts");
+    let ts = read("ts/france-tnt-pcr.ts");
     let mut report = Report::new();
     PcrCheck.run(&ts, &mut report);
     let errs = pcr_errors(&report);
     assert!(
         errs.is_empty(),
-        "clean france-tnt-pcr.ts should yield no PCR errors, got {}: {:?}",
+        "clean ts/france-tnt-pcr.ts should yield no PCR errors, got {}: {:?}",
         errs.len(),
         errs
     );
@@ -293,7 +293,7 @@ const ALLOWED: &[(&str, bool, bool)] = &[
 /// far apart in PCR time — not a synthetic tick offset.
 #[test]
 fn real_pcr_value_gap_is_still_reported() {
-    let ts = read("ts/h264_aac.ts");
+    let ts = read("ts/h264-aac.ts");
     const TS_PACKET_SIZE: usize = 188;
 
     let mut pcr_packets: Vec<usize> = Vec::new();

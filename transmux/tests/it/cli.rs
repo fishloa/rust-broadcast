@@ -74,7 +74,7 @@ fn errors(issues: &[transmux::ConformanceIssue]) -> Vec<String> {
 
 #[test]
 fn ts_to_cmaf_validates_clean() {
-    let ts = read("ts/h264_aac.ts");
+    let ts = read("ts/h264-aac.ts");
     let opts = Opts {
         format: OutputFormat::Cmaf,
         ..Opts::default()
@@ -106,7 +106,7 @@ fn ts_to_cmaf_validates_clean() {
 
 #[test]
 fn mp4_to_hls_playlist_and_segments() {
-    let mp4 = read("mp4/frag/h264_high.frag.mp4");
+    let mp4 = read("mp4/frag/h264-high.frag.mp4");
     let opts = Opts {
         format: OutputFormat::Hls,
         segment_duration: 4,
@@ -169,19 +169,19 @@ fn mp4_to_hls_playlist_and_segments() {
 #[test]
 fn autodetect_recognises_each_container() {
     assert_eq!(
-        detect_container(&read("ts/h264_aac.ts")).unwrap(),
+        detect_container(&read("ts/h264-aac.ts")).unwrap(),
         Container::MpegTs
     );
     assert_eq!(
-        detect_container(&read("mp4/frag/h264_high.frag.mp4")).unwrap(),
+        detect_container(&read("mp4/frag/h264-high.frag.mp4")).unwrap(),
         Container::Mp4
     );
     assert_eq!(
-        detect_container(&read("webm/vp9_opus.webm")).unwrap(),
+        detect_container(&read("mkv/vp9-opus.webm")).unwrap(),
         Container::WebM
     );
     assert_eq!(
-        detect_container(&read("ps/h264_ac3.ps")).unwrap(),
+        detect_container(&read("ps/h264-ac3.ps")).unwrap(),
         Container::MpegPs
     );
     // Garbage must not be mistaken for any container.
@@ -195,7 +195,7 @@ fn autodetect_recognises_each_container() {
 /// stride×phase lattice finds them (issue #960 / audit r05-W29).
 #[test]
 fn autodetect_finds_m2ts_and_mid_packet_captures() {
-    let ts = read("ts/h264_aac.ts");
+    let ts = read("ts/h264-aac.ts");
     assert_eq!(detect_container(&ts).unwrap(), Container::MpegTs);
 
     // M2TS: prepend a 4-byte timestamp before *every* 188-byte packet.
@@ -225,7 +225,7 @@ fn autodetect_finds_m2ts_and_mid_packet_captures() {
 
 #[test]
 fn format_selection_changes_output_shape() {
-    let ts = read("ts/h264_aac.ts");
+    let ts = read("ts/h264-aac.ts");
 
     let cmaf = match run_bytes(
         &ts,
@@ -383,7 +383,7 @@ fn args_debug_redacts_key_hex_but_keeps_the_kid() {
 /// file with no `moov` (ISO/IEC 23009-1 §6.3.4.2).
 #[test]
 fn dash_honours_segment_duration_and_omits_moov() {
-    let ts = read("ts/h264_aac.ts");
+    let ts = read("ts/h264-aac.ts");
     let out = run_bytes(
         &ts,
         &Opts {
@@ -434,7 +434,7 @@ fn dash_honours_segment_duration_and_omits_moov() {
 /// names must be written alongside.
 #[test]
 fn hls_honours_segment_duration_and_writes_init() {
-    let ts = read("ts/h264_aac.ts");
+    let ts = read("ts/h264-aac.ts");
     let out = run_bytes(
         &ts,
         &Opts {

@@ -177,19 +177,19 @@ fn assert_chunk_invariant(ts: &[u8], what: &str) -> Vec<String> {
 }
 
 const FIXTURES: &[&str] = &[
-    "fixtures/ts/h264_aac.ts",
-    "fixtures/ts/h264_aac_40s.ts",
+    "fixtures/ts/h264-aac.ts",
+    "fixtures/ts/h264-aac-40s.ts",
     "fixtures/ts/h264/main.ts",
     "fixtures/ts/hevc/main.ts",
     "fixtures/ts/hevc/main10.ts",
-    "fixtures/ts/aac-5_1-640k.ts",
+    "fixtures/ts/aac-5-1-640k.ts",
     "fixtures/ts/gulli-opengop.ts",
     "fixtures/ts/france2.ts",
     "fixtures/ts/m6-single.ts",
-    "fixtures/ts/h264/high_1080_cropped.ts",
-    "fixtures/transmux/ts/h264-two-resolutions.ts",
-    "fixtures/transmux/sample_aes_eac3/clear.ts",
-    "fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
+    "fixtures/ts/h264/high-1080-cropped.ts",
+    "fixtures/ts/h264-two-resolutions.ts",
+    "fixtures/crypto/sample-aes-eac3/clear.ts",
+    "fixtures/ts/audio-pes-straddle/sintel-ac3-eac3-aligned.ts",
 ];
 
 /// The config-validity check needs whole-length damage: the over-long

@@ -15,7 +15,7 @@
 //!
 //! PROVENANCE: the headline `#782` case is exercised **both** ways. The
 //! real-fixture test (`splice_insert_rebases_real_fixture_onto_the_join`)
-//! runs on the committed `fixtures/ts/h264_aac.ts` capture — real H.264 +
+//! runs on the committed `fixtures/ts/h264-aac.ts` capture — real H.264 +
 //! AAC, real keyframes, and genuinely different track timescales (90 000
 //! video / 44 100 audio) — reusing the exact base/ad split that
 //! `examples/ssai_ad_stitch.rs` (issue #664) performs, so the mixed-timescale
@@ -967,7 +967,7 @@ fn concat_leaves_untimed_section_samples_as_none() {
 // #782 Test 7 (REAL FIXTURE) — the same defect on real demuxed data, with
 // real mixed timescales. Reuses the base/ad split that
 // `examples/ssai_ad_stitch.rs` (issue #664) performs on the committed
-// `fixtures/ts/h264_aac.ts` capture: an `ad` Media whose tracks are anchored
+// `fixtures/ts/h264-aac.ts` capture: an `ad` Media whose tracks are anchored
 // `start_decode_time: 0` while their samples keep the capture's real absolute
 // `dts` — precisely the anchor/stamp disagreement #782 is about, and exactly
 // what a demuxed-from-its-own-file ad looks like. The #664 SSAI test asserts
@@ -981,7 +981,7 @@ fn concat_leaves_untimed_section_samples_as_none() {
 // ---------------------------------------------------------------------------
 #[test]
 fn splice_insert_rebases_real_fixture_onto_the_join() {
-    let path = test_fixtures::path("ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264-aac.ts");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let source: Media = TsDemux::new().unpackage(&bytes[..]).expect("TS demux");
 

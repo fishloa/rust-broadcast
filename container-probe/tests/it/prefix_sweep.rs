@@ -19,11 +19,11 @@
 //! up — while the sampled test was green:
 //!
 //! ```text
-//! fixtures/mp4/h264_high.mp4        lengths 33..=39, 41..=47
-//! fixtures/mp4/cmaf/av_frag.mp4     21 lengths, including 1278..=1284, 1590..=1596
-//! fixtures/container-probe/ts_midpacket_phase.ts   all 96 lengths 16..=111
-//! fixtures/container-probe/audio.mp3              41 lengths (16..=48, 237..=240, 429..=432)
-//! fixtures/container-probe/h264.annexb            32, 40
+//! fixtures/mp4/h264-high.mp4        lengths 33..=39, 41..=47
+//! fixtures/mp4/cmaf/av-frag.mp4     21 lengths, including 1278..=1284, 1590..=1596
+//! fixtures/ts/ts-midpacket-phase.ts   all 96 lengths 16..=111
+//! fixtures/audio/audio.mp3              41 lengths (16..=48, 237..=240, 429..=432)
+//! fixtures/candidates/h264.annexb            32, 40
 //! ```
 //!
 //! Two successive fix rounds patched this prober-by-prober and each round a
@@ -74,7 +74,7 @@ enum WholeFile {
 /// there, and that direction is covered by `tests/it/corpus_sweep.rs`.
 const REAL_FILES: &[(&str, Format, WholeFile)] = &[
     (
-        "fixtures/ts/h264_aac.ts",
+        "fixtures/ts/h264-aac.ts",
         Format::MpegTs,
         WholeFile::Identifies,
     ),
@@ -100,27 +100,27 @@ const REAL_FILES: &[(&str, Format, WholeFile)] = &[
     ),
     // 376 bytes: two TS packets, one short of the 3-sync weak threshold.
     (
-        "fixtures/mpeg-ts/af-pcr-stuffing.ts",
+        "fixtures/ts/af-pcr-stuffing.ts",
         Format::MpegTs,
         WholeFile::TooShortToConclude,
     ),
     (
-        "fixtures/container-probe/ts_midpacket_phase.ts",
+        "fixtures/ts/ts-midpacket-phase.ts",
         Format::MpegTs,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/container-probe/m2ts_192.m2ts",
+        "fixtures/ts/m2ts-192.m2ts",
         Format::MpegTs,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/mp4/h264_high.mp4",
+        "fixtures/mp4/h264-high.mp4",
         Format::Isobmff,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/mp4/hevc_main.mp4",
+        "fixtures/mp4/hevc-main.mp4",
         Format::Isobmff,
         WholeFile::Identifies,
     ),
@@ -130,12 +130,12 @@ const REAL_FILES: &[(&str, Format, WholeFile)] = &[
         WholeFile::Identifies,
     ),
     (
-        "fixtures/mp4/cmaf/av_frag.mp4",
+        "fixtures/mp4/cmaf/av-frag.mp4",
         Format::Isobmff,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/mp4/progressive/av_prog.mp4",
+        "fixtures/mp4/progressive/av-prog.mp4",
         Format::Isobmff,
         WholeFile::Identifies,
     ),
@@ -145,63 +145,63 @@ const REAL_FILES: &[(&str, Format, WholeFile)] = &[
         WholeFile::Identifies,
     ),
     (
-        "fixtures/mkv/h264_aac.mkv",
+        "fixtures/mkv/h264-aac.mkv",
         Format::Matroska,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/mkv/vp9_opus.mkv",
+        "fixtures/mkv/vp9-opus.mkv",
         Format::Matroska,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/webm/vorbis.webm",
+        "fixtures/mkv/vorbis.webm",
         Format::WebM,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/webm/vp9_opus.webm",
+        "fixtures/mkv/vp9-opus.webm",
         Format::WebM,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/mxf/op1a_mpeg2_pcm.mxf",
+        "fixtures/mxf/op1a-mpeg2-pcm.mxf",
         Format::Mxf,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/ps/h264_ac3.ps",
+        "fixtures/ps/h264-ac3.ps",
         Format::MpegPs,
         WholeFile::Identifies,
     ),
     ("fixtures/flv/av.flv", Format::Flv, WholeFile::Identifies),
     (
-        "fixtures/container-probe/pcm_s16le.wav",
+        "fixtures/audio/pcm-s16le.wav",
         Format::Wav,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/container-probe/opus.ogg",
+        "fixtures/audio/opus.ogg",
         Format::Ogg,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/container-probe/video.asf",
+        "fixtures/candidates/video.asf",
         Format::Asf,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/container-probe/aac.adts",
+        "fixtures/audio/aac.adts",
         Format::AdtsAac,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/container-probe/audio.mp3",
+        "fixtures/audio/audio.mp3",
         Format::Mp3,
         WholeFile::Identifies,
     ),
     (
-        "fixtures/container-probe/h264.annexb",
+        "fixtures/candidates/h264.annexb",
         Format::AnnexB,
         WholeFile::Identifies,
     ),

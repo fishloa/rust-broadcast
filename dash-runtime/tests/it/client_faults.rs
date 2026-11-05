@@ -246,7 +246,7 @@ fn rejection_reasons_are_typed() {
 
 #[test]
 fn a_progressive_mp4_served_as_a_segment_is_fatal_at_once() {
-    let progressive = test_fixtures::read("mp4/h264_high.mp4");
+    let progressive = test_fixtures::read("mp4/h264-high.mp4");
     let run = play(
         FFMPEG,
         Fault::always(SEGMENT, FaultKind::Replace(progressive)),

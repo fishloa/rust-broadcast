@@ -1,10 +1,10 @@
 //! `TsDemux` gate — MPEG-2 TS → hub `Media` IR, verified against ffprobe /
-//! ffmpeg oracles for `fixtures/ts/h264_aac.ts` (issue #467).
+//! ffmpeg oracles for `fixtures/ts/h264-aac.ts` (issue #467).
 //!
 //! Oracles (committed):
-//! - `h264_aac.packets.csv` — ffprobe per-packet (codec_type, stream_index, pts,
+//! - `h264-aac.packets.csv` — ffprobe per-packet (codec_type, stream_index, pts,
 //!   dts, duration, size, keyframe) in decode order, 90 kHz ticks.
-//! - `h264_aac.ref.mp4` — ffmpeg `-c copy` remux of the SAME TS; its `avcC` box
+//! - `h264-aac.ref.mp4` — ffmpeg `-c copy` remux of the SAME TS; its `avcC` box
 //!   body + length-prefixed video mdat sample payloads are the byte oracle.
 //!
 //! Every test below is written to *bite*: the demuxed IR is compared against the
@@ -24,8 +24,8 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn load_ts() -> Vec<u8> {
-    let path = fixtures_dir().join("h264_aac.ts");
-    let data = std::fs::read(&path).expect("h264_aac.ts fixture must exist");
+    let path = fixtures_dir().join("h264-aac.ts");
+    let data = std::fs::read(&path).expect("h264-aac.ts fixture must exist");
     assert_eq!(
         data.len() % 188,
         0,
@@ -35,8 +35,8 @@ fn load_ts() -> Vec<u8> {
 }
 
 fn load_ref_mp4() -> Vec<u8> {
-    std::fs::read(fixtures_dir().join("demux-oracle/h264_aac.ref.mp4"))
-        .expect("h264_aac.ref.mp4 oracle must exist")
+    std::fs::read(fixtures_dir().join("demux-oracle/h264-aac.ref.mp4"))
+        .expect("h264-aac.ref.mp4 oracle must exist")
 }
 
 /// One ffprobe oracle row.
@@ -55,7 +55,7 @@ struct OracleRow {
 
 /// Parse the ffprobe CSV oracle (skips `#` comment lines).
 fn load_oracle_rows() -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(fixtures_dir().join("demux-oracle/h264_aac.packets.csv"))
+    let text = std::fs::read_to_string(fixtures_dir().join("demux-oracle/h264-aac.packets.csv"))
         .expect("packets.csv oracle must exist");
     let mut rows = Vec::new();
     for line in text.lines() {
@@ -327,7 +327,7 @@ fn enumerates_two_tracks_h264_then_aac() {
     assert_eq!(media.tracks.len(), 2, "must demux exactly 2 tracks");
     match &media.tracks[0].spec.config {
         CodecConfig::Avc { width, height, .. } => {
-            // Dimensions must be decoded from the in-band SPS (h264_aac.ts is
+            // Dimensions must be decoded from the in-band SPS (h264-aac.ts is
             // Main profile 320x240) — not left at 0.
             assert_eq!(
                 (*width, *height),

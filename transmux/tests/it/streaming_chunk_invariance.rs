@@ -132,19 +132,19 @@ fn assert_invariant(rel: &str) -> Vec<String> {
 #[test]
 fn audio_and_video_fixtures_are_chunk_size_invariant() {
     for rel in [
-        "fixtures/ts/h264_aac.ts",
-        "fixtures/ts/aac-5_1-640k.ts",
+        "fixtures/ts/h264-aac.ts",
+        "fixtures/ts/aac-5-1-640k.ts",
         "fixtures/ts/h264/interlaced.ts",
         "fixtures/ts/hevc/main.ts",
-        "fixtures/ts/legacy/mpeg2_mp2.ts",
-        "fixtures/ts/legacy/mpeg2_mp2_pes_misaligned.ts",
-        "fixtures/ts/dolby/eac3_dvb_0x06.ts",
+        "fixtures/ts/legacy/mpeg2-mp2.ts",
+        "fixtures/ts/legacy/mpeg2-mp2-pes-misaligned.ts",
+        "fixtures/ts/dolby/eac3-dvb-0x06.ts",
         "fixtures/ts/dolby/ac3.ts",
-        "fixtures/ts/dts/dts_core.ts",
+        "fixtures/ts/dts/dts-core.ts",
         "fixtures/ts/m6-single.ts",
-        "fixtures/transmux/timeline/av_offset.ts",
-        "fixtures/transmux/audio_pes_straddle/sintel-ac3-eac3-aligned.ts",
-        "fixtures/transmux/paff/paff_tff_12f_64x64.ts",
+        "fixtures/dash/timeline/av_offset.ts",
+        "fixtures/ts/audio-pes-straddle/sintel-ac3-eac3-aligned.ts",
+        "fixtures/video/paff/paff-tff-12f-64x64.ts",
     ] {
         let events = assert_invariant(rel);
         let k = kinds(&events);
@@ -164,7 +164,7 @@ fn discontinuity_and_track_update_events_are_chunk_size_invariant() {
     );
 
     // SD <-> HD parameter-set change on one PID: TrackUpdated, same track_id.
-    let events = assert_invariant("fixtures/transmux/ts/h264-two-resolutions.ts");
+    let events = assert_invariant("fixtures/ts/h264-two-resolutions.ts");
     let k = kinds(&events);
     assert!(
         k.get("TrackUpdated").copied().unwrap_or(0) > 0,
@@ -185,7 +185,7 @@ fn discontinuity_and_track_update_events_are_chunk_size_invariant() {
 fn large_captures_are_chunk_size_invariant() {
     for rel in [
         "fixtures/ts/gulli-opengop.ts",
-        "fixtures/ts/h264_aac_40s.ts",
+        "fixtures/ts/h264-aac-40s.ts",
     ] {
         assert_invariant(rel);
     }

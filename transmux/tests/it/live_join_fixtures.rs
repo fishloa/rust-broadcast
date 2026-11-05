@@ -84,7 +84,7 @@ fn run(spec: &transmux::TrackSpec, samples: &[Sample], cut: usize, policy: JoinP
 
 #[test]
 fn closed_gop_idr_stream_cut_mid_gop_drops_exactly_up_to_the_next_idr() {
-    let (spec, samples) = video_samples("fixtures/ts/h264_aac_40s.ts");
+    let (spec, samples) = video_samples("fixtures/ts/h264-aac-40s.ts");
     let idrs = with_nal(&samples, 5);
     assert_eq!(&idrs[..3], &[0, 25, 50], "GOP of 25 samples");
     // From the start: joins at sample 0 immediately, nothing dropped.
@@ -176,7 +176,7 @@ fn self_contained_policy_never_joins_the_idr_less_stream() {
 
 #[test]
 fn rejoin_after_failure_waits_for_the_next_random_access_point() {
-    let (spec, samples) = video_samples("fixtures/ts/h264_aac_40s.ts");
+    let (spec, samples) = video_samples("fixtures/ts/h264-aac-40s.ts");
     let mut j = LiveJoin::for_config(&spec.config).unwrap();
     for s in &samples[..30] {
         j.push(s);

@@ -4,9 +4,9 @@
 //! (`chroma_format`/`bit_depth_*`/`sps_ext`) as mandatory whenever
 //! `profile_indication` was in the High-profile family (100/110/122/244).
 //!
-//! Fixture: `fixtures/scte35-ssai/dash/V300/{init.mp4,3.m4s}` — a real
+//! Fixture: `fixtures/scte35/dash/v300/{init.mp4,3.m4s}` — a real
 //! DASH-IF `livesim2` capture (Apache-2.0, see
-//! `fixtures/scte35-ssai/PROVENANCE.md`). Its `avcC` is exactly 41 bytes,
+//! `fixtures/scte35/PROVENANCE.md`). Its `avcC` is exactly 41 bytes,
 //! profile 100 (High), and the SPS+PPS arrays consume every byte — there is
 //! no trailer on the wire at all, which a conformant High-profile encoder is
 //! free to do. ffmpeg reads this file without complaint; before the fix,
@@ -22,8 +22,8 @@ use transmux::nalu_types::{AvcPps, AvcSps};
 use transmux::pipeline::{CodecConfig, TrackSpec, build_init_segment};
 
 fn fixture_bytes() -> Vec<u8> {
-    let mut buf = test_fixtures::read("scte35-ssai/dash/V300/init.mp4");
-    buf.extend_from_slice(&test_fixtures::read("scte35-ssai/dash/V300/3.m4s"));
+    let mut buf = test_fixtures::read("scte35/dash/v300/init.mp4");
+    buf.extend_from_slice(&test_fixtures::read("scte35/dash/v300/3.m4s"));
     buf
 }
 

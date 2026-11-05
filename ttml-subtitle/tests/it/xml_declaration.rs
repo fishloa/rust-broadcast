@@ -10,7 +10,7 @@ const TT: &str = r#"<tt xmlns="http://www.w3.org/ns/ttml"><body/></tt>"#;
 const DEFAULT_DECL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>"#;
 
 fn fixture(name: &str) -> String {
-    let p = test_fixtures::path(&format!("ttml/{name}"));
+    let p = test_fixtures::path(&format!("subtitles/{name}"));
     fs::read_to_string(p).expect("fixture")
 }
 

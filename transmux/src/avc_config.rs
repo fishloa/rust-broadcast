@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_avc_config_high_profile_no_trailer_952() {
-        // Real DASH-IF `livesim2` `avcC` (`fixtures/scte35-ssai/dash/V300/init.mp4`,
+        // Real DASH-IF `livesim2` `avcC` (`fixtures/scte35/dash/v300/init.mp4`,
         // issue #952): profile 100 (High), 41 bytes total, SPS+PPS consuming
         // every byte — the optional §5.3.3.1.2 high-profile trailer
         // (chroma_format/bit_depth_*/sps_ext) is simply absent, which a

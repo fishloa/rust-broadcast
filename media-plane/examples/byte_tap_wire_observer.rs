@@ -5,7 +5,7 @@
 //! bytes exactly as they arrived, before any demuxer gets a chance to reject
 //! or discard them.
 //!
-//! Reads `fixtures/ts/h264_aac.ts` (a real broadcast capture shared across
+//! Reads `fixtures/ts/h264-aac.ts` (a real broadcast capture shared across
 //! this workspace's crates) via [`std::fs::read`], records every packet with
 //! an arrival timestamp derived from its position in the file, then drains
 //! the tap through a deliberately small ring so the run demonstrates both
@@ -20,7 +20,7 @@
 use bytes::Bytes;
 use media_plane::{ByteTap, TapItem, TapPoint};
 
-const FIXTURE: &str = "ts/h264_aac.ts";
+const FIXTURE: &str = "ts/h264-aac.ts";
 const TS_PACKET_SIZE: usize = 188;
 /// Deliberately small next to a real capture's packet count, so this run
 /// exercises the tap's eviction/`Lagged` path on genuine data, not just the

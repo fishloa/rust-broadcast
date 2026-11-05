@@ -1,6 +1,6 @@
 """Smoke test for transmux-py against a real committed MPEG-2 TS capture.
 
-Validates the binding against `fixtures/ts/h264_aac.ts` — the deterministic,
+Validates the binding against `fixtures/ts/h264-aac.ts` — the deterministic,
 real 2-track (H.264 video + AAC audio) capture the `transmux` Rust crate's own
 test suite (`transmux/tests/it/ts_demux.rs`, `smooth.rs`, `golden_gate.rs`, etc.)
 uses as its oracle-backed fixture. Its exact sample counts (75 video / 131
@@ -90,7 +90,7 @@ def test_private_krone_display_geometry():
 # workspace's own transmux test suite, not fixture data private to this
 # binding).
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "fixtures", "ts", "h264_aac.ts"
+    os.path.dirname(__file__), "..", "..", "..", "fixtures", "ts", "h264-aac.ts"
 )
 
 

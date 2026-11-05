@@ -7,7 +7,7 @@
 //!
 //! The fixture (`../fixtures/hls/ts-hls/`, see its `PROVENANCE.md`) is real
 //! ffmpeg `-f hls -hls_segment_type mpegts` output generated from the
-//! workspace's own committed `fixtures/ts/h264_aac.ts` capture — not
+//! workspace's own committed `fixtures/ts/h264-aac.ts` capture — not
 //! hand-typed bytes, so it carries the real PAT/PMT/PES layout the wild
 //! (not just the happy path a synthetic fixture would cover).
 //!

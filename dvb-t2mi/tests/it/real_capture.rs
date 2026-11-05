@@ -18,7 +18,7 @@ const T2MI_PID: Pid = Pid::new(0x0040);
 const TS_PACKET: usize = 188;
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("dvb-t2mi/colombia-capital-t2mi.ts")
+    test_fixtures::read("t2mi/colombia-capital-t2mi.ts")
 }
 
 #[test]

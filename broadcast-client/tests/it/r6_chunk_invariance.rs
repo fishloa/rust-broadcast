@@ -13,7 +13,7 @@ const SOAK_FIXED_CHUNKS: &[usize] = &[
 ];
 const FIXED_CHUNKS: &[usize] = &[TS_PACKET, 7 * TS_PACKET, 4096, 64 * 1024, 256 * 1024];
 const SMALL_FILE_EXTRA_CHUNKS: &[usize] = &[1, 1316];
-const SMALL_FILE: &str = "ts/h264_aac.ts";
+const SMALL_FILE: &str = "ts/h264-aac.ts";
 const SOAK_RANDOM_SEEDS: &[u64] = &[1, 2, 3];
 const RANDOM_SEEDS: &[u64] = &[1, 2];
 const MAX_RANDOM_PACKETS: u64 = 1500;
@@ -253,11 +253,14 @@ macro_rules! public_capture {
     };
 }
 
-private_capture!(tf1_is_chunk_invariant, "zenith-live/tf-1-8MB.ts");
-private_capture!(arte_is_chunk_invariant, "zenith-live/arte-8MB.ts");
-private_capture!(rai_gulp_is_chunk_invariant, "zenith-live/rai-gulp-8MB.ts");
-public_capture!(h264_aac_is_chunk_invariant, "ts/h264_aac.ts");
-public_capture!(h264_aac_40s_is_chunk_invariant, "ts/h264_aac_40s.ts");
+private_capture!(tf1_is_chunk_invariant, "ts/live-channels/tf-1-8-mb.ts");
+private_capture!(arte_is_chunk_invariant, "ts/live-channels/arte-8-mb.ts");
+private_capture!(
+    rai_gulp_is_chunk_invariant,
+    "ts/live-channels/rai-gulp-8-mb.ts"
+);
+public_capture!(h264_aac_is_chunk_invariant, "ts/h264-aac.ts");
+public_capture!(h264_aac_40s_is_chunk_invariant, "ts/h264-aac-40s.ts");
 public_capture!(france2_is_chunk_invariant, "ts/france2.ts");
 public_capture!(gulli_opengop_is_chunk_invariant, "ts/gulli-opengop.ts");
 public_capture!(

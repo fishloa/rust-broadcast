@@ -39,7 +39,7 @@ fn played_then_ended_resets_attempt_counter() {
     c.poll_timeout(dl);
     let _ = c.poll();
     static D: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
     // play
     c.on_response(200, &[], 0);
     let _ = c.poll_event();
@@ -70,7 +70,7 @@ fn server_closes_every_60s_no_stall_notice() {
         c.on_response(200, &[], i * 60000);
         let _ = c.poll_event();
         static D: std::sync::LazyLock<Vec<u8>> =
-            std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
+            std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
         c.feed(D.as_slice(), i * 60000 + 1);
         c.on_eof(i * 60000 + 60000);
         assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
@@ -115,7 +115,7 @@ fn gone_410_is_not_found_event() {
 #[test]
 fn stall_notice_repeats_once_per_second_after_first() {
     static D: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
     let mut c = TsHttpClient::new("u", Config::default(), 0);
     let _ = c.poll();
     c.on_response(200, &[], 0);
@@ -192,7 +192,7 @@ fn starved_data_vs_nodata_classified_separately() {
     assert!(saw_data);
 
     static D: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264_aac.ts"));
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
     let mut c2 = TsHttpClient::new("u", Config::default(), 0);
     let _ = c2.poll();
     c2.on_response(200, &[], 0);

@@ -91,7 +91,7 @@ fn print_track_summary(media: &Media) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = fixture_path("ts/h264_aac.ts");
+    let path = fixture_path("ts/h264-aac.ts");
     let ts = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(err) => {

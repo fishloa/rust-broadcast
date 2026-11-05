@@ -5,7 +5,7 @@
 //!
 //! The streams are spec-built by `tests/support/paff_gen.rs` (I_PCM, losslessly
 //! decodable, every field different), 12 frames of 64x64, TFF and BFF; two are
-//! also committed under `../fixtures/transmux/paff/` and pinned against the generator.
+//! also committed under `../fixtures/video/paff/` and pinned against the generator.
 
 #[path = "support/paff_gen.rs"]
 mod paff_gen;
@@ -245,10 +245,10 @@ fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
 
 #[test]
 fn committed_fixtures_match_the_generator_and_pair() {
-    let dir = test_fixtures::path("transmux/paff");
+    let dir = test_fixtures::path("video/paff");
     for (name, g) in [
-        ("paff_tff_12f_64x64", gen_tff()),
-        ("paff_bff_12f_64x64", gen_bff()),
+        ("paff-tff-12f-64x64", gen_tff()),
+        ("paff-bff-12f-64x64", gen_bff()),
     ] {
         let ts = std::fs::read(dir.join(format!("{name}.ts"))).expect("committed fixture");
         assert_eq!(ts, g.ts, "{name}.ts is exactly what paff_gen produces");
@@ -417,10 +417,10 @@ fn progressive_and_non_field_streams_are_unaffected() {
 #[test]
 #[ignore]
 fn regenerate_fixtures() {
-    let dir = test_fixtures::path("transmux/paff");
+    let dir = test_fixtures::path("video/paff");
     for (name, g) in [
-        ("paff_tff_12f_64x64", gen_tff()),
-        ("paff_bff_12f_64x64", gen_bff()),
+        ("paff-tff-12f-64x64", gen_tff()),
+        ("paff-bff-12f-64x64", gen_bff()),
     ] {
         std::fs::write(dir.join(format!("{name}.ts")), &g.ts).unwrap();
         std::fs::write(dir.join(format!("{name}.yuv")), &g.yuv).unwrap();

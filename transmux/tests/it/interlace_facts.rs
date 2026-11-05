@@ -37,7 +37,7 @@ fn progressive_streams_are_progressive_frames() {
         "fixtures/ts/h264/main.ts",
         "fixtures/ts/h264/high.ts",
         "fixtures/ts/h264/baseline.ts",
-        "fixtures/ts/h264_aac.ts",
+        "fixtures/ts/h264-aac.ts",
         "fixtures/ts/hevc/main.ts",
         "fixtures/ts/hevc/main10.ts",
     ] {
@@ -98,14 +98,14 @@ fn real_paff_capture_reports_field_pairs() {
 
 #[test]
 fn synthetic_paff_reports_parity_of_the_first_field() {
-    let (scan, tff) = facts_of("fixtures/transmux/paff/paff_tff_12f_64x64.ts");
+    let (scan, tff) = facts_of("fixtures/video/paff/paff-tff-12f-64x64.ts");
     assert_eq!(scan, VideoScan::Paff);
     assert_eq!(tff.len(), 12);
     assert!(
         tff.iter()
             .all(|f| f.field_pic && f.fields == 2 && f.bottom_field_first == Some(false))
     );
-    let (_, bff) = facts_of("fixtures/transmux/paff/paff_bff_12f_64x64.ts");
+    let (_, bff) = facts_of("fixtures/video/paff/paff-bff-12f-64x64.ts");
     assert!(
         bff.iter()
             .all(|f| f.field_pic && f.fields == 2 && f.bottom_field_first == Some(true))
@@ -116,7 +116,7 @@ fn synthetic_paff_reports_parity_of_the_first_field() {
 
 #[test]
 fn non_video_and_garbage_yield_none() {
-    let ts = std::fs::read(fixture("fixtures/ts/h264_aac.ts")).unwrap();
+    let ts = std::fs::read(fixture("fixtures/ts/h264-aac.ts")).unwrap();
     let m = TsDemux::new().unpackage(&ts).unwrap();
     let audio = m
         .tracks

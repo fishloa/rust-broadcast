@@ -1,5 +1,5 @@
 //! Hand-built ECMG⇔SCS `CW_provision` fixture (TS 103 197 §5.5.7): parse the
-//! committed `cw_provision.bin`, assert its decoded fields, and verify a
+//! committed `cw-provision.bin`, assert its decoded fields, and verify a
 //! byte-exact round-trip. The CW inside `CP_CW_combination` is opaque.
 
 use broadcast_common::traits::Serialize;
@@ -9,7 +9,7 @@ use dvb_simulcrypt::{
 };
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("dvb-simulcrypt/cw_provision.bin")
+    test_fixtures::read("simulcrypt/cw-provision.bin")
 }
 
 #[test]

@@ -24,7 +24,7 @@ fn pusi(p: &[u8]) -> bool {
 /// E-AC-3 dependent-substream hold-back (#1186) loses a COMPLETE access unit
 /// on a continuity-counter gap in the FOLLOWING PES.
 ///
-/// `gw_ffmpeg.ts` carries one 7.1 access unit (AC-3 core + dependent E-AC-3
+/// `gw-ffmpeg.ts` carries one 7.1 access unit (AC-3 core + dependent E-AC-3
 /// frame) per PES. Drop one non-PUSI packet out of PES 80: PES 80 is
 /// (correctly) discarded as damaged. PES 79 was received whole and intact, but
 /// its access unit is still sitting in `anchor.carry` (held back for a possible
@@ -32,10 +32,10 @@ fn pusi(p: &[u8]) -> bool {
 /// away. Before the hold-back, AU 79 was emitted as soon as PES 79 completed.
 #[test]
 fn eac3_cc_gap_in_next_pes_drops_the_held_intact_access_unit() {
-    let Some(ts) = private("eac3-dep/gw_ffmpeg.ts") else {
+    let Some(ts) = private("audio/eac3-dependent/gw-ffmpeg.ts") else {
         return;
     };
-    let Some(es) = private("eac3-dep/the_great_wall_7.1.eac3") else {
+    let Some(es) = private("audio/eac3-dependent/the-great-wall-7.1.eac3") else {
         return;
     };
     let aus: Vec<Vec<u8>> = split_eac3_syncframes(&es)
@@ -126,7 +126,7 @@ fn encode_pts(prefix: u8, v: u64) -> [u8; 5] {
 /// with the old timeline's stamp as soon as PES 79 completed.
 #[test]
 fn eac3_held_access_unit_is_retimed_onto_the_next_pes_timeline_after_a_pts_jump() {
-    let Some(ts) = private("eac3-dep/gw_ffmpeg.ts") else {
+    let Some(ts) = private("audio/eac3-dependent/gw-ffmpeg.ts") else {
         return;
     };
     const JUMP: u64 = 10 * 90_000; // +10 s from PES 80 on

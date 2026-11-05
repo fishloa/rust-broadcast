@@ -92,7 +92,8 @@ fn a_data_only_hls_ts_stream_reports_each_dropped_track_then_ends() {
 
 #[test]
 fn each_dropped_data_track_is_reported_once_while_media_keeps_flowing() {
-    let Some(bytes) = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "r5_hls_dropped")
+    let Some(bytes) =
+        test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "r5_hls_dropped")
     else {
         return;
     };

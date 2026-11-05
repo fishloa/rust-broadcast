@@ -1,6 +1,6 @@
 //! Apple TV controller INPUT-LOG goldens. The zenith-tv player recorded, for
 //! three clean-ish runs, every call it made into the controller in call order
-//! (`private/fixtures/buffering-runtime/*-apple-tv.lb.csv`, see its PROVENANCE.md):
+//! (`private/fixtures/logs/buffering/*-apple-tv.lb.csv`, see its PROVENANCE.md):
 //! `kind,now_us,a,b` with `chunk` (a = bytes, b = PCR 27 MHz or empty),
 //! `media` (a = track 1 video / 2 audio, b = media end 27 MHz), `tick`
 //! (a = has_pos, b = playback 27 MHz), `register` (a = track), `hint`
@@ -112,7 +112,7 @@ fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> 
         running: false,
     };
     let path = test_fixtures::require(
-        &format!("buffering-runtime/{name}-apple-tv.lb.csv"),
+        &format!("logs/buffering/{name}-apple-tv.lb.csv"),
         "buffering-runtime apple_tv_input_logs",
     )?;
     let text = std::fs::read_to_string(&path).unwrap();
@@ -194,7 +194,7 @@ fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> 
 /// measured straight from the log (independent of the controller).
 fn max_audio_gap_us(name: &str, from_us: u64) -> u64 {
     let path = test_fixtures::require(
-        &format!("buffering-runtime/{name}-apple-tv.lb.csv"),
+        &format!("logs/buffering/{name}-apple-tv.lb.csv"),
         "buffering-runtime apple_tv_input_logs",
     )
     .unwrap();

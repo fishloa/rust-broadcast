@@ -1,7 +1,7 @@
 //! Independent-oracle test for `dvb-tools pids` bitrate estimation
 //! (issue #1100 / audit W-DT-1, plus its PCR-wrap follow-up).
 //!
-//! `fixtures/france-tnt-pcr.ts` (workspace root) is a real multi-program
+//! `fixtures/ts/france-tnt-pcr.ts` (workspace root) is a real multi-program
 //! capture carrying five independent PCR PIDs (0x0078, 0x00DC, 0x026C,
 //! 0x0208, 0x02D0 — one per service, ISO/IEC 13818-1 §2.4.4.9). Before the
 //! fix, `pids.rs` tracked the *first* PCR seen on any PID and the *last* PCR
@@ -28,7 +28,7 @@
 //! Oracle: TSDuck 3.44 `tsanalyze`'s own bitrate estimate for each
 //! *unshifted* capture, independent of our parser and our own PCR unwrap:
 //! ```text
-//! $ tsanalyze fixtures/france-tnt-pcr.ts
+//! $ tsanalyze fixtures/ts/france-tnt-pcr.ts
 //! Selected reference bitrate: ............. 24,323,948 b/s   (188 bytes/pkt)
 //! $ tsanalyze france-tnt-pcr-pid00dc-only.ts   # PID 0x00DC isolated
 //! Selected reference bitrate: ..............  4,113,084 b/s   (188 bytes/pkt)
@@ -61,7 +61,7 @@ fn run(args: &[&str]) -> (bool, String) {
 }
 
 /// tsanalyze's "Selected reference bitrate" (188 bytes/pkt basis) for
-/// `fixtures/france-tnt-pcr.ts`, recorded verbatim from its own report.
+/// `fixtures/ts/france-tnt-pcr.ts`, recorded verbatim from its own report.
 const ORACLE_BPS: f64 = 24_323_948.0;
 
 /// tsanalyze's "Selected reference bitrate" for the PID-0x00DC-only stream
@@ -102,7 +102,7 @@ fn assert_bitrate_matches_oracle(path: &str, oracle_mbps: f64) {
 
 #[test]
 fn pids_bitrate_matches_tsanalyze_oracle_within_1_percent() {
-    let path = fixture("/france-tnt-pcr.ts");
+    let path = fixture("/ts/france-tnt-pcr.ts");
     assert_bitrate_matches_oracle(&path, ORACLE_BPS / 1_000_000.0);
 }
 

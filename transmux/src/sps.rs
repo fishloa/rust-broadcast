@@ -16,7 +16,7 @@
 //! - **H.265 VPS timing**: ITU-T H.265 §7.3.2.1 (VPS) — `vps_timing_info_present_flag`,
 //!   `vps_num_units_in_tick`, `vps_time_scale`; inheritance into the SPS VUI per
 //!   `private/specs-verified/mpeg/transmux/codec/hevc-vps-timing.md` (§3-§4).
-//! - **Coded dimensions**: see `fixtures/ts/CODEC-ORACLE.md`.
+//! - **Coded dimensions**: see `fixtures/ts/PROVENANCE.md`.
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
 //!   §7.4.1 NAL semantics (emulation_prevention_three_byte); H.265 §7.4.2.1.
 
@@ -2065,7 +2065,7 @@ mod tests {
     }
 
     /// Positive VUI timing case: a real H.264 High-profile SPS extracted from
-    /// `fixtures/mp4/h264_high.mp4` (ffprobe: `r_frame_rate=25/1`).
+    /// `fixtures/mp4/h264-high.mp4` (ffprobe: `r_frame_rate=25/1`).
     ///
     /// The SPS carries `timing_info_present_flag=1` with:
     /// - `num_units_in_tick = 1`
@@ -2073,7 +2073,7 @@ mod tests {
     /// - fps = 50 / (2 × 1) = 25.0
     ///
     /// Bytes are the verbatim SPS NAL (including 0x67 header) extracted from
-    /// the Annex-B stream of `h264_high.mp4` via `h264_mp4toannexb`.
+    /// the Annex-B stream of `h264-high.mp4` via `h264_mp4toannexb`.
     #[test]
     fn avc_sps_vui_timing_25fps() {
         // profile_idc=100 (High), level_idc=13, carries VUI with timing_info.
@@ -2154,7 +2154,7 @@ mod tests {
     }
 
     /// Positive HEVC VUI timing case: a real H.265 Main-profile SPS extracted from
-    /// `fixtures/transmux/hevc_frag.mp4` (ffprobe: `r_frame_rate=25/1`).
+    /// `fixtures/mp4/hevc-frag.mp4` (ffprobe: `r_frame_rate=25/1`).
     ///
     /// SPS NAL extracted from the `hvcC` box (nal_type=33, length=42 bytes).
     /// The SPS carries `vui_parameters_present_flag=1` and
@@ -2166,7 +2166,7 @@ mod tests {
     /// The x265 encoder options in the SEI confirm `fps=25/1 vui-timing-info`.
     #[test]
     fn hevc_sps_vui_timing_25fps() {
-        // Verbatim SPS NAL (nal_unit_type=33) from hevc_frag.mp4 hvcC.
+        // Verbatim SPS NAL (nal_unit_type=33) from hevc-frag.mp4 hvcC.
         // Emulation-prevention byte 0x03 appears at offsets 10, 18, 28, 34
         // within the raw NAL; BitReader::with_unescape handles removal.
         let sps: &[u8] = &[

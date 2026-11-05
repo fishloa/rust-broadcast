@@ -9,7 +9,7 @@ use timed_metadata::daterange::{DateRange, Scte35Cue};
 use timed_metadata::event::TimedEvent;
 
 fn read_fixture(name: &str) -> String {
-    test_fixtures::read_to_string(&format!("timed-metadata/{name}"))
+    test_fixtures::read_to_string(&format!("hls/daterange/{name}"))
 }
 
 fn check(line: &str, expect_id: &str) {

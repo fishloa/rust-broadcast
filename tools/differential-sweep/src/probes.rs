@@ -792,10 +792,10 @@ pub fn scte35(fx: &Fixture, _: &Cfg) -> Option<Value> {
 // ---------------------------------------------------------------------------
 
 pub fn st291(fx: &Fixture, _: &Cfg) -> Option<Value> {
-    if fx.ext != "bin" || !fx.rel.contains("st291/") {
+    if fx.ext != "bin" || !fx.rel.contains("rtp/anc") {
         return None;
     }
-    if fx.rel.ends_with("anc_rtp.bin") {
+    if fx.rel.ends_with("anc-rtp.bin") {
         return Some(match st291::AncRtpPayload::parse_rtp_packet(&fx.data) {
             Ok((_, p)) => json!({ "rtp": "ok", "payload": variant_name(&format!("{p:?}")) }),
             Err(e) => json!({ "rtp": format!("err:{}", variant_name(&format!("{e:?}"))) }),

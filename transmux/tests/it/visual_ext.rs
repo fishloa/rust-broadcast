@@ -1,6 +1,6 @@
 //! Ungameable gate test for colr / pasp / clap visual sample-entry extension boxes (#434).
 //!
-//! Extracts `colr` + `pasp` from the real ffmpeg-generated `colr_hdr.mp4` fixture,
+//! Extracts `colr` + `pasp` from the real ffmpeg-generated `colr-hdr.mp4` fixture,
 //! parses them, asserts oracle values (FMP4-GAPS-ORACLE.md), and byte-exact
 //! round-trips each box. Builds a `clap` from a spec vector and round-trips it.
 //!
@@ -29,7 +29,7 @@ const PASP_BODY_ORACLE: [u8; 8] = [
 ];
 
 fn load_fixture() -> Vec<u8> {
-    test_fixtures::read("mp4/colr_hdr.mp4")
+    test_fixtures::read("mp4/colr-hdr.mp4")
 }
 
 /// Find a direct child box by four-CC (shallow — only walks one level).

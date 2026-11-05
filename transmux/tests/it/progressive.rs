@@ -1,10 +1,10 @@
 //! Progressive (single-file, non-fragmented) MP4 output gate — issue #463.
 //!
-//! Pipeline under test: `TsDemux::unpackage(h264_aac.ts)` → [`Media`], then
+//! Pipeline under test: `TsDemux::unpackage(h264-aac.ts)` → [`Media`], then
 //! `ProgressiveMux { faststart: true }.package(&media)` → a complete `.mp4`.
 //!
-//! Oracle: `fixtures/ts/demux-oracle/h264_aac.ref.mp4` is
-//! `ffmpeg -movflags +faststart -c copy` of `fixtures/ts/h264_aac.ts`
+//! Oracle: `fixtures/ts/demux-oracle/h264-aac.ref.mp4` is
+//! `ffmpeg -movflags +faststart -c copy` of `fixtures/ts/h264-aac.ts`
 //! (H.264 video + AAC audio, 75 video samples). Its box order (moov before
 //! mdat) and its video sample bytes / `avcC` are the oracle.
 //!
@@ -248,12 +248,12 @@ fn fixture(rel: &[&str]) -> Vec<u8> {
 }
 
 fn demux_media() -> Media {
-    let ts = fixture(&["fixtures", "ts", "h264_aac.ts"]);
+    let ts = fixture(&["fixtures", "ts", "h264-aac.ts"]);
     TsDemux::new().unpackage(&ts).expect("demux ts")
 }
 
 fn ref_mp4() -> Vec<u8> {
-    fixture(&["fixtures", "ts", "demux-oracle", "h264_aac.ref.mp4"])
+    fixture(&["fixtures", "ts", "demux-oracle", "h264-aac.ref.mp4"])
 }
 
 fn package(faststart: bool) -> Vec<u8> {
@@ -503,7 +503,7 @@ fn faststart_false_same_samples_different_order() {
 // ---------------------------------------------------------------------------
 
 /// A movie timescale large enough (2 GHz, as in
-/// `transmux/mp4/cenc_boxes/v1_mvhd.mp4`) that a few minutes of media
+/// `mp4/cenc-boxes/v1-mvhd.mp4`) that a few minutes of media
 /// overflows `u32::MAX` ticks — the real-world trigger for the version-1
 /// `mvhd`/`tkhd`/`mdhd` layouts.
 const HUGE_TIMESCALE: u32 = 2_000_000_000;
@@ -778,7 +778,7 @@ fn interleaved_chunk_contents_match_the_reference() {
 
     // The reference: the same TS, remuxed by ffmpeg (one chunk per track is
     // fine — the packet contents are what is compared).
-    let ts = fixture(&["fixtures", "ts", "h264_aac.ts"]);
+    let ts = fixture(&["fixtures", "ts", "h264-aac.ts"]);
     let ts_path = dir.join("src.ts");
     std::fs::write(&ts_path, &ts).expect("write ts");
     let ref_path = dir.join("ref.mp4");

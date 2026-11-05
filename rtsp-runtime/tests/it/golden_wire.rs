@@ -1,9 +1,9 @@
 //! Byte-for-byte goldens for the RTSP wire output (W1-R-low-a, spec §6).
 //!
-//! `session_transcript.golden` is a full client<->server exchange, both ends the
+//! `session-transcript.golden` is a full client<->server exchange, both ends the
 //! sans-IO cores, with a fixed User-Agent and a deterministic session id.
-//! `transport_parsed.golden` is the `Debug` of each parsed `Transport` (semantic
-//! pin, must never change). `transport_header.golden` is the serialized header
+//! `transport-parsed.golden` is the `Debug` of each parsed `Transport` (semantic
+//! pin, must never change). `transport-header.golden` is the serialized header
 //! text (byte pin; Task 4 may change parameter ORDER only, and says so in the
 //! CHANGELOG). Regenerate only with `GOLDEN_UPDATE=1`.
 
@@ -12,7 +12,7 @@ use rtsp_runtime::{ClientSession, ServerSession, Transport, TransportSpec};
 const URI: &str = "rtsp://example.test/stream";
 
 fn golden(name: &str, actual: &str) {
-    let path = format!("{}/tests/golden/{name}", env!("CARGO_MANIFEST_DIR"));
+    let path = test_fixtures::path(&format!("golden/rtsp/{}", name));
     if std::env::var_os("GOLDEN_UPDATE").is_some() {
         std::fs::write(&path, actual).expect("write golden");
         return;
@@ -71,7 +71,7 @@ fn session_transcript_is_byte_identical() {
     exchange("PAUSE", r, &mut c, &mut s, &mut out);
     let r = c.teardown(URI).unwrap();
     exchange("TEARDOWN", r, &mut c, &mut s, &mut out);
-    golden("session_transcript.golden", &out);
+    golden("session-transcript.golden", &out);
 }
 
 const TRANSPORT_CASES: &[&str] = &[
@@ -94,6 +94,6 @@ fn transport_parse_and_header_goldens() {
         parsed.push_str(&format!("{case}\n  {t:?}\n"));
         header.push_str(&format!("{case}\n  {}\n", t.to_header_value().unwrap()));
     }
-    golden("transport_parsed.golden", &parsed);
-    golden("transport_header.golden", &header);
+    golden("transport-parsed.golden", &parsed);
+    golden("transport-header.golden", &header);
 }

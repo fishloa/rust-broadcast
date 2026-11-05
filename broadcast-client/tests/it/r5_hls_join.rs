@@ -50,7 +50,7 @@ fn video_tracks(events: &[Event]) -> Vec<TrackId> {
 }
 
 fn tf1_segments() -> Option<Vec<Vec<u8>>> {
-    let bytes = test_fixtures::require_bytes("zenith-http/tf1-live.ts", "r5_hls_join")?;
+    let bytes = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "r5_hls_join")?;
     let prefix = &bytes[..SOURCE_PREFIX_BYTES.min(bytes.len())];
     let first_sync = (0..188)
         .find(|&o| (0..5).all(|k| prefix.get(o + k * 188) == Some(&0x47)))

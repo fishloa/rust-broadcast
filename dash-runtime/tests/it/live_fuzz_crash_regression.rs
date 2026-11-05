@@ -186,7 +186,7 @@ fn utc_body(mode: u8, aux: u8, now: u64, base_unix: i64, rest: &mut &[u8]) -> Op
 
 #[test]
 fn dash_client_live_crash_regression() {
-    let data = test_fixtures::read("dash/fuzz/dash_client_live-crash.bin");
+    let data = test_fixtures::read("dash/fuzz-regressions/dash_client_live-crash.bin");
     let data = data.as_slice();
     assert!(data.len() >= HEADER && data.len() <= MAX_INPUT);
     let (head, mut rest) = data.split_at(HEADER);

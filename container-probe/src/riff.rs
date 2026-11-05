@@ -55,7 +55,7 @@ mod tests {
     /// 12-byte `"RIFF"`..`"WAVE"` span) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/container-probe/pcm_s16le.wav");
+        let data = fixture_bytes("fixtures/audio/pcm-s16le.wav");
         let need = WAVE_OFFSET + WAVE_FORM_TYPE.len();
         let region = &data[..need - 1];
         match probe(region, region.len()) {

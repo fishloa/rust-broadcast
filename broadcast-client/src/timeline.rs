@@ -271,7 +271,7 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
-        let data = test_fixtures::read("ts/h264_aac.ts");
+        let data = test_fixtures::read("ts/h264-aac.ts");
         let media = TsDemux::new().unpackage(&data[..]).unwrap();
         let mut video = None;
         let mut audio = None;

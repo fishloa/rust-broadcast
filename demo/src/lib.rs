@@ -999,7 +999,7 @@ mod tests {
         assert_eq!(ts_value["container"], "mpeg-ts");
         assert!(!ts_value["pid_map"].as_array().unwrap().is_empty());
 
-        let mp4_json = analyze(&mp4_fixture("h264_high.mp4"));
+        let mp4_json = analyze(&mp4_fixture("h264-high.mp4"));
         let mp4_value: serde_json::Value = serde_json::from_str(&mp4_json).unwrap();
         assert_eq!(mp4_value["container"], "mp4");
         assert!(!mp4_value["tracks"].as_array().unwrap().is_empty());
@@ -1224,9 +1224,9 @@ mod tests {
         }
         let mut inputs: Vec<(String, Vec<u8>)> = Vec::new();
         for name in [
-            "h264_high.mp4",
+            "h264-high.mp4",
             "cenc.mp4",
-            "hevc_main.mp4",
+            "hevc-main.mp4",
             "stpp.mp4",
             "opus.mp4",
         ] {

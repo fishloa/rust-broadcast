@@ -4,7 +4,7 @@
 //! the `dvcC` / `dvvC` box, and external readers (ffprobe, GPAC, Apple
 //! `mediastreamvalidator`) agree.
 //!
-//! Real artifacts: `private/fixtures/dolby-vision/` (PROVENANCE.md). Every test
+//! Real artifacts: `private/fixtures/video/dolby-vision/` (PROVENANCE.md). Every test
 //! drives the production path: `RouteHandle` + `ProgramSegmenter::pump` over a
 //! `Trunk`, read back through the axum router. External tools skip loudly when
 //! absent.
@@ -37,11 +37,11 @@ const RING: usize = 1 << 16;
 const PUMP_EVERY: usize = 64;
 const STREAM: &str = "cam";
 const DECLARED_BPS: u64 = 4_000_000;
-const P81: &str = "dolby-vision/sollevante-dv-p8.1-1080p24-10s.ts";
-const P5: &str = "dolby-vision/sollevante-dv-p5-1080p24-10s.ts";
-const P84: &str = "dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.ts";
-const HDR10: &str = "hdr10/meridian-hdr10-60f.ts";
-const HLG: &str = "hlg/sollevante-hlg-derived-1080p24-10s.ts";
+const P81: &str = "video/dolby-vision/sollevante-dv-p8.1-1080p24-10s.ts";
+const P5: &str = "video/dolby-vision/sollevante-dv-p5-1080p24-10s.ts";
+const P84: &str = "video/dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.ts";
+const HDR10: &str = "video/hdr10/meridian-hdr10-60f.ts";
+const HLG: &str = "video/hlg/sollevante-hlg-derived-1080p24-10s.ts";
 const SDR: &str = "ts/hevc/main10.ts";
 
 struct Source {

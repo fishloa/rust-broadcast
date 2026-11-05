@@ -708,7 +708,7 @@ fn track_abandoned_config_unrecoverable_is_actually_emitted() {
 
 /// `AC-3_descriptor` (ETSI EN 300 468 Annex D, tag `0x6A`) in its minimal
 /// legal form: tag + length(1) + an all-zero flags byte (every optional field
-/// absent) — the same shape `fixtures/ts/dolby/eac3_dvb_0x06.ts` uses for the
+/// absent) — the same shape `fixtures/ts/dolby/eac3-dvb-0x06.ts` uses for the
 /// `0x7A` enhanced variant (see its PROVENANCE.md).
 const AC3_DESCRIPTOR: [u8; 3] = [0x6A, 0x01, 0x00];
 /// PES private data (ISO/IEC 13818-1 Table 2-34) — DVB's descriptor-
@@ -821,9 +821,9 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
     );
 }
 
-/// The first SPS and PPS of the committed `h264_aac.ts` capture.
+/// The first SPS and PPS of the committed `h264-aac.ts` capture.
 fn real_avc_sps_pps() -> (Vec<u8>, Vec<u8>) {
-    let path = test_fixtures::path("ts/h264_aac.ts");
+    let path = test_fixtures::path("ts/h264-aac.ts");
     let source = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let media = TsDemux::new().unpackage(&source[..]).expect("demux");
     let video = media

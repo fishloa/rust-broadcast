@@ -49,7 +49,7 @@ struct Capture {
 const CAPTURES: &[Capture] = &[
     Capture {
         name: "rai-gulp",
-        path: "zenith-live/rai-gulp-8MB.ts",
+        path: "ts/live-channels/rai-gulp-8-mb.ts",
         garbage_pid: Some(0x194),
         video_pid: 0xcc,
         audio_pid: 0x130,
@@ -57,7 +57,7 @@ const CAPTURES: &[Capture] = &[
     },
     Capture {
         name: "rai-news-24",
-        path: "zenith-live/rai-news-24-8MB.ts",
+        path: "ts/live-channels/rai-news-24-8-mb.ts",
         garbage_pid: None,
         video_pid: 0xcf,
         audio_pid: 0x133,
@@ -65,7 +65,7 @@ const CAPTURES: &[Capture] = &[
     },
     Capture {
         name: "h264_aac_40s",
-        path: "ts/h264_aac_40s.ts",
+        path: "ts/h264-aac-40s.ts",
         garbage_pid: None,
         video_pid: 0x100,
         audio_pid: 0x101,

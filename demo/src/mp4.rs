@@ -470,14 +470,12 @@ mod tests {
     }
 
     fn transmux_fixture(name: &str) -> Vec<u8> {
-        let path = format!(
-            test_fixtures::path("transmux/{}"),
-            name
-        );
-        std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {path}: {e}"))
+        let path = test_fixtures::path(&format!("mp4/{name}"));
+        std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", path.display()))
     }
 
-    /// Real-fixture gate: `h264_high.mp4` is a *progressive* (faststart,
+    /// Real-fixture gate: `h264-high.mp4` is a *progressive* (faststart,
     /// `moov` after a single `mdat`, no `moof`) capture — this exercises the
     /// [`ProgressiveDemux`] branch of [`analyze_mp4_impl`]'s dispatch and
     /// must resolve a video track carrying a well-formed `avc1.` RFC 6381
@@ -486,7 +484,7 @@ mod tests {
     /// all, which would legitimately have zero samples).
     #[test]
     fn h264_high_progressive_resolves_codec_identity() {
-        let bytes = fixture("h264_high.mp4");
+        let bytes = fixture("h264-high.mp4");
         let report = analyze_mp4_impl(&bytes);
         assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
         let video = report
@@ -505,14 +503,14 @@ mod tests {
         assert!(video.height.unwrap_or(0) > 0);
     }
 
-    /// Real-fixture gate for the OTHER dispatch branch: `h264_aac_frag.mp4`
-    /// (under `fixtures/transmux/`) is a genuinely fragmented CMAF capture
+    /// Real-fixture gate for the OTHER dispatch branch: `h264-aac-frag.mp4`
+    /// (under `fixtures/ts/`) is a genuinely fragmented CMAF capture
     /// (`moov` + three `moof`/`mdat` pairs) — this exercises
     /// [`analyze_mp4_impl`]'s [`Fmp4Demux`] branch, on both a video and an
     /// audio track, with samples spanning multiple fragments.
     #[test]
     fn h264_aac_fragmented_resolves_both_tracks_across_fragments() {
-        let bytes = transmux_fixture("h264_aac_frag.mp4");
+        let bytes = transmux_fixture("h264-aac-frag.mp4");
         let report = analyze_mp4_impl(&bytes);
         assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
 
@@ -546,7 +544,7 @@ mod tests {
     /// RFC 6381 string.
     #[test]
     fn hevc_fragment_resolves_codec_identity() {
-        let bytes = fixture("hevc_main.mp4");
+        let bytes = fixture("hevc-main.mp4");
         let report = analyze_mp4_impl(&bytes);
         assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
         let video = report

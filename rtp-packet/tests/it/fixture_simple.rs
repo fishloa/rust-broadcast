@@ -1,4 +1,4 @@
-//! Real-fixture gate: `../fixtures/rtp/rtp_simple.bin` (RFC 3550 §5.1, the
+//! Real-fixture gate: `../fixtures/rtp/rtp-simple.bin` (RFC 3550 §5.1, the
 //! `P=0 X=0 CC=0` simple case).
 //!
 //! ## Fixture provenance
@@ -6,7 +6,7 @@
 //! These are genuine wire bytes, not hand-typed: the 324-byte packet was
 //! captured by running this workspace's own `transmux::RtpPacketiser`
 //! (RFC 3550-compliant AAC-hbr / RFC 3640 packetiser) over the real broadcast
-//! capture `fixtures/ts/h264_aac.ts` (already committed for transmux's own
+//! capture `fixtures/ts/h264-aac.ts` (already committed for transmux's own
 //! RTP tests, `transmux/tests/it/rtp.rs`, issue #469), then saving one emitted
 //! audio packet's exact wire bytes. The RTP fixed-header fields (marker,
 //! payload type, sequence number, timestamp, SSRC) and the AAC-hbr payload
@@ -25,7 +25,7 @@ use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
 fn fixture_bytes() -> Vec<u8> {
-    test_fixtures::read("rtp/rtp_simple.bin")
+    test_fixtures::read("rtp/rtp-simple.bin")
 }
 
 #[test]

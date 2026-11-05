@@ -37,7 +37,7 @@ fn nz(n: usize) -> NonZeroUsize {
 
 #[tokio::test]
 async fn master_without_captions_is_unchanged() {
-    let bytes = test_fixtures::read("ts/h264_aac.ts");
+    let bytes = test_fixtures::read("ts/h264-aac.ts");
     let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
     let trunk = Trunk::new(TrunkConfig::new(
         nz(RING),

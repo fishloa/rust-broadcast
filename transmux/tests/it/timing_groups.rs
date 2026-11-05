@@ -2,7 +2,7 @@
 //!
 //! Gate criteria (ungameable):
 //! - `prft` from `fixtures/mp4/prft.mp4`: parse fields + byte-exact round-trip.
-//! - `sgpd('roll')` + `sbgp` from `fixtures/mp4/aac_sgpd.mp4`: parse
+//! - `sgpd('roll')` + `sbgp` from `fixtures/mp4/aac-sgpd.mp4`: parse
 //!   `roll_distance=-1` + byte-exact round-trip.
 //! - `subs`: build from a spec vector, round-trip.
 //! - Mutation: mutating a field changes the serialized bytes.
@@ -183,7 +183,7 @@ fn prft_mutation_changes_bytes() {
 
 #[test]
 fn sgpd_roll_real_fixture_parse_fields() {
-    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac-sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -209,7 +209,7 @@ fn sgpd_roll_real_fixture_parse_fields() {
 
 #[test]
 fn sgpd_roll_real_fixture_byte_exact_round_trip() {
-    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac-sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -231,7 +231,7 @@ fn sgpd_roll_real_fixture_byte_exact_round_trip() {
 
 #[test]
 fn sgpd_oracle_body_matches() {
-    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac-sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
     let sgpd_box = find_full_box(stbl, b"sgpd");
@@ -245,7 +245,7 @@ fn sgpd_oracle_body_matches() {
 
 #[test]
 fn sbgp_real_fixture_parse_fields() {
-    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac-sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -268,7 +268,7 @@ fn sbgp_real_fixture_parse_fields() {
 
 #[test]
 fn sbgp_real_fixture_byte_exact_round_trip() {
-    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac-sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -294,7 +294,7 @@ fn sbgp_real_fixture_byte_exact_round_trip() {
 
 #[test]
 fn sgpd_mutation_changes_bytes() {
-    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac-sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
     let sgpd_box = find_full_box(stbl, b"sgpd");
@@ -313,7 +313,7 @@ fn sgpd_mutation_changes_bytes() {
 
 #[test]
 fn sbgp_mutation_changes_bytes() {
-    let path = test_fixtures::path("mp4/aac_sgpd.mp4");
+    let path = test_fixtures::path("mp4/aac-sgpd.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
     let sbgp_box = find_full_box(stbl, b"sbgp");

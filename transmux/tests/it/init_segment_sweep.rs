@@ -22,7 +22,7 @@ use transmux::MovieBox;
 
 /// Fixtures that legitimately cannot round-trip byte-for-byte, with the reason.
 ///
-/// The QuickTime `.mov` fixtures in `../fixtures/transmux/audio_srat/` are here for a
+/// The QuickTime `.mov` fixtures in `../fixtures/audio/srat/` are here for a
 /// reason unrelated to what they test (the sound-entry
 /// `entry_version`/`srat` fields): QuickTime's `hdlr` carries a `mhlr`/`soun`
 /// component type and subtype that ISOBMFF's `HandlerBox` does not model, so
@@ -31,11 +31,11 @@ use transmux::MovieBox;
 /// `audio_srat::quicktime_*` on the entry bytes themselves.
 const KNOWN_NON_IDENTICAL: &[(&str, &str)] = &[
     (
-        "audio_srat/qt_alac_v1.mov",
+        "audio/srat/qt-alac-v1.mov",
         "QuickTime hdlr component type/subtype (mhlr/soun) is not an ISOBMFF HandlerBox field",
     ),
     (
-        "audio_srat/qt_alac_v2_synthetic.mov",
+        "audio/srat/qt-alac-v2-synthetic.mov",
         "QuickTime hdlr component type/subtype (mhlr/soun) is not an ISOBMFF HandlerBox field",
     ),
 ];
@@ -86,7 +86,7 @@ fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 /// Every `.mp4`/`.m4s`/`.mov` under `fixtures/` (and the crate-local ones).
 fn fixture_files() -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
-    let mut stack = vec![test_fixtures::root(), test_fixtures::path("transmux")];
+    let mut stack = vec![test_fixtures::root()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -174,7 +174,7 @@ fn every_committed_init_segment_round_trips_byte_identically() {
 /// own length, so the file is malformed rather than merely short.
 #[test]
 fn a_moov_with_trailing_partial_bytes_is_rejected() {
-    let path = test_fixtures::path("mp4/h264_high.mp4");
+    let path = test_fixtures::path("mp4/h264-high.mp4");
     let Ok(data) = std::fs::read(&path) else {
         eprintln!("SKIP a_moov_with_trailing_partial_bytes_is_rejected: fixture missing");
         return;

@@ -3,7 +3,7 @@
 //! Each Error check gets BOTH a positive (clean → no such issue) and a negative
 //! (broken → the exact `code`) assertion, so it cannot be satisfied by an
 //! always-pass or always-fail validator. Clean segments are built from the real
-//! codec configs + real coded samples of `h264_aac_frag.mp4` via the crate's own
+//! codec configs + real coded samples of `h264-aac-frag.mp4` via the crate's own
 //! `build_init_segment` / `build_media_segment`.
 
 use broadcast_common::Parse;
@@ -19,7 +19,7 @@ use transmux::{
 // ---------------------------------------------------------------------------
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("transmux/h264_aac_frag.mp4")
+    test_fixtures::read("mp4/h264-aac-frag.mp4")
 }
 
 fn find_top_box(data: &[u8], fourcc: &[u8; 4]) -> (usize, Vec<u8>) {

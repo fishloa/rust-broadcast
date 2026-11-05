@@ -8,7 +8,7 @@ const CHUNK: usize = 8192;
 
 #[test]
 fn mpeg2_video_is_the_default_rendered_video_and_gets_a_join() {
-    let bytes = test_fixtures::read("ts/legacy/mpeg2_mp2.ts");
+    let bytes = test_fixtures::read("ts/legacy/mpeg2-mp2.ts");
     let mut host = Host::open(Config::default());
     host.feed(&bytes, CHUNK);
     let announced = host.announced().expect("tracks");

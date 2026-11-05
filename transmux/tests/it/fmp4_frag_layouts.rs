@@ -1,12 +1,12 @@
 //! Oracle consumer: `Fmp4Demux` fragment addressing (audit r05-W7).
 //!
-//! Consumes the CLEAR variants of `../fixtures/transmux/cenc_frag_layouts/` — the
+//! Consumes the CLEAR variants of `../fixtures/mp4/cenc-layouts/` — the
 //! three addressing forms a real muxer writes (`clear_ffmpeg_{default,
 //! base_moof,omit}.mp4`) plus the two hand-split multi-trun files
 //! (`clear_multitrun_{base_moof,omit}_implicit.mp4`; no tool emits multiple
 //! truns per traf — see the fixture README). Every file must demux to the same
 //! per-sample plaintext as `clear.mp4` (whose per-sample hashes are pinned in
-//! `clear_samples.txt`), for **all** tracks.
+//! `clear-samples.txt`), for **all** tracks.
 //!
 //! `Fmp4Demux` shares its §8.8.7/§8.8.8 resolver with `CencDecryptor`
 //! (`frag_offsets`), so this proves the demuxer's side of the same rule set.
@@ -16,7 +16,7 @@ use broadcast_common::Unpackage;
 use transmux::TrackId;
 use transmux::{CodecConfig, Fmp4Demux, Media};
 
-const DIR: &str = "transmux/cenc_frag_layouts";
+const DIR: &str = "mp4/cenc-layouts";
 
 fn read(name: &str) -> Vec<u8> {
     let p = test_fixtures::path(&format!("{}/{}", DIR, name));
@@ -61,11 +61,11 @@ fn all_clear_layouts_demux_identically() {
     // The clear variants: the three real-muxer forms plus the hand-split
     // multi-trun files (no tool emits multiple truns per traf).
     let files = [
-        "clear_ffmpeg_default.mp4",
-        "clear_ffmpeg_base_moof.mp4",
-        "clear_ffmpeg_omit.mp4",
-        "clear_multitrun_base_moof_implicit.mp4",
-        "clear_multitrun_omit_implicit.mp4",
+        "clear-ffmpeg-default.mp4",
+        "clear-ffmpeg-base-moof.mp4",
+        "clear-ffmpeg-omit.mp4",
+        "clear-multitrun-base-moof-implicit.mp4",
+        "clear-multitrun-omit-implicit.mp4",
     ];
     for f in files {
         let got = by_track(&demux(f));
@@ -84,15 +84,15 @@ fn all_clear_layouts_demux_identically() {
 }
 
 /// The fixtures really are the layouts they claim: `clear.mp4` and
-/// `clear_ffmpeg_base_moof.mp4` are the same bytes (per the fixture README),
+/// `clear-ffmpeg-base-moof.mp4` are the same bytes (per the fixture README),
 /// and all clear variants decode to the same video sample count.
 #[test]
 fn clear_variants_carry_the_same_codec_config() {
     for f in [
         "clear.mp4",
-        "clear_ffmpeg_default.mp4",
-        "clear_ffmpeg_omit.mp4",
-        "clear_multitrun_omit_implicit.mp4",
+        "clear-ffmpeg-default.mp4",
+        "clear-ffmpeg-omit.mp4",
+        "clear-multitrun-omit-implicit.mp4",
     ] {
         let m = demux(f);
         assert_eq!(m.tracks.len(), 2, "{f}: two tracks");

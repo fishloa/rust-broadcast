@@ -14,7 +14,7 @@
 //! | `ts/krone-anamorphic-sar-16-11-zenith-tv.ts` (private) | absent (`video_signal_type_present_flag` 0) | | |
 //! | `ts/transformers-eia608-h264.ts` (private) | 0 | 1 | absent (`colour_description_present_flag` 0) |
 //! | `ts/gulli-opengop.ts` (public) | 0 | 0 | 1/1/1 (BT.709) |
-//! | `tsduck/input/test-084.ts` (private) | 0 | 0 | 5/5/5 |
+//! | `suites/tsduck/input/test-084.ts` (private) | 0 | 0 | 5/5/5 |
 //!
 //! Every capture was also scanned with the same oracle: the other H.264
 //! fixtures either carry `video_signal_type_present_flag` 0 or one of the
@@ -24,7 +24,7 @@
 //! not checked out.
 //!
 //! HEVC colour has **no** real fixture in this worktree
-//! (`private/fixtures/tsduck/input/` holds no `test-074.hevc.ts`, and no
+//! (`private/fixtures/suites/tsduck/input/` holds no `test-074.hevc.ts`, and no
 //! private HEVC capture signals a non-default colour description), so HEVC
 //! colour is covered by the spec vectors in `src/sps.rs` only.
 
@@ -179,7 +179,7 @@ fn gulli_signals_bt709_colour() {
 #[test]
 fn tsduck_084_signals_bt601_sd_colour() {
     check(
-        "tsduck/input/test-084.ts",
+        "suites/tsduck/input/test-084.ts",
         Some(VideoSignalType::new(
             VideoFormat::Component,
             false,

@@ -2,9 +2,9 @@
 //!
 //! These tests navigate the container hierarchy in real MP4 files and verify:
 //!
-//! - `stts` / `ctts` (and the trak's `elst`) extracted from `h264_aac_prog.mp4`
+//! - `stts` / `ctts` (and the trak's `elst`) extracted from `h264-aac-prog.mp4`
 //!   via `moov → trak → [edts → elst] → mdia → minf → stbl`
-//! - `sidx` from `h264_sidx.mp4` at top level via `box_iter`
+//! - `sidx` from `h264-sidx.mp4` at top level via `box_iter`
 //!
 //! Each parsed box is serialised back and compared byte-for-byte with the
 //! original box body (excluding the 8-byte box header).
@@ -69,12 +69,12 @@ fn find_full_box<'a>(body: &'a [u8], four_cc: &[u8; 4]) -> &'a [u8] {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture: h264_aac_prog.mp4 — stts, ctts (v0, non-zero), elst
+// Fixture: h264-aac-prog.mp4 — stts, ctts (v0, non-zero), elst
 // ---------------------------------------------------------------------------
 
 #[test]
 fn stts_real_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -103,7 +103,7 @@ fn stts_real_fixture_round_trip() {
 
 #[test]
 fn ctts_real_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
@@ -138,7 +138,7 @@ fn ctts_real_fixture_round_trip() {
 
 #[test]
 fn elst_real_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let trak = enter_chain(&data, &[b"moov", b"trak"]);
@@ -181,7 +181,7 @@ fn elst_real_fixture_round_trip() {
 
 #[test]
 fn elst_mutation_changes_bytes() {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let trak = enter_chain(&data, &[b"moov", b"trak"]);
     let edts = find_full_box(trak, b"edts");
@@ -202,12 +202,12 @@ fn elst_mutation_changes_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture: h264_sidx.mp4 — sidx at top level via box_iter
+// Fixture: h264-sidx.mp4 — sidx at top level via box_iter
 // ---------------------------------------------------------------------------
 
 #[test]
 fn sidx_real_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/h264_sidx.mp4");
+    let path = test_fixtures::path("mp4/h264-sidx.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     // Find sidx via box_iter
@@ -264,7 +264,7 @@ fn sidx_real_fixture_round_trip() {
 
 #[test]
 fn sidx_mutation_changes_bytes() {
-    let path = test_fixtures::path("transmux/h264_sidx.mp4");
+    let path = test_fixtures::path("mp4/h264-sidx.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     let mut parsed = None;

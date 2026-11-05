@@ -1,6 +1,6 @@
 //! Real-fixture round-trip and navigation tests for the typed init-segment (moov) box tree.
 //!
-//! EXIT CRITERION 1: Parse the ENTIRE `moov` box from `h264_aac_prog.mp4`, serialise it back,
+//! EXIT CRITERION 1: Parse the ENTIRE `moov` box from `h264-aac-prog.mp4`, serialise it back,
 //!   and assert byte-identical to the original moov box bytes.
 //! EXIT CRITERION 2: After parsing, reach the video trak's avc1 sample entry + audio trak's
 //!   mp4a sample entry (assert both found).
@@ -38,7 +38,7 @@ fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
 
 #[test]
 fn stsd_parses_from_fixture() {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     // Navigate manually to stsd bytes
@@ -82,7 +82,7 @@ fn stsd_parses_from_fixture() {
 
 #[test]
 fn moov_real_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
 
     // Find the moov box at top level
@@ -124,7 +124,7 @@ fn moov_real_fixture_round_trip() {
 
 #[test]
 fn moov_frag_fixture_round_trip() {
-    let path = test_fixtures::path("transmux/h264_aac_frag.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-frag.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let moov_bytes = find_top_box(&data, b"moov");
 
@@ -156,7 +156,7 @@ fn moov_frag_fixture_round_trip() {
 
 #[test]
 fn moov_navigation_reaches_avc1_and_mp4a() {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let moov_bytes = find_top_box(&data, b"moov");
     let moov = MovieBox::parse(moov_bytes).expect("should parse moov");
@@ -244,7 +244,7 @@ fn moov_navigation_reaches_avc1_and_mp4a() {
 
 #[test]
 fn tkhd_mutation_changes_bytes() {
-    let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
+    let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
     let data = std::fs::read(path).expect("fixture file must exist");
     let moov_bytes = find_top_box(&data, b"moov");
     let moov = MovieBox::parse(moov_bytes).expect("should parse moov");

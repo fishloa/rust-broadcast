@@ -2139,7 +2139,7 @@ mod tests {
     #[test]
     fn mpegh_3daudio_descriptor_matches_real_fixture_bytes() {
         // Real Fraunhofer MPEG-H-in-TS fixture ES_info
-        // (`private/fixtures/ts/mpegh-cicp01-baseline.ts`): `3F 04 08 10 7F C1`.
+        // (`private/fixtures/audio/mpegh/mpegh-cicp-01-baseline-32kbps-single.ts`): `3F 04 08 10 7F C1`.
         // Table 2-121 bit layout of the 3 body bytes after the 0x08 ext tag:
         //   0x10                       mpegh3daProfileLevelIndication
         //   0x7F = 0 1 111111          interactivityEnabled=0,

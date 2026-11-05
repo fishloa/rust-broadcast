@@ -124,7 +124,7 @@ None. For RTSP `close()` first queues one `Send` carrying `TEARDOWN` (only when 
 
 ## Tests required (BC-1)
 
-One named test per bullet above using the real fixtures: TF1 capture `private/fixtures/zenith-http/tf1-live.ts`
+One named test per bullet above using the real fixtures: TF1 capture `private/fixtures/http/live-channels/tf1-live.ts`
 (+ headers files) through `test_fixtures`, driven through a tiny in-test host (feeds on_response/on_data/on_closed
 from the capture). Auth tests use constructed response headers from RFC 9110/6750/9728 verbatim examples
 (see private/specs-verified/ietf/broadcast-auth/www-authenticate-challenges.md) and Digest vectors already in broadcast-auth tests.
@@ -194,7 +194,7 @@ Automatic feeding inside the session (the host does nothing):
 - Time unit: the controller takes microseconds; the session clock is already `now_us`.
 - VOD (a `Finite` resource): the controller is not created (no live-edge decisions); the BC-5 playout gate emits the `Event::Buffer`s instead (see "BC-5 playout gate").
 
-Tests (BC-2) compare the session against a bare `BufferController` oracle fed the same inputs by the test, and use the real TF1 capture (`zenith-http/tf1-live.ts`, 1316-byte chunks, synthetic arrival schedule steady 100 ms/chunk, then a 3 s gap, then steady).
+Tests (BC-2) compare the session against a bare `BufferController` oracle fed the same inputs by the test, and use the real TF1 capture (`http/live-channels/tf1-live.ts`, 1316-byte chunks, synthetic arrival schedule steady 100 ms/chunk, then a 3 s gap, then steady).
 
 `Event::Sample` gains `join: Option<transmux::JoinDecision>` (Some for video samples of a track that has a `LiveJoin`, None otherwise), so the player drops `Drop(_)` samples itself exactly as it does today; the session still emits them (it never drops samples). Reported as a breaking field addition to `Event::Sample` (BC-1 is not yet consumed by any player).
 
@@ -327,7 +327,7 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
 
 Tests: `broadcast-client/tests/rtsp.rs` with a fake RTSP server in `tests/support/rtsp_host.rs` (parses the
 session's `Send` bytes with `rtsp-types`, answers with SDP built by `sdp-types`, pushes `$`-framed RTP made by
-`transmux`'s packetiser from the real `fixtures/ts/h264_aac.ts` samples; the oracle is the original samples,
+`transmux`'s packetiser from the real `fixtures/ts/h264-aac.ts` samples; the oracle is the original samples,
 payload bytes and timestamps). Digest responses are verified by `broadcast-auth`'s own `Verifier`.
 
 ### RTSP track clocks
@@ -360,7 +360,7 @@ Config: `Config::playout: PlayoutConfig { vod_start_lead_us: 1_000_000, live_sta
 
 Behaviour changes versus BC-2/BC-3a: finite TS and HLS now emit Buffer events (BC-2 finite TS and BC-3a HLS emitted none); the controller log (`buffer_input_log`, test seam) stays empty for them.
 
-Tests: `broadcast-client/tests/playout.rs` (HLS through the real HLS session with the classic-TS ts-hls and CMAF fixtures plus a 12 s contiguous stream built from the same fixture samples for live, finite TS from `fixtures/ts/h264_aac.ts` with `Content-Length`). The oracle in the test recomputes the leads from the delivered `Event::Sample`s independently of the gate.
+Tests: `broadcast-client/tests/playout.rs` (HLS through the real HLS session with the classic-TS ts-hls and CMAF fixtures plus a 12 s contiguous stream built from the same fixture samples for live, finite TS from `fixtures/ts/h264-aac.ts` with `Content-Length`). The oracle in the test recomputes the leads from the delivered `Event::Sample`s independently of the gate.
 
 ## Pre-release audit fixes (#1484)
 
@@ -433,7 +433,7 @@ Deduplication and state scope: every `Event::Discontinuity` (source reconnect, H
 
 Controller semantics worth knowing: `buffering-runtime` answers a `PcrDiscontinuity` while Playing with `Pause` then `Resume`, never a second `StartPlaying`, so after a jump the player sees `Resume` (or `Start` if the controller was still Buffering) positioned on the new timeline's media. The BC-5 gate does fire `Start` again.
 
-Tests: `broadcast-client/tests/timeline_jump.rs` (TS via PES-PTS rewriting of the public `h264_aac.ts` and the real TF1 capture, HLS VOD/live through the real HLS session, RTSP through the fake server with rewritten RTP timestamps, a two-video-track RTSP SDP) and the exact-boundary unit tests in `src/timeline.rs`.
+Tests: `broadcast-client/tests/timeline_jump.rs` (TS via PES-PTS rewriting of the public `h264-aac.ts` and the real TF1 capture, HLS VOD/live through the real HLS session, RTSP through the fake server with rewritten RTP timestamps, a two-video-track RTSP SDP) and the exact-boundary unit tests in `src/timeline.rs`.
 
 ## Audit round 4 (#1498)
 
@@ -572,12 +572,12 @@ far. Release happens when the first of these holds:
    sent yet is still waited for: it is counted from the later of the hold's start and the last resolution, as
    media time (largest per-track pts span among held samples) OR session-clock time, whichever passes first,
    and armed through `next_deadline_us`/`WakeAt`. Measured gaps between consecutive resolutions: audio resolves
-   0.48 s of media after the first video in `ts/h264_aac_40s.ts`, 0.32 s in `ts/france2.ts`, 0.16 s in the TF1
+   0.48 s of media after the first video in `ts/h264-aac-40s.ts`, 0.32 s in `ts/france2.ts`, 0.16 s in the TF1
    capture, 0.32 s (rai-gulp) and 0.21 s (rai-news-24); the slowest sparse stream_type 6 PID resolves 0.44 s
    after the previous one (`ts/france2.ts`). A stream that has sent but not resolved (scrambled, sparse) is
    waited for until a limit below;
 2. a limit, counted from the first media of the connection: `HOLD_QUIET_INPUT_BYTES` (512 KiB of input with no
-   further stream resolving: the scrambled `csa/csa2-plain.ts` leaves declared streams unresolved forever and
+   further stream resolving: the scrambled `crypto/csa2-plain.ts` leaves declared streams unresolved forever and
    round-5 F2's liveness test needs media within 0.56 MB of it), `HOLD_MAX_INPUT_BYTES` (4 MiB of input),
    `HOLD_MAX_MEDIA_US` (1 s of media, the largest per-track pts span among held samples), or `HOLD_MAX_WALL_US`
    (1 s of caller clock, armed through `next_deadline_us`/`WakeAt`, so a source that goes quiet mid-hold still
@@ -593,8 +593,8 @@ far. Release happens when the first of these holds:
    a 404, a starved report.
 
 Evidence for the numbers (release point per capture): single programme `ts/france2.ts` 0.76 s of media / 0.85 MB,
-the TF1 capture 0.74 s / 0.26 MB, `ts/h264_aac.ts` within the first chunk, the 30-stream
-`france-tnt-uhf32-video-head-6MB.ts` 1.76 s / 1.5 MB when allowed to run to resolution; its 0.92 MB gap between
+the TF1 capture 0.74 s / 0.26 MB, `ts/h264-aac.ts` within the first chunk, the 30-stream
+`france-tnt-uhf32-video-head-6-mb.ts` 1.76 s / 1.5 MB when allowed to run to resolution; its 0.92 MB gap between
 two resolution bursts exceeds the quiet bound, so that multiplex is announced in several steps (first set, then one
 `Tracks` update per later track, the pre-F1 behaviour) rather than once. The limits leave ~1.7x headroom over the worst case and
 stay under the 5 s stall notice. A stream that declares a PID it never sends (modelled by dropping `PID 142` from
@@ -640,7 +640,7 @@ Decisions that change public behaviour (transmux `StreamingTsDemux`, hls-runtime
 `tests/audit_r5_liveness.rs` and `tests/audit_r5_discontinuity.rs` assert "no `Event::Error`". F4 deliberately
 reports each non-muxable HLS-TS track (SCTE-35, ID3, private data present in those captures) as a non-fatal
 `ErrorKind::TrackDropped`, so both files now ignore that one kind when collecting errors (nothing else in them
-changed). The F1 hold interacted with the TS-HTTP liveness test on `csa/csa2-plain.ts` (declared streams that never
+changed). The F1 hold interacted with the TS-HTTP liveness test on `crypto/csa2-plain.ts` (declared streams that never
 resolve): the hold had no input-driven bound below 4 MiB / 3 s, so nothing was released inside the test's 0.56 MB;
 `HOLD_QUIET_INPUT_BYTES` fixes that.
 
@@ -698,14 +698,14 @@ asked to render. `buffering-runtime` is unchanged, but its `track_silence_timeou
 input log, and so every existing oracle test, is unchanged.
 
 Evidence (`tests/start_gate.rs`, host simulation at real time with a 50 ms tick, captures rai-gulp, rai-news-24,
-`ts/h264_aac_40s.ts`, `ts/france2.ts`, hold early / 200 ms backstop / disabled, declared `[1, 2]` and default, the
+`ts/h264-aac-40s.ts`, `ts/france2.ts`, hold early / 200 ms backstop / disabled, declared `[1, 2]` and default, the
 audio PES muxed 0 / 500 / 1000 ms later): before, every skewed run with a 1.1 s start lead flapped (`Start`
 0.70 s to 1.25 s, `Pause` 0.15 s to 0.6 s later); after, none flaps and `Start` carries both tracks at at least 90%
 of the start lead. At the default 1.8 s start lead and at skew 0 every `Start` time is identical before and after.
 With a 1.1 s start lead the skewed `Start` moves by the skew actually present plus the audio's own lead: rai-gulp
 skew 500 0.80 s to 1.80 s, skew 1000 0.80 s to 2.25 s; rai-news-24 skew 1000 1.25 s to 2.75 s;
 `h264_aac_40s` skew 1000 1.00 s to 2.10 s. `ts/france2.ts` (2.7 s long) never reaches the audio's lead at skew 1000
-and 1.1 s. The captures `tf-1-8MB.ts` and `arte-8MB.ts` are not used: 4% of their packets are missing (continuity
+and 1.1 s. The captures `tf-1-8-mb.ts` and `arte-8-mb.ts` are not used: 4% of their packets are missing (continuity
 errors on the video PID) and no track resolves for 13 s of real time.
 
 ## Audit round 6 (session, TS-HTTP, buffer, RTSP)
@@ -721,7 +721,7 @@ vanished. RTSP does not share the flaw (the track set is rebuilt from each DESCR
 
 ### F4: chunk invariance (no defect found in the session)
 
-The reported 479/477/478/467 sample counts came from replaying `tf-1-8MB.ts` at the PCR-estimated bitrate (1.87
+The reported 479/477/478/467 sample counts came from replaying `tf-1-8-mb.ts` at the PCR-estimated bitrate (1.87
 Mbps, wrong for a capture with a PCR jump): the first sample of that capture is 3.9 MB in, so the 15 s start
 timeout expired at a read-quantised byte offset, reconnected, and the demuxer restarted at a different place per
 read size. With clocks that do not trip a timer, `tests/r6_chunk_invariance.rs` replays tf-1, arte, rai-gulp and
@@ -743,7 +743,7 @@ rejected: ids come from one monotonic counter that every consumer (`media-plane`
 keys state by, and `remove_track` documents the churn as intended (#774); reusing an id would silently splice a
 returning stream onto a removed track's state. The least invasive fix keeps the id contract and makes the
 declaration kind-aware: a declared video or audio id that vanished is replaced by the lowest announced track of
-its kind that the host did not declare. `pmt_flip` on `h264_aac_40s.ts` (audio dropped at 40 %, restored at 70 %)
+its kind that the host did not declare. `pmt_flip` on `h264-aac-40s.ts` (audio dropped at 40 %, restored at 70 %)
 announces `[1,2]`, `[1]`, `[1,3]` and the controller registers 1, 2, unregisters 2, registers 3.
 
 ### F7: every video codec
@@ -752,7 +752,7 @@ announces `[1,2]`, `[1]`, `[1,3]` and the controller registers 1, 2, unregisters
 detector roles, playout kinds) instead of `LiveJoin::for_config`, which is `None` for MPEG-2, AV1, VP9 and VP8.
 `join.rs` wraps `LiveJoin` for AVC/HEVC/VVC and adds a sync-sample join for the rest: the first sync sample is the
 join point, earlier samples are `Drop(BeforeRandomAccessPoint)`, samples before the join point in presentation order
-are `Drop(LeadingPicture)`. TS and HLS use the same wrapper. `legacy/mpeg2_mp2.ts` plays with a join point and
+are `Drop(LeadingPicture)`. TS and HLS use the same wrapper. `legacy/mpeg2-mp2.ts` plays with a join point and
 the video is the default rendered video; the AV1 and VP9 fragmented MP4 fixtures join at their first sync sample.
 
 ### F8: RTSP codecs
@@ -786,7 +786,7 @@ RFC 8216 §4.4.4.5 (`private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md
 
 ### F9a: typed errors instead of silent zero-sample endings
 - A progressive MP4 served as init and segment (`moov`, no `moof`) -> `Error::NotFragmented` -> FATAL `ErrorKind::UnsupportedContainer { reason: "non_fragmented_mp4" }`.
-- A fragment the demuxer skipped (`Media::degraded` `MalformedUnit`): notably an absolute `tfhd` base-data-offset whose target lies outside the segment's own bytes (`mp4/prft.mp4`, `mp4/frag/mpeg2video.frag.mp4`, `mp4/cmaf/av_frag.mp4`, `mp4/llcmaf/ll_chunked.mp4` split into segments; CMAF uses default-base-is-moof). The good fragments' samples are emitted, the loss is reported ONCE per session as non-fatal `UnsupportedContainer { reason: "damaged_fragment" }`. Documented limitation, not a fix: such a layout only resolves when the segment sits at its original file offset.
+- A fragment the demuxer skipped (`Media::degraded` `MalformedUnit`): notably an absolute `tfhd` base-data-offset whose target lies outside the segment's own bytes (`mp4/prft.mp4`, `mp4/frag/mpeg2video.frag.mp4`, `mp4/cmaf/av-frag.mp4`, `mp4/llcmaf/ll-chunked.mp4` split into segments; CMAF uses default-base-is-moof). The good fragments' samples are emitted, the loss is reported ONCE per session as non-fatal `UnsupportedContainer { reason: "damaged_fragment" }`. Documented limitation, not a fix: such a layout only resolves when the segment sits at its original file offset.
 - A playlist or segment body over its cap closes the request (as before) and now reports ONE non-fatal `ErrorKind::BodyTooLarge { field: "max_manifest_bytes" | "max_segment_bytes" }` per field and session; the retry meets the same cap, so the host should raise it. (A key body over `max_key_bytes` already reported `KeyFetchFailed`.)
 - A `SUBTITLES` rendition in a master is never fetched or played; it is listed in `Event::Variants`' renditions and playing it is the host's job (README host contract). No per-track event: there is no track.
 

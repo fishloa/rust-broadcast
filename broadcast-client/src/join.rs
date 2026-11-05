@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn avc_keeps_the_nal_aware_join() {
-        let data = test_fixtures::read("ts/h264_aac.ts");
+        let data = test_fixtures::read("ts/h264-aac.ts");
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let video = media
             .tracks

@@ -4,7 +4,7 @@
 //! just to compare it against the retained one and drop it.
 //!
 //! Uses the real NIT sections of a committed capture
-//! (`fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts`, PID 0x0010).
+//! (`fixtures/ts/tnt-5w-12732v-isi6-10s.ts`, PID 0x0010).
 #![cfg(feature = "ts")]
 
 use dvb_si::collect::SectionSetCollector;
@@ -16,7 +16,7 @@ use test_alloc::ThreadCounting;
 static A: ThreadCounting = ThreadCounting::new();
 
 fn nit_sections() -> Vec<Vec<u8>> {
-    let path = test_fixtures::path("dvb-si/tnt-5w-12732v-isi6-10s.ts");
+    let path = test_fixtures::path("ts/tnt-5w-12732v-isi6-10s.ts");
     let data = std::fs::read(path).expect("read fixture");
     let mut reassembler = SectionReassembler::default();
     let mut sections = Vec::new();

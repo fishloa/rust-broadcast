@@ -6,7 +6,7 @@ fn cfg() -> Config {
 
 #[test]
 fn real_finite_capture() {
-    let bytes = test_fixtures::read("ts/h264_aac.ts");
+    let bytes = test_fixtures::read("ts/h264-aac.ts");
     let mut oracle = transmux::StreamingTsDemux::new();
     oracle.feed(&bytes);
     oracle.finish();
@@ -54,7 +54,7 @@ fn real_finite_capture() {
 
 #[test]
 fn real_live_capture() {
-    let bytes = test_fixtures::read("ts/h264_aac.ts");
+    let bytes = test_fixtures::read("ts/h264-aac.ts");
     let mut c = TsHttpClient::new("u", cfg(), 0);
     let _ = c.poll();
     c.on_response(200, &[], 0);

@@ -16,7 +16,7 @@ const BODY_MPEG1_LEN: u8 = 1;
 /// Default of the trailing 5-bit `reserved` of the MPEG-2 branch (H.222.0
 /// Table 2-46): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023,
 /// audit §5; confirmed by the TSDuck oracle PMT and the real
-/// `shared/real-pmt.bin` capture).
+/// `si/tsduck-mpeg-descriptors-pmt.bin` capture).
 pub const RESERVED_5_DEFAULT: u8 = 0b1_1111;
 const RESERVED_5_MASK: u8 = 0x1F;
 

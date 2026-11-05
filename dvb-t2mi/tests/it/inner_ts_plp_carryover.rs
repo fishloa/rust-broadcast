@@ -17,7 +17,7 @@
 //! framing directly from EN 302 755 §5.1.8 / TS 102 773's own byte layout,
 //! using two distinguishable **real** TS packets as the two PLPs' payload
 //! (`fixtures/ts/scte35-real.ts` and the first packet of
-//! `fixtures/mpeg-ts/af-pcr-stuffing.ts`), split so each PLP's single UP
+//! `fixtures/ts/af-pcr-stuffing.ts`), split so each PLP's single UP
 //! spans two BBFrames — the exact shape that needs carry-over state.
 
 #![cfg(feature = "ts")]
@@ -123,14 +123,14 @@ fn outer_ts(pid: Pid, data: &[u8]) -> Vec<[u8; TS_LEN]> {
 
 /// Committed copy of the two-PLP outer TS this test builds (T2-MI PID
 /// 0x1000), consumed by `dvb-tools`'s `t2mi --inner` multi-PLP CLI test.
-const FIXTURE: &str = "dvb-t2mi/two-plp-synthetic.ts";
+const FIXTURE: &str = "t2mi/two-plp-synthetic.ts";
 
 #[test]
 fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     let pid = 0x1000;
 
     let inner_a = real_packet("fixtures/ts/scte35-real.ts", 0);
-    let inner_b = real_packet("fixtures/mpeg-ts/af-pcr-stuffing.ts", 0);
+    let inner_b = real_packet("fixtures/ts/af-pcr-stuffing.ts", 0);
     assert_ne!(
         &inner_a[..],
         &inner_b[..],
@@ -195,7 +195,7 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     assert_eq!(
         fs::read(test_fixtures::path(FIXTURE)).expect("committed two-plp-synthetic.ts"),
         flat,
-        "fixtures/dvb-t2mi/two-plp-synthetic.ts out of sync (UPDATE_T2MI_FIXTURE=1 regenerates)"
+        "fixtures/t2mi/two-plp-synthetic.ts out of sync (UPDATE_T2MI_FIXTURE=1 regenerates)"
     );
 
     let mut rec = InnerTsRecovery::new(Pid::new(pid)); // no --plp filter: the buggy shared path

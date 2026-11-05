@@ -3190,7 +3190,7 @@ mod tests {
     /// Step 1): one line per probe, `path<TAB>status<TAB>name: value`, the
     /// header names sorted. Taken from `main` BEFORE the axum 0.8 /
     /// tower-http 0.7 bump, because `add_response_headers` and `CorsLayer`
-    /// both write the wire (see `tests/golden/README.md`).
+    /// both write the wire (see `fixtures/golden/http/PROVENANCE.md`).
     /// `GOLDEN_BLESS=<dir>` writes instead of comparing.
     #[tokio::test]
     async fn origin_response_headers_match_golden() {
@@ -3292,14 +3292,13 @@ mod tests {
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");
             std::fs::write(
-                std::path::Path::new(&dir).join("origin_response_headers.golden"),
+                std::path::Path::new(&dir).join("golden/http/origin-response-headers.golden"),
                 &actual,
             )
             .expect("write golden");
             return;
         }
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/origin_response_headers.golden");
+        let path = test_fixtures::path("golden/http/origin-response-headers.golden");
         let expected = std::fs::read_to_string(&path).expect("read origin header golden");
         assert_eq!(
             actual, expected,

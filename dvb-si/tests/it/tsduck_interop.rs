@@ -16,7 +16,7 @@ use dvb_si::descriptors::video_stream::FrameRateCode;
 use dvb_si::tables::pmt::PmtSection;
 
 fn fixture(name: &str) -> Vec<u8> {
-    test_fixtures::read(&format!("dvb-si/{name}"))
+    test_fixtures::read(&format!("si/{name}"))
 }
 
 #[test]

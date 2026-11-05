@@ -29,7 +29,7 @@ serde            = { version = "1", optional = true, default-features = false, f
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-# Real-fixture tests/examples only (`fixtures/scte35-ssai/`): decode the real
+# Real-fixture tests/examples only (`fixtures/scte35/`): decode the real
 # emsg-carried cue this crate's transition/emission logic is verified
 # against. Not a runtime dependency of the core itself.
 mp4-emsg = { path = "../mp4-emsg", version = "0.5", default-features = false }

@@ -44,7 +44,7 @@ fn specs_from_fixture(fixture: &str) -> Option<Vec<TrackSpec>> {
 
 #[test]
 fn h264_fixture_with_vui_timing_emits_frame_rate() {
-    let Some(specs) = specs_from_fixture("ts/h264_aac.ts") else {
+    let Some(specs) = specs_from_fixture("ts/h264-aac.ts") else {
         return;
     };
     let origin = origin();
@@ -66,9 +66,9 @@ fn audio_only_origin_has_no_frame_rate() {
 
 #[test]
 fn maximum_across_video_tracks_wins() {
-    let specs25 = specs_from_fixture("ts/h264_aac.ts").unwrap_or_default();
+    let specs25 = specs_from_fixture("ts/h264-aac.ts").unwrap_or_default();
     let specs30 =
-        specs_from_fixture("scte35-ssai/ts/video_with_scte35_splice_insert.ts").unwrap_or_default();
+        specs_from_fixture("scte35/ts/video-with-scte35-splice-insert.ts").unwrap_or_default();
     if specs25.is_empty() || specs30.is_empty() {
         return;
     }
@@ -106,7 +106,7 @@ fn set_init_reset_clears_frame_rate() {
         .declared_bandwidth_bps(5_000_000)
         .build()
         .expect("build");
-    let specs = specs_from_fixture("ts/h264_aac.ts").unwrap_or_default();
+    let specs = specs_from_fixture("ts/h264-aac.ts").unwrap_or_default();
     if specs.is_empty() {
         return;
     }
@@ -122,7 +122,7 @@ fn set_init_reset_clears_frame_rate() {
     );
 }
 
-const IPHONE_30FPS: &str = "dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.ts";
+const IPHONE_30FPS: &str = "video/dolby-vision/iphone18promax-dv-p8.4-2160p30-7s.ts";
 const SEGMENT_TARGET_SECS: u32 = 1;
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
@@ -226,7 +226,8 @@ fn ts_origin_without_vui_timing_measures_frame_rate_from_dts_deltas() {
 
 #[test]
 fn ts_origin_with_vui_timing_keeps_the_signalled_frame_rate() {
-    let Some(tracks) = ts_fixture_tracks("hlg/sollevante-hlg-derived-1080p24-10s.ts", false) else {
+    let Some(tracks) = ts_fixture_tracks("video/hlg/sollevante-hlg-derived-1080p24-10s.ts", false)
+    else {
         return;
     };
     let (origin, _segments) = ts_origin_fed_with(tracks, |_, _, _| true);
@@ -260,10 +261,13 @@ fn variable_frame_rate_reports_the_maximum_not_the_overall_mean() {
 #[test]
 fn every_video_variant_on_a_ts_origin_carries_frame_rate() {
     for (fixture, expected) in [
-        ("dolby-vision/sollevante-dv-p8.1-1080p24-10s.ts", 24_000),
-        ("dolby-vision/sollevante-dv-p5-1080p24-10s.ts", 24_000),
+        (
+            "video/dolby-vision/sollevante-dv-p8.1-1080p24-10s.ts",
+            24_000,
+        ),
+        ("video/dolby-vision/sollevante-dv-p5-1080p24-10s.ts", 24_000),
         (IPHONE_30FPS, 30_000),
-        ("hlg/sollevante-hlg-derived-1080p24-10s.ts", 24_000),
+        ("video/hlg/sollevante-hlg-derived-1080p24-10s.ts", 24_000),
     ] {
         let Some(tracks) = ts_fixture_tracks(fixture, false) else {
             continue;

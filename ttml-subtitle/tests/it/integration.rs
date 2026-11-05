@@ -9,7 +9,7 @@ use ttml_subtitle::document::{BodyElement, DivElement, InlineContent, PElement, 
 use ttml_subtitle::*;
 
 fn fixture_path(name: &str) -> PathBuf {
-    test_fixtures::path(&format!("ttml/{name}"))
+    test_fixtures::path(&format!("subtitles/{name}"))
 }
 
 fn load_fixture(name: &str) -> String {

@@ -22,7 +22,7 @@ static FLV: std::sync::LazyLock<Vec<u8>> =
 static CSV: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| test_fixtures::read_to_string("flv/av.packets.csv"));
 static REF_MP4: std::sync::LazyLock<Vec<u8>> =
-    std::sync::LazyLock::new(|| test_fixtures::read("ts/demux-oracle/h264_aac.ref.mp4"));
+    std::sync::LazyLock::new(|| test_fixtures::read("ts/demux-oracle/h264-aac.ref.mp4"));
 
 /// One oracle packet row.
 #[derive(Debug, Clone, Copy)]
@@ -765,9 +765,9 @@ fn aac_channel_count_uses_table_1_19() {
     // The fixture is `ffmpeg -f lavfi -i "anullsrc=r=48000:cl=7.1" -c:a aac -f flv`;
     // its ASC is 0x11B856E500 (AAC-LC, sfi 3 = 48000 Hz, channelConfiguration 7).
     static FLV_7_1: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("flv/aac-7_1.flv"));
+        std::sync::LazyLock::new(|| test_fixtures::read("flv/aac-7-1.flv"));
     static ORACLE: std::sync::LazyLock<String> =
-        std::sync::LazyLock::new(|| test_fixtures::read_to_string("flv/aac-7_1.oracle.csv"));
+        std::sync::LazyLock::new(|| test_fixtures::read_to_string("flv/aac-7-1.oracle.csv"));
     let row = ORACLE
         .as_str()
         .lines()
@@ -781,7 +781,7 @@ fn aac_channel_count_uses_table_1_19() {
     let mut demux = FlvDemux::new();
     let media = demux
         .unpackage(FLV_7_1.as_slice())
-        .expect("demux aac-7_1.flv");
+        .expect("demux aac-7-1.flv");
     let CodecConfig::Aac {
         channel_count,
         sample_rate,
@@ -800,10 +800,10 @@ fn aac_channel_count_uses_table_1_19() {
 fn streaming_aac_channel_count_uses_table_1_19() {
     use transmux::DemuxEvent;
     static FLV_7_1: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("flv/aac-7_1.flv"));
+        std::sync::LazyLock::new(|| test_fixtures::read("flv/aac-7-1.flv"));
 
     let mut demux = transmux::StreamingFlvDemux::new();
-    demux.feed(FLV_7_1.as_slice()).expect("feed aac-7_1.flv");
+    demux.feed(FLV_7_1.as_slice()).expect("feed aac-7-1.flv");
     let mut channels = None;
     while let Some(ev) = demux.poll_event() {
         if let DemuxEvent::TrackAdded(spec) = ev

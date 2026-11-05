@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn aac_channel_count_uses_table_1_19() {
         // 0x11B856E500: AAC-LC, samplingFrequencyIndex 3 (48000 Hz),
-        // channelConfiguration 7 — the ASC `fixtures/flv/aac-7_1.flv` carries
+        // channelConfiguration 7 — the ASC `fixtures/flv/aac-7-1.flv` carries
         // (ffmpeg `-f lavfi -i "anullsrc=r=48000:cl=7.1" -c:a aac -f flv`).
         let cfg = aac_config_from_asc_hex("11B856E500").expect("real 7.1 ASC");
         match cfg {

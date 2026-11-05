@@ -233,7 +233,7 @@ fn iframe_master_audio_only_omitted() {
 fn iframe_master_d3prime_unavailable_omitted() {
     // Build an audio-first segment that follows an entry.
     let Some(media) = (|| {
-        let data = test_fixtures::require_bytes("ts/h264_aac.ts", "iframe")?;
+        let data = test_fixtures::require_bytes("ts/h264-aac.ts", "iframe")?;
         TsDemux::new().demux(&data).ok()
     })() else {
         return;

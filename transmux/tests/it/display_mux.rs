@@ -33,13 +33,13 @@ fn find_box_body<'a>(data: &'a [u8], four_cc: &[u8; 4]) -> &'a [u8] {
 }
 
 fn avc_config() -> AVCDecoderConfigurationRecord {
-    let data = std::fs::read(test_fixtures::path("mp4/h264_high.mp4")).expect("fixture");
+    let data = std::fs::read(test_fixtures::path("mp4/h264-high.mp4")).expect("fixture");
     let body = find_box_body(&data, b"avcC");
     AVCDecoderConfigurationRecord::parse(body).expect("parse avcC")
 }
 
 fn hevc_config() -> HEVCDecoderConfigurationRecord {
-    let data = std::fs::read(test_fixtures::path("mp4/hevc_main.mp4")).expect("fixture");
+    let data = std::fs::read(test_fixtures::path("mp4/hevc-main.mp4")).expect("fixture");
     let hvc_box = find_full_box(&data, b"hvcC");
     HEVCDecoderConfigurationRecord::parse(&hvc_box[8..]).expect("parse hvcC")
 }

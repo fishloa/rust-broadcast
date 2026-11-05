@@ -193,7 +193,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         // prefix of a fragmented file is indistinguishable from a progressive
         // one. Claiming `Progressive` there would send a consumer to the wrong
         // demuxer — measured: the first 64 bytes of a real fragmented CMAF
-        // file (`fixtures/mp4/cmaf/av_frag.mp4`) contain `ftyp` and the start
+        // file (`fixtures/mp4/cmaf/av-frag.mp4`) contain `ftyp` and the start
         // of `moov` and nothing else.
         layout: if saw_moof {
             IsobmffLayout::Fragmented
@@ -308,7 +308,7 @@ mod tests {
     /// 8-byte box header) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/mp4/h264_high.mp4");
+        let data = fixture_bytes("fixtures/mp4/h264-high.mp4");
         let region = &data[..BOX_HEADER_MIN_SIZE - 1];
         match probe(region, region.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, BOX_HEADER_MIN_SIZE),

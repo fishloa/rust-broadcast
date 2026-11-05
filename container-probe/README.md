@@ -74,7 +74,7 @@ match probe(&bytes) {
 }
 
 // A real capture (committed fixture; path is relative to the crate root).
-let data = std::fs::read("../fixtures/ts/h264_aac.ts").unwrap();
+let data = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
 match probe(&data) {
     Probe::Identified { format, .. } => assert_eq!(format, Format::MpegTs),
     other => panic!("expected an identified TS, got {other:?}"),
@@ -147,7 +147,7 @@ for `OggS`) is "stop" for that prober, not "read more".
 
 - Annex B detection is H.264 only (see the table).
 - 204-byte TS is covered only by a synthetic fixture
-  (`fixtures/container-probe/PROVENANCE.md`); 208-byte has none.
+  (`fixtures/candidates/probe/PROVENANCE.md`); 208-byte has none.
 - `.ts` is an ambiguous extension (TypeScript uses it): only the probe result
   is authoritative.
 

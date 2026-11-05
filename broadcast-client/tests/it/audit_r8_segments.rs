@@ -14,7 +14,7 @@ use support::hls_host::{
 const FMP4_BASE: &str = "http://origin.test/v";
 const FMP4_PLAYLIST_URL: &str = "http://origin.test/v/index.m3u8";
 const FMP4_INIT_URL: &str = "http://origin.test/v/i.mp4";
-const FRAGMENT_FIXTURE: &str = "transmux/h264_aac_frag.mp4";
+const FRAGMENT_FIXTURE: &str = "mp4/h264-aac-frag.mp4";
 const SEGMENT_GROUP: usize = 3;
 const STEPS: usize = 40_000;
 const GARBAGE_LEN: u32 = 4096;

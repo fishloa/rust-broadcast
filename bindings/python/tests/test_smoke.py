@@ -9,13 +9,12 @@ import os
 import pytest
 import dvb_si_py as dvb
 
-# Repo-relative path to a real DVB capture, committed in the PUBLIC `fixtures/`
-# tree (it moved there from `fixtures/dvb-si/`; the old path no longer
-# exists, and a `skipif` on it silently turned these tests into no-ops). The
-# file must exist: its absence is a failure, never a skip.
+# Repo-relative path to a real DVB capture committed in the public `fixtures/ts/`
+# tree. A `skipif` on a stale path once silently turned these tests into
+# no-ops, so the file must exist: its absence is a failure, never a skip.
 FIXTURE = os.path.join(
     os.path.dirname(__file__),
-    "..", "..", "..", "fixtures", "dvb-si", "tnt-5w-12732v-isi6-10s.ts",
+    "..", "..", "..", "fixtures", "ts", "tnt-5w-12732v-isi6-10s.ts",
 )
 assert os.path.exists(FIXTURE), f"committed real capture missing: {FIXTURE}"
 PKT = 188

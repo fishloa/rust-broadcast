@@ -62,7 +62,7 @@ media-doctor = { version = "0.13", default-features = false } # library only
 use media_doctor::{check_hls_playlist, Diagnostic, PtsCheck, Report, SyncByteCheck};
 
 // A real capture: the harness runs each diagnostic over the whole buffer.
-let ts = std::fs::read("../fixtures/ts/h264_aac.ts").unwrap();
+let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
 let mut report = Report::new();
 SyncByteCheck.run(&ts, &mut report);
 PtsCheck.run(&ts, &mut report);
@@ -146,10 +146,10 @@ $ cargo run -p media-doctor --example check_playlists --all-features
 Example invocations on committed fixtures (run from the repository root):
 
 ```console
-$ media-doctor check --input fixtures/ts/h264_aac.ts
+$ media-doctor check --input fixtures/ts/h264-aac.ts
 No issues found.
 
-$ media-doctor check --input fixtures/ts/h264_aac.ts --json
+$ media-doctor check --input fixtures/ts/h264-aac.ts --json
 {
   "findings": []
 }

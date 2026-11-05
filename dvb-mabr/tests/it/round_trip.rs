@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use dvb_mabr::{MulticastGatewayConfiguration, MulticastServerConfiguration};
 
 fn fixture_path(name: &str) -> PathBuf {
-    test_fixtures::path(&format!("dvb-mabr/{name}"))
+    test_fixtures::path(&format!("mabr/{name}"))
 }
 
 fn read_fixture(name: &str) -> String {

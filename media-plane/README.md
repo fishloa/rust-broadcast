@@ -61,7 +61,7 @@ let trunk = Trunk::new(TrunkConfig::new(nz(4096), nz(64), nz(32), nz(32), nz(16)
 let writer = trunk.writer().expect("the first writer is always granted");
 let mut cursor = trunk.subscribe(); // live tail: reads what is published from now on
 
-let ts = std::fs::read("../fixtures/ts/h264_aac.ts").unwrap();
+let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
 let mut demux = StreamingTsDemux::new();
 for chunk in ts.chunks(188 * 64) {
     demux.feed(chunk);

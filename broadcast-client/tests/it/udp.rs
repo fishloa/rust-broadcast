@@ -7,8 +7,8 @@ use broadcast_client::{
 };
 use std::net::{IpAddr, Ipv4Addr};
 
-const SMALL: &str = "ts/h264_aac.ts";
-const LIVE_CAPTURE: &str = "zenith-live/tf-1-8MB.ts";
+const SMALL: &str = "ts/h264-aac.ts";
+const LIVE_CAPTURE: &str = "ts/live-channels/tf-1-8-mb.ts";
 const GROUP: &str = "udp://239.1.1.1:5000";
 const SSRC_A: u32 = 0xA1A1_A1A1;
 const SSRC_B: u32 = 0xB2B2_B2B2;

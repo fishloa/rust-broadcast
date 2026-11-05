@@ -130,10 +130,10 @@ worse than no scheduler." The tests hold `TransitionPlan` to that bar:
   timeline with no gap and no overlap.
 - `transition::tests::rebase_returns_none_rather_than_wrapping_out_of_range`.
 - `tests/it/real_fixture_transition.rs` plans a programme to ad transition against
-  the real, non-IDR-aligned cue in `fixtures/scte35-ssai/` (DASH-IF `livesim2`,
+  the real, non-IDR-aligned cue in `fixtures/scte35/` (DASH-IF `livesim2`,
   Apache-2.0): the nearest keyframe is 6000 ticks (67 ms) after the cue's nominal
   instant, measured independently from the fragment's own boxes (see
-  `fixtures/scte35-ssai/PROVENANCE.md`), and the emitted cue carries the
+  `fixtures/scte35/PROVENANCE.md`), and the emitted cue carries the
   conditioned instant, not the raw request.
 
 ## Examples

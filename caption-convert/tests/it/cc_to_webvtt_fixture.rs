@@ -1,7 +1,7 @@
 //! Fixture-driven CEA-608 -> WebVTT/SRT test, exercising
 //! `caption_convert::Cea608ToWebVtt` end to end against the same real
 //! fixture `timed-metadata`'s own #568 test uses:
-//! `fixtures/cc/cea608_cc1_synthetic.txt` (see that fixture's header comment
+//! `fixtures/captions/cea608-cc1-synthetic.txt` (see that fixture's header comment
 //! for its provenance and caption plan -- pop-on "HELLO", roll-up
 //! "HI"->"HI\nBYE"->"BYE", paint-on "OK").
 //!
@@ -21,11 +21,11 @@ use cc_data::decode::Cea608Channel;
 use std::fs;
 
 fn fixture_path() -> std::path::PathBuf {
-    test_fixtures::path("cc/cea608_cc1_synthetic.txt")
+    test_fixtures::path("captions/cea608-cc1-synthetic.txt")
 }
 
 fn load_fixture_text() -> String {
-    fs::read_to_string(fixture_path()).expect("read cea608_cc1_synthetic.txt fixture")
+    fs::read_to_string(fixture_path()).expect("read cea608-cc1-synthetic.txt fixture")
 }
 
 fn load_frames(text: &str) -> Vec<(u64, Vec<u8>)> {

@@ -3,14 +3,14 @@
 //! must stop at the first `BrokenPipe`, exit successfully, and not panic in
 //! `println!` or fail later on the final flush.
 //!
-//! Real capture: `fixtures/dvb-t2mi/colombia-capital-t2mi.ts` (T2-MI PID
+//! Real capture: `fixtures/t2mi/colombia-capital-t2mi.ts` (T2-MI PID
 //! 0x0040, thousands of packets, so output is guaranteed to outlive the
 //! reader we drop right after spawning).
 
 use std::process::{Command, Stdio};
 
 fn fixture() -> String {
-    test_fixtures::path("dvb-t2mi/colombia-capital-t2mi.ts")
+    test_fixtures::path("t2mi/colombia-capital-t2mi.ts")
         .to_string_lossy()
         .into_owned()
 }

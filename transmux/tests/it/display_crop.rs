@@ -247,7 +247,7 @@ fn check_real(fixture: &str, coded: (u32, u32), out: (u32, u32, u32, u32)) {
 #[test]
 fn real_fixtures_crop() {
     check_real(
-        "ts/h264/high_1080_cropped.ts",
+        "ts/h264/high-1080-cropped.ts",
         (1920, 1088),
         (0, 0, 1920, 1080),
     );

@@ -3,7 +3,6 @@
 //! (issue #1428 slice 1, RFC 8216bis §4.4.6.1-§4.4.6.2).
 
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
 
 use broadcast_hls::MasterPlaylist;
 use hls_runtime::server::{
@@ -59,10 +58,7 @@ fn master_with(decls: Vec<AudioRenditionDecl>, cc_none: bool) -> String {
 #[test]
 fn two_group_two_language_master_matches_golden() {
     let text = master_with(two_groups(), true);
-    let path = PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/golden/audio_renditions_master.golden"
-    ));
+    let path = test_fixtures::path("golden/hls/audio-renditions-master.golden");
     let golden = std::fs::read_to_string(&path).expect("golden");
     assert_eq!(text, golden);
 }

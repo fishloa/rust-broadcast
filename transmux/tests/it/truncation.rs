@@ -53,7 +53,7 @@ fn committed_mpd_fixtures_truncations_all_error() {
 
 #[test]
 fn packager_output_truncations_all_error() {
-    let ts = fs::read(fixtures().join("ts/h264_aac.ts")).expect("ts fixture");
+    let ts = fs::read(fixtures().join("ts/h264-aac.ts")).expect("ts fixture");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
 
     let mpd = DashPackager::default().package(&media).expect("mpd");

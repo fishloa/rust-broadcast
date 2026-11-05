@@ -1,5 +1,5 @@
 //! `RtpStreamDepacketiser` durations on the real B-frame stream
-//! `fixtures/ts/h264_aac.ts`, packetised in decode order with RTP timestamps
+//! `fixtures/ts/h264-aac.ts`, packetised in decode order with RTP timestamps
 //! equal to the presentation time (RFC 6184 §5.1).
 
 use broadcast_common::{Package, Unpackage};
@@ -9,8 +9,8 @@ use transmux::{
 };
 
 fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    let data = std::fs::read(path).expect("h264_aac.ts fixture must exist");
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    let data = std::fs::read(path).expect("h264-aac.ts fixture must exist");
     let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
     let track = media
         .tracks

@@ -1,10 +1,10 @@
 # ts-hls fixture provenance
 
-Generated from the workspace's own committed `fixtures/ts/h264_aac.ts` capture
+Generated from the workspace's own committed `fixtures/ts/h264-aac.ts` capture
 (not a copyrighted external source) via:
 
 ```bash
-ffmpeg -i fixtures/ts/h264_aac.ts -c copy -f hls -hls_time 2 -hls_segment_type mpegts \
+ffmpeg -i fixtures/ts/h264-aac.ts -c copy -f hls -hls_time 2 -hls_segment_type mpegts \
   -hls_list_size 0 -hls_playlist_type vod fixtures/hls/ts-hls/index.m3u8
 ```
 

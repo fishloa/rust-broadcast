@@ -1,6 +1,6 @@
 //! PCR restamp — real-fixture fault-inject test (ISO/IEC 13818-1 §2.4.3.5).
 //!
-//! Oracle: the shared `fixtures/france-tnt-pcr.ts` — a 2688-packet slice of a
+//! Oracle: the shared `fixtures/ts/france-tnt-pcr.ts` — a 2688-packet slice of a
 //! real French TNT mux carrying 24 PCRs across 5 PCR PIDs. We corrupt the PCRs
 //! on the busiest PCR PID (keeping the first as the anchor), run
 //! `restamp_pcr(from_bitrate)`, and assert the output PCRs are strictly
@@ -17,7 +17,7 @@ const PKT: usize = 188;
 // Shared workspace fixtures live one level up from the crate root (read at
 // runtime via std::fs, so `cargo publish` — which never runs integration tests
 // — is unaffected by the out-of-crate path).
-const FIXTURE: &str = "france-tnt-pcr.ts";
+const FIXTURE: &str = "ts/france-tnt-pcr.ts";
 const DISC_FIXTURE: &str = "ts/france-pcr-discontinuity.ts";
 
 fn pid(p: &[u8]) -> Pid {

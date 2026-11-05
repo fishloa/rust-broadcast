@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn pack_header_round_trip_fixture_pattern() {
-        // Byte-for-byte the real fixture's first pack header (fixtures/mpeg-ps/
+        // Byte-for-byte the real fixture's first pack header (fixtures/ps/
         // ffmpeg-mpeg2-ps.mpg, bytes 0..14): SCR=0, reserved=0x1F, stuffing=0.
         // mux = (0x43<<14)|(0x36<<6)|(0x3B>>2) = 0x10CD8E (Table 2-39, no '01'
         // prefix before program_mux_rate — see the parse-side comment), which

@@ -77,7 +77,7 @@ fn anamorphic_tkhd_and_swapped_sar_differs() {
 
 #[test]
 fn high_1080_cropped_tkhd() {
-    let Some(spec) = spec_from_fixture("ts/h264/high_1080_cropped.ts") else {
+    let Some(spec) = spec_from_fixture("ts/h264/high-1080-cropped.ts") else {
         return;
     };
     let data = build(spec);

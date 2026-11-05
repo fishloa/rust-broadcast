@@ -433,7 +433,7 @@ mod tests {
 
     // ---- colr (nclx) -----------------------------------------------------
 
-    /// Oracle: colr body from colr_hdr.mp4 (ffmpeg-generated BT.2020 HDR)
+    /// Oracle: colr body from colr-hdr.mp4 (ffmpeg-generated BT.2020 HDR)
     const COLR_NCLX_ORACLE: [u8; 11] = [
         0x6E, 0x63, 0x6C, 0x78, // 'nclx'
         0x00, 0x02, // colour_primaries = 2 (unspecified)

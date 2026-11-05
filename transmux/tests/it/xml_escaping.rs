@@ -19,11 +19,11 @@ const SPECIALS: &str = "a&b<c>d\"e'f";
 const SPECIALS_ATTR: &str = "a&amp;b&lt;c&gt;d&quot;e&apos;f";
 
 fn demux_media() -> transmux::media::Media {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    let ts = std::fs::read(path).expect("h264_aac.ts fixture must exist");
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    let ts = std::fs::read(path).expect("h264-aac.ts fixture must exist");
     TsDemux::new()
         .unpackage(&ts[..])
-        .expect("demux h264_aac.ts")
+        .expect("demux h264-aac.ts")
 }
 
 /// Collect `(element, attribute, value)` for every start tag via quick-xml.

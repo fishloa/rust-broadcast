@@ -6,7 +6,7 @@ use support::replay::{TS_PACKET, bitrate_bps, open_live, replay_paced};
 const CHUNK: usize = 4096;
 const SETTLE_US: u64 = 500_000;
 const FAR_US: u64 = 60_000_000;
-const TF1: &str = "zenith-http/tf1-live.ts";
+const TF1: &str = "http/live-channels/tf1-live.ts";
 const TF1_LAST_AUDIO: u16 = 0x84;
 const TF1_LATE_DATA: u16 = 0x97;
 const TF1_EARLY_DATA: u16 = 0x96;

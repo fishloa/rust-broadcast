@@ -26,7 +26,7 @@ Typical users: RTSP/RTP clients and servers, WebRTC engines, RIST, and monitorin
 | IETF RFC 5506 "Reduced-Size RTCP" | RFC 5506 (not vendored) | A compound that starts with a non-SR/RR packet is accepted | Partial | Only the leading-packet relaxation, no feedback semantics |
 | IETF RFC 4585 / RFC 5104 / RFC 3611 / REMB draft | n/a | PT 205, 206, 207 and XR | Typed-opaque | Preserved as `RtcpPacket::Unknown` |
 
-Verified against a real Chromium `RTCPeerConnection` compound (RR + PLI + REMB, 68 bytes, `../fixtures/rtcp/chrome_rr_pli_remb.bin`) plus spec-table vectors.
+Verified against a real Chromium `RTCPeerConnection` compound (RR + PLI + REMB, 68 bytes, `../fixtures/rtp/chrome-rr-pli-remb.bin`) plus spec-table vectors.
 
 ## Features
 
@@ -43,7 +43,7 @@ Parse the real Chromium compound, inspect each packet, and write it back unchang
 use broadcast_common::{Parse, Serialize};
 use rtcp_packet::{CompoundPacket, RtcpPacket};
 
-let wire = std::fs::read("../fixtures/rtcp/chrome_rr_pli_remb.bin").unwrap();
+let wire = std::fs::read("../fixtures/rtp/chrome-rr-pli-remb.bin").unwrap();
 let compound = CompoundPacket::parse(&wire).unwrap();
 assert_eq!(compound.packets.len(), 3);
 

@@ -25,7 +25,7 @@
 use mpeg_pes::{PesAssembler, PesPacket, StreamId};
 
 fn fixture_bytes() -> Vec<u8> {
-    test_fixtures::read("mpeg-pes/dirac-vc2-extended-stream-id.ts")
+    test_fixtures::read("pes/dirac-vc2-extended-stream-id.ts")
 }
 
 const PKT: usize = 188;

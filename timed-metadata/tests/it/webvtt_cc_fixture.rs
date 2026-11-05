@@ -1,6 +1,6 @@
 //! Fixture-driven CEA-608 -> WebVTT test (issue #568).
 //!
-//! Fixture: `fixtures/cc/cea608_cc1_synthetic.txt` — a synthetic-but-spec-real
+//! Fixture: `fixtures/captions/cea608-cc1-synthetic.txt` — a synthetic-but-spec-real
 //! CEA-608 (line-21) CC1 `cc_data()` byte stream (CTA-608-E control/PAC/char
 //! codes; Table B.9 wire framing), generated once and committed (see the
 //! fixture file's own header comment for the exact caption plan and the
@@ -29,13 +29,13 @@ use timed_metadata::event::MediaTime;
 use timed_metadata::webvtt::{Cea608CueExtractor, Cue, write_document, write_segment};
 
 fn fixture_path() -> std::path::PathBuf {
-    test_fixtures::path("cc/cea608_cc1_synthetic.txt")
+    test_fixtures::path("captions/cea608-cc1-synthetic.txt")
 }
 
 /// Parse the fixture into `(pts_90k, cc_data_bytes)` frames, skipping
 /// comment/blank lines.
 fn load_frames() -> Vec<(u64, Vec<u8>)> {
-    let text = fs::read_to_string(fixture_path()).expect("read cea608_cc1_synthetic.txt fixture");
+    let text = fs::read_to_string(fixture_path()).expect("read cea608-cc1-synthetic.txt fixture");
     let mut frames = Vec::new();
     for line in text.lines() {
         let line = line.trim();

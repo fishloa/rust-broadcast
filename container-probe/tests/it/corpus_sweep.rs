@@ -47,12 +47,7 @@ fn extension_format(ext: &str) -> Option<Format> {
 
 /// The subset of fixture dirs where `.ts` unambiguously means an MPEG-2 TS
 /// stream (as opposed to TypeScript). Any `.ts` outside these is skipped.
-const TS_DIRS: &[&str] = &[
-    "fixtures/ts/",
-    "fixtures/mpeg-ts/",
-    "fixtures/dvb-si/",
-    "fixtures/mpeg-pes/",
-];
+const TS_DIRS: &[&str] = &["fixtures/ts/", "fixtures/si/", "fixtures/pes/"];
 
 /// Skip files smaller than this — too small for any prober to conclude.
 const MIN_FILE_SIZE: u64 = 64;
@@ -112,12 +107,12 @@ fn extension(p: &Path) -> String {
 /// file failing to identify is a test failure, not a silently tolerated line of
 /// output.
 const EXPECTED_INSUFFICIENT: &[&str] = &[
-    "fixtures/ts/emsg-pid4.ts",                  // 188 B — 1 packet
-    "fixtures/ts/scte35-balanced.ts",            // 188 B — 1 packet
-    "fixtures/ts/scte35-real.ts",                // 188 B — 1 packet
-    "fixtures/ts/scte35-unbalanced.ts",          // 188 B — 1 packet
-    "fixtures/mpeg-ts/af-pcr-stuffing.ts",       // 376 B — 2 packets
-    "fixtures/mpeg-pes/pes-pts-dts-stuffing.ts", // 376 B — 2 packets
+    "fixtures/ts/emsg-pid4.ts",             // 188 B — 1 packet
+    "fixtures/ts/scte35-balanced.ts",       // 188 B — 1 packet
+    "fixtures/ts/scte35-real.ts",           // 188 B — 1 packet
+    "fixtures/ts/scte35-unbalanced.ts",     // 188 B — 1 packet
+    "fixtures/ts/af-pcr-stuffing.ts",       // 376 B — 2 packets
+    "fixtures/pes/pes-pts-dts-stuffing.ts", // 376 B — 2 packets
 ];
 
 /// Whether `rel` is on the documented too-small allowlist.

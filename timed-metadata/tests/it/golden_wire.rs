@@ -1,7 +1,7 @@
 //! Goldens for DATERANGE rendering and RFC 3339 formatting, generated from
 //! unmodified `main`. `GOLDEN_BLESS=<dir>` writes.
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use timed_metadata::DateRange;
 use timed_metadata::anchor::format_rfc3339_ms;
@@ -13,9 +13,7 @@ fn check(name: &str, actual: &str) {
         fs::write(Path::new(&dir).join(name), actual).expect("write golden");
         return;
     }
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(name);
+    let path = test_fixtures::path(&format!("golden/hls/{}", name));
     let expected = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }

@@ -55,7 +55,7 @@ assert_eq!(h.program_mux_rate, 3);
 assert_eq!(h.scr.ticks(), 0);
 
 // Walk a real capture (committed fixture; path is relative to the crate root).
-let data = std::fs::read("../fixtures/mpeg-ps/ffmpeg-mpeg2-ps.mpg").unwrap();
+let data = std::fs::read("../fixtures/ps/ffmpeg-mpeg2-ps.mpg").unwrap();
 let (packs, _trailing) = program_stream::parse_all_packs(&data)?;
 assert!(!packs.is_empty());
 for pack in &packs {

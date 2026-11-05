@@ -1,13 +1,13 @@
 //! `PsDemux` gate — MPEG-2 Program Stream → hub `Media` IR, verified against
-//! ffprobe / ffmpeg oracles for `fixtures/ps/h264_ac3.ps` (issue #470).
+//! ffprobe / ffmpeg oracles for `fixtures/ps/h264-ac3.ps` (issue #470).
 //!
 //! Oracles (committed):
-//! - `fixtures/ps/h264_ac3.packets.csv` — ffprobe per-packet
+//! - `fixtures/ps/h264-ac3.packets.csv` — ffprobe per-packet
 //!   (codec_type, stream_index, pts, dts, duration, size, keyframe) in 90 kHz
 //!   ticks. Many video rows carry empty (`N/A`) pts/dts — a PS does not stamp
 //!   every frame — so video timing is asserted only against the rows that carry
 //!   values.
-//! - `fixtures/ts/demux-oracle/h264_aac.ref.mp4` — the H.264 video is the SAME
+//! - `fixtures/ts/demux-oracle/h264-aac.ref.mp4` — the H.264 video is the SAME
 //!   source video (`-c:v copy`); its `avcC` box body is the byte oracle for the
 //!   H.264 config and its video sample NAL payloads are the byte oracle for the
 //!   coded video data.
@@ -29,15 +29,15 @@ fn ps_dir() -> PathBuf {
 }
 
 fn load_ps() -> Vec<u8> {
-    let path = ps_dir().join("h264_ac3.ps");
-    let data = std::fs::read(&path).expect("h264_ac3.ps fixture must exist");
+    let path = ps_dir().join("h264-ac3.ps");
+    let data = std::fs::read(&path).expect("h264-ac3.ps fixture must exist");
     assert_eq!(data[4], 0x44, "byte 4 must be the MPEG-2 SCR prefix (0x44)");
     data
 }
 
 fn ref_mp4() -> Vec<u8> {
-    let path = test_fixtures::path("ts/demux-oracle/h264_aac.ref.mp4");
-    std::fs::read(&path).expect("h264_aac.ref.mp4 oracle must exist")
+    let path = test_fixtures::path("ts/demux-oracle/h264-aac.ref.mp4");
+    std::fs::read(&path).expect("h264-aac.ref.mp4 oracle must exist")
 }
 
 /// One ffprobe oracle row; `pts`/`dts` are `None` for empty (`N/A`) fields.
@@ -50,7 +50,7 @@ struct OracleRow {
 }
 
 fn load_oracle_rows() -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(ps_dir().join("h264_ac3.packets.csv"))
+    let text = std::fs::read_to_string(ps_dir().join("h264-ac3.packets.csv"))
         .expect("packets.csv oracle must exist");
     let mut rows = Vec::new();
     for line in text.lines() {

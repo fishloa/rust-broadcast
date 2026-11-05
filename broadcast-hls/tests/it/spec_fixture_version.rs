@@ -190,7 +190,7 @@ fn abridged_spec_fixtures_do_not_parse_because_the_rfc_elides_them() {
 //
 // These are NOT spec vectors, so unlike the §9 fixtures above they carry no
 // independent authority: their declared version is *our* claim, derived by
-// hand from the §8 table and written down in `fixtures/hls/MANIFEST.md`'s
+// hand from the §8 table and written down in `fixtures/hls/PROVENANCE.md`'s
 // "EXT-X-VERSION derivation" section. Asserting `computed_version()` against
 // them therefore proves something narrower but still worth having — that the
 // hand-derivation in the manifest and the code's derivation agree. It makes
@@ -209,7 +209,7 @@ fn read_handbuilt_fixture(name: &str) -> String {
 }
 
 /// `(fixture, expected computed_version, the MANIFEST's stated reason)` —
-/// values transcribed from `fixtures/hls/MANIFEST.md`'s Tier 1b derivation
+/// values transcribed from `fixtures/hls/PROVENANCE.md`'s Tier 1b derivation
 /// table. Keep the two in step; that is the whole point of this test.
 const HANDBUILT_MULTIVARIANT_VERSIONS: &[(&str, Option<u8>, &str)] = &[
     (
@@ -252,7 +252,7 @@ fn handbuilt_multivariant_computed_version_matches_the_manifest_derivation() {
             pl.computed_version(),
             *expected,
             "{name}: computed version disagrees with the derivation recorded \
-             in fixtures/hls/MANIFEST.md ({why}). Either the manifest's \
+             in fixtures/hls/PROVENANCE.md ({why}). Either the manifest's \
              reasoning is wrong or the §8 implementation is.\n{text}"
         );
     }
@@ -268,7 +268,7 @@ fn handbuilt_media_computed_version_matches_the_manifest_derivation() {
             pl.computed_version(),
             *expected,
             "{name}: computed version disagrees with the derivation recorded \
-             in fixtures/hls/MANIFEST.md ({why}). Either the manifest's \
+             in fixtures/hls/PROVENANCE.md ({why}). Either the manifest's \
              reasoning is wrong or the §8 implementation is.\n{text}"
         );
     }

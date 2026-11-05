@@ -9,7 +9,7 @@ use support::hls_host::{Host, Reply, hls_config, is_ended};
 
 const BASE: &str = "http://origin.test/v";
 const PL: &str = "http://origin.test/v/index.m3u8";
-const FRAGMENT_FIXTURE: &str = "transmux/h264_aac_frag.mp4";
+const FRAGMENT_FIXTURE: &str = "mp4/h264-aac-frag.mp4";
 const SEGMENT_GROUP: usize = 3;
 const STEPS: usize = 20_000;
 const VOD_HEAD: &str =

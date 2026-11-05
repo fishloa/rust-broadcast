@@ -5,13 +5,13 @@
 //! demuxed to the IR, re-muxed, and re-demuxed, with the `mhaC` record and the
 //! coded sample bytes checked byte-for-byte against the source.
 //!
-//! Fixture: `fixtures/mp4/frag/mpegh_stereo.frag.mp4` — a real Fraunhofer/
+//! Fixture: `fixtures/mp4/frag/mpegh-stereo.frag.mp4` — a real Fraunhofer/
 //! DASH-IF MPEG-H 3D Audio stereo (48 kHz) fMP4, trimmed to ftyp + moov + 6
 //! fragments. It carries a real 64-byte `mhaC` box (56-byte record body:
 //! configurationVersion=1, profile-level LC L1 = 0x0B, referenceChannelLayout
 //! CICP 2 = stereo, 51-byte `mpegh3daConfig`).
 //!
-//! The companion `mpegh_stereo.packets.csv` reflects the *full* source file's
+//! The companion `mpegh-stereo.packets.csv` reflects the *full* source file's
 //! metadata (not this truncated fixture), so expected sample counts are derived
 //! from the fixture's own `moof`/`trun`, never hardcoded.
 //!
@@ -29,7 +29,7 @@ use transmux::{
 };
 
 static FIXTURE: std::sync::LazyLock<Vec<u8>> =
-    std::sync::LazyLock::new(|| test_fixtures::read("mp4/frag/mpegh_stereo.frag.mp4"));
+    std::sync::LazyLock::new(|| test_fixtures::read("mp4/frag/mpegh-stereo.frag.mp4"));
 
 // Ground-truth values decoded from the fixture's own mhaC record (asserted, not
 // trusted): LC profile-level L1 and CICP ChannelConfiguration 2 (stereo).

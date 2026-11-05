@@ -1,5 +1,5 @@
 //! Real-fixture test — parses the genuine ST 2022-6 HBRMT/RTP/UDP capture in
-//! `fixtures/st2022/st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap`
+//! `fixtures/rtp/st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap`
 //! (issue #926/#943) with `st2022::PayloadHeader`, and byte-exact
 //! round-trips every payload header in the capture. Until now every
 //! `st2022` test used hand-invented bytes — this is the crate's first
@@ -8,7 +8,7 @@
 //! The capture is a genuine `cisco/herisson` (`ip2vf`) HBRMT sender, one
 //! full 1080i59.94 frame (4,497 RTP packets), captured on Linux loopback
 //! (`lo`, `EN10MB`/Ethernet link type with zeroed MACs — unlike the RIST
-//! fixture's macOS `DLT_NULL` capture). See `fixtures/st2022/PROVENANCE.md`
+//! fixture's macOS `DLT_NULL` capture). See `fixtures/rtp/PROVENANCE.md`
 //! for the byte-level hand-decode this test's expected values come from,
 //! independently re-derived here against the crate's own parser.
 //!
@@ -47,7 +47,7 @@ const RTP_HEADER_LEN: usize = 12;
 const HBRMT_MEDIA_PAYLOAD_LEN: usize = 1376;
 
 fn fixture_path() -> String {
-    test_fixtures::path("st2022/st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap")
+    test_fixtures::path("rtp/st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap")
         .to_string_lossy()
         .into_owned()
 }

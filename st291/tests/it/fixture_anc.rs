@@ -6,7 +6,7 @@
 use st291::{AncDataPacket, AncPacket};
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("st291/anc.bin")
+    test_fixtures::read("rtp/anc.bin")
 }
 
 #[test]

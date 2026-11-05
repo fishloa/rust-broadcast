@@ -7,9 +7,9 @@
 //!   re-emitted as `000`.
 //!
 //! ## Evidence
-//! * Real stuffing: `fixtures/mpeg-pes/pes-pts-dts-stuffing.ts` (also covered
+//! * Real stuffing: `fixtures/pes/pes-pts-dts-stuffing.ts` (also covered
 //!   by `fixture_pes_header.rs`).
-//! * Real reserved bits: `fixtures/mpeg-pes/dirac-vc2-extended-stream-id.ts`
+//! * Real reserved bits: `fixtures/pes/dirac-vc2-extended-stream-id.ts`
 //!   carries PES-extension flags byte `0x01`, i.e. `reserved == 0b000`, **not**
 //!   the `0b111` the spec-convention suggests (so the old writer happened to
 //!   match; a `0b111` writer would have broken it).
@@ -222,10 +222,7 @@ fn full_archive_pes_headers_round_trip() {
 /// Real evidence on the PES-extension reserved bits (see module docs).
 #[test]
 fn real_pes_extension_reserved_bits_are_preserved() {
-    let ts = fs::read(test_fixtures::path(
-        "mpeg-pes/dirac-vc2-extended-stream-id.ts",
-    ))
-    .unwrap();
+    let ts = fs::read(test_fixtures::path("pes/dirac-vc2-extended-stream-id.ts")).unwrap();
     let pkts = pes_packets(&ts);
     assert!(!pkts.is_empty());
     for raw in &pkts {

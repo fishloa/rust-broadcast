@@ -521,7 +521,7 @@ mod tests {
     }
 
     // Real PMT ES_info bytes of the Fraunhofer-IIS mpegh-test-content transport
-    // streams (PMT of `mpegh_cicp_01_baseline_32kbps_single.ts` etc.): the
+    // streams (PMT of `mpegh-cicp-01-baseline-32kbps-single.ts` etc.): the
     // MPEG-H 3D audio descriptor with all-ones reserved bits.
     #[test]
     fn fraunhofer_baseline_cicp01() {

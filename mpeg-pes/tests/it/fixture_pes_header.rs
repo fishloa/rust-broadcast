@@ -25,14 +25,14 @@
 //! **zero** PES headers setting any of these flags (real broadcast PES headers
 //! carry only PTS/DTS), and the TSDuck "candidates" are mis-stream-typed bytes
 //! that never round-trip byte-identical. These fields are covered by the
-//! build-from-fields round-trip unit tests in `mpeg-pes/src/packet.rs`.
+//! build-from-fields round-trip unit tests in `pes/src/packet.rs`.
 
 use mpeg_pes::{PesPacket, StreamId};
 
 const TS: usize = 188;
 
 fn fixture(name: &str) -> Vec<u8> {
-    test_fixtures::read(&format!("mpeg-pes/{name}"))
+    test_fixtures::read(&format!("pes/{name}"))
 }
 
 /// PES payload of a PUSI TS packet (these fixture packets are payload-only,

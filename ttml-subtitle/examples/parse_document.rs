@@ -7,7 +7,7 @@ use std::fs;
 use ttml_subtitle::Document;
 
 fn main() {
-    let fixture = test_fixtures::path("ttml/imsc1-document-example-822.ttml");
+    let fixture = test_fixtures::path("subtitles/imsc1-document-example-822.ttml");
 
     let xml = fs::read_to_string(&fixture).expect("failed to read fixture");
 

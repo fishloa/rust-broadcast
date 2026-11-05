@@ -1,11 +1,11 @@
 //! Real-fixture HEVC SPS decode gate test (#516).
 //!
-//! Extracts the SPS NAL from the `hvcC` box of the committed `hevc_frag.mp4`
+//! Extracts the SPS NAL from the `hvcC` box of the committed `hevc-frag.mp4`
 //! fixture (moov → trak → mdia → minf → stbl → stsd → hvc1 → hvcC), then
 //! calls `transmux::decode_hevc_sps` directly and asserts the exact coded
 //! dimensions / profile / chroma / bit-depth reported by `ffprobe`.
 //!
-//! ffprobe ground truth for `fixtures/transmux/hevc_frag.mp4`:
+//! ffprobe ground truth for `fixtures/mp4/hevc-frag.mp4`:
 //!   codec_name=hevc  profile=Main  width=320  height=240
 //!   pix_fmt=yuv420p  level=60
 
@@ -76,7 +76,7 @@ fn extract_hvcc_body(file: &[u8]) -> Vec<u8> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Decode the HEVC SPS from the real `hevc_frag.mp4` fixture via the
+/// Decode the HEVC SPS from the real `hevc-frag.mp4` fixture via the
 /// `hvcC` decoder configuration record and assert the exact oracle values
 /// reported by ffprobe.
 ///
@@ -84,8 +84,8 @@ fn extract_hvcc_body(file: &[u8]) -> Vec<u8> {
 /// level_idc=60, main tier (tier_flag=false).
 #[test]
 fn hevc_sps_decode_from_hvcc_fixture() {
-    let path = test_fixtures::path("transmux/hevc_frag.mp4");
-    let file = std::fs::read(path).expect("fixture hevc_frag.mp4 must exist");
+    let path = test_fixtures::path("mp4/hevc-frag.mp4");
+    let file = std::fs::read(path).expect("fixture hevc-frag.mp4 must exist");
 
     // Extract hvcC body and parse the decoder config record.
     let hvcc_body = extract_hvcc_body(&file);
@@ -143,8 +143,8 @@ fn hevc_sps_decode_from_hvcc_fixture() {
 /// accident or by a raw-passthrough implementation.
 #[test]
 fn hevc_sps_wrong_dimension_is_caught() {
-    let path = test_fixtures::path("transmux/hevc_frag.mp4");
-    let file = std::fs::read(path).expect("fixture hevc_frag.mp4 must exist");
+    let path = test_fixtures::path("mp4/hevc-frag.mp4");
+    let file = std::fs::read(path).expect("fixture hevc-frag.mp4 must exist");
 
     let hvcc_body = extract_hvcc_body(&file);
     let record =

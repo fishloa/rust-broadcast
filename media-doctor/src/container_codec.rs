@@ -125,7 +125,7 @@ fn check_media(media: &Media, report: &mut Report) {
         // is not length-prefixed at all) is not a structural fault — it
         // would misread arbitrary audio bytes as a bogus NAL length and
         // false-positive on every clean AAC track (confirmed against
-        // `fixtures/transmux/h264_aac_frag.mp4`'s AAC track).
+        // `fixtures/mp4/h264-aac-frag.mp4`'s AAC track).
         let is_nal_track = matches!(
             &track.spec.config,
             CodecConfig::Avc { .. } | CodecConfig::Hevc { .. }
@@ -363,15 +363,15 @@ mod tests {
     /// `length-prefix-violation`.
     ///
     /// Built from the committed real capture
-    /// `fixtures/transmux/h264_aac_prog.mp4`: demuxed through `transmux`, its
+    /// `fixtures/mp4/h264-aac-prog.mp4`: demuxed through `transmux`, its
     /// `avcC` record set to `lengthSizeMinusOne = 1`, and every sample
     /// re-prefixed from 4 bytes to 2 — a conformant file our own muxer never
     /// produces (it always writes 4-byte prefixes) and therefore could not
     /// previously be exercised.
     #[test]
     fn two_byte_nal_length_prefix_is_not_a_violation() {
-        let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
-        let bytes = std::fs::read(path).expect("read h264_aac_prog.mp4");
+        let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
+        let bytes = std::fs::read(path).expect("read h264-aac-prog.mp4");
         let mut media = ProgressiveDemux::new(bytes.len())
             .expect("demuxer")
             .unpackage(&bytes)
@@ -415,8 +415,8 @@ mod tests {
     /// (ISO/IEC 14496-15 5.3.3.1.1) and rejects a non-AVC/HEVC config.
     #[test]
     fn nal_length_size_comes_from_the_record() {
-        let path = test_fixtures::path("transmux/h264_aac_prog.mp4");
-        let bytes = std::fs::read(path).expect("read h264_aac_prog.mp4");
+        let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
+        let bytes = std::fs::read(path).expect("read h264-aac-prog.mp4");
         let mut media = ProgressiveDemux::new(bytes.len())
             .expect("demuxer")
             .unpackage(&bytes)

@@ -2,7 +2,7 @@
 //! start of the file (Microsoft ASF Specification §3.1.2.1, "Header Object
 //! GUID", `30 26 B2 75 8E 66 CF 11 A6 D9 00 AA 00 62 CE 6C`).
 //!
-//! The fixture `fixtures/container-probe/video.asf` begins with exactly these
+//! The fixture `fixtures/candidates/video.asf` begins with exactly these
 //! 16 bytes. Magic-only `STRONG`.
 
 use crate::{Confidence, Detail, Evidence, Outcome};
@@ -48,7 +48,7 @@ mod tests {
     /// 16-byte Header Object GUID) is `Insufficient`, not `Unknown`.
     #[test]
     fn short_prefix_is_insufficient() {
-        let data = fixture_bytes("fixtures/container-probe/video.asf");
+        let data = fixture_bytes("fixtures/candidates/video.asf");
         let region = &data[..ASF_HEADER_GUID.len() - 1];
         match probe(region, region.len()) {
             Outcome::Insufficient(n) => assert_eq!(n, ASF_HEADER_GUID.len()),

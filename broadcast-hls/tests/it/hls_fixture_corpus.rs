@@ -5,7 +5,7 @@
 //! and asserts the outcome — either a clean parse, or (for the two spec
 //! fixtures that are genuinely unparsable) the exact documented error.
 //!
-//! Provenance for every fixture lives in `fixtures/hls/MANIFEST.md`; read
+//! Provenance for every fixture lives in `fixtures/hls/PROVENANCE.md`; read
 //! that file, not this one, for *why* each fixture exists.
 //!
 //! Fixtures are loaded with `concat!(

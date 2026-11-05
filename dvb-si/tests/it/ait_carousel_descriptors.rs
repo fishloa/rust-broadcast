@@ -3,9 +3,9 @@
 //! everything the captures do not carry.
 //!
 //! Real data (private submodule, skip loudly when absent):
-//! `sections/hotbird-ait-carousel/` (Hot Bird 13E MHP) and
-//! `sections/france-tnt-hbbtv-carousel/` (France TNT HbbTV) — complete AIT /
-//! DSI / DII sections, see `private/fixtures/sections/PROVENANCE.md`. The
+//! `si/hotbird-ait-carousel/` (Hot Bird 13E MHP) and
+//! `si/france-tnt-hbbtv-carousel/` (France TNT HbbTV) — complete AIT /
+//! DSI / DII sections, see `private/fixtures/si/PROVENANCE.md`. The
 //! survey recorded there found NO real sample of AIT tags
 //! 0x06/0x08-0x0D/0x10/0x11/0x14 nor of carousel tags 0x02-0x08/0x0A/0x0B in
 //! any capture, so those are covered by the syntax-table vectors below (which
@@ -67,7 +67,7 @@ fn walk_ait(bytes: &[u8]) -> Vec<String> {
 
 #[test]
 fn hotbird_real_ait_section_walks_typed_and_round_trips() {
-    let Some(bytes) = section("sections/hotbird-ait-carousel/ait-pid1ec7-off275232.bin") else {
+    let Some(bytes) = section("si/hotbird-ait-carousel/ait-pid1ec7-off275232.bin") else {
         return;
     };
     let seen = walk_ait(&bytes);
@@ -90,7 +90,7 @@ fn hotbird_real_ait_section_walks_typed_and_round_trips() {
 
 #[test]
 fn france_real_ait_section_walks_typed_and_round_trips() {
-    let Some(bytes) = section("sections/france-tnt-hbbtv-carousel/ait-pid010e-off19364.bin") else {
+    let Some(bytes) = section("si/france-tnt-hbbtv-carousel/ait-pid010e-off19364.bin") else {
         return;
     };
     let seen = walk_ait(&bytes);
@@ -113,7 +113,7 @@ fn dii_module_infos(bytes: &[u8]) -> Vec<Vec<u8>> {
 
 #[test]
 fn hotbird_real_dii_module_info_has_empty_typed_user_info() {
-    let Some(bytes) = section("sections/hotbird-ait-carousel/dii1-pid1e9e-off42488.bin") else {
+    let Some(bytes) = section("si/hotbird-ait-carousel/dii1-pid1e9e-off42488.bin") else {
         return;
     };
     let infos = dii_module_infos(&bytes);
@@ -132,8 +132,7 @@ fn hotbird_real_dii_module_info_has_empty_typed_user_info() {
 
 #[test]
 fn france_real_dii_user_info_types_compressed_module_and_keeps_unallocated_tag() {
-    let Some(bytes) = section("sections/france-tnt-hbbtv-carousel/dii1-pid010f-off114680.bin")
-    else {
+    let Some(bytes) = section("si/france-tnt-hbbtv-carousel/dii1-pid010f-off114680.bin") else {
         return;
     };
     let infos = dii_module_infos(&bytes);
@@ -172,8 +171,10 @@ fn france_real_dii_user_info_types_compressed_module_and_keeps_unallocated_tag()
 fn tsduck_test_062_plain_module_info_types_type_descriptor() {
     use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
     use std::collections::BTreeMap;
-    let Some(path) = test_fixtures::require("tsduck/input/test-062.ts", "ait_carousel_descriptors")
-    else {
+    let Some(path) = test_fixtures::require(
+        "suites/tsduck/input/test-062.ts",
+        "ait_carousel_descriptors",
+    ) else {
         return;
     };
     let data = std::fs::read(path).expect("read capture");

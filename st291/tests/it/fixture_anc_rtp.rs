@@ -1,7 +1,7 @@
-//! Real-ish fixture test: parse the committed `fixtures/st291/anc_rtp.bin`
+//! Real-ish fixture test: parse the committed `fixtures/rtp/anc-rtp.bin`
 //! (an RFC 8331 ANC-over-RTP packet built from the same real, already-audited
-//! ANC content bytes as `fixtures/st291/anc.bin` — see
-//! `fixtures/st291/anc_rtp-PROVENANCE.md` — wrapped fresh in RFC-8331-correct
+//! ANC content bytes as `fixtures/rtp/anc.bin` — see
+//! `fixtures/rtp/PROVENANCE.md` — wrapped fresh in RFC-8331-correct
 //! RTP + payload-header framing), assert the decoded fields against
 //! independently-known expected values, and verify a byte-exact round-trip.
 
@@ -9,7 +9,7 @@ use broadcast_common::Serialize;
 use st291::{AncContent, AncRtpPayload, FieldSense, RtpAncPacket};
 
 fn fixture() -> Vec<u8> {
-    test_fixtures::read("st291/anc_rtp.bin")
+    test_fixtures::read("rtp/anc-rtp.bin")
 }
 
 #[test]

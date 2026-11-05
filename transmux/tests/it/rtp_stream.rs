@@ -1,6 +1,6 @@
 //! Real-fixture gate for the streaming RTP depayloader (#700).
 //!
-//! Demuxes the real `h264_aac.ts` fixture, packetises it to RTP (the same
+//! Demuxes the real `h264-aac.ts` fixture, packetises it to RTP (the same
 //! `TsDemux` + `RtpPacketiser::package` calls `tests/it/rtp.rs` uses), then feeds
 //! the video stream's packets through [`RtpStreamDepacketiser`] fed with the
 //! codec config recovered from the *generated SDP* (exercising the P2
@@ -36,8 +36,8 @@ const SSRC: u32 = 0x1234_5678;
 // ── Step 0 plumbing, copied verbatim from tests/it/rtp.rs ──────────────────────
 
 fn demux_fixture() -> Media {
-    let path = test_fixtures::path("ts/h264_aac.ts");
-    let data = std::fs::read(path).expect("h264_aac.ts fixture must exist");
+    let path = test_fixtures::path("ts/h264-aac.ts");
+    let data = std::fs::read(path).expect("h264-aac.ts fixture must exist");
     let mut demux = TsDemux::new();
     demux.unpackage(&data[..]).expect("demux TS → IR")
 }
@@ -149,7 +149,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     // Sync points preserved.
     let rec_syncs = recovered.iter().filter(|s| s.flags.is_sync).count();
     assert_eq!(rec_syncs, orig_video_syncs, "keyframe count preserved");
-    // Literal expectations for `h264_aac.ts` (75 access units at 90 kHz, a
+    // Literal expectations for `h264-aac.ts` (75 access units at 90 kHz, a
     // B-frame encode whose wire timestamps are presentation times in decode
     // order). Each AU's duration is its step to the next presentation
     // instant, the source's own 3600-tick (25 fps) grid; the one exception is
@@ -230,7 +230,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
 // ── Loss/reorder gate (issue #779) ──────────────────────────────────────────
 //
 // Tests 1-4 perturb the *real* fixture-derived RTP packet list
-// (`video_stream(&out).packets`, real NAL content from `h264_aac.ts`) by
+// (`video_stream(&out).packets`, real NAL content from `h264-aac.ts`) by
 // dropping/reordering/duplicating entries — there is no committed raw RTP
 // capture to lose a packet from, and even one would only ever be perturbed
 // the same synthetic way for this kind of test. Tests 5-6 are hand-built
@@ -273,7 +273,7 @@ fn longest_fu_a_run(packets: &[Vec<u8>]) -> (usize, usize) {
 }
 
 /// Real AVC config + original (demuxed) video sample byte data + real RTP
-/// packets for the video stream, from the shared `h264_aac.ts` fixture.
+/// packets for the video stream, from the shared `h264-aac.ts` fixture.
 fn video_fixture() -> (CodecConfig, Vec<bytes::Bytes>, Vec<Vec<u8>>) {
     let media = demux_fixture();
     let out = packetise(&media);
@@ -296,7 +296,7 @@ fn video_fixture() -> (CodecConfig, Vec<bytes::Bytes>, Vec<Vec<u8>>) {
 /// byte data (in emission order) and whether any *loss* event was raised.
 ///
 /// "Loss" is `SequenceGap`/`DamagedAccessUnit` specifically, not any signal:
-/// this fixture (`h264_aac.ts`) is a real B-frame encode, so a faithful
+/// this fixture (`h264-aac.ts`) is a real B-frame encode, so a faithful
 /// depacketiser also reports `NonMonotonicTimestamp` (audit r04-W29) — the
 /// wire's sampling timestamps step backward. That is not loss, and the
 /// issue-#779 tests below are about loss, so it is filtered out here rather
