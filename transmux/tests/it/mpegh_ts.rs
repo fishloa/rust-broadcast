@@ -5,7 +5,7 @@
 //! Fraunhofer-IIS `mpegh-test-content` capture (CICP_01, baseline profile,
 //! 32 kbps, single-stream), `stream_type 0x2D`, ES_info carrying the
 //! `MPEG-H_3dAudio_descriptor` (`0x3F` extension descriptor). CC BY-NC-ND —
-//! lives in the private `private/` submodule, not the public tree; this
+//! lives in `private/` submodule, not the public tree; this
 //! test **skips cleanly** (mirrors `scte35-splice/tests/it/downloaded_scte35.rs`)
 //! when the submodule isn't checked out.
 //!

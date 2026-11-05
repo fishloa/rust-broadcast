@@ -1,7 +1,7 @@
 //! Fetch-on-demand SCTE-35 capture test — exercises the T2-MI → inner TS
 //! → SCTE-35 pipeline against a real Russian mux (issue #218).
 //!
-//! Keyed on `private fixtures/russia-t2mi-scte35.ts` (~4.9 GB). When the capture
+//! Keyed on `russia-t2mi-scte35.ts` (fetch-on-demand) (~4.9 GB). When the capture
 //! is present, feeds the outer TS through `InnerTsRecovery` for PLP 0,
 //! scans the inner TS for `splice_info_section` (table_id 0xFC), and asserts
 //! at least one splice command parses successfully.

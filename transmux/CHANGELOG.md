@@ -3521,7 +3521,7 @@ re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
   TS clock, not an audio sample count). No MPEG-H audio bitstream decode —
   config/sample passthrough only, mirroring the existing AC-3/DTS TS
   carriage and the crate's existing ISOBMFF `mha1`/`mhaC` support. Gated on
-  the private `private/fixtures/ts/mpegh-cicp01-baseline.ts` fixture
+  `private/fixtures/ts/mpegh-cicp01-baseline.ts` fixture
   (`transmux/tests/mpegh_ts.rs`, skips cleanly when the private submodule
   isn't checked out).
 - **`nal::caption_cc_data`** — extract ATSC A/53 caption SEI (in-band

@@ -603,7 +603,7 @@ prove recompilation, per the repo's mutation discipline):
 | full range: `full_range() == true` | `private/fixtures/ts/transformers-eia608-h264.ts` | trace_headers video_full_range_flag 1 | ignore the flag |
 | HEVC colour: primaries 9, transfer 16 (PQ), limited | tsduck `test-074.hevc.ts` (must be mirrored into `private/fixtures/tsduck/`, BSD licence per the tsduck PROVENANCE) | trace_headers | HEVC walk reading the H.264 field order |
 | HEVC SAR / conformance window / default display window | **none real** | spec vectors from SN §1/§3, plus a derived fixture: real HEVC re-muxed with ffmpeg `hevc_metadata` (`sample_aspect_ratio=`, `crop_*`), provenance recorded | sign/offset errors in E-78..E-81 |
-| ordering: on `h264-two-resolutions.ts` the `TrackUpdated` arrives after the last 320x240 Sample and before the first 640x480 one | public `transmux/fixtures/ts/h264-two-resolutions.ts` | its README oracle (keyframe DTS 306000) | move the push back before `push_live_au` |
+| ordering: on `h264-two-resolutions.ts` the `TrackUpdated` arrives after the last 320x240 Sample and before the first 640x480 one | public `fixtures/transmux/ts/h264-two-resolutions.ts` | its README oracle (keyframe DTS 306000) | move the push back before `push_live_au` |
 | edge vectors: idc 0, 17, 254, Extended 0:45, 64:0, crop beyond picture, VUI truncated after SAR | spec vectors (inline, `#[cfg(test)]`) | SN §1/§3 | each guard removed |
 | fuzz: `from_avc_sps`/`from_hevc_sps` added to the existing `transmux_ts_demux*` targets' reach + a direct `sps_display` target | - | no panic, bounded | - |
 

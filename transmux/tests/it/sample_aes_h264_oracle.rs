@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use transmux::annexb::{iter_annexb_nals, length_prefixed_to_annexb};
 use transmux::sample_aes::{BLOCK_LEN, KEY_LEN, h264_decrypt_nal, h264_encrypt_nal};
 
-/// `fixtures/sample_aes_h264/key.bin`.
+/// `fixtures/transmux/sample_aes_h264/key.bin`.
 const KEY: [u8; KEY_LEN] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 ];

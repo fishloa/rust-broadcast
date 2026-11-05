@@ -61,7 +61,7 @@
   ffmpeg itself extracts from `ffmpeg-mpeg2video-2xac3.ps`:
 
   ```sh
-  ffmpeg -v error -i fixtures/ps/ffmpeg-mpeg2video-2xac3.ps -map 0:a:N          -c copy -f ac3 fixtures/ps/ffmpeg-mpeg2video-2xac3.aN.ac3
+  ffmpeg -v error -i ./fixtures/ps/ffmpeg-mpeg2video-2xac3.ps -map 0:a:N          -c copy -f ac3 ./fixtures/ps/ffmpeg-mpeg2video-2xac3.a${N}.ac3
   ```
 
   Used by `transmux/tests/it/ps_demux_substreams.rs` as a **non-circular** oracle:

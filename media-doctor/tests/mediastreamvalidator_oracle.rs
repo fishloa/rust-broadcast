@@ -45,7 +45,7 @@
 //!
 //! ## Calibration (`spec_fixtures_calibrate`)
 //!
-//! Run first, against `fixtures/hls/spec/` (the RFC's own §9 example
+//! Run first, against `private/fixtures/hls/spec/` (the RFC's own §9 example
 //! playlists, committed for issue #869): if the validator rejected one of
 //! these, the invocation above would be wrong, not the fixture. It doesn't —
 //! every MUST-level finding across all 8 parseable spec fixtures is one of a
@@ -193,7 +193,7 @@ impl std::fmt::Display for Finding {
 /// that a static fixture file will never produce).
 fn run_validator(dir: &Path, entry: &str, parse_only: bool, timeout_secs: u32) -> Vec<Finding> {
     // The JSON output path (`-O`) is deliberately OUTSIDE `dir`: for the
-    // calibration test `dir` is the private `fixtures/hls/spec/` tree, and
+    // calibration test `dir` is `private/fixtures/hls/spec/` tree, and
     // writing scratch output into a source directory would dirty a fixture
     // tree the test run itself doesn't own. Unique per call (a monotonic
     // counter) since `cargo test` runs test functions concurrently by
@@ -376,7 +376,7 @@ fn is_known_standalone_artifact(f: &Finding) -> bool {
     }
 }
 
-/// The 8 committed `fixtures/hls/spec/*.m3u8` files that actually parse (see
+/// The 8 committed `private/fixtures/hls/spec/*.m3u8` files that actually parse (see
 /// `fixtures/hls/MANIFEST.md`'s Tier 1 table). `9.10-daterange-scte35.m3u8`
 /// and `9.11-low-latency-playlist.m3u8` are excluded on purpose: both embed
 /// the RFC's own bare `...` elision line mid-playlist, which is not

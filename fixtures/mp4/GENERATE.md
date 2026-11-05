@@ -41,7 +41,7 @@ i = bytes(d).find(b'enca')
 j = bytes(d).find(b'sinf', i)
 d[i:i+4] = b'mp4a'
 d[j:j+4] = b'free'
-open('fixtures/mp4/cenc_mixed_tracks.mp4', 'wb').write(bytes(d))
+open('fixtures/transmux/cenc_mixed_tracks.mp4', 'wb').write(bytes(d))
 EOF
 
 # #430 captions (TTML → stpp; wvtt needs GPAC MP4Box, absent → spec vector)

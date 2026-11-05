@@ -76,7 +76,7 @@ system-specific init data, hand-built from a spec vector.)
 ## #431 AC-4 — UNBLOCKED via ../rust-ac4
 
 Real fixtures from the sibling `rust-ac4` codec repo:
-- `fixtures/mp4/ac4/ac4_2ch.mp4` — real Dolby AC-4 init segment (moov + `ac-4` sample
+- `./fixtures/mp4/ac4/ac4_2ch.mp4` — real Dolby AC-4 init segment (moov + `ac-4` sample
   entry + `dac4`); the **dac4 oracle**.
 - `fixtures/ts/ac4/ac4_channel.ac4` — real AC-4 elementary stream (syncframes/TOC).
 

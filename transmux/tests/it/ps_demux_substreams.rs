@@ -1,7 +1,7 @@
 //! `PsDemux` `private_stream_1` substream / AC-3 syncframe / H.264 AU-split
 //! gate (audit r04-W19, r04-W20, r04-W21).
 //!
-//! Fixture: `fixtures/ps/ffmpeg-mpeg2video-2xac3.ps` — see
+//! Fixture: `./fixtures/ps/ffmpeg-mpeg2video-2xac3.ps` — see
 //! `fixtures/ps/README.md` for the exact ffmpeg command. It is the real shape
 //! the three warnings describe: one MPEG-2 video stream plus **two**
 //! AC-3 audio substreams multiplexed into a single `private_stream_1` (0xBD)
@@ -345,7 +345,7 @@ fn first_access_unit_pointers(data: &[u8], want: u8) -> Vec<u16> {
 /// the two-substream fixture:
 ///
 /// ```text
-/// ffmpeg -v error -i fixtures/ps/ffmpeg-mpeg2video-2xac3.ps -map 0:a:N ///        -c copy -f ac3 fixtures/ps/ffmpeg-mpeg2video-2xac3.aN.ac3
+/// ffmpeg -v error -i ./fixtures/ps/ffmpeg-mpeg2video-2xac3.ps -map 0:a:N ///        -c copy -f ac3 ./fixtures/ps/ffmpeg-mpeg2video-2xac3.a${N}.ac3
 /// ```
 ///
 /// This is an independent oracle: ffmpeg's own demuxer decides where the

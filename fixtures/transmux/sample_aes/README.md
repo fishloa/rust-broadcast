@@ -1,4 +1,4 @@
-# Fixture provenance — `fixtures/sample_aes/`
+# Fixture provenance — `fixtures/transmux/sample_aes/`
 
 ## `eac3_51_1024k.ec3`
 

@@ -2,7 +2,7 @@
 
 Every committed test fixture in `fixtures/` must have a documented
 source and a clear legal basis for redistribution. Non-redistributable
-material lives in the private `private/` git submodule, never here.
+material lives in `private/` git submodule, never here.
 
 ## HLS manifest fixtures (`fixtures/hls/`)
 
@@ -94,7 +94,7 @@ non-Rust fixture checks — Python's standard-library `xml.etree.ElementTree`, a
   committed file) and compared byte-for-byte: **identical**, 56 bytes,
   `000000387073736800000000edef8ba979d64acea3c827dcd51d21ed000000181210b4c3188beddd453d9bc21cbca756623948e3dc959b06`.
 
-## LL-HLS test fixture (`hls-runtime/fixtures/ts-hls/`)
+## LL-HLS test fixture (`fixtures/hls/ts-hls/`)
 
 | File | Source | Date | Licence |
 |---|---|---|---|

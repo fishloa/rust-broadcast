@@ -203,7 +203,7 @@ fn assert_case(case: &Case) {
 }
 
 // ---------------------------------------------------------------------------
-// Tier 1 — draft-pantos-hls-rfc8216bis-22 §9 examples (fixtures/hls/spec/)
+// Tier 1 — draft-pantos-hls-rfc8216bis-22 §9 examples (private/fixtures/hls/spec/)
 // ---------------------------------------------------------------------------
 //
 // §9.8 (Session Data fragment) and §9.9 (bare CHARACTERISTICS attribute
@@ -279,7 +279,7 @@ fn spec_examples_parse_as_expected() {
 }
 
 /// Directory-completeness guard: every `.m3u8` file actually committed under
-/// `fixtures/hls/spec/` must be covered by [`SPEC_CASES`] above — so a
+/// `private/fixtures/hls/spec/` must be covered by [`SPEC_CASES`] above — so a
 /// fixture added later without a matching test case fails loudly instead of
 /// silently going unparsed-and-unchecked forever.
 #[test]

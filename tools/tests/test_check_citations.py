@@ -107,3 +107,41 @@ def test_github_url_into_private_fails(tmp_path, monkeypatch) -> None:
     assert _run(monkeypatch, tmp_path) == 1
 def test_committed_tree_passes() -> None:
     assert cc.main() == 0
+
+
+def test_fixture_ts_missing_fails(tmp_path, monkeypatch) -> None:
+    _scratch(tmp_path, {"docs/good.md": "see fixtures/ts/missing.ts\n"})
+    assert _run(monkeypatch, tmp_path) == 1
+
+
+def test_fixture_ts_existing_passes(tmp_path, monkeypatch) -> None:
+    (tmp_path / "fixtures" / "ts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "fixtures" / "ts" / "exists.ts").write_text("x\n")
+    _scratch(tmp_path, {"docs/good.md": "see fixtures/ts/exists.ts\n", "fixtures/ts/exists.ts": "x\n"})
+    assert _run(monkeypatch, tmp_path) == 0
+
+
+def test_fixture_private_mp4_missing_fails_when_present(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
+    (tmp_path / "private" / "specs-verified").mkdir(parents=True, exist_ok=True)
+    _scratch(tmp_path, {"good.md": "see private/fixtures/x/missing.mp4\n"})
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    assert _run(monkeypatch, tmp_path) == 1
+
+
+def test_fixture_private_mp4_missing_passes_when_absent(tmp_path, monkeypatch) -> None:
+    _scratch(tmp_path, {"good.md": "see private/fixtures/x/missing.mp4\n"})
+    assert not (tmp_path / "private" / "specs-verified").exists()
+    assert _run(monkeypatch, tmp_path) == 0
+
+
+def test_crate_tests_fixtures_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"dvb-si"})
+    _scratch(tmp_path, {"docs/good.md": "see dvb-si/tests/fixtures/x.ts\n"})
+    assert _run(monkeypatch, tmp_path) == 1
+
+
+def test_crate_fixtures_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"dvb-si"})
+    _scratch(tmp_path, {"docs/good.md": "see dvb-si/fixtures/x.bin\n"})
+    assert _run(monkeypatch, tmp_path) == 1

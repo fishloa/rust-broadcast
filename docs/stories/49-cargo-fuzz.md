@@ -32,8 +32,8 @@ Each target: `#![no_main]`, take `data: &[u8]`, never `unwrap()` on the fuzzed p
 
 ## Seed corpora
 Add `fuzz/corpus/<target>/` seeds derived from the real fixtures:
-`dvb-si/fixtures/m6-single.ts`, `tnt-5w-12732v-isi6-10s.ts`,
-`dvb-t2mi/fixtures/colombia-capital-t2mi.ts`. A small shell snippet in the
+`fixtures/ts/m6-single.ts`, `tnt-5w-12732v-isi6-10s.ts`,
+`fixtures/dvb-t2mi/colombia-capital-t2mi.ts`. A small shell snippet in the
 README that `split`s a `.ts` into 188-byte packets into the corpus dir is enough;
 commit a handful of representative seeds (do not commit megabytes).
 
