@@ -482,7 +482,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Version (in-tree):** 0.29.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtcp-packet`](#rtcp-packet), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`tshttp-runtime`](#tshttp-runtime)
-- **Links:** [README](../mp4/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
+- **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
 ### Live transport protocols
 
@@ -854,7 +854,7 @@ K-weighting at any non-zero sample rate (coefficients derived by bilinear transf
 - **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
-- **Links:** [README](../broadcast-audio/README.md) · [CHANGELOG](../broadcast-loudness/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-loudness) · [docs.rs](https://docs.rs/broadcast-loudness)
+- **Links:** [README](../broadcast-loudness/README.md) · [CHANGELOG](../broadcast-loudness/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-loudness) · [docs.rs](https://docs.rs/broadcast-loudness)
 
 ### Internal test helpers (never published)
 

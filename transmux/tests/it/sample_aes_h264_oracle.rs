@@ -1,7 +1,7 @@
 //! Oracle consumer: H.264 HLS Sample-AES CBC chaining (audit r05-W1).
 //!
 //! Consumes the committed, independently-generated fixtures under
-//! `../fixtures/ts/sample_aes_h264/` — see that directory's `README.md` and
+//! `../fixtures/crypto/sample-aes-h264/` — see that directory's `README.md` and
 //! `ORACLES.md`. The claim they pin:
 //!
 //! * AES-128-CBC **chains across the encrypted 16-byte blocks within one NAL**;

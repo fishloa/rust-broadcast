@@ -1,7 +1,7 @@
 //! Oracle consumer: CENC fragmented-MP4 addressing (audit r05-W7,
 //! ISO/IEC 14496-12 §8.8.7 / §8.8.8).
 //!
-//! Consumes `../fixtures/ts/cenc_frag_layouts/` — see its `README.md` and
+//! Consumes `../fixtures/mp4/cenc-layouts/` — see its `README.md` and
 //! `ORACLES.md`. Nine encrypted files cover every combination of the three base
 //! rules (`base_data_offset` present / `default-base-is-moof` / neither) and two
 //! trun addressing modes (explicit `data_offset` / implicit, continuing after

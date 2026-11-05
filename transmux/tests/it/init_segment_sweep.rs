@@ -22,7 +22,7 @@ use transmux::MovieBox;
 
 /// Fixtures that legitimately cannot round-trip byte-for-byte, with the reason.
 ///
-/// The QuickTime `.mov` fixtures in `../fixtures/ts/audio_srat/` are here for a
+/// The QuickTime `.mov` fixtures in `../fixtures/audio/srat/` are here for a
 /// reason unrelated to what they test (the sound-entry
 /// `entry_version`/`srat` fields): QuickTime's `hdlr` carries a `mhlr`/`soun`
 /// component type and subtype that ISOBMFF's `HandlerBox` does not model, so

@@ -448,7 +448,7 @@ pub fn ac3_decrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]
 /// each, with the **IV reset at every syncframe**.
 ///
 /// The reset is what the independent oracle shows
-/// (`../fixtures/ts/sample_aes_eac3/`): ffmpeg decodes the reset reference 9/9
+/// (`../fixtures/crypto/sample-aes-eac3/`): ffmpeg decodes the reset reference 9/9
 /// audio frames identical to clear but the carried-IV variant only 1/9, and
 /// Bento4's `mp4hls` output is byte-identical to the reset reference. See that
 /// fixture's `README.md` / `proof.log`.

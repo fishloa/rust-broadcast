@@ -1,6 +1,6 @@
 //! Oracle consumer: `Fmp4Demux` fragment addressing (audit r05-W7).
 //!
-//! Consumes the CLEAR variants of `../fixtures/ts/cenc_frag_layouts/` — the
+//! Consumes the CLEAR variants of `../fixtures/mp4/cenc-layouts/` — the
 //! three addressing forms a real muxer writes (`clear_ffmpeg_{default,
 //! base_moof,omit}.mp4`) plus the two hand-split multi-trun files
 //! (`clear_multitrun_{base_moof,omit}_implicit.mp4`; no tool emits multiple

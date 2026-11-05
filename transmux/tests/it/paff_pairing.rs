@@ -5,7 +5,7 @@
 //!
 //! The streams are spec-built by `tests/support/paff_gen.rs` (I_PCM, losslessly
 //! decodable, every field different), 12 frames of 64x64, TFF and BFF; two are
-//! also committed under `../fixtures/ts/paff/` and pinned against the generator.
+//! also committed under `../fixtures/video/paff/` and pinned against the generator.
 
 #[path = "support/paff_gen.rs"]
 mod paff_gen;
