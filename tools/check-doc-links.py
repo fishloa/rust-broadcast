@@ -45,24 +45,10 @@ def tracked() -> list[str]:
 
 
 def scan_files() -> list[Path]:
-    files: list[Path] = []
-    docs_dir = ROOT / "docs"
-    if docs_dir.is_dir():
-        for p in docs_dir.rglob("*.md"):
-            if ".git" in p.parts:
-                continue
-            files.append(p)
-    if (ROOT / "README.md").is_file():
-        files.append(ROOT / "README.md")
-    for p in ROOT.glob("*/README.md"):
-        files.append(p)
-    # nested crate READMEs
-    for p in ROOT.rglob("README.md"):
-        if ".git" in p.parts or "private" in p.parts:
-            continue
-        if p not in files:
-            files.append(p)
-    return files
+    return [
+        ROOT / f for f in tracked()
+        if f.endswith("README.md") or (f.startswith("docs/") and f.endswith(".md"))
+    ]
 
 
 def crate_root(path: Path) -> Path:
@@ -216,9 +202,7 @@ def main() -> int:
             check_markdown(f, errors)
         except (OSError, UnicodeDecodeError):
             continue
-    for f in ROOT.rglob("*.rs"):
-        if ".git" in f.parts or "private" in f.parts:
-            continue
+    for f in (ROOT / r for r in tracked() if r.endswith(".rs")):
         try:
             check_rust(f, errors)
         except (OSError, UnicodeDecodeError):
