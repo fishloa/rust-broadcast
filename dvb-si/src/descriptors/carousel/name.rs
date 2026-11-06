@@ -79,13 +79,25 @@ mod tests {
 
     #[test]
     fn wrong_tag_truncated_and_overflow() {
-        assert!(NameDescriptor::parse(&[0x01, 0]).is_err());
-        assert!(NameDescriptor::parse(&[TAG, 3, b'a']).is_err());
+        assert!(matches!(
+            NameDescriptor::parse(&[0x01, 0]),
+            Err(Error::InvalidDescriptor { tag: 0x01, .. })
+        ));
+        assert!(matches!(
+            NameDescriptor::parse(&[TAG, 3, b'a']),
+            Err(Error::BufferTooShort { .. })
+        ));
         let big = vec![b'x'; 256];
         let d = NameDescriptor {
             name: DvbText::new(&big),
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "descriptor_length",
+                ..
+            }))
+        ));
     }
 }

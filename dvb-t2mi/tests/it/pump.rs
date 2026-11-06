@@ -163,7 +163,16 @@ fn wrong_pid_packet_ignored_no_stats_movement() {
 #[test]
 fn stats_default_is_zero() {
     let pump = T2miPump::new(Pid::new(0x0100));
-    assert_eq!(pump.stats(), Stats::default());
+    let s = pump.stats();
+    assert_eq!(s, Stats::default());
+    assert_eq!(s.ts_packets, 0);
+    assert_eq!(s.t2mi_packets, 0);
+    assert_eq!(s.crc_failures, 0);
+    assert_eq!(s.malformed_packets, 0);
+    assert_eq!(s.tei_dropped, 0);
+    assert_eq!(s.cc_duplicates_skipped, 0);
+    assert_eq!(s.raw_resyncs, 0);
+    assert_eq!(s.raw_hunt_bytes_discarded, 0);
 }
 
 // ── additional: T2miEvent::header() + payload() lazy parsing ─────────────────

@@ -239,8 +239,14 @@ mod tests {
 
     #[test]
     fn rejects_empty_body_and_wrong_tag() {
-        assert!(UpdateDescriptor::parse(&[TAG, 0]).is_err());
-        assert!(UpdateDescriptor::parse(&[0x03, 1, 0]).is_err());
+        assert!(matches!(
+            UpdateDescriptor::parse(&[TAG, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            UpdateDescriptor::parse(&[0x03, 1, 0]),
+            Err(Error::InvalidDescriptor { tag: 0x03, .. })
+        ));
     }
 
     #[test]

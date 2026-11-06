@@ -364,10 +364,22 @@ mod tests {
 
     #[test]
     fn rejects_bad_tag_length_and_truncation() {
-        assert!(AtscCaptionServiceDescriptor::parse(&[0x87, 1, 0xE0]).is_err());
-        assert!(AtscCaptionServiceDescriptor::parse(&[TAG, 1, 0xE1]).is_err());
-        assert!(AtscCaptionServiceDescriptor::parse(&[TAG, 0]).is_err());
-        assert!(AtscCaptionServiceDescriptor::parse(&[TAG, 7, 0xE1]).is_err());
+        assert!(matches!(
+            AtscCaptionServiceDescriptor::parse(&[0x87, 1, 0xE0]),
+            Err(Error::InvalidDescriptor { tag: 0x87, .. })
+        ));
+        assert!(matches!(
+            AtscCaptionServiceDescriptor::parse(&[TAG, 1, 0xE1]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            AtscCaptionServiceDescriptor::parse(&[TAG, 0]),
+            Err(Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            AtscCaptionServiceDescriptor::parse(&[TAG, 7, 0xE1]),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

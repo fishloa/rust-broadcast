@@ -115,14 +115,26 @@ mod tests {
 
     #[test]
     fn rejects_short_wrong_tag_and_over_range_numbers() {
-        assert!(MessageDescriptor::parse(&[TAG, 3, 0, b'f', b'r']).is_err());
-        assert!(MessageDescriptor::parse(&[0x0C, 4, 0, b'f', b'r', b'e']).is_err());
+        assert!(matches!(
+            MessageDescriptor::parse(&[TAG, 3, 0, b'f', b'r']),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            MessageDescriptor::parse(&[0x0C, 4, 0, b'f', b'r', b'e']),
+            Err(Error::InvalidDescriptor { tag: 0x0C, .. })
+        ));
         let d = MessageDescriptor {
             descriptor_number: 16,
             last_descriptor_number: 0,
             language_code: LangCode(*b"eng"),
             text: DvbText::new(b""),
         };
-        assert!(d.serialize_into(&mut [0u8; 8]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 8]),
+            Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "descriptor_number",
+                ..
+            }))
+        ));
     }
 }

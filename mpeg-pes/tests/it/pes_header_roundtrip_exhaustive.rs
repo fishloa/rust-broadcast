@@ -188,15 +188,22 @@ fn every_pes_header_in_every_committed_ts_round_trips() {
     assert!(r.with_ext >= 1, "no real PES extension exercised");
 }
 
-/// Full-corpus gate (slow; needs the private repo, see `test_fixtures::corpus`):
-/// `cargo test -p mpeg-pes --test pes_header_roundtrip_exhaustive -- --ignored`.
+/// Full-corpus gate (needs the private repo, see `test_fixtures::corpus`; a
+/// loud skip when it is not checked out).
 ///
 /// Real non-`0xFF` PES header stuffing exists in
 /// `tsduck-test/input/test-002.ts`, and real `ES_rate` marker bits of `0`
 /// (the same stream: `ES_rate` bytes `25 0D 37`, leading marker `0`).
 #[test]
-#[ignore = "slow: scans the whole real-capture corpus (private/fixtures)"]
 fn full_archive_pes_headers_round_trip() {
+    if test_fixtures::require(
+        "suites/tsduck/input/test-002.ts",
+        "full_archive_pes_headers_round_trip",
+    )
+    .is_none()
+    {
+        return;
+    }
     let t = std::time::Instant::now();
     let r = scan(true);
     eprintln!(
@@ -209,14 +216,12 @@ fn full_archive_pes_headers_round_trip() {
         t.elapsed()
     );
     assert!(r.mismatches.is_empty(), "{:#?}", r.mismatches);
-    if test_fixtures::private_root().is_some() {
-        assert!(
-            r.with_nonff_stuffing
-                .iter()
-                .any(|e| e.contains("test-002.ts")),
-            "expected real non-0xFF stuffing in test-002.ts"
-        );
-    }
+    assert!(
+        r.with_nonff_stuffing
+            .iter()
+            .any(|e| e.contains("test-002.ts")),
+        "expected real non-0xFF stuffing in test-002.ts"
+    );
 }
 
 /// Real evidence on the PES-extension reserved bits (see module docs).

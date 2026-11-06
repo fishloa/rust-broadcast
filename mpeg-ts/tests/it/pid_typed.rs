@@ -115,13 +115,11 @@ fn every_committed_ts_fixture_pid_matches_the_wire() {
 /// The real-capture corpus (`private/fixtures/**` + the fetched `private fixtures`;
 /// skips loudly when the private repo is not checked out).
 #[test]
-#[ignore = "slow: scans the whole real-capture corpus; run with --ignored"]
 fn every_corpus_capture_pid_matches_the_wire() {
-    let files = test_fixtures::corpus(&["ts"]);
-    if files.is_empty() {
-        eprintln!("pid_typed: SKIPPED - the private repo is not checked out");
+    if test_fixtures::require("suites/tsduck/input/test-143.ts", "pid_typed").is_none() {
         return;
     }
+    let files = test_fixtures::corpus(&["ts"]);
     let mut total = 0usize;
     for f in &files {
         // Cap very large captures to the first 256 MiB: the property is
@@ -131,9 +129,7 @@ fn every_corpus_capture_pid_matches_the_wire() {
         total += verify_stream(&f.display().to_string(), data);
     }
     eprintln!("verified {total} packets across {} files", files.len());
-    if !files.is_empty() {
-        assert!(total > 0, "no aligned packets found in the corpus");
-    }
+    assert!(total > 0, "no aligned packets found in the corpus");
 }
 
 #[test]

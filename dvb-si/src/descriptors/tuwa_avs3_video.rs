@@ -403,16 +403,29 @@ mod tests {
 
     #[test]
     fn rejects_bad_tag_length_and_count_mismatch() {
-        assert!(TuwaAvs3VideoDescriptor::parse(&[0x3F, 7, 0, 0, 0, 0, 0, 0, 0]).is_err());
-        assert!(TuwaAvs3VideoDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            TuwaAvs3VideoDescriptor::parse(&[0x3F, 7, 0, 0, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: 0x3F, .. })
+        ));
+        assert!(matches!(
+            TuwaAvs3VideoDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0]),
+            Err(Error::BufferTooShort { .. })
+        ));
         // main stream with no reference header byte
-        assert!(TuwaAvs3VideoDescriptor::parse(&[TAG, 7, 0, 0, 0, 0x40, 0, 0, 0]).is_err());
+        assert!(matches!(
+            TuwaAvs3VideoDescriptor::parse(&[TAG, 7, 0, 0, 0, 0x40, 0, 0, 0]),
+            Err(Error::BufferTooShort { .. })
+        ));
         // num_ref=2 but only one reference present
-        assert!(
-            TuwaAvs3VideoDescriptor::parse(&[TAG, 10, 0, 0, 0, 0x40, 0, 0, 0, 0x05, 0, 0]).is_err()
-        );
+        assert!(matches!(
+            TuwaAvs3VideoDescriptor::parse(&[TAG, 10, 0, 0, 0, 0x40, 0, 0, 0, 0x05, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
         // library stream with trailing bytes
-        assert!(TuwaAvs3VideoDescriptor::parse(&[TAG, 8, 0, 0, 0, 0x08, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            TuwaAvs3VideoDescriptor::parse(&[TAG, 8, 0, 0, 0, 0x08, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
     }
 
     #[test]

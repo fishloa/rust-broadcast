@@ -73,7 +73,13 @@ mod tests {
         buf.extend_from_slice(&data);
         buf.extend_from_slice(&c.to_be_bytes());
         *buf.last_mut().unwrap() ^= 0xFF;
-        assert!(validate_crc(&buf).is_err());
+        assert_eq!(
+            validate_crc(&buf),
+            Err(Error::CrcMismatch {
+                computed: c,
+                expected: c ^ 0xFF
+            })
+        );
     }
 
     #[test]
@@ -84,11 +90,26 @@ mod tests {
         buf.extend_from_slice(&data);
         buf.extend_from_slice(&c.to_be_bytes());
         buf[0] ^= 0xFF;
-        assert!(validate_crc(&buf).is_err());
+        let mut corrupted = data;
+        corrupted[0] ^= 0xFF;
+        assert_eq!(
+            validate_crc(&buf),
+            Err(Error::CrcMismatch {
+                computed: compute(&corrupted),
+                expected: c
+            })
+        );
     }
 
     #[test]
     fn validate_crc_rejects_too_short_input() {
-        assert!(validate_crc(&[0x01, 0x02]).is_err());
+        assert!(matches!(
+            validate_crc(&[0x01, 0x02]),
+            Err(Error::BufferTooShort {
+                need: CRC_LEN,
+                have: 2,
+                ..
+            })
+        ));
     }
 }

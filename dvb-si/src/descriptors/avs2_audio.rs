@@ -383,14 +383,29 @@ mod tests {
 
     #[test]
     fn rejects_wrong_tag_and_truncation() {
-        assert!(Avs2AudioDescriptor::parse(&[0xD2, 2, 6, 0x20]).is_err());
-        assert!(Avs2AudioDescriptor::parse(&[TAG, 1, 6]).is_err());
+        assert!(matches!(
+            Avs2AudioDescriptor::parse(&[0xD2, 2, 6, 0x20]),
+            Err(Error::InvalidDescriptor { tag: 0xD2, .. })
+        ));
+        assert!(matches!(
+            Avs2AudioDescriptor::parse(&[TAG, 1, 6]),
+            Err(Error::BufferTooShort { .. })
+        ));
         // text_present but text_length claims more than present
-        assert!(Avs2AudioDescriptor::parse(&[TAG, 4, 2, 0x04, 5, 0]).is_err());
+        assert!(matches!(
+            Avs2AudioDescriptor::parse(&[TAG, 4, 2, 0x04, 5, 0]),
+            Err(Error::BufferTooShort { .. })
+        ));
         // language_present but no language bytes
-        assert!(Avs2AudioDescriptor::parse(&[TAG, 2, 2, 0x02]).is_err());
+        assert!(matches!(
+            Avs2AudioDescriptor::parse(&[TAG, 2, 2, 0x02]),
+            Err(Error::BufferTooShort { .. })
+        ));
         // version flag but no version block
-        assert!(Avs2AudioDescriptor::parse(&[TAG, 2, 2, 0x08]).is_err());
+        assert!(matches!(
+            Avs2AudioDescriptor::parse(&[TAG, 2, 2, 0x08]),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

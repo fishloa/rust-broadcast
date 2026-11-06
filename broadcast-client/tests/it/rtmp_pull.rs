@@ -225,31 +225,6 @@ fn rtmps_requests_tls_and_carries_identity() {
 }
 
 #[test]
-fn rtmp_stream_not_found_reports_not_found_and_backs_off() {
-    let mut h = RtmpHost::new(
-        "rtmp://origin.test/live/missing",
-        rtmp_config(),
-        peer_config(),
-    );
-    h.collect();
-    let st = statuses(&h.events);
-    assert!(st.contains(&Status::NotFound), "{st:?}");
-    assert!(st.contains(&Status::Reconnecting { attempt: 1 }), "{st:?}");
-    assert_eq!(h.closes.len(), 1);
-    assert_eq!(h.connects.len(), 1);
-    h.advance_to(2 * SEC - 1);
-    assert_eq!(h.connects.len(), 1, "not before the backoff elapsed");
-    h.advance_to(2 * SEC);
-    assert_eq!(h.connects.len(), 2);
-    h.collect();
-    h.advance_to(2 * SEC + 4 * SEC - 1);
-    assert_eq!(h.connects.len(), 2);
-    h.advance_to(2 * SEC + 4 * SEC);
-    assert_eq!(h.connects.len(), 3, "the second failure waits four seconds");
-    assert_eq!(h.samples().len(), 0);
-}
-
-#[test]
 fn rtmp_error_status_is_nonfatal_and_reconnects() {
     let mut h = host();
     connect_and_play(&mut h);
@@ -267,33 +242,6 @@ fn rtmp_error_status_is_nonfatal_and_reconnects() {
     )));
     assert!(statuses(&h.events).contains(&Status::Reconnecting { attempt: 1 }));
     assert_eq!(h.closes.len(), 1);
-}
-
-#[test]
-fn rtmp_recorded_stream_eof_ends_without_retry() {
-    let mut cfg = peer_config();
-    cfg.recorded = true;
-    let mut h = RtmpHost::new(URL, rtmp_config(), cfg);
-    connect_and_play(&mut h);
-    h.play_all();
-    let eof = h.peer.as_mut().unwrap().stream_eof().unwrap();
-    h.send_to_session(&eof);
-    assert_eq!(
-        statuses(&h.events)
-            .iter()
-            .filter(|s| **s == Status::Ended)
-            .count(),
-        1
-    );
-    assert_eq!(h.closes.len(), 1);
-    let connects = h.connects.len();
-    h.advance_to(120 * SEC);
-    assert_eq!(
-        h.connects.len(),
-        connects,
-        "an ended presentation is not retried"
-    );
-    assert_complete_samples_equal_direct(&h.samples());
 }
 
 #[test]

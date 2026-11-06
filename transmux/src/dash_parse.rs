@@ -2581,9 +2581,10 @@ mod tests {
     #[test]
     fn unclosed_attribute_quote_is_error_not_panic() {
         let err = Mpd::parse(r#"<MPD profiles="p type="static"><Period/></MPD>"#).unwrap_err();
-        // Whatever the specific classification, it must be a structured
-        // error, not a panic (the test itself not panicking is the proof).
-        let _ = err;
+        assert!(
+            matches!(err, DashParseError::UnterminatedTag { .. }),
+            "{err:?}"
+        );
     }
 
     #[test]

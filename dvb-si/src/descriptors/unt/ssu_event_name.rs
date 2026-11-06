@@ -135,9 +135,21 @@ mod tests {
 
     #[test]
     fn rejects_overruns_and_wrong_tag() {
-        assert!(SsuEventNameDescriptor::parse(&[TAG, 5, b'e', b'n', b'g', 100, 0]).is_err());
-        assert!(SsuEventNameDescriptor::parse(&[TAG, 6, b'e', b'n', b'g', 1, b'x', 9]).is_err());
-        assert!(SsuEventNameDescriptor::parse(&[TAG, 4, b'e', b'n', b'g', 0]).is_err());
-        assert!(SsuEventNameDescriptor::parse(&[0x04, 5, b'e', b'n', b'g', 0, 0]).is_err());
+        assert!(matches!(
+            SsuEventNameDescriptor::parse(&[TAG, 5, b'e', b'n', b'g', 100, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            SsuEventNameDescriptor::parse(&[TAG, 6, b'e', b'n', b'g', 1, b'x', 9]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            SsuEventNameDescriptor::parse(&[TAG, 4, b'e', b'n', b'g', 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            SsuEventNameDescriptor::parse(&[0x04, 5, b'e', b'n', b'g', 0, 0]),
+            Err(Error::InvalidDescriptor { tag: 0x04, .. })
+        ));
     }
 }

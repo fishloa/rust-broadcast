@@ -554,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_crc_mismatch_in_both_modes() {
+    fn parse_rejects_crc_mismatch_as_invalid_mode() {
         let mut hdr = [0u8; BBHEADER_LEN];
         hdr[0] = 0xF0;
         hdr[1] = 0x00;
@@ -565,10 +565,16 @@ mod tests {
         hdr[6] = 0x47;
         hdr[7] = 0x00;
         hdr[8] = 0x00;
-        hdr[9] = 0xFF; // Wrong CRC
+        let crc = crc8(&hdr[..9]);
 
-        let result = Bbheader::parse(&hdr);
-        assert!(result.is_err());
+        for delta in [0x02u8, 0x03, 0x80, 0xFF] {
+            hdr[9] = crc ^ delta;
+            let err = Bbheader::parse(&hdr).unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidMode { mode } if mode == delta),
+                "CRC byte off by {delta:#04x}: {err:?}"
+            );
+        }
     }
 
     #[test]

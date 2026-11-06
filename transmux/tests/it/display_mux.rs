@@ -530,11 +530,7 @@ fn transformers_neither() {
 
 #[test]
 fn gulli_colr_no_pasp() {
-    // public fixture
-    let path = test_fixtures::path("ts/gulli-opengop.ts");
-    let Ok(data) = std::fs::read(&path) else {
-        return;
-    };
+    let data = test_fixtures::read("ts/gulli-opengop.ts");
     let media = transmux::ts_demux::TsDemux::new()
         .demux(&data)
         .expect("demux");

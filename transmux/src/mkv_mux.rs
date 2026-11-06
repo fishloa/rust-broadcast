@@ -1053,11 +1053,7 @@ mod tests {
     /// unsigned and the blocks keep their spacing.
     #[test]
     fn negative_first_pts_does_not_shift_the_cluster() {
-        let file = test_fixtures::path("mkv/vp9-opus.mkv");
-        let Ok(bytes) = std::fs::read(file) else {
-            eprintln!("SKIP negative_first_pts_does_not_shift_the_cluster: fixture missing");
-            return;
-        };
+        let bytes = test_fixtures::read("mkv/vp9-opus.mkv");
         let mut media = crate::webm_demux::WebmDemux::new()
             .demux(&bytes)
             .expect("demux fixture");
@@ -1199,13 +1195,7 @@ mod tests {
             );
             return;
         }
-        let file = test_fixtures::path("mkv/vp9-opus.mkv");
-        let Ok(bytes) = std::fs::read(file) else {
-            eprintln!(
-                "SKIP negative_timeline_and_backward_jump_are_ffprobe_readable: fixture missing"
-            );
-            return;
-        };
+        let bytes = test_fixtures::read("mkv/vp9-opus.mkv");
         let base = crate::webm_demux::WebmDemux::new()
             .demux(&bytes)
             .expect("demux fixture");
@@ -1414,11 +1404,7 @@ mod tests {
     /// nothing), which is worse than refusing the input.
     #[test]
     fn cluster_with_an_out_of_range_block_is_rejected() {
-        let file = test_fixtures::path("mkv/vp9-opus.mkv");
-        let Ok(bytes) = std::fs::read(file) else {
-            eprintln!("SKIP cluster_with_an_out_of_range_block_is_rejected: fixture missing");
-            return;
-        };
+        let bytes = test_fixtures::read("mkv/vp9-opus.mkv");
         let media = crate::webm_demux::WebmDemux::new()
             .demux(&bytes)
             .expect("demux fixture");
@@ -1465,11 +1451,7 @@ mod tests {
             eprintln!("SKIP multiple_backward_steps_are_ffprobe_readable: ffprobe not on PATH");
             return;
         }
-        let file = test_fixtures::path("mkv/vp9-opus.mkv");
-        let Ok(bytes) = std::fs::read(file) else {
-            eprintln!("SKIP multiple_backward_steps_are_ffprobe_readable: fixture missing");
-            return;
-        };
+        let bytes = test_fixtures::read("mkv/vp9-opus.mkv");
         let base = crate::webm_demux::WebmDemux::new()
             .demux(&bytes)
             .expect("demux fixture");

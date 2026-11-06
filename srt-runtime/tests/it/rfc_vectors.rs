@@ -213,12 +213,9 @@ fn rfc6070_pbkdf2_vectors() {
 }
 
 #[test]
-#[ignore = "long-running (16777216 PBKDF2 iterations); run with RUST_BROADCAST_SOAK=1 and --ignored"]
 fn rfc6070_pbkdf2_long_vector() {
     if std::env::var_os("RUST_BROADCAST_SOAK").as_deref() != Some(std::ffi::OsStr::new("1")) {
-        eprintln!(
-            "SKIP rfc6070_pbkdf2_long_vector: set RUST_BROADCAST_SOAK=1 (and --ignored) to run"
-        );
+        eprintln!("SKIP rfc6070_pbkdf2_long_vector: set RUST_BROADCAST_SOAK=1 to run");
         return;
     }
     let mut out = vec![0u8; 20];

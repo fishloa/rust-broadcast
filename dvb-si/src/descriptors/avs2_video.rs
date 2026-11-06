@@ -198,10 +198,22 @@ mod tests {
 
     #[test]
     fn rejects_wrong_tag_length_and_truncation() {
-        assert!(Avs2VideoDescriptor::parse(&[0x41, 5, 0, 0, 0, 0, 0]).is_err());
-        assert!(Avs2VideoDescriptor::parse(&[TAG, 4, 0, 0, 0, 0]).is_err());
-        assert!(Avs2VideoDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0]).is_err());
-        assert!(Avs2VideoDescriptor::parse(&[TAG, 5, 0]).is_err());
+        assert!(matches!(
+            Avs2VideoDescriptor::parse(&[0x41, 5, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: 0x41, .. })
+        ));
+        assert!(matches!(
+            Avs2VideoDescriptor::parse(&[TAG, 4, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            Avs2VideoDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            Avs2VideoDescriptor::parse(&[TAG, 5, 0]),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

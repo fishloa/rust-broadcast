@@ -316,11 +316,23 @@ mod tests {
 
     #[test]
     fn rejects_bad_tag_length_and_truncation() {
-        assert!(ChinaCaptionServiceDescriptor::parse(&[0x87, 3, 0xE0, 0xE0, 0]).is_err());
+        assert!(matches!(
+            ChinaCaptionServiceDescriptor::parse(&[0x87, 3, 0xE0, 0xE0, 0]),
+            Err(Error::InvalidDescriptor { tag: 0x87, .. })
+        ));
         // number_of_services=1 but only the empty-body length
-        assert!(ChinaCaptionServiceDescriptor::parse(&[TAG, 3, 0xE1, 0xE0, 0]).is_err());
-        assert!(ChinaCaptionServiceDescriptor::parse(&[TAG, 2, 0xE0, 0xE0]).is_err());
-        assert!(ChinaCaptionServiceDescriptor::parse(&[TAG, 9, 0xE1]).is_err());
+        assert!(matches!(
+            ChinaCaptionServiceDescriptor::parse(&[TAG, 3, 0xE1, 0xE0, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            ChinaCaptionServiceDescriptor::parse(&[TAG, 2, 0xE0, 0xE0]),
+            Err(Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            ChinaCaptionServiceDescriptor::parse(&[TAG, 9, 0xE1]),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

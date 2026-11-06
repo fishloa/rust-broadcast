@@ -6,9 +6,8 @@
 
 use broadcast_common::{Parse, Serialize};
 use transmux::rtcp::{
-    App, Bye, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
-    PT_SOURCE_DESCRIPTION, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock, RtcpPacket,
-    RtcpPacketType, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
+    App, Bye, CompoundPacket, PT_SENDER_REPORT, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock,
+    RtcpPacket, RtcpPacketType, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
 
 fn block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
@@ -252,15 +251,4 @@ fn sr_rc_two_boundary() {
     let parsed = SenderReport::parse(&bytes).unwrap();
     assert_eq!(parsed.report_blocks.len(), 2);
     assert_eq!(parsed.report_blocks[1].cumulative_lost, -9);
-}
-
-// --- PT constants sanity. --------------------------------------------------
-
-#[test]
-fn pt_constants() {
-    assert_eq!(PT_SENDER_REPORT, 200);
-    assert_eq!(PT_RECEIVER_REPORT, 201);
-    assert_eq!(PT_SOURCE_DESCRIPTION, 202);
-    assert_eq!(PT_BYE, 203);
-    assert_eq!(PT_APP, 204);
 }

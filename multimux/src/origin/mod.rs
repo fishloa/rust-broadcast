@@ -3344,16 +3344,6 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
     }
 
-    /// A normal, well-formed request must still succeed once the limit
-    /// layers are wired in — proving they don't break the ordinary path
-    /// (a body well within the cap, one request, well within the timeout).
-    #[tokio::test]
-    async fn normal_request_still_succeeds_with_limits_applied() {
-        let app = router(Arc::new(AppState::new(make_state_streams())));
-        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
-    }
-
     /// A request body within the cap must still succeed (not just "under the
     /// cap is untested") — the counterpart to
     /// `oversized_request_body_is_rejected_413`.
@@ -4086,31 +4076,6 @@ mod tests {
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
-    }
-
-    /// Basic/Digest/Bearer output-auth are unaffected by the `Forwarded`
-    /// addition and by `RequestContext` gaining `headers`/`peer_addr` —
-    /// re-run here as an explicit "still pass" marker for the extensibility
-    /// wave (the bulk of the Basic/Digest/Bearer coverage is the pre-existing
-    /// `output_auth_basic_*`/`output_auth_digest_*`/`output_auth_bearer_*`
-    /// tests above, all still green).
-    #[tokio::test]
-    async fn output_auth_basic_digest_bearer_unaffected_by_forwarded_addition() {
-        let app = app_with_output_auth(Verifier::new(
-            Credentials::Basic {
-                username: "admin".into(),
-                password: "hunter2".into(),
-            },
-            OUTPUT_AUTH_REALM,
-        ));
-        let resp = app
-            .oneshot(get_with_auth(
-                "/cam1/master.m3u8",
-                &basic_header("admin", "hunter2"),
-            ))
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);

@@ -398,10 +398,22 @@ mod tests {
 
     #[test]
     fn rejects_wrong_tag_length_and_truncation() {
-        assert!(Avs3VideoDescriptor::parse(&[0xD0, 7, 0, 0, 0, 0, 0, 0, 0]).is_err());
-        assert!(Avs3VideoDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0]).is_err());
-        assert!(Avs3VideoDescriptor::parse(&[TAG, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_err());
-        assert!(Avs3VideoDescriptor::parse(&[TAG, 8, 0, 0]).is_err());
+        assert!(matches!(
+            Avs3VideoDescriptor::parse(&[0xD0, 7, 0, 0, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: 0xD0, .. })
+        ));
+        assert!(matches!(
+            Avs3VideoDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            Avs3VideoDescriptor::parse(&[TAG, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            Avs3VideoDescriptor::parse(&[TAG, 8, 0, 0]),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

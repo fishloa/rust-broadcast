@@ -174,11 +174,7 @@ fn every_committed_init_segment_round_trips_byte_identically() {
 /// own length, so the file is malformed rather than merely short.
 #[test]
 fn a_moov_with_trailing_partial_bytes_is_rejected() {
-    let path = test_fixtures::path("mp4/h264-high.mp4");
-    let Ok(data) = std::fs::read(&path) else {
-        eprintln!("SKIP a_moov_with_trailing_partial_bytes_is_rejected: fixture missing");
-        return;
-    };
+    let data = test_fixtures::read("mp4/h264-high.mp4");
     let moov_bytes = find_box(&data, b"moov").expect("a moov");
     for extra in 1..8usize {
         let mut patched = moov_bytes.to_vec();
