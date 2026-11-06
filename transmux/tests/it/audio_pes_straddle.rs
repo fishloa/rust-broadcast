@@ -25,6 +25,7 @@
 
 #![cfg(feature = "std")]
 
+use crate::ts_psi::pid_of;
 use std::collections::{BTreeMap, BTreeSet};
 use transmux::TrackId;
 
@@ -45,10 +46,6 @@ fn local_fixture(rel: &str) -> Vec<u8> {
 }
 
 // ── TS / PES plumbing (independent of the crate under test) ─────────────────
-
-fn pid_of(p: &[u8]) -> u16 {
-    (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])
-}
 
 fn payload_of(p: &[u8]) -> &[u8] {
     match (p[3] >> 4) & 3 {
