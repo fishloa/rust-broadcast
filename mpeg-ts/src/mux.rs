@@ -572,17 +572,11 @@ mod tests {
     // ── SiMux: basic behaviour ───────────────────────────────────────────────
 
     #[test]
-    fn new_simux_is_empty() {
-        let mut mux = SiMux::new();
-        let pkts = mux.poll(Duration::ZERO);
-        assert!(pkts.is_empty());
-    }
-
-    #[test]
-    fn simux_default_is_empty() {
-        let mut mux = SiMux::default();
-        let pkts = mux.poll(Duration::ZERO);
-        assert!(pkts.is_empty());
+    fn new_and_default_simux_are_empty() {
+        for mut mux in [SiMux::new(), SiMux::default()] {
+            let pkts = mux.poll(Duration::ZERO);
+            assert!(pkts.is_empty());
+        }
     }
 
     #[test]
