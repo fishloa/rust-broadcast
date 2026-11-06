@@ -168,6 +168,8 @@ mod ts_hls_audio_catch_up;
 mod ts_mux;
 mod ts_mux_psi_repeat;
 mod ts_mux_streaming;
+#[path = "support/ts_psi.rs"]
+mod ts_psi;
 mod ts_sync_loss_degraded;
 mod ts_to_cmaf;
 mod uuid_child_roundtrip;
