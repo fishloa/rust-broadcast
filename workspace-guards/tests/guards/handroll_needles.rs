@@ -13,10 +13,13 @@
 //! understood by the brace counter, and needles are lexical (a tokeniser built
 //! on `split(',')` is not detected).
 
+use workspace_guards::scan::{non_test_source, out_of_line_test_modules};
 use workspace_guards::src_files;
 
 pub struct Crate {
     pub name: &'static str,
+    /// Needles scanned in addition to [`NEEDLES`].
+    pub extra: &'static [&'static str],
     /// (file suffix, needle, reason).
     pub allow: &'static [(&'static str, &'static str, &'static str)],
 }
@@ -39,102 +42,22 @@ pub const NEEDLES: &[&str] = &[
     "tokio::time::sleep(",
 ];
 
-fn non_test_source(src: &str) -> String {
-    let lines: Vec<&str> = src.lines().collect();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if lines[i].trim_start().starts_with("#[cfg(test)]")
-            && let Some(m) = next_item_is_mod(&lines, i)
-        {
-            // An out-of-line `#[cfg(test)] mod x;` has no body here: skip only
-            // its own line, never the next real block.
-            i = if lines[m].trim_end().ends_with(';') {
-                m + 1
-            } else {
-                block_end(&lines, m) + 1
-            };
-            continue;
-        }
-        out.push_str(lines[i]);
-        out.push('\n');
-        i += 1;
-    }
-    out
-}
-
-fn next_item_is_mod(lines: &[&str], attr: usize) -> Option<usize> {
-    let mut j = attr + 1;
-    while j < lines.len() && lines[j].trim_start().starts_with("#[") {
-        j += 1;
-    }
-    let t = lines.get(j)?.trim_start();
-    let t = t.strip_prefix("pub ").unwrap_or(t);
-    t.starts_with("mod ").then_some(j)
-}
-
-fn block_end(lines: &[&str], from: usize) -> usize {
-    let (mut depth, mut seen_open) = (0i64, false);
-    for (k, line) in lines.iter().enumerate().skip(from) {
-        let (d, opened) = brace_delta(line);
-        depth += d;
-        seen_open |= opened;
-        if seen_open && depth <= 0 {
-            return k;
-        }
-    }
-    lines.len() - 1
-}
-
-fn brace_delta(line: &str) -> (i64, bool) {
-    let (mut delta, mut seen) = (0i64, false);
-    let mut chars = line.chars().peekable();
-    let mut in_str = false;
-    while let Some(c) = chars.next() {
-        if in_str {
-            match c {
-                '\\' => {
-                    chars.next();
-                }
-                '"' => in_str = false,
-                _ => {}
-            }
-            continue;
-        }
-        match c {
-            '"' => in_str = true,
-            '/' if chars.peek() == Some(&'/') => break,
-            '\'' => {
-                let rest: String = chars.clone().take(3).collect();
-                if let Some(end) = rest.find('\'') {
-                    for _ in 0..=end {
-                        chars.next();
-                    }
-                }
-            }
-            '{' => {
-                delta += 1;
-                seen = true;
-            }
-            '}' => delta -= 1,
-            _ => {}
-        }
-    }
-    (delta, seen)
-}
-
 #[test]
 fn no_hand_rolled_protocol_code_in_src() {
     let mut hits = Vec::new();
     for c in crate::handroll_data::NEEDLE_CRATES {
         let files = src_files(c.name);
         assert!(!files.is_empty(), "{}: no source files under src/", c.name);
+        let test_only = out_of_line_test_modules(&files);
         for (path, src) in &files {
+            if test_only.contains(path) {
+                continue;
+            }
             for (n, line) in non_test_source(src).lines().enumerate() {
                 if line.trim_start().starts_with("//") {
                     continue;
                 }
-                for needle in NEEDLES {
+                for needle in NEEDLES.iter().chain(c.extra) {
                     if line.contains(needle)
                         && !c
                             .allow
@@ -170,4 +93,49 @@ fn the_scanner_itself_bites() {
         1,
         "an out-of-line test mod must not swallow the next real item"
     );
+}
+
+#[test]
+fn an_out_of_line_test_mod_does_not_swallow_following_code() {
+    let src = "#[cfg(test)]\nmod tests;\nfn real() { let x = \"HTTP/1.1 200\"; }\nfn other() { }\n";
+    let body = non_test_source(src);
+    assert!(
+        body.contains("HTTP/1."),
+        "code after `mod tests;` is kept: {body:?}"
+    );
+}
+
+#[test]
+fn braces_and_quotes_inside_strings_do_not_desynchronise_the_scanner() {
+    let src = concat!(
+        "#[cfg(test)]\nmod tests {\n",
+        "    const A: &str = \"unbalanced { and \\\" quote\n continued } }\";\n",
+        "    const B: &str = r#\"raw { \" } }\"#;\n",
+        "    fn c() { let _ = '{'; let _: &'static str = \"x\"; }\n",
+        "}\nfn real() { let x = \"HTTP/1.1 200\"; }\n"
+    );
+    let body = non_test_source(src);
+    assert!(body.contains("fn real()"), "{body:?}");
+    assert!(!body.contains("unbalanced"), "{body:?}");
+}
+
+#[test]
+fn every_needle_of_every_crate_bites() {
+    for c in crate::handroll_data::NEEDLE_CRATES {
+        for needle in NEEDLES.iter().chain(c.extra) {
+            let src = format!("fn f() {{ let _ = {needle}; }}\n");
+            assert!(
+                non_test_source(&src).contains(needle),
+                "{}: {needle}",
+                c.name
+            );
+            let in_tests =
+                format!("#[cfg(test)]\nmod tests {{\n    fn f() {{ let _ = {needle}; }}\n}}\n");
+            assert!(
+                !non_test_source(&in_tests).contains(needle),
+                "{}: {needle} must be ignored inside a test mod",
+                c.name
+            );
+        }
+    }
 }

@@ -1,56 +1,16 @@
-//! Tripwire against hand-rolled generic protocol code coming back (W1 spec §5).
-//!
-//! Scans `src/**/*.rs` outside `#[cfg(test)] mod` bodies for: HTTP/RTSP status-line literals,
-//! a CRLFCRLF header terminator, `find("://")`, `strip_prefix("<scheme>://")`, SDP line building
-//! (`"a=`, `"m=`, `"v=0`), civil-date helpers, a base64 alphabet literal, and
-//! `thread::sleep` / `tokio::time::sleep(` in non-test code.
-//!
-//! **This is a lexical tripwire, not a proof.** A renamed helper or a string assembled from
-//! pieces evades it. Code review is the real control.
+//! Shared scanner for the lexical source guards: `non_test_source` strips
+//! `#[cfg(test)] mod` items with a small lexer that understands comments,
+//! strings (including multi-line and raw strings) and char literals, so a brace
+//! or quote inside a string cannot desynchronise it. A guard crate that keeps
+//! its own extra checks takes this as a dev-dependency instead of copying it.
 
-use std::fs;
 use std::path::Path;
-
-/// (file suffix, needle, reason). Empty means no exemptions.
-const ALLOW: &[(&str, &str, &str)] = &[];
-
-const NEEDLES: &[&str] = &[
-    "\"HTTP/1.",
-    "\"RTSP/1.0 ",
-    "\\r\\n\\r\\n",
-    "find(\"://\")",
-    "strip_prefix(\"rtsp://\")",
-    "strip_prefix(\"rtmp://\")",
-    "strip_prefix(\"http://\")",
-    "\"a=",
-    "\"m=",
-    "\"v=0",
-    "civil_from_days",
-    "days_from_civil",
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
-    "thread::sleep",
-    "tokio::time::sleep(",
-];
-
-fn rs_files(dir: &Path, out: &mut Vec<(String, String)>) {
-    for entry in fs::read_dir(dir).expect("read src dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            rs_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push((
-                path.display().to_string(),
-                fs::read_to_string(&path).expect("read source"),
-            ));
-        }
-    }
-}
 
 /// Source with every `#[cfg(test)] mod name { ... }` item removed (and an out-of-line
 /// `#[cfg(test)] mod name;` declaration), found with a small lexer that understands
 /// comments, strings (including multi-line and raw strings) and char literals, so an
 /// unbalanced brace or quote inside a string cannot desynchronise it.
-fn non_test_source(src: &str) -> String {
+pub fn non_test_source(src: &str) -> String {
     let b = src.as_bytes();
     let mut out = String::new();
     let mut i = 0;
@@ -223,71 +183,42 @@ fn skip_raw_string(b: &[u8], i: usize) -> usize {
     j + close.len()
 }
 
-#[test]
-fn no_hand_rolled_protocol_code_in_src() {
-    let mut files = Vec::new();
-    rs_files(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
-    let mut hits = Vec::new();
-    for (path, src) in &files {
-        let body = non_test_source(src);
-        for (n, line) in body.lines().enumerate() {
-            let t = line.trim_start();
-            if t.starts_with("//") {
-                continue; // doc/comment text may quote the patterns
-            }
-            for needle in NEEDLES {
-                if line.contains(needle)
-                    && !ALLOW
-                        .iter()
-                        .any(|(f, nd, _)| path.ends_with(f) && nd == needle)
-                {
-                    hits.push(format!("{path}:{}: {needle}", n + 1));
-                }
+/// Source files that exist only as `#[cfg(test)] mod name;` bodies of another
+/// file in `files` (`(path, text)`), as the paths a module declaration resolves
+/// to.
+pub fn out_of_line_test_modules(files: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (path, src) in files {
+        let p = Path::new(path);
+        let dir = if p.file_name().is_some_and(|n| n == "mod.rs") {
+            p.parent().map(Path::to_path_buf)
+        } else {
+            p.parent().zip(p.file_stem()).map(|(d, s)| d.join(s))
+        };
+        let Some(dir) = dir else { continue };
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim_start().starts_with("#[cfg(test)]")
+                && let Some(m) = next_item_is_mod(&lines, i)
+                && let Some(name) = lines[m]
+                    .trim()
+                    .trim_start_matches("pub ")
+                    .strip_prefix("mod ")
+                    .and_then(|r| r.strip_suffix(';'))
+            {
+                out.push(dir.join(format!("{name}.rs")).display().to_string());
             }
         }
     }
-    assert!(
-        hits.is_empty(),
-        "hand-rolled protocol code found (allowlist with a reason, or use the crate):\n{}",
-        hits.join("\n")
-    );
+    out
 }
 
-#[test]
-fn the_scanner_itself_bites() {
-    let src = "fn real() { let x = \"HTTP/1.1 200\"; }\n#[cfg(test)]\nmod tests {\n    fn t() { let y = \"HTTP/1.1 200\"; }\n}\n";
-    let body = non_test_source(src);
-    assert!(body.contains("HTTP/1."), "non-test line kept");
-    assert_eq!(
-        body.matches("HTTP/1.").count(),
-        1,
-        "test-module body removed"
-    );
-}
-
-#[test]
-fn an_out_of_line_test_mod_does_not_swallow_following_code() {
-    let src = "#[cfg(test)]\nmod tests;\nfn real() { let x = \"HTTP/1.1 200\"; }\nfn other() { }\n";
-    let body = non_test_source(src);
-    assert!(
-        body.contains("HTTP/1."),
-        "code after `mod tests;` is kept: {body:?}"
-    );
-}
-
-#[test]
-fn braces_and_quotes_inside_strings_do_not_desynchronise_the_scanner() {
-    let src = concat!(
-        "#[cfg(test)]\nmod tests {\n",
-        "    const A: &str = \"unbalanced { and \\\" quote\n continued } }\";\n",
-        "    const B: &str = r#\"raw { \" } }\"#;\n",
-        "    fn c() { let _ = '{'; let _: &'static str = \"x\"; }\n",
-        "}\nfn real() { let x = \"HTTP/1.1 200\"; }\n"
-    );
-    let body = non_test_source(src);
-    assert!(body.contains("fn real()"), "{body:?}");
-    assert!(!body.contains("unbalanced"), "{body:?}");
+pub fn next_item_is_mod(lines: &[&str], attr: usize) -> Option<usize> {
+    let mut j = attr + 1;
+    while j < lines.len() && lines[j].trim_start().starts_with("#[") {
+        j += 1;
+    }
+    let t = lines.get(j)?.trim_start();
+    let t = t.strip_prefix("pub ").unwrap_or(t);
+    t.starts_with("mod ").then_some(j)
 }

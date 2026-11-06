@@ -27,7 +27,6 @@ mod live_soak;
 mod live_world;
 mod mpd_fixtures;
 mod no_clock_guard;
-mod no_handroll_guard;
 mod selection;
 mod static_fixtures;
 mod timeline_zero_duration;

@@ -4,8 +4,10 @@
 //! new protocol/runtime crate to the shape that fits it.
 //!
 //! Not in any table, by design (their per-crate guards carry extra checks or a
-//! different scanner and stay in the crate): `broadcast-client`, `dash-runtime`,
-//! `dvb-stream`, `multimux`, `rtmp-runtime`, `rtsp-runtime`.
+//! different scanner and stay in the crate): `multimux` (its own scanner,
+//! pinned line ranges and a dash-pull clock guard) and `rtsp-runtime`
+//! (header-tokeniser and char-iteration checks on top of the needles; it takes
+//! the shared lexer from `workspace_guards::scan`).
 
 use crate::handroll_dehandroll::Crate as Dehandroll;
 use crate::handroll_lines::Crate as Lines;
@@ -173,6 +175,7 @@ pub const LINE_PATTERNS: &[Lines] = &[
 pub const NEEDLE_CRATES: &[Needles] = &[
     Needles {
         name: "hls-runtime",
+        extra: &[],
         allow: &[(
             "client/tokio_client.rs",
             "tokio::time::sleep(",
@@ -181,10 +184,12 @@ pub const NEEDLE_CRATES: &[Needles] = &[
     },
     Needles {
         name: "srt-runtime",
+        extra: &[],
         allow: &[],
     },
     Needles {
         name: "tshttp-runtime",
+        extra: &[],
         allow: &[(
             "client/tokio_client.rs",
             "tokio::time::sleep(",
@@ -193,6 +198,49 @@ pub const NEEDLE_CRATES: &[Needles] = &[
     },
     Needles {
         name: "webrtc-runtime",
+        extra: &[],
         allow: &[],
     },
+    Needles {
+        name: "broadcast-client",
+        extra: &[
+            "now_utc",
+            "SystemTime::now",
+            "Instant::now",
+            "Timestamp::now",
+            "Zoned::now",
+            "UNIX_EPOCH",
+            "Utc::now",
+            "Local::now",
+            "OffsetDateTime::now",
+            "is_expired(",
+            "CookieStore",
+        ],
+        allow: &[(
+            "client/tokio_client.rs",
+            "tokio::time::sleep(",
+            "backon-scheduled retry delay and WaitMs hint, both raced against the CancellationToken in sleep_or_cancelled",
+        )],
+    },
+    Needles {
+        name: "dash-runtime",
+        extra: &["sleep("],
+        allow: &[],
+    },
+    Needles {
+        name: "dvb-stream",
+        extra: RTSP_RTMP_NEEDLES,
+        allow: &[],
+    },
+    Needles {
+        name: "rtmp-runtime",
+        extra: RTSP_RTMP_NEEDLES,
+        allow: &[],
+    },
+];
+
+const RTSP_RTMP_NEEDLES: &[&str] = &[
+    "\"RTSP/1.0 ",
+    "strip_prefix(\"rtsp://\")",
+    "strip_prefix(\"rtmp://\")",
 ];

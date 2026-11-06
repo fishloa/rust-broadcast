@@ -1069,6 +1069,7 @@ dependencies = [
  "thiserror 2.0.21",
  "transmux",
  "url",
+ "workspace-guards",
 ]
 
 [[package]]
@@ -3661,6 +3662,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "webpki-roots",
+ "workspace-guards",
 ]
 
 [[package]]

@@ -27,6 +27,7 @@ thiserror        = "2"
 
 [dev-dependencies]
 test-fixtures     = { path = "../test-fixtures" }
+workspace-guards  = { path = "../workspace-guards" }
 percent-encoding = "2"
 
 [lints]
