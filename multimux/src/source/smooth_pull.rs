@@ -1947,12 +1947,7 @@ mod tests {
     /// from a genuine encrypted fragment rather than a hand-built box.
     #[test]
     fn real_piff_encrypted_fixture_is_detected() {
-        let path = test_fixtures::path("mp4/piff-sample-encrypted.mp4");
-        if !path.exists() {
-            eprintln!("SKIP real_piff_encrypted_fixture_is_detected: fixture missing");
-            return;
-        }
-        let bytes = std::fs::read(&path).expect("read fixture");
+        let bytes = test_fixtures::read("mp4/piff-sample-encrypted.mp4");
         assert!(
             fragment_looks_encrypted(&bytes),
             "a real PIFF-CBC encrypted fragment must be detected as encrypted"
