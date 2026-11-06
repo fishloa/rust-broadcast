@@ -297,8 +297,8 @@ fn every_committed_ts_adaptation_field_round_trips() {
     );
 }
 
-/// Full-corpus gate (slow; needs the private repo, see `test_fixtures::corpus`):
-/// `cargo test -p mpeg-ts --test af_extension_roundtrip -- --ignored`.
+/// Full-corpus gate (needs the private repo, see `test_fixtures::corpus`; a
+/// loud skip when it is not checked out).
 ///
 /// Real evidence for `adaptation_field_extension_flag == 1` (TEI = 0, parses):
 /// `tsduck-test/input/test-143.ts` pkts 451 and 3994 and
@@ -319,8 +319,15 @@ fn every_committed_ts_adaptation_field_round_trips() {
 ///   overruns the AF. That is stream damage, not a sender convention, so the
 ///   parser keeps rejecting it rather than guess.
 #[test]
-#[ignore = "slow: scans the whole real-capture corpus (private/fixtures)"]
 fn full_archive_adaptation_fields_round_trip() {
+    if test_fixtures::require(
+        "suites/tsduck/input/test-143.ts",
+        "full_archive_adaptation_fields_round_trip",
+    )
+    .is_none()
+    {
+        return;
+    }
     let t = std::time::Instant::now();
     let r = scan(true);
     eprintln!(
@@ -346,19 +353,17 @@ fn full_archive_adaptation_fields_round_trip() {
     for e in &r.parse_errors {
         assert!(
             e.contains("hotbird-mhp-si.ts: pkt 29872")
-                || e.contains("tsduck-test/input/test-143.ts")
-                || e.contains("tsduck-test/reference/test-147/"),
+                || e.contains("tsduck/input/test-143.ts")
+                || e.contains("tsduck/reference/test-147/"),
             "undocumented AF parse error: {e}"
         );
     }
-    if test_fixtures::private_root().is_some() {
-        assert!(
-            r.ext_ok
-                .iter()
-                .any(|e| e.contains("test-143.ts") || e.contains("test-147.ts")),
-            "expected real AF-extension packets in the archive"
-        );
-    }
+    assert!(
+        r.ext_ok
+            .iter()
+            .any(|e| e.contains("test-143.ts") || e.contains("test-147.ts")),
+        "expected real AF-extension packets in the archive"
+    );
 }
 
 fn hex(b: &[u8]) -> String {
