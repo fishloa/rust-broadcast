@@ -81,6 +81,8 @@ mod hevc_sps;
 mod hevc_vps_timing;
 mod hls_discontinuity;
 mod hub;
+#[path = "support/hub_fixtures.rs"]
+mod hub_fixtures;
 mod idr_fallback;
 mod init_segment;
 mod init_segment_sweep;

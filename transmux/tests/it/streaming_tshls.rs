@@ -10,12 +10,12 @@
 //! raw-passthrough implementation, since it requires correct keyframe-aligned
 //! cutting *and* correct non-anchor (audio) time-partitioning at each cut.
 
+use crate::hub_fixtures::dummy_avc_config;
 use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
 use transmux::media::Media;
 use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample,
-    StreamingTsHlsSegmenter, TrackSpec, TsDemux, TsHlsPackager, TsSegment,
+    CodecConfig, Sample, StreamingTsHlsSegmenter, TrackSpec, TsDemux, TsHlsPackager, TsSegment,
 };
 
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
@@ -230,22 +230,6 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
 // `#EXT-X-DISCONTINUITY` already belongs to the incremented sequence from the
 // moment it becomes the window's leading (oldest) segment — not one eviction
 // cycle later, once *it* rolls off in turn.
-
-fn dummy_avc_config() -> AVCConfigurationBox {
-    AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
-        configuration_version: 1,
-        profile_indication: 66,
-        profile_compatibility: 0,
-        level_indication: 30,
-        length_size_minus_one: 3, // 4-byte length prefixes
-        sps: vec![transmux::AvcSps(vec![0x67, 66, 0, 30, 0x00])],
-        pps: vec![transmux::AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
-        chroma_format: None,
-        bit_depth_luma_minus8: None,
-        bit_depth_chroma_minus8: None,
-        sps_ext: vec![],
-    })
-}
 
 fn single_video_track() -> TrackSpec {
     TrackSpec::new(

@@ -43,16 +43,16 @@
 //!    [`generic_drive_helper_also_spans_segmenter_stages`] additionally now
 //!    covers `LlHlsSegmenter` too (previously zero `Stage` coverage at all).
 
+use crate::hub_fixtures::dummy_esds;
 use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Stage, Timestamp};
 use transmux::media::Media;
 use transmux::{
-    CodecConfig, DecoderConfigDescriptor, DecoderSpecificInfo, DemuxEvent, ESDescriptor, EsdsBox,
-    LlHlsSegmenter, LlHlsStageOutput, LlSegmenter, PartInfo, ProgressiveDemux, SLConfigDescriptor,
-    Sample, SegmentInfo, SegmentMeta, Segmenter, StreamingFlvDemux, StreamingTsDemux,
-    StreamingTsHlsSegmenter, TrackSpec, TsDemux,
+    CodecConfig, DemuxEvent, LlHlsSegmenter, LlHlsStageOutput, LlSegmenter, PartInfo,
+    ProgressiveDemux, Sample, SegmentInfo, SegmentMeta, Segmenter, StreamingFlvDemux,
+    StreamingTsDemux, StreamingTsHlsSegmenter, TrackSpec, TsDemux,
 };
 
 use broadcast_common::Unpackage;
@@ -388,23 +388,6 @@ fn progressive_demux_stage_feed_rejects_input_past_its_byte_cap() {
 // Audio-only (no video track) keeps this self-contained: every `Sample` is a
 // sync sample, so the anchor cuts purely on accumulated duration, with no
 // need for a real `avcC`.
-
-fn dummy_esds() -> EsdsBox {
-    EsdsBox::new(ESDescriptor::new(
-        1,
-        0,
-        Some(DecoderConfigDescriptor::new(
-            0x40,
-            0x05,
-            false,
-            0,
-            0,
-            0,
-            Some(DecoderSpecificInfo::new(vec![0x12, 0x10])),
-        )),
-        Some(SLConfigDescriptor::predefined_two()),
-    ))
-}
 
 fn audio_track_spec() -> TrackSpec {
     TrackSpec::new(
