@@ -1,7 +1,7 @@
 #![cfg(all(feature = "tokio", feature = "crypto"))]
 
 use std::net::SocketAddr;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::time::Duration;
 
 use srt_runtime::Error;
@@ -28,16 +28,6 @@ impl Drop for KillOnDrop {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-fn spawn(cmd: &mut Command) -> KillOnDrop {
-    KillOnDrop(
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn"),
-    )
 }
 
 fn crypto_config(passphrase: &str, key_len: usize) -> HandshakeConfig {
@@ -86,7 +76,7 @@ fn spawn_libsrt_listener(
     passphrase: &str,
     pbkeylen: usize,
 ) -> (KillOnDrop, u16) {
-    let (child, port) = spawn_libsrt_ready(|port| {
+    let (child, port) = spawn_libsrt_ready(&[LIBSRT_BOUND_LINE], |port| {
         vec![
             format!("srt://:{port}?passphrase={passphrase}&pbkeylen={pbkeylen}"),
             format!("udp://127.0.0.1:{discard_port}"),
@@ -190,19 +180,19 @@ async fn libsrt_caller_to_tokio_listener(key_len: usize) {
             .unwrap();
         let bound = listener.local_addr().unwrap();
         let accept_jh = tokio::spawn(async move { listener.accept().await.unwrap() });
-        let src_port = free_udp_port();
-        let _caller = spawn(
-            Command::new("srt-live-transmit")
-                .arg("-loglevel:error")
-                .arg(format!("-chunk:{PAYLOAD_LEN}"))
-                .arg(format!("udp://:{src_port}"))
-                .arg(format!(
+        let (caller, src_port) = spawn_libsrt_ready(&[LIBSRT_UDP_SOURCE_BOUND_LINE], |src_port| {
+            vec![
+                format!("-chunk:{PAYLOAD_LEN}"),
+                format!("udp://:{src_port}"),
+                format!(
                     "srt://127.0.0.1:{}?passphrase={}&pbkeylen={}",
                     bound.port(),
                     PASSPHRASE,
                     key_len
-                )),
-        );
+                ),
+            ]
+        });
+        let _caller = KillOnDrop(caller);
         let mut receiver = tokio::time::timeout(Duration::from_secs(10), accept_jh)
             .await
             .unwrap()
@@ -274,17 +264,17 @@ async fn tokio_wrong_passphrase_is_refused() {
             .unwrap();
         let bound = listener.local_addr().unwrap();
         let accept_jh = tokio::spawn(async move { listener.accept().await });
-        let src_port = free_udp_port();
-        let _caller = spawn(
-            Command::new("srt-live-transmit")
-                .arg("-loglevel:error")
-                .arg(format!("-chunk:{PAYLOAD_LEN}"))
-                .arg(format!("udp://:{src_port}"))
-                .arg(format!(
+        let (caller, _src_port) = spawn_libsrt_ready(&[LIBSRT_UDP_SOURCE_BOUND_LINE], |src_port| {
+            vec![
+                format!("-chunk:{PAYLOAD_LEN}"),
+                format!("udp://:{src_port}"),
+                format!(
                     "srt://127.0.0.1:{}?passphrase=wrong-passphrase-xxxxxxxx&pbkeylen=16",
                     bound.port()
-                )),
-        );
+                ),
+            ]
+        });
+        let _caller = KillOnDrop(caller);
         // rejected connection never reaches accept
         assert!(
             tokio::time::timeout(Duration::from_secs(5), accept_jh)
@@ -389,7 +379,7 @@ async fn rendezvous_with_libsrt(key_len: usize, seed: u8) {
         let our_port = our_sock.local_addr().unwrap().port();
         let discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let discard_port = discard.local_addr().unwrap().port();
-        let (libsrt, lib_port) = spawn_libsrt_ready(|lib_port| {
+        let (libsrt, lib_port) = spawn_libsrt_ready(&[LIBSRT_BOUND_LINE], |lib_port| {
             vec![
                 libsrt_rdv_crypto_uri(our_port, lib_port, PASSPHRASE, key_len),
                 format!("udp://127.0.0.1:{discard_port}"),
@@ -442,7 +432,7 @@ async fn rendezvous_wrong_passphrase_is_refused() {
         let our_port = our_sock.local_addr().unwrap().port();
         let _discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let discard_port = _discard.local_addr().unwrap().port();
-        let (libsrt, lib_port) = spawn_libsrt_ready(|lib_port| {
+        let (libsrt, lib_port) = spawn_libsrt_ready(&[LIBSRT_BOUND_LINE], |lib_port| {
             vec![
                 libsrt_rdv_crypto_uri(our_port, lib_port, PASSPHRASE, 16),
                 format!("udp://127.0.0.1:{discard_port}"),

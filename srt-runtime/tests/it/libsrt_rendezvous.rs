@@ -111,7 +111,7 @@ async fn our_rendezvous_completes_real_handshake_and_data_with_libsrt() {
                 .await
                 .expect("bind discard socket");
             let discard_port = discard.local_addr().unwrap().port();
-            let (libsrt, lib_port) = spawn_libsrt_ready(|lib_port| {
+            let (libsrt, lib_port) = spawn_libsrt_ready(&[LIBSRT_BOUND_LINE], |lib_port| {
                 vec![
                     libsrt_rdv_uri(our_port, lib_port, "&latency=120"),
                     format!("udp://127.0.0.1:{discard_port}"),
@@ -163,14 +163,17 @@ async fn real_libsrt_rendezvous_sender_delivers_data_to_our_rendezvous_side() {
                 .await
                 .expect("bind our socket");
             let our_port = our_sock.local_addr().unwrap().port();
-            let src_port = free_udp_port();
-            let (libsrt, lib_port) = spawn_libsrt_ready(|lib_port| {
+            let src_port_cell = std::cell::Cell::new(0);
+            let ready = [LIBSRT_UDP_SOURCE_BOUND_LINE, LIBSRT_BOUND_LINE];
+            let (libsrt, lib_port) = spawn_libsrt_ready(&ready, |lib_port| {
+                src_port_cell.set(free_udp_port());
                 vec![
                     format!("-chunk:{PAYLOAD_LEN}"),
-                    format!("udp://:{src_port}"),
+                    format!("udp://:{}", src_port_cell.get()),
                     libsrt_rdv_uri(our_port, lib_port, "&latency=120"),
                 ]
             });
+            let src_port = src_port_cell.get();
             let _libsrt = KillOnDrop(libsrt);
 
             let mut ours = tokio::time::timeout(

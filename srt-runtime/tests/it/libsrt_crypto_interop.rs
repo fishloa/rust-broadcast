@@ -30,7 +30,7 @@
 
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 use srt_runtime::caller::CallerHandshake;
@@ -135,7 +135,7 @@ fn drive_caller(hs: &mut CallerHandshake, sock: &UdpSocket, peer: SocketAddr) ->
 }
 
 fn spawn_libsrt_listener(discard_port: u16, passphrase: &str) -> (KillOnDrop, u16) {
-    let (child, port) = spawn_libsrt_ready(|port| {
+    let (child, port) = spawn_libsrt_ready(&[LIBSRT_BOUND_LINE], |port| {
         vec![
             format!("srt://:{port}?passphrase={passphrase}&pbkeylen=16"),
             format!("udp://127.0.0.1:{discard_port}"),
@@ -237,21 +237,14 @@ fn our_listener_recovers_libsrts_sek_and_decrypts_its_data() {
     let port = sock.local_addr().unwrap().port();
     sock.set_read_timeout(Some(POLL)).unwrap();
 
-    let src_port = free_udp_port();
-    let _libsrt = KillOnDrop(
-        Command::new("srt-live-transmit")
-            .arg("-loglevel:error")
-            .arg(format!("-chunk:{PAYLOAD_LEN}"))
-            .arg(format!("udp://:{src_port}"))
-            .arg(format!(
-                "srt://127.0.0.1:{port}?passphrase={PASSPHRASE}&pbkeylen=16"
-            ))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn srt-live-transmit caller"),
-    );
+    let (libsrt, src_port) = spawn_libsrt_ready(&[LIBSRT_UDP_SOURCE_BOUND_LINE], |src_port| {
+        vec![
+            format!("-chunk:{PAYLOAD_LEN}"),
+            format!("udp://:{src_port}"),
+            format!("srt://127.0.0.1:{port}?passphrase={PASSPHRASE}&pbkeylen=16"),
+        ]
+    });
+    let _libsrt = KillOnDrop(libsrt);
 
     let mut hs = ListenerHandshake::new(
         0x0C0F_FEE0,
