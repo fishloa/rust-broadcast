@@ -273,6 +273,78 @@ pub fn spec_string(rel: &str, who: &str) -> Option<String> {
     Some(std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{who}: read {}: {e}", p.display())))
 }
 
+/// Parse the `[[entry]]` records of a spec enum mirror (`value = 0xNN` or
+/// `value = "0xNN"`, `variant = "..."`, `spec = "..."`) into
+/// `(value, variant, spec)`. Blank lines, `#` comments and unknown keys are
+/// skipped.
+///
+/// # Panics
+/// If a `value` is not hex or does not fit `T`.
+#[must_use]
+pub fn parse_spec_entries<T: TryFrom<u64>>(toml: &str) -> Vec<(T, String, String)> {
+    let mut results = Vec::new();
+    let mut cur_value: Option<T> = None;
+    let mut cur_variant: Option<String> = None;
+    let mut cur_spec: Option<String> = None;
+
+    let flush = |v: &mut Option<T>,
+                 var: &mut Option<String>,
+                 sp: &mut Option<String>,
+                 out: &mut Vec<(T, String, String)>| {
+        if let (Some(value), Some(variant), Some(spec)) = (v.take(), var.take(), sp.take()) {
+            out.push((value, variant, spec));
+        }
+    };
+
+    for raw in toml.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line == "[[entry]]" {
+            flush(
+                &mut cur_value,
+                &mut cur_variant,
+                &mut cur_spec,
+                &mut results,
+            );
+            continue;
+        }
+        if let Some(eq) = line.find('=') {
+            let key = line[..eq].trim();
+            let val = line[eq + 1..].trim();
+            match key {
+                "value" => {
+                    let hex = val
+                        .trim_matches('"')
+                        .trim_start_matches("0x")
+                        .trim_start_matches("0X");
+                    let parsed = u64::from_str_radix(hex, 16)
+                        .unwrap_or_else(|_| panic!("bad hex in TOML: {val:?}"));
+                    cur_value = Some(
+                        T::try_from(parsed)
+                            .unwrap_or_else(|_| panic!("TOML value out of range: {val:?}")),
+                    );
+                }
+                "variant" => {
+                    cur_variant = Some(val.trim_matches('"').replace("\\\"", "\"").to_string());
+                }
+                "spec" => {
+                    cur_spec = Some(val.trim_matches('"').replace("\\\"", "\"").to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    flush(
+        &mut cur_value,
+        &mut cur_variant,
+        &mut cur_spec,
+        &mut results,
+    );
+    results
+}
+
 /// Locate `rel` (e.g. `input/test-002.ts`, `reference/test-147/test-147.ts`) in
 /// the `private/fixtures/suites/tsduck/` mirror. Same skip/panic contract as [`require`].
 ///
