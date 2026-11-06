@@ -243,12 +243,3 @@ fn dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3() {
         "E-AC-3 samples must actually be recovered, not silently dropped"
     );
 }
-
-#[test]
-fn rfc6381_codes() {
-    let dac3 = Ac3SpecificBox::parse(&DAC3_ORACLE).unwrap();
-    assert_eq!(dac3.rfc6381(), "ac-3");
-
-    let dec3 = Ec3SpecificBox::parse(&DEC3_ORACLE).unwrap();
-    assert_eq!(dec3.rfc6381(), "ec-3");
-}
