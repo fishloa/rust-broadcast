@@ -179,9 +179,21 @@ mod tests {
 
     #[test]
     fn rejects_short_wrong_tag_and_over_range() {
-        assert!(EnhancedMessageDescriptor::parse(&[TAG, 4, 0, b'e', b'n', b'g']).is_err());
-        assert!(EnhancedMessageDescriptor::parse(&[0x04, 5, 0, b'e', b'n', b'g', 0]).is_err());
+        assert!(matches!(
+            EnhancedMessageDescriptor::parse(&[TAG, 4, 0, b'e', b'n', b'g']),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            EnhancedMessageDescriptor::parse(&[0x04, 5, 0, b'e', b'n', b'g', 0]),
+            Err(Error::InvalidDescriptor { tag: 0x04, .. })
+        ));
         let d = EnhancedMessageDescriptor::new(0, 0, LangCode(*b"eng"), 32, DvbText::new(b""));
-        assert!(d.serialize_into(&mut [0u8; 8]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 8]),
+            Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "message_index",
+                ..
+            }))
+        ));
     }
 }

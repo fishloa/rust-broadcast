@@ -92,7 +92,13 @@ mod tests {
 
     #[test]
     fn rejects_short_body_and_wrong_tag() {
-        assert!(IpMacPlatformNameDescriptor::parse(&[TAG, 2, b'f', b'o']).is_err());
-        assert!(IpMacPlatformNameDescriptor::parse(&[0x0D, 3, b'f', b'o', b'o']).is_err());
+        assert!(matches!(
+            IpMacPlatformNameDescriptor::parse(&[TAG, 2, b'f', b'o']),
+            Err(Error::InvalidDescriptor { tag: TAG, .. })
+        ));
+        assert!(matches!(
+            IpMacPlatformNameDescriptor::parse(&[0x0D, 3, b'f', b'o', b'o']),
+            Err(Error::InvalidDescriptor { tag: 0x0D, .. })
+        ));
     }
 }

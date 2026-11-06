@@ -704,10 +704,19 @@ mod tests {
 
     #[test]
     fn rejects_wrong_tag_and_truncation() {
-        assert!(Avs3AudioDescriptor::parse(&[0xD3, 2, 0x72, 0]).is_err());
+        assert!(matches!(
+            Avs3AudioDescriptor::parse(&[0xD3, 2, 0x72, 0]),
+            Err(Error::InvalidDescriptor { tag: 0xD3, .. })
+        ));
         // codec 0 needs 5 body bytes + resolution byte
-        assert!(Avs3AudioDescriptor::parse(&[TAG, 3, 0x03, 0x00, 0x00]).is_err());
-        assert!(Avs3AudioDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            Avs3AudioDescriptor::parse(&[TAG, 3, 0x03, 0x00, 0x00]),
+            Err(Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            Avs3AudioDescriptor::parse(&[TAG, 0]),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
