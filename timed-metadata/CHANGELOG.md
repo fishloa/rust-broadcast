@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Deprecated
+- `webvtt::teletext::decode_odd_parity` / `encode_odd_parity`: use `broadcast_common::parity::{strip_parity, set_odd_parity}` (dedupe R3).
 
 ## [0.8.0] - 2026-11-01
 
