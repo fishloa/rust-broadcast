@@ -142,13 +142,6 @@ mod tests {
     }
 
     #[test]
-    fn passthrough_is_a_byte_stage_via_generic_driver() {
-        fn accepts_byte_stage<S: ByteStage>(_s: &S) {}
-        let stage = PassThrough::new();
-        accepts_byte_stage(&stage);
-    }
-
-    #[test]
     fn passthrough_delivers_each_input_exactly_once() {
         let mut stage = PassThrough::new();
         let out = drive(&mut stage, &[b"abc", b"de", b"fghi"]).unwrap();
@@ -279,13 +272,6 @@ mod tests {
                 Demand::new(want)
             }
         }
-    }
-
-    #[test]
-    fn framer_is_a_byte_stage_via_generic_driver() {
-        fn accepts_byte_stage<S: ByteStage>(_s: &S) {}
-        let stage = FixedFramer::new(4, 8);
-        accepts_byte_stage(&stage);
     }
 
     #[test]
