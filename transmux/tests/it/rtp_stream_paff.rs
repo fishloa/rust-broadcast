@@ -5,6 +5,7 @@
 //! (`private/specs-verified/mpeg/transmux/codec/h264-slice-header.md`).
 #![cfg(feature = "std")]
 
+use crate::bit_writer::BitWriter;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
@@ -23,40 +24,6 @@ const NAL_PPS: u8 = 8;
 const REF_IDC: u8 = 3;
 const FRAME_ORDER: [u32; 13] = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11];
 
-#[derive(Default)]
-struct W {
-    out: Vec<u8>,
-    cur: u8,
-    n: u8,
-}
-
-impl W {
-    fn u(&mut self, bits: u32, v: u32) {
-        for i in (0..bits).rev() {
-            self.cur = (self.cur << 1) | ((v >> i) & 1) as u8;
-            self.n += 1;
-            if self.n == 8 {
-                self.out.push(self.cur);
-                self.cur = 0;
-                self.n = 0;
-            }
-        }
-    }
-    fn ue(&mut self, v: u32) {
-        let x = v + 1;
-        let len = 32 - x.leading_zeros();
-        self.u(len - 1, 0);
-        self.u(len, x);
-    }
-    fn finish(mut self) -> Vec<u8> {
-        self.u(1, 1);
-        while self.n != 0 {
-            self.u(1, 0);
-        }
-        self.out
-    }
-}
-
 fn nal(t: u8, rbsp: Vec<u8>) -> Vec<u8> {
     let mut v = vec![(REF_IDC << 5) | t];
     v.extend(rbsp);
@@ -64,7 +31,7 @@ fn nal(t: u8, rbsp: Vec<u8>) -> Vec<u8> {
 }
 
 fn sps() -> Vec<u8> {
-    let mut w = W::default();
+    let mut w = BitWriter::new();
     w.u(8, 77);
     w.u(8, 0);
     w.u(8, 30);
@@ -90,13 +57,13 @@ fn sps() -> Vec<u8> {
     w.ue(0);
     w.ue(0);
     w.ue(0);
-    w.ue(MAX_NUM_REORDER_FRAMES);
-    w.ue(MAX_NUM_REORDER_FRAMES + 1);
-    nal(NAL_SPS, w.finish())
+    w.ue(u64::from(MAX_NUM_REORDER_FRAMES));
+    w.ue(u64::from(MAX_NUM_REORDER_FRAMES + 1));
+    nal(NAL_SPS, w.trailing())
 }
 
 fn pps() -> Vec<u8> {
-    let mut w = W::default();
+    let mut w = BitWriter::new();
     w.ue(0);
     w.ue(0);
     w.u(1, 0);
@@ -112,23 +79,23 @@ fn pps() -> Vec<u8> {
     w.u(1, 1);
     w.u(1, 0);
     w.u(1, 0);
-    nal(NAL_PPS, w.finish())
+    nal(NAL_PPS, w.trailing())
 }
 
 fn field_slice(idr: bool, frame_num: u32, bottom: bool, poc_lsb: u32) -> Vec<u8> {
-    let mut w = W::default();
+    let mut w = BitWriter::new();
     w.ue(0);
     w.ue(7);
     w.ue(0);
-    w.u(4, frame_num);
+    w.u(4, u64::from(frame_num));
     w.u(1, 1);
-    w.u(1, u32::from(bottom));
+    w.u(1, u64::from(bottom));
     if idr {
         w.ue(0);
     }
-    w.u(6, poc_lsb);
+    w.u(6, u64::from(poc_lsb));
     w.ue(1);
-    nal(if idr { NAL_IDR } else { NAL_SLICE }, w.finish())
+    nal(if idr { NAL_IDR } else { NAL_SLICE }, w.trailing())
 }
 
 fn rtp(seq: u16, ts: u32, nal: &[u8]) -> Vec<u8> {

@@ -7,6 +7,8 @@ mod audio_srat;
 mod avc_hvc_config;
 mod base64_lenient;
 mod base_url;
+#[path = "support/bit_writer.rs"]
+mod bit_writer;
 mod box_walk_untrusted_sizes;
 mod caption_detect;
 mod captions;
