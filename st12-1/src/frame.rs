@@ -649,13 +649,26 @@ mod tests {
 
     #[test]
     fn binary_group_usage_covers_all_eight_combinations() {
-        for bgf2 in [false, true] {
-            for bgf1 in [false, true] {
-                for bgf0 in [false, true] {
-                    // Must not panic for any of the 8 possible combinations.
-                    let _ = BinaryGroupUsage::from_flags(bgf2, bgf1, bgf0);
-                }
-            }
+        use BinaryGroupUsage::*;
+        let table = [
+            ((false, false, false), UnspecifiedUnspecified),
+            ((false, false, true), UnspecifiedEightBitCodes),
+            ((false, true, false), ClockTimeUnspecified),
+            ((false, true, true), Reserved),
+            ((true, false, false), UnspecifiedDateTimeZone),
+            ((true, false, true), UnspecifiedPageLine),
+            ((true, true, false), ClockTimeDateTimeZone),
+            ((true, true, true), ClockTimePageLine),
+        ];
+        for ((bgf2, bgf1, bgf0), want) in table {
+            assert_eq!(
+                BinaryGroupUsage::from_flags(bgf2, bgf1, bgf0),
+                want,
+                "BGF2/1/0 = {}{}{}",
+                u8::from(bgf2),
+                u8::from(bgf1),
+                u8::from(bgf0)
+            );
         }
     }
 
