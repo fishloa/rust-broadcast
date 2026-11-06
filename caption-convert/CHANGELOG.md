@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Changed
+- Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).
 
 ## [0.4.0] - 2026-11-01
 

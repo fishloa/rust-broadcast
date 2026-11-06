@@ -115,7 +115,7 @@ fn pat_section(entries: &[(u16, u16)]) -> Vec<u8> {
     s.push((section_length & 0xFF) as u8);
     s.extend_from_slice(&body);
 
-    let crc = calc_crc32_mpeg2(&s);
+    let crc = broadcast_common::crc32_mpeg2::compute(&s);
     s.extend_from_slice(&crc.to_be_bytes());
 
     s
@@ -154,7 +154,7 @@ fn pmt_section(program_number: u16, pcr_pid: Pid, es_list: &[(u8, u16)]) -> Vec<
     s.push((section_length & 0xFF) as u8);
     s.extend_from_slice(&body);
 
-    let crc = calc_crc32_mpeg2(&s);
+    let crc = broadcast_common::crc32_mpeg2::compute(&s);
     s.extend_from_slice(&crc.to_be_bytes());
 
     s
@@ -186,10 +186,4 @@ fn payload_packet(pid: Pid, cc: u8) -> [u8; 188] {
         pkt[4 + i] = (i & 0xFF) as u8;
     }
     pkt
-}
-
-/// MPEG-2 CRC32 (polynomial 0x04C11DB7, init 0xFFFFFFFF, final XOR 0x00000000):
-/// the workspace's one implementation.
-fn calc_crc32_mpeg2(data: &[u8]) -> u32 {
-    broadcast_common::crc32_mpeg2::compute(data)
 }

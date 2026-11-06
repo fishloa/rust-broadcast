@@ -2,12 +2,8 @@
 //!
 //! Run with: `cargo run -p cc-data --example decode_cea608`
 
+use broadcast_common::parity::set_odd_parity;
 use cc_data::decode::{Cea608Channel, Cea608Decoder};
-
-/// Add odd parity to a 7-bit value so the pairs look like real line-21 bytes.
-fn par(v: u8) -> u8 {
-    broadcast_common::parity::set_odd_parity(v)
-}
 
 fn main() {
     let mut dec = Cea608Decoder::new();
@@ -26,7 +22,7 @@ fn main() {
         (0x14, 0x2F),
     ];
     for &(b1, b2) in pairs {
-        dec.push_pair(false, par(b1), par(b2));
+        dec.push_pair(false, set_odd_parity(b1), set_odd_parity(b2));
     }
 
     println!("CC1 mode : {}", dec.mode(Cea608Channel::Cc1));
@@ -43,7 +39,7 @@ fn main() {
         (b'O', 0x00),
     ];
     for &(b1, b2) in roll {
-        dec2.push_pair(false, par(b1), par(b2));
+        dec2.push_pair(false, set_odd_parity(b1), set_odd_parity(b2));
     }
     println!("\nRoll-up mode : {}", dec2.mode(Cea608Channel::Cc1));
     println!("Roll-up text :\n{}", dec2.channel_text(Cea608Channel::Cc1));
