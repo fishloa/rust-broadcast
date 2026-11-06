@@ -24,7 +24,7 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
@@ -54,16 +54,6 @@ impl Drop for KillOnDrop {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-fn spawn(cmd: &mut Command) -> KillOnDrop {
-    KillOnDrop(
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn srt-live-transmit"),
-    )
 }
 
 fn work_dir(name: &str) -> PathBuf {
@@ -155,7 +145,7 @@ async fn our_caller_to_libsrt_listener() {
 
         let discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let discard_port = discard.local_addr().unwrap().port();
-        let (libsrt, listen_port) = spawn_libsrt_ready(|port| {
+        let (libsrt, listen_port) = spawn_libsrt_ready(&[LIBSRT_BOUND_LINE], |port| {
             vec![
                 format!("srt://:{port}?latency={LATENCY_MS}"),
                 format!("udp://127.0.0.1:{discard_port}"),
@@ -213,17 +203,14 @@ async fn libsrt_caller_to_our_listener() {
         .expect("bind");
         let bound = listener.local_addr().unwrap();
         let accept = tokio::spawn(async move { listener.accept().await.expect("accept") });
-        let src_port = free_udp_port();
-        let _libsrt = spawn(
-            Command::new("srt-live-transmit")
-                .arg("-loglevel:error")
-                .arg(format!("-chunk:{CHUNK}"))
-                .arg(format!("udp://:{src_port}"))
-                .arg(format!(
-                    "srt://127.0.0.1:{}?latency={LATENCY_MS}",
-                    bound.port()
-                )),
-        );
+        let (libsrt, src_port) = spawn_libsrt_ready(&[LIBSRT_UDP_SOURCE_BOUND_LINE], |src_port| {
+            vec![
+                format!("-chunk:{CHUNK}"),
+                format!("udp://:{src_port}"),
+                format!("srt://127.0.0.1:{}?latency={LATENCY_MS}", bound.port()),
+            ]
+        });
+        let _libsrt = KillOnDrop(libsrt);
         let mut receiver = tokio::time::timeout(Duration::from_secs(10), accept)
             .await
             .expect("accept timed out")

@@ -24,7 +24,7 @@
 
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -52,16 +52,6 @@ impl Drop for KillOnDrop {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-fn spawn(cmd: &mut Command) -> KillOnDrop {
-    KillOnDrop(
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn srt-live-transmit"),
-    )
 }
 
 fn chunk(index: u32) -> Vec<u8> {
@@ -239,7 +229,7 @@ async fn libsrt_listener_naks_are_served_by_our_sender() {
         const CHUNKS: u32 = 60;
         let discard = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
         let discard_port = discard.local_addr().unwrap().port();
-        let (libsrt, listen_port) = spawn_libsrt_ready(|port| {
+        let (libsrt, listen_port) = spawn_libsrt_ready(&[LIBSRT_BOUND_LINE], |port| {
             vec![
                 format!("srt://:{port}"),
                 format!("udp://127.0.0.1:{discard_port}"),
@@ -338,17 +328,14 @@ async fn our_listener_behind_a_relay(
     let bound = listener.local_addr().unwrap();
     let accept = tokio::spawn(async move { listener.accept().await.expect("accept") });
     let relay = Relay::spawn(bound, forward_drop, backward_drop, blackhole);
-    let src_port = free_udp_port();
-    let libsrt = spawn(
-        Command::new("srt-live-transmit")
-            .arg("-loglevel:error")
-            .arg(format!("-chunk:{PAYLOAD_LEN}"))
-            .arg(format!("udp://:{src_port}"))
-            .arg(format!(
-                "srt://127.0.0.1:{}?{libsrt_options}",
-                relay.front_port
-            )),
-    );
+    let (libsrt, src_port) = spawn_libsrt_ready(&[LIBSRT_UDP_SOURCE_BOUND_LINE], |src_port| {
+        vec![
+            format!("-chunk:{PAYLOAD_LEN}"),
+            format!("udp://:{src_port}"),
+            format!("srt://127.0.0.1:{}?{libsrt_options}", relay.front_port),
+        ]
+    });
+    let libsrt = KillOnDrop(libsrt);
     let receiver = tokio::time::timeout(Duration::from_secs(10), accept)
         .await
         .expect("accept timed out")
