@@ -120,9 +120,8 @@ impl Probe {
     }
 
     /// Check one raw `splice_info_section` against a reference "now" on the
-    /// same 33-bit 90 kHz `pts_time` clock. See [`scte35::check_section`] —
-    /// this is a thin passthrough kept on `Probe` for API symmetry with
-    /// [`Probe::feed_ts_packet`].
+    /// same 33-bit 90 kHz `pts_time` clock. See [`scte35::check_section`].
+    #[deprecated(since = "0.7.0", note = "use `compliance_probe::scte35::check_section`")]
     pub fn feed_scte35_section(&mut self, section: &[u8], now_pts: u64) -> Scte35Sanity {
         scte35::check_section(section, now_pts)
     }
