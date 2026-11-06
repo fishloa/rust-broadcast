@@ -67,9 +67,32 @@ pub fn seq_in_closed_range(seq: u32, first: u32, last: u32) -> bool {
     SPACE.in_closed_range(seq, first, last)
 }
 
+/// Split ascending, circularly ordered sequence numbers into inclusive
+/// `(first, last)` runs of consecutive values.
+pub fn contiguous_runs(seqs: &[u32]) -> Vec<(u32, u32)> {
+    let mut runs: Vec<(u32, u32)> = Vec::new();
+    for &s in seqs {
+        match runs.last_mut() {
+            Some((_, last)) if seq_next(*last) == s => *last = s,
+            _ => runs.push((s, s)),
+        }
+    }
+    runs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contiguous_runs_merge_across_the_wrap() {
+        let top = SEQ_NUMBER_MASK;
+        assert_eq!(
+            contiguous_runs(&[1, 2, 4, top, 0, 1]),
+            vec![(1, 2), (4, 4), (top, 1)]
+        );
+        assert!(contiguous_runs(&[]).is_empty());
+    }
 
     #[test]
     fn space_mask_is_the_wire_mask() {

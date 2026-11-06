@@ -80,7 +80,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use crate::arq::seq::{seq_diff, seq_in_closed_range, seq_lt, seq_next};
+use crate::arq::seq::{contiguous_runs, seq_diff, seq_in_closed_range, seq_lt, seq_next};
 use crate::arq::{Receiver as ArqReceiver, Sender as ArqSender};
 use crate::caller::CallerHandshake;
 use crate::error::{Error, Result};
@@ -1951,19 +1951,6 @@ impl Driver {
         }
         Ok(())
     }
-}
-
-/// Split ascending, circularly ordered sequence numbers into inclusive
-/// `(first, last)` runs of consecutive values.
-fn contiguous_runs(seqs: &[u32]) -> Vec<(u32, u32)> {
-    let mut runs: Vec<(u32, u32)> = Vec::new();
-    for &s in seqs {
-        match runs.last_mut() {
-            Some((_, last)) if seq_next(*last) == s => *last = s,
-            _ => runs.push((s, s)),
-        }
-    }
-    runs
 }
 
 /// Spawn the forwarder task for a connection with its own **dedicated,

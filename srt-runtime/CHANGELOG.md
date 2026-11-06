@@ -6,7 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `arq::seq::contiguous_runs`: inclusive circular runs of consecutive sequence numbers, shared with `broadcast-client` (dedupe D15).
 - `SrtSocket::connect_from_socket` and `SrtSocket::rendezvous_from_socket`: connect or rendezvous over an already-bound `tokio::net::UdpSocket`, so a caller can hold its local port from bind to use. `connect_from_with` and `rendezvous_with` now bind and delegate to them (#1671).
+
+### Changed
+- `io.rs` uses the shared `contiguous_runs` instead of a private copy (dedupe D15).
 
 ## [0.7.0] - 2026-11-03
 ### Added
