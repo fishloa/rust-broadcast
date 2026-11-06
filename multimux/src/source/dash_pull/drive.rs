@@ -22,6 +22,7 @@ use super::session::{DashIngestSession, DashInput, FetchTarget, RetryTarget};
 use super::{DashPullDialer, DashPullRoute, build_client};
 use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
+use crate::source::driver::terminal_result;
 use crate::source::http_auth::{ScopedCredentials, authenticated_get_with};
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
 use crate::source::{BodyError, read_body_bounded};
@@ -362,21 +363,6 @@ fn wake_us(driver: &IngestDriver<DashIngestSession>) -> Option<u64> {
         .map(|t| t.as_nanos() / NANOS_PER_MICRO)
 }
 
-/// Turns a driver that has reached a terminal health state into this crate's
-/// own `Result`; see `hls_pull` for why a drive loop must check health after
-/// every feed.
-fn terminal_result(driver: IngestDriver<DashIngestSession>) -> Result<()> {
-    match driver.into_health() {
-        media_plane::ingress::HealthState::Failed(e) => Err(e),
-        media_plane::ingress::HealthState::HandshakeTimedOut { deadline } => {
-            Err(MultimuxError::Connect {
-                reason: format!("dash-pull: handshake deadline {deadline:?} passed"),
-            })
-        }
-        _ => Ok(()),
-    }
-}
-
 /// Drive `route` until a static presentation has played to its end, a fetch
 /// the policy cannot absorb fails, or the core stops the presentation. A live
 /// presentation never ends on its own.
@@ -445,7 +431,7 @@ pub(super) async fn run<S: RouteSink>(
 
         if !driver.health().is_running() {
             sink.advance(&driver).await;
-            return sink.finish(terminal_result(driver));
+            return sink.finish(terminal_result(driver, "dash-pull"));
         }
         if driver.session().failed() {
             driver.finish();
@@ -455,7 +441,7 @@ pub(super) async fn run<S: RouteSink>(
         if driver.session().ended() && scheduler.is_idle() {
             driver.finish();
             sink.advance(&driver).await;
-            return sink.finish(terminal_result(driver));
+            return sink.finish(terminal_result(driver, "dash-pull"));
         }
 
         let wake = [

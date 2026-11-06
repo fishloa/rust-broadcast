@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- hls-pull, smooth-pull and dash-pull share one `source::driver::terminal_result` (dedupe D13).
 
 ## [0.15.0] - 2026-11-03
 ### Fixed
