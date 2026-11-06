@@ -237,7 +237,9 @@ use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
-use crate::aac_asc::{AdtsHeader, AudioSpecificConfig, SamplingFrequencyIndex, parse_adts_header};
+use crate::aac_asc::{
+    ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig, SamplingFrequencyIndex, parse_adts_header,
+};
 use crate::ac3::{
     AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
     Ec3SpecificBox, Ec3SyncframeInfo,
@@ -504,8 +506,6 @@ const MPEGH_CONFIG_LEN_MAX: usize = u16::MAX as usize;
 const VIDEO_TIMESCALE: u32 = 90_000;
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
 const AAC_SAMPLES_PER_FRAME: u32 = 1024;
-/// ADTS fixed header length (bytes) — `crate::aac_asc` `ADTS_HEADER_SIZE`.
-const ADTS_HEADER_SIZE: usize = 7;
 
 /// MPEG-2 video `picture_start_code` (0x00000100) — ISO/IEC 13818-2 §6.2.3.
 /// `pub(crate)`: also used by `ps_demux` (C6, #1009) to split/flag MPEG-2
