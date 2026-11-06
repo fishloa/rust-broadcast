@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- `xml` feature (implies `std`, pulls `quick-xml`) and `xml_chars` module: `is_xml_char`, `char_data`, `namespace_of`, `BAD_CHAR` - the XML 1.0 character-data core previously copied into four crates (dedupe D5).
 - `Demand::saturated_if(bool)`: `Demand::saturated()` when full, else the default (dedupe C3).
 
 ## [10.0.0] - 2026-10-17

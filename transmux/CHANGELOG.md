@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
 - One `ADTS_HEADER_SIZE` constant shared by `aac_asc`, `ts_demux` and `sample_aes` (dedupe C1; the 7/9-byte `sample_aes::adts_header_len` is left as the Apple SAMPLE-AES rule, distinct from the raw-data-block offset in `ts_demux`).
 - The four segmenters build `Stage::demand` with `Demand::saturated_if` (dedupe C3).
 - `ac3` and `dts` import `bitreader::read_bits_checked` instead of declaring forwarding `read_bits` wrappers (dedupe R5).

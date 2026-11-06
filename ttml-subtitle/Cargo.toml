@@ -42,7 +42,7 @@ required-features = ["std"]
 default = ["std"]
 # `std` is REQUIRED for the XML document/validation paths (`quick-xml` is
 # std-only); only the `time` expression parser is no_std+alloc.
-std = ["broadcast-common/std", "thiserror/std", "dep:quick-xml", "serde?/std"]
+std = ["broadcast-common/std", "broadcast-common/xml", "thiserror/std", "dep:quick-xml", "serde?/std"]
 serde = ["dep:serde"]
 
 [lints]

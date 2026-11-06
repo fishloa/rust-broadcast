@@ -87,7 +87,7 @@ use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264, SMOOTH_TIMESCALE};
 use crate::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
-use crate::xml_chars::{char_data, is_xml_char};
+use broadcast_common::xml_chars::{char_data, is_xml_char};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::errors::IllFormedError;

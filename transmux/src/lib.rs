@@ -248,8 +248,6 @@ pub mod vp9;
 pub mod vvc_config;
 pub mod webm_demux;
 mod wire_cursor;
-#[cfg(feature = "std")]
-pub(crate) mod xml_chars;
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,

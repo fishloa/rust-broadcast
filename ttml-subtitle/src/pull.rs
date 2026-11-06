@@ -23,9 +23,8 @@ use alloc::vec::Vec;
 
 use quick_xml::NsReader;
 use quick_xml::XmlVersion;
-use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::name::{PrefixDeclaration, QName, ResolveResult};
+use quick_xml::name::{PrefixDeclaration, QName};
 
 use crate::document::XmlDeclaration;
 use crate::error::{Error, Result};
@@ -139,27 +138,6 @@ pub(crate) struct Pull<'a> {
     declaration: Option<XmlDeclaration>,
 }
 
-/// XML 1.0 §2.2 `Char` production: the only characters a document may contain,
-/// whether written literally or through a character reference.
-fn is_xml_char(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}'
-    )
-}
-
-const BAD_CHAR: &str = "character not allowed in XML 1.0 (Char production, §2.2)";
-
-fn namespace_of(result: ResolveResult<'_>) -> core::result::Result<Option<String>, String> {
-    match result {
-        ResolveResult::Unbound => Ok(None),
-        ResolveResult::Bound(ns) => Ok(Some(ns.into_inner().to_string())),
-        ResolveResult::Unknown(prefix) => {
-            Err(alloc::format!("unknown namespace prefix '{prefix}'"))
-        }
-    }
-}
-
 impl<'a> Pull<'a> {
     pub(crate) fn new(xml: &'a str) -> Self {
         Self {
@@ -179,7 +157,7 @@ impl<'a> Pull<'a> {
     /// The next event with its (owned) element-namespace resolution.
     fn read(&mut self) -> Result<(core::result::Result<Option<String>, String>, Event<'a>)> {
         match self.reader.read_resolved_event() {
-            Ok((ns, event)) => Ok((namespace_of(ns), event)),
+            Ok((ns, event)) => Ok((broadcast_common::xml_chars::namespace_of(ns), event)),
             Err(e) => Err(self.fail(&e.to_string())),
         }
     }
@@ -225,12 +203,13 @@ impl<'a> Pull<'a> {
                 .normalized_value(XmlVersion::Implicit1_0)
                 .map_err(|e| self.fail(&e.to_string()))?
                 .into_owned();
-            if !value.chars().all(is_xml_char) {
-                return Err(self.fail(BAD_CHAR));
+            if !value.chars().all(broadcast_common::xml_chars::is_xml_char) {
+                return Err(self.fail(broadcast_common::xml_chars::BAD_CHAR));
             }
             let (attr_ns, attr_local) = resolver.resolve_attribute(key);
             attributes.push(TagAttribute {
-                namespace: namespace_of(attr_ns).map_err(|m| self.fail(&m))?,
+                namespace: broadcast_common::xml_chars::namespace_of(attr_ns)
+                    .map_err(|m| self.fail(&m))?,
                 name: attr_local.into_inner().to_string(),
                 value,
             });
@@ -255,28 +234,7 @@ impl<'a> Pull<'a> {
     /// every other event. Both the item stream and the subtree skip go through
     /// it.
     fn char_data(&self, event: &Event<'_>) -> Result<Option<String>> {
-        let content = match event {
-            Event::Text(t) => t.xml10_content().into_owned(),
-            Event::CData(c) => c.xml10_content().into_owned(),
-            Event::GeneralRef(r) => match r.resolve_char_ref() {
-                Ok(Some(c)) => c.to_string(),
-                Ok(None) => match resolve_predefined_entity(r) {
-                    Some(s) => s.to_string(),
-                    None => {
-                        return Err(
-                            self.fail(&alloc::format!("undefined entity reference &{};", &**r))
-                        );
-                    }
-                },
-                Err(e) => return Err(self.fail(&e.to_string())),
-            },
-            _ => return Ok(None),
-        };
-        if content.chars().all(is_xml_char) {
-            Ok(Some(content))
-        } else {
-            Err(self.fail(BAD_CHAR))
-        }
+        broadcast_common::xml_chars::char_data(event).map_err(|m| self.fail(&m))
     }
 
     /// The document's root start tag; rejects content before it.

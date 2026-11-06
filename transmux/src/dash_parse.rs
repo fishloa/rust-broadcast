@@ -79,7 +79,7 @@ use core::fmt;
 use core::str::FromStr;
 use core::time::Duration;
 
-use crate::xml_chars::{char_data, is_xml_char};
+use broadcast_common::xml_chars::{char_data, is_xml_char};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::errors::IllFormedError;
