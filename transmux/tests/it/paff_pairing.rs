@@ -412,10 +412,10 @@ fn progressive_and_non_field_streams_are_unaffected() {
     );
 }
 
-/// Regenerates the committed fixtures: `cargo test -p transmux --test
-/// paff_pairing -- --ignored regenerate_fixtures`.
+/// Regenerates the committed fixtures: `cargo test -p transmux --test it --
+/// --ignored regenerate_fixtures`.
 #[test]
-#[ignore]
+#[ignore = "fixture generator: rewrites fixtures/video/paff, asserts nothing; run explicitly"]
 fn regenerate_fixtures() {
     let dir = test_fixtures::path("video/paff");
     for (name, g) in [
