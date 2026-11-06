@@ -14,5 +14,7 @@ mod panic_idioms;
 mod panic_idioms_data;
 mod secret_debug;
 mod secret_debug_data;
+mod serialize_mask;
+mod serialize_mask_data;
 mod truncation;
 mod truncation_data;

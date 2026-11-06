@@ -13,6 +13,5 @@ mod review_signalling_findings;
 mod round_trip;
 mod serde_round_trip;
 mod serialize_field_width;
-mod serialize_mask_guard;
 mod spec_drift;
 mod spec_samples;

@@ -3,7 +3,7 @@
 //! `Error::FieldOverflow`, never wrap into a different valid-looking value.
 //! Each case pins that the widest legal value still round-trips byte-exactly,
 //! so rejecting everything cannot satisfy it. The lexical half is
-//! `serialize_mask_guard.rs`.
+//! the `serialize_mask` guard in workspace-guards.
 
 use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::component::ComponentDescriptor;
