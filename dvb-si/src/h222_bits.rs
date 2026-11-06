@@ -14,22 +14,26 @@ use broadcast_common::len::fit_bits;
 const BITS_PER_BYTE: usize = 8;
 const MISALIGNED_BYTES: &str = "whole-byte access at a non-byte-aligned bit position";
 
-/// MSB-first bit reader over a descriptor body.
+/// MSB-first bit reader over a descriptor body, a thin error-mapping adapter
+/// over [`broadcast_common::bits::BitReader`].
 pub(crate) struct BitReader<'a> {
     data: &'a [u8],
-    /// Position in bits.
-    pos: usize,
+    inner: broadcast_common::bits::BitReader<'a>,
     what: &'static str,
 }
 
 impl<'a> BitReader<'a> {
     pub(crate) fn new(data: &'a [u8], what: &'static str) -> Self {
-        Self { data, pos: 0, what }
+        Self {
+            data,
+            inner: broadcast_common::bits::BitReader::new(data),
+            what,
+        }
     }
 
     fn short(&self, need_bits: usize) -> Error {
         Error::BufferTooShort {
-            need: (self.pos + need_bits).div_ceil(BITS_PER_BYTE),
+            need: (self.inner.bits_read() + need_bits).div_ceil(BITS_PER_BYTE),
             have: self.data.len(),
             what: self.what,
         }
@@ -37,7 +41,7 @@ impl<'a> BitReader<'a> {
 
     /// Bits not yet consumed.
     pub(crate) fn remaining_bits(&self) -> usize {
-        self.data.len() * BITS_PER_BYTE - self.pos
+        self.inner.bits_remaining()
     }
 
     /// Whole bytes not yet consumed (the reader must be byte aligned).
@@ -47,29 +51,14 @@ impl<'a> BitReader<'a> {
 
     /// Read `n` (1..=32) bits.
     pub(crate) fn bits(&mut self, n: usize) -> Result<u32> {
-        if self.remaining_bits() < n {
-            return Err(self.short(n));
-        }
-        let mut v: u32 = 0;
-        for _ in 0..n {
-            let byte = self.data[self.pos / BITS_PER_BYTE];
-            let bit = (byte >> (BITS_PER_BYTE - 1 - self.pos % BITS_PER_BYTE)) & 1;
-            v = (v << 1) | u32::from(bit);
-            self.pos += 1;
-        }
-        Ok(v)
+        let v = self.bits64(n)?;
+        Ok(u32::try_from(v).unwrap_or(u32::MAX))
     }
 
     /// Read `n` (1..=64) bits.
     pub(crate) fn bits64(&mut self, n: usize) -> Result<u64> {
-        if self.remaining_bits() < n {
-            return Err(self.short(n));
-        }
-        let mut v: u64 = 0;
-        for _ in 0..n {
-            v = (v << 1) | u64::from(self.bits(1)?);
-        }
-        Ok(v)
+        let width = u32::try_from(n).unwrap_or(u32::MAX);
+        self.inner.read_bits(width).map_err(|_| self.short(n))
     }
 
     /// Read `n` (1..=8) bits as a `u8`.
@@ -89,17 +78,16 @@ impl<'a> BitReader<'a> {
     /// Read `n` whole bytes. Errors (in release builds too) when the reader
     /// is not byte aligned, instead of silently reading shifted data.
     pub(crate) fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
-        if !self.pos.is_multiple_of(BITS_PER_BYTE) {
+        if !self.inner.is_byte_aligned() {
             return Err(Error::ValueOutOfRange {
                 field: self.what,
                 reason: MISALIGNED_BYTES,
             });
         }
-        if self.remaining_bytes() < n {
-            return Err(self.short(n * BITS_PER_BYTE));
-        }
-        let start = self.pos / BITS_PER_BYTE;
-        self.pos += n * BITS_PER_BYTE;
+        let start = self.inner.bits_read() / BITS_PER_BYTE;
+        self.inner
+            .skip_bits(n * BITS_PER_BYTE)
+            .map_err(|_| self.short(n * BITS_PER_BYTE))?;
         Ok(&self.data[start..start + n])
     }
 
