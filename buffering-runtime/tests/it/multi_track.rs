@@ -446,12 +446,18 @@ fn rebaseline_forgets_ends_but_keeps_registrations() {
 #[test]
 fn track_cap_is_enforced_without_panicking() {
     let mut c = BufferController::new(cfg(), None).unwrap();
-    for t in 0..(MAX_TRACKS as u32 + 8) {
-        c.on_track_media(1_000_000, t, BASE);
-        c.register_track(t + 100);
+    for t in 0..MAX_TRACKS as u32 {
+        c.on_track_media(1_000_000, t, at(BASE, 10_000_000));
     }
+    const OVERFLOW: u32 = 1_000;
+    c.register_track(OVERFLOW);
+    c.on_track_media(1_000_000, OVERFLOW, at(BASE, 0));
     c.on_tick(1_100_000, None);
-    let _ = c.stats();
+    let limiting = c.stats().limiting_track;
+    assert!(
+        matches!(limiting, Some(t) if (t as usize) < MAX_TRACKS),
+        "a track beyond MAX_TRACKS must not be tracked, limiting_track = {limiting:?}"
+    );
 }
 
 #[test]
