@@ -232,12 +232,10 @@ fn iframe_master_audio_only_omitted() {
 #[test]
 fn iframe_master_d3prime_unavailable_omitted() {
     // Build an audio-first segment that follows an entry.
-    let Some(media) = (|| {
-        let data = test_fixtures::require_bytes("ts/h264-aac.ts", "iframe")?;
-        TsDemux::new().demux(&data).ok()
-    })() else {
+    let Some(data) = test_fixtures::require_bytes("ts/h264-aac.ts", "iframe") else {
         return;
     };
+    let media = TsDemux::new().demux(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let init = build_init_segment(&specs, media.movie_timescale).expect("init");
     let audio = media
