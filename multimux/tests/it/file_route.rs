@@ -10,7 +10,6 @@
 //! that call exists to prevent — a route that ingests but serves nothing).
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use multimux::config::{Config, InputSpec, Route};
@@ -141,19 +140,6 @@ async fn get_non_empty(client: &reqwest::Client, url: &str) -> bytes::Bytes {
         .unwrap_or_else(|e| panic!("reading body of {url} failed: {e}"));
     assert!(!body.is_empty(), "GET {url}: body must be non-empty");
     body
-}
-
-/// Sanity: an unused-import guard that `InputSpec::File` stays constructible
-/// through the public API (the whole feature — the other input kinds are
-/// unrelated and not exercised here).
-#[test]
-fn file_is_the_feature() {
-    let _ = InputSpec::File {
-        path: "/a.ts".to_string(),
-        loop_file: true,
-    };
-    let _arc: Arc<()> = Arc::new(());
-    let _ = _arc;
 }
 
 /// Extract the `seg-*.m4s` URIs referenced by a rendered media playlist.
