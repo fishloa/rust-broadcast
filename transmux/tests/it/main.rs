@@ -96,7 +96,6 @@ mod mpeg_legacy;
 mod mpegh;
 mod mpegh_ts;
 mod nal_keyframe;
-mod no_dom_guard;
 mod opengop_anchor;
 mod paff_pairing;
 mod pipeline;

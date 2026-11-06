@@ -6,7 +6,6 @@ mod dash_validator_fixture;
 mod hls_fixture;
 mod hls_validator_fixture;
 mod integration;
-mod no_dom_guard;
 mod pcr_fixture;
 mod pts_fixture;
 mod scte35_fixture;

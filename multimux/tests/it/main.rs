@@ -30,7 +30,6 @@ mod http2_h2c;
 mod limit_budgets;
 mod master_503;
 mod master_without_captions;
-mod no_dom_guard;
 mod no_handroll_guard;
 mod no_slot_park;
 mod origin_content_type;

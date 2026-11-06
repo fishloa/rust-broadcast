@@ -8,6 +8,8 @@ mod handroll_lines;
 mod handroll_needles;
 mod label;
 mod label_data;
+mod no_dom;
+mod no_dom_data;
 mod non_exhaustive;
 mod non_exhaustive_data;
 mod panic_idioms;

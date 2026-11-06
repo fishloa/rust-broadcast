@@ -1,16 +1,16 @@
-//! Guard: this crate reads XML only through `quick_xml` events (straight into
+//! Guard: a table crate reads XML only through `quick_xml` events (straight into
 //! typed structs) and writes it only through `quick_xml::Writer`. Scans every
 //! `src/**/*.rs` outside `#[cfg(test)]` code and fails on:
 //!
 //! - a struct/enum/type whose name contains the CamelCase word `Node`,
-//!   `Element`, `Dom`, `Tree` or `Xml`, unless it is in `ALLOWED_TYPES` (each
+//!   `Element`, `Dom`, `Tree` or `Xml`, unless it is in the crate's `allowed_types` (each
 //!   entry says why it is not an XML tree);
 //! - a `fn` whose name contains `escape` defined in an XML module (a file that
 //!   uses `quick_xml`);
 //! - the entity literals `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;` (a
 //!   hand-rolled escape/unescape chain);
 //! - `roxmltree`;
-//! - a `fn` named with `esc`, `entity` or `xml` in an XML module, unless allowlisted;
+//! - a `fn` named with `esc`, `entity` or `xml` in an XML module, unless in `allowed_fns`;
 //! - a match/if arm on `'&'`, `'<'` or `'>'` that pushes a string literal;
 //! - XML-looking string building (`"<?xml`, `push_str("<`, `format!("<`) in a
 //!   file that does not use `quick_xml`.
@@ -21,32 +21,25 @@
 //! `esc2`, an untyped nested `Vec` tree or an entity table without the
 //! literals can evade it. Code review is the real control.
 
-use std::fs;
-use std::path::Path;
+use workspace_guards::src_files;
 
-/// Types whose names contain a banned word but are NOT an XML tree/DOM.
-const ALLOWED_TYPES: &[(&str, &str)] = &[];
-
-/// Functions in XML modules whose names contain `esc`, `entity` or `xml` but
-/// that are plumbing around quick-xml, not an escaper/unescaper.
-const ALLOWED_FNS: &[(&str, &str)] = &[];
+pub struct Crate {
+    pub name: &'static str,
+    /// `(type name, reason)`: names containing a banned word that are not an
+    /// XML tree/DOM.
+    pub allowed_types: &'static [(&'static str, &'static str)],
+    /// `(fn name, reason)`: functions in XML modules whose names contain
+    /// `esc`, `entity` or `xml` but that are plumbing around quick-xml, not an
+    /// escaper/unescaper.
+    pub allowed_fns: &'static [(&'static str, &'static str)],
+    /// Whether at least one `src/` file must use `quick_xml` (false for a
+    /// crate that reaches XML only through another crate, so the scan is not
+    /// vacuous by construction).
+    pub needs_xml_module: bool,
+}
 
 const BANNED_WORDS: [&str; 5] = ["Node", "Element", "Dom", "Tree", "Xml"];
 const ENTITY_LITERALS: [&str; 5] = ["&amp;", "&lt;", "&gt;", "&quot;", "&apos;"];
-
-fn rs_files(dir: &Path, out: &mut Vec<(String, String)>) {
-    for entry in fs::read_dir(dir).expect("read src dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            rs_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push((
-                path.display().to_string(),
-                fs::read_to_string(&path).expect("read source"),
-            ));
-        }
-    }
-}
 
 /// Net `{` minus `}` on a line, ignoring string/char literals and `//` comments.
 fn brace_delta(line: &str) -> (i64, bool) {
@@ -250,17 +243,11 @@ fn pushes_literal_for_markup_char(window: &str) -> bool {
     on_markup_char && window.contains("push_str(\"")
 }
 
-#[test]
-fn src_has_no_dom_or_hand_rolled_escaper() {
-    let mut files = Vec::new();
-    rs_files(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
-    assert!(!files.is_empty());
+fn problems_in(c: &Crate, files: &[(String, String)]) -> Vec<String> {
     let mut hits = Vec::new();
     let mut xml_modules = 0;
-    for (path, text) in &files {
+    for (path, text) in files {
+        let path = format!("{}: {path}", c.name);
         let uses_quick_xml = text.contains("quick_xml");
         if uses_quick_xml {
             xml_modules += 1;
@@ -281,14 +268,14 @@ fn src_has_no_dom_or_hand_rolled_escaper() {
                 let banned = words(&name)
                     .iter()
                     .any(|w| BANNED_WORDS.contains(&w.as_str()));
-                if banned && !ALLOWED_TYPES.iter().any(|(n, _)| *n == name) {
+                if banned && !c.allowed_types.iter().any(|(n, _)| *n == name) {
                     hits.push(at(&format!("type `{name}` looks like an XML tree; allowlist it with a reason if it is not")));
                 }
             }
             if uses_quick_xml && let Some(name) = declared_fn(line) {
                 let lower = name.to_ascii_lowercase();
                 if ["esc", "entity", "xml"].iter().any(|w| lower.contains(w))
-                    && !ALLOWED_FNS.iter().any(|(n, _)| *n == name)
+                    && !c.allowed_fns.iter().any(|(n, _)| *n == name)
                 {
                     hits.push(at(&format!(
                         "fn `{name}` in an XML module: escaping/entity/XML plumbing is quick-xml's (allowlist it with a reason if it is not)"
@@ -305,11 +292,13 @@ fn src_has_no_dom_or_hand_rolled_escaper() {
             }
         }
     }
-    // media-doctor has no quick-xml file of its own (its DASH check calls
-    // `transmux::Mpd::parse`); the type/entity/markup rules still apply.
-    let _ = xml_modules;
-    // Every allowlisted type is still declared somewhere (no stale entries).
-    for (allowed, _) in ALLOWED_TYPES {
+    if c.needs_xml_module && xml_modules == 0 {
+        hits.push(format!(
+            "{}: no file uses quick_xml: scan is vacuous",
+            c.name
+        ));
+    }
+    for (allowed, _) in c.allowed_types {
         let declared = files
             .iter()
             .flat_map(|(_, text)| code_lines(text))
@@ -317,11 +306,29 @@ fn src_has_no_dom_or_hand_rolled_escaper() {
             .count();
         if declared == 0 {
             hits.push(format!(
-                "allowlisted type `{allowed}` is not declared anywhere (stale allowlist entry)"
+                "{}: allowlisted type `{allowed}` is not declared anywhere (stale allowlist entry)",
+                c.name
             ));
         }
     }
+    hits
+}
+
+#[test]
+fn src_has_no_dom_or_hand_rolled_escaper() {
+    let mut hits = Vec::new();
+    for c in crate::no_dom_data::TABLE {
+        let files = src_files(c.name);
+        assert!(!files.is_empty(), "{}: no files under src", c.name);
+        hits.extend(problems_in(c, &files));
+    }
     assert!(hits.is_empty(), "XML guard violation(s): {hits:#?}");
+}
+
+#[test]
+fn table_names_are_workspace_members() {
+    let names: Vec<&str> = crate::no_dom_data::TABLE.iter().map(|c| c.name).collect();
+    crate::common::assert_names_are_members("no_dom", &names);
 }
 
 /// Regression: `end_of_block` must find the closing brace of a MULTI-LINE
@@ -349,5 +356,30 @@ fn code_lines_scans_past_multiline_cfg_test_mod() {
     assert!(
         !code.iter().any(|(_, l)| l.contains("assert!(true)")),
         "test-mod body must still be skipped"
+    );
+}
+
+#[test]
+fn problems_in_flags_a_dom_a_hand_escaper_and_a_stale_allow() {
+    let c = Crate {
+        name: "probe",
+        allowed_types: &[("XmlGone", "stale")],
+        allowed_fns: &[],
+        needs_xml_module: true,
+    };
+    let files = vec![(
+        "src/a.rs".to_string(),
+        "use quick_xml::Reader;\nstruct XmlNode;\nfn z() { let _ = \"x\".replace(\"&amp;\", \"&\"); }\n"
+            .to_string(),
+    )];
+    let hits = problems_in(&c, &files).join("\n");
+    assert!(hits.contains("type `XmlNode`"), "{hits}");
+    assert!(hits.contains("entity literal `&amp;`"), "{hits}");
+    assert!(hits.contains("`XmlGone` is not declared"), "{hits}");
+    let no_quick_xml = vec![("src/a.rs".to_string(), "fn a() {}\n".to_string())];
+    assert!(
+        problems_in(&c, &no_quick_xml)
+            .join("\n")
+            .contains("scan is vacuous")
     );
 }

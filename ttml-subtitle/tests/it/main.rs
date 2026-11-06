@@ -3,7 +3,6 @@ mod deep_drop;
 mod golden;
 mod integration;
 mod mixed_content;
-mod no_dom_guard;
 mod review_signalling_findings;
 mod truncation;
 mod unknown_attributes;
