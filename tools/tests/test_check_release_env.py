@@ -1,7 +1,8 @@
-"""tools/check-release-env.py: the crates-io approval gate must be REAL.
+"""tools/check-release-env.py: the crates-io environment must exist with its token.
 
-Observed live on 2026-10-17: the environment existed with `protection_rules: []`, i.e.
-no required reviewer, so no release job would ever have waited for approval."""
+The owner chose (2026-11-06) to publish without a manual approval step, so a
+missing `required_reviewers` rule is reported, not failed; a present one must not
+deadlock."""
 
 import importlib.util
 import json
@@ -18,9 +19,10 @@ spec.loader.exec_module(cre)
 REVIEW = {"type": "required_reviewers", "prevent_self_review": False, "reviewers": [{"type": "User", "reviewer": {"login": "owner"}}]}
 
 
-def test_no_protection_rules_is_a_failure_naming_the_cause():
-    problems, _ = cre.evaluate({"name": "crates-io", "protection_rules": []}, ["CARGO_REGISTRY_TOKEN"])
-    assert any("NO required_reviewers rule" in p for p in problems)
+def test_no_protection_rules_passes_and_says_tags_publish_unapproved():
+    problems, notes = cre.evaluate({"name": "crates-io", "protection_rules": []}, ["CARGO_REGISTRY_TOKEN"])
+    assert problems == []
+    assert any("without manual approval" in n for n in notes)
 
 
 def test_missing_environment_and_missing_secret_are_failures():
@@ -28,7 +30,7 @@ def test_missing_environment_and_missing_secret_are_failures():
     assert any("does not exist" in p for p in problems) and any("CARGO_REGISTRY_TOKEN" in p for p in problems)
 
 
-def test_a_real_gate_passes_and_reports_self_review():
+def test_an_optional_reviewer_rule_passes_and_reports_self_review():
     problems, notes = cre.evaluate({"protection_rules": [REVIEW], "can_admins_bypass": True}, ["CARGO_REGISTRY_TOKEN", "X"])
     assert problems == []
     assert "reviewers: owner" in notes and "prevent_self_review: False" in notes
@@ -55,7 +57,8 @@ def test_cli_with_a_stub_gh(tmp_path):
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
     (tmp_path / "env.json").write_text(json.dumps({"protection_rules": []}))
     r = subprocess.run([sys.executable, str(SCRIPT)], env=env, capture_output=True, text=True)
-    assert r.returncode == 1 and "NO required_reviewers" in r.stdout
-    (tmp_path / "env.json").write_text(json.dumps({"protection_rules": [REVIEW]}))
+    assert r.returncode == 0 and "without manual approval" in r.stdout and "crates-io environment OK" in r.stdout
+    rule = dict(REVIEW, prevent_self_review=True)
+    (tmp_path / "env.json").write_text(json.dumps({"protection_rules": [rule]}))
     r = subprocess.run([sys.executable, str(SCRIPT)], env=env, capture_output=True, text=True)
-    assert r.returncode == 0 and "crates-io gate OK" in r.stdout
+    assert r.returncode == 1 and "can never approve their own run" in r.stdout

@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Read-only pre-flight: is the `crates-io` publish gate real?
+"""Read-only pre-flight: can the `crates-io` environment publish?
 
     tools/check-release-env.py [--repo OWNER/REPO]
 
-Every release lane publishes from a job with `environment: crates-io`. That only
-gates anything if the environment (a) exists, (b) carries a `required_reviewers`
-protection rule with at least one reviewer and (c) the `CARGO_REGISTRY_TOKEN`
-secret is set. Without (b) the job never reaches the `waiting` state:
-`push-release-tags.sh` then sees every tag publish the moment its gates pass,
-with nobody approving, and nothing in the wave looks wrong until it is done.
+Every release lane publishes from a job with `environment: crates-io`. The
+environment must exist and the `CARGO_REGISTRY_TOKEN` secret must be set.
 
-Also reports `prevent_self_review`: when true, the person who pushes a tag cannot
-approve its own run (a second reviewer is needed); when false, the pusher can.
+The owner chose (2026-11-06) to publish without a manual approval step: a tag
+publishes as soon as its lane gates pass. A `required_reviewers` rule is
+therefore optional and only reported; if one is present it must not deadlock
+(`prevent_self_review` with a single reviewer means the tag pusher can never
+approve its own run).
 
-Uses `gh api` / `gh secret list` only (read-only). Exit 0 = gate real, secret
-present; 1 = a problem (each printed); 2 = gh unusable.
+Uses `gh api` / `gh secret list` only (read-only). Exit 0 = environment usable,
+secret present; 1 = a problem (each printed); 2 = gh unusable.
 """
 
 from __future__ import annotations
@@ -45,10 +44,7 @@ def evaluate(env: dict | None, secrets: list[str]) -> tuple[list[str], list[str]
         rules = env.get("protection_rules") or []
         reviewers = [r for r in rules if r.get("type") == "required_reviewers"]
         if not reviewers:
-            problems.append(
-                f"environment `{ENV}` has NO required_reviewers rule (protection_rules={[r.get('type') for r in rules]}): "
-                "publish jobs will not wait for approval"
-            )
+            notes.append("no required_reviewers rule: tags publish without manual approval")
         for r in reviewers:
             who = [(x.get("reviewer") or {}).get("login") or (x.get("reviewer") or {}).get("slug") or "?" for x in r.get("reviewers") or []]
             if not who:
@@ -84,7 +80,7 @@ def main(argv: list[str]) -> int:
         print(f"INFO  {n}")
     for p in problems:
         print(f"FAIL  {p}")
-    print("crates-io gate OK" if not problems else f"{len(problems)} problem(s): fix in repo Settings -> Environments before the first tag")
+    print("crates-io environment OK" if not problems else f"{len(problems)} problem(s): fix in repo Settings -> Environments before the first tag")
     return 1 if problems else 0
 
 
