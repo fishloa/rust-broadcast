@@ -109,7 +109,9 @@ use crate::source::SessionClocks;
 #[cfg(feature = "test-hooks")]
 use crate::source::handshake_policy;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
-use crate::webrtc_session::{Resource, ResourceGuard, ResourceTable, SessionControl};
+use crate::webrtc_session::{
+    Resource, ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr,
+};
 use axum::response::IntoResponse as _;
 use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
 
@@ -818,20 +820,6 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
     })
 }
 
-/// The first `name` attribute value, taken from the media section (media
-/// level) and falling back to the session level (RFC 8839 §5.4). The typed
-/// sdp-types attribute accessors make this resolve `Option<Option<&str>>`.
-fn ice_attr<'a>(
-    session: &'a sdp_types::Session,
-    media: &'a sdp_types::Media,
-    name: &'a str,
-) -> Option<&'a str> {
-    media
-        .get_first_attribute_value(name)
-        .flatten()
-        .or_else(|| session.get_first_attribute_value(name).flatten())
-}
-
 /// Builds this side's SDP answer via `sdp-types`' own `Session::write`
 /// (Task 8): [`SetupRole::Passive`] (this route is always the DTLS server),
 /// `a=recvonly` (a WHIP publish endpoint never sends media back),
@@ -967,11 +955,6 @@ fn whip_router_with_cap(state: Arc<WhipServeState>, max_pending: usize) -> axum:
             "/whip/session/{id}",
             patch(whip_patch).delete(whip_delete).options(whip_options),
         )
-        // Mirror `output::whep`'s `ensure_connect_info`: a test harness driving
-        // the router with `oneshot` has no accepted stream, so `ConnectInfo`
-        // (and the `LocalAddr` extension) is absent and `whip_post`'s
-        // `ConnectInfo(peer)` extractor would reject; inject a default so the
-        // production router is driveable by `whip_router_for_test`.
         .layer(axum::middleware::from_fn(ensure_connect_info))
         // ONE shared concurrency pool across every route on this listener (not
         // one semaphore per route/method, which `ConcurrencyLimitLayer` would
@@ -1044,36 +1027,6 @@ async fn add_whip_cors(
         HeaderValue::from_static("Location, ETag"),
     );
     resp
-}
-
-/// Inject a default `ConnectInfo`/`LocalAddr` when absent (a `oneshot`-driven
-/// test has no accepted stream) — the exact counterpart to
-/// `output::whep::ensure_connect_info`, so `whip_post`'s `ConnectInfo(peer)`
-/// extractor never rejects a request driven through `whip_router_for_test`.
-async fn ensure_connect_info(
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    if req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .is_none()
-    {
-        req.extensions_mut()
-            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
-                std::net::Ipv4Addr::UNSPECIFIED,
-                0,
-            ))));
-    }
-    if req
-        .extensions()
-        .get::<Option<crate::origin::LocalAddr>>()
-        .is_none()
-    {
-        req.extensions_mut()
-            .insert(None::<crate::origin::LocalAddr>);
-    }
-    next.run(req).await
 }
 
 /// Which IP [`whip_post_inner`] binds this session's media socket on: the

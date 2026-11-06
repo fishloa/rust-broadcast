@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- WHIP source and WHEP output share `webrtc_session::{ensure_connect_info, ice_attr}` (dedupe D14).
 - hls-pull, smooth-pull and dash-pull share one `source::driver::terminal_result` (dedupe D13).
 
 ## [0.15.0] - 2026-11-03

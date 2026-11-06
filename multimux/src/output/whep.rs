@@ -116,7 +116,9 @@ use webrtc_runtime::media::{
 use webrtc_runtime::whep::content_type;
 use webrtc_runtime::whep::server::{Event as WhepEvent, WhepSession};
 
-use crate::webrtc_session::{Resource, ResourceGuard, ResourceTable, SessionControl};
+use crate::webrtc_session::{
+    Resource, ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr,
+};
 
 use crate::error::{MultimuxError, Result};
 use axum::response::IntoResponse as _;
@@ -347,19 +349,6 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
         payload_type,
         media: media.clone(),
     })
-}
-
-/// The first `name` attribute value, taken from the media section (media
-/// level) and falling back to the session level (RFC 8839 §5.4).
-fn ice_attr<'a>(
-    session: &'a sdp_types::Session,
-    media: &'a sdp_types::Media,
-    name: &'a str,
-) -> Option<&'a str> {
-    media
-        .get_first_attribute_value(name)
-        .flatten()
-        .or_else(|| session.get_first_attribute_value(name).flatten())
 }
 
 /// Resolves this side's [`SetupRole`] from the viewer offer's `a=setup`
@@ -638,34 +627,6 @@ async fn whep_auth_middleware(
         None => next.run(req).await,
         Some(resp) => resp,
     }
-}
-
-/// Insert a default `ConnectInfo` when the request has none (a `oneshot`
-/// test harness), so `whep_post`'s extractor never rejects.
-async fn ensure_connect_info(
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    if req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .is_none()
-    {
-        req.extensions_mut()
-            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
-                std::net::Ipv4Addr::UNSPECIFIED,
-                0,
-            ))));
-    }
-    if req
-        .extensions()
-        .get::<Option<crate::origin::LocalAddr>>()
-        .is_none()
-    {
-        req.extensions_mut()
-            .insert(None::<crate::origin::LocalAddr>);
-    }
-    next.run(req).await
 }
 
 /// Add the permissive CORS headers the WHEP signalling endpoint needs to

@@ -127,6 +127,49 @@ const RESOURCE_ID_LEN: usize = 32;
 /// buffer more than the transport would ever admit.
 const MAX_PENDING_CANDIDATES: usize = webrtc_runtime::media::MAX_REMOTE_CANDIDATES;
 
+/// The first `name` attribute value, taken from the media section (media
+/// level) and falling back to the session level (RFC 8839 §5.4). The typed
+/// sdp-types attribute accessors make this resolve `Option<Option<&str>>`.
+pub(crate) fn ice_attr<'a>(
+    session: &'a sdp_types::Session,
+    media: &'a sdp_types::Media,
+    name: &'a str,
+) -> Option<&'a str> {
+    media
+        .get_first_attribute_value(name)
+        .flatten()
+        .or_else(|| session.get_first_attribute_value(name).flatten())
+}
+
+/// Inject a default `ConnectInfo`/`LocalAddr` when absent (a `oneshot`-driven
+/// test harness has no accepted stream), so the `ConnectInfo(peer)` extractor
+/// of the WHIP and WHEP POST handlers never rejects the request.
+pub(crate) async fn ensure_connect_info(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .is_none()
+    {
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                std::net::Ipv4Addr::UNSPECIFIED,
+                0,
+            ))));
+    }
+    if req
+        .extensions()
+        .get::<Option<crate::origin::LocalAddr>>()
+        .is_none()
+    {
+        req.extensions_mut()
+            .insert(None::<crate::origin::LocalAddr>);
+    }
+    next.run(req).await
+}
+
 /// Length of a locally generated ICE `ufrag` (RFC 8445 section 5.4 asks for
 /// at least 24 bits; matches the offer-time credentials).
 pub(crate) const ICE_UFRAG_LEN: usize = 8;
