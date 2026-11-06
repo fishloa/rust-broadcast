@@ -711,7 +711,10 @@ mod tests {
             .try_to_bytes()
             .unwrap();
         let truncated = &full[..full.len() - 3];
-        assert!(Amf0Value::parse(truncated).is_err());
+        assert!(matches!(
+            Amf0Value::parse(truncated),
+            Err(RtmpError::BufferTooShort { .. })
+        ));
     }
 
     #[test]
