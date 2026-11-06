@@ -26,11 +26,6 @@ mod ps_demux_copies {
     use broadcast_common::Unpackage;
     use transmux::PsDemux;
 
-    fn load(rel: &str) -> Option<Vec<u8>> {
-        let p = test_fixtures::root().join(rel);
-        std::fs::read(p).ok()
-    }
-
     /// r04-O6: the PS demuxer copied every video byte three times (ES concat, the
     /// per-AU `to_vec`, the Annex-B -> length-prefixed re-encode). Total bytes
     /// allocated while demuxing, as a multiple of the input size, is the
@@ -41,10 +36,7 @@ mod ps_demux_copies {
             ("ps/ffmpeg-h264-noaud.ps", H264_BUDGET_X100),
             ("ps/ffmpeg-mpeg2video-mp2.ps", MPEG2_BUDGET_X100),
         ] {
-            let Some(bytes) = load(rel) else {
-                eprintln!("SKIPPED {rel}");
-                continue;
-            };
+            let bytes = test_fixtures::read(rel);
             let (media, allocated) =
                 bytes_allocated(|| PsDemux::new().unpackage(bytes.as_slice()).unwrap());
             drop(media);
@@ -74,11 +66,7 @@ mod ts_demux_copies {
     /// bytes allocated while demuxing, as a multiple of the input size.
     #[test]
     fn ts_demux_copies_of_the_payload() {
-        let p = test_fixtures::path("ts/h264-aac.ts");
-        let Ok(bytes) = std::fs::read(p) else {
-            eprintln!("SKIPPED ts/h264-aac.ts");
-            return;
-        };
+        let bytes = test_fixtures::read("ts/h264-aac.ts");
         let (media, allocated) =
             bytes_allocated(|| TsDemux::new().unpackage(bytes.as_slice()).unwrap());
         drop(media);
@@ -134,11 +122,7 @@ mod rtp_stream_copies {
     /// loop, as a multiple of the packet bytes pushed.
     #[test]
     fn rtp_push_copies_each_packet_once() {
-        let p = test_fixtures::path("ts/h264-aac.ts");
-        let Ok(data) = std::fs::read(p) else {
-            eprintln!("SKIPPED ts/h264-aac.ts");
-            return;
-        };
+        let data = test_fixtures::read("ts/h264-aac.ts");
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
         let video = media
             .tracks
@@ -193,19 +177,11 @@ mod cenc_decrypt_copies {
     use super::bytes_allocated;
     use transmux::CencDecryptor;
 
-    fn load() -> Option<Vec<u8>> {
-        let p = test_fixtures::path("mp4/cenc.mp4");
-        std::fs::read(p).ok()
-    }
-
     /// r05-O2: `from_fmp4` copied the whole file and `demux` copied every sample
     /// again. Bytes allocated by harvest + demux, as a multiple of the file size.
     #[test]
     fn harvest_and_demux_do_not_copy_the_file_and_every_sample() {
-        let Some(file) = load() else {
-            eprintln!("SKIPPED mp4/cenc.mp4");
-            return;
-        };
+        let file = test_fixtures::read("mp4/cenc.mp4");
         let (n, allocated) = bytes_allocated(|| {
             let dec = CencDecryptor::from_fmp4(&file).unwrap();
             dec.demux().unwrap().tracks.len()
@@ -240,11 +216,7 @@ mod muxer_buffering {
     /// Bytes allocated by `package`, as a multiple of the produced output size.
     #[test]
     fn muxers_copy_the_output_few_times() {
-        let p = test_fixtures::path("ts/h264-aac.ts");
-        let Ok(data) = std::fs::read(p) else {
-            eprintln!("SKIPPED ts/h264-aac.ts");
-            return;
-        };
+        let data = test_fixtures::read("ts/h264-aac.ts");
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
         let cases: [(&str, Vec<u8>, usize); 3] = {
             let (prog, a1) = bytes_allocated(|| ProgressiveMux::new(true).package(&media).unwrap());
