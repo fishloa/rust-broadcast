@@ -37,7 +37,7 @@
 //! - a `c@r` repeat count — [`StreamIndex::enumerate_chunks`] errors
 //!   ([`SmoothParseError::ChunkRunTooLong`]) rather than expanding past
 //!   [`MAX_CHUNK_RUN`];
-//! - a `QualityLevel@CodecPrivateData` hex string — [`hex_decode`] errors
+//! - a `QualityLevel@CodecPrivateData` hex string — `hex_decode` errors
 //!   ([`SmoothParseError::CodecPrivateDataTooLong`]) rather than allocating
 //!   past [`MAX_CODEC_PRIVATE_DATA_HEX_LEN`], checked *before* any decode
 //!   allocation.
