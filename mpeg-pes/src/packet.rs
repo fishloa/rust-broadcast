@@ -1317,12 +1317,23 @@ mod tests {
 
     #[test]
     fn serialize_rejects_oversized_optional_fields() {
-        // Construct a PesHeader whose optional_len() > 255 by adding enough flags.
-        // max realistic: 5+5+6+3+1+1+2 = 23, plus PesExtension with big private data.
-        // This is structurally impossible with typed fields to reach 256 naturally,
-        // but we test the guard exists by checking that OptionalFieldsTooLarge
-        // is the right error variant name still exists.
-        let _ = Error::OptionalFieldsTooLarge(256);
+        let pack_header = [0u8; 255];
+        let h = PesHeader {
+            pes_extension: Some(PesExtension {
+                pack_header: Some(&pack_header),
+                ..PesExtension::new()
+            }),
+            ..empty_header()
+        };
+        let pkt = PesPacket {
+            stream_id: StreamId(0xE0),
+            pes_packet_length: 0,
+            header: Some(h),
+            payload: &[],
+        };
+        let mut out = vec![0u8; pkt.serialized_len()];
+        let err = pkt.serialize_into(&mut out).unwrap_err();
+        assert!(matches!(err, Error::OptionalFieldsTooLarge(n) if n > 255));
     }
 
     // ── Typed optional fields round-trips ──────────────────────────────────
