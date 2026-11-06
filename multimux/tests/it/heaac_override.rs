@@ -7,20 +7,20 @@
 //! production path: `RouteHandle::set_track_specs` + `ProgramSegmenter::pump`
 //! over a `Trunk`, read back through the axum router as a player would.
 
+use crate::support::hdr_route::{
+    DECLARED_BPS, PART_TARGET_MS, PUMP_EVERY, STREAM, Source, TARGET_DURATION_SECS,
+    WINDOW_SEGMENTS, contains, get, init_bytes, new_trunk, ok,
+};
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use broadcast_common::Parse;
 use broadcast_common::mux::Unpackage;
 use broadcast_hls::{MasterPlaylist, MediaPlaylist};
 use media_plane::ProgramId;
-use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
-use tower::ServiceExt;
-use transmux::pipeline::{Sample, TrackSpec};
+use media_plane::trunk::RetentionClass;
 use transmux::ts_demux::TsDemux;
 use transmux::{MovieBox, MovieFragmentBox};
 
@@ -31,13 +31,6 @@ use multimux::output::llhls::LlHlsOutput;
 use multimux::route::RouteHandle;
 use multimux::source::segment::ProgramSegmenter;
 
-const TARGET_DURATION_SECS: f64 = 1.0;
-const PART_TARGET_MS: u32 = 200;
-const WINDOW_SEGMENTS: usize = 64;
-const RING: usize = 1 << 16;
-const PUMP_EVERY: usize = 64;
-const STREAM: &str = "cam";
-const DECLARED_BPS: u64 = 4_000_000;
 const V1_FIXTURE: &str = "ts/heaac/heaac-v1-adts.ts";
 const V2_FIXTURE: &str = "ts/heaac/heaac-v2-adts.ts";
 const V1_ASC: [u8; 4] = [0x2B, 0x92, 0x08, 0x00];
@@ -46,11 +39,6 @@ const AAC_FRAME_OUTPUT_TICKS: u32 = 2048;
 const BOX_HEADER_LEN: usize = 8;
 const HANDLER_SOUND: [u8; 4] = *b"soun";
 const V2_ASC: [u8; 4] = [0xEB, 0x8A, 0x08, 0x00];
-
-struct Source {
-    spec: TrackSpec,
-    samples: Vec<Sample>,
-}
 
 fn load(fixture: &str) -> Vec<Source> {
     let bytes = test_fixtures::read(fixture);
@@ -70,17 +58,6 @@ fn load(fixture: &str) -> Vec<Source> {
                 .collect(),
         })
         .collect()
-}
-
-fn new_trunk() -> Arc<Trunk> {
-    let nz = |n: usize| NonZeroUsize::new(n).expect("non-zero");
-    Trunk::new(TrunkConfig::new(
-        nz(RING),
-        nz(64),
-        nz(WINDOW_SEGMENTS),
-        nz(64),
-        nz(RING),
-    ))
 }
 
 fn route_app(fixture: &str, profiles: Vec<AudioProfileOverride>) -> Router {
@@ -135,31 +112,6 @@ fn route_app(fixture: &str, profiles: Vec<AudioProfileOverride>) -> Router {
     router(Arc::new(AppState::new(streams)))
 }
 
-async fn get(app: &Router, path: &str) -> (StatusCode, Vec<u8>) {
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/{STREAM}/{path}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    let status = resp.status();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .expect("body")
-        .to_vec();
-    (status, body)
-}
-
-async fn ok(app: &Router, path: &str) -> Vec<u8> {
-    let (status, body) = get(app, path).await;
-    assert_eq!(status, StatusCode::OK, "GET {path}");
-    body
-}
-
 async fn master_codecs(app: &Router) -> String {
     let text = String::from_utf8(ok(app, "master.m3u8").await).expect("utf8");
     let master =
@@ -171,28 +123,11 @@ async fn master_codecs(app: &Router) -> String {
         .unwrap_or_else(|| panic!("variant carries CODECS:\n{text}"))
 }
 
-async fn init_bytes(app: &Router) -> Vec<u8> {
-    let text = String::from_utf8(ok(app, "media.m3u8").await).expect("utf8");
-    let playlist =
-        MediaPlaylist::parse(&text).unwrap_or_else(|e| panic!("media must parse: {e}\n{text}"));
-    let map = playlist.segments[0]
-        .map
-        .as_ref()
-        .expect("EXT-X-MAP")
-        .uri
-        .clone();
-    ok(app, &map).await
-}
-
 fn declared(profile: AudioProfile) -> Vec<AudioProfileOverride> {
     vec![AudioProfileOverride {
         track: AudioTrackSelector::Index(0),
         audio_profile: profile,
     }]
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 #[tokio::test]
