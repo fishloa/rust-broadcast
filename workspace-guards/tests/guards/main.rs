@@ -10,6 +10,8 @@ mod label;
 mod label_data;
 mod non_exhaustive;
 mod non_exhaustive_data;
+mod panic_idioms;
+mod panic_idioms_data;
 mod secret_debug;
 mod secret_debug_data;
 mod truncation;

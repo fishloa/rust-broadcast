@@ -8,7 +8,6 @@ mod golden_base64;
 mod hostility;
 mod known_vectors;
 mod legacy_command_length;
-mod no_panic_idioms_guard;
 mod real_capture;
 mod review_signalling_findings;
 mod round_trip;

@@ -27,3 +27,15 @@ pub fn assert_table_covers_members(family: &str, table: &[&str], exempt: &[&str]
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
+
+/// Fails if a crate named in a scoped guard table is not a workspace member
+/// (a rename must update the table).
+pub fn assert_names_are_members(family: &str, names: &[&str]) {
+    let members = workspace_members();
+    let missing: Vec<String> = names
+        .iter()
+        .filter(|n| !members.iter().any(|m| m == **n))
+        .map(|n| format!("{family}: `{n}` is not a workspace member"))
+        .collect();
+    assert!(missing.is_empty(), "{}", missing.join("\n"));
+}

@@ -1,6 +1,5 @@
 mod cc_to_webvtt_fixture;
 mod hostility;
-mod no_panic_idioms_guard;
 mod real_ts_captions;
 mod review_signalling_findings;
 mod scc_reference;
