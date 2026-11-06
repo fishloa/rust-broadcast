@@ -382,6 +382,8 @@ async fn libsrt_sender_recovers_a_hundreds_of_losses_list_from_our_periodic_nak(
         const CHUNKS: u32 = 1_000;
         const FIRST_LOSS: u32 = 20;
         const LAST_LOSS: u32 = 920;
+        const SMALL_NAK_LIST_LEN: usize = 8;
+        let periodic_nak_forwarded = Arc::new(AtomicBool::new(false));
         let (mut receiver, relay, _libsrt, src_port) = our_listener_behind_a_relay(
             HandshakeConfig {
                 // Room for the periodic NAK to do the recovering before
@@ -395,11 +397,18 @@ async fn libsrt_sender_recovers_a_hundreds_of_losses_list_from_our_periodic_nak(
             // losses: one single-entry NAK each). Even indices only, so the
             // last chunk (999) is kept.
             |index| (FIRST_LOSS..LAST_LOSS).contains(&index) && index % 2 == 0,
-            |packet| {
-                matches!(
-                    packet,
-                    SrtPacket::Control(ControlPacket::Nak(nak)) if nak.raw_loss_list.len() <= 8
-                )
+            // Small NAKs are swallowed only until the first periodic NAK has
+            // passed: a loss detected after the last periodic NAK is reported
+            // by a lone small NAK, which swallowing for good would strand.
+            move |packet| {
+                let SrtPacket::Control(ControlPacket::Nak(nak)) = packet else {
+                    return false;
+                };
+                if nak.raw_loss_list.len() > SMALL_NAK_LIST_LEN {
+                    periodic_nak_forwarded.store(true, Ordering::Relaxed);
+                    return false;
+                }
+                !periodic_nak_forwarded.load(Ordering::Relaxed)
             },
         )
         .await;
