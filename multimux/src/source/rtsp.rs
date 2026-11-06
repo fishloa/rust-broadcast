@@ -77,7 +77,7 @@ use media_plane::ingress::{
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use crate::error::{MultimuxError, Result};
-use crate::source::http_auth::resolve_credentials;
+use crate::source::http_auth::{credentials_from_url, resolve_credentials, strip_userinfo};
 use crate::source::{IngestTimeouts, Source, TrackInit, sdp::parse_sdp_tracks};
 
 /// Interleaved channel offset from a media's RTP channel to its paired RTCP
@@ -578,7 +578,7 @@ impl Dialer for RtspDialer {
                 crate::redact::redact_url(&self.url)
             ),
         })?;
-        let credentials = resolve_credentials(self.auth.clone(), extract_credentials(&base_url)?);
+        let credentials = resolve_credentials(self.auth.clone(), credentials_from_url(&base_url)?);
         let request_url = strip_userinfo(&base_url)?;
         let request_uri = request_url.to_string();
 
@@ -647,53 +647,6 @@ fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
                 reason: format!("bad a=control {c:?}: {e}"),
             }),
     }
-}
-
-/// Extracts RTSP [`Credentials`] from a base URL's userinfo, percent-decoding
-/// both components.
-fn extract_credentials(url: &Url) -> Result<Option<Credentials>> {
-    if url.username().is_empty() {
-        return Ok(None);
-    }
-    let username = percent_decode(url.username())?;
-    let password = match url.password() {
-        Some(p) => percent_decode(p)?,
-        None => String::new(),
-    };
-    Ok(Some(Credentials::new(username, password)))
-}
-
-/// Percent-decodes a URL userinfo component to UTF-8. Never echoes `s`: it is
-/// (part of) a still percent-encoded credential.
-fn percent_decode(s: &str) -> Result<String> {
-    percent_encoding::percent_decode_str(s)
-        .decode_utf8()
-        .map(|c| c.into_owned())
-        .map_err(|e| MultimuxError::Auth {
-            reason: format!("invalid percent-encoded userinfo: {e}"),
-        })
-}
-
-/// Returns a copy of `url` with its userinfo removed.
-fn strip_userinfo(url: &Url) -> Result<Url> {
-    let mut clean = url.clone();
-    clean
-        .set_username("")
-        .map_err(|()| MultimuxError::Connect {
-            reason: format!(
-                "failed to strip username from rtsp(s) URL {}",
-                crate::redact::redact_url(url.as_str())
-            ),
-        })?;
-    clean
-        .set_password(None)
-        .map_err(|()| MultimuxError::Connect {
-            reason: format!(
-                "failed to strip password from rtsp(s) URL {}",
-                crate::redact::redact_url(url.as_str())
-            ),
-        })?;
-    Ok(clean)
 }
 
 /// Derives the `host:port` connect address from the base URL, defaulting to

@@ -66,4 +66,14 @@ pub enum Error {
     /// injectable one.
     #[error("bearer token is not a valid Authorization header value")]
     InvalidBearerToken,
+
+    /// A URL's userinfo is not valid UTF-8 once percent-decoded. The message
+    /// carries the decoder's reason only, never the (encoded) credential.
+    #[error("invalid percent-encoded userinfo: {0}")]
+    InvalidUserinfo(String),
+
+    /// A URL cannot carry userinfo (a cannot-be-a-base URL), so the named
+    /// component (`"username"` / `"password"`) could not be removed.
+    #[error("failed to strip {0} from URL")]
+    UserinfoNotRemovable(&'static str),
 }
