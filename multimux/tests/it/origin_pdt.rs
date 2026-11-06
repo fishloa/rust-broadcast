@@ -8,11 +8,11 @@
 //! wiring itself is exercised by `multimux`'s own `origin` module tests and
 //! by the mutation checks in the issue.
 
+use crate::support::origin::{body_bytes, body_string, get};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use tower::ServiceExt;
 
 use hls_runtime::server::Container;
@@ -53,27 +53,6 @@ fn video_track_spec() -> TrackSpec {
             height: 0,
         },
     )
-}
-
-async fn body_string(resp: axum::response::Response) -> String {
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    String::from_utf8(bytes.to_vec()).unwrap()
-}
-
-async fn body_bytes(resp: axum::response::Response) -> Vec<u8> {
-    axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap()
-        .to_vec()
-}
-
-fn get(uri: &str) -> Request<Body> {
-    Request::builder()
-        .uri(uri)
-        .body(Body::empty())
-        .expect("well-formed GET request")
 }
 
 fn feed_via_segmenter(
