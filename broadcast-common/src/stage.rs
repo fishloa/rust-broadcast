@@ -178,6 +178,16 @@ impl Demand {
             saturated: true,
         }
     }
+
+    /// [`Demand::saturated`] when `full`, otherwise the "no preference"
+    /// [`Demand::default`].
+    pub const fn saturated_if(full: bool) -> Self {
+        if full {
+            Self::saturated()
+        } else {
+            Demand::new(0)
+        }
+    }
 }
 
 /// The incremental-drive shape every streaming stage in the workspace adopts.
@@ -319,6 +329,15 @@ pub trait Stage {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saturated_if_selects_saturated_or_default() {
+        assert_eq!(
+            super::Demand::saturated_if(true),
+            super::Demand::saturated()
+        );
+        assert_eq!(super::Demand::saturated_if(false), super::Demand::default());
+    }
+
     use super::*;
     use alloc::collections::VecDeque;
     use alloc::vec::Vec;

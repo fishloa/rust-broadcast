@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `Demand::saturated_if(bool)`: `Demand::saturated()` when full, else the default (dedupe C3).
 
 ## [10.0.0] - 2026-10-17
 ### Documentation

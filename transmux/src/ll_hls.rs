@@ -1557,15 +1557,11 @@ impl Stage for LlHlsSegmenter {
     /// is held for the boundary), so a single-IDR stream produces no part
     /// **and** no segment while `pending` grows.
     fn demand(&self) -> Demand {
-        if self
-            .tracks
-            .iter()
-            .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK)
-        {
-            Demand::saturated()
-        } else {
-            Demand::default()
-        }
+        Demand::saturated_if(
+            self.tracks
+                .iter()
+                .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK),
+        )
     }
 }
 /// How many of `t`'s un-parted samples (`pending[part_start..]`) fit inside a

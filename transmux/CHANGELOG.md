@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- The four segmenters build `Stage::demand` with `Demand::saturated_if` (dedupe C3).
 - `ac3` and `dts` import `bitreader::read_bits_checked` instead of declaring forwarding `read_bits` wrappers (dedupe R5).
 
 ## [0.29.1] - 2026-11-03
