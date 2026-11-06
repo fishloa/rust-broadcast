@@ -2621,6 +2621,7 @@ dependencies = [
  "tshttp-runtime",
  "url",
  "webrtc-runtime",
+ "workspace-guards",
 ]
 
 [[package]]

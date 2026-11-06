@@ -261,6 +261,7 @@ required-features = ["whip", "whep", "test-hooks"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+workspace-guards = { path = "../workspace-guards" }
 transmux = { path = "../transmux", version = "0.29.1", features = ["sample-aes"] }
 # `test-support`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).

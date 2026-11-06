@@ -139,3 +139,59 @@ fn every_needle_of_every_crate_bites() {
         }
     }
 }
+
+#[test]
+fn the_scanner_survives_strings_raw_strings_comments_and_non_ascii() {
+    // A string in a PRODUCTION line containing an unbalanced brace must not
+    // desync the checker: production code after the test module stays visible.
+    let brace_in_str = "fn a() { let s = \"}\"; }\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\nfn prod_after() { let x = \"HTTP/1.1 200\"; }\n";
+    assert_eq!(
+        non_test_source(brace_in_str).matches("HTTP/1.").count(),
+        1,
+        "a production string with an unbalanced brace must not swallow prod code after the test mod"
+    );
+
+    // A RAW string containing braces inside the test module — the old
+    // per-line `in_str` scanner desynced on these (the WHEP_TEST_OFFER shape).
+    let raw_in_test = "fn a() {}\n#[cfg(test)]\nmod tests {\n    const O: &str = r#\"v=0\r\n{}{}\"#;\n    fn t() { let y = \"HTTP/1.1 200\"; }\n}\n";
+    assert_eq!(
+        non_test_source(raw_in_test).matches("HTTP/1.").count(),
+        0,
+        "a raw string with braces in the test module must still remove the whole module"
+    );
+
+    // A MULTI-LINE `\"...\"` string continuation inside the test module with a
+    // stray `{` — also must not desync (a per-line scanner would).
+    let multiline_str_in_test = "fn a() {}\n#[cfg(test)]\nmod tests {\n    const O: &str = \"v=0\r\n{\r\n\";\n    fn t() { let y = \"HTTP/1.1 200\"; }\n}\n";
+    assert_eq!(
+        non_test_source(multiline_str_in_test)
+            .matches("HTTP/1.")
+            .count(),
+        0,
+        "a multi-line string with a brace in the test module must still remove the module"
+    );
+
+    // A block comment containing braces must not desync brace depth.
+    let block_comment = "fn a() { /* } { */ }\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\nfn prod() { let x = \"HTTP/1.1 200\"; }\n";
+    assert_eq!(
+        non_test_source(block_comment).matches("HTTP/1.").count(),
+        1,
+        "a comment brace must not swallow production code after the test mod"
+    );
+
+    // Non-ASCII text must survive byte-for-byte: the old `b[i] as char` walk
+    // mangled every multi-byte character (U+00E9 -> two chars), which would
+    // corrupt any needle or source line carrying non-ASCII (this workspace's
+    // doc comments use em dashes and `§`).
+    let non_ascii = "fn a() {}\n/// § \u{2014} café\n#[cfg(test)]\nmod tests {\n    fn t() { let y = \"HTTP/1.1 200\"; }\n}\nfn prod() { let x = \"HTTP/1.1 200\"; }\n";
+    let stripped = non_test_source(non_ascii);
+    assert!(
+        stripped.contains("/// § \u{2014} café"),
+        "non-ASCII text must be preserved intact, got: {stripped:?}"
+    );
+    assert_eq!(
+        stripped.matches("HTTP/1.").count(),
+        1,
+        "non-ASCII text must not desync the scanner (only the test-mod body removed)"
+    );
+}
