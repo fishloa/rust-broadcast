@@ -17,6 +17,7 @@
 //! wrap past `0x7FFF_FFFF` back to `0`.
 
 use crate::packet::SEQ_NUMBER_MASK;
+use alloc::vec::Vec;
 use broadcast_common::seq::SeqSpace;
 
 /// The SRT sequence-number space: 31 bits (§3.1). The arithmetic itself is
