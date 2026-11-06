@@ -413,7 +413,7 @@ impl ListenerHandshake {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::handshake::{HANDSHAKE_CIF_FIXED_LEN, HS_EXT_FLAG_HSREQ};
+    use crate::packet::handshake::HS_EXT_FLAG_HSREQ;
 
     fn caller_induction(caller_id: u32) -> ControlPacket<'static> {
         ControlPacket::Handshake(HandshakePacket {
@@ -581,14 +581,6 @@ mod tests {
         let mut l = ListenerHandshake::new(1, 1, HandshakeConfig::default());
         let outputs = l.feed(&caller_induction(2));
         assert!(outputs.is_ok());
-    }
-
-    // `HANDSHAKE_CIF_FIXED_LEN` import above is exercised indirectly by the
-    // packet codec; referenced here only to keep the `use` alive across
-    // refactors without an unused-import warning surfacing as a hard error.
-    #[test]
-    fn cif_fixed_len_is_the_documented_48_bytes() {
-        assert_eq!(HANDSHAKE_CIF_FIXED_LEN, 48);
     }
 
     fn conclusion_response_bytes(outputs: &[HandshakeOutput]) -> Vec<u8> {

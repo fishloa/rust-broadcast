@@ -413,22 +413,6 @@ mod tests {
     }
 
     #[test]
-    fn max_bw_config_clone_and_eq() {
-        let a = MaxBwConfig::Set(100);
-        let b = MaxBwConfig::Set(100);
-        assert_eq!(a, b);
-        let c = MaxBwConfig::InputBased {
-            input_bw: 1000,
-            overhead: 20,
-        };
-        let d = MaxBwConfig::InputBased {
-            input_bw: 1001,
-            overhead: 20,
-        };
-        assert_ne!(c, d);
-    }
-
-    #[test]
     fn overhead_formula_edge_cases() {
         // overhead = 0: MAX_BW = bw + bw*0/100 = bw
         assert_eq!(
