@@ -271,17 +271,6 @@ mod tests {
     }
 
     #[test]
-    fn decode_component_type_full_service_cm_stereo() {
-        // AC-3, full_service=1, CM, stereo — same test as ac3.rs via shared from_byte
-        // 0x42 = bit7=0, bit6=1, bits[5:3]=000(CM), bits[2:0]=010(stereo)
-        let ct = Ac3ComponentType::from_byte(0x42);
-        assert!(!ct.enhanced_ac3);
-        assert!(ct.full_service);
-        assert_eq!(ct.service_type, Ac3ServiceType::CompleteMain);
-        assert_eq!(ct.channels, Ac3ChannelMode::Stereo);
-    }
-
-    #[test]
     fn parse_rejects_wrong_tag() {
         assert!(matches!(
             EnhancedAc3Descriptor::parse(&[0x6A, 1, 0]).unwrap_err(),
