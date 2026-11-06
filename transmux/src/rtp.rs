@@ -2235,7 +2235,7 @@ pub fn base64_decode(s: &str) -> Result<Vec<u8>> {
 use broadcast_common::hex::hex_encode;
 
 /// Hex-decode a string; rejects odd lengths and invalid nibbles.
-pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
+pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
     ::hex::decode(s).map_err(|e| match e {
         ::hex::FromHexError::OddLength => Error::InvalidValue {
             field: "hex",

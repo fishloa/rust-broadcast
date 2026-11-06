@@ -443,7 +443,7 @@ pub use hdr10plus::{
 #[cfg(feature = "std")]
 pub use smooth_parse::{
     C, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN, QualityLevel, SmoothManifest,
-    SmoothParseError, StreamIndex, hex_decode as smooth_hex_decode, track_spec_from_quality_level,
+    SmoothParseError, StreamIndex, track_spec_from_quality_level,
 };
 pub use splice::{SplicePoint, SpliceResult, concat, snap_to_preceding_sync, splice_insert};
 pub use sps::{

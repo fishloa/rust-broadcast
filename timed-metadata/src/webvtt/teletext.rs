@@ -15,7 +15,7 @@
 //! - [`decode_hamming_8_4`] / [`encode_hamming_8_4`] — the 4-data-bit +
 //!   4-parity-bit code protecting packet addresses and page header fields
 //!   (§8.2): single-bit errors corrected, double-bit errors rejected.
-//! - [`decode_odd_parity`] / [`encode_odd_parity`] — the 7-data-bit + 1-parity
+//! - `broadcast_common::parity::{strip_parity, set_odd_parity}` — the 7-data-bit + 1-parity
 //!   code protecting displayable row bytes (§8.1): errors only *detected*
 //!   (odd parity carries no correction capability), rendered as
 //!   `'\u{FFFD}'`.
@@ -115,27 +115,6 @@ pub fn encode_hamming_8_4(nibble: u8) -> u8 {
     let p3 = 1 ^ d1 ^ d2 ^ d3;
     let p4 = 1 ^ p1 ^ d1 ^ p2 ^ d2 ^ p3 ^ d3 ^ d4;
     p1 | (d1 << 1) | (p2 << 2) | (d2 << 3) | (p3 << 4) | (d3 << 5) | (p4 << 6) | (d4 << 7)
-}
-
-/// Decode an odd-parity protected byte (ETSI EN 300 706 §8.1): bit 8 (the
-/// MSB, `0x80`) is the parity bit, bits 1-7 (`0x7F`) carry the 7 data bits.
-/// Odd parity **detects but cannot correct** single-bit errors (unlike
-/// Hamming-8/4): returns `None` on any parity mismatch.
-///
-/// Returns the 7-bit data value, or `None` if the byte does not have odd
-/// parity (an even count of set bits).
-#[must_use]
-#[deprecated(since = "0.9.0", note = "use `broadcast_common::parity::strip_parity`")]
-pub fn decode_odd_parity(byte: u8) -> Option<u8> {
-    broadcast_common::parity::strip_parity(byte)
-}
-
-/// Encode a 7-bit data value with odd parity in bit 8 (MSB), per ETSI
-/// EN 300 706 §8.1. Only the low 7 bits of `data7` are used.
-#[must_use]
-#[deprecated(since = "0.9.0", note = "use `broadcast_common::parity::set_odd_parity`")]
-pub fn encode_odd_parity(data7: u8) -> u8 {
-    broadcast_common::parity::set_odd_parity(data7)
 }
 
 /// The C12/C13/C14 "National Option Character Subset" selector (ETSI
@@ -1003,7 +982,7 @@ mod tests {
 
     pub(super) fn field_from_block(block: [u8; 42], line: u8) -> dvb_vbi::TeletextDataField {
         // `build_header_block`/`build_row_block` produce the spec's own
-        // (canonical) byte values via `encode_hamming_8_4`/`encode_odd_parity`;
+        // (canonical) byte values via `encode_hamming_8_4`/`set_odd_parity`;
         // reverse each bit to emulate the LSB-first wire bytes `push` now
         // un-reverses, so these tests exercise the real wire path.
         dvb_vbi::TeletextDataField {

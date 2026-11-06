@@ -613,7 +613,7 @@ impl StreamIndex {
 /// allocation, defending against a hostile Manifest's unbounded
 /// `CodecPrivateData`) and erroring on odd length or a non-hex-digit byte
 /// rather than panicking.
-pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
+pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
     if s.len() > MAX_CODEC_PRIVATE_DATA_HEX_LEN {
         return Err(SmoothParseError::CodecPrivateDataTooLong { len: s.len() });
     }

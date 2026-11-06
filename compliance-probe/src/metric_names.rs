@@ -35,7 +35,7 @@
 //!
 //! SCTE-35 malformed-section detection
 //! (`compliance_probe_scte35_malformed_total`) can only fire on the **wire**
-//! path ([`crate::Probe::feed_scte35_section`]) — anything already published
+//! path ([`crate::scte35::check_section`]) — anything already published
 //! into a [`media_plane::Trunk`]'s event log as a
 //! [`timed_metadata::TimedEvent`] was, by construction, already parsed
 //! successfully by whoever wrote it there, so
