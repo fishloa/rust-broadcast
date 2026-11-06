@@ -28,23 +28,14 @@ const KEY: [u8; 16] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 ];
 
-fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264/main.ts")
-}
-
-fn clear_video_media() -> Option<Media> {
-    let path = fixture_path();
-    if !path.exists() {
-        return None;
-    }
-    let bytes = std::fs::read(&path).unwrap();
-    let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(bytes.as_slice()).expect("demux");
-    Some(
-        media
-            .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-            .expect("avc"),
-    )
+fn clear_video_media() -> Media {
+    let bytes = test_fixtures::read("ts/h264/main.ts");
+    let media = transmux::TsDemux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux");
+    media
+        .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("avc")
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -127,9 +118,7 @@ fn ffmpeg_try_decrypt(
 /// `cbcs` fails this test and tells us to update the interop table.
 #[test]
 fn ffmpeg_cannot_decrypt_cbcs() {
-    let Some(media) = clear_video_media() else {
-        return;
-    };
+    let media = clear_video_media();
 
     for (tag, constant_iv_senc) in [
         ("emit", ConstantIvSenc::Emit),
