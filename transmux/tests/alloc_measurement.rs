@@ -42,7 +42,6 @@
 
 #![cfg(feature = "cenc")]
 
-use std::path::PathBuf;
 use test_alloc::ThreadCounting;
 
 use broadcast_common::{Encrypt, Unpackage};
@@ -66,27 +65,15 @@ fn snapshot_counters() -> (usize, usize, usize) {
     (s.allocs, s.bytes, s.deallocs)
 }
 
-fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264/main.ts")
-}
-
 /// The real cleartext H.264 capture (same fixture `cenc_encrypt.rs`'s unit
-/// tests use), narrowed to its single AVC video track. `None` if the fixture
-/// is absent (skip cleanly, matching the other CENC test files' convention).
-fn clear_video_media() -> Option<Media> {
-    let path = fixture_path();
-    if !path.exists() {
-        eprintln!("alloc_measurement: SKIPPED — {path:?} not found.");
-        return None;
-    }
-    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+/// tests use), narrowed to its single AVC video track.
+fn clear_video_media() -> Media {
+    let bytes = test_fixtures::read("ts/h264/main.ts");
     let mut demux = TsDemux::new();
     let media = demux.unpackage(bytes.as_slice()).expect("demux main.ts");
-    Some(
-        media
-            .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-            .expect("AVC video track present"),
-    )
+    media
+        .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("AVC video track present")
 }
 
 const KID: [u8; 16] = [
@@ -138,9 +125,7 @@ const CENC_MEASURED_DEALLOCS: usize = 43;
 /// regression is actually caught rather than merely reported.
 #[test]
 fn cenc_encrypt_allocation_count_over_real_fixture() {
-    let Some(mut media) = clear_video_media() else {
-        return;
-    };
+    let mut media = clear_video_media();
     let sample_count = media.tracks[0].samples.len();
     assert!(sample_count > 1, "fixture must carry more than one sample");
     // Total cleartext payload size across every sample of the track, captured
@@ -223,9 +208,7 @@ const CBCS_MEASURED_DEALLOCS: usize = 40;
 /// through `cenc_crypto::cbcs_sample` with its own subsample walk.
 #[test]
 fn cbcs_encrypt_allocation_count_over_real_fixture() {
-    let Some(mut media) = clear_video_media() else {
-        return;
-    };
+    let mut media = clear_video_media();
     let sample_count = media.tracks[0].samples.len();
     let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
 
@@ -280,67 +263,9 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The `Bytes` capability side (media plane step 2b): `Bytes::clone` is a
-// refcount bump and `Bytes::slice` shares the buffer without copying. These
-// are the capabilities `Sample.data` moved off `Vec<u8>` to gain — confirmed
-// here by `Bytes::as_ptr()` identity (same buffer, not merely equal content)
-// and the same counting allocator the encrypt-path regression numbers above
-// use.
-//
-// IMPORTANT — this proves the capability, not that transmux exploits it yet:
-// - No production fan-out path exists yet (the Trunk isn't built).
-// - The production RTP packetiser does NOT use it: `rtp.rs:323`
-//   (`packetise_video`) returns `Vec<Vec<u8>>`, built by copying
-//   (`pkt.extend_from_slice(nal)` at `rtp.rs:365,488-489,540` and
-//   `payload[off..end].to_vec()` at `rtp.rs:905,996`), and `rtp_stream.rs:365`
-//   does `rtp_packet.to_vec()`. `grep -rn "\.slice(" transmux/src/` currently
-//   returns zero matches — every production copy point above is real.
-//   Issue #777 tracks converting the packetiser to `Bytes::slice` for a
-//   genuinely zero-copy egress path.
-// ---------------------------------------------------------------------------
-
-/// Cloning a sample's `Bytes` to fan it out to N consumers (WHEP, RTMP-out,
-/// SRT-out, loudness, DVR, catch-up — media plane §1) allocates zero payload
-/// bytes and every clone shares the identical underlying buffer. This
-/// measures a capability `Bytes` provides; no production fan-out path
-/// consumes it yet (the Trunk isn't built) — see the section header above.
-#[test]
-fn bytes_clone_shares_buffer_enabling_zero_copy_fan_out() {
-    let Some(media) = clear_video_media() else {
-        return;
-    };
-    let sample = &media.tracks[0].samples[0];
-    assert!(!sample.data.is_empty(), "sample must carry payload bytes");
-    let original_ptr = sample.data.as_ptr();
-
-    const N_CONSUMERS: usize = 6;
-    let mut fanned_out: Vec<bytes::Bytes> = Vec::with_capacity(N_CONSUMERS);
-
-    reset_counters();
-    for _ in 0..N_CONSUMERS {
-        fanned_out.push(sample.data.clone());
-    }
-    let (allocs, alloc_bytes, _deallocs) = snapshot_counters();
-
-    eprintln!(
-        "MEASUREMENT fan_out: consumers={N_CONSUMERS} allocs={allocs} alloc_bytes={alloc_bytes}"
-    );
-
-    for (i, clone) in fanned_out.iter().enumerate() {
-        assert_eq!(
-            clone.as_ptr(),
-            original_ptr,
-            "consumer {i}'s clone must share the original buffer, not copy it"
-        );
-        assert_eq!(clone.len(), sample.data.len());
-    }
-    assert_eq!(
-        allocs, 0,
-        "fanning a sample out to {N_CONSUMERS} consumers must allocate zero payload bytes \
-         (got {allocs} allocations, {alloc_bytes} bytes)"
-    );
-}
+// The production RTP packetiser copies: `packetise_video` builds each packet
+// with `extend_from_slice`/`to_vec`, and `Bytes::slice` is not used in
+// `transmux/src/`. Issue #777 tracks a genuinely zero-copy egress path.
 
 /// The production RTP packetiser (issue #777) — feed the real fixture's
 /// H.264 track through the production `packetise_video` (the same code
@@ -361,9 +286,7 @@ const RTP_MEASURED_ALLOC_BYTES: usize = 9_632;
 
 #[test]
 fn rtp_packetiser_allocates_zero_payload_bytes() {
-    let Some(media) = clear_video_media() else {
-        return;
-    };
+    let media = clear_video_media();
     let sample_count = media.tracks[0].samples.len();
     assert!(sample_count > 1, "fixture must carry more than one sample");
     let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
@@ -419,9 +342,7 @@ fn rtp_packetiser_allocates_zero_payload_bytes() {
 /// show a large per-packet jump.
 #[test]
 fn rtp_packetiser_per_packet_cost_is_independent_of_payload_size() {
-    let Some(media) = clear_video_media() else {
-        return;
-    };
+    let media = clear_video_media();
 
     use transmux::media::Track;
 
