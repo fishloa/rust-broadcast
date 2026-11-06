@@ -23,10 +23,10 @@
 
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
-use std::process::Child;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use test_bounded::KillOnDrop;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::{HandshakeConfig, RejectionReason};
@@ -46,19 +46,6 @@ const IDLE_WINDOW: Duration = Duration::from_secs(4);
 
 fn pattern(n: usize, seed: u8) -> Vec<u8> {
     (0..n).map(|i| seed.wrapping_add(i as u8)).collect()
-}
-
-/// Kills the wrapped child on drop (panic, early `?`, or a `tokio::time::timeout`
-/// dropping the future all count) — a plain `.kill()` at the end of the async
-/// block is skipped by any of those paths, leaking a real `srt-live-transmit`
-/// process that then spins retrying forever.
-struct KillOnDrop(Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 /// A libsrt listener forwarding to a UDP discard socket this test reads;

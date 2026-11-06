@@ -40,6 +40,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
+use test_bounded::tool_available;
 
 use axum::Router;
 use axum::response::IntoResponse;
@@ -91,13 +92,6 @@ fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
 }
 
 // ── External-tool availability + oracle helpers (mirrors transmux's) ───────
-
-fn ffprobe_available() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .output()
-        .is_ok_and(|o| o.status.success())
-}
 
 macro_rules! skip_unless {
     ($cond:expr, $why:expr) => {
@@ -295,7 +289,7 @@ async fn start_ll_origin(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ll_hls_client_reference_reconstructs_decodable_stream() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     let src_probe = ffprobe_json(&fixture_path());
 
@@ -401,7 +395,7 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
 
 #[test]
 fn dropped_sample_changes_the_decoded_frame_count() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     let (spec, fed_samples) = real_video_track_and_samples();
     let full_count = fed_samples.len();
@@ -458,7 +452,7 @@ fn dropped_sample_changes_the_decoded_frame_count() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn non_ll_full_segment_path_also_decodes() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     let src_probe = ffprobe_json(&fixture_path());
     let (spec, fed_samples) = real_video_track_and_samples();
@@ -623,7 +617,7 @@ async fn non_ll_full_segment_path_also_decodes() {
 /// mis-flushed period shows up here as a container `ffprobe` cannot decode.
 #[test]
 fn dvr_period_file_from_real_samples_replays_decodably() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
     use multimux::dvr::{ArchiveOverrunSerde, DvrConfig, DvrRecorder};

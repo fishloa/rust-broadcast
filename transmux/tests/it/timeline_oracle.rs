@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use test_bounded::tool_available;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
@@ -60,16 +61,9 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-fn ffprobe_available() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .output()
-        .is_ok_and(|o| o.status.success())
-}
-
 /// ffprobe `start_time` (seconds) per `codec_type` of `path`.
 fn ffprobe_start_times(path: &std::path::Path) -> Option<(f64, f64)> {
-    if !ffprobe_available() {
+    if !tool_available("ffprobe", "-version") {
         eprintln!("SKIP ffprobe cross-check: ffprobe not on PATH");
         return None;
     }

@@ -1,8 +1,8 @@
 #![cfg(all(feature = "tokio", feature = "crypto"))]
 
 use std::net::SocketAddr;
-use std::process::Child;
 use std::time::Duration;
+use test_bounded::KillOnDrop;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::{CryptoConfig, HandshakeConfig};
@@ -20,14 +20,6 @@ const SALT: [u8; 16] = [0x11u8; 16];
 
 fn pattern(n: usize, seed: u8) -> Vec<u8> {
     (0..n).map(|i| seed.wrapping_add(i as u8)).collect()
-}
-
-struct KillOnDrop(Child);
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 fn crypto_config(passphrase: &str, key_len: usize) -> HandshakeConfig {

@@ -4,6 +4,7 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
+use test_bounded::tool_available;
 
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
@@ -279,14 +280,6 @@ fn every_video_variant_on_a_ts_origin_carries_frame_rate() {
             "{fixture}"
         );
     }
-}
-
-fn tool_available(tool: &str, arg: &str) -> bool {
-    std::process::Command::new(tool)
-        .arg(arg)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 #[test]

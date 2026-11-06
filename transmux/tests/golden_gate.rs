@@ -35,6 +35,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use test_bounded::tool_available;
 
 use serde_json::Value;
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
@@ -58,14 +59,6 @@ fn scratch_dir(name: &str) -> PathBuf {
 }
 
 // ── External-tool availability gate ─────────────────────────────────────────
-
-/// True if `ffprobe -version` runs successfully on `PATH`.
-fn ffprobe_available() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .output()
-        .is_ok_and(|o| o.status.success())
-}
 
 /// True if `ffprobe -demuxers` lists a demuxer whose comma-separated short
 /// name list contains exactly `name` (e.g. `"dash"`, `"hls"`).
@@ -239,7 +232,7 @@ fn assert_matches_source(src_probe: &Value, out_probe: &Value, what: &str) {
 
 #[test]
 fn ts_to_cmaf_ffprobe_validated() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     let ts = ts_fixture();
     let src_probe = {
@@ -276,7 +269,7 @@ fn ts_to_cmaf_ffprobe_validated() {
 
 #[test]
 fn ts_to_progressive_mp4_ffprobe_validated() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     let ts = ts_fixture();
     let src_probe = {
@@ -316,7 +309,7 @@ fn ts_to_progressive_mp4_ffprobe_validated() {
 
 #[test]
 fn ts_to_ts_hls_segment_and_playlist_ffprobe_validated() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     let ts = ts_fixture();
     let src_probe = {
@@ -380,7 +373,7 @@ fn ts_to_ts_hls_segment_and_playlist_ffprobe_validated() {
 
 #[test]
 fn ts_to_dash_mpd_validated() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     let ts = ts_fixture();
     let src_probe = {
@@ -543,7 +536,7 @@ fn ts_to_dash_mpd_validated() {
 /// the harness's own self-test — it does not touch the library.
 #[test]
 fn mutated_cmaf_output_fails_the_gate() {
-    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+    skip_unless!(tool_available("ffprobe", "-version"), "ffprobe not on PATH");
 
     let ts = ts_fixture();
     let out = run_bytes(

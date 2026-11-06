@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use test_bounded::tool_available;
 
 use axum::Router;
 use axum::body::Body;
@@ -225,14 +226,6 @@ async fn init_bytes(app: &Router) -> Vec<u8> {
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
-}
-
-fn tool_available(tool: &str, arg: &str) -> bool {
-    std::process::Command::new(tool)
-        .arg(arg)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 async fn master_text(app: &Router) -> String {

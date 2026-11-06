@@ -11,6 +11,7 @@
 //! `ir2 = TsDemux(ts2)`.
 
 use broadcast_common::{Package, Serialize, Unpackage};
+use test_bounded::tool_available;
 use transmux::TrackId;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
@@ -757,14 +758,6 @@ fn too_many_elementary_streams_is_refused() {
 
 // ── Test 10 — independent oracle on the AUD-bearing output (audit fix wave 2) ──
 
-fn have_tool(tool: &str, arg: &str) -> bool {
-    std::process::Command::new(tool)
-        .arg(arg)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// Run `ffprobe -count_frames` and return the video frame count.
 fn ffprobe_video_frames(path: &std::path::Path) -> u64 {
     let out = std::process::Command::new("ffprobe")
@@ -810,7 +803,7 @@ fn ffprobe_aud_frames(path: &std::path::Path) -> usize {
 /// independent judge of both the frame count and the split.
 #[test]
 fn aud_output_matches_source_frame_count_and_delimits_every_au() {
-    if !have_tool("ffprobe", "-version") {
+    if !tool_available("ffprobe", "-version") {
         eprintln!("SKIP ts_mux AUD oracle: ffprobe not on PATH");
         return;
     }
@@ -908,7 +901,7 @@ fn re_muxing_an_aud_bearing_ts_does_not_duplicate_the_aud() {
 /// no PCR repetition/discontinuity errors on the muxed output.
 #[test]
 fn muxed_ts_pcr_passes_tsanalyze() {
-    if !have_tool("tsanalyze", "--version") {
+    if !tool_available("tsanalyze", "--version") {
         eprintln!("SKIP ts_mux PCR oracle: tsanalyze not on PATH");
         return;
     }

@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use test_bounded::tool_available;
 
 use axum::Router;
 use axum::body::Body;
@@ -170,14 +171,6 @@ async fn ok(app: &Router, path: &str) -> Vec<u8> {
     let (status, body) = get(app, path).await;
     assert_eq!(status, StatusCode::OK, "GET {path}");
     body
-}
-
-fn tool_available(tool: &str, arg: &str) -> bool {
-    std::process::Command::new(tool)
-        .arg(arg)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 async fn master_text(app: &Router) -> String {

@@ -21,8 +21,8 @@
 #![cfg(feature = "tokio")]
 
 use std::net::SocketAddr;
-use std::process::Child;
 use std::time::Duration;
+use test_bounded::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{IoConfig, SrtSocket};
@@ -52,17 +52,6 @@ fn patient_io() -> IoConfig {
 
 fn pattern(n: usize, seed: u8) -> Vec<u8> {
     (0..n).map(|i| seed.wrapping_add(i as u8)).collect()
-}
-
-/// Kills the wrapped child on drop (panic, early return, or a timeout
-/// dropping the future) so a real `srt-live-transmit` is never leaked.
-struct KillOnDrop(Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 /// libsrt rendezvous URI: its remote is `peer_port`, its own bound port
