@@ -824,13 +824,7 @@ impl<'a> DataField<'a> {
     /// Parse a PES data field from `data`: the `data_identifier` byte then a
     /// run of data units until the buffer is exhausted.
     pub fn parse(data: &'a [u8]) -> Result<Self> {
-        if data.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "data_identifier",
-            });
-        }
+        need_in(data, 1, "data_identifier")?;
         let data_identifier = data[0];
         let mut data_units = Vec::new();
         let mut off = 1;
