@@ -20,9 +20,10 @@
 //!   is a packager convention, **not** a formal Apple specification.
 //! - **DRM system-ID UUIDs** — `private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md` §1 (DASH-IF registry).
 
-#[cfg(feature = "std")]
 use alloc::string::String;
 use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use broadcast_common::error::InvalidValue;
 
 use crate::cenc::ProtectionSystemSpecificHeaderBox;
 use crate::error::{Error, Result};
@@ -354,11 +355,11 @@ pub fn fairplay_pssh(skd_uri: &str) -> ProtectionSystemSpecificHeaderBox {
 pub fn playready_kid_value_decode(value: &str) -> Result<[u8; 16]> {
     let bytes = base64_decode(value)?;
     if bytes.len() != 16 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "playready KID VALUE",
             value: bytes.len() as u64,
             reason: "expected 16 decoded bytes",
-        });
+        }));
     }
     let mut out = [0u8; 16];
     out.copy_from_slice(&bytes);

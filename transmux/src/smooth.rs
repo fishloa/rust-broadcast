@@ -40,6 +40,7 @@ use crate::TrackId;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::timescale::{Rounding, rescale_i64, rescale_u64};
@@ -771,10 +772,12 @@ fn smooth_timeline(
                 Some(&next) if next >= start => next,
                 _ => own_end,
             };
-            let duration = u32::try_from(end - start).map_err(|_| Error::InvalidValue {
-                field: "trun sample_duration",
-                value: end - start,
-                reason: "exceeds 32 bits in the 10 MHz Smooth timescale",
+            let duration = u32::try_from(end - start).map_err(|_| {
+                Error::InvalidValue(InvalidValue {
+                    field: "trun sample_duration",
+                    value: end - start,
+                    reason: "exceeds 32 bits in the 10 MHz Smooth timescale",
+                })
             })?;
             let cto = rescale_i64(
                 i64::from(s.composition_offset()),
@@ -782,10 +785,12 @@ fn smooth_timeline(
                 SMOOTH_TIMESCALE,
                 Rounding::Nearest,
             );
-            let composition_offset = i32::try_from(cto).map_err(|_| Error::InvalidValue {
-                field: "trun sample_composition_time_offset",
-                value: cto.unsigned_abs(),
-                reason: "exceeds 32 bits in the 10 MHz Smooth timescale",
+            let composition_offset = i32::try_from(cto).map_err(|_| {
+                Error::InvalidValue(InvalidValue {
+                    field: "trun sample_composition_time_offset",
+                    value: cto.unsigned_abs(),
+                    reason: "exceeds 32 bits in the 10 MHz Smooth timescale",
+                })
             })?;
             Ok(SmoothSampleTime {
                 start,
@@ -843,10 +848,12 @@ fn build_smooth_fragment(
     let mdat_header =
         BoxHeader::for_payload(BoxType::from_bytes(*b"mdat"), None, mdat_payload_len).header_size();
     let mdat_start = moof_size + mdat_header;
-    let data_offset = i32::try_from(mdat_start).map_err(|_| Error::InvalidValue {
-        field: "trun data_offset",
-        value: mdat_start as u64,
-        reason: "moof too large for the signed 32-bit trun data_offset",
+    let data_offset = i32::try_from(mdat_start).map_err(|_| {
+        Error::InvalidValue(InvalidValue {
+            field: "trun data_offset",
+            value: mdat_start as u64,
+            reason: "moof too large for the signed 32-bit trun data_offset",
+        })
     })?;
     moof.traf[0].trun[0].data_offset = Some(data_offset);
 
@@ -903,10 +910,12 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
 
     // Patch moof and traf sizes; both were written in the compact 32-bit form,
     // which has no room for a `largesize` (§4.2), so a size past u32 is refused.
-    let too_big = |size: usize| Error::InvalidValue {
-        field: "moof/traf box size",
-        value: size as u64,
-        reason: "exceeds the 32-bit box size of the serialized moof",
+    let too_big = |size: usize| {
+        Error::InvalidValue(InvalidValue {
+            field: "moof/traf box size",
+            value: size as u64,
+            reason: "exceeds the 32-bit box size of the serialized moof",
+        })
     };
     let new_moof_size = u32::try_from(out.len()).map_err(|_| too_big(out.len()))?;
     out[0..4].copy_from_slice(&new_moof_size.to_be_bytes());

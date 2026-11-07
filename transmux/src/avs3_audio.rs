@@ -26,6 +26,7 @@ use crate::bitreader::write_bits_checked;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{fit_u16, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -38,11 +39,11 @@ pub const AV3A_FOURCC: [u8; 4] = *b"av3a";
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 
 fn short(what: &'static str) -> Error {
-    Error::BufferTooShort {
+    Error::BufferTooShort(BufferTooShort {
         need: 0,
         have: 0,
         what,
-    }
+    })
 }
 
 /// `content_type` (4 bits) and its dependent fields — A.4.2.1 / Table A.2.
@@ -346,11 +347,11 @@ fn parse_ll(r: &mut BitReader<'_>) -> Result<Avs3AudioLlConfig> {
 impl<'a> Parse<'a> for Ca3SpecificBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let first = *bytes.first().ok_or(Error::BufferTooShort {
+        let first = *bytes.first().ok_or(Error::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,
             what: "dca3 body",
-        })?;
+        }))?;
         let id = first >> 4;
         let mut r = BitReader::new(bytes);
         r.skip_bits(4).map_err(|_| short("dca3 body"))?;
@@ -700,12 +701,12 @@ mod tests {
         assert_eq!(b.config.audio_codec_id(), 7);
         assert!(matches!(
             Ca3SpecificBox::parse(&[]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(
             matches!(
                 Ca3SpecificBox::parse(&[0x22, 0x20]),
-                Err(crate::error::Error::BufferTooShort { .. })
+                Err(crate::error::Error::BufferTooShort(..))
             ),
             "truncated GA config"
         );

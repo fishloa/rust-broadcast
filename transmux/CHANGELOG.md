@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `WebmDemux` reports an `Info` whose `TimestampScale` is 0 or does not fit an `i64` as a malformed unit (the default scale then applies) instead of applying it: 0 collapsed every pts to 0 and values of 2^63 or more made pts negative (c5 R5-2).
 ### Changed
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` and `InvalidValue` now wrap `broadcast_common::error::{BufferTooShort, OutputBufferTooSmall, InvalidValue}` (`Error::BufferTooShort(e)`); the hand-written `From` impls are replaced by `#[from]`. `OutputBufferTooSmall` and `InvalidValue` display with the shared message text. `FieldOverflow` now names the `broadcast_common::error` path (same type).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The `stco`, `co64`, `stss` parse and all six flat FullBox table serializers (`stco`, `co64`, `stss`, `stts`, `ctts`, `elst`) go through one `parse_flat_table` / `serialize_flat_table`; `stts`/`ctts`/`elst` keep their own `parse_body` (they report a truncated entry as an error, the others a count check) (c3 d:ST1).
 - The in-crate test bit writers of `slice_header` and `display_track`, and the `hdr10plus` integration test, use one `BitWriter` (`test_bits.rs`, `tests/it/support/bit_writer.rs`) (c3 d:L2).
@@ -35,7 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `vvcC` writer no longer indexes the output buffer directly: a short buffer or a short `general_constraint_info` is a typed `BufferTooShort` instead of a panic (c2 M4).
 
 ### Added
-- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 - `CodecConfig::name()`: one label per codec family (c4 D3); `flv` and `mkv_mux` unsupported-codec errors use it, so MPEG-H, MPEG-2 video and MPEG audio read `MPEG-H 3D Audio`, `MPEG-2 Video`, `MPEG-1/2 Audio` and a subtitle track `Subtitle` in both.
 - `box_types::clamped_boxes` / `ClampedBox`: a tolerant top-level box walk that clamps a truncated tail to the buffer end; `frag_offsets::mdat_ranges` and the hls-runtime iframe helpers use it instead of three private copies (c3 d:B1).
 

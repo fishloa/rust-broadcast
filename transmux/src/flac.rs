@@ -8,6 +8,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -82,11 +83,11 @@ impl<'a> Parse<'a> for FlacSpecificBox {
             // round trip would silently stop being byte-identical.
             let data_end = data_start.checked_add(length).filter(|&e| e <= bytes.len());
             let Some(data_end) = data_end else {
-                return Err(Error::BufferTooShort {
+                return Err(Error::BufferTooShort(BufferTooShort {
                     need: data_start + length,
                     have: bytes.len(),
                     what: "dfLa metadata block",
-                });
+                }));
             };
             blocks.push(FlacMetadataBlock {
                 last,
@@ -104,11 +105,11 @@ impl<'a> Parse<'a> for FlacSpecificBox {
         match blocks.first() {
             Some(b) if b.block_type == BLOCK_TYPE_STREAMINFO => {}
             other => {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "dfLa first metadata block",
                     value: other.map_or(u64::MAX, |b| b.block_type as u64),
                     reason: "the first FLAC metadata block must be STREAMINFO (type 0)",
-                });
+                }));
             }
         }
         Ok(Self {
@@ -150,6 +151,8 @@ impl Serialize for FlacSpecificBox {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::{BufferTooShort, InvalidValue};
+
     use super::*;
 
     /// A metadata block of 16 MiB (2^24) cannot fit the 24-bit
@@ -213,11 +216,11 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::BufferTooShort {
+                Error::BufferTooShort(BufferTooShort {
                     need: 42,
                     have: 12,
                     ..
-                }
+                })
             ),
             "expected BufferTooShort for the truncated block, got {err:?}"
         );
@@ -236,11 +239,11 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "dfLa first metadata block",
                     value: 1,
                     ..
-                }
+                })
             ),
             "expected InvalidValue naming block type 1, got {err:?}"
         );

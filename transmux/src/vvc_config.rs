@@ -73,6 +73,7 @@ use crate::sps::rfc6381_vvc1;
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::bits::BitWriter;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
@@ -345,11 +346,11 @@ impl<'a> Parse<'a> for VvcDecoderConfigurationRecord {
         let _reserved0 = r.bits(5, "vvcC reserved")?;
         let length_size_minus_one = r.bits(2, "LengthSizeMinusOne")? as u8;
         if !Self::is_valid_length_size(length_size_minus_one) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "LengthSizeMinusOne",
                 value: length_size_minus_one as u64,
                 reason: "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2022 §11.3.2.1)",
-            });
+            }));
         }
         let ptl_present = r.flag("ptl_present_flag")?;
 
@@ -448,11 +449,11 @@ impl VvcDecoderConfigurationRecord {
         if let Some(ptl) = &self.ptl {
             let want = usize::from(ptl.num_bytes_constraint_info);
             if ptl.general_constraint_info.len() < want {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "general_constraint_info",
                     value: ptl.general_constraint_info.len() as u64,
                     reason: "shorter than num_bytes_constraint_info",
-                });
+                }));
             }
         }
         Ok(())
@@ -800,11 +801,11 @@ impl<'a> VvcBitReader<'a> {
         let start = self.bit_pos / 8;
         let end = start + len;
         if end > self.data.len() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: end,
                 have: self.data.len(),
                 what,
-            });
+            }));
         }
         self.bit_pos += len * 8;
         Ok(self.data[start..end].to_vec())
@@ -840,11 +841,13 @@ impl<'a> VvcBitWriter<'a> {
     /// `bits_bytes` writes back identically.
     fn bits_from_bytes(&mut self, data: &[u8], n: usize) -> Result<()> {
         for i in 0..n {
-            let byte = data.get(i / 8).ok_or(Error::BufferTooShort {
-                need: n.div_ceil(8),
-                have: data.len(),
-                what: "general_constraint_info",
-            })?;
+            let byte = data
+                .get(i / 8)
+                .ok_or(Error::BufferTooShort(BufferTooShort {
+                    need: n.div_ceil(8),
+                    have: data.len(),
+                    what: "general_constraint_info",
+                }))?;
             self.bits(u64::from((byte >> (7 - (i % 8))) & 1), 1)?;
         }
         Ok(())
@@ -879,6 +882,8 @@ impl<'a> VvcBitWriter<'a> {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::{BufferTooShort, InvalidValue};
+
     use super::*;
     use broadcast_common::{Parse, Serialize};
 
@@ -1093,19 +1098,19 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         };
         assert!(matches!(
             record.try_to_bytes(),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "general_constraint_info",
                 ..
-            })
+            }))
         ));
         // And through the box path.
         let boxed = VvcConfigurationBox::new(record);
         assert!(matches!(
             boxed.try_to_bytes(),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "general_constraint_info",
                 ..
-            })
+            }))
         ));
     }
 
@@ -1155,7 +1160,7 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
             let mut buf = alloc::vec![0u8; short];
             let mut w = VvcBitWriter::new(&mut buf);
             assert!(
-                matches!(write_ptl(&mut w, &ptl), Err(Error::BufferTooShort { .. })),
+                matches!(write_ptl(&mut w, &ptl), Err(Error::BufferTooShort(..))),
                 "{short}-byte buffer for a {len}-byte PTL"
             );
         }
@@ -1174,10 +1179,10 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         let mut w = VvcBitWriter::new(&mut buf);
         assert!(matches!(
             write_ptl(&mut w, &ptl),
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 what: "general_constraint_info",
                 ..
-            })
+            }))
         ));
     }
 }

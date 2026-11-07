@@ -180,7 +180,7 @@ fn hevc_sps_truncated_returns_error() {
     let truncated: &[u8] = &[0x42, 0x01, 0x00];
     let result = decode_hevc_sps(truncated);
     assert!(
-        matches!(result, Err(transmux::error::Error::BufferTooShort { .. })),
+        matches!(result, Err(transmux::error::Error::BufferTooShort(..))),
         "decode_hevc_sps on a truncated NAL must return Err, got: {result:?}"
     );
 }
@@ -190,7 +190,7 @@ fn hevc_sps_truncated_returns_error() {
 fn hevc_sps_too_short_returns_error() {
     let result = decode_hevc_sps(&[0x42]);
     assert!(
-        matches!(result, Err(transmux::error::Error::BufferTooShort { .. })),
+        matches!(result, Err(transmux::error::Error::BufferTooShort(..))),
         "one-byte input must return Err (need at least 2 bytes for HEVC NAL header)"
     );
 }

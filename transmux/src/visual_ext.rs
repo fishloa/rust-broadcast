@@ -15,6 +15,7 @@
 //! `no_std` + `alloc`.
 
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -298,11 +299,11 @@ impl Serialize for ColourInformationBox {
             // colour type, so a missing `nclx` must be an error — otherwise the
             // box is written 7 bytes short of its declared length (r04-W39).
             let Some(nclx) = &self.nclx else {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "colr nclx",
                     value: 0,
                     reason: "colour_type is nclx but no nclx params are set",
-                });
+                }));
             };
             buf[c..c + 2].copy_from_slice(&nclx.colour_primaries.to_be_bytes());
             c += 2;
@@ -327,6 +328,8 @@ impl Serialize for ColourInformationBox {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
     use broadcast_common::Serialize;
 
@@ -524,10 +527,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "colr nclx",
                     ..
-                }
+                })
             ),
             "expected InvalidValue for the missing nclx params, got {err:?}"
         );

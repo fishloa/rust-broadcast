@@ -50,6 +50,7 @@
 use crate::TrackId;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 
@@ -683,11 +684,13 @@ fn declared_lace_count(payload: &[u8], flags: u8) -> Result<usize> {
     if flags & BLOCK_FLAG_LACING_MASK == 0 {
         return Ok(1);
     }
-    let count = payload.first().ok_or(Error::BufferTooShort {
-        need: 1,
-        have: 0,
-        what: "webm laced block frame count",
-    })?;
+    let count = payload
+        .first()
+        .ok_or(Error::BufferTooShort(BufferTooShort {
+            need: 1,
+            have: 0,
+            what: "webm laced block frame count",
+        }))?;
     Ok(usize::from(*count) + 1)
 }
 
@@ -711,11 +714,11 @@ fn unlace(payload: &[u8], flags: u8) -> Result<Vec<Vec<u8>>> {
     }
     // Laced blocks begin with the frame count minus one.
     let Some((&count_minus_one, rest)) = payload.split_first() else {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,
             what: "webm laced block frame count",
-        });
+        }));
     };
     let frame_count = usize::from(count_minus_one) + 1;
     if frame_count > MAX_LACED_FRAMES {
@@ -734,11 +737,11 @@ fn unlace(payload: &[u8], flags: u8) -> Result<Vec<Vec<u8>>> {
                 let mut size = 0usize;
                 loop {
                     let Some((&byte, tail)) = body.split_first() else {
-                        return Err(Error::BufferTooShort {
+                        return Err(Error::BufferTooShort(BufferTooShort {
                             need: 1,
                             have: 0,
                             what: "webm Xiph lace size",
-                        });
+                        }));
                     };
                     body = tail;
                     size = size
@@ -1179,19 +1182,19 @@ fn vp8_config(first_frame: &[u8]) -> Result<CodecConfig> {
     need_in(first_frame, VP8_KEYFRAME_HEADER_LEN, "VP8 key-frame header")?;
     // Frame tag is 24-bit little-endian; bit [0] of byte 0 is `key_frame`.
     if first_frame[0] & VP8_KEYFRAME_TAG_BIT != 0 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "VP8 key_frame",
             value: (first_frame[0] & VP8_KEYFRAME_TAG_BIT) as u64,
             reason: "first VP8 frame is not a key frame (key_frame bit != 0)",
-        });
+        }));
     }
     let start = &first_frame[VP8_FRAME_TAG_LEN..VP8_FRAME_TAG_LEN + VP8_START_CODE.len()];
     if start != VP8_START_CODE {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "VP8 start code",
             value: u32::from_be_bytes([0, start[0], start[1], start[2]]) as u64,
             reason: "VP8 key-frame start code is not 0x9D012A",
-        });
+        }));
     }
     let d = VP8_FRAME_TAG_LEN + VP8_START_CODE.len();
     let width = u16::from_le_bytes([first_frame[d], first_frame[d + 1]]) & VP8_DIMENSION_MASK;
@@ -1213,11 +1216,11 @@ fn vorbis_config(info: &TrackInfo) -> Result<CodecConfig> {
     // Identification header: packet-type(1) + "vorbis"(6) signature.
     need_in(id, VORBIS_ID_MIN_LEN, "Vorbis identification header")?;
     if id[0] != VORBIS_ID_HEADER_TYPE {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "Vorbis header packet type",
             value: id[0] as u64,
             reason: "first Vorbis header is not the identification header (type 0x01)",
-        });
+        }));
     }
     if &id[1..1 + VORBIS_SIGNATURE.len()] != VORBIS_SIGNATURE {
         return Err(Error::InvalidInput(
@@ -1249,21 +1252,21 @@ fn vorbis_config(info: &TrackInfo) -> Result<CodecConfig> {
 fn vorbis_id_header(cp: &[u8]) -> Result<&[u8]> {
     need_in(cp, 1, "Vorbis CodecPrivate (Xiph lacing count)")?;
     if cp[0] != VORBIS_LACE_COUNT {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "Vorbis CodecPrivate lacing count",
             value: cp[0] as u64,
             reason: "expected numPackets-1 == 2 (three Xiph-laced Vorbis headers)",
-        });
+        }));
     }
     let mut pos = 1usize;
     let mut lengths = [0usize; 2];
     for len in lengths.iter_mut() {
         loop {
-            let b = *cp.get(pos).ok_or(Error::BufferTooShort {
+            let b = *cp.get(pos).ok_or(Error::BufferTooShort(BufferTooShort {
                 need: pos + 1,
                 have: cp.len(),
                 what: "Vorbis CodecPrivate Xiph lacing length",
-            })?;
+            }))?;
             pos += 1;
             *len += b as usize;
             if b != 0xFF {
@@ -1276,11 +1279,11 @@ fn vorbis_id_header(cp: &[u8]) -> Result<&[u8]> {
     let id_end = id_start
         .checked_add(lengths[0])
         .filter(|&e| e <= cp.len())
-        .ok_or(Error::BufferTooShort {
+        .ok_or(Error::BufferTooShort(BufferTooShort {
             need: id_start + lengths[0],
             have: cp.len(),
             what: "Vorbis identification header body",
-        })?;
+        }))?;
     Ok(&cp[id_start..id_end])
 }
 
@@ -1321,11 +1324,11 @@ fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
     let cp = &info.codec_private;
     need_in(cp, OPUS_HEAD_MIN_LEN, "Opus CodecPrivate (OpusHead)")?;
     if &cp[0..8] != OPUS_HEAD_MAGIC {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "OpusHead magic",
             value: u64::from_be_bytes([cp[0], cp[1], cp[2], cp[3], cp[4], cp[5], cp[6], cp[7]]),
             reason: "Opus CodecPrivate does not start with the \"OpusHead\" signature",
-        });
+        }));
     }
     // OpusHead (RFC 7845 §5.1) is little-endian; dOps is big-endian but the
     // typed OpusSpecificBox holds decoded scalar values, so byte-order is handled
@@ -1801,7 +1804,7 @@ mod tests {
         // Two frames, first lace size 0x05 but only 2 bytes follow.
         let block = [0x81u8, 0x00, 0x00, 0x02, 0x01, 0x05, 0xAA, 0xBB];
         let err = parse_block(&block, 0, DEFAULT_TIMESTAMP_SCALE_NS, true).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     /// r04-W43: an AVC `CodecPrivate` declaring 2-byte NAL lengths must have its

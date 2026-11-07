@@ -35,6 +35,7 @@
 //! `no_std` + `alloc`.
 
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
@@ -101,11 +102,11 @@ pub fn encode_ber_length(len: usize) -> Vec<u8> {
 /// where `consumed` is the number of length-encoding bytes read (never touches
 /// the value that follows).
 pub fn ber_length(bytes: &[u8]) -> Result<(usize, usize)> {
-    let first = *bytes.first().ok_or(Error::BufferTooShort {
+    let first = *bytes.first().ok_or(Error::BufferTooShort(BufferTooShort {
         need: 1,
         have: 0,
         what: "BER length first byte",
-    })?;
+    }))?;
     if first & BER_LONG_FORM_FLAG == 0 {
         // Short form: the byte is the length.
         return Ok((first as usize, 1));
@@ -113,18 +114,18 @@ pub fn ber_length(bytes: &[u8]) -> Result<(usize, usize)> {
     let n = (first & BER_LOW7_MASK) as usize;
     if n == 0 {
         // Indefinite form (0x80 alone) — not used in KLV/MISB.
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "ber_length",
             value: first as u64,
             reason: "indefinite BER length form is not permitted in KLV",
-        });
+        }));
     }
     if n > core::mem::size_of::<usize>() {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "ber_length",
             value: n as u64,
             reason: "BER long-form length exceeds usize width",
-        });
+        }));
     }
     need_in(bytes, 1 + n, "BER long-form length bytes")?;
     let mut value: usize = 0;
@@ -165,18 +166,20 @@ pub fn ber_oid(bytes: &[u8]) -> Result<(u32, usize)> {
     let mut value: u32 = 0;
     let mut consumed = 0;
     loop {
-        let b = *bytes.get(consumed).ok_or(Error::BufferTooShort {
-            need: consumed + 1,
-            have: bytes.len(),
-            what: "BER-OID tag byte",
-        })?;
+        let b = *bytes
+            .get(consumed)
+            .ok_or(Error::BufferTooShort(BufferTooShort {
+                need: consumed + 1,
+                have: bytes.len(),
+                what: "BER-OID tag byte",
+            }))?;
         // Guard against overflow of the accumulator before shifting in 7 bits.
         if value > (u32::MAX >> 7) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "ber_oid",
                 value: value as u64,
                 reason: "BER-OID tag exceeds u32 range",
-            });
+            }));
         }
         value = (value << 7) | (b & BER_LOW7_MASK) as u32;
         consumed += 1;
@@ -225,11 +228,11 @@ impl<'a> Parse<'a> for KlvItem {
         let value_end = value_start
             .checked_add(len)
             .filter(|&end| end <= bytes.len())
-            .ok_or(Error::BufferTooShort {
+            .ok_or(Error::BufferTooShort(BufferTooShort {
                 need: value_start.saturating_add(len),
                 have: bytes.len(),
                 what: "KLV item value",
-            })?;
+            }))?;
         Ok(Self {
             key,
             value: bytes[value_start..value_end].to_vec(),
@@ -309,11 +312,11 @@ fn parse_local_set_items(mut body: &[u8]) -> Result<Vec<LocalSetItem>> {
         let value_end = value_start
             .checked_add(val_len)
             .filter(|&end| end <= body.len())
-            .ok_or(Error::BufferTooShort {
+            .ok_or(Error::BufferTooShort(BufferTooShort {
                 need: value_start.saturating_add(val_len),
                 have: body.len(),
                 what: "KLV Local Set item value",
-            })?;
+            }))?;
         items.push(LocalSetItem {
             tag,
             value: body[value_start..value_end].to_vec(),
@@ -448,11 +451,11 @@ impl<'a> Parse<'a> for UasLocalSet {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let item = KlvItem::parse(bytes)?;
         if item.key != UAS_LS_KEY {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "uas_ls_key",
                 value: item.key[0] as u64,
                 reason: "not the MISB ST 0601 UAS Datalink Local Set Universal Label",
-            });
+            }));
         }
         let items = parse_local_set_items(&item.value)?;
         Ok(Self { items })
@@ -558,7 +561,7 @@ mod tests {
         bytes.extend_from_slice(&[0xFFu8; 8]);
         let err = KlvItem::parse(&bytes).expect_err("hostile BER length must be rejected");
         assert!(
-            matches!(err, Error::BufferTooShort { .. }),
+            matches!(err, Error::BufferTooShort(..)),
             "expected BufferTooShort, got {err:?}"
         );
     }
@@ -575,7 +578,7 @@ mod tests {
         packet.extend_from_slice(&value);
         let err = UasLocalSet::parse(&packet).expect_err("hostile inner BER length must fail");
         assert!(
-            matches!(err, Error::BufferTooShort { .. }),
+            matches!(err, Error::BufferTooShort(..)),
             "expected BufferTooShort, got {err:?}"
         );
     }

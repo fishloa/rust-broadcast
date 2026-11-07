@@ -23,6 +23,7 @@
 use crate::error::{Error, Result};
 use crate::sample_entries::{SampleEntryChild, VisualSampleEntryFields};
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
 use broadcast_common::len::{fit_bits, fit_u16, need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -242,20 +243,20 @@ pub(crate) fn parse_sequence_header_record(
     trailing: usize,
 ) -> Result<(u8, Vec<u8>)> {
     if bytes.len() < 3 {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: 3,
             have: bytes.len(),
             what,
-        });
+        }));
     }
     let len = usize::from(u16::from_be_bytes([bytes[1], bytes[2]]));
     let need = 3 + len + trailing;
     if bytes.len() < need {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need,
             have: bytes.len(),
             what,
-        });
+        }));
     }
     reject_trailing(bytes.len() - need, what)?;
     Ok((bytes[0], bytes[3..3 + len].to_vec()))
@@ -269,11 +270,11 @@ fn reject_trailing(extra: usize, what: &'static str) -> Result<()> {
     if extra == 0 {
         Ok(())
     } else {
-        Err(Error::InvalidValue {
+        Err(Error::InvalidValue(InvalidValue {
             field: what,
             value: extra as u64,
             reason: "trailing bytes after the configuration record",
-        })
+        }))
     }
 }
 
@@ -659,11 +660,11 @@ pub struct TemporalLayerEntry {
 impl<'a> Parse<'a> for TemporalLayerEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let b = bytes.first().ok_or(Error::BufferTooShort {
+        let b = bytes.first().ok_or(Error::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,
             what: "telg entry",
-        })?;
+        }))?;
         Ok(Self {
             temporal_layer_id: *b,
         })
@@ -678,7 +679,10 @@ impl Serialize for TemporalLayerEntry {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let slot = buf
             .first_mut()
-            .ok_or(Error::OutputBufferTooSmall { need: 1, have: 0 })?;
+            .ok_or(Error::OutputBufferTooSmall(OutputBufferTooSmall {
+                need: 1,
+                have: 0,
+            }))?;
         *slot = self.temporal_layer_id;
         Ok(1)
     }
@@ -739,11 +743,11 @@ impl VisualLrapEntry {
 impl<'a> Parse<'a> for VisualLrapEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let b0 = *bytes.first().ok_or(Error::BufferTooShort {
+        let b0 = *bytes.first().ok_or(Error::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,
             what: "lrap entry",
-        })?;
+        }))?;
         let n = usize::from((b0 >> 2) & 0x07);
         let need = 1 + n * 2;
         need_in(bytes, need, "lrap library samples")?;
@@ -851,11 +855,11 @@ mod tests {
     fn av3c_rejects_truncation_and_overlong_header() {
         assert!(matches!(
             Avs3ConfigurationBox::parse(&[1, 0]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             Avs3ConfigurationBox::parse(&[1, 0, 4, 0, 0, 1]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let mut c = Avs3ConfigurationBox::new(vec![0; 70_000], LibraryDependencyIdc::Library);
         let mut out = vec![0u8; c.serialized_len()];
@@ -909,11 +913,11 @@ mod tests {
     fn lavc_rejects_truncation_and_overwide() {
         assert!(matches!(
             LAvsConfigurationBox::parse(&[1]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             LAvsConfigurationBox::parse(&[1, 2, 0, 0, 0, 0, 0]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let mut l = LAvsConfigurationBox::new(vec![TemporalLayerInfo::new(
             8,
@@ -961,7 +965,7 @@ mod tests {
         let _: LibrarySampleGroupEntry = round_trip(&[]);
         assert!(matches!(
             VisualLrapEntry::parse(&[0x44]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let bad = VisualLrapEntry::new(8, vec![]);
         assert!(matches!(

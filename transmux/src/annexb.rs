@@ -13,6 +13,7 @@
 //! canonical and the length→Annex B→length round-trip byte-identical.
 
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
 
 use crate::error::{Error, Result};
@@ -162,20 +163,22 @@ pub fn iter_length_prefixed_nals(lp: &[u8]) -> Result<Vec<&[u8]>> {
 /// runs past the end of the buffer.
 pub fn iter_length_prefixed_nals_with(lp: &[u8], length_size: usize) -> Result<Vec<&[u8]>> {
     if !VALID_NAL_LENGTH_SIZES.contains(&length_size) {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "NAL length size",
             value: length_size as u64,
             reason: "must be 1, 2 or 4 (lengthSizeMinusOne 0/1/3; 2 is reserved)",
-        });
+        }));
     }
     let mut nals = Vec::new();
     let mut off = 0usize;
     while off < lp.len() {
-        let prefix_end = off.checked_add(length_size).ok_or(Error::BufferTooShort {
-            need: usize::MAX,
-            have: lp.len(),
-            what: "NAL length prefix",
-        })?;
+        let prefix_end =
+            off.checked_add(length_size)
+                .ok_or(Error::BufferTooShort(BufferTooShort {
+                    need: usize::MAX,
+                    have: lp.len(),
+                    what: "NAL length prefix",
+                }))?;
         need_in(lp, prefix_end, "NAL length prefix")?;
         let mut len: usize = 0;
         for &byte in &lp[off..prefix_end] {
@@ -184,11 +187,13 @@ pub fn iter_length_prefixed_nals_with(lp: &[u8], length_size: usize) -> Result<V
         let start = prefix_end;
         // As in [`iter_length_prefixed_nals`]: the length is attacker-controlled,
         // so check the addition rather than assuming 64-bit `usize`.
-        let end = start.checked_add(len).ok_or(Error::BufferTooShort {
-            need: usize::MAX,
-            have: lp.len(),
-            what: "NAL length prefix overflows the buffer offset",
-        })?;
+        let end = start
+            .checked_add(len)
+            .ok_or(Error::BufferTooShort(BufferTooShort {
+                need: usize::MAX,
+                have: lp.len(),
+                what: "NAL length prefix overflows the buffer offset",
+            }))?;
         need_in(lp, end, "NAL payload")?;
         nals.push(&lp[start..end]);
         off = end;
@@ -246,6 +251,8 @@ pub fn length_prefixed_to_annexb(lp: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
 
     #[test]
@@ -362,7 +369,7 @@ mod tests {
         let lp = [0x00, 0x00, 0x00, 0x63, 0xAA, 0xBB];
         assert!(matches!(
             iter_length_prefixed_nals(&lp),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -379,7 +386,7 @@ mod tests {
     fn length_prefixed_rejects_maximal_declared_length() {
         let lp = [0xFF, 0xFF, 0xFF, 0xFF, 0xAA, 0xBB];
         let err = iter_length_prefixed_nals(&lp).expect_err("must not be accepted");
-        assert!(matches!(err, Error::BufferTooShort { .. }), "{err:?}");
+        assert!(matches!(err, Error::BufferTooShort(..)), "{err:?}");
     }
 
     /// The same maximal length at a nonzero offset (after one well-formed NAL),
@@ -392,7 +399,7 @@ mod tests {
         ];
         assert!(matches!(
             iter_length_prefixed_nals(&lp),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -437,11 +444,11 @@ mod tests {
         let au = [0x00, 0x00, 0x04, 0xAA, 0xBB, 0xCC, 0xDD];
         assert!(matches!(
             normalise_nal_length_size(&au, 3),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "NAL length size",
                 value: 3,
                 ..
-            })
+            }))
         ));
     }
 
@@ -466,12 +473,12 @@ mod tests {
         // Declared length 0xFFFF with only 3 bytes present.
         assert!(matches!(
             normalise_nal_length_size(&[0x00, 0x00, 0xFF, 0xFF, 0xAA], 4),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         // A truncated prefix (fewer than 4 bytes at the tail).
         assert!(matches!(
             normalise_nal_length_size(&[0x00, 0x00, 0x00, 0x01, 0xAA, 0x00, 0x00], 4),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 
@@ -481,21 +488,21 @@ mod tests {
     fn normalise_rejects_hostile_input() {
         assert!(matches!(
             normalise_nal_length_size(&[0x00], 0),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             normalise_nal_length_size(&[0x00], 5),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         // Truncated 2-byte prefix (a lone byte).
         assert!(matches!(
             normalise_nal_length_size(&[0x00], 2),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         // Declared length 0xFFFF far past the buffer.
         assert!(matches!(
             normalise_nal_length_size(&[0xFF, 0xFF, 0xAA], 2),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         // A zero-length NAL is legal framing (an empty NAL), not an error.
         let out = normalise_nal_length_size(&[0x00, 0x00], 2).unwrap();
@@ -508,15 +515,15 @@ mod tests {
     fn iter_length_prefixed_with_rejects_bad_size() {
         assert!(matches!(
             iter_length_prefixed_nals_with(&[0x00], 0),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             iter_length_prefixed_nals_with(&[0x00], 3),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             iter_length_prefixed_nals_with(&[0x00], 5),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         // The three defined sizes are all accepted.
         for size in VALID_NAL_LENGTH_SIZES {

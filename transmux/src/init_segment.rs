@@ -16,6 +16,7 @@ use crate::media::TrackEncryption;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -74,11 +75,11 @@ pub(crate) fn check_entry_count(
     }
     let needed = count.saturating_mul(entry_len);
     if needed > remaining {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: remaining.saturating_add(needed),
             have: remaining,
             what,
-        });
+        }));
     }
     Ok(())
 }
@@ -93,11 +94,11 @@ pub(crate) fn parse_flat_table<E>(
     let compact = crate::box_types::compact_form(bytes)?;
     let bytes: &[u8] = &compact;
     if bytes.len() < 16 {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: 16,
             have: bytes.len(),
             what,
-        });
+        }));
     }
     let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
     let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
@@ -212,11 +213,11 @@ where
     let mut off = 0usize;
     while off < body.len() {
         if body.len() - off < MIN_BOX_HEADER {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: off + MIN_BOX_HEADER,
                 have: body.len(),
                 what: "container child header",
-            });
+            }));
         }
         let (bx, consumed) = crate::box_types::parse_box(&body[off..])?;
         let bytes = &body[off..off + consumed];
@@ -3645,11 +3646,11 @@ impl<'a> Parse<'a> for TrackBox {
             Ok(())
         })?;
         Ok(Self {
-            tkhd: tkhd.ok_or(Error::BufferTooShort {
+            tkhd: tkhd.ok_or(Error::BufferTooShort(BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "trak missing tkhd",
-            })?,
+            }))?,
             edts,
             mdia,
             opaque,
@@ -3952,11 +3953,11 @@ impl<'a> Parse<'a> for MovieBox {
             Ok(())
         })?;
         Ok(Self {
-            mvhd: mvhd.ok_or(Error::BufferTooShort {
+            mvhd: mvhd.ok_or(Error::BufferTooShort(BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "moov missing mvhd",
-            })?,
+            }))?,
             tracks,
             mvex,
             opaque,
@@ -4442,7 +4443,7 @@ mod tests {
         let err = ChunkLargeOffsetBox::parse(&body)
             .expect_err("a count the body cannot hold is malformed");
         assert!(
-            matches!(err, Error::BufferTooShort { .. }),
+            matches!(err, Error::BufferTooShort(..)),
             "expected BufferTooShort, got {err:?}"
         );
     }

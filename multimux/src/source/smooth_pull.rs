@@ -1967,7 +1967,7 @@ mod tests {
     fn discover_moof_track_id_errors_not_panics_on_garbage() {
         assert!(matches!(
             fragment_track_id(b"not a fragment at all"),
-            Err(transmux::error::Error::BufferTooShort { .. })
+            Err(transmux::error::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             fragment_track_id(&[]),

@@ -27,6 +27,7 @@
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -439,11 +440,13 @@ impl Ec3SyncframeInfo {
     /// [`Self::parse_at`].
     fn from_ac3_independent(data: &[u8], off: usize) -> Result<Self> {
         let ac3 = Ac3SyncframeInfo::parse_at(data, off)?;
-        let words = ac3_frame_words(ac3.fscod, ac3.frmsizecod).ok_or(Error::InvalidValue {
-            field: "AC-3 frmsizecod/fscod",
-            value: u64::from(ac3.frmsizecod),
-            reason: "reserved fscod or frmsizecod (Tables 4.1 / 4.13)",
-        })?;
+        let words = ac3_frame_words(ac3.fscod, ac3.frmsizecod).ok_or(Error::InvalidValue(
+            InvalidValue {
+                field: "AC-3 frmsizecod/fscod",
+                value: u64::from(ac3.frmsizecod),
+                reason: "reserved fscod or frmsizecod (Tables 4.1 / 4.13)",
+            },
+        ))?;
         // E-AC-3 payload is full of `0B 77` pairs and a header-shaped 5 bytes is
         // cheap to hit after a resync, so once the whole frame is in hand require
         // its CRC (§4.4.5.2 / §6.10.1) to check out: a false sync passes this by
@@ -452,11 +455,11 @@ impl Ec3SyncframeInfo {
         if let Some(frame) = data.get(off..off + len)
             && ac3_crc16(&frame[AC3_SYNCWORD_BYTES..]) != 0
         {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "AC-3 crc2",
                 value: u64::from(ac3_crc16(&frame[AC3_SYNCWORD_BYTES..])),
                 reason: "syncframe CRC does not check out (false sync or damaged frame)",
-            });
+            }));
         }
         Ok(Self {
             strmtyp: EAC3_STRMTYP_INDEPENDENT,
@@ -625,7 +628,7 @@ impl Ec3SyncframeInfo {
             }
             let info = match Self::parse_at(data, off) {
                 Ok(info) => info,
-                Err(Error::BufferTooShort { .. }) => return (out, false),
+                Err(Error::BufferTooShort(..)) => return (out, false),
                 Err(_) => return (out, true),
             };
             let len = (info.frmsiz as usize + 1) * BYTES_PER_WORD;
@@ -1027,11 +1030,11 @@ impl Ec3SpecificBox {
             .map(|f| f.substreamid)
             .next_back()
         else {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "dec3 num_ind_sub",
                 value: frames.len() as u64,
                 reason: "an E-AC-3 access unit must contain an independent frame",
-            });
+            }));
         };
         // §F.6.1 makes `num_ind_sub` 3 bits and `data_rate` 13: a value that
         // does not fit is a real (if improbable) stream this box cannot
@@ -1043,11 +1046,11 @@ impl Ec3SpecificBox {
         // contiguous from 0 (e.g. 0 then 5); describing that would build a box
         // that cannot be serialized (issue #1171), so reject it here.
         if substreams.len() != usize::from(num_ind_sub) + 1 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "dec3 num_ind_sub",
                 value: u64::from(num_ind_sub),
                 reason: "independent substreams must be numbered contiguously from 0",
-            });
+            }));
         }
         let data_rate =
             broadcast_common::len::fit_bits(data_rate as u64, 13, "dec3 data_rate")? as u16;
@@ -1220,11 +1223,11 @@ impl Serialize for Ec3SpecificBox {
         // a misframed box.
         let expected = self.num_ind_sub as usize + 1;
         if self.substreams.len() != expected {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "dec3 num_ind_sub",
                 value: self.num_ind_sub as u64,
                 reason: "substreams.len() must equal num_ind_sub + 1",
-            });
+            }));
         }
         let need = self.serialized_len();
         need_out(buf, need)?;
@@ -1459,11 +1462,11 @@ fn skip_eac3_mixdata2(es: &[u8], bit_pos: &mut usize) -> Result<()> {
 fn skip_eac3_bits(es: &[u8], bit_pos: &mut usize, n: usize) -> Result<()> {
     let end = bit_pos.saturating_add(n);
     if end > es.len() * 8 {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: end.div_ceil(8),
             have: es.len(),
             what: "E-AC-3 bsi",
-        });
+        }));
     }
     *bit_pos = end;
     Ok(())
@@ -2018,10 +2021,10 @@ pub(crate) mod tests {
         damaged[100] ^= 0x01;
         assert!(matches!(
             Ec3SyncframeInfo::parse_at(&damaged, 0),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "AC-3 crc2",
                 ..
-            })
+            }))
         ));
         assert!(Ec3SyncframeInfo::parse_at(&damaged[..1000], 0).is_ok());
     }
@@ -2041,26 +2044,26 @@ pub(crate) mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "dec3 num_ind_sub",
                     ..
-                }
+                })
             ),
             "expected InvalidValue for a dependent-only AU, got {err:?}"
         );
         // The empty slice is the same case.
         assert!(matches!(
             Ec3SpecificBox::from_syncframes(&[]),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
         // `into_dec3` on a dependent frame errors too, rather than returning a
         // box that cannot be serialized.
         assert!(matches!(
             frames[0].into_dec3(),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "dec3 num_ind_sub",
                 ..
-            })
+            }))
         ));
     }
 
@@ -2100,10 +2103,10 @@ pub(crate) mod tests {
         assert!(
             matches!(
                 Ec3SpecificBox::from_syncframes(&all),
-                Err(Error::InvalidValue {
+                Err(Error::InvalidValue(InvalidValue {
                     field: "dec3 num_ind_sub",
                     ..
-                })
+                }))
             ),
             "a repeated-AU substream list must be rejected at construction"
         );
@@ -2336,10 +2339,10 @@ pub(crate) mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "dec3 num_ind_sub",
                     ..
-                }
+                })
             ),
             "expected InvalidValue for the count mismatch, got {err:?}"
         );

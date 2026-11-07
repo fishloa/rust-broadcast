@@ -66,6 +66,7 @@ use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 
 use broadcast_common::timescale::{Rounding, rescale_u64};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
@@ -599,11 +600,11 @@ impl RtpPacketiser {
         for (i, sample) in track.samples.iter().enumerate() {
             let au = &sample.data;
             if au.len() >= (1usize << AAC_SIZE_LENGTH) {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "aac_au_size",
                     value: au.len() as u64,
                     reason: "exceeds 13-bit AAC-hbr AU-size field",
-                });
+                }));
             }
             let timestamp = rescale_ts(sample_pts(track, i), timescale, clock);
             // AU-headers-length is in BITS: one 2-byte header = 16 bits. One
@@ -718,11 +719,11 @@ fn build_stap_a(
     buf.extend_from_slice(&[stap_hdr]);
     for nal in nals {
         if nal.len() > u16::MAX as usize {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "stap_a_nal_size",
                 value: nal.len() as u64,
                 reason: "exceeds 16-bit STAP-A size prefix",
-            });
+            }));
         }
         buf.extend_from_slice(&(nal.len() as u16).to_be_bytes());
         buf.extend_from_slice(nal);
@@ -1043,13 +1044,13 @@ impl RtpInputStream {
                     ));
                 }
                 if self.clock_rate != *sample_rate {
-                    return Err(Error::InvalidValue {
+                    return Err(Error::InvalidValue(InvalidValue {
                         field: "rtp_clock_rate",
                         value: u64::from(self.clock_rate),
                         reason: "an MPEG-4 audio stream's RTP clock rate is its \
                                  sampling rate (RFC 3640 §3.1), so it must equal the \
                                  AudioSpecificConfig's sample rate",
-                    });
+                    }));
                 }
                 Ok(*sample_rate)
             }
@@ -1061,11 +1062,11 @@ impl RtpInputStream {
                     ));
                 }
                 if self.clock_rate != VIDEO_CLOCK_RATE {
-                    return Err(Error::InvalidValue {
+                    return Err(Error::InvalidValue(InvalidValue {
                         field: "rtp_clock_rate",
                         value: u64::from(self.clock_rate),
                         reason: "RFC 6184 §8.1 fixes the H.264 RTP clock rate at 90 kHz",
-                    });
+                    }));
                 }
                 Ok(self.clock_rate)
             }
@@ -1729,21 +1730,21 @@ fn reassemble_video_impl(
                 let mut stap_nals: Vec<Vec<u8>> = Vec::new();
                 while off < payload.len() {
                     if off + STAP_A_SIZE_LEN > payload.len() {
-                        bad!(Error::BufferTooShort {
+                        bad!(Error::BufferTooShort(BufferTooShort {
                             need: off + STAP_A_SIZE_LEN,
                             have: payload.len(),
                             what: "STAP-A size prefix",
-                        });
+                        }));
                     }
                     let size = u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
                     off += STAP_A_SIZE_LEN;
                     let end = off + size;
                     if end > payload.len() {
-                        bad!(Error::BufferTooShort {
+                        bad!(Error::BufferTooShort(BufferTooShort {
                             need: end,
                             have: payload.len(),
                             what: "STAP-A NAL",
-                        });
+                        }));
                     }
                     stap_nals.push(payload[off..end].to_vec());
                     off = end;
@@ -1752,11 +1753,11 @@ fn reassemble_video_impl(
             }
             NAL_TYPE_FU_A => {
                 if payload.len() < 2 {
-                    bad!(Error::BufferTooShort {
+                    bad!(Error::BufferTooShort(BufferTooShort {
                         need: 2,
                         have: payload.len(),
                         what: "FU-A header",
-                    });
+                    }));
                 }
                 let fu_indicator = payload[0];
                 let fu_header = payload[1];
@@ -1903,22 +1904,22 @@ fn reassemble_audio_impl(
         };
         let payload = hdr.payload;
         if payload.len() < AAC_AU_HEADERS_LENGTH_LEN {
-            bad!(Error::BufferTooShort {
+            bad!(Error::BufferTooShort(BufferTooShort {
                 need: AAC_AU_HEADERS_LENGTH_LEN,
                 have: payload.len(),
                 what: "AAC AU-headers-length",
-            });
+            }));
         }
         let au_headers_len_bits = u16::from_be_bytes([payload[0], payload[1]]) as usize;
         let header_bytes = au_headers_len_bits.div_ceil(8);
         let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * 8);
         let mut off = AAC_AU_HEADERS_LENGTH_LEN;
         if off + header_bytes > payload.len() {
-            bad!(Error::BufferTooShort {
+            bad!(Error::BufferTooShort(BufferTooShort {
                 need: off + header_bytes,
                 have: payload.len(),
                 what: "AAC AU headers",
-            });
+            }));
         }
         // A packet carries complete AUs or a single fragment of one (§3.2.3),
         // so more than one header means each header is a whole AU.
@@ -2064,32 +2065,34 @@ pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
 fn map_rtp_error(e: rtp_packet::Error) -> Error {
     match e {
         rtp_packet::Error::BufferTooShort { need, have, what } => {
-            Error::BufferTooShort { need, have, what }
+            Error::BufferTooShort(BufferTooShort { need, have, what })
         }
-        rtp_packet::Error::InvalidVersion(v) => Error::InvalidValue {
+        rtp_packet::Error::InvalidVersion(v) => Error::InvalidValue(InvalidValue {
             field: "rtp_version",
             value: u64::from(v),
             reason: "must be 2",
-        },
+        }),
         rtp_packet::Error::InvalidValue {
             field,
             value,
             reason,
-        } => Error::InvalidValue {
+        } => Error::InvalidValue(InvalidValue {
             field,
             value,
             reason,
-        },
-        rtp_packet::Error::InvalidPadding { count, reason } => Error::InvalidValue {
+        }),
+        rtp_packet::Error::InvalidPadding { count, reason } => Error::InvalidValue(InvalidValue {
             field: "rtp_padding",
             value: u64::from(count),
             reason,
-        },
-        rtp_packet::Error::ExtensionNotWordAligned { data_len } => Error::InvalidValue {
-            field: "rtp_extension_length",
-            value: data_len as u64,
-            reason: "extension data length is not a multiple of 4 bytes",
-        },
+        }),
+        rtp_packet::Error::ExtensionNotWordAligned { data_len } => {
+            Error::InvalidValue(InvalidValue {
+                field: "rtp_extension_length",
+                value: data_len as u64,
+                reason: "extension data length is not a multiple of 4 bytes",
+            })
+        }
         _ => Error::InvalidInput("invalid RTP header"),
     }
 }
@@ -2201,16 +2204,16 @@ pub fn base64_encode(data: &[u8]) -> String {
 /// trailing bits are tolerated; any other invalid input is an error.
 pub fn base64_decode(s: &str) -> Result<Vec<u8>> {
     LENIENT.decode(s).map_err(|e| match e {
-        base64::DecodeError::InvalidByte(_, byte) => Error::InvalidValue {
+        base64::DecodeError::InvalidByte(_, byte) => Error::InvalidValue(InvalidValue {
             field: "base64",
             value: u64::from(byte),
             reason: "not a base64 character",
-        },
-        _ => Error::InvalidValue {
+        }),
+        _ => Error::InvalidValue(InvalidValue {
             field: "base64",
             value: s.len() as u64,
             reason: "invalid base64 length",
-        },
+        }),
     })
 }
 
@@ -2232,21 +2235,21 @@ use broadcast_common::hex::hex_encode;
 /// Hex-decode a string; rejects odd lengths and invalid nibbles.
 pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
     ::hex::decode(s).map_err(|e| match e {
-        ::hex::FromHexError::OddLength => Error::InvalidValue {
+        ::hex::FromHexError::OddLength => Error::InvalidValue(InvalidValue {
             field: "hex",
             value: s.len() as u64,
             reason: "odd-length hex string",
-        },
-        ::hex::FromHexError::InvalidHexCharacter { c, .. } => Error::InvalidValue {
+        }),
+        ::hex::FromHexError::InvalidHexCharacter { c, .. } => Error::InvalidValue(InvalidValue {
             field: "hex",
             value: u64::from(c),
             reason: "not a hex digit",
-        },
-        ::hex::FromHexError::InvalidStringLength => Error::InvalidValue {
+        }),
+        ::hex::FromHexError::InvalidStringLength => Error::InvalidValue(InvalidValue {
             field: "hex",
             value: s.len() as u64,
             reason: "invalid hex string length",
-        },
+        }),
     })
 }
 

@@ -43,6 +43,7 @@ use crate::error::{Error, Result};
 use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt, VALID_LENGTH_SIZES};
 use crate::wire_cursor::{read_nalu_16, read_u8};
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
@@ -121,11 +122,11 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
         let length_size_minus_one = b4 & 0x03;
         // Reject value 2 as invalid (§5.3.3 p19).
         if !VALID_LENGTH_SIZES.contains(&length_size_minus_one) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "lengthSizeMinusOne",
                 value: length_size_minus_one as u64,
                 reason: "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2017 §5.3.3)",
-            });
+            }));
         }
 
         // reserved(3) + numOfSequenceParameterSets(5)
@@ -140,12 +141,12 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
         // for every current and future caller of `parse`, matching this
         // crate's "no raw-byte public API / decode-completeness" discipline.
         if num_sps == 0 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "numOfSequenceParameterSets",
                 value: 0,
                 reason: "an AVCDecoderConfigurationRecord must declare at least one SPS \
                          (ISO/IEC 14496-15:2017 §5.3.3); a conformant encoder never emits 0",
-            });
+            }));
         }
 
         // SPS array
@@ -412,6 +413,8 @@ impl Serialize for AVCConfigurationBox {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
     use alloc::vec;
     use broadcast_common::{Parse, Serialize};
@@ -564,10 +567,10 @@ mod tests {
         let err = AVCDecoderConfigurationRecord::parse(&bad).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(InvalidValue {
                 field: "lengthSizeMinusOne",
                 ..
-            }
+            })
         ));
     }
 
@@ -658,11 +661,11 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "numOfSequenceParameterSets",
                     value: 0,
                     ..
-                }
+                })
             ),
             "0 SPS must be a structured InvalidValue error, not silently accepted: {err:?}"
         );

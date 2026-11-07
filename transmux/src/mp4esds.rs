@@ -37,6 +37,7 @@
 use crate::box_types::BoxHeader;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
@@ -79,11 +80,11 @@ const DECODER_CONFIG_FIXED: usize = 13;
 
 fn read_u24_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
     if *cursor + 3 > bytes.len() {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: *cursor + 3,
             have: bytes.len(),
             what,
-        });
+        }));
     }
     let v = u32::from_be_bytes([0, bytes[*cursor], bytes[*cursor + 1], bytes[*cursor + 2]]);
     *cursor += 3;
@@ -92,11 +93,11 @@ fn read_u24_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u
 
 fn read_u32_be(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
     if *cursor + 4 > bytes.len() {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: *cursor + 4,
             have: bytes.len(),
             what,
-        });
+        }));
     }
     let v = u32::from_be_bytes([
         bytes[*cursor],
@@ -120,33 +121,33 @@ fn parse_varint(bytes: &[u8], cursor: &mut usize) -> Result<(usize, usize)> {
     let mut value: usize = 0;
     loop {
         if *cursor >= bytes.len() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: *cursor + 1,
                 have: bytes.len(),
                 what: "descriptor size varint",
-            });
+            }));
         }
         let b = bytes[*cursor];
         *cursor += 1;
         value = (value << 7) | (b & 0x7F) as usize;
         let bytes_so_far = *cursor - start;
         if bytes_so_far > MAX_VARINT_BYTES {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "descriptor size varint",
                 value: bytes_so_far as u64,
                 reason: "varint longer than 4 bytes",
-            });
+            }));
         }
         if (b & 0x80) == 0 {
             break;
         }
     }
     if value > MAX_DESCRIPTOR_SIZE {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "descriptor size",
             value: value as u64,
             reason: "exceeds maximum descriptor size (2^28-1)",
-        });
+        }));
     }
     Ok((value, *cursor - start))
 }
@@ -178,11 +179,11 @@ fn write_varint_width(
     width: usize,
 ) -> Result<()> {
     if !(1..=MAX_VARINT_BYTES).contains(&width) {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "descriptor size varint width",
             value: width as u64,
             reason: "varint width must be 1..=4 bytes",
-        });
+        }));
     }
     if value > MAX_DESCRIPTOR_SIZE {
         return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
@@ -192,11 +193,11 @@ fn write_varint_width(
         }));
     }
     if varint_width(value) > width {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "descriptor size varint width",
             value: width as u64,
             reason: "value does not fit the recorded varint width",
-        });
+        }));
     }
     need_out(buf, *cursor + width)?;
     for i in 0..width {
@@ -532,22 +533,22 @@ impl<'a> Parse<'a> for DecoderConfigDescriptor {
 
         // objectTypeIndication (8)
         if cursor >= body.len() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: 1,
                 have: body.len(),
                 what: "objectTypeIndication",
-            });
+            }));
         }
         let oti = ObjectTypeIndication(body[cursor]);
         cursor += 1;
 
         // streamType(6) + upStream(1) + reserved(1) — a single byte (14496-1 §7.2.6.6)
         if cursor >= body.len() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: cursor + 1,
                 have: body.len(),
                 what: "streamType/upStream",
-            });
+            }));
         }
         let st_byte = body[cursor];
         let stream_type_val = (st_byte >> 2) & 0x3F;
@@ -574,11 +575,11 @@ impl<'a> Parse<'a> for DecoderConfigDescriptor {
             let sub_body = if cursor + sub_size <= body.len() {
                 &body[cursor..cursor + sub_size]
             } else {
-                return Err(Error::BufferTooShort {
+                return Err(Error::BufferTooShort(BufferTooShort {
                     need: cursor + sub_size,
                     have: body.len(),
                     what: "DecoderConfigDescriptor sub_descriptor body",
-                });
+                }));
             };
 
             match sub_tag {
@@ -769,31 +770,31 @@ impl<'a> Parse<'a> for ESDescriptor {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut tag_cursor = 0usize;
         if tag_cursor >= bytes.len() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: 1,
                 have: bytes.len(),
                 what: "ES_Descriptor tag",
-            });
+            }));
         }
         let tag = bytes[tag_cursor];
         tag_cursor += 1;
         if tag != Self::TAG {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "descriptor_tag",
                 value: tag as u64,
                 reason: "expected ES_DescrTag (0x03)",
-            });
+            }));
         }
         let (size, size_width) = parse_varint(bytes, &mut tag_cursor)?;
         // The varint size is wire-controlled; bound it before slicing (r04-C4).
         let end = tag_cursor
             .checked_add(size)
             .filter(|&end| end <= bytes.len())
-            .ok_or(Error::BufferTooShort {
+            .ok_or(Error::BufferTooShort(BufferTooShort {
                 need: tag_cursor.saturating_add(size),
                 have: bytes.len(),
                 what: "ES_Descriptor body",
-            })?;
+            }))?;
         let body = &bytes[tag_cursor..end];
 
         let mut cursor = 0usize;
@@ -806,11 +807,11 @@ impl<'a> Parse<'a> for ESDescriptor {
 
         // flags byte: streamDependenceFlag(1) + URL_Flag(1) + OCRstreamFlag(1) + streamPriority(5)
         if cursor >= body.len() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: cursor + 1,
                 have: body.len(),
                 what: "ES flags byte",
-            });
+            }));
         }
         let flags = body[cursor];
         cursor += 1;
@@ -832,11 +833,11 @@ impl<'a> Parse<'a> for ESDescriptor {
         // Optional: URLstring
         let url = if url_flag {
             if cursor >= body.len() {
-                return Err(Error::BufferTooShort {
+                return Err(Error::BufferTooShort(BufferTooShort {
                     need: cursor + 1,
                     have: body.len(),
                     what: "URLLength",
-                });
+                }));
             }
             let url_len = body[cursor] as usize;
             cursor += 1;
@@ -845,11 +846,11 @@ impl<'a> Parse<'a> for ESDescriptor {
             // so invalid bytes are a structured error — a lossy decode would
             // silently break the byte-identical round trip (#1148 E).
             let u = core::str::from_utf8(&body[cursor..cursor + url_len]).map_err(|eve| {
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "URLstring",
                     value: body[cursor + eve.valid_up_to()] as u64,
                     reason: "URLstring must be UTF-8 (ISO/IEC 14496-1 §7.2.6.5)",
-                }
+                })
             })?;
             cursor += url_len;
             Some(alloc::string::String::from(u))
@@ -962,25 +963,25 @@ impl Serialize for ESDescriptor {
         // Deriving it the other way — writing from the flags — is not possible
         // without inventing a value, so a disagreement is an error.
         if self.stream_dependence_flag != self.depends_on_es_id.is_some() {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "ES_Descriptor.streamDependenceFlag",
                 value: self.stream_dependence_flag as u64,
                 reason: "streamDependenceFlag disagrees with depends_on_es_id",
-            });
+            }));
         }
         if self.url_flag != self.url.is_some() {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "ES_Descriptor.URL_Flag",
                 value: self.url_flag as u64,
                 reason: "URL_Flag disagrees with url",
-            });
+            }));
         }
         if self.ocr_stream_flag != self.ocr_es_id.is_some() {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "ES_Descriptor.OCRstreamFlag",
                 value: self.ocr_stream_flag as u64,
                 reason: "OCRstreamFlag disagrees with ocr_es_id",
-            });
+            }));
         }
 
         let mut body_size = 2 + 1; // ES_ID + flags
@@ -1118,11 +1119,11 @@ impl EsdsBox {
     pub fn parse_box(data: &[u8]) -> Result<Self> {
         let header = BoxHeader::parse(data)?;
         if !header.box_type.is(b"esds") {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: header.box_type.to_u32() as u64,
                 reason: "expected 'esds'",
-            });
+            }));
         }
         // ISO/IEC 14496-12 §4.2: size == 0 means the box extends to the end of
         // the enclosing data; a declared size past `data` is rejected (r04-C4).
@@ -1132,11 +1133,11 @@ impl EsdsBox {
         };
         let body = data
             .get(header.header_size()..end)
-            .ok_or(Error::BufferTooShort {
+            .ok_or(Error::BufferTooShort(BufferTooShort {
                 need: end,
                 have: data.len(),
                 what: "esds box body",
-            })?;
+            }))?;
         Self::parse_body(body)
     }
 
@@ -1191,6 +1192,8 @@ impl Serialize for EsdsBox {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
     use alloc::vec;
 
@@ -1276,15 +1279,15 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "descriptor size varint width",
                     ..
-                }
+                })
             ),
             "{err:?}"
         );
         let err = write_varint_width(&mut buf, &mut c, 0, 0).unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }), "{err:?}");
+        assert!(matches!(err, Error::InvalidValue(..)), "{err:?}");
         let err = write_varint_width(&mut buf, &mut c, MAX_DESCRIPTOR_SIZE + 1, 4).unwrap_err();
         assert!(matches!(err, Error::FieldOverflow(_)), "{err:?}");
     }
@@ -1491,10 +1494,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "ES_Descriptor.streamDependenceFlag",
                     ..
-                }
+                })
             ),
             "got {err:?}"
         );
@@ -1506,10 +1509,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "ES_Descriptor.URL_Flag",
                     ..
-                }
+                })
             ),
             "got {err:?}"
         );
@@ -1521,10 +1524,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "ES_Descriptor.OCRstreamFlag",
                     ..
-                }
+                })
             ),
             "got {err:?}"
         );
@@ -1533,7 +1536,7 @@ mod tests {
         let mut reverse = base.clone();
         reverse.depends_on_es_id = Some(7);
         let err = EsdsBox::new(reverse).try_to_bytes().unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }), "got {err:?}");
+        assert!(matches!(err, Error::InvalidValue(..)), "got {err:?}");
 
         // With the flag and field in agreement, serialization succeeds and the
         // declared body size matches what is written.
@@ -1881,7 +1884,7 @@ mod tests {
         ];
         let err =
             ESDescriptor::parse(hostile).expect_err("hostile size varint must fail, not panic");
-        assert!(matches!(err, Error::BufferTooShort { .. }), "got {err:?}");
+        assert!(matches!(err, Error::BufferTooShort(..)), "got {err:?}");
     }
 
     /// #1148/E: ISO/IEC 14496-1 §7.2.6.5 defines `URLstring` as UTF-8, so
@@ -1905,10 +1908,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "URLstring",
                     ..
-                }
+                })
             ),
             "expected InvalidValue for URLstring, got {err:?}"
         );
@@ -1921,7 +1924,7 @@ mod tests {
         boxed.extend_from_slice(&[0, 0, 0, 0]);
         boxed.extend_from_slice(payload);
         let e = EsdsBox::parse_box(&boxed).expect_err("box path must reject too");
-        assert!(matches!(e, Error::InvalidValue { .. }), "got {e:?}");
+        assert!(matches!(e, Error::InvalidValue(..)), "got {e:?}");
 
         // A valid UTF-8 URL (multi-byte code point included) parses and
         // re-serializes to the same bytes.
@@ -1998,7 +2001,7 @@ mod tests {
         .to_vec();
         let err = EsdsBox::parse_body(&body).expect_err("oversized ES_Descriptor size must fail");
         assert!(
-            matches!(err, Error::BufferTooShort { .. }),
+            matches!(err, Error::BufferTooShort(..)),
             "expected BufferTooShort, got {err:?}"
         );
     }

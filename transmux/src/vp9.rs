@@ -13,6 +13,7 @@
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -95,12 +96,12 @@ impl<'a> Parse<'a> for Vp9ConfigurationBox {
         // no published syntax, so guessing at a layout for it would be
         // fabrication. Reject anything else rather than mis-reading it.
         if version != VERSION_1 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "vpcC FullBox version",
                 value: u64::from(version),
                 reason: "VP Codec ISO Media File Format Binding defines only version 1 \
                          (version 0 is deprecated with no published syntax)",
-            });
+            }));
         }
         let flags = u32::from_be_bytes([0, bytes[1], bytes[2], bytes[3]]);
         let r = &bytes[FULL_HDR..];
@@ -121,11 +122,11 @@ impl<'a> Parse<'a> for Vp9ConfigurationBox {
         // so a short read means the box is malformed.
         let init_end = init_start
             .checked_add(init_size)
-            .ok_or(Error::BufferTooShort {
+            .ok_or(Error::BufferTooShort(BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "codecInitializationDataSize overflows the offset",
-            })?;
+            }))?;
         need_in(bytes, init_end, "codecInitializationData")?;
         let codec_initialization_data = bytes[init_start..init_end].to_vec();
         Ok(Self {
@@ -153,11 +154,11 @@ impl Serialize for Vp9ConfigurationBox {
         // Only version 1 can be written; emitting any other version with this
         // layout would claim a syntax that is not the one being written.
         if self.version != VERSION_1 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "vpcC FullBox version",
                 value: u64::from(self.version),
                 reason: "VP Codec ISO Media File Format Binding defines only version 1",
-            });
+            }));
         }
         let need = self.serialized_len();
         need_out(buf, need)?;
@@ -216,11 +217,11 @@ impl Vp9SampleEntry {
         let visual = VisualSampleEntryFields::parse_body(bytes, "vp09")?;
         let region = VisualSampleEntryFields::children_region(bytes, "vp09")?;
         let vpcc = crate::sample_entries::find_config_box(region, &VPCC_FOURCC).ok_or(
-            Error::BufferTooShort {
+            Error::BufferTooShort(BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "vp09 missing vpcC",
-            },
+            }),
         )?;
         let config = Vp9ConfigurationBox::parse(&vpcc[crate::box_types::box_header_len(vpcc)?..])?;
         let children = crate::sample_entries::entry_children(region, &VPCC_FOURCC)?;
@@ -272,6 +273,8 @@ impl Serialize for Vp9SampleEntry {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::{BufferTooShort, InvalidValue};
+
     use super::*;
 
     fn config(codec_initialization_data: Vec<u8>) -> Vp9ConfigurationBox {
@@ -371,10 +374,10 @@ mod tests {
             assert!(
                 matches!(
                     Vp9ConfigurationBox::parse(&body),
-                    Err(Error::InvalidValue {
+                    Err(Error::InvalidValue(InvalidValue {
                         field: "vpcC FullBox version",
                         ..
-                    })
+                    }))
                 ),
                 "version {version} must be rejected"
             );
@@ -389,10 +392,10 @@ mod tests {
         cfg.version = 0;
         assert!(matches!(
             cfg.try_to_bytes(),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "vpcC FullBox version",
                 ..
-            })
+            }))
         ));
     }
 
@@ -449,15 +452,15 @@ mod tests {
         ];
         assert!(matches!(
             Vp9ConfigurationBox::parse(short),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         // A body too short for the fixed record.
         assert!(matches!(
             Vp9ConfigurationBox::parse(&[0x01, 0x00, 0x00, 0x00, 0x00]),
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 what: "vpcC body",
                 ..
-            })
+            }))
         ));
     }
 }

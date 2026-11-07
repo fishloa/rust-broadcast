@@ -31,6 +31,7 @@ use crate::TrackId;
 use crate::error::{Error, Result};
 use crate::init_segment::bounded_entry_count;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
@@ -162,11 +163,11 @@ impl<'a> Parse<'a> for ProducerReferenceTimeBox {
         )?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != PRFT_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected prft",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
@@ -349,11 +350,11 @@ impl SampleGroupDescriptionBox {
         // times pushing empty entries).
         let entry_min_footprint = entry_count.saturating_mul(sgpd_min_entry_len);
         if entry_min_footprint > body.len() - c {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: c.saturating_add(entry_min_footprint),
                 have: body.len(),
                 what: "sgpd entries",
-            });
+            }));
         }
         let mut entries = Vec::with_capacity(bounded_entry_count(
             body.len().saturating_sub(c),
@@ -386,11 +387,11 @@ impl SampleGroupDescriptionBox {
                     // a truncated entry.
                     let rest = body.len() - c;
                     if rest == 0 {
-                        return Err(Error::BufferTooShort {
+                        return Err(Error::BufferTooShort(BufferTooShort {
                             need: c + 1,
                             have: body.len(),
                             what: "sgpd entry body",
-                        });
+                        }));
                     }
                     rest
                 }
@@ -431,11 +432,11 @@ impl<'a> Parse<'a> for SampleGroupDescriptionBox {
         need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "sgpd box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != SGPD_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected sgpd",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
@@ -628,11 +629,11 @@ impl<'a> Parse<'a> for SampleToGroupBox {
         need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "sbgp box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != SBGP_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected sbgp",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
@@ -768,11 +769,11 @@ impl SubSampleInformationBox {
         ));
         for _ in 0..entry_count {
             if body.len() < c + 4 + 2 {
-                return Err(Error::BufferTooShort {
+                return Err(Error::BufferTooShort(BufferTooShort {
                     need: c + 6,
                     have: body.len(),
                     what: "subs entry header",
-                });
+                }));
             }
             let sample_delta = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
@@ -827,11 +828,11 @@ impl<'a> Parse<'a> for SubSampleInformationBox {
         need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "subs box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != SUBS_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected subs",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }

@@ -520,7 +520,7 @@ fn truncated_srat_is_rejected() {
     let short = [0u8, 0, 0, 16, b's', b'r', b'a', b't', 0, 0, 0];
     assert!(matches!(
         SamplingRateBox::parse(&short),
-        Err(transmux::error::Error::BufferTooShort { .. })
+        Err(transmux::error::Error::BufferTooShort(..))
     ));
     // Every shorter prefix too, down to empty.
     let full = {
@@ -533,7 +533,7 @@ fn truncated_srat_is_rejected() {
         assert!(
             matches!(
                 SamplingRateBox::parse(&full[..n]),
-                Err(transmux::error::Error::BufferTooShort { .. })
+                Err(transmux::error::Error::BufferTooShort(..))
             ),
             "a {n}-byte prefix must be rejected"
         );

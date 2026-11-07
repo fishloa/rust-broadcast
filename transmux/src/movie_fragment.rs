@@ -15,6 +15,7 @@ use crate::TrackId;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 
 const BOX_HEADER_SIZE: usize = 8;
@@ -1055,11 +1056,11 @@ impl TrackFragmentBox {
             }
             Ok(())
         })?;
-        let tfhd = tfhd.ok_or(Error::BufferTooShort {
+        let tfhd = tfhd.ok_or(Error::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,
             what: "traf missing tfhd",
-        })?;
+        }))?;
         // A `traf` with zero `trun`s is legal: §8.8.3/§8.8.8 require none, and
         // the `tfhd` `duration-is-empty` flag (`TFHD_DURATION_IS_EMPTY`) exists
         // precisely to declare a fragment that carries no samples for this
@@ -1199,17 +1200,17 @@ impl MovieFragmentBox {
             }
             Ok(())
         })?;
-        let mfhd = mfhd.ok_or(Error::BufferTooShort {
+        let mfhd = mfhd.ok_or(Error::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,
             what: "moof missing mfhd",
-        })?;
+        }))?;
         if traf.is_empty() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "moof missing traf",
-            });
+            }));
         }
         Ok(MovieFragmentBox { mfhd, traf, order })
     }

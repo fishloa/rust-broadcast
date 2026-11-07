@@ -16,6 +16,7 @@
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -104,11 +105,11 @@ impl<'a> Parse<'a> for Av1ConfigurationBox {
         need_in(bytes, AV1C_FIXED_LEN, "av1C body")?;
         let b0 = bytes[0];
         if (b0 & MARKER_BIT) == 0 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "av1C marker",
                 value: b0 as u64,
                 reason: "marker bit must be 1",
-            });
+            }));
         }
         let version = b0 & 0x7F;
         let b1 = bytes[1];
@@ -191,11 +192,11 @@ impl Av1SampleEntry {
         let visual = VisualSampleEntryFields::parse_body(bytes, "av01")?;
         let region = VisualSampleEntryFields::children_region(bytes, "av01")?;
         let av1c = crate::sample_entries::find_config_box(region, &AV1C_FOURCC).ok_or(
-            Error::BufferTooShort {
+            Error::BufferTooShort(BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "av01 missing av1C",
-            },
+            }),
         )?;
         let config = Av1ConfigurationBox::parse(&av1c[crate::box_types::box_header_len(av1c)?..])?;
         let children = crate::sample_entries::entry_children(region, &AV1C_FOURCC)?;

@@ -15,6 +15,7 @@ use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
 use crate::sps::{AvcSliceSps, decode_avc_slice_sps};
 use alloc::collections::BTreeMap;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 
 /// `nal_unit_type` of a non-IDR coded slice (Table 7-1).
 const NAL_SLICE: u8 = 1;
@@ -63,22 +64,22 @@ pub fn decode_avc_slice_pps(pps_nal: &[u8]) -> Result<AvcSlicePps> {
     let pps_id = r.read_ue("pic_parameter_set_id")?;
     let sps_id = r.read_ue("seq_parameter_set_id")?;
     if pps_id > 255 || sps_id > 31 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "pic_parameter_set_id/seq_parameter_set_id",
             value: pps_id.max(sps_id),
             reason: "out of range (H.264 §7.4.2.2: 0..=255 / 0..=31)",
-        });
+        }));
     }
     let entropy_coding_mode = r.read_flag("entropy_coding_mode_flag")?;
     let bottom_field_pic_order_in_frame_present =
         r.read_flag("bottom_field_pic_order_in_frame_present_flag")?;
     let num_slice_groups_minus1 = r.read_ue("num_slice_groups_minus1")?;
     if num_slice_groups_minus1 > 7 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "num_slice_groups_minus1",
             value: num_slice_groups_minus1,
             reason: "out of range 0..=7 (H.264 §7.4.2.2)",
-        });
+        }));
     }
     if num_slice_groups_minus1 > 0 {
         let map_type = r.read_ue("slice_group_map_type")?;
@@ -165,18 +166,22 @@ pub struct AvcSliceHeader {
 }
 
 fn to_u32(v: u64, field: &'static str) -> Result<u32> {
-    u32::try_from(v).map_err(|_| Error::InvalidValue {
-        field,
-        value: v,
-        reason: "does not fit in u32",
+    u32::try_from(v).map_err(|_| {
+        Error::InvalidValue(InvalidValue {
+            field,
+            value: v,
+            reason: "does not fit in u32",
+        })
     })
 }
 
 fn to_i32(v: i64, field: &'static str) -> Result<i32> {
-    i32::try_from(v).map_err(|_| Error::InvalidValue {
-        field,
-        value: v as u64,
-        reason: "does not fit in i32",
+    i32::try_from(v).map_err(|_| {
+        Error::InvalidValue(InvalidValue {
+            field,
+            value: v as u64,
+            reason: "does not fit in i32",
+        })
     })
 }
 
@@ -187,18 +192,18 @@ pub fn parse_avc_slice_header(
     sps: &AvcSliceSps,
     pps: &AvcSlicePps,
 ) -> Result<AvcSliceHeader> {
-    let header = *nal.first().ok_or(Error::BufferTooShort {
+    let header = *nal.first().ok_or(Error::BufferTooShort(BufferTooShort {
         need: 1,
         have: 0,
         what: "H.264 slice NAL header",
-    })?;
+    }))?;
     let nal_type = header & NAL_TYPE_MASK;
     if nal_type != NAL_SLICE && nal_type != NAL_IDR {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "nal_unit_type",
             value: nal_type as u64,
             reason: "not a non-partitioned coded slice (1 or 5)",
-        });
+        }));
     }
     let idr = nal_type == NAL_IDR;
     let nal_ref_idc = (header & NAL_REF_IDC_MASK) >> NAL_REF_IDC_SHIFT;
@@ -207,19 +212,19 @@ pub fn parse_avc_slice_header(
     let first_mb_in_slice = to_u32(r.read_ue("first_mb_in_slice")?, "first_mb_in_slice")?;
     let slice_type = r.read_ue("slice_type")?;
     if slice_type > 9 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "slice_type",
             value: slice_type,
             reason: "out of range 0..=9 (H.264 Table 7-6)",
-        });
+        }));
     }
     let pps_id = r.read_ue("pic_parameter_set_id")?;
     if pps_id != pps.pps_id as u64 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "pic_parameter_set_id",
             value: pps_id,
             reason: "slice refers to a different PPS than the one supplied",
-        });
+        }));
     }
     let colour_plane_id = if sps.separate_colour_plane {
         Some(r.read_bits(COLOUR_PLANE_ID_BITS, "colour_plane_id")? as u8)
@@ -439,6 +444,8 @@ fn peek_pps_id(nal: &[u8]) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
     use crate::test_bits::BitWriter;
     use alloc::vec;
@@ -611,24 +618,24 @@ mod tests {
         for cut in 1..4 {
             assert!(matches!(
                 parse_avc_slice_header(&n[..cut], &sps, &pps),
-                Err(Error::BufferTooShort { .. })
+                Err(Error::BufferTooShort(..))
             ));
         }
         let other = AvcSlicePps { pps_id: 4, ..pps };
         assert!(matches!(
             parse_avc_slice_header(&n, &sps, &other),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "pic_parameter_set_id",
                 ..
-            })
+            }))
         ));
         assert!(matches!(
             parse_avc_slice_header(&[0x67, 0x01], &sps, &pps),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "nal_unit_type",
                 value: 7,
                 ..
-            })
+            }))
         ));
     }
 

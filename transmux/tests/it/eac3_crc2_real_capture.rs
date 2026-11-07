@@ -15,6 +15,7 @@
 //! and the demuxed track loses its eighth frame).
 
 use broadcast_common::Unpackage;
+use broadcast_common::error::InvalidValue;
 use transmux::ac3::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 use transmux::pipeline::CodecConfig;
 use transmux::{Error, TsDemux};
@@ -73,9 +74,9 @@ fn false_ac3_headers_in_the_real_payload_are_rejected_by_crc2() {
             // reason must be the CRC, not a reserved code.
             if ac3.is_ok_and(|a| a.bsid <= 8) {
                 match ec3 {
-                    Err(Error::InvalidValue {
+                    Err(Error::InvalidValue(InvalidValue {
                         field: "AC-3 crc2", ..
-                    }) => crc_rejected.push(off),
+                    })) => crc_rejected.push(off),
                     Err(_) => {}
                     Ok(e) => panic!("{name}: false AC-3 header @{off} accepted: {e:?}"),
                 }

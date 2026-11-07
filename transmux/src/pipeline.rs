@@ -18,6 +18,7 @@ use crate::TrackId;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 
 use broadcast_common::Serialize;
 
@@ -794,12 +795,13 @@ pub(crate) fn build_chunk(
     let mut cursor = moof_size + crate::box_types::BOX_HEADER_MIN_SIZE;
     let mut mdat_data = Vec::new();
     for (i, ft) in tracks.iter().enumerate() {
-        moof.traf[i].trun[0].data_offset =
-            Some(i32::try_from(cursor).map_err(|_| Error::InvalidValue {
+        moof.traf[i].trun[0].data_offset = Some(i32::try_from(cursor).map_err(|_| {
+            Error::InvalidValue(InvalidValue {
                 field: "trun data_offset",
                 value: cursor as u64,
                 reason: "fragment too large for the signed 32-bit trun data_offset",
-            })?);
+            })
+        })?);
         for s in ft.samples {
             mdat_data.extend_from_slice(&s.data);
             cursor += s.data.len();

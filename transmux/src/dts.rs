@@ -30,6 +30,7 @@
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -211,19 +212,19 @@ impl DtsCoreFrameInfo {
         let _cpf = read_bits(es, &mut bit_pos, 1, "CPF")?;
         let nblks = read_bits(es, &mut bit_pos, 7, "NBLKS")? as u8;
         if nblks < DTS_NBLKS_MIN {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "NBLKS",
                 value: nblks as u64,
                 reason: "must be >= 5 (0..=4 reserved — Table 5-1)",
-            });
+            }));
         }
         let fsize = read_bits(es, &mut bit_pos, 14, "FSIZE")? as u16;
         if fsize < DTS_FSIZE_MIN {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "FSIZE",
                 value: fsize as u64,
                 reason: "must be >= 95 (0..=94 reserved — Table 5-1)",
-            });
+            }));
         }
         let amode = read_bits(es, &mut bit_pos, 6, "AMODE")? as u8;
         let sfreq = read_bits(es, &mut bit_pos, 4, "SFREQ")? as u8;
@@ -239,16 +240,16 @@ impl DtsCoreFrameInfo {
         let lff = read_bits(es, &mut bit_pos, 2, "LFF")? as u8;
         let _hflag = read_bits(es, &mut bit_pos, 1, "HFLAG")?;
 
-        let sample_rate = dts_sfreq_hz(sfreq).ok_or(Error::InvalidValue {
+        let sample_rate = dts_sfreq_hz(sfreq).ok_or(Error::InvalidValue(InvalidValue {
             field: "SFREQ",
             value: sfreq as u64,
             reason: "reserved/invalid core sampling-frequency code — Table 5-5",
-        })?;
-        let chs = dts_amode_channels(amode).ok_or(Error::InvalidValue {
+        }))?;
+        let chs = dts_amode_channels(amode).ok_or(Error::InvalidValue(InvalidValue {
             field: "AMODE",
             value: amode as u64,
             reason: "user-defined channel arrangement (0b010000..=0b111111) not decodable",
-        })?;
+        }))?;
         let channels = chs + u8::from(lff != 0);
 
         Ok(Self {
@@ -717,7 +718,7 @@ mod tests {
         let hdr = build_core_header(3, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
         assert!(matches!(
             DtsCoreFrameInfo::from_es(&hdr),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
     }
 
@@ -726,7 +727,7 @@ mod tests {
         let hdr = build_core_header(FX_NBLKS, 50, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
         assert!(matches!(
             DtsCoreFrameInfo::from_es(&hdr),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
     }
 
@@ -735,7 +736,7 @@ mod tests {
         let hdr = build_core_header(FX_NBLKS, FX_FSIZE, FX_AMODE, 0b0000, FX_RATE, FX_LFF);
         assert!(matches!(
             DtsCoreFrameInfo::from_es(&hdr),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
     }
 
@@ -744,7 +745,7 @@ mod tests {
         let hdr = build_core_header(FX_NBLKS, FX_FSIZE, 0b010000, FX_SFREQ, FX_RATE, FX_LFF);
         assert!(matches!(
             DtsCoreFrameInfo::from_es(&hdr),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
     }
 

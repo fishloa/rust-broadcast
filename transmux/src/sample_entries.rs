@@ -20,6 +20,7 @@ use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 
 /// Length of the VisualSampleEntry fixed fields (ISO/IEC 14496-12:2015 §12.1.3).
@@ -339,11 +340,11 @@ impl AVCSampleEntry {
             let config = if avcc.len() > 8 {
                 AVCConfigurationBox::parse_body(&avcc[crate::box_types::box_header_len(avcc)?..])?
             } else {
-                return Err(Error::BufferTooShort {
+                return Err(Error::BufferTooShort(BufferTooShort {
                     need: 8,
                     have: avcc.len(),
                     what: "avcC body",
-                });
+                }));
             };
             // Every sibling box (colr/pasp/btrt/clli/mdcv/dvcC/dvvC …) — a
             // box *before* the config is kept too, not only the ones after it.
@@ -355,11 +356,11 @@ impl AVCSampleEntry {
                 extra_boxes,
             })
         } else {
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "avc1 missing avcC",
-            })
+            }))
         }
     }
 
@@ -590,11 +591,11 @@ impl HEVCSampleEntry {
             let config = if hvcc.len() > 8 {
                 HEVCConfigurationBox::parse_body(&hvcc[crate::box_types::box_header_len(hvcc)?..])?
             } else {
-                return Err(Error::BufferTooShort {
+                return Err(Error::BufferTooShort(BufferTooShort {
                     need: 8,
                     have: hvcc.len(),
                     what: "hvcC body",
-                });
+                }));
             };
             // Keep every sibling box (colr/pasp/btrt/clli/mdcv/dvcC/dvvC …):
             // dropping them loses HDR and Dolby Vision signalling on an
@@ -606,11 +607,11 @@ impl HEVCSampleEntry {
                 extra_boxes: capture_extra_boxes(config_region, &[b"hvcC"]),
             })
         } else {
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "hvc1 missing hvcC",
-            })
+            }))
         }
     }
 
@@ -696,11 +697,11 @@ impl VVCSampleEntry {
         let bytes: &[u8] = &compact;
         use crate::vvc_config::VvcConfigurationBox;
         if bytes.len() < 8 + 78 + 8 {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: 8 + 80 + 8,
                 have: bytes.len(),
                 what: "vvc1 bare",
-            });
+            }));
         }
         let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let visual = VisualSampleEntryFields::parse_body(bytes, "vvc1")?;
@@ -709,11 +710,11 @@ impl VVCSampleEntry {
             let config = if vvcc.len() > 8 {
                 VvcConfigurationBox::parse_body(&vvcc[crate::box_types::box_header_len(vvcc)?..])?
             } else {
-                return Err(Error::BufferTooShort {
+                return Err(Error::BufferTooShort(BufferTooShort {
                     need: 8,
                     have: vvcc.len(),
                     what: "vvcC body",
-                });
+                }));
             };
             // As for HEVC: keep every sibling box (colr/pasp/btrt/clli/mdcv …),
             // not just the config (r04-W37).
@@ -724,11 +725,11 @@ impl VVCSampleEntry {
                 extra_boxes: capture_extra_boxes(config_region, &[b"vvcC"]),
             })
         } else {
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "vvc1 missing vvcC",
-            })
+            }))
         }
     }
 

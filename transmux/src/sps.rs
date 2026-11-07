@@ -27,6 +27,7 @@ use crate::ir::{
 };
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::need_in;
 
 // ---------------------------------------------------------------------------
@@ -46,16 +47,18 @@ pub(crate) fn is_high_profile(profile_idc: u8) -> bool {
 /// wire values, which then feed dimension/loop arithmetic.
 fn ue_to_u8(v: u64, spec_max: u64, field: &'static str) -> Result<u8> {
     if v > spec_max {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field,
             value: v,
             reason: "out of spec range",
-        });
+        }));
     }
-    u8::try_from(v).map_err(|_| Error::InvalidValue {
-        field,
-        value: v,
-        reason: "does not fit in u8",
+    u8::try_from(v).map_err(|_| {
+        Error::InvalidValue(InvalidValue {
+            field,
+            value: v,
+            reason: "does not fit in u8",
+        })
     })
 }
 
@@ -63,11 +66,13 @@ fn ue_to_u8(v: u64, spec_max: u64, field: &'static str) -> Result<u8> {
 /// `read_ue(..)? as u8 + 8`, which overflowed for hostile values).
 fn ue_bit_depth(minus8: u64, spec_max: u64, field: &'static str) -> Result<u8> {
     let minus8 = ue_to_u8(minus8, spec_max, field)?;
-    minus8.checked_add(8).ok_or(Error::InvalidValue {
-        field,
-        value: minus8 as u64,
-        reason: "bit depth overflow",
-    })
+    minus8
+        .checked_add(8)
+        .ok_or(Error::InvalidValue(InvalidValue {
+            field,
+            value: minus8 as u64,
+            reason: "bit depth overflow",
+        }))
 }
 
 /// Computed SubWidthC / SubHeightC from `chroma_format_idc`
@@ -402,11 +407,11 @@ fn decode_avc_sps_inner(
         // hostile count spins on `read_se` (which used to return Ok(0) at
         // EOF without consuming) for billions of iterations.
         if num_ref_frames > 255 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "num_ref_frames_in_pic_order_cnt_cycle",
                 value: num_ref_frames,
                 reason: "out of range 0..=255 (H.264 §7.4.2.1)",
-            });
+            }));
         }
         for _ in 0..num_ref_frames {
             let _ = r.read_se("offset_for_ref_frame[i]")?;
@@ -593,11 +598,11 @@ const HRD_MAX_CPB_CNT_MINUS1: u64 = 31;
 fn parse_avc_hrd(r: &mut BitReader) -> crate::error::Result<(u8, u8)> {
     let cpb_cnt_minus1 = r.read_ue("cpb_cnt_minus1")?;
     if cpb_cnt_minus1 > HRD_MAX_CPB_CNT_MINUS1 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "cpb_cnt_minus1",
             value: cpb_cnt_minus1,
             reason: "out of range 0..=31 (H.264 §E.2.2)",
-        });
+        }));
     }
     let _ = r.read_bits(4, "bit_rate_scale")?;
     let _ = r.read_bits(4, "cpb_size_scale")?;
@@ -652,11 +657,11 @@ const COLOUR_CODE_BITS: usize = 8;
 /// than a silent clamp.
 fn read_video_signal_type(r: &mut BitReader) -> Result<VideoSignalType> {
     let code = r.read_bits(VIDEO_FORMAT_BITS, "video_format")? as u8;
-    let video_format = VideoFormat::from_wire(code).ok_or(Error::InvalidValue {
+    let video_format = VideoFormat::from_wire(code).ok_or(Error::InvalidValue(InvalidValue {
         field: "video_format",
         value: u64::from(code),
         reason: "not a u(3) value (H.264 Table E-2 / H.265 Table E.2)",
-    })?;
+    }))?;
     let full_range = r.read_flag("video_full_range_flag")?;
     let colour = if r.read_flag("colour_description_present_flag")? {
         let primaries = r.read_bits(COLOUR_CODE_BITS, "colour_primaries")? as u8;
@@ -948,11 +953,11 @@ pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
     // vps_num_layer_sets_minus1 ue(v)
     let vps_num_layer_sets_minus1 = r.read_ue("vps_num_layer_sets_minus1")?;
     if vps_num_layer_sets_minus1 > 1023 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "vps_num_layer_sets_minus1",
             value: vps_num_layer_sets_minus1,
             reason: "out of range (HEVC VPS)",
-        });
+        }));
     }
     for _i in 1..=vps_num_layer_sets_minus1 {
         for _j in 0..=vps_max_layer_id {
@@ -1215,11 +1220,11 @@ fn parse_hevc_hrd(r: &mut BitReader, max_sub_layers_minus1: u8) -> Result<Option
         if !low_delay {
             let cpb_cnt_minus1 = r.read_ue("cpb_cnt_minus1")?;
             if cpb_cnt_minus1 > 31 {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "cpb_cnt_minus1",
                     value: cpb_cnt_minus1,
                     reason: "out of range 0..=31 (H.265 §7.4.8)",
-                });
+                }));
             }
             cpb_cnt = cpb_cnt_minus1 + 1;
         }
@@ -1368,11 +1373,11 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // loop (the VUI walk swallows this Err, so the SPS decode still returns,
     // just without timing).
     if num_short_term > 64 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "num_short_term_ref_pic_sets",
             value: num_short_term,
             reason: "out of range 0..=64 (H.265 §7.4.3.2)",
-        });
+        }));
     }
     // st_ref_pic_set() — §7.3.7, including inter-RPS prediction (7-61/7-62),
     // so the walk can reach the VUI (`field_seq_flag`) on every stream.
@@ -1391,11 +1396,11 @@ fn parse_hevc_sps_to_vui_timing_inner(
             let delta_rps_sign = r.read_flag("delta_rps_sign")?;
             let abs_delta_rps_minus1 = r.read_ue("abs_delta_rps_minus1")?;
             if abs_delta_rps_minus1 >= 1 << 15 {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "abs_delta_rps_minus1",
                     value: abs_delta_rps_minus1,
                     reason: "out of range 0..=2^15-1 (H.265 §7.4.8)",
-                });
+                }));
             }
             let magnitude = abs_delta_rps_minus1 as i64 + 1;
             let delta_rps = if delta_rps_sign {
@@ -1456,11 +1461,11 @@ fn parse_hevc_sps_to_vui_timing_inner(
             let num_positive = r.read_ue("num_positive_pics")?;
             // §7.4.8: each is at most sps_max_dec_pic_buffering_minus1 (<= 15).
             if num_negative > HEVC_MAX_RPS_PICS || num_positive > HEVC_MAX_RPS_PICS {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "num_negative_pics/num_positive_pics",
                     value: num_negative.max(num_positive),
                     reason: "out of range 0..=16 (H.265 §7.4.8)",
-                });
+                }));
             }
             let mut s0 = Vec::new();
             let mut acc = 0i64;
@@ -1479,11 +1484,11 @@ fn parse_hevc_sps_to_vui_timing_inner(
             (s0, s1)
         };
         if set.0.len() > HEVC_MAX_RPS_PICS as usize || set.1.len() > HEVC_MAX_RPS_PICS as usize {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "NumNegativePics/NumPositivePics",
                 value: set.0.len().max(set.1.len()) as u64,
                 reason: "derived RPS larger than 16 entries (H.265 §7.4.8)",
-            });
+            }));
         }
         rps_sets.push(set);
     }
@@ -1983,6 +1988,8 @@ pub(crate) fn decode_ptl(
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
 
     const X264_PYRAMID_SPS: [u8; 25] = [
@@ -2375,7 +2382,7 @@ mod tests {
                 assert!(
                     matches!(
                         decode_vvc_sps(&nal[..cut]),
-                        Err(crate::error::Error::BufferTooShort { .. })
+                        Err(crate::error::Error::BufferTooShort(..))
                     ),
                     "additional={additional} cut={cut} of {} must error",
                     nal.len()
@@ -2512,12 +2519,12 @@ mod tests {
         let nal: &[u8] = &[0x00, 0x78, 0x00, 0x40];
         assert!(matches!(
             decode_vvc_sps(nal),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         // A two-byte header alone (the minimum for the reader to start).
         assert!(matches!(
             decode_vvc_sps(&[0x00, 0x78]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -2613,10 +2620,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "num_ref_frames_in_pic_order_cnt_cycle",
                     ..
-                }
+                })
             ),
             "{err:?}"
         );
@@ -2636,10 +2643,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "chroma_format_idc",
                     ..
-                }
+                })
             ),
             "{err:?}"
         );
@@ -2661,10 +2668,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "bit_depth_luma_minus8",
                     ..
-                }
+                })
             ),
             "{err:?}"
         );
@@ -4103,7 +4110,7 @@ mod tests {
         nal.extend(s.finish());
         let r = decode_hevc_vps_timing(&nal);
         assert!(
-            matches!(r, Err(crate::error::Error::InvalidValue { .. })),
+            matches!(r, Err(crate::error::Error::InvalidValue(..))),
             "expected Err, got {:?}",
             r
         );
@@ -4156,7 +4163,7 @@ mod tests {
         assert!(
             matches!(
                 decode_hevc_vps_timing(&synth_vps(1024, 7, 9)),
-                Err(crate::error::Error::InvalidValue { .. })
+                Err(crate::error::Error::InvalidValue(..))
             ),
             "1024 layer sets is out of range"
         );

@@ -4,6 +4,7 @@
 //! and malformed classifications, plus `package_track_fragment`'s own contract.
 
 use broadcast_common::Unpackage;
+use broadcast_common::error::BufferTooShort;
 use transmux::Error;
 use transmux::media::{Media, Track};
 use transmux::smooth::SmoothPackager;
@@ -140,11 +141,11 @@ fn fragment_track_id_reports_a_missing_moof_or_traf() {
     assert!(
         matches!(
             got,
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "moof missing traf"
-            })
+            }))
         ),
         "{got:?}"
     );

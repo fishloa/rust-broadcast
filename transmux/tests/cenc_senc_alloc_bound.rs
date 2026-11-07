@@ -63,7 +63,7 @@ fn hostile_senc_sample_count_allocates_nothing_large() {
         assert!(
             matches!(
                 result,
-                Err(transmux::error::Error::BufferTooShort { .. }
+                Err(transmux::error::Error::BufferTooShort(..)
                     | transmux::error::Error::InvalidInput(..))
             ),
             "iv_size={iv_size} flags={flags:#x}: a 20-byte senc declaring 0xFFFFFFFF samples \

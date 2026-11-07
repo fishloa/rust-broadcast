@@ -1450,7 +1450,7 @@ fn aac_clock_rate_disagreeing_with_the_config_is_rejected() {
         })
         .expect_err("48 kHz is not the config's sample rate");
     assert!(
-        matches!(err, transmux::Error::InvalidValue { .. }),
+        matches!(err, transmux::Error::InvalidValue(..)),
         "must be a structured value error, got {err:?}"
     );
 }
@@ -1498,7 +1498,7 @@ fn non_90khz_avc_clock_is_rejected() {
         })
         .expect_err("H.264 is carried at 90 kHz (RFC 6184 §8.1)");
     assert!(
-        matches!(err, transmux::Error::InvalidValue { .. }),
+        matches!(err, transmux::Error::InvalidValue(..)),
         "must be a structured value error, got {err:?}"
     );
 }

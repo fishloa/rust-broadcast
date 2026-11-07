@@ -19,6 +19,7 @@
 use crate::error::{Error, Result};
 use crate::hevc_config::HEVCDecoderConfigurationRecord;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
@@ -84,18 +85,18 @@ fn be32(b: &[u8], at: usize) -> u32 {
 
 fn check_exact(bytes: &[u8], need: usize, what: &'static str) -> Result<()> {
     if bytes.len() < need {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need,
             have: bytes.len(),
             what,
-        });
+        }));
     }
     if bytes.len() > need {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: what,
             value: bytes.len() as u64,
             reason: "payload longer than the defined syntax",
-        });
+        }));
     }
     Ok(())
 }
@@ -330,17 +331,17 @@ mod tests {
     fn wrong_lengths_are_rejected() {
         assert!(matches!(
             MasteringDisplayColourVolume::parse(&MDCV_BODY[..23]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let mut long = MDCV_BODY.to_vec();
         long.push(0);
         assert!(matches!(
             MasteringDisplayColourVolume::parse(&long),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             ContentLightLevel::parse(&CLLI_BODY[..3]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 

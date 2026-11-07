@@ -25,6 +25,7 @@
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -187,11 +188,11 @@ pub const DOVI_RESERVED_ZERO: [u8; DOVI_RESERVED_LEN] = [0; DOVI_RESERVED_LEN];
 const RESERVED_OFFSET: usize = 4;
 
 fn invalid(field: &'static str, value: u64, reason: &'static str) -> Error {
-    Error::InvalidValue {
+    Error::InvalidValue(InvalidValue {
         field,
         value,
         reason,
-    }
+    })
 }
 
 fn pack_config_word(r: &DoviDecoderConfigurationRecord) -> u16 {
@@ -569,13 +570,13 @@ mod tests {
     fn lengths_are_rejected() {
         assert!(matches!(
             DoviDecoderConfigurationRecord::parse(&P81_RECORD[..23]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let mut long = P81_RECORD.to_vec();
         long.push(0);
         assert!(matches!(
             DoviDecoderConfigurationRecord::parse(&long),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
     }
 

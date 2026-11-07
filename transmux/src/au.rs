@@ -33,6 +33,7 @@
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 
 use crate::annexb::find_start_code_prefix;
 use crate::error::{Error, Result as AuResult};
@@ -319,11 +320,11 @@ impl AccessUnitSplitter {
             (self.au.len(), "access unit"),
         ] {
             if len > MAX_OPEN_NAL_BYTES {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: what,
                     value: len as u64,
                     reason: "exceeds the maximum buffered Annex B NAL/access unit size",
-                });
+                }));
             }
         }
         Ok(())
@@ -453,6 +454,8 @@ pub fn split_access_units(codec: NalCodec, annexb: &[u8]) -> Vec<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
     use alloc::vec;
 
@@ -800,10 +803,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "Annex B NAL",
                     ..
-                }
+                })
             ),
             "expected the buffered-NAL cap error, got {err:?}"
         );

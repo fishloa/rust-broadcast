@@ -34,6 +34,7 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 
@@ -509,21 +510,21 @@ pub(crate) fn sample_layout(
     let chunk_offsets = chunk_offsets(co64, stco)?;
     let declared = stsz.sample_count as usize;
     if declared > file_len {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: declared,
             have: file_len,
             what: "stsz sample_count vs file length",
-        });
+        }));
     }
     let entries = &stsc.entries;
     let mut prev_first = 0u32;
     for e in entries {
         if e.first_chunk <= prev_first {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "stsc.first_chunk",
                 value: u64::from(e.first_chunk),
                 reason: "first_chunk must be >= 1 and strictly ascending (ISO/IEC 14496-12 §8.7.4)",
-            });
+            }));
         }
         prev_first = e.first_chunk;
     }
@@ -671,6 +672,8 @@ fn expand_stss(stss: Option<&SyncSampleBox>, total_samples: usize) -> Vec<bool> 
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
     use crate::init_segment::StscEntry;
 
@@ -753,7 +756,7 @@ mod tests {
         let err = find_stbl_child(&children, b"stsc", stsc_variant, stsc_reparse_err)
             .expect_err("a matching Opaque box must surface its real parse error");
         assert!(
-            matches!(err, Error::BufferTooShort { .. }),
+            matches!(err, Error::BufferTooShort(..)),
             "expected the real BufferTooShort from SampleToChunkBox::parse, got {err:?}"
         );
     }
@@ -893,10 +896,10 @@ mod tests {
             assert!(
                 matches!(
                     err,
-                    Error::InvalidValue {
+                    Error::InvalidValue(InvalidValue {
                         field: "stsc.first_chunk",
                         ..
-                    }
+                    })
                 ),
                 "{err:?}"
             );
