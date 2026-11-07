@@ -76,27 +76,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        961,
+        962,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1015,
+        1016,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1053,
+        1054,
         "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        1688,
+        1685,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1710,
+        1707,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
@@ -136,17 +136,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/smooth.rs",
-        130,
+        131,
         "spawn_blocking Smooth layout build; awaited inline",
     ),
     (
         "output/smooth.rs",
-        184,
+        185,
         "spawn_blocking Smooth layout locate; awaited inline",
     ),
     (
         "output/smooth.rs",
-        233,
+        234,
         "spawn_blocking Smooth fragment build; awaited inline",
     ),
     (

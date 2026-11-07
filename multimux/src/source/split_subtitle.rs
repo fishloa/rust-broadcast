@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 
 use broadcast_common::Timestamp;
 use broadcast_common::clock33;
+use broadcast_common::timescale::{Rounding, rescale_i64};
 use caption_convert::{Cue, MediaTime, TeletextToWebVtt, cue_block};
 use dvb_si::descriptors::teletext::{TeletextEntry, TeletextType};
 use dvb_si::descriptors::{AnyDescriptor, parse_loop};
@@ -332,8 +333,7 @@ struct Core<D: CueDecoder> {
 }
 
 fn rescale_90k(value: i64, timescale: u32) -> i64 {
-    let ticks = i128::from(value) * PTS_HZ / i128::from(timescale.max(1));
-    i64::try_from(ticks).unwrap_or(if ticks < 0 { i64::MIN } else { i64::MAX })
+    rescale_i64(value, timescale, clock33::PTS_HZ, Rounding::TowardZero)
 }
 
 fn to_media_time(local: i64) -> MediaTime {

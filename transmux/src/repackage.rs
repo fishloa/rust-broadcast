@@ -35,6 +35,7 @@
 use alloc::vec::Vec;
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::{Rounding, rescale_i64};
 
 use crate::error::{Error, Result};
 use crate::media::{Fmp4Demux, Media, TimelineOrigin, Track, relative_decode_times};
@@ -92,19 +93,12 @@ fn presentation_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
 /// timescale, rounding down (`floor`) so the half-open `[start, end)` semantics
 /// are preserved without dropping a boundary sample.
 fn rescale_floor(ticks: u64, from_timescale: u32, to_timescale: u32) -> i64 {
-    if from_timescale == 0 || from_timescale == to_timescale {
-        return ticks as i64;
-    }
-    // (ticks * to) / from, in 128-bit to avoid overflow on large timescales.
-    ((ticks as u128 * to_timescale as u128) / from_timescale as u128) as i64
-}
-
-/// Convert a signed tick count between timescales, rounding down.
-fn rescale_signed_floor(ticks: i64, from_timescale: u32, to_timescale: u32) -> i64 {
-    if from_timescale == 0 || from_timescale == to_timescale {
-        return ticks;
-    }
-    (ticks as i128 * to_timescale as i128).div_euclid(from_timescale as i128) as i64
+    rescale_i64(
+        i64::try_from(ticks).unwrap_or(i64::MAX),
+        from_timescale,
+        to_timescale,
+        Rounding::Floor,
+    )
 }
 
 /// The index of the track whose next un-fed sample has the earliest decode
@@ -242,7 +236,7 @@ impl Media {
             } else {
                 // Lower edge = the snapped anchor start, else the raw window.
                 let lo = match snapped {
-                    Some(idx) => rescale_signed_floor(anchor_pts[idx], anchor_ts, ts),
+                    Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
                     None => rescale_floor(start, self.movie_timescale, ts),
                 };
                 pts.iter().position(|&p| p >= lo && p < hi)

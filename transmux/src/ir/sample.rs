@@ -18,6 +18,7 @@
 
 use crate::TrackId;
 use alloc::sync::Arc;
+use broadcast_common::timescale::{Rounding, rescale_i64};
 use bytes::Bytes;
 
 use super::DisplayInfo;
@@ -133,12 +134,6 @@ pub struct Sample {
     pub display: Option<Arc<DisplayInfo>>,
 }
 
-/// `ticks` rescaled from a `from` Hz timescale to a `to` Hz timescale (floor).
-pub(crate) fn rescale_ticks(ticks: i64, from: u32, to: u32) -> i64 {
-    let scaled = (i128::from(ticks) * i128::from(to)).div_euclid(i128::from(from.max(1)));
-    i64::try_from(scaled).unwrap_or(if scaled < 0 { i64::MIN } else { i64::MAX })
-}
-
 impl Sample {
     /// This sample with `dts`, `pts` and `duration` re-expressed from a
     /// `from` Hz media timescale in a `to` Hz one; the instant each describes
@@ -148,11 +143,11 @@ impl Sample {
         if from == to {
             return self;
         }
-        self.dts = self.dts.map(|t| rescale_ticks(t, from, to));
-        self.pts = self.pts.map(|t| rescale_ticks(t, from, to));
-        self.duration = self
-            .duration
-            .map(|d| u32::try_from(rescale_ticks(i64::from(d), from, to)).unwrap_or(u32::MAX));
+        self.dts = self.dts.map(|t| rescale_i64(t, from, to, Rounding::Floor));
+        self.pts = self.pts.map(|t| rescale_i64(t, from, to, Rounding::Floor));
+        self.duration = self.duration.map(|d| {
+            u32::try_from(rescale_i64(i64::from(d), from, to, Rounding::Floor)).unwrap_or(u32::MAX)
+        });
         self
     }
 

@@ -67,6 +67,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::{Rounding, rescale_u64};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use rtp_packet::RtpPacket as RtpPacketWire;
@@ -678,10 +679,7 @@ fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
 
 /// Rescale a tick count from `from` to `to` timescale (round to nearest).
 fn rescale_ts(ticks: u64, from: u32, to: u32) -> u32 {
-    if from == 0 || from == to {
-        return ticks as u32;
-    }
-    ((ticks * to as u64 + from as u64 / 2) / from as u64) as u32
+    rescale_u64(ticks, from, to, Rounding::Nearest) as u32
 }
 
 /// Split a 4-byte length-prefixed IR video sample into its NAL slices.

@@ -4,6 +4,7 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 ### Changed
+- `timing::ticks_to_us` rescales through `broadcast_common::timescale` (same floor rounding) (c2 H6).
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
 
 ## [0.2.0] - 2026-11-03

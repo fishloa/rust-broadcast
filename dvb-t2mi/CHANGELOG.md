@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `PayloadObject` comes from `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H1).
 
 ## [12.1.0] - 2026-11-03
 

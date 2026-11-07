@@ -46,6 +46,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
+use broadcast_common::timescale::{Rounding, rescale_i64};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 
 use crate::aac_asc::AudioSpecificConfig;
@@ -1062,7 +1063,7 @@ fn ticks_to_ms(ticks: i64, timescale: u32) -> i64 {
     if timescale == 0 {
         return 0;
     }
-    (ticks as i128 * FLV_TIMESCALE as i128 / timescale as i128) as i64
+    rescale_i64(ticks, timescale, FLV_TIMESCALE, Rounding::TowardZero)
 }
 
 /// [`ticks_to_ms`] for a value that must land in an FLV `Timestamp` (the UI24

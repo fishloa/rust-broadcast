@@ -38,12 +38,7 @@ crate::impl_spec_display!(Rounding);
 
 /// `ticks` rescaled from `from` to `to` ticks per second.
 #[must_use]
-pub fn rescale(
-    ticks: i128,
-    from: impl Into<u64>,
-    to: impl Into<u64>,
-    rounding: Rounding,
-) -> i128 {
+pub fn rescale(ticks: i128, from: impl Into<u64>, to: impl Into<u64>, rounding: Rounding) -> i128 {
     let den = i128::from(from.into().max(1));
     let num = ticks.saturating_mul(i128::from(to.into().max(1)));
     match rounding {
@@ -100,9 +95,18 @@ mod tests {
 
     #[test]
     fn identity_and_known_conversion() {
-        assert_eq!(rescale(90_000, 90_000u32, 90_000u32, Rounding::Nearest), 90_000);
-        assert_eq!(rescale(48_000, 48_000u32, 90_000u32, Rounding::Floor), 90_000);
-        assert_eq!(rescale_u64(1024, 48_000u32, 90_000u32, Rounding::Nearest), 1920);
+        assert_eq!(
+            rescale(90_000, 90_000u32, 90_000u32, Rounding::Nearest),
+            90_000
+        );
+        assert_eq!(
+            rescale(48_000, 48_000u32, 90_000u32, Rounding::Floor),
+            90_000
+        );
+        assert_eq!(
+            rescale_u64(1024, 48_000u32, 90_000u32, Rounding::Nearest),
+            1920
+        );
     }
 
     #[test]

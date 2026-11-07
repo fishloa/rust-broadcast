@@ -26,6 +26,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::{Rounding, rescale_i64};
 use transmux::{RtpStreamDepacketiser, Sample, TrackId};
 
 use crate::events::{AvSync, Event};
@@ -37,7 +38,7 @@ use crate::events::{AvSync, Event};
 /// quietly and anything larger is reported to the host.
 pub(crate) const SR_SWITCH_TOLERANCE_US: i128 = 100_000;
 const MAX_HELD_SAMPLES: usize = 256;
-const US_PER_SEC: i128 = 1_000_000;
+const US_PER_SEC: u32 = 1_000_000;
 const SLEW_DIVISOR: i64 = 2;
 
 pub(crate) enum Out {
@@ -66,15 +67,7 @@ pub(crate) struct Aligner {
 }
 
 fn rescale(ticks: i64, from: u32, to: u32) -> i64 {
-    let num = i128::from(ticks) * i128::from(to);
-    let den = i128::from(from.max(1));
-    let half = den / 2;
-    let rounded = if num >= 0 {
-        (num + half) / den
-    } else {
-        (num - half) / den
-    };
-    i64::try_from(rounded).unwrap_or(if rounded < 0 { i64::MIN } else { i64::MAX })
+    rescale_i64(ticks, from, to, Rounding::Nearest)
 }
 
 fn wrapped_gap(rtptime: u32, reference: i64) -> i64 {
@@ -82,7 +75,12 @@ fn wrapped_gap(rtptime: u32, reference: i64) -> i64 {
 }
 
 fn ticks_to_us(ticks: i64, timescale: u32) -> i128 {
-    i128::from(ticks) * US_PER_SEC / i128::from(timescale.max(1))
+    broadcast_common::timescale::rescale(
+        i128::from(ticks),
+        timescale,
+        US_PER_SEC,
+        Rounding::TowardZero,
+    )
 }
 
 impl Aligner {

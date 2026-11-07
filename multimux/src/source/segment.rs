@@ -78,6 +78,8 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use broadcast_common::timescale::{Rounding, rescale_u64};
 use transmux::TrackId;
 
 use broadcast_common::Timestamp;
@@ -1694,15 +1696,18 @@ fn timescale_moves(trunk: &Trunk, declared: &[TrackSpec]) -> HashMap<TrackId, (u
 }
 
 /// Rescale a timestamp in `timescale` ticks to the trunk event ring's fixed
-/// 90 kHz clock (issue #1083, W9). Rounds to nearest, saturating — a value
-/// that overflows `u64` is clamped, never wrapped.
+/// 90 kHz clock (issue #1083, W9). Rounds down, saturating — a value that
+/// overflows `u64` is clamped, never wrapped.
 fn rescale_to_90k(pts: i64, timescale: u32) -> u64 {
     // A negative PTS (a pre-roll/PTS-base offset a demuxer may produce) is
     // clamped to 0: the event ring has no representation for a time before
     // zero, and a segment starting there simply begins the timeline.
-    let pts = u128::try_from(pts).unwrap_or(0);
-    let scaled = pts.saturating_mul(u128::from(timed_metadata::PTS_HZ)) / u128::from(timescale);
-    u64::try_from(scaled).unwrap_or(u64::MAX)
+    rescale_u64(
+        u64::try_from(pts).unwrap_or(0),
+        timescale,
+        timed_metadata::PTS_HZ,
+        Rounding::Floor,
+    )
 }
 
 /// Per-iteration driver every `run_*` entry point calls right after

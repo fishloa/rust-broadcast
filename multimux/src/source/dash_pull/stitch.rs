@@ -15,9 +15,12 @@
 
 use std::collections::HashMap;
 
+use broadcast_common::timescale::{Rounding, rescale};
+
 use transmux::{Sample, TrackId, TrackSpec};
 
-const MICROS_PER_SECOND: i128 = 1_000_000;
+const MICROS_PER_SECOND_U32: u32 = 1_000_000;
+const MICROS_PER_SECOND: i128 = MICROS_PER_SECOND_U32 as i128;
 const HALF_SECOND_US: i128 = MICROS_PER_SECOND / 2;
 
 struct TrackClock {
@@ -36,7 +39,12 @@ pub(super) struct Stitcher {
 }
 
 fn ticks_to_us(ticks: i64, timescale: u32) -> i128 {
-    i128::from(ticks) * MICROS_PER_SECOND / i128::from(timescale)
+    rescale(
+        i128::from(ticks),
+        timescale,
+        MICROS_PER_SECOND_U32,
+        Rounding::TowardZero,
+    )
 }
 
 fn us_to_ticks(us: i128, timescale: u32) -> i64 {
