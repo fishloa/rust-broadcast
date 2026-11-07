@@ -19,6 +19,7 @@ use dvb_stream::UdpSectionStream;
 use dvb_stream::udp::MulticastConfig;
 use dvb_stream::{SectionStream, T2miEventStream};
 use futures_core::Stream;
+#[cfg(feature = "udp")]
 use test_fixtures::psi::pat_packet;
 use tokio::io::{AsyncRead, ReadBuf};
 
