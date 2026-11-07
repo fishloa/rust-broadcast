@@ -8,7 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Removed
 - Unused public items, with no use in the workspace beyond their own unit tests: `PSM_START_CODE`.
+### Fixed
+- `PackHeader`, `SystemHeader` and `ProgramStreamMap` `serialize_into` returned `Error::BufferTooShort` for a too-small OUTPUT buffer; they now return the new `Error::OutputBufferTooSmall { need, have }` (c3 S1).
 ### Added
+- `Error::OutputBufferTooSmall`.
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).

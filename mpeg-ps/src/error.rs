@@ -17,6 +17,15 @@ pub enum Error {
         /// What was being parsed.
         what: &'static str,
     },
+    /// Output buffer passed to `serialize_into` was smaller than
+    /// `serialized_len()`.
+    #[error("serialize: output buffer too small: need {need}, have {have}")]
+    OutputBufferTooSmall {
+        /// Bytes required.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
     /// `pack_start_code` was not `0x000001BA`.
     #[error("invalid pack_start_code: {0:#010X} (expected 0x000001BA)")]
     BadPackStartCode(u32),
@@ -108,6 +117,15 @@ impl From<broadcast_common::len::BufferTooShort> for Error {
             need: e.need,
             have: e.have,
             what: e.what,
+        }
+    }
+}
+
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
         }
     }
 }

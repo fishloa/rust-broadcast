@@ -5,7 +5,7 @@
 //! It uses start-code prefix `0x000001` + `map_stream_id` `0xBC`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize, crc32_mpeg2};
@@ -282,7 +282,7 @@ impl Serialize for ProgramStreamMap<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        need_in(buf, total, "program_stream_map serialize output")?;
+        need_out(buf, total)?;
 
         // packet_start_code_prefix (3 bytes)
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX.to_be_bytes()[1..]);

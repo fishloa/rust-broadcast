@@ -6,7 +6,7 @@
 //! buffer-size bounds.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize};
@@ -298,7 +298,7 @@ impl Serialize for SystemHeader {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        need_in(buf, total, "system_header serialize output")?;
+        need_out(buf, total)?;
 
         // system_header_start_code
         buf[0..4].copy_from_slice(&SYSTEM_HEADER_START_CODE.to_be_bytes());

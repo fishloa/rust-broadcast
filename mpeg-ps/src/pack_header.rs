@@ -6,7 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::scr::{self, Scr};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `pack_start_code` — `0x000001BA`.
@@ -125,7 +125,7 @@ impl Serialize for PackHeader<'_> {
             "pack_header.reserved",
         )? as u8;
         let len = self.serialized_len();
-        need_in(buf, len, "pack_header serialize output")?;
+        need_out(buf, len)?;
 
         // pack_start_code
         buf[0..4].copy_from_slice(&PACK_START_CODE.to_be_bytes());
