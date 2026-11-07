@@ -5,6 +5,8 @@
 - The DASH and LL-DASH `type="dynamic"` MPDs now carry `MPD@publishTime` (ISO/IEC 23009-1 section 5.3.1.2 Table 3: shall be present for dynamic MPDs, and a later value marks an update). It is the instant the newest listed segment became available, so it is unchanged while the window is unchanged and later after every new segment.
 - `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
 ### Changed
+- Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
+- DASH and LL-DASH share one manifest handler and `ServedEgress` (`output::dash::serve_mpd`); the in-crate tests share `body_string`, `drain` and `video_spec` from `testutil` (c7 G7).
 - The DASH period stitcher's `ticks_to_us` uses `broadcast_common::timescale::to_micros` (c6 F7).
 - The WHIP and WHEP outputs share one CORS middleware (`webrtc_session::add_cors`), one session registration (`register_session`) and one `SignallingMachine` implementation macro; the push egress, DASH output and segmenters call `CodecConfig::is_video` instead of private copies (c4 D2, M4).
 - The five pull routes are one generic `PullRoute<K: PullKind>`; `RtspRoute`, `HlsPullRoute`, `SmoothPullRoute`, `TsHttpRoute` and `DashPullRoute` are type aliases over it with unchanged constructors and builders (c4 D4). The marker types `RtspKind`, `HlsPullKind`, `SmoothPullKind`, `TsHttpKind` and `DashPullKind` are public.
@@ -19,7 +21,8 @@
 - TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
 ### Removed
 - Unused `origin::limit::RETRY_AFTER_SECS` (c2 TH1).
-
+### Added
+- `MultimuxError::Flv(transmux::FlvError)`: an RTMP ingest FLV demux failure keeps its source instead of a flattened `Depay` string; WHIP RTP depayload failures surface as `MultimuxError::Transmux` (c6 C6-14).
 
 ## [0.15.0] - 2026-11-03
 ### Fixed

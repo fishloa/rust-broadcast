@@ -1,5 +1,6 @@
 mod declaration_validation;
 mod deep_drop;
+mod error_variants;
 mod golden;
 mod integration;
 mod mixed_content;

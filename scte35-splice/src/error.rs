@@ -8,7 +8,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// Error variants that SCTE 35 parsers and builders can return.
 ///
 /// Spec references quote clauses from ANSI/SCTE 35 2023r1 where applicable.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.

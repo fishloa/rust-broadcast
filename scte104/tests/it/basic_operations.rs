@@ -166,3 +166,17 @@ fn config_and_fault_request_reject_truncation_and_short_buffers() {
     assert_truncations_rejected::<FaultRequest>(&wire, "fault_request_data");
     assert_short_buffers(&fault);
 }
+
+#[test]
+fn a_multiple_operation_message_with_wrong_reserved_bits_is_rejected() {
+    use broadcast_common::Parse;
+    let bytes = [0u8; 16];
+    assert_eq!(
+        scte104::MultipleOperationMessage::parse(&bytes).unwrap_err(),
+        scte104::Error::ReservedBits(broadcast_common::error::ReservedBits {
+            field: "reserved",
+            expected: 0xFFFF,
+            found: 0,
+        })
+    );
+}

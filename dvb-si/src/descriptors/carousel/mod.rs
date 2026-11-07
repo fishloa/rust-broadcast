@@ -11,7 +11,7 @@
 //! [`crate::descriptors::parse_loop`].
 //!
 //! [`AnyCarouselDescriptor`] is generated from a single declarative list
-//! (`declare_carousel_descriptors!`), one line per tag, exactly like the AIT namespace
+//! (`declare_tag_namespace!`), one line per tag, exactly like the AIT namespace
 //! in [`crate::descriptors::ait`]; the generated drift test pins each
 //! tag literal to the type's [`crate::traits::DescriptorDef::TAG`].
 //!
@@ -60,106 +60,10 @@ pub use ssu_module_type::{SsuModuleType, SsuModuleTypeDescriptor};
 pub use subgroup_association::{SubgroupAssociationDescriptor, SubgroupTag};
 pub use type_descriptor::TypeDescriptor;
 
-/// Declares [`AnyCarouselDescriptor`] + its dispatcher from one tag list.
-///
-/// Mirrors `declare_ait_descriptors!` in `crate::descriptors::ait`.
-/// Each line is `Variant = 0xTAG => crate::descriptors::carousel::module::Type[<'a>]`.
-macro_rules! declare_carousel_descriptors {
-    (
-        $lt:lifetime;
-        $( $variant:ident = $tag:literal => $($path:ident)::+ $(<$plt:lifetime>)? ),+ $(,)?
-    ) => {
-        /// Every crate-implemented data-carousel descriptor, plus an `Unknown` fallthrough.
-        ///
-        /// Data-carousel descriptor tags belong to their own private tag space
-        /// (EN 301 192 §10.2.1 Table 48/49), separate from both the EN 300 468 SI
-        /// tags and the AIT tags. The same numeric tag value may map to a
-        /// different type there.
-        #[derive(Debug)]
-        #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-        #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-        #[non_exhaustive]
-        pub enum AnyCarouselDescriptor<$lt> {
-            $(
-                #[allow(missing_docs)]
-                $variant($($path)::+ $(<$plt>)?),
-            )+
-            /// Tag with no typed implementation; `body` is the payload sans
-            /// the 2-byte (tag, length) header.
-            Unknown {
-                /// The raw descriptor_tag byte.
-                tag: u8,
-                /// The raw payload bytes (descriptor_length bytes).
-                body: &$lt [u8],
-            },
-        }
+use crate::descriptors::tag_namespace::declare_tag_namespace;
 
-        $(
-            impl<$lt> From<$($path)::+ $(<$plt>)?> for AnyCarouselDescriptor<$lt> {
-                fn from(d: $($path)::+ $(<$plt>)?) -> Self {
-                    Self::$variant(d)
-                }
-            }
-        )+
-
-        impl<$lt> AnyCarouselDescriptor<$lt> {
-            /// Every tag the generated dispatcher routes (excludes
-            /// [`AnyCarouselDescriptor::Unknown`]).
-            pub const DISPATCHED_TAGS: &'static [u8] = &[$($tag),+];
-
-            /// Diagnostic name of the contained carousel descriptor — the type's
-            /// [`DescriptorDef::NAME`](crate::traits::DescriptorDef::NAME)
-            /// (`"TYPE"`, `"MODULE_LINK"`, …); `"UNKNOWN"`
-            /// for [`AnyCarouselDescriptor::Unknown`].
-            #[must_use]
-            pub fn name(&self) -> &'static str {
-                match self {
-                    $(
-                        Self::$variant(_) =>
-                            <$($path)::+ as crate::traits::DescriptorDef>::NAME,
-                    )+
-                    Self::Unknown { .. } => "UNKNOWN",
-                }
-            }
-
-            /// Parse one full carousel descriptor (2-byte header included) by its tag.
-            ///
-            /// `None` means no typed implementation exists for `tag` (the
-            /// caller turns that into [`AnyCarouselDescriptor::Unknown`]). `Some(Err)`
-            /// is a typed parse failure for a recognised tag.
-            pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Option<crate::error::Result<Self>> {
-                use broadcast_common::Parse;
-                match tag {
-                    $(
-                        $tag => Some(<$($path)::+>::parse(full).map(Self::$variant)),
-                    )+
-                    _ => None,
-                }
-            }
-        }
-
-        #[cfg(test)]
-        mod macro_drift {
-            #[test]
-            fn tag_literals_match_descriptor_def() {
-                use crate::traits::DescriptorDef;
-                $(
-                    assert_eq!(
-                        $tag,
-                        <$($path)::+ as DescriptorDef>::TAG,
-                        concat!("tag literal drift for ", stringify!($variant)),
-                    );
-                    assert!(
-                        !<$($path)::+ as DescriptorDef>::NAME.is_empty(),
-                        concat!("empty NAME for ", stringify!($variant)),
-                    );
-                )+
-            }
-        }
-    };
-}
-
-declare_carousel_descriptors! {'a;
+declare_tag_namespace! {'a;
+    enum AnyCarouselDescriptor, space "data-carousel", spec "EN 301 192 §10.2.1 Table 48/49", names "`\"TYPE\"`, `\"MODULE_LINK\"`, …";
     Type                = 0x01 => crate::descriptors::carousel::type_descriptor::TypeDescriptor<'a>,
     Name                = 0x02 => crate::descriptors::carousel::name::NameDescriptor<'a>,
     Info                = 0x03 => crate::descriptors::carousel::info::InfoDescriptor<'a>,

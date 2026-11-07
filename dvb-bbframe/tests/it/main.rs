@@ -1,3 +1,4 @@
+mod error_variants;
 mod integration_fixture;
 mod nm_issy_npd_synthetic;
 mod serde_round_trip;

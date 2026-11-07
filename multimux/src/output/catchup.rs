@@ -490,6 +490,7 @@ mod tests {
     use super::*;
     use crate::dvr::{ArchiveOverrunSerde, DvrConfig};
     use crate::route::SPTS_PROGRAM_ID;
+    use crate::testutil::body_string;
 
     fn temp_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -537,13 +538,6 @@ mod tests {
             segment_seq: seq,
             part_count: 1,
         }
-    }
-
-    async fn body_string(resp: Response) -> String {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        String::from_utf8(bytes.to_vec()).unwrap()
     }
 
     async fn body_bytes(resp: Response) -> Vec<u8> {

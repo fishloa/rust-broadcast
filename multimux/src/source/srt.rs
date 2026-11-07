@@ -489,26 +489,10 @@ pub async fn run_srt_listener_once(
 mod tests {
     use super::*;
     use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
+    use crate::testutil::drain;
     use media_plane::ingress::ProgramId;
-    use media_plane::trunk::{SampleCursor, SampleCursorItem};
+    use media_plane::trunk::SampleCursor;
     use parking_lot::Mutex as StdMutex;
-
-    /// Counts every sample a cursor yields — the `Trunk`-side replacement
-    /// for the pre-5a tests' `MediaStore::init_bytes()`/`window_segments()`
-    /// assertions. The property under test is unchanged (real H.264 samples
-    /// travelled the whole chain: SRT socket → `StreamingTsDemux` →
-    /// `SessionEvent::Sample` → `Trunk`); only the sink moved, because step
-    /// 4 deleted `MediaStore` and a step-5a source publishes samples, not
-    /// segments (see this crate's CHANGELOG on the segmenter gap).
-    fn drain(cursor: &mut SampleCursor) -> usize {
-        let mut n = 0;
-        while let Some(item) = cursor.poll() {
-            if matches!(item, SampleCursorItem::Timed { .. }) {
-                n += 1;
-            }
-        }
-        n
-    }
 
     /// Loopback biting test (issue #739): a real `SrtSocket` caller connects
     /// to a real listener-mode `SrtRoute` bound to an ephemeral loopback

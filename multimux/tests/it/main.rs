@@ -1,4 +1,3 @@
-#[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
 mod accept_lifecycle;
 mod admin_api;
 mod audio_renditions;
@@ -15,6 +14,8 @@ mod dashif_ingest_session_strict;
 mod dispatch_ingest;
 mod dovi_route;
 mod emsg_mp4box;
+#[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
+mod error_variants;
 mod example_configs;
 mod file_reader;
 mod file_route;

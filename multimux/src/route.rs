@@ -396,7 +396,7 @@ impl DashState {
 }
 
 /// Why [`RouteHandle::add_segment`] could not publish a segment.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 #[non_exhaustive]
 pub enum AddSegmentError {
     /// No program with this id has been published on the route yet.
@@ -2021,7 +2021,7 @@ mod program_registry_tests {
     //! actual-vs-expected values, and the subsequent revert.
 
     use super::*;
-    use transmux::CodecConfig;
+    use crate::testutil::video_spec;
 
     /// A minimal standalone `Trunk`, distinct in identity from any other
     /// call's — every ring capacity is `1` since these tests never publish
@@ -2416,17 +2416,6 @@ mod program_registry_tests {
             }
             _ => panic!("expected ProgramResolution::Found (still trunk_a)"),
         }
-    }
-
-    fn video_spec(track_id: TrackId) -> TrackSpec {
-        TrackSpec::new(
-            track_id,
-            90_000,
-            CodecConfig::Vp8 {
-                width: 1280,
-                height: 720,
-            },
-        )
     }
 
     fn seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {

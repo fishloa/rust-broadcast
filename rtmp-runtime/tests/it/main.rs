@@ -1,5 +1,6 @@
 mod client_adapter;
 mod client_play;
+mod error_variants;
 mod ffmpeg_publish;
 mod golden_wire;
 mod ingest_fixture;

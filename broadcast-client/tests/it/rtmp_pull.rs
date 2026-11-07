@@ -4,7 +4,10 @@ use std::time::Duration;
 
 use broadcast_client::{Config, Error, ErrorKind, Event, Session, Status};
 
-use crate::support::rtmp_host::{PeerConfig, RtmpHost, SEC, URL, direct, peer_config, rtmp_config};
+use crate::support::rtmp_host::{
+    PeerConfig, RtmpHost, SEC, URL, assert_complete_samples_equal_direct,
+    assert_samples_equal_direct, connect_and_play, direct, peer_config, rtmp_config,
+};
 use crate::support::rtmp_wire::{PeerServer, Serve, WireHost};
 
 fn statuses(events: &[Event]) -> Vec<Status> {
@@ -33,70 +36,12 @@ fn rtmp_pull_matches_direct_flv_demux() {
     });
     let samples = host.samples();
     assert!(samples.len() > 50, "the fixture carries real media");
-    let d = direct();
-    for track in &d.tracks {
-        let got: Vec<&transmux::Sample> = samples
-            .iter()
-            .filter(|(id, _)| *id == track.spec.track_id.value())
-            .map(|(_, s)| s)
-            .collect();
-        assert_eq!(
-            got.len(),
-            track.samples.len(),
-            "track {}",
-            track.spec.track_id
-        );
-        for (a, b) in got.iter().zip(track.samples.iter()) {
-            assert_eq!(a.data, b.data);
-            assert_eq!(a.dts, b.dts);
-            assert_eq!(a.pts, b.pts);
-            assert_eq!(a.duration, b.duration);
-        }
-    }
+    assert_complete_samples_equal_direct(&samples);
     let st = statuses(&host.events);
     assert!(st.contains(&Status::Ended));
 }
 
 use rtmp_runtime::amf0::Amf0Value;
-
-fn connect_and_play(h: &mut RtmpHost) {
-    h.collect();
-    assert!(
-        h.peer.as_ref().is_some_and(|p| p.is_playing()),
-        "play was accepted"
-    );
-}
-
-fn assert_samples_equal_direct(samples: &[(u32, transmux::Sample)]) {
-    assert_samples_equal_direct_with(samples, 1);
-}
-
-fn assert_complete_samples_equal_direct(samples: &[(u32, transmux::Sample)]) {
-    assert_samples_equal_direct_with(samples, 0);
-}
-
-fn assert_samples_equal_direct_with(samples: &[(u32, transmux::Sample)], held: usize) {
-    let d = direct();
-    for track in &d.tracks {
-        let got: Vec<&transmux::Sample> = samples
-            .iter()
-            .filter(|(id, _)| *id == track.spec.track_id.value())
-            .map(|(_, s)| s)
-            .collect();
-        assert_eq!(
-            got.len(),
-            track.samples.len() - held,
-            "track {}",
-            track.spec.track_id
-        );
-        for (a, b) in got.iter().zip(track.samples.iter()) {
-            assert_eq!(a.data, b.data);
-            assert_eq!(a.dts, b.dts);
-            assert_eq!(a.pts, b.pts);
-            assert_eq!(a.duration, b.duration);
-        }
-    }
-}
 
 #[test]
 fn rtmp_url_splits_app_stream_and_query() {

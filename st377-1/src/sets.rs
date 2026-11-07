@@ -287,3 +287,25 @@ pub fn owned_set_serialized_len(key: UlBytes, owned_items: &[LocalSetOwnedItem])
     }
     .serialized_len()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_required_property_names_the_tag_property_and_set() {
+        let expected = Error::MissingRequiredProperty {
+            tag: 0x3C0A,
+            name: "Instance UID",
+            set: "Preface",
+        };
+        assert_eq!(
+            get_required_raw(&[], 0x3C0A, "Instance UID", "Preface"),
+            Err(expected)
+        );
+        assert_eq!(
+            get_required_fixed::<16>(&[], 0x3C0A, "Instance UID", "Preface"),
+            Err(expected)
+        );
+    }
+}

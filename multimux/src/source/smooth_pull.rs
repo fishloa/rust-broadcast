@@ -1086,6 +1086,7 @@ pub async fn run_smooth_pull(
 mod tests {
     use super::*;
     use crate::source::IngestTimeouts;
+    use crate::testutil::drain;
     use axum::Router;
     use axum::extract::{Path as AxumPath, State};
     use axum::http::StatusCode as AxumStatusCode;
@@ -1093,7 +1094,7 @@ mod tests {
     use axum::routing::get;
     use broadcast_common::Package;
     use media_plane::ingress::HandshakePolicy;
-    use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
+    use media_plane::trunk::{SampleCursor, TrunkConfig};
     use std::collections::HashMap;
     use std::num::NonZeroUsize;
     use std::sync::Arc;
@@ -1225,16 +1226,6 @@ mod tests {
 
     fn handshake() -> HandshakePolicy {
         HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
-    }
-
-    fn drain(cursor: &mut SampleCursor) -> usize {
-        let mut n = 0;
-        while let Some(item) = cursor.poll() {
-            if matches!(item, SampleCursorItem::Timed { .. }) {
-                n += 1;
-            }
-        }
-        n
     }
 
     fn fixture_ts_path() -> std::path::PathBuf {

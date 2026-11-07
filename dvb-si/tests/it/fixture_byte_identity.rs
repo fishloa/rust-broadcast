@@ -7,7 +7,6 @@
 
 use broadcast_common::Serialize;
 use dvb_si::demux::SiDemux;
-use dvb_si::tables::AnyTableSection;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn read_fixture(filename: &str) -> Vec<u8> {
@@ -46,8 +45,8 @@ fn feed_and_assert_byte_identity(demux: &mut SiDemux, data: &[u8], fixture_name:
                     continue;
                 }
             };
-            let mut buf = vec![0u8; serialized_len_of(&table)];
-            serialize_into_of(&table, &mut buf);
+            let mut buf = vec![0u8; table.serialized_len()];
+            table.serialize_into(&mut buf).unwrap();
             if buf != original {
                 // Print a detailed diff header so the user can see which
                 // section/byte diverges.
@@ -87,137 +86,6 @@ fn feed_and_assert_byte_identity(demux: &mut SiDemux, data: &[u8], fixture_name:
         }
     }
     eprintln!("  {fixture_name}: {section_count} sections, all byte-identical");
-}
-
-/// Compute the serialized length of an [`AnyTableSection`] without needing
-/// to implement `Serialize` on the enum.
-fn serialized_len_of(table: &AnyTableSection<'_>) -> usize {
-    match table {
-        AnyTableSection::PatSection(t) => t.serialized_len(),
-        AnyTableSection::CatSection(t) => t.serialized_len(),
-        AnyTableSection::PmtSection(t) => t.serialized_len(),
-        AnyTableSection::TsdtSection(t) => t.serialized_len(),
-        AnyTableSection::DsmccSection(t) => t.serialized_len(),
-        AnyTableSection::NitSection(t) => t.serialized_len(),
-        AnyTableSection::SdtSection(t) => t.serialized_len(),
-        AnyTableSection::BatSection(t) => t.serialized_len(),
-        AnyTableSection::UntSection(t) => t.serialized_len(),
-        AnyTableSection::IntSection(t) => t.serialized_len(),
-        AnyTableSection::SatSection(t) => t.serialized_len(),
-        AnyTableSection::EitSection(t) => t.serialized_len(),
-        AnyTableSection::TdtSection(t) => t.serialized_len(),
-        AnyTableSection::RstSection(t) => t.serialized_len(),
-        AnyTableSection::StSection(t) => t.serialized_len(),
-        AnyTableSection::TotSection(t) => t.serialized_len(),
-        AnyTableSection::AitSection(t) => t.serialized_len(),
-        AnyTableSection::ContainerSection(t) => t.serialized_len(),
-        AnyTableSection::RctSection(t) => t.serialized_len(),
-        AnyTableSection::CitSection(t) => t.serialized_len(),
-        AnyTableSection::MpeFecSection(t) => t.serialized_len(),
-        AnyTableSection::RntSection(t) => t.serialized_len(),
-        AnyTableSection::MpeIfecSection(t) => t.serialized_len(),
-        AnyTableSection::ProtectionMessage(t) => t.serialized_len(),
-        AnyTableSection::DownloadableFontInfo(t) => t.serialized_len(),
-        AnyTableSection::DitSection(t) => t.serialized_len(),
-        AnyTableSection::SitSection(t) => t.serialized_len(),
-        AnyTableSection::MpeDatagram(t) => t.serialized_len(),
-        AnyTableSection::Unknown { raw, .. } => raw.len(),
-        _ => panic!("unhandled AnyTableSection variant"),
-    }
-}
-
-/// Serialize an [`AnyTableSection`] into `buf` (which must be the correct size).
-fn serialize_into_of(table: &AnyTableSection<'_>, buf: &mut [u8]) {
-    match table {
-        AnyTableSection::PatSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::CatSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::PmtSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::TsdtSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::DsmccSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::NitSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::SdtSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::BatSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::UntSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::IntSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::SatSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::EitSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::TdtSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::RstSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::StSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::TotSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::AitSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::ContainerSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::RctSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::CitSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::MpeFecSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::RntSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::MpeIfecSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::ProtectionMessage(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::DownloadableFontInfo(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::DitSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::SitSection(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::MpeDatagram(t) => {
-            t.serialize_into(buf).unwrap();
-        }
-        AnyTableSection::Unknown { raw, .. } => {
-            buf.copy_from_slice(raw);
-        }
-        _ => panic!("unhandled AnyTableSection variant"),
-    }
 }
 
 // ── m6-single.ts ─────────────────────────────────────────────────────────

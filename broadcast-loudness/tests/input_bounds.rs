@@ -69,3 +69,15 @@ fn push_f32_slice_rejects_a_non_finite_sample_with_its_index() {
         Err(Error::NonFiniteSample { index: 37, .. })
     ));
 }
+
+#[test]
+fn pushing_after_finish_is_rejected_on_every_pusher() {
+    let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+    meter.finish();
+    assert_eq!(meter.push_f32(&[0.0, 0.0]), Err(Error::Finished));
+    assert_eq!(meter.push_f64(&[0.0, 0.0]), Err(Error::Finished));
+    assert_eq!(
+        meter.push_stereo_planar_f32(&[0.0], &[0.0]),
+        Err(Error::Finished)
+    );
+}

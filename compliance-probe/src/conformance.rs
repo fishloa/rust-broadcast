@@ -90,8 +90,6 @@ impl PcrTracker {
             have_drift: false,
         });
 
-        // First observation for this PID: record the baseline, nothing to
-        // compare yet.
         if !state.have_drift && state.last_pcr_27mhz == pcr_27mhz && state.last_arrival == t {
             return None;
         }

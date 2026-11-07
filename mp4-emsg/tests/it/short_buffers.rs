@@ -24,3 +24,15 @@ fn real_emsg_boxes_reject_every_short_buffer() {
         );
     }
 }
+
+#[test]
+fn a_truncated_header_is_a_missing_fullbox_header() {
+    assert_eq!(
+        EmsgBox::parse(&[0u8; 4]).unwrap_err(),
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            need: 12,
+            have: 4,
+            what: "emsg FullBox header",
+        })
+    );
+}

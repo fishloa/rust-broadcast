@@ -17,14 +17,6 @@
 
 pub use broadcast_auth::{Authenticator, Credentials, RequestContext};
 
-use crate::error::Error;
-
-impl From<broadcast_auth::Error> for Error {
-    fn from(e: broadcast_auth::Error) -> Self {
-        Error::Auth(e.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

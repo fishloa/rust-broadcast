@@ -22,6 +22,7 @@
 //! test documents and applies that constant.
 
 use broadcast_common::Package;
+use test_fixtures::ffprobe;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
@@ -35,37 +36,6 @@ const ORACLE: &str = "mkv/vp9-opus.packets.csv";
 /// Opus codec delay ffprobe applies to audio presentation times, in ms.
 /// (pre-skip 312 samples @ 48 kHz = 6.5 ms, rounded up to 7 ms.)
 const AUDIO_CODEC_DELAY_MS: i64 = 7;
-
-/// One ffprobe oracle row.
-#[derive(Debug)]
-struct OracleRow {
-    codec_type: String,
-    pts: i64,
-    size: usize,
-    keyframe: bool,
-}
-
-fn load_oracle() -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(test_fixtures::path(ORACLE)).expect("read oracle csv");
-    let mut rows = Vec::new();
-    for line in text.lines() {
-        if line.starts_with('#') || line.trim().is_empty() {
-            continue;
-        }
-        let f: Vec<&str> = line.split(',').collect();
-        rows.push(OracleRow {
-            codec_type: f[0].to_string(),
-            pts: f[2].trim().parse().unwrap(),
-            size: f[5].trim().parse().unwrap(),
-            keyframe: f[6].trim() == "1",
-        });
-    }
-    rows
-}
-
-fn oracle_for<'a>(rows: &'a [OracleRow], codec_type: &str) -> Vec<&'a OracleRow> {
-    rows.iter().filter(|r| r.codec_type == codec_type).collect()
-}
 
 fn demux() -> Media {
     let bytes = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
@@ -97,9 +67,9 @@ fn enumerates_two_tracks_vp9_and_opus() {
 #[test]
 fn frame_counts_and_sizes_match_oracle() {
     let m = demux();
-    let oracle = load_oracle();
-    let vid_oracle = oracle_for(&oracle, "video");
-    let aud_oracle = oracle_for(&oracle, "audio");
+    let oracle = ffprobe::packets(ORACLE);
+    let vid_oracle = ffprobe::of_type(&oracle, "video");
+    let aud_oracle = ffprobe::of_type(&oracle, "audio");
 
     assert_eq!(vid_oracle.len(), 50, "oracle sanity: 50 video frames");
     assert_eq!(aud_oracle.len(), 101, "oracle sanity: 101 audio frames");
@@ -132,20 +102,22 @@ fn frame_counts_and_sizes_match_oracle() {
 #[test]
 fn timestamps_and_keyframes_match_oracle() {
     let m = demux();
-    let oracle = load_oracle();
-    let vid_oracle = oracle_for(&oracle, "video");
-    let aud_oracle = oracle_for(&oracle, "audio");
+    let oracle = ffprobe::packets(ORACLE);
+    let vid_oracle = ffprobe::of_type(&oracle, "video");
+    let aud_oracle = ffprobe::of_type(&oracle, "audio");
 
     // Video: IR timescale is ms, first block PTS is 0 → recon_pts == oracle pts.
     let vid = &m.tracks[0];
     let mut acc = 0i64;
     for (i, s) in vid.samples.iter().enumerate() {
         assert_eq!(
-            acc, vid_oracle[i].pts,
+            acc,
+            vid_oracle[i].pts(),
             "video sample {i} reconstructed PTS must equal oracle"
         );
         assert_eq!(
-            s.flags.is_sync, vid_oracle[i].keyframe,
+            s.flags.is_sync,
+            vid_oracle[i].is_keyframe(),
             "video sample {i} keyframe flag must equal oracle"
         );
         acc += s.duration.unwrap_or(0) as i64;
@@ -157,7 +129,7 @@ fn timestamps_and_keyframes_match_oracle() {
     for (i, s) in aud.samples.iter().enumerate() {
         assert_eq!(
             acc,
-            aud_oracle[i].pts + AUDIO_CODEC_DELAY_MS,
+            aud_oracle[i].pts() + AUDIO_CODEC_DELAY_MS,
             "audio sample {i} reconstructed PTS must equal oracle + codec delay"
         );
         assert!(s.flags.is_sync, "audio sample {i} must be a sync sample");

@@ -18,9 +18,11 @@
 //! directly and publish it.
 
 use crate::support::origin::{body_bytes, body_string, get};
+use crate::support::segmenter_feed::{
+    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_track_spec,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
-use transmux::TrackId;
 
 use axum::http::StatusCode;
 use tower::ServiceExt;
@@ -29,39 +31,9 @@ use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::llhls::LlHlsOutput;
 use multimux::route::RouteHandle;
-use transmux::avc_config_from_sprop;
-use transmux::ll_hls::{LlHlsSegmenter, PartInfo};
-use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
+use transmux::ll_hls::PartInfo;
+use transmux::pipeline::Sample;
 use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
-
-/// A real-ish sprop-parameter-sets pair (SPS+PPS) — same one used by
-/// `multimux::source::rtsp`'s own tests — decoded into an `avcC` config so
-/// the init segment carries a genuine AVC configuration record rather than a
-/// fabricated one.
-const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-
-/// 90 kHz video timescale (the CMAF movie timescale [`feed_via_segmenter`]
-/// builds with) — 1/30 s per access unit at 30 fps.
-const VIDEO_TIMESCALE: u32 = 90_000;
-const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
-/// Target full-segment duration, seconds — matches the pre-#805-task-5
-/// `run_pipeline`-driven version of this test.
-const TARGET_DURATION_SECS: f64 = 1.0;
-/// LL-HLS part target, milliseconds — matches the pre-#805-task-5 version.
-const PART_TARGET_MS: u32 = 500;
-
-fn video_track_spec() -> TrackSpec {
-    let config = avc_config_from_sprop(SPROP).expect("valid sprop");
-    TrackSpec::new(
-        TrackId::new(1),
-        VIDEO_TIMESCALE,
-        CodecConfig::Avc {
-            config,
-            width: 0,
-            height: 0,
-        },
-    )
-}
 
 /// Only `Severity::Error` issues fail the gate — warnings (e.g. a missing
 /// `mvex`/`trex` on a segment that isn't the init segment) are informational.
@@ -81,62 +53,6 @@ fn first_segment_uri(playlist: &str) -> Option<&str> {
     let rest = &playlist[start..];
     let end = rest.find(".m4s")? + ".m4s".len();
     Some(&rest[..end])
-}
-
-/// Drives `batches` through a real [`LlHlsSegmenter`] into `store` — the
-/// direct replacement for the deleted `crate::pipeline::run_pipeline`
-/// (issue #805 task 5): same segmenter, same track specs, same
-/// `set_init`/`add_part`/`add_segment` calls, just inlined here rather than
-/// wrapped behind a `SampleSource`/`MockSource` indirection this crate no
-/// longer has. Flushes any trailing buffered partial segment at the end,
-/// exactly like the deleted `run_pipeline` did. Publishes `SPTS_PROGRAM_ID`
-/// first (issue #805 task 6: a `ProgramServing` bundle must exist before
-/// `set_init`/`add_part`/`add_segment` can write into it).
-///
-/// MUTATION VERIFIED: commenting out the `store.set_init(...)` call below
-/// makes `end_to_end_pipeline_serves_valid_llhls` fail:
-/// `assert_eq!(resp.status(), StatusCode::OK)` (the init-segment `GET`) fails
-/// at `multimux/tests/it/origin_llhls.rs:209`, comparing actual `404` against
-/// expected `200` — with no init bytes ever set, the route's `init-1.mp4`
-/// route has nothing to serve. Rebuilt and re-ran to confirm this exact
-/// failure, then reverted.
-fn feed_via_segmenter(
-    store: &RouteHandle,
-    specs: Vec<TrackSpec>,
-    batches: Vec<Vec<(u32, Sample)>>,
-) {
-    let program = media_plane::ProgramId(0);
-    store.publish_new_program(program);
-
-    let mut seg = LlHlsSegmenter::with_part_target(
-        specs,
-        transmux::VIDEO_CLOCK_RATE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
-    )
-    .expect("segmenter builds");
-    store.set_init(program, seg.init_segment().expect("init segment builds"));
-
-    for batch in batches {
-        for (track_id, sample) in batch {
-            seg.push(TrackId::new(track_id), sample)
-                .expect("push succeeds");
-        }
-        for part in seg.take_ready_parts() {
-            store.add_part(program, part);
-        }
-        for segment in seg.take_ready_segments() {
-            store.add_segment(program, segment).expect("add_segment");
-        }
-    }
-
-    seg.flush().expect("flush succeeds");
-    for part in seg.take_ready_parts() {
-        store.add_part(program, part);
-    }
-    for segment in seg.take_ready_segments() {
-        store.add_segment(program, segment).expect("add_segment");
-    }
 }
 
 #[tokio::test]

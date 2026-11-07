@@ -371,6 +371,7 @@ pub(crate) async fn iframe_playlist(
 mod tests {
     use super::*;
     use crate::route::RouteHandle;
+    use crate::testutil::body_string;
     use std::time::Duration;
     use transmux::ll_hls::{PartInfo, SegmentInfo};
 
@@ -411,13 +412,6 @@ mod tests {
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 0));
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(2, 1));
         route
-    }
-
-    async fn body_string(resp: Response) -> String {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        String::from_utf8(bytes.to_vec()).unwrap()
     }
 
     /// Wraps `route` into an [`LlHlsState`] using the default playlist name —

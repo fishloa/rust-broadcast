@@ -78,3 +78,27 @@ fn broadcast_origin_is_valid_and_exercises_the_full_surface() {
 
     cfg.validate().expect("broadcast-origin.json must validate");
 }
+
+#[test]
+fn a_missing_config_file_is_a_config_read_error_naming_the_path() {
+    let path = std::path::PathBuf::from("/nonexistent-multimux-dir/config.json");
+    match Config::from_json_file(&path).unwrap_err() {
+        multimux::MultimuxError::ConfigRead { path: got, source } => {
+            assert_eq!(got, path);
+            assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        }
+        other => panic!("expected ConfigRead, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_config_file_that_is_not_json_is_a_config_parse_error_naming_the_path() {
+    let path = test_fixtures::path("ts/m6-single.ts");
+    match Config::from_json_file(&path).unwrap_err() {
+        multimux::MultimuxError::ConfigParse { path: got, reason } => {
+            assert_eq!(got, path);
+            assert!(reason.starts_with("expected value at line 1"), "{reason}");
+        }
+        other => panic!("expected ConfigParse, got {other:?}"),
+    }
+}

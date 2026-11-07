@@ -119,3 +119,10 @@ fn daterange_parse_failures_carry_a_reason() {
     assert_eq!(attr_parse(&format!("{base},SCTE35-IN=0xZZ")), "bad hex");
     assert_eq!(attr_parse(&format!("{base},SCTE35-CMD=0xGG00")), "bad hex");
 }
+
+#[test]
+fn undecodable_emsg_bytes_surface_the_emsg_parser_error() {
+    let bytes = [0u8; 4];
+    let expected = EmsgBox::parse(&bytes).unwrap_err();
+    assert_eq!(emsg_to_scte35(&bytes).unwrap_err(), Error::Emsg(expected));
+}

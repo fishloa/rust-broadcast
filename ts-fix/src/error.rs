@@ -6,7 +6,7 @@ use thiserror::Error;
 ///
 /// `#[non_exhaustive]` so future variants (e.g. from new repair operations) are
 /// additive — callers must not match exhaustively.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
     /// The slice passed to [`crate::TsFix::push`] was not exactly 188 bytes.

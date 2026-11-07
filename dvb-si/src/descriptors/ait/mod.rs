@@ -7,7 +7,7 @@
 //! [`crate::descriptors::any`] for the AIT namespace.
 //!
 //! [`AnyAitDescriptor`] is generated from a single declarative list
-//! (`declare_ait_descriptors!`) — one line per AIT descriptor tag. The list
+//! (`declare_tag_namespace!`) — one line per AIT descriptor tag. The list
 //! produces the enum, `From` impls, `name()`, `dispatch()`,
 //! `DISPATCHED_TAGS`, and a drift test that pins each tag literal to the
 //! type's [`crate::traits::DescriptorDef::TAG`].
@@ -93,105 +93,10 @@ pub use simple_application_boundary::SimpleApplicationBoundaryDescriptor;
 pub use simple_application_location::SimpleApplicationLocationDescriptor;
 pub use transport_protocol::TransportProtocolDescriptor;
 
-/// Declares [`AnyAitDescriptor`] + its dispatcher from one tag list.
-///
-/// Mirrors the `declare_descriptors!` macro in `crate::descriptors::any`.
-/// Each line is `Variant = 0xTAG => crate::descriptors::ait::module::Type[<'a>]`.
-macro_rules! declare_ait_descriptors {
-    (
-        $lt:lifetime;
-        $( $variant:ident = $tag:literal => $($path:ident)::+ $(<$plt:lifetime>)? ),+ $(,)?
-    ) => {
-        /// Every crate-implemented AIT descriptor, plus an `Unknown` fallthrough.
-        ///
-        /// AIT tags belong to a separate namespace from EN 300 468 SI tags
-        /// (ETSI TS 102 809 §5.3). The same numeric tag value may map to
-        /// a different type here.
-        #[derive(Debug)]
-        #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-        #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-        #[non_exhaustive]
-        pub enum AnyAitDescriptor<$lt> {
-            $(
-                #[allow(missing_docs)]
-                $variant($($path)::+ $(<$plt>)?),
-            )+
-            /// Tag with no typed implementation; `body` is the payload sans
-            /// the 2-byte (tag, length) header.
-            Unknown {
-                /// The raw descriptor_tag byte.
-                tag: u8,
-                /// The raw payload bytes (descriptor_length bytes).
-                body: &$lt [u8],
-            },
-        }
+use crate::descriptors::tag_namespace::declare_tag_namespace;
 
-        $(
-            impl<$lt> From<$($path)::+ $(<$plt>)?> for AnyAitDescriptor<$lt> {
-                fn from(d: $($path)::+ $(<$plt>)?) -> Self {
-                    Self::$variant(d)
-                }
-            }
-        )+
-
-        impl<$lt> AnyAitDescriptor<$lt> {
-            /// Every tag the generated dispatcher routes (excludes
-            /// [`AnyAitDescriptor::Unknown`]).
-            pub const DISPATCHED_TAGS: &'static [u8] = &[$($tag),+];
-
-            /// Diagnostic name of the contained AIT descriptor — the type's
-            /// [`DescriptorDef::NAME`](crate::traits::DescriptorDef::NAME)
-            /// (`"APPLICATION"`, `"TRANSPORT_PROTOCOL"`, …); `"UNKNOWN"`
-            /// for [`AnyAitDescriptor::Unknown`].
-            #[must_use]
-            pub fn name(&self) -> &'static str {
-                match self {
-                    $(
-                        Self::$variant(_) =>
-                            <$($path)::+ as crate::traits::DescriptorDef>::NAME,
-                    )+
-                    Self::Unknown { .. } => "UNKNOWN",
-                }
-            }
-
-            /// Parse one full AIT descriptor (2-byte header included) by its tag.
-            ///
-            /// `None` means no typed implementation exists for `tag` (the
-            /// caller turns that into [`AnyAitDescriptor::Unknown`]). `Some(Err)`
-            /// is a typed parse failure for a recognised tag.
-            pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Option<crate::error::Result<Self>> {
-                use broadcast_common::Parse;
-                match tag {
-                    $(
-                        $tag => Some(<$($path)::+>::parse(full).map(Self::$variant)),
-                    )+
-                    _ => None,
-                }
-            }
-        }
-
-        #[cfg(test)]
-        mod macro_drift {
-            #[test]
-            fn tag_literals_match_descriptor_def() {
-                use crate::traits::DescriptorDef;
-                $(
-                    assert_eq!(
-                        $tag,
-                        <$($path)::+ as DescriptorDef>::TAG,
-                        concat!("tag literal drift for ", stringify!($variant)),
-                    );
-                    assert!(
-                        !<$($path)::+ as DescriptorDef>::NAME.is_empty(),
-                        concat!("empty NAME for ", stringify!($variant)),
-                    );
-                )+
-            }
-        }
-    };
-}
-
-declare_ait_descriptors! {'a;
+declare_tag_namespace! {'a;
+    enum AnyAitDescriptor, space "AIT", spec "ETSI TS 102 809 §5.3", names "`\"APPLICATION\"`, `\"TRANSPORT_PROTOCOL\"`, …";
     Application              = 0x00 => crate::descriptors::ait::application::ApplicationDescriptor,
     ApplicationName          = 0x01 => crate::descriptors::ait::application_name::ApplicationNameDescriptor<'a>,
     TransportProtocol        = 0x02 => crate::descriptors::ait::transport_protocol::TransportProtocolDescriptor<'a>,

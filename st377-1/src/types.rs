@@ -568,4 +568,41 @@ mod tests {
         assert_eq!(bytes.len(), 8);
         assert_eq!(parse_uid_batch(&bytes).unwrap(), items);
     }
+
+    #[test]
+    fn a_short_uid_batch_has_an_invalid_header() {
+        assert_eq!(
+            parse_uid_batch(&[0u8; 4]),
+            Err(Error::InvalidBatchHeader {
+                count: 0,
+                item_len: 0,
+                buffer_len: 4
+            })
+        );
+    }
+
+    #[test]
+    fn a_uid_batch_with_a_wrong_item_length_is_rejected() {
+        let mut bytes = alloc::vec![0u8; 8 + 16];
+        bytes[3] = 1;
+        bytes[7] = 8;
+        assert_eq!(
+            parse_uid_batch(&bytes),
+            Err(Error::InvalidBatchHeader {
+                count: 1,
+                item_len: 8,
+                buffer_len: 16
+            })
+        );
+    }
+
+    #[test]
+    fn odd_length_and_lone_surrogate_utf16_are_invalid() {
+        let invalid = Error::InvalidUtf16 {
+            tag: 0,
+            name: "UTF-16 string",
+        };
+        assert_eq!(decode_utf16_be(&[0x00]), Err(invalid));
+        assert_eq!(decode_utf16_be(&[0xD8, 0x00]), Err(invalid));
+    }
 }

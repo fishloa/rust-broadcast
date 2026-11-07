@@ -1,6 +1,7 @@
 mod arq_recovery;
 mod crypto_handshake;
 mod crypto_vectors;
+mod error_variants;
 mod filecc_congestion;
 mod handshake_round_trip;
 mod io_concurrent_listener;

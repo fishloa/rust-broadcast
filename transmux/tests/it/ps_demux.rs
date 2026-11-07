@@ -19,6 +19,7 @@ use std::path::PathBuf;
 
 use crate::box_iter::{Box4, iter_boxes};
 use broadcast_common::Unpackage;
+use test_fixtures::ffprobe;
 use transmux::PsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
@@ -39,56 +40,6 @@ fn load_ps() -> Vec<u8> {
 fn ref_mp4() -> Vec<u8> {
     let path = test_fixtures::path("ts/demux-oracle/h264-aac.ref.mp4");
     std::fs::read(&path).expect("h264-aac.ref.mp4 oracle must exist")
-}
-
-/// One ffprobe oracle row; `pts`/`dts` are `None` for empty (`N/A`) fields.
-#[derive(Debug, Clone)]
-struct OracleRow {
-    codec_type: String,
-    pts: Option<u64>,
-    dts: Option<u64>,
-    keyframe: Option<bool>,
-}
-
-fn load_oracle_rows() -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(ps_dir().join("h264-ac3.packets.csv"))
-        .expect("packets.csv oracle must exist");
-    let mut rows = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let f: Vec<&str> = line.split(',').collect();
-        assert!(f.len() >= 7, "oracle row must have 7 columns: {line:?}");
-        let parse_opt = |s: &str| -> Option<u64> {
-            let s = s.trim();
-            if s.is_empty() || s == "N/A" {
-                None
-            } else {
-                Some(s.parse().unwrap_or_else(|_| panic!("bad ts field {s:?}")))
-            }
-        };
-        let kf = f[6].trim();
-        rows.push(OracleRow {
-            codec_type: f[0].to_string(),
-            pts: parse_opt(f[2]),
-            dts: parse_opt(f[3]),
-            keyframe: if kf.is_empty() || kf == "N/A" {
-                None
-            } else {
-                Some(kf.parse::<u8>().unwrap() == 1)
-            },
-        });
-    }
-    rows
-}
-
-fn oracle_for(rows: &[OracleRow], codec_type: &str) -> Vec<OracleRow> {
-    rows.iter()
-        .filter(|r| r.codec_type == codec_type)
-        .cloned()
-        .collect()
 }
 
 // ── Minimal ISOBMFF box walking for the ref mp4 (progressive, non-fragmented) ─
@@ -299,9 +250,9 @@ fn enumerates_two_tracks_h264_then_ac3() {
 fn sample_counts_and_oracle_timing() {
     let ps = load_ps();
     let media: Media = PsDemux::new().unpackage(&ps).expect("demux");
-    let rows = load_oracle_rows();
-    let video_rows = oracle_for(&rows, "video");
-    let audio_rows = oracle_for(&rows, "audio");
+    let rows = ffprobe::packets("ps/h264-ac3.packets.csv");
+    let video_rows = ffprobe::of_type(&rows, "video");
+    let audio_rows = ffprobe::of_type(&rows, "audio");
     assert_eq!(video_rows.len(), 75, "oracle has 75 video frames");
     assert_eq!(audio_rows.len(), 88, "oracle has 88 audio frames");
 
@@ -326,7 +277,7 @@ fn sample_counts_and_oracle_timing() {
     //     DTS-only shift (relative-delta matching alone would not).
     //   • the DTS position relative to the first stamped frame matches — catches
     //     wrong frame spacing / mis-anchored decode times.
-    let stamped: Vec<&OracleRow> = video_rows
+    let stamped: Vec<&&ffprobe::PacketRow> = video_rows
         .iter()
         .filter(|r| r.pts.is_some() && r.dts.is_some())
         .collect();
@@ -335,11 +286,11 @@ fn sample_counts_and_oracle_timing() {
         "oracle must carry several stamped video rows, got {}",
         stamped.len()
     );
-    let oracle_base_dts = stamped[0].dts.unwrap() as i64;
+    let oracle_base_dts = stamped[0].dts();
     let demux_base_dts = demuxed[0].0;
     for row in &stamped {
-        let want_co = (row.pts.unwrap() as i64 - row.dts.unwrap() as i64) as i32;
-        let want_dts_rel = row.dts.unwrap() as i64 - oracle_base_dts;
+        let want_co = (row.pts() - row.dts()) as i32;
+        let want_dts_rel = row.dts() - oracle_base_dts;
         let found = demuxed
             .iter()
             .find(|&&(dts, co, _)| co == want_co && (dts - demux_base_dts) == want_dts_rel);

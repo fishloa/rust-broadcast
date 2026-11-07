@@ -5,6 +5,7 @@ mod dvb_ta_compact_vectors;
 mod dvb_ta_profile_validation;
 mod dvb_ta_serialize_consistency;
 mod dvb_ta_spec_drift;
+mod error_variants;
 mod golden_base64;
 mod hostility;
 mod known_vectors;

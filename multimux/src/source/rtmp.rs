@@ -568,9 +568,7 @@ impl Stage for RtmpIngestSession {
                     });
                 }
                 ServerEvent::Media { flv } => {
-                    self.demux.feed(flv).map_err(|e| MultimuxError::Depay {
-                        reason: format!("rtmp/flv: {e}"),
-                    })?;
+                    self.demux.feed(flv)?;
                 }
                 // `ServerEvent` is `#[non_exhaustive]`; `Publish`/`Eof` need
                 // no reaction here — `Eof` is observed at the transport

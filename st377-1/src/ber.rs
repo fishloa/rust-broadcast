@@ -273,4 +273,17 @@ mod tests {
             Error::BufferTooShort(..)
         ));
     }
+
+    #[test]
+    fn a_fixed_width_too_narrow_for_the_length_is_rejected() {
+        use core::num::NonZeroU8;
+        let mut buf = [0u8; 16];
+        for (len, width) in [(0x80u64, 1u8), (0x100, 2)] {
+            let w = BerLength::Fixed(NonZeroU8::new(width).unwrap());
+            assert_eq!(
+                encode_ber_length_as(len, w, &mut buf),
+                Err(Error::FixedBerLengthTooSmall { len, width })
+            );
+        }
+    }
 }

@@ -467,3 +467,32 @@ fn minimal_video_media() -> transmux::media::Media {
     // literal here spelled out before `Media` became `#[non_exhaustive]`.
     Media::new(vec![track], 90000)
 }
+
+#[test]
+fn dash_trick_mode_naming_a_missing_main_adaptation_set_is_rejected() {
+    let trick = TrickModeAdaptationSet {
+        id: 7,
+        main_adaptation_set_id: 99,
+        max_playout_rate: 8,
+        repr: TrickModeRepr {
+            id: "trick-repr-0".into(),
+            codecs: "avc1.64001e".into(),
+            bandwidth: 150_000,
+            width: Some(320),
+            height: Some(180),
+            timescale: 90000,
+            total_duration: 900000,
+        },
+    };
+    let mut packager = DashPackager {
+        trick_mode: Some(trick),
+        ..Default::default()
+    };
+    assert_eq!(
+        packager.package(&minimal_video_media()).unwrap_err(),
+        transmux::Error::TrickModeMainAdaptationSetNotFound {
+            main_adaptation_set_id: 99,
+            trick_adaptation_set_id: 7,
+        }
+    );
+}

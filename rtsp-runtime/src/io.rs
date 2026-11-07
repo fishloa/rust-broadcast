@@ -456,8 +456,7 @@ where
                     ref request,
                     ..
                 } => {
-                    // Write the retried (now-authenticated) request and wait
-                    // for ITS CSeq from here on.
+                    // From here on, wait for the retried request's own CSeq.
                     let retry = request.clone();
                     self.write(retry).await?;
                     cseq = retry_cseq;

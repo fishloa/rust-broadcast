@@ -44,7 +44,7 @@ impl core::fmt::Debug for RtmpTarget {
 }
 
 /// Why an RTMP URL was rejected.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RtmpUrlError {
     /// The text is not a URL.

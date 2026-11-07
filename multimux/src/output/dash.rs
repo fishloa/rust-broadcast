@@ -107,19 +107,28 @@ impl Output for DashOutput {
 /// codec string, not merely "no segment has closed yet", which still
 /// renders a valid, if near-empty, MPD).
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
+    serve_mpd(route, render_mpd).await
+}
+
+/// The shared DASH/LL-DASH manifest handler: resolves `route`'s program and
+/// serves whatever `render` produces (`503` when it renders nothing).
+pub(crate) async fn serve_mpd(
+    route: Arc<RouteHandle>,
+    render: fn(&RouteHandle) -> Option<String>,
+) -> Response {
     let serving = match http::resolve_route_program(&route) {
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
     let trunk = serving.trunk();
-    let origin = DashOrigin { route };
+    let origin = MpdOrigin { route, render };
     let resp = http::resolve_blocking(&trunk, &origin, (), BLOCKING_RELOAD_TIMEOUT, || ()).await;
     http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
         ([(header::CONTENT_TYPE, DASH_MANIFEST_CONTENT_TYPE)], body).into_response()
     })
 }
 
-/// The DASH manifest [`ServedEgress`]: a stateless render of `route`'s
+/// The DASH/LL-DASH manifest [`ServedEgress`]: a stateless render of `route`'s
 /// current window/track specs — never answers
 /// [`EgressResponse::Await`] (there is nothing to wait for; an MPD can
 /// always be rendered from whatever window state currently exists, or
@@ -129,11 +138,12 @@ async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
 /// as every other output, rather than a bespoke handler, so a manifest route
 /// can never drift into its own ad hoc HTTP-mapping logic — see
 /// `crate::http`'s own module doc.
-struct DashOrigin {
+struct MpdOrigin {
     route: Arc<RouteHandle>,
+    render: fn(&RouteHandle) -> Option<String>,
 }
 
-impl ServedEgress for DashOrigin {
+impl ServedEgress for MpdOrigin {
     type Request = ();
     type Body = String;
 
@@ -143,7 +153,7 @@ impl ServedEgress for DashOrigin {
         _now: broadcast_common::Timestamp,
         _await_policy: AwaitPolicy,
     ) -> EgressResponse<String> {
-        match render_mpd(&self.route) {
+        match (self.render)(&self.route) {
             Some(body) => EgressResponse::Ready {
                 body,
                 cache: CachePolicy::NoCache,
@@ -407,6 +417,7 @@ pub(crate) fn xs_duration_secs_checked(field: &'static str, secs: f64) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::video_spec;
     use transmux::CodecConfig;
 
     /// Howard Hinnant's `civil_from_days` — the PRE-jiff algorithm, retained
@@ -471,17 +482,6 @@ mod tests {
         assert!(t2 > t1, "{second} must be later than {first}");
         assert_eq!(first, "2023-11-14T22:13:24Z");
         assert_eq!(second, "2023-11-14T22:13:24.5Z");
-    }
-
-    fn video_spec(track_id: TrackId) -> TrackSpec {
-        TrackSpec::new(
-            track_id,
-            90_000,
-            CodecConfig::Vp8 {
-                width: 1280,
-                height: 720,
-            },
-        )
     }
 
     /// A teletext-shaped opaque track — no derivable RFC 6381 codec string

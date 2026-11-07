@@ -498,4 +498,12 @@ mod tests {
             Err(Error::UnknownPartitionKind { byte: 0xFF })
         ));
     }
+
+    #[test]
+    fn unknown_status_byte_rejected() {
+        assert!(matches!(
+            PartitionStatus::from_byte(0x05),
+            Err(Error::UnknownPartitionStatus { byte: 0x05 })
+        ));
+    }
 }

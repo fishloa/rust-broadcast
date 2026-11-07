@@ -145,7 +145,7 @@ pub struct ManifestGrouping {
 }
 
 /// Errors raised by the ingest core.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IngestError {
     #[error("auth required (§5.3.4)")]
@@ -226,7 +226,6 @@ impl ManifestGrouping {
             return Err(IngestError::MpdBaseUrlPresent);
         }
 
-        // Collect effective templates per representation.
         // An AdaptationSet may carry the template on itself (inherited by reps).
         let mut templates: Vec<(String /*rep id*/, SegmentTemplate)> = Vec::new();
         let mut switching_sets: Vec<Vec<String>> = Vec::new();

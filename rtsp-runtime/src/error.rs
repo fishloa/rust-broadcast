@@ -16,7 +16,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Errors produced by the RTSP session engine.
 #[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum Error {
     /// The RTSP message could not be parsed by the underlying `rtsp-types` codec.
     #[error("failed to parse RTSP message: {0}")]
@@ -61,7 +61,12 @@ pub enum Error {
     /// Authentication failed: no credentials were configured, the challenge
     /// could not be parsed, or the digest computation failed (RFC 2326 §14).
     #[error("authentication failure: {0}")]
-    Auth(String),
+    Auth(#[from] broadcast_auth::Error),
+
+    /// The server answered `401 Unauthorized` without a `WWW-Authenticate`
+    /// challenge, so there is nothing to answer (RFC 2326 §14).
+    #[error("authentication failure: 401 without WWW-Authenticate")]
+    MissingAuthChallenge,
 
     /// A socket IO operation failed in the async adapter (feature `tokio`).
     #[error("socket IO error: {0}")]

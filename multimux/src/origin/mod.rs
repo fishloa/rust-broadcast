@@ -2436,6 +2436,7 @@ mod tests {
     use crate::output::llhls::LlHlsOutput;
     use crate::route::HealthState;
     use crate::route::RouteHandle;
+    use crate::testutil::body_string;
     use tower::ServiceExt;
 
     fn make_state() -> Arc<AppState> {
@@ -2583,13 +2584,6 @@ mod tests {
     }
 
     // --- Observability endpoints (issue #663, P1c) ---
-
-    async fn body_string(resp: Response) -> String {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        String::from_utf8(bytes.to_vec()).unwrap()
-    }
 
     /// Biting test 1: `GET /metrics` must actually serve a Prometheus text
     /// exposition body (not an empty/placeholder 200) — a request is made

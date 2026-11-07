@@ -49,7 +49,7 @@ pub struct IngestObject<'a> {
 ///
 /// Exposes the underlying [`IngestError`] (with its §5.3 HTTP status) for the
 /// P2b listener, plus a stringly-typed demux failure for everything else.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SessionError {
     /// An ingest-protocol error carrying its §5.3 status.

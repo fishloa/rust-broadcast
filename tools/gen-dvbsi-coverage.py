@@ -20,8 +20,8 @@ Inputs ("what the code implements" — read lexically, never hand-typed):
 * ``declare_tables!``            dvb-si/src/tables/any.rs
 * ``declare_descriptors!``       dvb-si/src/descriptors/any.rs
 * ``declare_extension_bodies!``  dvb-si/src/descriptors/extension/mod.rs
-* ``declare_ait_descriptors!``   dvb-si/src/descriptors/ait/mod.rs
-* ``declare_carousel_descriptors!`` dvb-si/src/descriptors/carousel/mod.rs
+* ``declare_tag_namespace!``   dvb-si/src/descriptors/ait/mod.rs
+* ``declare_tag_namespace!`` dvb-si/src/descriptors/carousel/mod.rs
 * ``Mpeg2ExtensionBody``         dvb-si/src/descriptors/mpeg2_extension.rs
 * each module's leading ``//!`` paragraph (the spec citation), ``TAG`` consts,
   the ``DescriptorRegistry::with_*`` opt-ins, the ``Charset`` enum, and the
@@ -426,7 +426,7 @@ def load_extension_bodies() -> list[Impl]:
 
 def load_ait() -> list[Impl]:
     path = SRC / "descriptors" / "ait" / "mod.rs"
-    body = strip_line_comments(macro_body(read(path), "declare_ait_descriptors", path))
+    body = strip_line_comments(macro_body(read(path), "declare_tag_namespace", path))
     out = []
     for m in re.finditer(r"(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*=>\s*(crate::descriptors::[\w:]+)::(\w+)", body):
         variant, tag, mod, ty = m.groups()
@@ -434,7 +434,7 @@ def load_ait() -> list[Impl]:
         v = int(tag, 16)
         out.append(Impl("ait_descriptor_tag", [(v, v)], variant, ty, f, True, cite=citation(module_doc(f))))
     if not out:
-        raise GenError("declare_ait_descriptors! yielded nothing")
+        raise GenError("declare_tag_namespace! yielded nothing")
     return out
 
 
@@ -499,9 +499,9 @@ def load_mpeg2_extension() -> list[Impl]:
 
 
 def load_carousel_descriptors() -> list[Impl]:
-    """The DVB data-carousel namespace (``declare_carousel_descriptors!``)."""
+    """The DVB data-carousel namespace (``declare_tag_namespace!``)."""
     path = SRC / "descriptors" / "carousel" / "mod.rs"
-    body = strip_line_comments(macro_body(read(path), "declare_carousel_descriptors", path))
+    body = strip_line_comments(macro_body(read(path), "declare_tag_namespace", path))
     out = []
     for m in re.finditer(r"(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*=>\s*(crate::descriptors::[\w:]+)::(\w+)", body):
         variant, tag, mod, ty = m.groups()
@@ -509,7 +509,7 @@ def load_carousel_descriptors() -> list[Impl]:
         v = int(tag, 16)
         out.append(Impl("dii_descriptor_tag", [(v, v)], variant, ty, f, True, cite=citation(module_doc(f))))
     if not out:
-        raise GenError("declare_carousel_descriptors! yielded nothing")
+        raise GenError("declare_tag_namespace! yielded nothing")
     return out
 
 

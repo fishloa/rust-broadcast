@@ -26,6 +26,7 @@
 //! all of them.
 
 use broadcast_common::Package;
+use test_fixtures::ffprobe;
 use transmux::webm_demux::WebmDemux;
 use transmux::{CmafMux, Media, parse_box};
 
@@ -157,26 +158,6 @@ fn split_into_two_clusters(data: &[u8]) -> Vec<u8> {
     out
 }
 
-#[derive(Debug)]
-struct OracleRow {
-    codec_type: String,
-    size: usize,
-}
-
-fn load_oracle() -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(test_fixtures::path(ORACLE)).expect("read oracle csv");
-    text.lines()
-        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-        .map(|line| {
-            let f: Vec<&str> = line.split(',').collect();
-            OracleRow {
-                codec_type: f[0].to_string(),
-                size: f[5].trim().parse().unwrap(),
-            }
-        })
-        .collect()
-}
-
 /// Before the C10 fix: `Codec::Video`... no — `next_element` on the unknown
 /// -size Cluster A ran to the end of the buffer, so `walk_cluster` was
 /// handed Cluster A's real blocks PLUS Cluster B's raw (id, size, body)
@@ -197,9 +178,9 @@ fn unknown_size_cluster_does_not_swallow_the_next_cluster() {
     let mut d = WebmDemux::new();
     let media: Media = d.demux(&rebuilt).expect("demux the rebuilt fixture");
 
-    let oracle = load_oracle();
-    let vid_oracle: Vec<&OracleRow> = oracle.iter().filter(|r| r.codec_type == "video").collect();
-    let aud_oracle: Vec<&OracleRow> = oracle.iter().filter(|r| r.codec_type == "audio").collect();
+    let oracle = ffprobe::packets(ORACLE);
+    let vid_oracle = ffprobe::of_type(&oracle, "video");
+    let aud_oracle = ffprobe::of_type(&oracle, "audio");
 
     let vid = &media.tracks[0];
     let aud = &media.tracks[1];

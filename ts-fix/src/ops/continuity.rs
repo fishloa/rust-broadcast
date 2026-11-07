@@ -160,8 +160,6 @@ impl Op for ContinuityOp {
         });
 
         if state_initialised {
-            // First payload-bearing packet on this PID: pass through unchanged,
-            // advance expected for next.
             let next = (current_cc + 1) & 0x0F;
             state.expected = next;
             out(packet);

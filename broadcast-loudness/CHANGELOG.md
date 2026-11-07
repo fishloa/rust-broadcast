@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `LoudnessMeter::new` rejects sample rates above `MAX_SAMPLE_RATE` with `InvalidSampleRate`; a `u32` rate near 4 GHz used to request about 96 GB for the sliding-window trackers and abort the process (c5 R5-1).
 ### Changed
+- Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 
 

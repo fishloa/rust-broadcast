@@ -766,7 +766,7 @@ impl ClientSession {
         };
 
         let challenge = header_value(response.header(&headers::WWW_AUTHENTICATE))
-            .ok_or_else(|| Error::Auth("401 without WWW-Authenticate".into()))?;
+            .ok_or(Error::MissingAuthChallenge)?;
         let stale = crate::headers_util::challenge_is_stale(challenge);
 
         // Always rebuild the authenticator from THIS challenge. A server can
@@ -950,6 +950,27 @@ mod tests {
             .unwrap();
         let req = String::from_utf8_lossy(&c.options("rtsp://h/s").unwrap()).into_owned();
         assert!(req.contains("Authorization: Basic dTpw"), "got: {req}");
+    }
+
+    #[test]
+    fn a_401_without_a_challenge_cannot_be_answered() {
+        let mut c = ClientSession::new();
+        c.authenticate_with(Credentials::new("u", "p"), Some("Basic realm=\"x\""))
+            .unwrap();
+        c.describe("rtsp://h/s").unwrap();
+        assert_eq!(
+            c.handle_data_strict(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\n\r\n")
+                .unwrap_err(),
+            Error::MissingAuthChallenge
+        );
+    }
+
+    #[test]
+    fn a_broadcast_auth_failure_keeps_its_source() {
+        assert_eq!(
+            Error::from(broadcast_auth::Error::InvalidBearerToken),
+            Error::Auth(broadcast_auth::Error::InvalidBearerToken)
+        );
     }
 
     fn setup_request(c: &mut ClientSession) {

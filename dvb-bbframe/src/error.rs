@@ -6,7 +6,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// Error type for BBFrame parsing and serialization.
 ///
 /// All variants carry spec-clause references in their display messages.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding.

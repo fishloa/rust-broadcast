@@ -53,3 +53,11 @@ fn compound_packet_rejects_every_short_buffer() {
         too_small,
     );
 }
+
+#[test]
+fn an_empty_compound_packet_is_invalid_input() {
+    assert_eq!(
+        rtcp_packet::CompoundPacket::new(Vec::new()).unwrap_err(),
+        rtcp_packet::Error::InvalidInput("empty RTCP compound packet")
+    );
+}

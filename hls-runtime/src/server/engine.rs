@@ -1177,7 +1177,7 @@ pub enum HlsOriginBuildError {
 }
 
 /// Error returned by [`HlsOrigin::master_playlist`].
-#[derive(Debug, PartialEq, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error, Clone)]
 #[non_exhaustive]
 pub enum HlsMasterError {
     /// No segment with a measurable duration has been published yet and no

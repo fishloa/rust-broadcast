@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use crate::box_iter::{Box4, iter_boxes};
 use broadcast_common::{Package, Serialize, Unpackage};
+use test_fixtures::ffprobe;
 use transmux::TsDemux;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
@@ -38,52 +39,6 @@ fn load_ts() -> Vec<u8> {
 fn load_ref_mp4() -> Vec<u8> {
     std::fs::read(fixtures_dir().join("demux-oracle/h264-aac.ref.mp4"))
         .expect("h264-aac.ref.mp4 oracle must exist")
-}
-
-/// One ffprobe oracle row.
-#[derive(Debug, Clone)]
-struct OracleRow {
-    codec_type: String,
-    stream_index: u32,
-    pts: u64,
-    dts: u64,
-    #[allow(dead_code)]
-    duration: u64,
-    #[allow(dead_code)]
-    size: u64,
-    keyframe: bool,
-}
-
-/// Parse the ffprobe CSV oracle (skips `#` comment lines).
-fn load_oracle_rows() -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(fixtures_dir().join("demux-oracle/h264-aac.packets.csv"))
-        .expect("packets.csv oracle must exist");
-    let mut rows = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let f: Vec<&str> = line.split(',').collect();
-        assert!(f.len() >= 7, "oracle row must have 7 columns: {line:?}");
-        rows.push(OracleRow {
-            codec_type: f[0].to_string(),
-            stream_index: f[1].parse().unwrap(),
-            pts: f[2].parse().unwrap(),
-            dts: f[3].parse().unwrap(),
-            duration: f[4].parse().unwrap(),
-            size: f[5].parse().unwrap(),
-            keyframe: f[6].parse::<u8>().unwrap() == 1,
-        });
-    }
-    rows
-}
-
-fn oracle_for(rows: &[OracleRow], codec_type: &str) -> Vec<OracleRow> {
-    rows.iter()
-        .filter(|r| r.codec_type == codec_type)
-        .cloned()
-        .collect()
 }
 
 // ── Minimal ISOBMFF box walking for the ref mp4 (progressive, non-fragmented) ─
@@ -303,10 +258,10 @@ fn enumerates_two_tracks_h264_then_aac() {
 fn timestamps_and_sync_flags_match_csv_oracle() {
     let ts = load_ts();
     let media = TsDemux::new().unpackage(&ts).expect("demux");
-    let rows = load_oracle_rows();
+    let rows = ffprobe::packets("ts/demux-oracle/h264-aac.packets.csv");
 
-    let video_oracle = oracle_for(&rows, "video");
-    let audio_oracle = oracle_for(&rows, "audio");
+    let video_oracle = ffprobe::of_type(&rows, "video");
+    let audio_oracle = ffprobe::of_type(&rows, "audio");
     assert_eq!(video_oracle.len(), 75, "oracle: 75 video packets");
     assert_eq!(audio_oracle.len(), 131, "oracle: 131 audio packets");
     // Sanity: the CSV is self-describing (stream 0 = video, 1 = audio).
@@ -347,15 +302,18 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
             .pts
             .unwrap_or_else(|| panic!("video sample {i} has no pts"));
         assert_eq!(
-            dts as u64, video_oracle[i].dts,
+            dts,
+            video_oracle[i].dts(),
             "video sample {i} DTS (actual s.dts) must match oracle"
         );
         assert_eq!(
-            pts as u64, video_oracle[i].pts,
+            pts,
+            video_oracle[i].pts(),
             "video sample {i} PTS (actual s.pts) must match oracle"
         );
         assert_eq!(
-            s.flags.is_sync, video_oracle[i].keyframe,
+            s.flags.is_sync,
+            video_oracle[i].is_keyframe(),
             "video sample {i} keyframe flag must match oracle"
         );
     }
@@ -397,12 +355,12 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
         );
 
         let dts_90k = (dts * 90_000 + audio_ts / 2).div_euclid(audio_ts);
-        let diff = (dts_90k - audio_oracle[i].dts as i128).abs();
+        let diff = (dts_90k - audio_oracle[i].dts() as i128).abs();
         assert!(
             diff <= 2,
             "audio sample {i} DTS (actual s.dts={dts} @ {audio_ts} Hz -> {dts_90k} @ 90 kHz) \
              must match oracle {} within 2 ticks (floor-anchor + rescale rounding); diff={diff}",
-            audio_oracle[i].dts
+            audio_oracle[i].dts()
         );
         assert!(s.flags.is_sync, "audio sample {i} must be a sync sample");
     }

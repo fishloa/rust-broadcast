@@ -5,7 +5,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Errors produced by challenge parsing / response computation.
 #[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum Error {
     /// The `WWW-Authenticate` challenge value could not be parsed (RFC 7235 /
     /// RFC 2326 §14 for a Basic or Digest challenge).
