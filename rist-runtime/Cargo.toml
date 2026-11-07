@@ -23,6 +23,7 @@ thiserror        = { version = "2", default-features = false }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+rtp-packet    = { path = "../rtp-packet", default-features = false }
 
 [features]
 default = ["std"]

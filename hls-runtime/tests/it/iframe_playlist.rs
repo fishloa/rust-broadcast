@@ -88,59 +88,16 @@ fn iframe_playlist_text(origin: &HlsOrigin) -> EgressResponse<hls_runtime::serve
 }
 
 fn find_moof_offset(bytes: &[u8]) -> Option<usize> {
-    let mut offset = 0usize;
-    while offset + transmux::box_types::BOX_HEADER_MIN_SIZE <= bytes.len() {
-        let rest = &bytes[offset..];
-        let header = transmux::box_types::BoxHeader::parse(rest).ok()?;
-        let hdr_sz = header.header_size();
-        if hdr_sz > rest.len() {
-            break;
-        }
-        let total = if header.size == u64::from(transmux::box_types::SIZE_TO_EOF) {
-            rest.len()
-        } else {
-            usize::try_from(header.size).ok().filter(|&t| t >= hdr_sz)?
-        };
-        if header.box_type.is(b"moof") {
-            return Some(offset);
-        }
-        let step = total.min(rest.len());
-        if step == 0 {
-            break;
-        }
-        offset += step;
-    }
-    None
+    transmux::box_types::clamped_boxes(bytes)
+        .find(|b| b.header.box_type.is(b"moof"))
+        .map(|b| b.start)
 }
 
 fn find_mdat_payload_start(bytes: &[u8], sample_start: usize) -> Option<usize> {
-    let mut offset = 0usize;
-    while offset + transmux::box_types::BOX_HEADER_MIN_SIZE <= bytes.len() {
-        let rest = &bytes[offset..];
-        let header = transmux::box_types::BoxHeader::parse(rest).ok()?;
-        let hdr_sz = header.header_size();
-        if hdr_sz > rest.len() {
-            break;
-        }
-        let total = if header.size == u64::from(transmux::box_types::SIZE_TO_EOF) {
-            rest.len()
-        } else {
-            usize::try_from(header.size).ok().filter(|&t| t >= hdr_sz)?
-        };
-        if header.box_type.is(b"mdat") {
-            let payload = offset + hdr_sz;
-            let end = offset + total;
-            if sample_start >= payload && sample_start < end {
-                return Some(payload);
-            }
-        }
-        let step = total.min(rest.len());
-        if step == 0 {
-            break;
-        }
-        offset += step;
-    }
-    None
+    transmux::box_types::clamped_boxes(bytes)
+        .filter(|b| b.header.box_type.is(b"mdat"))
+        .find(|b| (b.payload_start()..b.end).contains(&sample_start))
+        .map(|b| b.payload_start())
 }
 
 #[test]

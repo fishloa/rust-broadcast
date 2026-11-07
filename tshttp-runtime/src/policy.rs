@@ -330,7 +330,6 @@ impl TsHttpPolicy {
             Phase::Awaiting { .. } => self.fail_before_playing(now_ms),
             Phase::Playing => {
                 if self.finite {
-                    // truncated transfer
                     self.fail_before_playing(now_ms);
                 } else {
                     self.played_ended(now_ms);
@@ -341,29 +340,9 @@ impl TsHttpPolicy {
         }
     }
 
-    /// Connect/read failure (T4, T7, T8).
+    /// Connect/read failure (T4, T7, T8); handled exactly as a body end.
     pub fn on_error(&mut self, now_ms: u64) {
-        if matches!(self.phase, Phase::Ended) {
-            return;
-        }
-        if self.finite && self.finite_done {
-            self.phase = Phase::Ended;
-            self.events.push_back(Event::Ended);
-            return;
-        }
-        match self.phase {
-            Phase::Opening { .. } => self.fail_before_playing(now_ms),
-            Phase::Awaiting { .. } => self.fail_before_playing(now_ms),
-            Phase::Playing => {
-                if self.finite {
-                    self.fail_before_playing(now_ms);
-                } else {
-                    self.played_ended(now_ms);
-                }
-            }
-            Phase::Backoff { .. } => {}
-            Phase::Ended => {}
-        }
+        self.on_eof(now_ms);
     }
 
     /// Caller-initiated reconnect (T13).

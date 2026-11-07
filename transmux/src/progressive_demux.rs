@@ -302,12 +302,6 @@ impl Stage for ProgressiveDemux<'_> {
         Ok(())
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     /// Reports the remaining headroom under `max_bytes` (issue B7): `want_bytes`
     /// is however much of the cap is not yet used, and `saturated` becomes
     /// `true` the moment `buf` reaches `max_bytes` — at which point any

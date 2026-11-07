@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use broadcast_common::{Parse, Timestamp};
+use broadcast_common::Timestamp;
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
 use hls_runtime::server::HlsOrigin;
@@ -49,40 +49,10 @@ fn fixture_bytes(name: &str) -> Vec<u8> {
 }
 
 fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
-    // Locate moof.
-    let mut offset = 0usize;
-    let mut moof_off: Option<usize> = None;
-    let mut moof_total: usize = 0;
-    let mut moof_hdr: usize = 0;
-    while offset + transmux::box_types::BOX_HEADER_MIN_SIZE <= segment.len() {
-        let rest = &segment[offset..];
-        let header = transmux::box_types::BoxHeader::parse(rest).ok()?;
-        let hdr_sz = header.header_size();
-        if hdr_sz > rest.len() {
-            break;
-        }
-        let total = if header.size == u64::from(transmux::box_types::SIZE_TO_EOF) {
-            rest.len()
-        } else {
-            match usize::try_from(header.size) {
-                Ok(t) if t >= hdr_sz => t,
-                _ => break,
-            }
-        };
-        if header.box_type.is(b"moof") {
-            moof_off = Some(offset);
-            moof_total = total.min(rest.len());
-            moof_hdr = hdr_sz;
-            break;
-        }
-        let step = total.min(rest.len());
-        if step == 0 {
-            break;
-        }
-        offset += step;
-    }
-    let moof_off = moof_off?;
-    let body = &segment[moof_off + moof_hdr..moof_off + moof_total];
+    let found =
+        transmux::box_types::clamped_boxes(segment).find(|b| b.header.box_type.is(b"moof"))?;
+    let moof_off = found.start;
+    let body = &segment[found.payload_start()..found.end];
     let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(body).ok()?;
 
     let mdats = transmux::frag_offsets::mdat_ranges(segment);
@@ -96,38 +66,11 @@ fn compute_iframe_len(segment: &[u8], video_track_id: TrackId) -> Option<u64> {
     if first.flags & (1 << 16) != 0 {
         return None;
     }
-    // mdat payload start check
-    let mut off = 0usize;
-    let mut mdat_payload_start = None;
-    while off + transmux::box_types::BOX_HEADER_MIN_SIZE <= segment.len() {
-        let rest = &segment[off..];
-        let header = transmux::box_types::BoxHeader::parse(rest).ok()?;
-        let hdr_sz = header.header_size();
-        if hdr_sz > rest.len() {
-            break;
-        }
-        let total = if header.size == u64::from(transmux::box_types::SIZE_TO_EOF) {
-            rest.len()
-        } else {
-            match usize::try_from(header.size) {
-                Ok(t) if t >= hdr_sz => t,
-                _ => break,
-            }
-        };
-        if header.box_type.is(b"mdat") {
-            let payload = off + hdr_sz;
-            let end = off + total;
-            if first.start >= payload && first.start < end {
-                mdat_payload_start = Some(payload);
-            }
-        }
-        let step = total.min(rest.len());
-        if step == 0 {
-            break;
-        }
-        off += step;
-    }
-    if first.start != mdat_payload_start? {
+    let mdat_payload_start = transmux::box_types::clamped_boxes(segment)
+        .filter(|b| b.header.box_type.is(b"mdat"))
+        .find(|b| (b.payload_start()..b.end).contains(&first.start))?
+        .payload_start();
+    if first.start != mdat_payload_start {
         return None;
     }
     u64::try_from(first.end).ok()

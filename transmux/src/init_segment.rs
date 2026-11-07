@@ -358,6 +358,32 @@ fn typed_child_bytes(children: &[&dyn SerializeBox]) -> Result<Vec<Vec<u8>>> {
         .collect::<Result<Vec<_>>>()
 }
 
+/// Serialize a container box: header, then its children in wire order.
+fn serialize_container(
+    fourcc: &[u8; 4],
+    need: usize,
+    order: &[Option<usize>],
+    typed_children: &[&dyn SerializeBox],
+    opaque: &[OpaqueBox],
+    buf: &mut [u8],
+) -> Result<usize> {
+    if buf.len() < need {
+        return Err(Error::OutputBufferTooSmall {
+            need,
+            have: buf.len(),
+        });
+    }
+    let mut c = crate::box_types::write_box_header(buf, fourcc, need)?;
+    let typed = typed_child_bytes(typed_children)?;
+    serialize_children(order, &typed, opaque, buf, &mut c)?;
+    if c != need {
+        return Err(Error::InvalidInput(
+            "container child order does not account for the whole box",
+        ));
+    }
+    Ok(c)
+}
+
 /// A typed child of one of this module's containers, which the shared child
 /// walker serializes positionally.
 pub(crate) trait SerializeBox {
@@ -3374,23 +3400,14 @@ impl Serialize for DataInformationBox {
         crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let hdr_len = crate::box_types::write_box_header(buf, b"dinf", need)?;
-        let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = hdr_len;
-        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
-        if c != need {
-            return Err(Error::InvalidInput(
-                "dinf child order does not account for the whole box",
-            ));
-        }
-        Ok(c)
+        serialize_container(
+            b"dinf",
+            self.serialized_len(),
+            &self.child_order(),
+            &self.typed_children(),
+            &self.opaque,
+            buf,
+        )
     }
 }
 
@@ -3566,23 +3583,14 @@ impl Serialize for MediaInformationBox {
         crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let hdr_len = crate::box_types::write_box_header(buf, b"minf", need)?;
-        let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = hdr_len;
-        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
-        if c != need {
-            return Err(Error::InvalidInput(
-                "minf child order does not account for the whole box",
-            ));
-        }
-        Ok(c)
+        serialize_container(
+            b"minf",
+            self.serialized_len(),
+            &self.child_order(),
+            &self.typed_children(),
+            &self.opaque,
+            buf,
+        )
     }
 }
 
@@ -3715,23 +3723,14 @@ impl Serialize for MediaBox {
         crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let hdr_len = crate::box_types::write_box_header(buf, b"mdia", need)?;
-        let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = hdr_len;
-        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
-        if c != need {
-            return Err(Error::InvalidInput(
-                "mdia child order does not account for the whole box",
-            ));
-        }
-        Ok(c)
+        serialize_container(
+            b"mdia",
+            self.serialized_len(),
+            &self.child_order(),
+            &self.typed_children(),
+            &self.opaque,
+            buf,
+        )
     }
 }
 
@@ -3825,23 +3824,14 @@ impl Serialize for EditBox {
         crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let hdr_len = crate::box_types::write_box_header(buf, b"edts", need)?;
-        let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = hdr_len;
-        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
-        if c != need {
-            return Err(Error::InvalidInput(
-                "edts child order does not account for the whole box",
-            ));
-        }
-        Ok(c)
+        serialize_container(
+            b"edts",
+            self.serialized_len(),
+            &self.child_order(),
+            &self.typed_children(),
+            &self.opaque,
+            buf,
+        )
     }
 }
 
@@ -3972,23 +3962,14 @@ impl Serialize for TrackBox {
         crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let hdr_len = crate::box_types::write_box_header(buf, b"trak", need)?;
-        let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = hdr_len;
-        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
-        if c != need {
-            return Err(Error::InvalidInput(
-                "trak child order does not account for the whole box",
-            ));
-        }
-        Ok(c)
+        serialize_container(
+            b"trak",
+            self.serialized_len(),
+            &self.child_order(),
+            &self.typed_children(),
+            &self.opaque,
+            buf,
+        )
     }
 }
 
@@ -4155,23 +4136,14 @@ impl Serialize for MovieExtendsBox {
         crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let hdr_len = crate::box_types::write_box_header(buf, b"mvex", need)?;
-        let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = hdr_len;
-        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
-        if c != need {
-            return Err(Error::InvalidInput(
-                "mvex child order does not account for the whole box",
-            ));
-        }
-        Ok(c)
+        serialize_container(
+            b"mvex",
+            self.serialized_len(),
+            &self.child_order(),
+            &self.typed_children(),
+            &self.opaque,
+            buf,
+        )
     }
 }
 
@@ -4302,23 +4274,14 @@ impl Serialize for MovieBox {
         crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let hdr_len = crate::box_types::write_box_header(buf, b"moov", need)?;
-        let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = hdr_len;
-        serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
-        if c != need {
-            return Err(Error::InvalidInput(
-                "moov child order does not account for the whole box",
-            ));
-        }
-        Ok(c)
+        serialize_container(
+            b"moov",
+            self.serialized_len(),
+            &self.child_order(),
+            &self.typed_children(),
+            &self.opaque,
+            buf,
+        )
     }
 }
 

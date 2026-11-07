@@ -80,12 +80,6 @@ impl Stage for FuzzSession {
         Ok(())
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     fn demand(&self) -> Demand {
         Demand::new(4096)
     }

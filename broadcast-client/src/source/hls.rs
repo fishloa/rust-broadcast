@@ -4,7 +4,6 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use std::collections::HashMap;
 
 use hls_runtime::client::{
     Action as HlsAction, Error as CoreError, HlsClient, KeyId, Output, ResourceId,
@@ -17,11 +16,10 @@ use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::redirect;
 use crate::source::fetch::body::BodyAcc;
-use crate::source::fetch::conn::{ConnAlloc, ConnLease};
-use crate::source::fetch::deadlines::Deadlines;
+use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
-use crate::source::fetch::inactivity::Inactivity;
-use crate::source::fetch::resume::{Basis, HeadOutcome, Parked, Stash, accept_head};
+use crate::source::fetch::inflight::{self, InFlight, PurposeKind, TimeoutClass, Timeouts};
+use crate::source::fetch::resume::{HeadOutcome, Parked, Stash, accept_head};
 use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
@@ -58,25 +56,16 @@ enum Purpose {
     Key(KeyId),
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Timeouts {
-    playlist_us: u64,
-    segment_us: u64,
-    key_us: u64,
-}
-
-impl Purpose {
+impl PurposeKind for Purpose {
     fn is_media(self) -> bool {
         !matches!(self, Self::Playlist)
     }
-}
 
-impl Timeouts {
-    fn of(&self, purpose: Purpose) -> u64 {
-        match purpose {
-            Purpose::Playlist | Purpose::Resource(ResourceId::Init) => self.playlist_us,
-            Purpose::Resource(_) => self.segment_us,
-            Purpose::Key(_) => self.key_us,
+    fn timeout_class(self) -> TimeoutClass {
+        match self {
+            Self::Playlist | Self::Resource(ResourceId::Init) => TimeoutClass::Manifest,
+            Self::Resource(_) => TimeoutClass::Segment,
+            Self::Key(_) => TimeoutClass::Aux,
         }
     }
 }
@@ -88,47 +77,7 @@ struct BodyLimits {
     key: usize,
 }
 
-struct Req {
-    purpose: Purpose,
-    original_url: String,
-    url: Url,
-    byte_range: Option<(u64, u64)>,
-    redirects: u32,
-    authed: bool,
-    stale_replayed: bool,
-    lease: Option<ConnLease>,
-    started_us: u64,
-    last_activity_us: u64,
-    responded_ok: bool,
-    basis: Option<Basis>,
-    resume_from: Option<u64>,
-    body: BodyAcc,
-}
-
-impl Req {
-    fn deadline(&self, timeouts: &Timeouts) -> Option<u64> {
-        self.started_us.checked_add(timeouts.of(self.purpose))
-    }
-
-    fn new(purpose: Purpose, url: Url, byte_range: Option<(u64, u64)>, body_limit: usize) -> Self {
-        Self {
-            purpose,
-            original_url: url.to_string(),
-            url,
-            byte_range,
-            redirects: 0,
-            authed: false,
-            stale_replayed: false,
-            lease: None,
-            started_us: 0,
-            last_activity_us: 0,
-            responded_ok: false,
-            basis: None,
-            resume_from: None,
-            body: BodyAcc::new(body_limit),
-        }
-    }
-}
+type Req = inflight::Req<Purpose, ()>;
 
 pub(crate) struct HlsSource {
     client: HlsClient,
@@ -148,12 +97,9 @@ pub(crate) struct HlsSource {
     skipped_kind: Option<ErrorKind>,
     damaged_reported: bool,
     oversize_reported: BTreeSet<&'static str>,
-    timeouts: Timeouts,
     backoff: Backoff,
     max_redirects: u32,
-    reqs: HashMap<u32, Req>,
-    deadlines: Deadlines<u32>,
-    inactivity: Inactivity,
+    flight: InFlight<Purpose, ()>,
     stash: Stash<Purpose>,
     parked: Vec<Req>,
     lanes: Lanes<HlsAction>,
@@ -165,7 +111,6 @@ pub(crate) struct HlsSource {
     attempt: Attempts,
     established: bool,
     live: bool,
-    conn_alloc: ConnAlloc,
     role: Role,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
@@ -197,16 +142,17 @@ impl HlsSource {
             skipped_kind: None,
             damaged_reported: false,
             oversize_reported: BTreeSet::new(),
-            timeouts: Timeouts {
-                playlist_us: config.request_timeout_us,
-                segment_us: config.segment_timeout_us,
-                key_us: config.hls_key_timeout_us,
-            },
             backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
             max_redirects: config.max_redirects,
-            reqs: HashMap::new(),
-            deadlines: Deadlines::new(),
-            inactivity: Inactivity::new(config.segment_inactivity_timeout_us),
+            flight: InFlight::new(
+                Timeouts {
+                    manifest_us: config.request_timeout_us,
+                    segment_us: config.segment_timeout_us,
+                    aux_us: config.hls_key_timeout_us,
+                },
+                config.segment_inactivity_timeout_us,
+                conn_alloc,
+            ),
             stash: Stash::new(),
             parked: Vec::new(),
             lanes: Lanes::new(),
@@ -218,7 +164,6 @@ impl HlsSource {
             attempt: Attempts::default(),
             established: false,
             live: false,
-            conn_alloc,
             role,
             actions: VecDeque::new(),
             events: VecDeque::new(),
@@ -236,7 +181,8 @@ impl HlsSource {
     }
 
     pub(crate) fn conns(&self) -> Vec<u32> {
-        self.reqs
+        self.flight
+            .reqs
             .keys()
             .chain(self.refused_captures.keys())
             .copied()
@@ -244,7 +190,7 @@ impl HlsSource {
     }
 
     pub(crate) fn owns(&self, conn: u32) -> bool {
-        self.reqs.contains_key(&conn) || self.refused_captures.contains_key(&conn)
+        self.flight.reqs.contains_key(&conn) || self.refused_captures.contains_key(&conn)
     }
 
     pub(crate) fn endlist_seen(&self) -> bool {
@@ -299,7 +245,7 @@ impl HlsSource {
         if self.fatal {
             return;
         }
-        let in_flight: Vec<Purpose> = self.reqs.values().map(|r| r.purpose).collect();
+        let in_flight: Vec<Purpose> = self.flight.reqs.values().map(|r| r.purpose).collect();
         for purpose in in_flight {
             self.init_retry |= purpose == Purpose::Resource(ResourceId::Init);
             self.client_failed(purpose);
@@ -338,7 +284,7 @@ impl HlsSource {
         if self.fatal {
             return;
         }
-        let Some(mut req) = self.reqs.remove(&conn) else {
+        let Some(mut req) = self.flight.reqs.remove(&conn) else {
             return;
         };
         auth.receive_cookies(&req.url, headers, now);
@@ -395,7 +341,7 @@ impl HlsSource {
                         self.established = true;
                         self.events.push_back(Event::Status(Status::Establishing));
                     }
-                    self.reqs.insert(conn, req);
+                    self.flight.reqs.insert(conn, req);
                 }
             }
         } else if status == STATUS_RANGE_NOT_SATISFIABLE && req.resume_from.is_some() {
@@ -447,7 +393,7 @@ impl HlsSource {
             }
             return;
         }
-        let Some(req) = self.reqs.get_mut(&conn) else {
+        let Some(req) = self.flight.reqs.get_mut(&conn) else {
             return;
         };
         if !req.responded_ok || bytes.is_empty() {
@@ -464,7 +410,7 @@ impl HlsSource {
                     fatal: false,
                 });
             }
-            if let Some(req) = self.reqs.remove(&conn) {
+            if let Some(req) = self.flight.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
                 self.fail(req, now);
                 if !auth.is_waiting() {
@@ -487,7 +433,7 @@ impl HlsSource {
         if let Some(cap) = self.refused_captures.remove(&conn) {
             self.events.push_back(cap.into_event());
         }
-        let Some(req) = self.reqs.remove(&conn) else {
+        let Some(req) = self.flight.reqs.remove(&conn) else {
             return;
         };
         if error.is_some() || !req.responded_ok || req.body.is_truncated() {
@@ -776,7 +722,11 @@ impl HlsSource {
             || self
                 .lanes
                 .any_other(|a| matches!(a, HlsAction::FetchPlaylist { .. }))
-            || self.reqs.values().any(|r| r.purpose == Purpose::Playlist)
+            || self
+                .flight
+                .reqs
+                .values()
+                .any(|r| r.purpose == Purpose::Playlist)
     }
 
     fn schedule_retry(&mut self, now: u64, refetch: Option<String>, segment_attempt: Option<u32>) {
@@ -798,14 +748,8 @@ impl HlsSource {
     }
 
     fn expire(&mut self, now: u64) {
-        let reqs = &self.reqs;
-        let timeouts = &self.timeouts;
-        let overdue = self.deadlines.expire(now, |conn, deadline| {
-            reqs.get(conn)
-                .is_some_and(|r| r.deadline(timeouts) == Some(deadline))
-        });
-        for conn in overdue {
-            if let Some(req) = self.reqs.remove(&conn) {
+        for conn in self.flight.overdue(now) {
+            if let Some(req) = self.flight.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
                 self.fail(req, now);
             }
@@ -814,15 +758,12 @@ impl HlsSource {
     }
 
     fn expire_inactive(&mut self, now: u64) {
-        let reqs = &self.reqs;
-        let expired = self
-            .inactivity
-            .expire(now, |conn| reqs.get(&conn).map(|r| r.last_activity_us));
+        let expired = self.flight.inactive(now);
         for at in expired.wakes {
             self.actions.push_back(Action::WakeAt(at));
         }
         for conn in expired.stalled {
-            if let Some(req) = self.reqs.remove(&conn) {
+            if let Some(req) = self.flight.reqs.remove(&conn) {
                 self.stalled(req, conn, now);
             }
         }
@@ -925,7 +866,7 @@ impl HlsSource {
         }
         match Url::parse(url) {
             Ok(parsed) => {
-                let mut req = Req::new(purpose, parsed, byte_range, self.body_limit(purpose));
+                let mut req = Req::new(purpose, parsed, byte_range, self.body_limit(purpose), ());
                 if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
                     req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
                     req.body = parked.body;
@@ -951,71 +892,19 @@ impl HlsSource {
 
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
-        let mut headers = auth.request_headers(&req.url, now);
+        let headers = auth.request_headers(&req.url, now);
         req.authed = crate::auth::carries_credentials(&headers);
-        req.started_us = now;
-        req.last_activity_us = now;
-        req.responded_ok = false;
-        let resume = req
-            .resume_from
-            .zip(req.basis.as_ref())
-            .and_then(|(received, basis)| basis.request_headers(received));
-        match &resume {
-            Some(resume) => headers.extend(resume.iter().cloned()),
-            None => {
-                req.resume_from = None;
-                req.basis = None;
-                req.body.reset();
-            }
-        }
-        let lease = self.conn_alloc.lease();
-        let conn = lease.id();
-        req.lease = Some(lease);
-        let timeout = self.timeouts.of(req.purpose);
-        self.actions.push_back(Action::HttpRequest {
-            conn,
-            method: METHOD_GET.to_string(),
-            url: req.url.to_string(),
-            headers,
-            byte_range: req.byte_range.filter(|_| resume.is_none()),
-            identity: None,
-        });
-        self.actions
-            .push_back(Action::WakeAt(now.saturating_add(timeout)));
-        let deadline = now.checked_add(timeout);
-        if req.purpose.is_media()
-            && let Some(at) = self.inactivity.arm(conn, now)
-        {
-            self.actions.push_back(Action::WakeAt(at));
-        }
-        self.reqs.insert(conn, req);
-        if let Some(deadline) = deadline {
-            self.deadlines.arm(conn, deadline);
-        }
-        let timeouts = &self.timeouts;
-        self.deadlines.compact(self.reqs.len(), || {
-            self.reqs
-                .iter()
-                .filter_map(|(conn, r)| r.deadline(timeouts).map(|d| (d, *conn)))
-        });
-        let reqs = &self.reqs;
-        self.inactivity.compact(|| {
-            reqs.iter()
-                .filter(|(_, r)| r.purpose.is_media())
-                .map(|(conn, r)| (*conn, r.last_activity_us))
-                .collect()
-        });
+        self.flight
+            .start(req, headers, METHOD_GET, now, &mut self.actions);
     }
 
     fn reset_in_flight(&mut self) {
-        let mut conns: Vec<u32> = self.reqs.keys().copied().collect();
+        let mut conns: Vec<u32> = self.flight.reqs.keys().copied().collect();
         conns.sort_unstable();
         for conn in conns {
             self.actions.push_back(Action::Close { conn });
         }
-        self.reqs.clear();
-        self.deadlines.clear();
-        self.inactivity.clear();
+        self.flight.clear();
         self.stash.clear();
         self.parked.clear();
         self.lanes.clear();
@@ -1216,6 +1105,7 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::fetch::resume::Basis;
 
     const MAX_TEST_BODY: usize = 1024;
     use crate::source::fetch::deadlines::{SLACK_FACTOR, SLACK_FLOOR};
@@ -1288,47 +1178,48 @@ mod tests {
         let (mut source, mut auth, url) = source_with_auth();
         for now in 0..10_000u64 {
             source.send(
-                Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY),
+                Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY, ()),
                 &mut auth,
                 now,
             );
-            let conn = source.reqs.keys().next().copied().unwrap();
-            source.reqs.remove(&conn);
+            let conn = source.flight.reqs.keys().next().copied().unwrap();
+            source.flight.reqs.remove(&conn);
         }
         assert!(
-            source.deadlines.len() <= SLACK_FLOOR + SLACK_FACTOR,
+            source.flight.deadlines.len() <= SLACK_FLOOR + SLACK_FACTOR,
             "{} stale deadlines kept",
-            source.deadlines.len()
+            source.flight.deadlines.len()
         );
     }
 
     #[test]
     fn expire_fails_only_the_overdue_live_request() {
         let (mut source, mut auth, url) = source_with_auth();
-        let timeout = source.timeouts.playlist_us;
+        let timeout = source.flight.timeouts.manifest_us;
         source.send(
-            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY),
+            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY, ()),
             &mut auth,
             0,
         );
-        let overdue = source.reqs.keys().next().copied().unwrap();
+        let overdue = source.flight.reqs.keys().next().copied().unwrap();
         source.send(
-            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY),
+            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY, ()),
             &mut auth,
             10,
         );
         let completed = source
+            .flight
             .reqs
             .keys()
             .find(|c| **c != overdue)
             .copied()
             .unwrap();
-        source.reqs.remove(&completed);
+        source.flight.reqs.remove(&completed);
         source.take_actions();
 
         source.expire(timeout - 1);
         assert!(source.take_actions().is_empty());
-        assert!(source.reqs.contains_key(&overdue));
+        assert!(source.flight.reqs.contains_key(&overdue));
 
         source.expire(timeout);
         let closes: Vec<u32> = source
@@ -1353,21 +1244,21 @@ mod tests {
     #[test]
     fn a_stale_deadline_never_expires_a_newer_request_on_a_reused_id() {
         let (mut source, mut auth, url) = source_with_auth();
-        let timeout = source.timeouts.playlist_us;
+        let timeout = source.flight.timeouts.manifest_us;
         source.send(
-            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY),
+            Req::new(Purpose::Playlist, url.clone(), None, MAX_TEST_BODY, ()),
             &mut auth,
             0,
         );
-        let conn = source.reqs.keys().next().copied().unwrap();
-        source.reqs.remove(&conn);
-        let mut newer = Req::new(Purpose::Playlist, url, None, MAX_TEST_BODY);
+        let conn = source.flight.reqs.keys().next().copied().unwrap();
+        source.flight.reqs.remove(&conn);
+        let mut newer = Req::new(Purpose::Playlist, url, None, MAX_TEST_BODY, ());
         newer.started_us = timeout / 2;
-        source.reqs.insert(conn, newer);
+        source.flight.reqs.insert(conn, newer);
         source.take_actions();
 
         source.expire(timeout);
         assert!(source.take_actions().is_empty());
-        assert!(source.reqs.contains_key(&conn));
+        assert!(source.flight.reqs.contains_key(&conn));
     }
 }

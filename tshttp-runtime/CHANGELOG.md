@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- `TsHttpPolicy::on_error` delegates to `on_eof` (the two bodies were identical).
+
 ## [0.2.0] - 2026-11-03
 
 ### Changed

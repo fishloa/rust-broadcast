@@ -10,7 +10,6 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use std::collections::HashMap;
 
 use broadcast_hls::MediaType;
 use dash_runtime::client::{
@@ -31,11 +30,10 @@ use crate::events::{Action, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::body::BodyAcc;
-use crate::source::fetch::conn::{ConnAlloc, ConnLease};
-use crate::source::fetch::deadlines::Deadlines;
+use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::failures::{Attempts, Verdict, verdict};
-use crate::source::fetch::inactivity::Inactivity;
-use crate::source::fetch::resume::{Basis, HeadOutcome, Parked, Stash, accept_head};
+use crate::source::fetch::inflight::{self, InFlight, PurposeKind, TimeoutClass, Timeouts};
+use crate::source::fetch::resume::{HeadOutcome, Parked, Stash, accept_head};
 use crate::source::fetch::retry::{Backoff, RefusedCapture, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 
@@ -90,28 +88,18 @@ enum Purpose {
     Resource(ResourceId),
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Timeouts {
-    manifest_us: u64,
-    segment_us: u64,
-    utc_us: u64,
-}
-
-impl Purpose {
+impl PurposeKind for Purpose {
     fn is_media(self) -> bool {
         matches!(self, Self::Resource(_))
     }
-}
 
-impl Timeouts {
-    fn of(&self, purpose: Purpose) -> u64 {
-        match purpose {
-            Purpose::Mpd
-            | Purpose::Resource(ResourceId::Init { .. } | ResourceId::Index { .. }) => {
-                self.manifest_us
+    fn timeout_class(self) -> TimeoutClass {
+        match self {
+            Self::Mpd | Self::Resource(ResourceId::Init { .. } | ResourceId::Index { .. }) => {
+                TimeoutClass::Manifest
             }
-            Purpose::Resource(_) => self.segment_us,
-            Purpose::Utc(_) => self.utc_us,
+            Self::Resource(_) => TimeoutClass::Segment,
+            Self::Utc(_) => TimeoutClass::Aux,
         }
     }
 }
@@ -145,60 +133,34 @@ impl Head {
     }
 }
 
-struct Req {
-    purpose: Purpose,
+struct DashExtra {
     method: &'static str,
-    original_url: String,
-    url: Url,
-    byte_range: Option<(u64, u64)>,
     conditional: Vec<(String, String)>,
-    redirects: u32,
-    authed: bool,
-    stale_replayed: bool,
-    lease: Option<ConnLease>,
-    started_us: u64,
     received_us: u64,
-    last_activity_us: u64,
-    responded_ok: bool,
-    basis: Option<Basis>,
-    resume_from: Option<u64>,
     head: Head,
-    body: BodyAcc,
 }
 
-impl Req {
-    fn deadline(&self, timeouts: &Timeouts) -> Option<u64> {
-        self.started_us.checked_add(timeouts.of(self.purpose))
-    }
+type Req = inflight::Req<Purpose, DashExtra>;
 
-    fn new(
-        purpose: Purpose,
-        method: &'static str,
-        url: Url,
-        byte_range: Option<(u64, u64)>,
-        body_limit: usize,
-    ) -> Self {
-        Self {
-            purpose,
+fn new_req(
+    purpose: Purpose,
+    method: &'static str,
+    url: Url,
+    byte_range: Option<(u64, u64)>,
+    body_limit: usize,
+) -> Req {
+    Req::new(
+        purpose,
+        url,
+        byte_range,
+        body_limit,
+        DashExtra {
             method,
-            original_url: url.to_string(),
-            url,
-            byte_range,
             conditional: Vec::new(),
-            redirects: 0,
-            authed: false,
-            stale_replayed: false,
-            lease: None,
-            started_us: 0,
             received_us: 0,
-            last_activity_us: 0,
-            responded_ok: false,
-            basis: None,
-            resume_from: None,
             head: Head::default(),
-            body: BodyAcc::new(body_limit),
-        }
-    }
+        },
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,7 +196,6 @@ pub(crate) struct DashSource {
     dash_config: dash_runtime::client::DashConfig,
     pull: PullLimits,
     body_limits: BodyLimits,
-    timeouts: Timeouts,
     backoff: Backoff,
     max_redirects: u32,
     max_key_failures: u32,
@@ -242,9 +203,7 @@ pub(crate) struct DashSource {
     mpd_accepted: bool,
     retry_after_us: u64,
     refused_captures: BTreeMap<u32, RefusedCapture>,
-    reqs: HashMap<u32, Req>,
-    deadlines: Deadlines<u32>,
-    inactivity: Inactivity,
+    flight: InFlight<Purpose, DashExtra>,
     stash: Stash<Purpose>,
     parked: Vec<Req>,
     retries: BTreeMap<ResourceId, u64>,
@@ -273,7 +232,6 @@ pub(crate) struct DashSource {
     live: bool,
     ended: bool,
     fatal: bool,
-    conn_alloc: ConnAlloc,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
 }
@@ -306,11 +264,6 @@ impl DashSource {
                 manifest: config.max_manifest_bytes,
                 segment: config.max_segment_bytes,
             },
-            timeouts: Timeouts {
-                manifest_us: config.request_timeout_us,
-                segment_us: config.segment_timeout_us,
-                utc_us: config.dash.utc_timeout_us,
-            },
             backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms),
             max_redirects: config.max_redirects,
             max_key_failures: config.max_key_failures,
@@ -318,9 +271,15 @@ impl DashSource {
             mpd_accepted: false,
             retry_after_us: 0,
             refused_captures: BTreeMap::new(),
-            reqs: HashMap::new(),
-            deadlines: Deadlines::new(),
-            inactivity: Inactivity::new(config.segment_inactivity_timeout_us),
+            flight: InFlight::new(
+                Timeouts {
+                    manifest_us: config.request_timeout_us,
+                    segment_us: config.segment_timeout_us,
+                    aux_us: config.dash.utc_timeout_us,
+                },
+                config.segment_inactivity_timeout_us,
+                conn_alloc,
+            ),
             stash: Stash::new(),
             parked: Vec::new(),
             retries: BTreeMap::new(),
@@ -353,7 +312,6 @@ impl DashSource {
             live: false,
             ended: false,
             fatal: false,
-            conn_alloc,
             actions: VecDeque::new(),
             events: VecDeque::new(),
         };
@@ -370,7 +328,8 @@ impl DashSource {
     }
 
     pub(crate) fn conns(&self) -> Vec<u32> {
-        self.reqs
+        self.flight
+            .reqs
             .keys()
             .chain(self.refused_captures.keys())
             .copied()
@@ -504,7 +463,7 @@ impl DashSource {
         if self.fatal {
             return;
         }
-        let Some(mut req) = self.reqs.remove(&conn) else {
+        let Some(mut req) = self.flight.reqs.remove(&conn) else {
             return;
         };
         auth.receive_cookies(&req.url, headers, now);
@@ -556,14 +515,14 @@ impl DashSource {
                 }
                 HeadOutcome::Accepted => {
                     req.responded_ok = true;
-                    req.received_us = now;
+                    req.extra.received_us = now;
                     req.last_activity_us = now;
-                    req.head = Head::of(headers);
+                    req.extra.head = Head::of(headers);
                     if !self.established {
                         self.established = true;
                         self.events.push_back(Event::Status(Status::Establishing));
                     }
-                    self.reqs.insert(conn, req);
+                    self.flight.reqs.insert(conn, req);
                 }
             }
         } else if status == STATUS_RANGE_NOT_SATISFIABLE && req.resume_from.is_some() {
@@ -572,7 +531,7 @@ impl DashSource {
             self.send(req, auth, now);
         } else if status == STATUS_NOT_MODIFIED && req.purpose == Purpose::Mpd {
             self.actions.push_back(Action::Close { conn });
-            req.received_us = now;
+            req.extra.received_us = now;
             self.deliver_unchanged(&req, now);
         } else {
             let refused = status == 429 || status == 503;
@@ -619,7 +578,7 @@ impl DashSource {
             }
             return;
         }
-        let Some(req) = self.reqs.get_mut(&conn) else {
+        let Some(req) = self.flight.reqs.get_mut(&conn) else {
             return;
         };
         if !req.responded_ok || bytes.is_empty() {
@@ -636,7 +595,7 @@ impl DashSource {
                     fatal: false,
                 });
             }
-            if let Some(req) = self.reqs.remove(&conn) {
+            if let Some(req) = self.flight.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
                 self.fail(req, now, Failure::TooLarge);
                 if !auth.is_waiting() {
@@ -659,10 +618,10 @@ impl DashSource {
         if let Some(cap) = self.refused_captures.remove(&conn) {
             self.events.push_back(cap.into_event());
         }
-        let Some(mut req) = self.reqs.remove(&conn) else {
+        let Some(mut req) = self.flight.reqs.remove(&conn) else {
             return;
         };
-        let head_request = req.method == METHOD_HEAD;
+        let head_request = req.extra.method == METHOD_HEAD;
         let truncated = !head_request && req.body.is_truncated();
         if error.is_some() || !req.responded_ok || truncated {
             self.fail(req, now, Failure::Transport);
@@ -694,14 +653,14 @@ impl DashSource {
     }
 
     fn meta<'r>(req: &'r Req, final_url: Option<&'r str>) -> ResponseMeta<'r> {
-        let mut meta = ResponseMeta::new(req.started_us, req.received_us);
-        if let Some(date) = req.head.date.as_deref() {
+        let mut meta = ResponseMeta::new(req.started_us, req.extra.received_us);
+        if let Some(date) = req.extra.head.date.as_deref() {
             meta = meta.with_date(date);
         }
-        if let Some(etag) = req.head.etag.as_deref() {
+        if let Some(etag) = req.extra.head.etag.as_deref() {
             meta = meta.with_etag(etag);
         }
-        if let Some(last_modified) = req.head.last_modified.as_deref() {
+        if let Some(last_modified) = req.extra.head.last_modified.as_deref() {
             meta = meta.with_last_modified(last_modified);
         }
         if let Some(url) = final_url {
@@ -757,8 +716,9 @@ impl DashSource {
     }
 
     fn deliver_utc(&mut self, id: UtcId, req: &Req, now: u64) {
-        let mut response = UtcResponse::new(req.started_us, req.received_us, req.body.as_slice());
-        if let Some(date) = req.head.date.as_deref() {
+        let mut response =
+            UtcResponse::new(req.started_us, req.extra.received_us, req.body.as_slice());
+        if let Some(date) = req.extra.head.date.as_deref() {
             response = response.with_date(date);
         }
         let _ = self.client.on_utc_response(now, id, &response);
@@ -889,14 +849,8 @@ impl DashSource {
     }
 
     fn expire(&mut self, now: u64) {
-        let reqs = &self.reqs;
-        let timeouts = &self.timeouts;
-        let overdue = self.deadlines.expire(now, |conn, deadline| {
-            reqs.get(conn)
-                .is_some_and(|r| r.deadline(timeouts) == Some(deadline))
-        });
-        for conn in overdue {
-            if let Some(req) = self.reqs.remove(&conn) {
+        for conn in self.flight.overdue(now) {
+            if let Some(req) = self.flight.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
                 self.fail(req, now, Failure::Timeout);
             }
@@ -905,15 +859,12 @@ impl DashSource {
     }
 
     fn expire_inactive(&mut self, now: u64) {
-        let reqs = &self.reqs;
-        let expired = self
-            .inactivity
-            .expire(now, |conn| reqs.get(&conn).map(|r| r.last_activity_us));
+        let expired = self.flight.inactive(now);
         for at in expired.wakes {
             self.actions.push_back(Action::WakeAt(at));
         }
         for conn in expired.stalled {
-            if let Some(req) = self.reqs.remove(&conn) {
+            if let Some(req) = self.flight.reqs.remove(&conn) {
                 self.stalled(req, conn, now);
             }
         }
@@ -1033,14 +984,14 @@ impl DashSource {
         };
         match Url::parse(&url) {
             Ok(parsed) => {
-                let mut req = Req::new(
+                let mut req = new_req(
                     purpose,
                     method,
                     parsed,
                     byte_range,
                     self.body_limit(purpose),
                 );
-                req.conditional = conditional;
+                req.extra.conditional = conditional;
                 if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
                     req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));
                     req.body = parked.body;
@@ -1063,70 +1014,19 @@ impl DashSource {
         self.flush_refused();
         let mut headers = auth.request_headers(&req.url, now);
         req.authed = crate::auth::carries_credentials(&headers);
-        headers.extend(req.conditional.iter().cloned());
-        req.started_us = now;
-        req.last_activity_us = now;
-        req.responded_ok = false;
-        let resume = req
-            .resume_from
-            .zip(req.basis.as_ref())
-            .and_then(|(received, basis)| basis.request_headers(received));
-        match &resume {
-            Some(resume) => headers.extend(resume.iter().cloned()),
-            None => {
-                req.resume_from = None;
-                req.basis = None;
-                req.body.reset();
-            }
-        }
-        let lease = self.conn_alloc.lease();
-        let conn = lease.id();
-        req.lease = Some(lease);
-        let timeout = self.timeouts.of(req.purpose);
-        self.actions.push_back(Action::HttpRequest {
-            conn,
-            method: req.method.to_string(),
-            url: req.url.to_string(),
-            headers,
-            byte_range: req.byte_range.filter(|_| resume.is_none()),
-            identity: None,
-        });
-        self.actions
-            .push_back(Action::WakeAt(now.saturating_add(timeout)));
-        let deadline = now.checked_add(timeout);
-        if req.purpose.is_media()
-            && let Some(at) = self.inactivity.arm(conn, now)
-        {
-            self.actions.push_back(Action::WakeAt(at));
-        }
-        self.reqs.insert(conn, req);
-        if let Some(deadline) = deadline {
-            self.deadlines.arm(conn, deadline);
-        }
-        let timeouts = &self.timeouts;
-        self.deadlines.compact(self.reqs.len(), || {
-            self.reqs
-                .iter()
-                .filter_map(|(conn, r)| r.deadline(timeouts).map(|d| (d, *conn)))
-        });
-        let reqs = &self.reqs;
-        self.inactivity.compact(|| {
-            reqs.iter()
-                .filter(|(_, r)| r.purpose.is_media())
-                .map(|(conn, r)| (*conn, r.last_activity_us))
-                .collect()
-        });
+        headers.extend(req.extra.conditional.iter().cloned());
+        let method = req.extra.method;
+        self.flight
+            .start(req, headers, method, now, &mut self.actions);
     }
 
     fn reset_in_flight(&mut self) {
-        let mut conns: Vec<u32> = self.reqs.keys().copied().collect();
+        let mut conns: Vec<u32> = self.flight.reqs.keys().copied().collect();
         conns.sort_unstable();
         for conn in conns {
             self.actions.push_back(Action::Close { conn });
         }
-        self.reqs.clear();
-        self.deadlines.clear();
-        self.inactivity.clear();
+        self.flight.clear();
         self.stash.clear();
         self.parked.clear();
         self.retries.clear();

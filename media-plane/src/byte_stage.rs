@@ -130,12 +130,6 @@ mod tests {
             Ok(())
         }
 
-        fn next_deadline(&self) -> Option<Timestamp> {
-            None
-        }
-
-        fn on_deadline(&mut self, _now: Timestamp) {}
-
         fn demand(&self) -> Demand {
             Demand::new(4096)
         }
@@ -255,12 +249,6 @@ mod tests {
             }
             Ok(())
         }
-
-        fn next_deadline(&self) -> Option<Timestamp> {
-            None
-        }
-
-        fn on_deadline(&mut self, _now: Timestamp) {}
 
         fn demand(&self) -> Demand {
             if self.queued.len() >= self.max_queued {

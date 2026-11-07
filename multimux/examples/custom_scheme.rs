@@ -175,12 +175,6 @@ impl Stage for DemoSession {
         self.pending.pop_front()
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     fn finish(&mut self) -> Result<(), Infallible> {
         Ok(())
     }

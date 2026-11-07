@@ -85,60 +85,12 @@ fn avc_keyframes_agree_with_demuxer_and_oracle() {
 
 // ── Test 2: HEVC — first AU is IRAP, a later AU is not ───────────────────────
 
-/// Reassemble the video elementary stream's access units from a TS by PES
-/// boundary (PUSI marks a new PES packet = one AU here) for `video_pid`.
-/// Returns each AU as its **Annex B** ES payload (PES header stripped).
-fn hevc_access_units(ts: &[u8], video_pid: u16) -> Vec<Vec<u8>> {
-    const TS_PACKET: usize = 188;
-    let mut aus: Vec<Vec<u8>> = Vec::new();
-    let mut cur: Option<Vec<u8>> = None;
-    for pkt in ts.chunks_exact(TS_PACKET) {
-        if pkt[0] != 0x47 {
-            continue;
-        }
-        let pid = (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16;
-        if pid != video_pid {
-            continue;
-        }
-        let pusi = pkt[1] & 0x40 != 0;
-        let afc = (pkt[3] >> 4) & 0x3;
-        let mut off = 4usize;
-        if afc & 0x2 != 0 {
-            off += 1 + pkt[4] as usize; // adaptation_field_length + the field
-        }
-        if afc & 0x1 == 0 || off >= TS_PACKET {
-            continue;
-        }
-        let payload = &pkt[off..];
-        if pusi {
-            if let Some(prev) = cur.take() {
-                aus.push(prev);
-            }
-            cur = Some(payload.to_vec());
-        } else if let Some(c) = cur.as_mut() {
-            c.extend_from_slice(payload);
-        }
-    }
-    if let Some(c) = cur {
-        aus.push(c);
-    }
-    aus
-}
-
-/// Strip a PES packet header, returning the elementary-stream Annex B payload.
-fn pes_es_payload(pes: &[u8]) -> &[u8] {
-    assert_eq!(&pes[0..3], &[0x00, 0x00, 0x01], "PES start-code prefix");
-    // Optional PES header: byte 8 is PES_header_data_length.
-    let header_data_len = pes[8] as usize;
-    &pes[9 + header_data_len..]
-}
-
 #[test]
 fn hevc_first_au_is_irap_rest_are_not() {
     let ts = std::fs::read(fixtures_dir().join("ts/hevc/main.ts")).expect("hevc/main.ts fixture");
     // Video elementary PID for this capture (HEVC stream_type 0x24).
     const HEVC_VIDEO_PID: u16 = 0x0100;
-    let aus = hevc_access_units(&ts, HEVC_VIDEO_PID);
+    let aus = crate::ts_psi::pes_packets(&ts, HEVC_VIDEO_PID);
     assert!(
         aus.len() > 1,
         "need multiple AUs to bite (got {})",
@@ -146,7 +98,7 @@ fn hevc_first_au_is_irap_rest_are_not() {
     );
 
     // First AU carries VPS/SPS/PPS + an IDR (IRAP): keyframe.
-    let first = pes_es_payload(&aus[0]);
+    let first = crate::ts_psi::pes_es_payload(&aus[0]);
     assert!(
         access_unit_is_keyframe(NalCodec::Hevc, first, false),
         "first HEVC AU must be an IRAP keyframe"
@@ -155,7 +107,7 @@ fn hevc_first_au_is_irap_rest_are_not() {
     // Every subsequent AU is a TRAIL picture (nal_unit_type 0/1): not IRAP.
     let mut non_irap_seen = 0usize;
     for au in &aus[1..] {
-        let es = pes_es_payload(au);
+        let es = crate::ts_psi::pes_es_payload(au);
         assert!(
             !access_unit_is_keyframe(NalCodec::Hevc, es, false),
             "non-first HEVC AU must not be an IRAP keyframe"
@@ -242,11 +194,11 @@ fn vvc_classifies_real_mdat_nals() {
 fn annexb_and_length_prefixed_agree_on_real_hevc_au() {
     let ts = std::fs::read(fixtures_dir().join("ts/hevc/main.ts")).expect("hevc/main.ts fixture");
     const HEVC_VIDEO_PID: u16 = 0x0100;
-    let aus = hevc_access_units(&ts, HEVC_VIDEO_PID);
+    let aus = crate::ts_psi::pes_packets(&ts, HEVC_VIDEO_PID);
     assert!(aus.len() > 1);
 
     for au in [&aus[0], &aus[1]] {
-        let annexb = pes_es_payload(au);
+        let annexb = crate::ts_psi::pes_es_payload(au);
         let lp = transmux::annexb::annexb_to_length_prefixed(annexb);
         let via_annexb = access_unit_is_keyframe(NalCodec::Hevc, annexb, false);
         let via_lp = access_unit_is_keyframe(NalCodec::Hevc, &lp, true);
@@ -258,12 +210,12 @@ fn annexb_and_length_prefixed_agree_on_real_hevc_au() {
     // And they must actually differ between the two AUs (bite): AU0 keyframe, AU1 not.
     assert!(access_unit_is_keyframe(
         NalCodec::Hevc,
-        pes_es_payload(&aus[0]),
+        crate::ts_psi::pes_es_payload(&aus[0]),
         false
     ));
     assert!(!access_unit_is_keyframe(
         NalCodec::Hevc,
-        pes_es_payload(&aus[1]),
+        crate::ts_psi::pes_es_payload(&aus[1]),
         false
     ));
 }

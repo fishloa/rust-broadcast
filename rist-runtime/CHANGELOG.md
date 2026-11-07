@@ -7,6 +7,10 @@ All notable changes to this crate will be documented in this file.
 - `Error::TrailingData`, never constructed: TR-06-1 §5.2 does not fix a closed sub-packet list, and unmatched sub-packets are kept in `unknown` (c2 TH3).
 - Unused public `Receiver::rtt_estimate` (c2 TH1).
 
+### Changed
+- New `librist_capture` test: every datagram of the librist 0.2.18 Simple Profile capture parses as RTP (PT 33, contiguous sequence, 1316-byte TS payload) and re-serializes byte-exactly; adds a dev-dependency on `rtp-packet` (c3 t:S4).
+
+
 ## [0.4.0] - 2026-10-17
 ### Documentation
 - README restructured: what the crate does and does not do, a standards-supported table (edition, scope, status), feature-flag table, a doctested quick start and related crates; crate-root docs now render the README (or are kept in step with it).

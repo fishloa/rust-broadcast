@@ -898,7 +898,7 @@ fn compress_playlist_response(
         .unwrap_or(content_type)
         .trim()
         .to_ascii_lowercase();
-    media_type == "application/vnd.apple.mpegurl" || media_type == "application/dash+xml"
+    media_type == crate::http::PLAYLIST_CONTENT_TYPE || media_type == "application/dash+xml"
 }
 
 /// Router-wide middleware (mounted via `.layer` on each stream's *merged*

@@ -98,3 +98,39 @@ pub fn split_lp(lp: &[u8]) -> Vec<Vec<u8>> {
     }
     out
 }
+
+/// One PID's PES packets reassembled from raw TS packets (a payload-unit
+/// start begins a new PES packet), each as full PES bytes with the header
+/// still attached.
+pub fn pes_packets(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
+    let mut packets: Vec<Vec<u8>> = Vec::new();
+    let mut cur: Option<Vec<u8>> = None;
+    for pkt in ts.chunks_exact(TS) {
+        if pkt[0] != 0x47 || pid_of(pkt) != pid {
+            continue;
+        }
+        let off = payload_offset(pkt);
+        if off >= TS {
+            continue;
+        }
+        let payload = &pkt[off..];
+        if pusi_of(pkt) {
+            if let Some(prev) = cur.take() {
+                packets.push(prev);
+            }
+            cur = Some(payload.to_vec());
+        } else if let Some(c) = cur.as_mut() {
+            c.extend_from_slice(payload);
+        }
+    }
+    packets.extend(cur);
+    packets
+}
+
+/// Strip a PES packet header (ITU-T H.222.0 §2.4.3.6), returning the
+/// elementary-stream payload.
+pub fn pes_es_payload(pes: &[u8]) -> &[u8] {
+    assert_eq!(&pes[0..3], &[0x00, 0x00, 0x01], "PES start-code prefix");
+    let header_data_len = pes[8] as usize;
+    &pes[9 + header_data_len..]
+}

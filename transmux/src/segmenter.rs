@@ -625,14 +625,6 @@ impl Stage for Segmenter {
         self.flush()
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        // Segments are only cut in reaction to `push` (a keyframe past the
-        // target duration) or `flush` — no rate-scheduled or timeout work.
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     /// `saturated` once any track holds [`MAX_PENDING_SAMPLES_PER_TRACK`]
     /// un-cut samples — the point past which [`feed`](Stage::feed) errors
     /// rather than buffering further, so a cooperative driver must stop

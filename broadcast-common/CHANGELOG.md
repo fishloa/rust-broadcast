@@ -11,6 +11,10 @@
 - `xml` feature (implies `std`, pulls `quick-xml`) and `xml_chars` module: `is_xml_char`, `char_data`, `namespace_of`, `BAD_CHAR` - the XML 1.0 character-data core previously copied into four crates (dedupe D5).
 - `Demand::saturated_if(bool)`: `Demand::saturated()` when full, else the default (dedupe C3).
 
+### Changed
+- `Stage::next_deadline`, `Stage::on_deadline` and `Stage::demand` have default bodies (no deadline, nothing to do, `Demand::default()`), so a stage that only reacts to `feed`/`finish` omits them; the trivial overrides in `transmux` are gone (c3 d:G1).
+
+
 ## [10.0.0] - 2026-10-17
 ### Documentation
 - README rewritten to the workspace crate-README standard: what the crate does and does not do, a standards table (edition, scope, status), feature flags, a doctested quick start, the implemented API surface, design notes and related crates. Where the crate has a library target the crate-root docs are now `include_str!("../README.md")`, so docs.rs and crates.io show the same text.

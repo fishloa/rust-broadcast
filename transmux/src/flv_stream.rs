@@ -688,13 +688,6 @@ impl Stage for StreamingFlvDemux {
         Ok(())
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        // Only ever reacts to feed/finish — no rate-scheduled or timeout work.
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     /// `want_bytes` is the **exact** number of bytes still missing before the
     /// unit [`feed`](StreamingFlvDemux::feed) is currently blocked on can be
     /// consumed: the rest of the FLV header, the rest of a partial tag

@@ -1537,14 +1537,6 @@ impl Stage for LlHlsSegmenter {
         self.flush()
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        // Parts/segments are only cut in reaction to `push`/`flush` — no
-        // rate-scheduled or timeout work.
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     /// `saturated` once any track holds [`MAX_PENDING_SAMPLES_PER_TRACK`]
     /// un-cut samples — the same bound (and reasoning) as
     /// [`Segmenter`](crate::segmenter::Segmenter)'s: past it
