@@ -5,6 +5,7 @@ All notable changes to dash-runtime will be documented in this file.
 ## [Unreleased]
 ### Changed
 - The `live_fuzz_crash_regression` test and the `dash_client_live` fuzz target share one driver module (`tests/it/common/live_fuzz_driver.rs`) instead of a 322-line copy (c3 d:T1).
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - The MPD reader's attribute loop is `broadcast_common::xml_chars::read_attributes_checked` with the attribute count and size limits as its hook; an over-limit attribute count is now reported after (not before) a malformed value on the same start tag (c2 H8).
 - `timing::ticks_to_us` rescales through `broadcast_common::timescale` (same floor rounding) (c2 H6).
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).

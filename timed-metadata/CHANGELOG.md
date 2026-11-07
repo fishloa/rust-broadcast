@@ -7,6 +7,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 - Unused public items, with no use in the workspace beyond their own unit tests: `set_anchor`.
 - The `chrono` feature (on by default) and the `chrono` dependency: nothing in the crate used them.
 - `webvtt::teletext::decode_odd_parity` and `encode_odd_parity` (one-line forwards). Use `broadcast_common::parity::strip_parity` and `broadcast_common::parity::set_odd_parity` (dedupe R3).
+### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
+
 
 ## [0.8.0] - 2026-11-01
 

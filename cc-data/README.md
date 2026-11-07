@@ -85,6 +85,8 @@ assert_eq!(back.cea708().count(), 1);
 Decoding (feature `decode`):
 
 ```rust
+# #[cfg(feature = "decode")]
+# fn main() {
 use cc_data::decode::{Cea608Channel, Cea608Decoder};
 
 let mut dec = Cea608Decoder::new();
@@ -95,6 +97,9 @@ dec.push_pair(false, 0x14, 0x70); // PAC row 15 indent 0
 dec.push_pair(false, b'H', b'I');
 dec.push_pair(false, 0x14, 0x2F); // EOC -> flip
 assert_eq!(dec.channel_text(Cea608Channel::Cc1), "HI");
+# }
+# #[cfg(not(feature = "decode"))]
+# fn main() {}
 ```
 
 Examples: `parse_cc_data`, `build_cc_data`, `decode_cea608`, `decode_cea708`

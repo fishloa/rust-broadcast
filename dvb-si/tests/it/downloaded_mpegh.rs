@@ -114,3 +114,47 @@ fn cicp13_baseline() {
         None,
     );
 }
+
+#[test]
+fn cicp01_baseline_continuous_stream() {
+    check(
+        "mpegh-cicp-01-baseline-32kbps-cont-2000",
+        &[0x3F, 0x04, 0x08, 0x10, 0x7F, 0xC1],
+        0x10,
+        1,
+        None,
+    );
+}
+
+#[test]
+fn cicp01_baseline_multi_stream() {
+    check(
+        "mpegh-cicp-01-baseline-32kbps-multi-5",
+        &[0x3F, 0x04, 0x08, 0x10, 0x7F, 0xC1],
+        0x10,
+        1,
+        None,
+    );
+}
+
+#[test]
+fn cicp06_baseline() {
+    check(
+        "mpegh-cicp-06-baseline-32kbps-single",
+        &[0x3F, 0x04, 0x08, 0x11, 0x7F, 0xC6],
+        0x11,
+        6,
+        None,
+    );
+}
+
+#[test]
+fn cicp13_low_complexity_with_baseline_compatible_set() {
+    check(
+        "mpegh-cicp-13-lc-baseline-compatible-32kbps-single",
+        &[0x3F, 0x06, 0x08, 0x0E, 0x3F, 0xCD, 0x01, 0x13],
+        0x0E,
+        13,
+        Some(&[0x13]),
+    );
+}

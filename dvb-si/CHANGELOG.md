@@ -6,6 +6,7 @@
 - `tables::nit::NitTransportStream` and `tables::bat::BatTransportStream`: use `tables::TransportStreamEntry` (same fields and `new`).
 - `collect::CompleteNitTransportStream` and `collect::CompleteBatTransportStream`: use `collect::CompleteTransportStream`.
 ### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - `tables::sat`: the 600-line SAT body parse and 300-line write matches are one function per satellite_table_id (internal, c3 t:S7).
 - `build.rs` generates the CA-system and private-data-specifier name functions from one writer (c3 d:D1).
 - NIT and BAT share one section parse/serialize core, CAT and TSDT another, and the three descriptor registries use `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H4, H1).

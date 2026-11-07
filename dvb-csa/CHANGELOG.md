@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - Dev-dependency `rand` 0.9 -> 0.10 (bitsliced differential test only; not in public API).
 
 ## [0.4.0] - 2026-10-17

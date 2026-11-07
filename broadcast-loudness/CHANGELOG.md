@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unused public items, with no use in the workspace beyond their own unit tests: `integrated_lu`.
 ### Added
 - EBU Tech 3341 Table 1 true-peak cases 20-23 verified against the EBU reference WAVs (private fixtures; measured -0.15, -0.08, -0.20, -0.08 dBTP, all within 0.0 +0.2/-0.4), #1635.
+### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
+
 
 ## [0.5.0] - 2026-10-17
 ### Documentation

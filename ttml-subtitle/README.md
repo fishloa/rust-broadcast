@@ -136,6 +136,11 @@ parsed input) will serialize and re-parse to an equal document. This is tested b
 ```rust
 use ttml_subtitle::{Document, validation::{Validator, Profile, ImscVersion}};
 
+# let xml = r#"<tt xml:lang="en" xmlns="http://www.w3.org/ns/ttml"
+#    xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+#    ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text">
+#   <body><div><p begin="0s" end="5s">Hello</p></div></body>
+# </tt>"#;
 let doc = Document::parse_str(xml).unwrap();
 
 let validator = Validator::new(Profile::Text, ImscVersion::V1_1);

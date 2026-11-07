@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Removed
 - Unused public items, with no use in the workspace beyond their own unit tests: `is_mandatory`, `is_next_header`, `mandatory_h_type`, `optional_h_type`.
+### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
+
 
 ## [0.5.0] - 2026-10-17
 ### Documentation

@@ -10,6 +10,9 @@ versioning.
 - `ci_plus::ca_support::MsCaPmtStream` and `MsCaPmtReplyStream`: the multi-stream `MsCaPmt` and `MsCaPmtReply` now hold `objects::ca_pmt::CaPmtStream` and `objects::ca_pmt_reply::CaPmtReplyStream` (identical fields).
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
+### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
+
 
 ## [0.10.0] - 2026-10-17
 ### Documentation

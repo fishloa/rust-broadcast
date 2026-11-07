@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Unused public items, with no use in the workspace beyond their own unit tests: `to_8_color`.
 ### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).
 
 ## [0.7.1] - 2026-11-03
