@@ -52,6 +52,19 @@ impl Limit {
 }
 impl_spec_display!(Limit);
 
+impl From<broadcast_common::xml_chars::XmlLimit> for Limit {
+    fn from(limit: broadcast_common::xml_chars::XmlLimit) -> Self {
+        use broadcast_common::xml_chars::XmlLimit;
+        match limit {
+            XmlLimit::Depth => Self::Depth,
+            XmlLimit::Elements => Self::Elements,
+            XmlLimit::AttributeBytes => Self::AttributeBytes,
+            XmlLimit::Attributes => Self::Attributes,
+            _ => Self::InputBytes,
+        }
+    }
+}
+
 /// A feature the 0.1 core recognises but deliberately does not implement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

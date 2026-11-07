@@ -3,9 +3,12 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Added
+- `Limits::xml_limits()`: the XML-level bounds as the shared `broadcast_common::xml_chars::XmlLimits`; `From<XmlLimit> for Limit`.
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed
+- The MPD reader's size, depth, element-count and attribute bounds are enforced through `broadcast_common::xml_chars::XmlBudget` instead of hand-kept counters; `Limits` and every default are unchanged.
 - `timing::ticks_to_us` and the plan's microsecond-to-tick ceiling use `broadcast_common::timescale::{to_micros, from_micros}` (c6 F7).
 - The `live_fuzz_crash_regression` test and the `dash_client_live` fuzz target share one driver module (`tests/it/common/live_fuzz_driver.rs`) instead of a 322-line copy (c3 d:T1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
