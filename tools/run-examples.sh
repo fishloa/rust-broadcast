@@ -112,7 +112,7 @@ while IFS=$'\t' read -r pkg ex; do
     checked=$((checked + 1))
     # shellcheck disable=SC2046 # deliberate word splitting: the map holds a
     # whitespace-separated argument list, not one argument.
-    out=$(cargo run -q -p "$pkg" --example "$ex" "$@" -- $(example_args "$pkg/$ex") 2>&1 | tr -d '\0')
+    out=$(cargo run -q -p "$pkg" --example "$ex" "$@" -- $(example_args "$pkg/$ex") 2>&1 | LC_ALL=C tr -d '\0')
     rc=$?
 
     if [ "$rc" -ne 0 ]; then
