@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `ids::Generation`, the init-segment generation newtype, next to `SegmentSeq`/`PartIndex` (c2 L5).
 ### Removed
-- Unused public `retention` `cold_len`; `Trunk::sparse_len` and `Trunk::event_len` are now test-only (c2 TH1).
+- `Trunk::sparse_len` and `Trunk::event_len` are now test-only (c2 TH1).
 
 ## [0.9.0] - 2026-11-03
 
