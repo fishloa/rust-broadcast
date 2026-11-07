@@ -158,7 +158,7 @@ mod tests {
         let mut conv = Cea608ToWebVtt::new(Cea608Channel::Cc1);
         // cc_count with more bytes claimed than provided.
         let err = conv.push_cc_data(0, &[0xFF]);
-        assert!(err.is_err());
+        assert!(matches!(&err, Err(crate::error::Error::CcData(_))));
     }
 
     #[test]

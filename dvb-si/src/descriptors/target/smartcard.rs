@@ -103,7 +103,13 @@ mod tests {
 
     #[test]
     fn rejects_short_body_and_wrong_tag() {
-        assert!(TargetSmartcardDescriptor::parse(&[TAG, 3, 1, 2, 3]).is_err());
-        assert!(TargetSmartcardDescriptor::parse(&[0x07, 4, 1, 2, 3, 4]).is_err());
+        assert!(matches!(
+            &(TargetSmartcardDescriptor::parse(&[TAG, 3, 1, 2, 3])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(TargetSmartcardDescriptor::parse(&[0x07, 4, 1, 2, 3, 4])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

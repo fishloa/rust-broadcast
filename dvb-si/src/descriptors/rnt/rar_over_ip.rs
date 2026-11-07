@@ -208,8 +208,17 @@ mod tests {
         assert_eq!(out, bytes);
         let mut over = sample(0x01);
         over[2 + 11] = 200;
-        assert!(RarOverIpDescriptor::parse(&over).is_err());
-        assert!(RarOverIpDescriptor::parse(&[TAG, 2, 0, 0]).is_err());
-        assert!(RarOverIpDescriptor::parse(&[0x40, 0]).is_err());
+        assert!(matches!(
+            &(RarOverIpDescriptor::parse(&over)),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(RarOverIpDescriptor::parse(&[TAG, 2, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(RarOverIpDescriptor::parse(&[0x40, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

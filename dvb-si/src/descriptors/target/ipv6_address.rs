@@ -88,6 +88,9 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
-        assert!(TargetIpv6AddressDescriptor::parse(&[TAG, 3, 1, 2, 3]).is_err());
+        assert!(matches!(
+            &(TargetIpv6AddressDescriptor::parse(&[TAG, 3, 1, 2, 3])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

@@ -28,7 +28,10 @@ fn iso_639_64_entries_is_rejected_not_wrapped() {
     let bad = Iso639LanguageDescriptor {
         entries: (0..64).map(|_| entry()).collect(),
     };
-    assert!(ser(&bad).is_err());
+    assert!(matches!(
+        &(ser(&bad)),
+        Err(dvb_si::error::Error::FieldOverflow(_))
+    ));
     // 63 entries = 252 bytes is the widest legal body.
     let ok = Iso639LanguageDescriptor {
         entries: (0..63).map(|_| entry()).collect(),

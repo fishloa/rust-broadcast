@@ -1167,7 +1167,6 @@ impl ConformanceMonitor {
         // `raw[5]` even when `adaptation_field_length` pointed past a
         // truncated packet, and used unmasked magic bit constants.
 
-        // Compute what we need from the existing state, then decide.
         let (expected, is_duplicate, should_emit_dup, should_emit_cc) = {
             let state = self.cc_states.entry(pid).or_insert_with(|| CcState {
                 last_cc: cc,
@@ -1240,7 +1239,6 @@ impl ConformanceMonitor {
             }
         };
 
-        // Now emit events without holding a borrow on cc_states.
         if should_emit_dup {
             self.emit(
                 Indicator::ContinuityCountError,
@@ -1258,7 +1256,6 @@ impl ConformanceMonitor {
             );
         }
 
-        // Finally, update state.
         let state = self.cc_states.get_mut(&pid).unwrap();
         if discontinuity {
             state.last_cc = cc;
@@ -1680,7 +1677,6 @@ impl ConformanceMonitor {
             return;
         }
 
-        // Parse the PAT proper.
         let pat = match PatSection::parse(section_bytes) {
             Ok(p) => p,
             Err(_) => return,
@@ -1752,7 +1748,6 @@ impl ConformanceMonitor {
             return;
         }
 
-        // Parse the PMT proper.
         let pmt = match PmtSection::parse(section_bytes) {
             Ok(p) => p,
             Err(_) => return,
@@ -1837,7 +1832,6 @@ impl ConformanceMonitor {
         let limit_ms = self.config.pcr_discontinuity_limit.as_millis() as u64;
         let should_emit_disc = delta_ms > limit_ms && !discontinuity;
 
-        // Emit outside the HashMap borrow.
         if should_emit_rep {
             self.emit(
                 Indicator::PcrRepetitionError,
@@ -1862,7 +1856,6 @@ impl ConformanceMonitor {
             );
         }
 
-        // Update state.
         let state = self.pcr_states.get_mut(&pid).unwrap();
         state.last_pcr_27mhz = pcr_27mhz;
         state.last_pcr_time = t;
@@ -1925,7 +1918,6 @@ impl ConformanceMonitor {
             );
         }
 
-        // Update state.
         let state = self.pts_states.get_mut(&pid).unwrap();
         state.last_pts_time = t;
     }
@@ -2346,7 +2338,6 @@ impl ConformanceMonitor {
             }
         };
 
-        // Emit events outside the borrow.
         if check.buffer_overflow {
             self.emit(
                 Indicator::BufferError,

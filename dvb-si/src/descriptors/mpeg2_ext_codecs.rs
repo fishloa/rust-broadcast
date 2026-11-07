@@ -547,7 +547,10 @@ mod tests {
         assert_eq!(d.write_body().unwrap(), b);
         let mut bad = d.clone();
         bad.profile_idc = 16;
-        assert!(bad.write_body().is_err());
+        assert!(matches!(
+            &(bad.write_body()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         assert!(LcevcVideo::parse_body(&b[..3]).is_err());
     }
 
@@ -559,7 +562,10 @@ mod tests {
         assert_eq!(d.trailing, [0xFF]);
         assert_eq!(d.write_body().unwrap(), b);
         assert!(LcevcLinkage::parse_body(&[3, 1]).is_err());
-        assert!(LcevcLinkage::new(vec![0; 256]).write_body().is_err());
+        assert!(matches!(
+            &(LcevcLinkage::new(vec![0; 256]).write_body()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]
@@ -593,7 +599,10 @@ mod tests {
         let mut l = MediaServiceLanguage::new(ConfigurationType::Complete, b"en".to_vec(), vec![]);
         l.lang_len_idc = 2; // claims 3 bytes
         let e = MediaServiceKindEntry::new(false, MediaTypeIdc::Audio, None, vec![l]);
-        assert!(MediaServiceKind::new(vec![e]).write_body().is_err());
+        assert!(matches!(
+            &(MediaServiceKind::new(vec![e]).write_body()),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         // lang_len_idc = 3 is reserved
         let b = [0b0_0_001_01_1, 0b00_000_11_1];
         assert!(MediaServiceKind::parse_body(&b).is_err());
@@ -604,6 +613,9 @@ mod tests {
             media_id: vec![1, 2],
         };
         let e = MediaServiceKindEntry::new(false, MediaTypeIdc::Audio, Some(id), vec![]);
-        assert!(MediaServiceKind::new(vec![e]).write_body().is_err());
+        assert!(matches!(
+            &(MediaServiceKind::new(vec![e]).write_body()),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

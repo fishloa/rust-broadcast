@@ -264,13 +264,19 @@ mod tests {
     #[test]
     fn parse_rejects_missing_arrow() {
         let doc = "1\n00:00:00,000 00:00:01,000\nhi\n";
-        assert!(parse_srt(doc).is_err());
+        assert!(matches!(
+            &(parse_srt(doc)),
+            Err(crate::error::Error::InvalidSrt(_))
+        ));
     }
 
     #[test]
     fn parse_rejects_bad_sequence_number() {
         let doc = "not-a-number\n00:00:00,000 --> 00:00:01,000\nhi\n";
-        assert!(parse_srt(doc).is_err());
+        assert!(matches!(
+            &(parse_srt(doc)),
+            Err(crate::error::Error::InvalidSrt(_))
+        ));
     }
 
     #[test]

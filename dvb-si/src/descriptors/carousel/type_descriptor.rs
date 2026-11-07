@@ -83,12 +83,18 @@ mod tests {
         let d = TypeDescriptor::parse(&[TAG, 0]).unwrap();
         assert_eq!(d.serialized_len(), 2);
         assert!(TypeDescriptor::parse(&[0x02, 0]).is_err());
-        assert!(TypeDescriptor::parse(&[TAG, 3, b'a']).is_err());
+        assert!(matches!(
+            &(TypeDescriptor::parse(&[TAG, 3, b'a'])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let big = vec![b'x'; 256];
         let d = TypeDescriptor {
             media_type: DvbText::new(&big),
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

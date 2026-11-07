@@ -122,14 +122,23 @@ mod tests {
 
     #[test]
     fn malformed_rejected() {
-        assert!(DvbHtmlApplicationBoundaryDescriptor::parse(&[TAG, 0]).is_err());
-        assert!(DvbHtmlApplicationBoundaryDescriptor::parse(&[TAG, 2, 9, b'a']).is_err());
+        assert!(matches!(
+            &(DvbHtmlApplicationBoundaryDescriptor::parse(&[TAG, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(DvbHtmlApplicationBoundaryDescriptor::parse(&[TAG, 2, 9, b'a'])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let big = vec![b'x'; 256];
         let d = DvbHtmlApplicationBoundaryDescriptor {
             label: DvbText::new(&big),
             regular_expression: DvbText::new(b""),
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

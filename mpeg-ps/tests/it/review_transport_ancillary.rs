@@ -12,7 +12,7 @@
 //!    serializes to bytes that parse back as a different header.
 
 use broadcast_common::{Parse, Serialize};
-use mpeg_ps::{PackHeader, Scr, StdBufferBound, SystemHeader};
+use mpeg_ps::{Error, PackHeader, Scr, StdBufferBound, SystemHeader};
 
 fn header() -> SystemHeader {
     SystemHeader {
@@ -47,7 +47,7 @@ fn system_header_rate_bound_over_22_bits_is_rejected() {
     h.rate_bound = 0x40_0000;
     let r = ser(&h);
     assert!(
-        r.is_err(),
+        matches!(&r, Err(Error::FieldOverflow(_))),
         "rate_bound 0x40_0000 serialized as rate_bound {} instead of erroring",
         SystemHeader::parse(&r.unwrap()).unwrap().rate_bound
     );
@@ -58,10 +58,16 @@ fn system_header_rate_bound_over_22_bits_is_rejected() {
 fn system_header_audio_and_video_bound_over_width_are_rejected() {
     let mut h = header();
     h.audio_bound = 0x40;
-    assert!(ser(&h).is_err(), "audio_bound 0x40 silently masked");
+    assert!(
+        matches!(ser(&h), Err(Error::FieldOverflow(_))),
+        "audio_bound 0x40 silently masked"
+    );
     let mut h = header();
     h.video_bound = 0x20;
-    assert!(ser(&h).is_err(), "video_bound 0x20 silently masked");
+    assert!(
+        matches!(ser(&h), Err(Error::FieldOverflow(_))),
+        "video_bound 0x20 silently masked"
+    );
 }
 
 /// `P-STD_buffer_size_bound` is 13 bits; `0x2000` was masked to `0`.
@@ -69,7 +75,10 @@ fn system_header_audio_and_video_bound_over_width_are_rejected() {
 fn system_header_buffer_size_bound_over_13_bits_is_rejected() {
     let mut h = header();
     h.std_buffer_bounds[0].buffer_size_bound = 0x2000;
-    assert!(ser(&h).is_err(), "buffer_size_bound 0x2000 silently masked");
+    assert!(
+        matches!(ser(&h), Err(Error::FieldOverflow(_))),
+        "buffer_size_bound 0x2000 silently masked"
+    );
 }
 
 /// `PackHeader` SCR base is 33 bits: `1 << 33` was masked to base 0.
@@ -88,7 +97,7 @@ fn pack_header_scr_base_over_33_bits_is_rejected() {
     let mut out = vec![0u8; p.serialized_len()];
     let r = p.serialize_into(&mut out);
     assert!(
-        r.is_err(),
+        matches!(&r, Err(Error::FieldOverflow(_))),
         "SCR base 2^33 serialized as base {}",
         PackHeader::parse(&out).unwrap().scr.base
     );

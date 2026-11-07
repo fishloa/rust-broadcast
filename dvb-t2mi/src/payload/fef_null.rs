@@ -269,7 +269,10 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu() {
         let buf = [0x00u8, 0x1F, 0x00];
-        assert!(FefNullPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(FefNullPayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]

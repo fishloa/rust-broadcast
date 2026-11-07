@@ -332,7 +332,10 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        assert!(cmd.try_to_bytes().is_err());
+        assert!(matches!(
+            &(cmd.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

@@ -24,7 +24,10 @@ fn splice_info_section_sap_type_and_encryption_algorithm_widths() {
     let mut over = ok.clone();
     over.sap_type = 0x04;
     assert!(
-        over.try_to_bytes().is_err(),
+        matches!(
+            &(over.try_to_bytes()),
+            Err(scte35_splice::error::Error::FieldOverflow(_))
+        ),
         "sap_type 4 must not wrap to 0"
     );
 

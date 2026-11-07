@@ -135,13 +135,19 @@ mod tests {
     #[test]
     fn rejects_truncated_and_inconsistent() {
         assert!(SsuLocationDescriptor::parse(&[TAG, 1, 0]).is_err());
-        assert!(SsuLocationDescriptor::parse(&[TAG, 3, 0x00, 0x0A, 0x01]).is_err());
+        assert!(matches!(
+            &(SsuLocationDescriptor::parse(&[TAG, 3, 0x00, 0x0A, 0x01])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let d = SsuLocationDescriptor {
             data_broadcast_id: 0x0005,
             association_tag: Some(1),
             private_data: &[],
         };
         let mut out = vec![0u8; 16];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

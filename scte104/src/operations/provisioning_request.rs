@@ -447,7 +447,10 @@ mod tests {
             })
             .collect();
         let op = ProvisioningRequest { services };
-        assert!(op.try_to_bytes().is_err());
+        assert!(matches!(
+            &(op.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     /// S4-W3 (#1129): `number_of_DPI_PIDs` used to be written with
@@ -470,7 +473,10 @@ mod tests {
                 injector_component_list: None,
             }],
         };
-        assert!(op.try_to_bytes().is_err());
+        assert!(matches!(
+            &(op.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     /// S4-W3 (#1129): `injector_component_list`'s audio/data component
@@ -491,7 +497,10 @@ mod tests {
                 }),
             }],
         };
-        assert!(op.try_to_bytes().is_err());
+        assert!(matches!(
+            &(op.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

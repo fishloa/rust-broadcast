@@ -182,7 +182,6 @@ fn annexb_nal_chain(data: &[u8]) -> (usize, bool) {
             // been ruled out — it ran out of data, so report truncated.
             return (cnt, true);
         }
-        // Validate the NAL header immediately after this start code.
         if !valid_nal(data, i) {
             return (cnt, false);
         }

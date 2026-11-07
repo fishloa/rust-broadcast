@@ -145,7 +145,6 @@ impl PacketReassembler {
                 break;
             }
 
-            // Extract complete packet
             let packet_bytes = self.buf.split_to(total_packet_len);
             self.pending.push_back(packet_bytes.freeze());
         }

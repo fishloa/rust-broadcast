@@ -852,7 +852,10 @@ mod tests {
 
     #[test]
     fn embedded_nul_in_text_is_rejected() {
-        assert!(AudioDescription::with_text(b"bad\0text").is_err());
+        assert!(matches!(
+            &(AudioDescription::with_text(b"bad\0text")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]

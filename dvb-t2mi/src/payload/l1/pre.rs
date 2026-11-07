@@ -444,8 +444,14 @@ mod tests {
     fn crc32_and_serialize_with_crc_propagate_the_same_error() {
         let mut pre = synthetic_pre();
         pre.num_rf = 8;
-        assert!(pre.crc32().is_err());
-        assert!(pre.serialize_with_crc().is_err());
+        assert!(matches!(
+            &(pre.crc32()),
+            Err(crate::error::Error::L1Bits(_))
+        ));
+        assert!(matches!(
+            &(pre.serialize_with_crc()),
+            Err(crate::error::Error::L1Bits(_))
+        ));
     }
 
     #[test]

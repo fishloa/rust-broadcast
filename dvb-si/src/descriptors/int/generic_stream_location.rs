@@ -340,13 +340,14 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
         // selector_length (3) runs past the end.
-        assert!(
-            IpMacGenericStreamLocationDescriptor::parse(&[TAG, 9, 0, 1, 4, 0, 2, 0, 3, 0x83, 1])
-                .is_err()
-        );
-        assert!(
-            IpMacGenericStreamLocationDescriptor::parse(&[TAG, 7, 0, 0, 0, 0, 0, 0, 0]).is_err()
-        );
+        assert!(matches!(
+            &(IpMacGenericStreamLocationDescriptor::parse(&[TAG, 9, 0, 1, 4, 0, 2, 0, 3, 0x83, 1])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(IpMacGenericStreamLocationDescriptor::parse(&[TAG, 7, 0, 0, 0, 0, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]
@@ -360,14 +361,20 @@ mod tests {
             trailing: &[],
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         let big = [0u8; 128];
         let d = IpMacGenericStreamLocationDescriptor {
             selector: GenericStreamSelector::Bytes(&big),
             ..d
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

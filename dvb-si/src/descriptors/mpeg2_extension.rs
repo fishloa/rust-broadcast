@@ -791,19 +791,28 @@ mod tests {
         };
         let desc = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioMultiStream(m));
         let mut out = [0u8; 32];
-        assert!(desc.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(desc.serialize_into(&mut out)),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         // Over-wide reserved/field values must be rejected, not masked.
         let mut a = MpegH3dAudio::new(0, false, None, 1);
         a.reference_channel_layout = 0x40;
         let desc = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudio(a));
-        assert!(desc.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(desc.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         // A 256-byte body does not fit descriptor_length.
         let big = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioConfig(
             MpegH3dAudioConfig {
                 mpegh3da_config: vec![0; 255],
             },
         ));
-        assert!(big.serialize_into(&mut [0u8; 300]).is_err());
+        assert!(matches!(
+            &(big.serialize_into(&mut [0u8; 300])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     /// No truncation of any vector may panic (it must parse or return `Err`).

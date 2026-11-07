@@ -84,6 +84,9 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
-        assert!(TargetMacAddressDescriptor::parse(&[TAG, 5, 1, 2, 3, 4, 5]).is_err());
+        assert!(matches!(
+            &(TargetMacAddressDescriptor::parse(&[TAG, 5, 1, 2, 3, 4, 5])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

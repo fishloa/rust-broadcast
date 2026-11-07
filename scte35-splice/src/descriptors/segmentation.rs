@@ -592,7 +592,10 @@ mod tests {
             segments_expected: 1,
             ..Default::default()
         };
-        assert!(d.try_to_bytes().is_err());
+        assert!(matches!(
+            &(d.try_to_bytes()),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     /// SC-W4 (#1129): `segmentation_duration` used to be masked with
@@ -608,7 +611,10 @@ mod tests {
             segments_expected: 1,
             ..Default::default()
         };
-        assert!(d.try_to_bytes().is_err());
+        assert!(matches!(
+            &(d.try_to_bytes()),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]

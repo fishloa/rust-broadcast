@@ -182,11 +182,17 @@ mod tests {
         // name present, class length byte missing
         assert!(ProviderExportDescriptor::parse(&[TAG, 2, 1, b'a']).is_err());
         // class overruns
-        assert!(ProviderExportDescriptor::parse(&[TAG, 4, 1, b'a', 3, b'x']).is_err());
+        assert!(matches!(
+            &(ProviderExportDescriptor::parse(&[TAG, 4, 1, b'a', 3, b'x'])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         assert!(ProviderExportDescriptor::parse(&[0x13, 0]).is_err());
         let long = vec![0u8; 256];
         let d = ProviderExportDescriptor::new(vec![ProviderExport::new(b"a", &long)]);
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

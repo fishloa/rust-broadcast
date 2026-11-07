@@ -257,5 +257,8 @@ fn over_range_reserved_run_is_an_error_not_a_wrap() {
     let b = time_association(0xF, 0x40); // 6-bit run given 0x40
     let sat = SatSection::new(2, true, 1, 0, true, 0, 0, SatBody::TimeAssociation(b));
     let mut buf = vec![0u8; sat.serialized_len()];
-    assert!(sat.serialize_into(&mut buf).is_err());
+    assert!(matches!(
+        &(sat.serialize_into(&mut buf)),
+        Err(dvb_si::error::Error::SectionLengthOverflow { .. })
+    ));
 }

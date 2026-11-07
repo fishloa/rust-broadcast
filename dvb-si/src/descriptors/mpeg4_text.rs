@@ -84,7 +84,10 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         assert_eq!(d.serialize_into(&mut out).unwrap(), 5);
         assert_eq!(out, b);
-        assert!(Mpeg4TextDescriptor::parse(&[0x2C, 0]).is_err());
+        assert!(matches!(
+            &(Mpeg4TextDescriptor::parse(&[0x2C, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         assert!(Mpeg4TextDescriptor::parse(&[TAG, 4, 1]).is_err());
         let big = vec![0u8; 256];
         let d = Mpeg4TextDescriptor::new(&big);

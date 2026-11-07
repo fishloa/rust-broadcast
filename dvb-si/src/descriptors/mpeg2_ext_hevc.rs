@@ -1018,14 +1018,20 @@ mod tests {
     #[test]
     fn subregion_rejects_inconsistent_values() {
         // truncated layout
-        assert!(HevcSubregion::parse_body(&[0x04, 0x10, 0x5A, 0x01, 0x3C]).is_err());
+        assert!(matches!(
+            &(HevcSubregion::parse_body(&[0x04, 0x10, 0x5A, 0x01, 0x3C])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         // pattern length != SubstreamCountMinus1
         let mut d = HevcSubregion::parse_body(&[
             0x04, 0x10, 0x5A, 0x01, 0x3C, 0x07, 0x80, 0x04, 0x38, 0x81, 0xFB,
         ])
         .unwrap();
         d.layouts[0].patterns[0].push(1);
-        assert!(d.write_body().is_err());
+        assert!(matches!(
+            &(d.write_body()),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         // preamble presence must match SubstreamMarkingFlag
         d.layouts[0].patterns[0].pop();
         d.layouts[0].preamble = Some(HevcSubregionPreamble::new(0x11));
@@ -1034,7 +1040,10 @@ mod tests {
         d.layouts[0].preamble = None;
         d.layouts[0].substream_count_minus_1 = 0;
         d.layouts[0].patterns = vec![Vec::new(); 128];
-        assert!(d.write_body().is_err());
+        assert!(matches!(
+            &(d.write_body()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     // Hand-built from Table 2-117 (see docs): reserved bits all ones.
@@ -1092,7 +1101,10 @@ mod tests {
                 .write_body()
                 .is_err()
         );
-        assert!(HevcOperationPoint::parse_body(&[0xC1, 0x00]).is_err());
+        assert!(matches!(
+            &(HevcOperationPoint::parse_body(&[0xC1, 0x00])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
@@ -1155,7 +1167,10 @@ mod tests {
             substream_id: 1,
             detail: HevcTileSubstreamDetail::Additional(vec![]),
         };
-        assert!(empty.write_body().is_err());
+        assert!(matches!(
+            &(empty.write_body()),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     // Bit layout of the hand-computed vector (MSB first):
@@ -1233,9 +1248,15 @@ mod tests {
     fn profile_tier_level_rejects_out_of_range_fields() {
         let mut p = ProfileTierLevelInfo::new(0, false, 0, 0, 0);
         p.copied_44bits = 1 << 44;
-        assert!(write_ptl(&p).is_err());
+        assert!(matches!(
+            &(write_ptl(&p)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         assert!(write_ptl(&ProfileTierLevelInfo::new(4, false, 0, 0, 0)).is_err());
-        assert!(write_ptl(&ProfileTierLevelInfo::new(0, false, 32, 0, 0)).is_err());
+        assert!(matches!(
+            &(write_ptl(&ProfileTierLevelInfo::new(0, false, 32, 0, 0))),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         assert!(parse_ptl(&PTL_VECTOR[..11]).is_err());
     }
 }

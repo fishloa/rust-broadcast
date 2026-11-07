@@ -50,9 +50,21 @@ mod tests {
                 what: "t"
             })
         ));
-        assert!(be_u16(&[1, 2], 1, "t").is_err());
-        assert!(be_u16(&[1, 2], 9, "t").is_err());
-        assert!(be_u16(&[], usize::MAX, "t").is_err());
-        assert!(be_u32(&[1, 2, 3], 0, "t").is_err());
+        assert!(matches!(
+            &(be_u16(&[1, 2], 1, "t")),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            &(be_u16(&[1, 2], 9, "t")),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            &(be_u16(&[], usize::MAX, "t")),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            &(be_u32(&[1, 2, 3], 0, "t")),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 }

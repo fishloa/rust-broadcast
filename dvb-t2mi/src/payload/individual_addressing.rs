@@ -1428,7 +1428,10 @@ mod tests {
 
     #[test]
     fn parse_rejects_short_buffer() {
-        assert!(IndividualAddressingPayload::parse(&[0x00]).is_err());
+        assert!(matches!(
+            &(IndividualAddressingPayload::parse(&[0x00])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
@@ -1595,7 +1598,10 @@ mod tests {
     #[test]
     fn parse_truncated_transmitter_header() {
         let buf = [0x00u8, 0x02, 0x00];
-        assert!(IndividualAddressingPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(IndividualAddressingPayload::parse(&buf)),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
@@ -1610,7 +1616,10 @@ mod tests {
         let tx_loop = [0x00, 0x01, 0x04, 0x10, 0xFF, 0xAA, 0xBB];
         let mut buf = vec![0x00u8, tx_loop.len() as u8];
         buf.extend_from_slice(&tx_loop);
-        assert!(IndividualAddressingPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(IndividualAddressingPayload::parse(&buf)),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

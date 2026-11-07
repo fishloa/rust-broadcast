@@ -231,8 +231,14 @@ mod tests {
             reserved_future_use: 0x20,
             ..Default::default()
         };
-        assert!(bad.serialize_into(&mut out).is_err());
-        assert!(GraphicsConstraintsDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            &(bad.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
+        assert!(matches!(
+            &(GraphicsConstraintsDescriptor::parse(&[TAG, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]

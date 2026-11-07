@@ -321,9 +321,15 @@ mod tests {
     fn malformed_is_rejected() {
         assert!(QualityAccessUnit::parse(&[]).is_err());
         // metric_count=1 but no metric header
-        assert!(QualityAccessUnit::parse(&[0x01, 0x01]).is_err());
+        assert!(matches!(
+            &(QualityAccessUnit::parse(&[0x01, 0x01])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         // truncated sample
-        assert!(QualityAccessUnit::parse(&[0x01, 0x01, 0, 0, 0, 1, 1, 0x21, 0, 1]).is_err());
+        assert!(matches!(
+            &(QualityAccessUnit::parse(&[0x01, 0x01, 0, 0, 0, 1, 1, 0x21, 0, 1])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         // bad DTS prefix ('0011' instead of '0010')
         let bad = [
             0x01, 0x01, 0, 0, 0, 1, 1, 0x31, 0x00, 0x01, 0x00, 0x01, 0x07,
@@ -336,7 +342,10 @@ mod tests {
         let bad = [
             0x01, 0x01, 0, 0, 0, 1, 1, 0x20, 0x00, 0x01, 0x00, 0x01, 0x07,
         ];
-        assert!(QualityAccessUnit::parse(&bad).is_err());
+        assert!(matches!(
+            &(QualityAccessUnit::parse(&bad)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
         // trailing byte
         let ok = [0x01, 0x00, 0xFF];
         assert!(QualityAccessUnit::parse(&ok).is_err());
@@ -345,7 +354,10 @@ mod tests {
             2,
             vec![QualityMetric::new(1, vec![QualitySample::new(0, &[1])])],
         );
-        assert!(unit.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            &(unit.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::ValueOutOfRange { .. })
+        ));
         let unit = QualityAccessUnit::new(
             1,
             vec![QualityMetric::new(
@@ -353,6 +365,9 @@ mod tests {
                 vec![QualitySample::new(1 << 33, &[1])],
             )],
         );
-        assert!(unit.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            &(unit.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

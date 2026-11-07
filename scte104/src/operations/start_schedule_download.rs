@@ -141,6 +141,9 @@ mod tests {
         let op = StartScheduleDownload {
             provider_avail_ids: alloc::vec![1; 256],
         };
-        assert!(op.try_to_bytes().is_err());
+        assert!(matches!(
+            &(op.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

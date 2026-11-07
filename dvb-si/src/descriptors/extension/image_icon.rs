@@ -255,7 +255,6 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
         let reserved_future_use = (sel[1] >> 3) & RESERVED_5_MASK;
 
         let body = if descriptor_number == 0x00 {
-            // First segment: metadata + payload.
             if sel.len() < 3 {
                 return Err(Error::BufferTooShort {
                     need: 3,

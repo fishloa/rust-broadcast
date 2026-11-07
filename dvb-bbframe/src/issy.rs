@@ -363,7 +363,10 @@ mod tests {
 
     #[test]
     fn short_rejects_long_prefix() {
-        assert!(decode_issy_short([0x80, 0x00]).is_err());
+        assert!(matches!(
+            &(decode_issy_short([0x80, 0x00])),
+            Err(crate::error::Error::InvalidIssyForm { .. })
+        ));
     }
 
     #[test]
@@ -388,7 +391,10 @@ mod tests {
 
     #[test]
     fn long_rejects_short_prefix() {
-        assert!(decode_issy_long([0x00, 0x00, 0x00]).is_err());
+        assert!(matches!(
+            &(decode_issy_long([0x00, 0x00, 0x00])),
+            Err(crate::error::Error::InvalidIssyForm { .. })
+        ));
     }
 
     #[test]

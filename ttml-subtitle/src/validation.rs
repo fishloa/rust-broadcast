@@ -194,7 +194,6 @@ impl Validator {
     }
 
     fn validate_tt(&mut self, tt: &TtElement) {
-        // Check content profiles
         let claimed_text = self.claims_text_profile(tt);
         let claimed_image = self.claims_image_profile(tt);
 
@@ -239,7 +238,6 @@ impl Validator {
     fn claims_text_profile(&self, tt: &TtElement) -> bool {
         let text_designators = [document::IMSC11_TEXT_PROFILE, document::IMSC1_TEXT_PROFILE];
 
-        // Check ttp:contentProfiles
         if let Some(ref cp) = tt.ttp_content_profiles {
             for d in &text_designators {
                 if cp.contains(d) {
@@ -248,7 +246,6 @@ impl Validator {
             }
         }
 
-        // Check ttp:profile
         if let Some(ref p) = tt.ttp_profile {
             for d in &text_designators {
                 if p == *d {
@@ -286,7 +283,6 @@ impl Validator {
     }
 
     fn has_frame_usage(&self, tt: &TtElement) -> bool {
-        // Scan the document's time expressions for frame metrics
         let body = match tt.body {
             Some(ref b) => b,
             None => return false,

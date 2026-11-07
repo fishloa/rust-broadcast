@@ -103,7 +103,10 @@ mod tests {
 
     #[test]
     fn span_rejects_len_past_end() {
-        assert!(span(10, 11, 20).is_err());
+        assert!(matches!(
+            &(span(10, 11, 20)),
+            Err(crate::error::Error::SectionLengthOverflow { .. })
+        ));
     }
 
     /// `pos` alone (not just `pos + len`) can sit near `usize::MAX` — this is
@@ -112,6 +115,9 @@ mod tests {
     /// cursor and only `len` is large): `checked_add` must still catch it.
     #[test]
     fn span_rejects_pos_plus_len_overflowing_usize() {
-        assert!(span(usize::MAX - 1, 4, usize::MAX).is_err());
+        assert!(matches!(
+            &(span(usize::MAX - 1, 4, usize::MAX)),
+            Err(crate::error::Error::SectionLengthOverflow { .. })
+        ));
     }
 }

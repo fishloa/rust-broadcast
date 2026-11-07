@@ -118,7 +118,10 @@ mod tests {
     fn parse_rejects_nonzero_rfu_bits() {
         let buf = [0x00u8, 0x00, 0x40];
         let result = BbframePayload::parse(&buf);
-        assert!(result.is_err());
+        assert!(matches!(
+            &(result),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
         assert!(matches!(
             result.unwrap_err(),
             crate::Error::ReservedBitsViolation { .. }
@@ -136,7 +139,10 @@ mod tests {
 
     #[test]
     fn parse_rejects_body_shorter_than_3_bytes() {
-        assert!(BbframePayload::parse(&[0x00, 0x00]).is_err());
+        assert!(matches!(
+            &(BbframePayload::parse(&[0x00, 0x00])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         assert!(BbframePayload::parse(&[]).is_err());
     }
 

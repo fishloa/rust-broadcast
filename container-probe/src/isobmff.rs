@@ -72,7 +72,6 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     }
     let leading_is_ftyp = leading_type == TYPE_FTYP || leading_type == TYPE_STYP;
 
-    // Walk the top-level chain, counting fully-contained boxes.
     let mut offset = 0usize;
     let mut boxes = 0u64;
     let mut brand: Option<[u8; 4]> = None;

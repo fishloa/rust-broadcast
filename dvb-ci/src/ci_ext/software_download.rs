@@ -519,7 +519,6 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
             });
         }
         let compatibility_descriptor = &rest[compat_len_off..compat_block_end];
-        // Walk the module loop to find where private data begins.
         let number_of_modules =
             u16::from_be_bytes([rest[compat_block_end], rest[compat_block_end + 1]]) as usize;
         let mut mpos = compat_block_end + 2;

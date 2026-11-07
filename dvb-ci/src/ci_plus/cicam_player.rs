@@ -1703,10 +1703,16 @@ mod tests {
         );
         // ...but one that arrives with a payload is rejected, not truncated.
         let with_payload = [0x9F, 0xA0, 0x08, 0x03, 0x01, 0x00, 0xEE];
-        assert!(PlayerControlReq::parse(&with_payload).is_err());
+        assert!(matches!(
+            &(PlayerControlReq::parse(&with_payload)),
+            Err(crate::error::Error::InvalidObject { .. })
+        ));
         // SetSpeed with a trailing byte is rejected too.
         let speed_pad = [0x9F, 0xA0, 0x08, 0x05, 0x01, 0x02, 0x00, 0x64, 0xEE];
-        assert!(PlayerControlReq::parse(&speed_pad).is_err());
+        assert!(matches!(
+            &(PlayerControlReq::parse(&speed_pad)),
+            Err(crate::error::Error::InvalidObject { .. })
+        ));
     }
 
     #[test]

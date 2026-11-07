@@ -100,7 +100,13 @@ mod tests {
 
     #[test]
     fn wrong_length_rejected() {
-        assert!(Crc32Descriptor::parse(&[TAG, 3, 0, 0, 0]).is_err());
-        assert!(Crc32Descriptor::parse(&[TAG, 5, 0, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            &(Crc32Descriptor::parse(&[TAG, 3, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(Crc32Descriptor::parse(&[TAG, 5, 0, 0, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

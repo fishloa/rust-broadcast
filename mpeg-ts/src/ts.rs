@@ -2190,7 +2190,10 @@ mod tests {
             opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut buf = vec![0u8; af.serialized_len()];
-        assert!(af.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(af.serialize_into(&mut buf)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     /// Known-bytes test: flags=0x30 (discontinuity + PCR), known PCR vector.

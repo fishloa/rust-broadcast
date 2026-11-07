@@ -324,7 +324,10 @@ mod tests {
             auto_return: false,
             duration: 1u64 << 33,
         };
-        assert!(bd.try_to_bytes().is_err());
+        assert!(matches!(
+            &(bd.try_to_bytes()),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]

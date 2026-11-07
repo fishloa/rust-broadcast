@@ -98,11 +98,20 @@ mod tests {
 
     #[test]
     fn wrong_length_and_over_range_rejected() {
-        assert!(IpSignallingDescriptor::parse(&[TAG, 2, 0, 0]).is_err());
-        assert!(IpSignallingDescriptor::parse(&[TAG, 4, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            &(IpSignallingDescriptor::parse(&[TAG, 2, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(IpSignallingDescriptor::parse(&[TAG, 4, 0, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let d = IpSignallingDescriptor {
             platform_id: 0x0100_0000,
         };
-        assert!(d.serialize_into(&mut [0u8; 5]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 5])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

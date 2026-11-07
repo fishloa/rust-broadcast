@@ -167,7 +167,10 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 5, 0, 0x80, 0x01, 0x00, 0x02]);
         assert!(DiiLocationDescriptor::parse(&[TAG, 0]).is_err());
-        assert!(DiiLocationDescriptor::parse(&[TAG, 4, 0, 1, 2, 3]).is_err());
+        assert!(matches!(
+            &(DiiLocationDescriptor::parse(&[TAG, 4, 0, 1, 2, 3])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let bad = DiiLocationDescriptor {
             transport_protocol_label: 0,
             locations: vec![DiiLocation::new(0x8000, 0)],

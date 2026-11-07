@@ -255,14 +255,20 @@ mod tests {
             body: &[0u8; 256],
         };
         let mut buf = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut buf)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]
     fn truncated_final_entry_yields_err_then_fuses() {
         let bytes = [0x00, 0x08, 0x43, 0x55]; // claims 8 body bytes, only 2 present
         let mut it = parse_loop(&bytes);
-        assert!(it.next().unwrap().is_err());
+        assert!(matches!(
+            &(it.next().unwrap()),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         assert!(it.next().is_none());
     }
 }

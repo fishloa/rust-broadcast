@@ -85,9 +85,18 @@ mod tests {
 
     #[test]
     fn wrong_length_and_short_buffer_rejected() {
-        assert!(LocationDescriptor::parse(&[TAG, 0]).is_err());
-        assert!(LocationDescriptor::parse(&[TAG, 2, 1, 2]).is_err());
+        assert!(matches!(
+            &(LocationDescriptor::parse(&[TAG, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(LocationDescriptor::parse(&[TAG, 2, 1, 2])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let d = LocationDescriptor { location_tag: 1 };
-        assert!(d.serialize_into(&mut [0u8; 2]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 2])),
+            Err(crate::error::Error::OutputBufferTooSmall { .. })
+        ));
     }
 }

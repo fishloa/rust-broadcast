@@ -95,7 +95,13 @@ mod tests {
 
     #[test]
     fn wrong_length_rejected() {
-        assert!(CompressedModuleDescriptor::parse(&[TAG, 4, 8, 0, 0, 0]).is_err());
-        assert!(CompressedModuleDescriptor::parse(&[TAG, 6, 8, 0, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            &(CompressedModuleDescriptor::parse(&[TAG, 4, 8, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(CompressedModuleDescriptor::parse(&[TAG, 6, 8, 0, 0, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

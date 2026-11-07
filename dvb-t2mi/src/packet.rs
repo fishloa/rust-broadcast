@@ -488,7 +488,10 @@ mod tests {
         };
         let mut buf = [0u8; 5];
         let result = hdr.serialize_into(&mut buf);
-        assert!(result.is_err());
+        assert!(matches!(
+            &(result),
+            Err(crate::error::Error::OutputBufferTooSmall { .. })
+        ));
     }
 
     #[test]

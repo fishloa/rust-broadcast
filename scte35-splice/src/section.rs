@@ -541,7 +541,10 @@ mod tests {
             &[],
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        assert!(section.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(section.serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     /// SC-C1: `descriptor_loop_length` is a 16-bit field; a loop of 64 KiB or
@@ -557,7 +560,10 @@ mod tests {
             &descriptor_loop,
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        assert!(section.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(section.serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     /// W2 (#1102): `alignment_stuffing()` (Table 5) between the descriptor

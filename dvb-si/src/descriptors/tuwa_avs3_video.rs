@@ -433,7 +433,10 @@ mod tests {
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         // mixed reference forms
         d.library_refs.as_mut().unwrap().refs[1] = TuwaLibraryRef::stream_id(1);
-        assert!(d.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::ValueOutOfRange { .. })
+        ));
         // flag/refs disagreement
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.library_stream_flag = true;
@@ -441,7 +444,10 @@ mod tests {
         // over-wide reserved
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.reserved = 8;
-        assert!(d.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         // too many references
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.library_refs.as_mut().unwrap().refs = vec![
@@ -451,6 +457,9 @@ mod tests {
             };
             128
         ];
-        assert!(d.serialize_into(&mut [0u8; 300]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 300])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

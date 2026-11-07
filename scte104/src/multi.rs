@@ -330,7 +330,10 @@ mod tests {
         let msg = MultipleOperationMessage::new(0, 1, 1, 0, 0, Timestamp::None, ops);
         // The real body does not fit u16, so serializing it must error
         // rather than emit a misframed messageSize.
-        assert!(msg.try_to_bytes().is_err());
+        assert!(matches!(
+            &(msg.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     /// S4-W3 (#1129): `num_ops` is an 8-bit field but used to be written
@@ -345,7 +348,10 @@ mod tests {
             })
             .collect();
         let msg = MultipleOperationMessage::new(0, 1, 1, 0, 0, Timestamp::None, ops);
-        assert!(msg.try_to_bytes().is_err());
+        assert!(matches!(
+            &(msg.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     /// S4-W1 (#1103): `serialized_len()` used to return the *stored*

@@ -437,7 +437,6 @@ impl SiDemux {
             }
         }
 
-        // Build the gate key and change detector.
         let (ext, section_number, version, change_crc) =
             if long_form && section.len() >= MIN_SECTION_LEN + LONG_FORM_EXTRA + CRC_LEN {
                 let ext = ((section[3] as u16) << 8) | section[4] as u16;

@@ -23,24 +23,24 @@ fn out() -> Vec<u8> {
 fn over_range_u16_fields_are_errors_not_wraps() {
     let big = vec![0u8; OVER];
     let mut buf = out();
-    assert!(
-        PlayerVerifyReq {
+    assert!(matches!(
+        &(PlayerVerifyReq {
             length_form: LengthForm::Minimal,
             service_location: &big
         }
-        .serialize_into(&mut buf)
-        .is_err()
-    );
-    assert!(
-        PlayerPlayReq {
+        .serialize_into(&mut buf)),
+        Err(dvb_ci::error::Error::LengthTooLarge(_))
+    ));
+    assert!(matches!(
+        &(PlayerPlayReq {
             length_form: LengthForm::Minimal,
             service_location: &big
         }
-        .serialize_into(&mut buf)
-        .is_err()
-    );
-    assert!(
-        PlayerStartReq {
+        .serialize_into(&mut buf)),
+        Err(dvb_ci::error::Error::LengthTooLarge(_))
+    ));
+    assert!(matches!(
+        &(PlayerStartReq {
             reserved: Default::default(),
             length_form: LengthForm::Minimal,
             input_max_bitrate: 0,
@@ -48,9 +48,9 @@ fn over_range_u16_fields_are_errors_not_wraps() {
             linear_channel: false,
             pmt: &big
         }
-        .serialize_into(&mut buf)
-        .is_err()
-    );
+        .serialize_into(&mut buf)),
+        Err(dvb_ci::error::Error::LengthTooLarge(_))
+    ));
     assert!(
         PlayerUpdateReq {
             length_form: LengthForm::Minimal,
@@ -60,8 +60,8 @@ fn over_range_u16_fields_are_errors_not_wraps() {
         .serialize_into(&mut buf)
         .is_err()
     );
-    assert!(
-        PlayerCapabilitiesReply {
+    assert!(matches!(
+        &(PlayerCapabilitiesReply {
             length_form: LengthForm::Minimal,
             component_types: vec![
                 ComponentType {
@@ -72,9 +72,9 @@ fn over_range_u16_fields_are_errors_not_wraps() {
                 OVER
             ],
         }
-        .serialize_into(&mut buf)
-        .is_err()
-    );
+        .serialize_into(&mut buf)),
+        Err(dvb_ci::error::Error::LengthTooLarge(_))
+    ));
 }
 
 #[test]

@@ -277,7 +277,13 @@ fn registry_custom_parse_error_continues() {
 
     let items: Vec<_> = reg.parse_loop(&bytes).collect();
     assert_eq!(items.len(), 2, "both entries should appear");
-    assert!(items[0].is_err(), "malformed custom should be Err");
+    assert!(
+        matches!(
+            &(items[0]),
+            Err(dvb_si::error::Error::BufferTooShort { .. })
+        ),
+        "malformed custom should be Err"
+    );
     assert!(matches!(items[1], Ok(AnyDescriptor::Stuffing(_))));
 }
 

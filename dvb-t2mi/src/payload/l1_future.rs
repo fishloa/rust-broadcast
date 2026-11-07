@@ -144,12 +144,18 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu() {
         let buf = [0x00u8, 0x01, 0x00];
-        assert!(L1FuturePayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(L1FuturePayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]
     fn parse_rejects_short_buffer() {
-        assert!(L1FuturePayload::parse(&[0x00]).is_err());
+        assert!(matches!(
+            &(L1FuturePayload::parse(&[0x00])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

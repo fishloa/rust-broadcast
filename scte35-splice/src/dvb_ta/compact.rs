@@ -673,7 +673,10 @@ mod tests {
     fn time_signal_pts_over_33_bits_is_rejected_not_masked() {
         let mut ts = sample_time_signal();
         ts.pts_time = 1u64 << 33;
-        assert!(ts.try_to_bytes().is_err());
+        assert!(matches!(
+            &(ts.try_to_bytes()),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]
@@ -726,14 +729,20 @@ mod tests {
     fn splice_insert_pts_over_33_bits_is_rejected_not_masked() {
         let mut si = sample_splice_insert(None);
         si.pts_time = 1u64 << 33;
-        assert!(si.try_to_bytes().is_err());
+        assert!(matches!(
+            &(si.try_to_bytes()),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]
     fn splice_insert_duration_over_33_bits_is_rejected_not_masked() {
         let mut si = sample_splice_insert(None);
         si.duration = 1u64 << 33;
-        assert!(si.try_to_bytes().is_err());
+        assert!(matches!(
+            &(si.try_to_bytes()),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     /// Table 8 against the independent packer: 152 fixed bits, the

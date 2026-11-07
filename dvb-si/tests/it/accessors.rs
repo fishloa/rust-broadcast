@@ -160,7 +160,10 @@ fn frequency_list_decoded_accessors() {
     let undef = FrequencyListDescriptor::new(CodingType::Undefined, vec![[0x01, 0x17, 0x25, 0x00]]);
     assert_eq!(undef.centre_frequencies_hz(), vec![None]);
     let mut undef_mut = FrequencyListDescriptor::new(CodingType::Undefined, vec![]);
-    assert!(undef_mut.set_centre_frequencies_hz(&[1_000]).is_err());
+    assert!(matches!(
+        &(undef_mut.set_centre_frequencies_hz(&[1_000])),
+        Err(dvb_si::error::Error::ValueOutOfRange { .. })
+    ));
 }
 
 #[cfg(feature = "chrono")]
@@ -185,10 +188,10 @@ fn local_time_offset_decoded_accessors() {
     assert_eq!(e.local_time_offset(), Some(Duration::minutes(-330)));
 
     // Mixed signs can't be represented by one polarity bit.
-    assert!(
-        e.set_offsets(Duration::hours(1), Duration::hours(-1))
-            .is_err()
-    );
+    assert!(matches!(
+        &(e.set_offsets(Duration::hours(1), Duration::hours(-1))),
+        Err(dvb_si::error::Error::ValueOutOfRange { .. })
+    ));
 
     let dt = Utc.with_ymd_and_hms(2024, 3, 31, 1, 0, 0).unwrap();
     e.set_time_of_change(dt).unwrap();

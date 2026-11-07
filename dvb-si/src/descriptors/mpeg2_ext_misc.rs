@@ -861,7 +861,10 @@ mod tests {
         // Every one-byte body is outside `if (descriptor_length > 1)` and
         // rejected, whatever it would promise (also the all-zero valid-looking 0x0F).
         for one in [0x0Fu8, 0x1F, 0x3F] {
-            assert!(VirtualSegmentation::parse_body(&[one]).is_err());
+            assert!(matches!(
+                &(VirtualSegmentation::parse_body(&[one])),
+                Err(crate::error::Error::InvalidDescriptor { .. })
+            ));
         }
         // Truncated partition.
         assert!(VirtualSegmentation::parse_body(&[0x3F, 0x8F]).is_err());
@@ -881,7 +884,10 @@ mod tests {
         assert_eq!(d.write_body().unwrap(), b);
         // 4 entries do not fit the 2-bit count
         let big = GreenExtension::new(vec![0; 4], vec![]);
-        assert!(big.write_body().is_err());
+        assert!(matches!(
+            &(big.write_body()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         assert!(GreenExtension::parse_body(&b[..4]).is_err());
     }
 
@@ -893,7 +899,10 @@ mod tests {
         assert_eq!(d.metric_codes, [0x5053_4E52, 0x5353_494D]);
         assert_eq!(d.trailing, [0xEE]);
         assert_eq!(d.write_body().unwrap(), b);
-        assert!(QualityExtension::new(1, vec![0; 256]).write_body().is_err());
+        assert!(matches!(
+            &(QualityExtension::new(1, vec![0; 256]).write_body()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]
@@ -929,6 +938,9 @@ mod tests {
         assert_eq!(md.l_max, 10000);
         assert_eq!(md.max_cll, 1000);
         assert_eq!(d.write_body().unwrap(), m);
-        assert!(JxsVideo::parse_body(&m[..m.len() - 1]).is_err());
+        assert!(matches!(
+            &(JxsVideo::parse_body(&m[..m.len() - 1])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 }

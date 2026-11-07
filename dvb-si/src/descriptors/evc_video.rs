@@ -232,6 +232,9 @@ mod tests {
         assert!(EvcVideoDescriptor::parse(&b[..b.len() - 1]).is_err());
         let mut bad = d.clone();
         bad.video_properties_tag = 16;
-        assert!(bad.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            &(bad.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

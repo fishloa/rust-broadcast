@@ -100,7 +100,6 @@ impl CarouselFs {
                 let remaining = &data[pos..];
                 match BiopMessage::parse_at(remaining) {
                     Ok((msg, consumed)) => {
-                        // Extract the object key and kind from the message.
                         let (obj_key_bytes, obj) = extract_object(module_id, &msg);
                         if let Some(obj) = obj {
                             let is_sg = matches!(&msg, BiopMessage::ServiceGateway(_));

@@ -203,7 +203,10 @@ mod tests {
             segmentation_upid: &upid,
             ..InsertSegmentationDescriptor::default()
         };
-        assert!(op.try_to_bytes().is_err());
+        assert!(matches!(
+            &(op.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

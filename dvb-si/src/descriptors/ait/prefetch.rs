@@ -166,7 +166,10 @@ mod tests {
     fn empty_entry_list_and_truncation() {
         let d = PrefetchDescriptor::parse(&[TAG, 1, 7]).unwrap();
         assert!(d.entries.is_empty());
-        assert!(PrefetchDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            &(PrefetchDescriptor::parse(&[TAG, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         assert!(PrefetchDescriptor::parse(&[TAG, 3, 7, 5, b'a']).is_err());
         let long = vec![0u8; 256];
         let d = PrefetchDescriptor {
@@ -177,6 +180,9 @@ mod tests {
             }],
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }
