@@ -251,10 +251,11 @@ impl<'a> Parse<'a> for Timestamp {
                     gpi_edge: bytes[2],
                 }))
             }
-            _ => Err(Error::InvalidValue {
+            other => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "timestamp time_type",
+                value: u64::from(other),
                 reason: "unknown time_type value",
-            }),
+            })),
         }
     }
 }
@@ -312,6 +313,18 @@ mod tests {
         assert_eq!(bytes.len(), TIME_LEN);
         let back = Time::parse(&bytes).unwrap();
         assert_eq!(t, back);
+    }
+
+    #[test]
+    fn unknown_time_type_is_rejected_with_its_value() {
+        assert_eq!(
+            Timestamp::parse(&[0x09, 0, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "timestamp time_type",
+                value: 9,
+                reason: "unknown time_type value",
+            }))
+        );
     }
 
     #[test]

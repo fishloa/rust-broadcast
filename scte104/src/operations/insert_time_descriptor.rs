@@ -55,10 +55,11 @@ impl Serialize for InsertTimeDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, LEN)?;
         if self.tai_seconds >> 48 != 0 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "insert_time_descriptor.TAI_seconds",
-                reason: "exceeds 48-bit range",
-            });
+                value: self.tai_seconds,
+                max: (1 << 48) - 1,
+            }));
         }
         // TAI_seconds: 6 bytes (48-bit)
         buf[0] = (self.tai_seconds >> 40) as u8;
@@ -112,9 +113,15 @@ mod tests {
             tai_ns: 0,
             utc_offset: 0,
         };
-        assert!(matches!(
-            &(op.try_to_bytes()),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            op.try_to_bytes().err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "insert_time_descriptor.TAI_seconds",
+                    value: 1 << 48,
+                    max: (1 << 48) - 1
+                }
+            ))
+        );
     }
 }
