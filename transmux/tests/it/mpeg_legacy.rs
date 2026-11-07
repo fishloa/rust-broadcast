@@ -9,6 +9,7 @@
 use std::fs;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use test_fixtures::ffprobe;
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::media::{CmafMux, Fmp4Demux};
 use transmux::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
@@ -173,32 +174,6 @@ fn fmp4_sample_fidelity_mpeg_audio() {
 
 // ── Test 4/5: TS demux — the broadcast pair + config from real ES ───────────
 
-struct CsvRow {
-    kind: String,
-    pts: i128,
-    dts: i128,
-    duration: u32,
-    keyframe: bool,
-}
-
-fn load_csv() -> Vec<CsvRow> {
-    let raw = fixture(&["ts", "legacy", "mpeg2-mp2.packets.csv"]);
-    let text = String::from_utf8(raw).unwrap();
-    text.lines()
-        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-        .map(|l| {
-            let f: Vec<&str> = l.split(',').collect();
-            CsvRow {
-                kind: f[0].to_string(),
-                pts: f[2].parse().unwrap(),
-                dts: f[3].parse().unwrap(),
-                duration: f[4].parse().unwrap(),
-                keyframe: f[6].trim() == "1",
-            }
-        })
-        .collect()
-}
-
 #[test]
 fn ts_demux_broadcast_pair() {
     let ts = fixture(&["ts", "legacy", "mpeg2-mp2.ts"]);
@@ -234,9 +209,9 @@ fn ts_demux_broadcast_pair() {
         other => panic!("track 1 expected MpegAudio, got {other:?}"),
     }
 
-    let csv = load_csv();
-    let csv_video: Vec<&CsvRow> = csv.iter().filter(|r| r.kind == "video").collect();
-    let csv_audio: Vec<&CsvRow> = csv.iter().filter(|r| r.kind == "audio").collect();
+    let csv = ffprobe::packets("ts/legacy/mpeg2-mp2.packets.csv");
+    let csv_video = ffprobe::of_type(&csv, "video");
+    let csv_audio = ffprobe::of_type(&csv, "audio");
 
     assert_eq!(video.samples.len(), 25, "25 video samples");
     assert_eq!(audio.samples.len(), 39, "39 audio samples");
@@ -256,15 +231,24 @@ fn ts_demux_broadcast_pair() {
         let row = csv_video[i];
         assert_eq!(
             s.duration,
-            Some(row.duration),
+            Some(u32::try_from(row.duration()).unwrap()),
             "video[{i}] duration matches CSV"
         );
         let dts = s.dts.unwrap_or_else(|| panic!("video[{i}] has no dts")) as i128;
-        assert_eq!(dts, row.dts, "video[{i}] DTS (actual s.dts) matches CSV");
-        let pts = s.pts.unwrap_or_else(|| panic!("video[{i}] has no pts")) as i128;
-        assert_eq!(pts, row.pts, "video[{i}] PTS (actual s.pts) matches CSV");
         assert_eq!(
-            s.flags.is_sync, row.keyframe,
+            dts,
+            i128::from(row.dts()),
+            "video[{i}] DTS (actual s.dts) matches CSV"
+        );
+        let pts = s.pts.unwrap_or_else(|| panic!("video[{i}] has no pts")) as i128;
+        assert_eq!(
+            pts,
+            i128::from(row.pts()),
+            "video[{i}] PTS (actual s.pts) matches CSV"
+        );
+        assert_eq!(
+            s.flags.is_sync,
+            row.is_keyframe(),
             "video[{i}] keyframe matches CSV"
         );
     }
@@ -288,20 +272,20 @@ fn ts_demux_broadcast_pair() {
         );
         let dur_90k = s.duration.unwrap_or(0) as i128 * 90_000 / audio_ts as i128;
         assert!(
-            (dur_90k - csv_audio[i].duration as i128).abs() <= 1,
+            (dur_90k - i128::from(csv_audio[i].duration())).abs() <= 1,
             "audio[{i}] duration matches CSV @90kHz within rounding"
         );
         assert_eq!(s.composition_offset(), 0, "audio has no CTS offset");
     }
     // Sanity: contiguous audio PTS grid (in 90 kHz) derived from the durations
     // spans the same range as the CSV (guards against dropped/extra frames).
-    let apts0 = csv_audio[0].pts;
+    let apts0 = i128::from(csv_audio[0].pts());
     let total_90k: i128 = audio.samples[..audio.samples.len() - 1]
         .iter()
         .map(|s| s.duration.unwrap_or(0) as i128 * 90_000 / audio_ts as i128)
         .sum();
     let span_last = apts0 + total_90k;
-    let csv_last = csv_audio[csv_audio.len() - 1].pts;
+    let csv_last = i128::from(csv_audio[csv_audio.len() - 1].pts());
     assert!(
         (span_last - csv_last).abs() <= audio.samples.len() as i128,
         "audio PTS grid spans the CSV range (within accumulated rounding)"

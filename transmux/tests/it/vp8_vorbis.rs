@@ -19,6 +19,7 @@
 //! Vorbis channels/sample_rate from the `CodecPrivate` identification header
 //! (Vorbis I §4.2.2) — never hardcoded into the parse.
 
+use test_fixtures::ffprobe;
 use transmux::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
@@ -31,35 +32,6 @@ const VP8_ORACLE: &str = "mkv/vp8-opus.packets.csv";
 const VORBIS_FIXTURE: &str = "mkv/vorbis.webm";
 /// Vorbis ffprobe oracle.
 const VORBIS_ORACLE: &str = "mkv/vorbis.packets.csv";
-
-/// One ffprobe oracle row.
-#[derive(Debug)]
-struct OracleRow {
-    codec_type: String,
-    size: usize,
-    keyframe: bool,
-}
-
-fn load_oracle(path: &str) -> Vec<OracleRow> {
-    let text = std::fs::read_to_string(test_fixtures::path(path)).expect("read oracle csv");
-    let mut rows = Vec::new();
-    for line in text.lines() {
-        if line.starts_with('#') || line.trim().is_empty() {
-            continue;
-        }
-        let f: Vec<&str> = line.split(',').collect();
-        rows.push(OracleRow {
-            codec_type: f[0].to_string(),
-            size: f[5].trim().parse().unwrap(),
-            keyframe: f[6].trim() == "1",
-        });
-    }
-    rows
-}
-
-fn oracle_for<'a>(rows: &'a [OracleRow], codec_type: &str) -> Vec<&'a OracleRow> {
-    rows.iter().filter(|r| r.codec_type == codec_type).collect()
-}
 
 fn demux(path: &str) -> Media {
     let bytes = std::fs::read(test_fixtures::path(path)).expect("read webm fixture");
@@ -95,8 +67,8 @@ fn vp8_enumeration_and_dimensions() {
 #[test]
 fn vp8_frame_oracle() {
     let m = demux(VP8_FIXTURE);
-    let oracle = load_oracle(VP8_ORACLE);
-    let vid_oracle = oracle_for(&oracle, "video");
+    let oracle = ffprobe::packets(VP8_ORACLE);
+    let vid_oracle = ffprobe::of_type(&oracle, "video");
 
     assert_eq!(vid_oracle.len(), 25, "oracle sanity: 25 VP8 frames");
     let vid = &m.tracks[0];
@@ -109,7 +81,8 @@ fn vp8_frame_oracle() {
             "VP8 sample {i} byte length must equal oracle size"
         );
         assert_eq!(
-            s.flags.is_sync, o.keyframe,
+            s.flags.is_sync,
+            o.is_keyframe(),
             "VP8 sample {i} keyframe flag must equal oracle"
         );
     }
@@ -170,8 +143,8 @@ fn vorbis_enumeration_and_config() {
 #[test]
 fn vorbis_frame_oracle() {
     let m = demux(VORBIS_FIXTURE);
-    let oracle = load_oracle(VORBIS_ORACLE);
-    let aud_oracle = oracle_for(&oracle, "audio");
+    let oracle = ffprobe::packets(VORBIS_ORACLE);
+    let aud_oracle = ffprobe::of_type(&oracle, "audio");
 
     assert_eq!(aud_oracle.len(), 45, "oracle sanity: 45 Vorbis frames");
     let aud = &m.tracks[0];

@@ -46,6 +46,7 @@
 //! lockstep with a scaling bug in it.
 
 use broadcast_common::{Package, Unpackage};
+use test_fixtures::ffprobe;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
@@ -127,36 +128,14 @@ fn ts_demux_timing_invariant_holds() {
 
 // ── 2. Fmp4Demux ─────────────────────────────────────────────────────────
 
-/// One `ffprobe -show_packets` oracle row, in decode order, in the stream's
-/// own `time_base` ticks (90 kHz for `h264-high.frag.mp4`'s video stream —
-/// verified via `ffprobe -show_entries stream=time_base`, which matches this
-/// fixture's `mdhd`/`mvhd` timescale, so oracle ticks compare directly
-/// against the IR's ticks with no unit conversion).
-struct OracleRow {
-    dts: i64,
-    duration: u32,
-}
-
-/// Parse the committed `ffprobe` CSV oracle for `h264-high.frag.mp4`
-/// (columns: `codec_type,stream_index,pts,dts,duration,size,keyframe`),
-/// generated independently of this crate by
+/// The committed `ffprobe` oracle for `h264-high.frag.mp4`, in decode order,
+/// in the stream's own `time_base` ticks (90 kHz for its video stream, matching
+/// the fixture's `mdhd`/`mvhd` timescale, so oracle ticks compare directly
+/// against the IR's ticks), generated independently of this crate by
 /// `ffprobe -select_streams v:0 -show_entries packet=pts,dts,duration,size,flags`.
-fn load_fmp4_oracle() -> Vec<OracleRow> {
-    let path = test_fixtures::path("mp4/frag/demux-oracle/h264-high.frag.packets.csv");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read oracle {}: {e}", path.display()));
-    let mut rows: Vec<OracleRow> = text
-        .lines()
-        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-        .map(|l| {
-            let cols: Vec<&str> = l.split(',').collect();
-            OracleRow {
-                dts: cols[3].parse().expect("oracle dts"),
-                duration: cols[4].parse().expect("oracle duration"),
-            }
-        })
-        .collect();
-    rows.sort_by_key(|r| r.dts);
+fn load_fmp4_oracle() -> Vec<ffprobe::PacketRow> {
+    let mut rows = ffprobe::packets("mp4/frag/demux-oracle/h264-high.frag.packets.csv");
+    rows.sort_by_key(ffprobe::PacketRow::dts);
     rows
 }
 
@@ -188,18 +167,20 @@ fn fmp4_demux_timing_invariant_holds() {
             .dts
             .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no dts"));
         assert_eq!(
-            dts, o.dts,
+            dts,
+            o.dts(),
             "Fmp4Demux: sample {i} dts ({dts}) must match the ffprobe oracle's dts ({})",
-            o.dts
+            o.dts()
         );
         let duration = s
             .duration
             .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no duration"));
         assert_eq!(
-            duration, o.duration,
+            i64::from(duration),
+            o.duration(),
             "Fmp4Demux: sample {i} duration ({duration}) must match the ffprobe oracle's \
              duration ({}) — this is what catches a scaling bug invariant #2 alone cannot",
-            o.duration
+            o.duration()
         );
     }
 }

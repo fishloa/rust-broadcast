@@ -23,6 +23,7 @@
 //! dev-dependency on it never appears in a published manifest (same pattern as
 //! `test-bounded` / `test-alloc`).
 
+pub mod ffprobe;
 pub mod fuzz;
 pub mod psi;
 pub mod vectors;

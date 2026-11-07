@@ -13,43 +13,15 @@
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
+use test_fixtures::ffprobe;
 use transmux::TrackId;
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::{CmafMux, CodecConfig, FlvDemux, FlvMux};
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
-static CSV: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| test_fixtures::read_to_string("flv/av.packets.csv"));
 static REF_MP4: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("ts/demux-oracle/h264-aac.ref.mp4"));
-
-/// One oracle packet row.
-#[derive(Debug, Clone, Copy)]
-struct Pkt {
-    is_video: bool,
-    pts: i64,
-    dts: i64,
-    size: usize,
-    keyframe: bool,
-}
-
-fn oracle() -> Vec<Pkt> {
-    CSV.as_str()
-        .lines()
-        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-        .map(|l| {
-            let c: Vec<&str> = l.split(',').collect();
-            Pkt {
-                is_video: c[0] == "video",
-                pts: c[2].parse().unwrap(),
-                dts: c[3].parse().unwrap(),
-                size: c[5].parse().unwrap(),
-                keyframe: c[6] == "1",
-            }
-        })
-        .collect()
-}
 
 /// Walk a top-level box by four-CC in a byte stream.
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
@@ -185,9 +157,9 @@ fn timestamps_and_keyframes_match_oracle() {
     let mut demux = FlvDemux::new();
     let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
 
-    let ora = oracle();
-    let vid_ora: Vec<Pkt> = ora.iter().copied().filter(|p| p.is_video).collect();
-    let aud_ora: Vec<Pkt> = ora.iter().copied().filter(|p| !p.is_video).collect();
+    let ora = ffprobe::packets("flv/av.packets.csv");
+    let vid_ora = ffprobe::of_type(&ora, "video");
+    let aud_ora = ffprobe::of_type(&ora, "audio");
 
     let vid = &media.tracks[0].samples;
     let aud = &media.tracks[1].samples;
@@ -207,7 +179,8 @@ fn timestamps_and_keyframes_match_oracle() {
     // Video keyframe flag = FLV.as_slice() FrameType==1. Oracle has exactly the same set.
     for (i, (s, p)) in vid.iter().zip(&vid_ora).enumerate() {
         assert_eq!(
-            s.flags.is_sync, p.keyframe,
+            s.flags.is_sync,
+            p.is_keyframe(),
             "video sample {i} keyframe flag"
         );
     }
@@ -216,18 +189,18 @@ fn timestamps_and_keyframes_match_oracle() {
     assert_eq!(kf, 3, "exactly 3 video keyframes");
 }
 
-fn check_timing(samples: &[transmux::Sample], ora: &[Pkt], kind: &str) {
-    let base_dts = ora[0].dts;
+fn check_timing(samples: &[transmux::Sample], ora: &[&ffprobe::PacketRow], kind: &str) {
+    let base_dts = ora[0].dts();
     let mut dts = 0i64; // relative to track start
     for (i, (s, p)) in samples.iter().zip(ora).enumerate() {
         // Per-sample payload length matches the ffprobe oracle `size` column
         // (video: length-prefixed NALs; audio: raw AAC AU). Bites on any
         // off-by-one in tag body slicing.
         assert_eq!(s.data.len(), p.size, "{kind} sample {i} payload size");
-        let exp_dts_rel = p.dts - base_dts;
+        let exp_dts_rel = p.dts() - base_dts;
         assert_eq!(dts, exp_dts_rel, "{kind} sample {i} DTS (relative)");
         // PTS = DTS + composition offset.
-        let exp_pts_rel = p.pts - base_dts;
+        let exp_pts_rel = p.pts() - base_dts;
         assert_eq!(
             dts + s.composition_offset() as i64,
             exp_pts_rel,
