@@ -10,15 +10,8 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding.
-    #[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]
-    BufferTooShort {
-        /// Bytes required to proceed.
-        need: usize,
-        /// Bytes actually available.
-        have: usize,
-        /// Human-readable name of the type or field being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// MODE field is neither 0 (NM) nor 1 (HEM).
     #[error("invalid MODE: {mode} (must be 0 or 1 per EN 302 755 §5.1.7)")]
@@ -35,13 +28,8 @@ pub enum Error {
     },
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
-    #[error("serialize: output buffer too small — need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Required size.
-        need: usize,
-        /// Actual size.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// A Normal-Mode per-UP stride shorter than one 188-byte user packet.
     #[error("invalid NM stride {stride}: must be 0 or at least {min} bytes (EN 302 755 §5.1.8)")]
@@ -85,36 +73,17 @@ pub enum Error {
     },
 }
 
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn buffer_too_short_message_contains_values() {
-        let err = Error::BufferTooShort {
+        let err = Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: 10,
             have: 5,
             what: "BBHEADER",
-        };
+        });
         let msg = format!("{err}");
         assert!(msg.contains("10") && msg.contains("5") && msg.contains("BBHEADER"));
     }
