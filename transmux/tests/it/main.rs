@@ -9,6 +9,8 @@ mod base64_lenient;
 mod base_url;
 #[path = "support/bit_writer.rs"]
 mod bit_writer;
+#[path = "support/box_walk.rs"]
+mod box_walk;
 mod box_walk_untrusted_sizes;
 mod caption_detect;
 mod captions;

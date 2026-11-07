@@ -3,7 +3,7 @@
 //!
 //! Every test here feeds a tiny fixture (tens of bytes to ~40 KB) whose
 //! `u32` count fields are set to `0xFFFFFFFF`, which the pre-fix parsers used
-//! directly as an iteration/allocation budget. A `#[global_allocator]` wraps
+//! directly as an iteration/allocation budget. A ``#[global_allocator]` wraps
 //! `System` and accounts live bytes **per thread** against a 64 MiB budget;
 //! an allocation that would exceed it returns null, so the process aborts
 //! immediately instead of eating the machine's memory. That makes these tests
@@ -28,38 +28,17 @@ use transmux::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, Sgp
 /// regression aborts here rather than swapping the machine.
 const BUDGET: usize = 64 << 20;
 
+#[path = "it/support/box_walk.rs"]
+mod box_walk;
+
+use box_walk::{SAMPLE_TABLE_CONTAINERS, find_box_range};
+
 #[global_allocator]
 static GLOBAL: test_alloc::ThreadCapped<BUDGET> = test_alloc::ThreadCapped::new();
 
 // ---------------------------------------------------------------------------
 // Fixture patching helpers
 // ---------------------------------------------------------------------------
-
-const CONTAINERS: &[&[u8; 4]] = &[b"moov", b"trak", b"mdia", b"minf", b"stbl"];
-
-/// Recursively locate a box of `fourcc` within `[lo, hi)`. Returns
-/// `(abs_offset, box_size)`. Descends into known container boxes.
-fn find_box_range(data: &[u8], lo: usize, hi: usize, fourcc: &[u8; 4]) -> Option<(usize, usize)> {
-    let mut off = lo;
-    while off + 8 <= hi {
-        let size =
-            u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]) as usize;
-        if size < 8 || off + size > hi {
-            break;
-        }
-        let t = [data[off + 4], data[off + 5], data[off + 6], data[off + 7]];
-        if &t == fourcc {
-            return Some((off, size));
-        }
-        if CONTAINERS.contains(&&t)
-            && let Some(found) = find_box_range(data, off + 8, off + size, fourcc)
-        {
-            return Some(found);
-        }
-        off += size;
-    }
-    None
-}
 
 fn fixture(path: &str) -> Vec<u8> {
     std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
@@ -75,12 +54,13 @@ fn patch_fixture(
     value: u32,
 ) -> Vec<u8> {
     let mut file = fixture(fixture_path);
-    let (start, size) = find_box_range(&file, 0, file.len(), fourcc).unwrap_or_else(|| {
-        panic!(
-            "fixture {fixture_path} must contain a {} box",
-            String::from_utf8_lossy(fourcc)
-        )
-    });
+    let (start, size) = find_box_range(&file, 0, file.len(), fourcc, SAMPLE_TABLE_CONTAINERS)
+        .unwrap_or_else(|| {
+            panic!(
+                "fixture {fixture_path} must contain a {} box",
+                String::from_utf8_lossy(fourcc)
+            )
+        });
     assert!(size >= offset_in_box + 4, "box too small to patch");
     let at = start + offset_in_box;
     file[at..at + 4].copy_from_slice(&value.to_be_bytes());
@@ -156,8 +136,8 @@ fn hostile_ctts_run_count_is_rejected() {
 #[test]
 fn hostile_stsz_sample_count_is_rejected() {
     let mut file = fixture(CENC_MP4);
-    let (start, size) =
-        find_box_range(&file, 0, file.len(), b"stsz").expect("cenc.mp4 must contain a stsz");
+    let (start, size) = find_box_range(&file, 0, file.len(), b"stsz", SAMPLE_TABLE_CONTAINERS)
+        .expect("cenc.mp4 must contain a stsz");
     assert!(size >= STSZ_SAMPLE_COUNT_OFFSET + 4);
     file[start + STSZ_SAMPLE_SIZE_OFFSET..start + STSZ_SAMPLE_SIZE_OFFSET + 4]
         .copy_from_slice(&1u32.to_be_bytes());

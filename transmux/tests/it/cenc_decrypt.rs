@@ -10,6 +10,7 @@
 
 #![cfg(feature = "cenc")]
 
+use crate::box_walk::{SAMPLE_TABLE_CONTAINERS, find_box_range};
 use broadcast_common::{Decrypt, Unpackage};
 use transmux::TsDemux;
 use transmux::annexb::iter_length_prefixed_nals;
@@ -434,32 +435,6 @@ fn mp4decrypt_available() -> bool {
 // explicitly, not silently decrypted with only the track's default KID.
 // ---------------------------------------------------------------------------
 
-const CONTAINERS: &[&[u8; 4]] = &[b"moov", b"trak", b"mdia", b"minf", b"stbl"];
-
-/// Recursively locate a box of `fourcc` within `[lo, hi)`. Returns
-/// `(abs_offset, box_size)`. Descends into known container boxes.
-fn find_box_range(data: &[u8], lo: usize, hi: usize, fourcc: &[u8; 4]) -> Option<(usize, usize)> {
-    let mut off = lo;
-    while off + 8 <= hi {
-        let size =
-            u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]) as usize;
-        if size < 8 || off + size > hi {
-            break;
-        }
-        let t = [data[off + 4], data[off + 5], data[off + 6], data[off + 7]];
-        if &t == fourcc {
-            return Some((off, size));
-        }
-        if CONTAINERS.contains(&&t)
-            && let Some(found) = find_box_range(data, off + 8, off + size, fourcc)
-        {
-            return Some(found);
-        }
-        off += size;
-    }
-    None
-}
-
 /// Grow (in place, ORIGINAL coordinate space) the 32-bit size of every
 /// container box whose original span contains the insertion point `at`
 /// (interior, or exactly at the box's own end — i.e. "append a new last
@@ -478,7 +453,7 @@ fn grow_ancestors(data: &mut [u8], lo: usize, hi: usize, at: usize, grow: usize)
         // point (because it's the last child of the container we're
         // inserting into) must NOT have its own size grown — only real
         // ancestors up the tree do.
-        if CONTAINERS.contains(&&t) && off < at && at <= off + size {
+        if SAMPLE_TABLE_CONTAINERS.contains(&&t) && off < at && at <= off + size {
             let new_size = (size + grow) as u32;
             data[off..off + 4].copy_from_slice(&new_size.to_be_bytes());
             grow_ancestors(data, off + 8, off + size, at, grow);
@@ -509,7 +484,8 @@ fn cenc_mp4_with_seig_sgpd() -> Vec<u8> {
 
     let file = read(CENC_MP4);
     let (stbl_start, stbl_size) =
-        find_box_range(&file, 0, file.len(), b"stbl").expect("fixture has a stbl");
+        find_box_range(&file, 0, file.len(), b"stbl", SAMPLE_TABLE_CONTAINERS)
+            .expect("fixture has a stbl");
     let insert_at = stbl_start + stbl_size; // append as stbl's new last child
 
     let sgpd = SampleGroupDescriptionBox {
