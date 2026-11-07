@@ -786,6 +786,13 @@ impl VVCSampleEntry {
             extra_boxes: Vec::new(),
         }
     }
+
+    /// Create a new `vvi1` sample entry (in-band parameter sets).
+    pub fn new_vvi1(config: crate::vvc_config::VvcConfigurationBox) -> Self {
+        let mut s = Self::new_vvc1(config);
+        s.codec_type = *b"vvi1";
+        s
+    }
 }
 
 impl Serialize for VVCSampleEntry {
@@ -1110,5 +1117,32 @@ mod tests {
             &[0u8; 16],
             "pre_defined(16)+reserved(16) after data_reference_index"
         );
+    }
+
+    #[test]
+    fn new_vvi1_is_vvc1_with_the_in_band_fourcc() {
+        use crate::vvc_config::VvcConfigurationBox;
+        use crate::vvc_config::VvcDecoderConfigurationRecord;
+        let record = || VvcDecoderConfigurationRecord {
+            length_size_minus_one: 3,
+            ptl_present: false,
+            ols_idx: 0,
+            num_sublayers: 1,
+            constant_frame_rate: 0,
+            chroma_format_idc: 1,
+            bit_depth_minus8: 0,
+            ptl: None,
+            max_picture_width: 0,
+            max_picture_height: 0,
+            avg_frame_rate: 0,
+            arrays: alloc::vec![],
+        };
+        let vvc1 = VVCSampleEntry::new_vvc1(VvcConfigurationBox::new(record()));
+        let vvi1 = VVCSampleEntry::new_vvi1(VvcConfigurationBox::new(record()));
+        assert_eq!(vvc1.codec_type, *b"vvc1");
+        assert_eq!(vvi1.codec_type, *b"vvi1");
+        let mut expected = vvc1.try_to_bytes().unwrap();
+        expected[4..8].copy_from_slice(b"vvi1");
+        assert_eq!(vvi1.try_to_bytes().unwrap(), expected);
     }
 }

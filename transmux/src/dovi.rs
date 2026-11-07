@@ -557,6 +557,24 @@ fn descriptor_bodies(es_info: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {
     })
 }
 
+/// Build the ES_info bytes for a descriptor (tag + length + body).
+pub fn video_stream_descriptor_bytes(d: &DoviVideoStreamDescriptor) -> Result<Vec<u8>> {
+    let body = d.try_to_bytes()?;
+    let mut out = Vec::with_capacity(2 + body.len());
+    out.push(DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
+    out.push(
+        broadcast_common::len::fit_u8(body.len(), "descriptor_length").map_err(|_| {
+            invalid(
+                "descriptor_length",
+                body.len() as u64,
+                "does not fit 8 bits",
+            )
+        })?,
+    );
+    out.extend_from_slice(&body);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -712,5 +730,16 @@ mod tests {
         let mut es_info = alloc::vec![DOVI_VIDEO_STREAM_DESCRIPTOR_TAG, body.len() as u8];
         es_info.extend_from_slice(&body);
         assert!(find_video_stream_descriptor(&es_info).is_some());
+    }
+
+    #[test]
+    fn video_stream_descriptor_bytes_frames_the_body_and_re_finds_it() {
+        let with_pid = [0x01, 0x00, 0x0E, 0x1A, 0x12, 0x37, 0x4B];
+        let d = DoviVideoStreamDescriptor::parse(&with_pid).unwrap();
+        let es_info = video_stream_descriptor_bytes(&d).unwrap();
+        assert_eq!(es_info[0], DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
+        assert_eq!(usize::from(es_info[1]), with_pid.len());
+        assert_eq!(&es_info[2..], &with_pid);
+        assert_eq!(find_video_stream_descriptor(&es_info), Some(d));
     }
 }

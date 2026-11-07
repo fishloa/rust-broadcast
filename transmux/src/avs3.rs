@@ -34,6 +34,13 @@ pub const LAVC_FOURCC: [u8; 4] = *b"lavc";
 pub const AVS3_FOURCC: [u8; 4] = *b"avs3";
 /// FourCC of the LAVS3 sample entry.
 pub const LAV3_FOURCC: [u8; 4] = *b"lav3";
+/// FourCC of the temporal-level sample group.
+pub const TELG_FOURCC: [u8; 4] = *b"telg";
+/// FourCC of the library random access point sample group.
+pub const LRAP_FOURCC: [u8; 4] = *b"lrap";
+/// FourCC of the library picture sample group.
+pub const A3LG_FOURCC: [u8; 4] = *b"a3lg";
+
 const BOX_HDR: usize = 8;
 const CONFIGURATION_VERSION: u8 = 1;
 const RESERVED6_ONES: u8 = 0x3F;
@@ -1087,5 +1094,12 @@ mod tests {
             AvsVideoSampleEntry::parse_entry(&[0, 0, 0, 8, b'a', b'v', b'c', b'1']),
             Err(crate::error::Error::UnexpectedBox { .. })
         ));
+    }
+
+    #[test]
+    fn sample_group_fourccs_are_their_ascii_names() {
+        assert_eq!(&TELG_FOURCC, b"telg");
+        assert_eq!(&LRAP_FOURCC, b"lrap");
+        assert_eq!(&A3LG_FOURCC, b"a3lg");
     }
 }

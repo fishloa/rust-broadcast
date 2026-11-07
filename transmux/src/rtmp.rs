@@ -55,6 +55,8 @@ pub const HANDSHAKE_RANDOM_LEN: usize = HANDSHAKE_PACKET_LEN - 2 * HANDSHAKE_TIM
 /// Default maximum chunk size before any Set Chunk Size (§5.4 / §5.4.1).
 pub const DEFAULT_CHUNK_SIZE: usize = 128;
 
+/// Reserved chunk stream id for low-level protocol control messages (§5.4).
+pub const CSID_CONTROL: u32 = 2;
 /// Chunk stream id this crate uses for outbound audio messages.
 const CSID_AUDIO: u32 = 4;
 /// Chunk stream id this crate uses for outbound video messages.
@@ -116,6 +118,8 @@ pub mod msg_type {
 pub mod bandwidth_limit {
     /// Hard: limit output bandwidth to the indicated window size.
     pub const HARD: u8 = 0;
+    /// Soft: limit to the smaller of the window size and the current limit.
+    pub const SOFT: u8 = 1;
     /// Dynamic: treat as Hard if the previous limit was Hard, else ignore.
     pub const DYNAMIC: u8 = 2;
 }
@@ -2053,5 +2057,27 @@ mod tests {
             .collect();
         // Bites: without the delta reset the re-send is stamped 1040+40=1080.
         assert_eq!(audio, vec![1000, 1040, 1040]);
+    }
+
+    #[test]
+    fn soft_limit_type_round_trips_through_set_peer_bandwidth() {
+        let body = [0x00, 0x26, 0x25, 0xA0, bandwidth_limit::SOFT];
+        let parsed = ProtocolControl::parse(msg_type::SET_PEER_BANDWIDTH, &body).unwrap();
+        assert_eq!(
+            parsed,
+            ProtocolControl::SetPeerBandwidth {
+                window_size: 2_500_000,
+                limit_type: bandwidth_limit::SOFT,
+            }
+        );
+        assert_eq!(bandwidth_limit::SOFT, 1);
+    }
+
+    #[test]
+    fn control_chunk_stream_id_is_the_reserved_low_level_csid() {
+        assert_eq!(CSID_CONTROL, 2);
+        assert_ne!(CSID_CONTROL, CSID_AUDIO);
+        assert_ne!(CSID_CONTROL, CSID_VIDEO);
+        assert_ne!(CSID_CONTROL, CSID_DATA);
     }
 }

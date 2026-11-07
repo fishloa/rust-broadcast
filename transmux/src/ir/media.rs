@@ -77,6 +77,13 @@ impl SkippedTrack {
             track_id: None,
         }
     }
+
+    /// Name the skipped `trak` by its `tkhd.track_ID`.
+    #[must_use]
+    pub fn with_track_id(mut self, track_id: TrackId) -> Self {
+        self.track_id = Some(track_id);
+        self
+    }
 }
 
 /// The media intermediate representation: a set of elementary [`Track`]s.
@@ -142,5 +149,19 @@ impl Media {
     pub fn with_pcr(mut self, pcr: Vec<PcrSample>) -> Self {
         self.pcr = pcr;
         self
+    }
+}
+
+#[cfg(test)]
+mod skipped_track_tests {
+    use super::*;
+
+    #[test]
+    fn with_track_id_names_the_skipped_trak() {
+        let plain = SkippedTrack::new("avc1".into(), "bad".into());
+        assert_eq!(plain.track_id, None);
+        let named = plain.with_track_id(TrackId::new(5));
+        assert_eq!(named.track_id, Some(TrackId::new(5)));
+        assert_eq!(named.fourcc, "avc1");
     }
 }
