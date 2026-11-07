@@ -12,6 +12,12 @@ Version: 0.3.0 -> 0.4.0.
 
 Internal changes with no public effect (shared helpers replacing private copies, README as crate-root docs, `Clone`/`PartialEq`/`Eq` derives on error enums where every field allows it) are listed in the CHANGELOG.
 
+## Bounded parsing (#1716)
+
+- A hostile document could use unbounded memory and time. Input size, element depth and count, and attribute size and count are now bounded, including inside skipped extension subtrees, and a tripped bound is `Error::TooLarge { limit, max }`. Nesting past 32 levels is now an error instead of a clean parse.
+- `MulticastServerConfiguration::parse_str_with_limits` and `MulticastGatewayConfiguration::parse_str_with_limits` take a caller-chosen `XmlLimits`; `default_limits()` is what `parse_str` applies.
+- The serializer uses the shared `broadcast_common::xml_chars` writer helpers; output is byte-identical.
+
 ## Dependencies
 
 Workspace sibling requirements move to the new epochs of this wave:

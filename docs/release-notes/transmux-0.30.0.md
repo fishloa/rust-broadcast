@@ -118,6 +118,12 @@ The DASH MPD and Smooth manifest readers resolve XML namespaces with `quick-xml`
 
 Internal changes with no public effect (shared helpers replacing private copies, README as crate-root docs, `Clone`/`PartialEq`/`Eq` derives on error enums where every field allows it) are listed in the CHANGELOG.
 
+## XML limits and writers (#1716)
+
+- `Mpd::parse_with_limits` and `SmoothManifest::parse_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `dash_parse::default_limits()` and `smooth_parse::default_limits()` are what `parse` applies (4 MiB input, depth 32, 100 000 elements, 256 attributes, 8 KiB per attribute; Smooth allows 128 KiB per attribute for PlayReady headers).
+- `LlDashPackager`'s MPD rewrite and `smooth_fragment::manifest_declares_protection` now resolve namespaces too: only a `<Protection>` element in no namespace counts as PlayReady protection, so a foreign-namespace `<ms:Protection>` no longer does.
+- The DASH and Smooth manifest writers use the shared `broadcast_common::xml_chars` writer helpers; output is byte-identical.
+
 ## Dependencies
 
 Workspace sibling requirements move to the new epochs of this wave:

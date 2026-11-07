@@ -31,6 +31,11 @@ validate_to_result(..)
 
 Internal changes with no public effect (shared helpers replacing private copies, README as crate-root docs, `Clone`/`PartialEq`/`Eq` derives on error enums where every field allows it) are listed in the CHANGELOG.
 
+## Bounded parsing (#1716)
+
+- A hostile document could use unbounded memory and time. Input size, element depth and count, and attribute size and count are now bounded, including inside preserved foreign subtrees, and a tripped bound is `Error::TooLarge { limit, max }`. Nesting past 128 levels is now `Error::TooLarge` instead of `Error::ConstraintViolation` or a parse.
+- `Document::parse_str_with_limits` takes a caller-chosen `XmlLimits`; `default_limits()` (64 MiB, depth 128, 2 000 000 elements, 64 KiB per attribute) is what `parse_str` applies.
+
 ## Dependencies
 
 Workspace sibling requirements move to the new epochs of this wave:

@@ -44,6 +44,11 @@ DASH and LL-DASH `type="dynamic"` MPDs now carry `MPD@publishTime` (ISO/IEC 2300
 
 Internal changes with no public effect (shared helpers replacing private copies, README as crate-root docs, `Clone`/`PartialEq`/`Eq` derives on error enums where every field allows it) are listed in the CHANGELOG.
 
+## XML (#1716)
+
+- The Smooth output writer uses the shared `broadcast_common::xml_chars` writer helpers; output is byte-identical (golden test unchanged).
+- Smooth-pull protection detection follows `transmux`: only a `<Protection>` element in no namespace counts.
+
 ## Dependencies
 
 Workspace sibling requirements move to the new epochs of this wave:

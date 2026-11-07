@@ -52,6 +52,10 @@ Removing the deprecated `Timestamp::checked_add_nanos` (it always saturated and 
 
 - `Stage::next_deadline`, `Stage::on_deadline` and `Stage::demand` have default bodies (no deadline, nothing to do, `Demand::default()`), so a stage that only reacts to `feed`/`finish` omits them; the trivial overrides in `transmux` are gone.
 
+## XML writer helpers (#1716)
+
+- `xml_chars::{XmlWriter, new_writer, write_declaration, start_tag, open_element, empty_element, close_element, write_text, text_element, finish_document, NO_ATTRS}`: one two-space-indenting quick-xml writer shared by the transmux, multimux and dvb-mabr manifest writers. Every attribute value and text node is escaped by quick-xml.
+
 ## Dependencies
 
 No workspace sibling requirement changes epoch.

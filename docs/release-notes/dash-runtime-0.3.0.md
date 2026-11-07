@@ -32,6 +32,10 @@ The MPD reader's attribute loop is `broadcast_common::xml_chars::read_attributes
 
 Internal changes with no public effect (shared helpers replacing private copies, README as crate-root docs, `Clone`/`PartialEq`/`Eq` derives on error enums where every field allows it) are listed in the CHANGELOG.
 
+## Shared XML bounds (#1716)
+
+- The MPD tree reader counts through `broadcast_common::xml_chars::XmlBudget`. The public `Limits` and its defaults are unchanged; `Limits::xml_limits()` exposes them as `XmlLimits`, and `From<XmlLimit> for Limit` maps a tripped bound.
+
 ## Dependencies
 
 Workspace sibling requirements move to the new epochs of this wave:
