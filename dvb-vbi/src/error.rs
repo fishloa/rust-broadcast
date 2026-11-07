@@ -8,23 +8,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
     /// A `data_unit_length` field did not match the bytes the typed payload
     /// occupies (EN 301 775 §4.4, Table 1).
     #[error("invalid data_unit_length {length} for data_unit_id {id:#04X}: {reason}")]
@@ -36,26 +24,13 @@ pub enum Error {
         /// Why it is invalid.
         reason: &'static str,
     },
-    /// A field value did not fit in its wire bit-width (e.g. `line_offset`
-    /// beyond 5 bits, `first_pixel_position` beyond 16 bits).
-    #[error("field {what} value {value} does not fit in {bits} bits")]
-    FieldTooWide {
-        /// The over-wide field name.
-        what: &'static str,
-        /// The offending value.
-        value: u32,
-        /// The field width on the wire.
-        bits: u32,
-    },
+    /// A value did not fit the wire field it is written to.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
     /// A field value violated a spec constraint (e.g. `n_pixels` must be > 0,
     /// ETSI EN 301 775 §4.9.2).
-    #[error("invalid field {what}: {reason}")]
-    InvalidField {
-        /// The field name.
-        what: &'static str,
-        /// Why it is invalid.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
     /// A [`DataUnit`](crate::DataUnit)'s `data_unit_id` does not match the
     /// kind of its typed payload (ETSI EN 301 775 §4.4.2, Table 3), so
     /// serializing it would write a mislabelled data unit.
@@ -66,23 +41,4 @@ pub enum Error {
         /// The payload kind that was supplied.
         payload: &'static str,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

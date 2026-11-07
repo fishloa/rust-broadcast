@@ -112,11 +112,13 @@ fn truncating_the_fixture_fails_to_parse() {
     data.pop();
     assert_eq!(
         DataField::parse(&data).err(),
-        Some(dvb_vbi::Error::BufferTooShort {
-            need: 5,
-            have: 4,
-            what: "data_unit body"
-        }),
+        Some(dvb_vbi::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 5,
+                have: 4,
+                what: "data_unit body"
+            }
+        )),
         "a truncated data unit must be rejected"
     );
 }
