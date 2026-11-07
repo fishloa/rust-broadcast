@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn target_region_tsduck_empty() {
-        let bytes = from_hex("7f0409666f6f");
+        let bytes = test_fixtures::hex_bytes("7f0409666f6f");
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
             ExtensionBody::TargetRegion(b) => {
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn target_region_tsduck_full() {
-        let bytes = from_hex("7f1509626172f8fd666f6f12fa3456ff616263789abcde");
+        let bytes = test_fixtures::hex_bytes("7f1509626172f8fd666f6f12fa3456ff616263789abcde");
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
             ExtensionBody::TargetRegion(b) => {

@@ -760,7 +760,7 @@ mod tests {
 
     #[test]
     fn tsduck_t2_reference() {
-        let bytes = from_hex(
+        let bytes = test_fixtures::hex_bytes(
             "7f240456789a13cd12340000678a0c075bcd1505e30a780fd22c320a1217ea6406fa0aa9fc59",
         );
         let d = ExtensionDescriptor::parse(&bytes).unwrap();

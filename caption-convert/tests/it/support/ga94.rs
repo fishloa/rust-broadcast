@@ -155,10 +155,7 @@ pub fn parse_reference(text: &str) -> Vec<(u64, Vec<u8>)> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| {
             let (pts, hex) = l.split_once(' ').expect("`<pts> <hex>` line");
-            let bytes = (0..hex.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
-                .collect();
+            let bytes = test_fixtures::hex_bytes(hex);
             (pts.parse().expect("pts"), bytes)
         })
         .collect()

@@ -63,11 +63,7 @@ mod tests {
     use alloc::string::ToString;
 
     fn splice_2002() -> alloc::vec::Vec<u8> {
-        let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
-        (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect()
+        test_fixtures::read("scte35/splice-insert-2002.bin")
     }
 
     #[test]

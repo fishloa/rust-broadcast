@@ -31,10 +31,7 @@ fn load_frames() -> Vec<(u64, Vec<u8>)> {
             .parse()
             .expect("pts is a u64");
         let hex = parts.next().expect("hex field");
-        let bytes = (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("valid hex byte"))
-            .collect();
+        let bytes = hex::decode(hex).expect("valid hex");
         frames.push((pts, bytes));
     }
     frames

@@ -314,16 +314,9 @@ mod tests {
     /// rejects every frame of that capture.
     const SHAKA_REAL_FRAME: &str = "5400fc94aefd8080ff4527fe9800fe0000fe0116fe1100fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000ff";
 
-    fn unhex(h: &str) -> Vec<u8> {
-        (0..h.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
-            .collect()
-    }
-
     #[test]
     fn real_a53_header_with_clear_em_data_flag_parses_and_round_trips() {
-        let bytes = unhex(SHAKA_REAL_FRAME);
+        let bytes = test_fixtures::hex_bytes(SHAKA_REAL_FRAME);
         let cc = CcData::parse(&bytes).unwrap();
         assert!(!cc.process_em_data_flag);
         assert!(cc.process_cc_data_flag);

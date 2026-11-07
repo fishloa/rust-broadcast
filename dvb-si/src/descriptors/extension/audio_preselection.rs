@@ -456,7 +456,7 @@ mod tests {
         // optional fields present (lang "foo", message_id 0xAB, 2 aux tags, 5
         // future_extension bytes).
         let hex = "7f1319100a5013af666f6fab400102052589632147";
-        let bytes = from_hex(hex);
+        let bytes = test_fixtures::hex_bytes(hex);
         let d = ExtensionDescriptor::parse(&bytes).unwrap_or_else(|e| panic!("parse {hex}: {e:?}"));
         assert_eq!(
             d.kind(),

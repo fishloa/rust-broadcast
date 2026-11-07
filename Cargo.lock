@@ -574,6 +574,7 @@ dependencies = [
  "broadcast-common",
  "cc-data",
  "dvb-vbi",
+ "hex",
  "mpeg-pes",
  "mpeg-ts",
  "serde",

@@ -1070,11 +1070,7 @@ mod tests {
 
         // Parse a real SCTE-35 splice (a program-splice, so `at` is None) and
         // publish it as a Media-anchored event at the start of segment 1.
-        let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
-        let splice_bytes: Vec<u8> = (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect();
+        let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
         let mut timeline = timed_metadata::Timeline::new();
         let ev = timeline.push_scte35(&splice_bytes).unwrap();
         writer.publish_event(
@@ -1152,11 +1148,7 @@ mod tests {
         // own tests use, then publish it twice at different anchors — the
         // id-less shape (`TimedEvent::id == None`) that a `time_signal`
         // produces.
-        let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
-        let sb: Vec<u8> = (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect();
+        let sb = test_fixtures::read("scte35/splice-insert-2002.bin");
         let mut timeline = timed_metadata::Timeline::new();
         let mut ev = timeline.push_scte35(&sb).unwrap();
         ev.id = None; // force the id-less shape under test
@@ -1573,11 +1565,7 @@ mod tests {
             pts_90k: 0,
             utc_epoch_ms: 1_000_000_000_000,
         });
-        let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
-        let splice_bytes: Vec<u8> = (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect();
+        let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
         let mut timeline = timed_metadata::Timeline::new();
         let ev = timeline.push_scte35(&splice_bytes).unwrap();
         writer.publish_event(

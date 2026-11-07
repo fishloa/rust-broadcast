@@ -520,7 +520,7 @@ mod tests {
         // conformant High-profile encoder is free to do. Must parse (not
         // error), leave the trailer fields `None` (not an invented default),
         // and round-trip byte-identically (no trailer grown back).
-        let body = hex_to_bytes(
+        let body = test_fixtures::hex_bytes(
             "0164001effe100196764001eacd940a02ff9610000030001000003003c8f162d9601000568ebecb22c",
         );
         assert_eq!(body.len(), 41, "fixture avcC body is 41 bytes per #952");
@@ -545,14 +545,6 @@ mod tests {
             serialized, body,
             "a trailer-less High-profile avcC must round-trip without growing one back"
         );
-    }
-
-    /// Decode a hex string into bytes (test-only helper).
-    fn hex_to_bytes(hex: &str) -> Vec<u8> {
-        (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect()
     }
 
     #[test]

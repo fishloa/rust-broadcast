@@ -1361,7 +1361,7 @@ mod tests {
         let vectors: [(&str, u8); 2] =
             [("7f02055f", 0x05), ("7f0d05afff94ac175f68831d8d99ad", 0x05)];
         for (hex, _ext) in vectors {
-            let bytes = from_hex(hex);
+            let bytes = test_fixtures::hex_bytes(hex);
             let d =
                 ExtensionDescriptor::parse(&bytes).unwrap_or_else(|e| panic!("parse {hex}: {e:?}"));
             let mut out = vec![0u8; d.serialized_len()];

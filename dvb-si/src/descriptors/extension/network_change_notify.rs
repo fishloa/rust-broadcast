@@ -411,8 +411,9 @@ mod tests {
     /// and verify byte-exact match.
     #[test]
     fn network_change_notify_tsduck_byte_exact() {
-        let bytes =
-            from_hex("7f230712340056781cabcde5cc2312340852030281ef67e5e20234561132453b83deadbeef");
+        let bytes = test_fixtures::hex_bytes(
+            "7f230712340056781cabcde5cc2312340852030281ef67e5e20234561132453b83deadbeef",
+        );
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.kind(), Some(ExtensionTag::NetworkChangeNotify));
 
