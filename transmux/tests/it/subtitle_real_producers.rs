@@ -214,13 +214,6 @@ fn oracle(stem: &str) -> Vec<Pkt> {
         .collect()
 }
 
-/// The checksum gpac prints for each packet is its `gf_crc_32`, the MPEG-2
-/// CRC-32 (poly 0x04C11DB7, init all-ones, no reflection) - the workspace's
-/// one implementation.
-fn crc32_gpac(data: &[u8]) -> u32 {
-    broadcast_common::crc32_mpeg2::compute(data)
-}
-
 fn ours(track: &Track) -> Vec<Pkt> {
     track
         .samples
@@ -230,7 +223,7 @@ fn ours(track: &Track) -> Vec<Pkt> {
             cts: s.pts.expect("pts"),
             dur: u64::from(s.duration.expect("duration")),
             size: s.data.len(),
-            crc32: crc32_gpac(&s.data),
+            crc32: broadcast_common::crc32_mpeg2::compute(&s.data),
         })
         .collect()
 }
