@@ -185,7 +185,7 @@ fn late_track_reaches_a_streaming_demux_that_joined_before_it() {
             added.push(spec.config.clone());
         }
     }
-    assert!(added.iter().any(|c| is_avc(c)), "video announced");
+    assert!(added.iter().any(is_avc), "video announced");
     assert!(
         added
             .iter()
