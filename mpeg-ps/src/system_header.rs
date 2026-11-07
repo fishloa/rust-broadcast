@@ -170,13 +170,7 @@ impl<'a> Parse<'a> for SystemHeader {
             let stream_id = body[pos];
             if stream_id == EXT_STREAM_ID {
                 // Extension form (6 bytes)
-                if pos + 6 > body.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 6,
-                        have: body.len(),
-                        what: "system_header extended stream entry",
-                    });
-                }
+                need_in(body, pos + 6, "system_header extended stream entry")?;
                 // byte pos+1: '11' + '000000'(6 bits)
                 if body[pos + 1] & 0xC0 != 0xC0 {
                     return Err(Error::BadStreamIdExtensionPrefix(body[pos + 1]));
@@ -205,13 +199,7 @@ impl<'a> Parse<'a> for SystemHeader {
                 pos += 6;
             } else {
                 // Normal form (3 bytes)
-                if pos + 3 > body.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 3,
-                        have: body.len(),
-                        what: "system_header stream entry",
-                    });
-                }
+                need_in(body, pos + 3, "system_header stream entry")?;
                 // byte pos+1: '11' + scale(1) + size[12:7](5)
                 if body[pos + 1] & 0xC0 != 0xC0 {
                     return Err(Error::BadMarker("P-STD_buffer_bound_scale prefix"));

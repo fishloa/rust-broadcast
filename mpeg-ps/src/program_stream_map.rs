@@ -188,13 +188,7 @@ fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> 
         let es_info_length = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
         let entry_hdr_end = pos + 4;
         let entry_end = entry_hdr_end + es_info_length;
-        if entry_end > data.len() {
-            return Err(Error::BufferTooShort {
-                need: entry_end,
-                have: data.len(),
-                what: "elementary_stream_map entry descriptors",
-            });
-        }
+        need_in(data, entry_end, "elementary_stream_map entry descriptors")?;
 
         let (stream_id_extension, descriptors) = if elementary_stream_id == 0xFD && !single_flag {
             // Extension form with pseudo descriptor
