@@ -635,12 +635,21 @@ mod tests {
         assert!(two.prepend_string(0xFF).is_none());
 
         let unterminated = cit(b"a\x00b");
-        assert_eq!(unterminated.prepend_string(1).map(|t| t.raw()), Some(&b"b"[..]));
+        assert_eq!(
+            unterminated.prepend_string(1).map(|t| t.raw()),
+            Some(&b"b"[..])
+        );
         assert!(unterminated.prepend_string(2).is_none());
 
         let empty_first = cit(b"\x00x\x00");
-        assert_eq!(empty_first.prepend_string(0).map(|t| t.raw()), Some(&b""[..]));
-        assert_eq!(empty_first.prepend_string(1).map(|t| t.raw()), Some(&b"x"[..]));
+        assert_eq!(
+            empty_first.prepend_string(0).map(|t| t.raw()),
+            Some(&b""[..])
+        );
+        assert_eq!(
+            empty_first.prepend_string(1).map(|t| t.raw()),
+            Some(&b"x"[..])
+        );
 
         assert!(cit(b"").prepend_string(0).is_none());
 

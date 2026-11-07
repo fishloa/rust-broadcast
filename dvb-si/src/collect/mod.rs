@@ -759,9 +759,7 @@ mod tests {
 
     const LCN_DESCRIPTOR: [u8; 6] = [0x83, 4, 0x00, 0x01, 0xFC, 0x05];
 
-    fn only_descriptor<'a, 'b>(
-        loop_: &'b ParsedDescriptorLoop<'a>,
-    ) -> &'b AnyDescriptor<'a> {
+    fn only_descriptor<'a, 'b>(loop_: &'b ParsedDescriptorLoop<'a>) -> &'b AnyDescriptor<'a> {
         assert_eq!(loop_.descriptors().len(), 1);
         loop_.descriptors()[0].as_ref().unwrap()
     }
@@ -794,7 +792,16 @@ mod tests {
 
     #[test]
     fn sdt_with_registry_types_the_opted_in_private_descriptor() {
-        let mut payload = vec![0, 1, 0xFF, 0x00, 0x07, 0xFC, 0x80, LCN_DESCRIPTOR.len() as u8];
+        let mut payload = vec![
+            0,
+            1,
+            0xFF,
+            0x00,
+            0x07,
+            0xFC,
+            0x80,
+            LCN_DESCRIPTOR.len() as u8,
+        ];
         payload.extend_from_slice(&LCN_DESCRIPTOR);
         let set = complete_set(&long_section(0x42, 7, &payload));
         let registry = lcn_registry();
@@ -816,7 +823,23 @@ mod tests {
     #[test]
     fn eit_with_registry_types_the_opted_in_private_descriptor() {
         let mut payload = vec![
-            0, 1, 0, 2, 0, 0x4E, 0x00, 0x09, 0xE4, 0x09, 0x12, 0x34, 0x56, 0x00, 0x01, 0x00, 0x80,
+            0,
+            1,
+            0,
+            2,
+            0,
+            0x4E,
+            0x00,
+            0x09,
+            0xE4,
+            0x09,
+            0x12,
+            0x34,
+            0x56,
+            0x00,
+            0x01,
+            0x00,
+            0x80,
             LCN_DESCRIPTOR.len() as u8,
         ];
         payload.extend_from_slice(&LCN_DESCRIPTOR);

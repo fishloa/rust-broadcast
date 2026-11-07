@@ -143,9 +143,7 @@ mod tests {
         let t = MjdBcdTime::from_datetime(dt).unwrap();
         assert_eq!(t.raw(), [0xEA, 0x29, 0x12, 0x34, 0x56]);
         assert_eq!(t.to_datetime(), Some(dt));
-        let far_future = chrono::Utc
-            .with_ymd_and_hms(9999, 12, 31, 0, 0, 0)
-            .unwrap();
+        let far_future = chrono::Utc.with_ymd_and_hms(9999, 12, 31, 0, 0, 0).unwrap();
         assert!(matches!(
             MjdBcdTime::from_datetime(far_future),
             Err(Error::ValueOutOfRange { .. })

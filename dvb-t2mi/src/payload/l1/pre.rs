@@ -201,6 +201,27 @@ impl L1Pre {
         Ok(buf)
     }
 
+    /// Parse the 21-byte info block and validate the 4-byte CRC-32 that follows
+    /// it; the inverse of [`serialize_with_crc`](Self::serialize_with_crc).
+    ///
+    /// The CRC is read from the fixed offset `bytes[21..25]` and computed over
+    /// the received info block; trailing bytes after the 25 are ignored.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::BufferTooShort`] if `bytes` is shorter than 25 bytes;
+    /// [`crate::Error::CrcMismatch`] if the CRC does not match.
+    pub fn parse_with_crc(bytes: &[u8]) -> crate::error::Result<L1Pre> {
+        need_in(bytes, L1PRE_WITH_CRC_BYTES, "L1Pre with CRC")?;
+        let (info, crc) = bytes[..L1PRE_WITH_CRC_BYTES].split_at(L1PRE_BYTES);
+        let expected = u32::from_be_bytes([crc[0], crc[1], crc[2], crc[3]]);
+        let computed = broadcast_common::crc32_mpeg2::compute(info);
+        if computed != expected {
+            return Err(crate::Error::CrcMismatch { computed, expected });
+        }
+        L1Pre::parse(info)
+    }
+
     /// Serialise to a 25-byte buffer: 21-byte info block + 4-byte CRC.
     ///
     /// # Errors
@@ -408,6 +429,60 @@ mod tests {
         let pre = synthetic_pre();
         let bytes = pre.serialize_with_crc().unwrap();
         assert_eq!(bytes.len(), L1PRE_WITH_CRC_BYTES);
+    }
+
+    #[test]
+    fn parse_with_crc_inverts_serialize_with_crc() {
+        let pre = synthetic_pre();
+        let bytes = pre.serialize_with_crc().unwrap();
+        assert_eq!(L1Pre::parse_with_crc(&bytes).unwrap(), pre);
+    }
+
+    #[test]
+    fn parse_with_crc_rejects_a_corrupted_crc_with_both_values() {
+        let pre = synthetic_pre();
+        let mut bytes = pre.serialize_with_crc().unwrap();
+        let expected_crc = pre.crc32().unwrap();
+        bytes[L1PRE_BYTES] ^= 0xFF;
+        let flipped = u32::from_be_bytes([
+            bytes[L1PRE_BYTES],
+            bytes[L1PRE_BYTES + 1],
+            bytes[L1PRE_BYTES + 2],
+            bytes[L1PRE_BYTES + 3],
+        ]);
+        assert_eq!(
+            L1Pre::parse_with_crc(&bytes),
+            Err(crate::Error::CrcMismatch {
+                computed: expected_crc,
+                expected: flipped,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_with_crc_rejects_a_corrupted_info_block() {
+        let pre = synthetic_pre();
+        let mut bytes = pre.serialize_with_crc().unwrap();
+        bytes[0] ^= 0x80;
+        assert!(matches!(
+            L1Pre::parse_with_crc(&bytes),
+            Err(crate::Error::CrcMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn parse_with_crc_ignores_trailing_bytes_and_rejects_short_input() {
+        let pre = synthetic_pre();
+        let mut bytes = pre.serialize_with_crc().unwrap();
+        assert!(matches!(
+            L1Pre::parse_with_crc(&bytes[..L1PRE_WITH_CRC_BYTES - 1]),
+            Err(crate::Error::BufferTooShort {
+                need: L1PRE_WITH_CRC_BYTES,
+                ..
+            })
+        ));
+        bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+        assert_eq!(L1Pre::parse_with_crc(&bytes).unwrap(), pre);
     }
 
     #[test]
