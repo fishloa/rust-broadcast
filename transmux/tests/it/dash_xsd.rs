@@ -110,6 +110,7 @@ fn dash_mpds_validate_against_iso_schema() {
             DashPackager {
                 dynamic: true,
                 availability_start_time: Some("2026-01-01T00:00:00Z".into()),
+                publish_time: Some("2026-01-01T00:00:00Z".into()),
                 ..DashPackager::default()
             },
         ),

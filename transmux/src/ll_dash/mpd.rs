@@ -78,6 +78,9 @@ impl LlDashPackager {
     /// Build an LL-DASH packager. `availability_start_time` is the wall-clock
     /// `MPD@availabilityStartTime` (ISO-8601 UTC). The `availabilityTimeOffset`
     /// is derived as `segment_duration_secs − chunk_duration_secs`.
+    /// `MPD@publishTime` (mandatory for a dynamic MPD, ISO/IEC 23009-1 §5.3.1.2
+    /// Table 3) starts equal to `availability_start_time`; set
+    /// `base.publish_time` to a later value for every updated MPD.
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if the durations are not positive/finite, or the
@@ -103,9 +106,11 @@ impl LlDashPackager {
                 "chunk_duration_secs must not exceed segment_duration_secs",
             ));
         }
+        let availability_start_time = availability_start_time.into();
         let base = DashPackager {
             dynamic: true,
-            availability_start_time: Some(availability_start_time.into()),
+            publish_time: Some(availability_start_time.clone()),
+            availability_start_time: Some(availability_start_time),
             ..DashPackager::default()
         };
         Ok(Self {
@@ -150,7 +155,8 @@ impl Package for LlDashPackager {
     /// Render the LL-DASH MPD for `media`.
     ///
     /// # Errors
-    /// Propagates [`DashPackager`] errors (e.g. empty track list).
+    /// Propagates [`DashPackager`] errors (e.g. empty track list, or no
+    /// `base.publish_time`: the LL-DASH MPD is always `dynamic`).
     fn package(&mut self, media: &Media) -> Result<String> {
         let base_xml = self.base.package(media)?;
         self.inject_ll(&base_xml)

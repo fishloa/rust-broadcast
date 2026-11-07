@@ -78,6 +78,7 @@ fn dash_mpd_escapes_caller_strings_and_round_trips() {
     let mut pkg = DashPackager {
         profiles: SPECIALS.to_string(),
         availability_start_time: Some(SPECIALS.to_string()),
+        publish_time: Some(SPECIALS.to_string()),
         dynamic: true,
         ..DashPackager::default()
     };

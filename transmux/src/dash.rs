@@ -31,7 +31,8 @@
 //! [`DashPackager::time_shift_buffer_depth`],
 //! [`DashPackager::suggested_presentation_delay`]) are emitted verbatim
 //! (caller-supplied ISO-8601 / xs:duration strings) when present, and omitted
-//! otherwise. `mediaPresentationDuration` (VOD-only, §5.3.1.2) is never emitted
+//! otherwise, except `publishTime`, which Table 3 makes mandatory for a
+//! dynamic MPD: rendering one without it fails with [`Error::InvalidField`]. `mediaPresentationDuration` (VOD-only, §5.3.1.2) is never emitted
 //! for a dynamic MPD.
 //!
 //! # AdaptationSet content (§5.3.3)
@@ -95,6 +96,7 @@ use core::time::Duration;
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
+use broadcast_common::error::InvalidField;
 use crate::media::{Media, Track};
 use crate::pipeline::{CodecConfig, TrackSpec};
 use crate::sps::rfc6381_avc1;
@@ -436,7 +438,8 @@ pub struct DashPackager {
     /// Optional `MPD@availabilityStartTime` (ISO-8601 UTC), live only
     /// (ISO/IEC 23009-1 §5.3.1.2 Table 3).
     pub availability_start_time: Option<String>,
-    /// Optional `MPD@publishTime` (ISO-8601 UTC), live only (§5.3.1.2 Table 3).
+    /// `MPD@publishTime` (ISO-8601 UTC): required when `dynamic` is set, ignored for
+    /// static (§5.3.1.2 Table 3).
     pub publish_time: Option<String>,
     /// Optional `MPD@minimumUpdatePeriod` (xs:duration), live only
     /// (§5.3.1.2 Table 3).
@@ -827,6 +830,13 @@ impl DashPackager {
         let mut writer = new_writer();
         let w = &mut writer;
         declaration(w);
+
+        if self.dynamic && self.publish_time.is_none() {
+            return Err(Error::InvalidField(InvalidField {
+                field: "MPD@publishTime",
+                reason: "shall be present for MPD@type='dynamic' (ISO/IEC 23009-1 §5.3.1.2 Table 3)",
+            }));
+        }
 
         // --- MPD (root) ---
         let mut mpd_attrs = alloc::vec![
