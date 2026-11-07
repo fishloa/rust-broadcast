@@ -11,6 +11,10 @@
 
 use crate::descriptors::{SegmentationDescriptor, SegmentationTypeId, SegmentationUpidType};
 
+/// Maximum DVB DAS `splice_info_section()` length in bytes when carried directly
+/// on a TS PID (§5.3.4.2, per SCTE 35).
+pub const MAX_SECTION_LEN_TS: usize = 4096;
+
 /// `segmentation_upid_type` mandated for the DVB-TA `segmentation_descriptor()`
 /// profile (§5.3.5.10): `0x0F` (URI, IETF RFC 3986).
 pub const PROFILE_UPID_TYPE: SegmentationUpidType = SegmentationUpidType::Uri;
@@ -198,5 +202,10 @@ mod tests {
                 .to_u8(),
             0x37
         );
+    }
+
+    #[test]
+    fn max_section_len_ts_is_the_4096_byte_das_limit() {
+        assert_eq!(MAX_SECTION_LEN_TS, 4096);
     }
 }
