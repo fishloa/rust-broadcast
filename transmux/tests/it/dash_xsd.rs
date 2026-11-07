@@ -162,11 +162,11 @@ fn dash_mpds_validate_against_iso_schema() {
         validate(&schema, &format!("dash-{name}"), &mpd);
     }
 
-    let plain = crate::common::ll_packager(2.0, 0.5, 3000);
-    let rate = crate::common::ll_packager(4.0, 1.0, 5000).with_playback_rate(0.96, 1.04);
-    let utc = crate::common::ll_packager(2.0, 0.5, 3000)
+    let plain = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let rate = crate::ll_packager::ll_packager(4.0, 1.0, 5000).with_playback_rate(0.96, 1.04);
+    let utc = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
         .with_utc_timing(UTCTIMING_HTTP_HEAD_2014, "https://time.example/x?a=1&b=2");
-    let mut timeline = crate::common::ll_packager(2.0, 0.5, 3000);
+    let mut timeline = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
     timeline.base.addressing = Addressing::Timeline;
     timeline.base.segments = timeline_segments(&media);
     for (name, mut pkg) in [

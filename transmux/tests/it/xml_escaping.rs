@@ -101,7 +101,8 @@ fn dash_mpd_escapes_caller_strings_and_round_trips() {
 #[test]
 fn ll_dash_utc_timing_escapes_scheme_and_value() {
     let media = demux_media();
-    let mut pkg = crate::common::ll_packager(2.0, 0.5, 3000).with_utc_timing(SPECIALS, SPECIALS);
+    let mut pkg =
+        crate::ll_packager::ll_packager(2.0, 0.5, 3000).with_utc_timing(SPECIALS, SPECIALS);
     let xml = pkg.package(&media).expect("LL MPD");
 
     assert!(
@@ -119,7 +120,7 @@ fn ll_dash_utc_timing_escapes_scheme_and_value() {
         Some(SPECIALS)
     );
     // The registered scheme still round-trips untouched.
-    let mut pkg = crate::common::ll_packager(2.0, 0.5, 3000)
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
         .with_utc_timing(UTCTIMING_HTTP_HEAD_2014, "https://t.example/x?a=1&b=2");
     let xml = pkg.package(&media).expect("LL MPD");
     assert_eq!(
@@ -133,7 +134,7 @@ fn ll_dash_rewrite_preserves_base_mpd_attribute_escaping() {
     // The LL rewrite re-reads the base MPD: an escaped `profiles` must come out
     // exactly as the base writer produced it (no double escaping).
     let media = demux_media();
-    let mut pkg = crate::common::ll_packager(2.0, 0.5, 3000);
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
     pkg.base.profiles = SPECIALS.to_string();
     let xml = pkg.package(&media).expect("LL MPD");
     assert!(

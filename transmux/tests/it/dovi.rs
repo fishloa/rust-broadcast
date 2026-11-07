@@ -389,7 +389,7 @@ fn p5_dash_codecs_name_the_dvh1_sample_entry() {
         "DASH codecs {:?} must contain {expected}",
         codecs_attrs(&mpd)
     );
-    let mut ll = crate::common::ll_packager(2.0, 0.5, 3000);
+    let mut ll = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
     let ll_mpd = ll.package(&media).unwrap();
     assert!(codecs_attrs(&ll_mpd).contains(&expected));
 }
@@ -428,7 +428,7 @@ fn assert_companion_dolby_set(
         vec![vec![base.clone()], vec![dv.clone()]],
         "{mpd}"
     );
-    let mut ll = crate::common::ll_packager(2.0, 0.5, 3000);
+    let mut ll = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
     let ll_mpd = ll.package(&media).unwrap();
     assert!(adaptation_set_codecs(&ll_mpd).contains(&vec![dv]));
 }
