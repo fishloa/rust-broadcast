@@ -12,7 +12,11 @@ Scans every tracked text file outside private/ and fails when:
      fixtures/golden/<topic>/), `docs/specs/`, `PRIVATE-MAP`, or
      `.test-streams` outside the fetch script;
   h. a `../fixtures/...` citation, or a literal `test_fixtures::path|read|
-     read_to_string("<topic>/<file>")` argument, does not resolve.
+     read_to_string("<topic>/<file>")` argument, does not resolve;
+  i. a `<member>/(src|tests|examples|benches|docs)/...` or bare
+     `(src|tests|examples|benches|docs)/...` path to a source, script, doc or
+     manifest file named in a comment or document does not exist (string
+     literals of .rs/.py files are skipped; those are exercised by tests).
 """
 
 import fnmatch
@@ -78,6 +82,12 @@ RELATIVE_FIXTURE_CITE = re.compile(
 FIXTURE_CALL = re.compile(
     r"test_fixtures::(?:path|read|read_to_string)\(\s*&?\"([^\"{}\\]+)\"\s*\)"
 )
+PATH_CITE = re.compile(
+    r"(?<![\w./-])((?:[\w+-]+/)*(?:src|tests|examples|benches|docs)/(?:[\w.+-]+/)*[\w.+-]+"
+    r"\.(?:rs|py|md|toml|sh|yml|yaml|json|mpd|csv))"
+)
+CRATE_RELATIVE_ROOTS = ("src", "tests", "examples", "benches", "docs")
+EXTERNAL_PATH_DOCS = {"docs/migration-notes-downstream.md"}
 GLOB_CHARS = set("*?[")
 RETIRED_EXEMPT = {
     "docs/FIXTURES.md",
@@ -483,6 +493,23 @@ def main() -> int:
                     errors.append(
                         f"{rel}: test_fixtures argument resolves in neither fixtures/ nor private/fixtures/: {cite}"
                     )
+
+        # i. source/test/doc/manifest paths named in comments and documents
+        if rel not in RETIRED_EXEMPT and rel not in EXTERNAL_PATH_DOCS:
+            for m in PATH_CITE.finditer(text):
+                cite = m.group(1)
+                first = cite.split("/")[0]
+                if cite.startswith(("private/", "docs/release-notes/")):
+                    continue
+                if first not in CRATE_RELATIVE_ROOTS and first not in WORKSPACE_MEMBERS and first != "tools":
+                    continue
+                if spans and in_spans(m.start(1), spans):
+                    continue
+                bases = [".", crate, d]
+                if first in CRATE_RELATIVE_ROOTS and first != "docs":
+                    bases += sorted(WORKSPACE_MEMBERS)
+                if not cite_resolves(cite, bases, present, present_dirs):
+                    errors.append(f"{rel}: path does not exist: {cite}")
 
         # c. markdown links into private/
         for m in MD_LINK.finditer(text):

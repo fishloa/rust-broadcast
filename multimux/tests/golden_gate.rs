@@ -12,7 +12,7 @@
 //!
 //! # Why the real fixture, not a synthetic SPS/PPS
 //!
-//! `tests/glass_to_glass.rs` (#717 slice 5's own acceptance test) feeds its
+//! `multimux/tests/it/glass_to_glass.rs` (#717 slice 5's own acceptance test) feeds its
 //! origin a placeholder AVC config with a truncated, non-conformant SPS/PPS
 //! (`dummy_avc_config`) — fine for its purpose (proving sub-second latency
 //! and byte-identical sample round-trip, both checked in this crate without

@@ -96,7 +96,7 @@ pub async fn bind_udp(
     // SO_REUSEPORT: use socket2's OWN target gate so this can never fail to
     // build where socket2's `set_reuse_port` is absent (solaris/illumos/
     // cygwin/nuttx/wasi, or a build without socket2's `all` feature) — see
-    // socket2 `src/sys/unix.rs`'s cfg on `set_reuse_port`. Elsewhere the
+    // socket2's cfg on `set_reuse_port`. Elsewhere the
     // option is ignored, not mis-set.
     #[cfg(not(any(
         target_os = "solaris",

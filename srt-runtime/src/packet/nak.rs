@@ -18,7 +18,7 @@ use super::{Error, F_BIT, Result, SEQ_NUMBER_MASK, be32};
 
 /// One decoded entry of a NAK loss list (Appendix A). Data-carrying ADT — not
 /// a spec/field label, so it is exempt from the `name()`/`Display`
-/// convention (see `tests/label_coverage.rs`).
+/// convention (see `workspace-guards/tests/guards/label.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

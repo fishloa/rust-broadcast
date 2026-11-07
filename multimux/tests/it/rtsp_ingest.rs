@@ -68,7 +68,7 @@ use transmux::pipeline::CodecConfig;
 /// A known-good H.264 `sprop-parameter-sets` (SPS + PPS) — the same vector
 /// `avc_config_from_sprop`/`avc_config_from_fmtp` are unit-tested against
 /// elsewhere in this workspace (transmux/src/rtp_sdp.rs,
-/// multimux/src/source/{rtsp,sdp}.rs, multimux/tests/origin_llhls.rs).
+/// multimux/src/source/{rtsp,sdp}.rs, multimux/tests/it/origin_llhls.rs).
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 
 /// The interleaved RTP channel SETUP negotiates for the sole video media

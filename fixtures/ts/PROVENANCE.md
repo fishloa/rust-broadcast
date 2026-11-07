@@ -107,7 +107,6 @@ b/s` (188 bytes/pkt).
 
 ---
 
-# Merged from fixtures/ts/PROVENANCE.md
 
 # `fixtures/ts/`
 
@@ -140,7 +139,7 @@ Oracle values from ffprobe 8.1.2 and a raw byte scan:
 
 
 
-## Folded note: CODEC-ORACLE.md
+## Codec oracle
 
 # Codec-config fixture oracle
 
@@ -207,7 +206,7 @@ comes from ETSI TS 102 366 Annex F when implementing #426.
 
 
 
-## Folded note: GENERATE.md
+## Regeneration
 
 # Regenerating the codec-config fixtures
 

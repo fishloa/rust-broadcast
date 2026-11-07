@@ -120,7 +120,7 @@ gap on every new crate, all fixed:
 | dvb-simulcrypt | label_coverage; exhaustive error-status drift tables; example index guard; serde smoke test | #316 |
 | dvb-si `association_tag` | clean except missing `USE_DVB_RESERVED_DEFAULT` const | #320 |
 
-Systematic gap: **7 crates lacked `tests/label_coverage.rs`** (enums had
+Systematic gap: **7 crates lacked `workspace-guards/tests/guards/label.rs`** (enums had
 name()+Display but no drift-guard) — now all have one. Every correctness bug got a
 regression test **verified by revert** (fails pre-fix, passes post-fix). Re-audit a
 crate only if its `src/` changed after the fix PR above.

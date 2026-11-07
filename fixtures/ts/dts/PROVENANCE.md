@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: GENERATE.md
+## Regeneration
 
 # `dts-core.ts` — DTS Coherent Acoustics core in MPEG-2 TS
 

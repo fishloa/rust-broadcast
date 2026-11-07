@@ -92,7 +92,7 @@ cargo run -p ttml-subtitle --example from_scratch
 
 - Parse then validate: two independent passes.
 - XML reading and writing go through `quick-xml` only; the serializer generates
-  output from typed fields (no raw passthrough), guarded by `tests/it/no_dom_guard.rs`.
+  output from typed fields (no raw passthrough), guarded by `workspace-guards/tests/guards/no_dom.rs`.
 - Semantic round-trip: parse -> serialize -> re-parse yields an equal document.
 - Public enums are `#[non_exhaustive]`; errors are structured (`thiserror`).
 - `no_std` + `alloc` only for `time` and `error`.

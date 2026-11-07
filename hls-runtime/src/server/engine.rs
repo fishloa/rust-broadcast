@@ -340,7 +340,7 @@ pub struct BlockingQuery {
 /// [`ServedEgress::Request`] for [`HlsOrigin`]: which wire resource is
 /// being asked for. A data-carrying dispatch ADT (matches this crate's
 /// `client::action::Action`/`ResourceId` convention) — see
-/// `tests/label_coverage.rs`'s SKIP list.
+/// `workspace-guards/tests/guards/label.rs`'s SKIP list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HlsRequest {
@@ -373,7 +373,7 @@ pub enum HlsRequest {
 
 /// [`ServedEgress::Body`] for [`HlsOrigin`]: the resolved body, typed by
 /// which [`HlsRequest`] produced it. A data-carrying ADT — see
-/// `tests/label_coverage.rs`'s SKIP list.
+/// `workspace-guards/tests/guards/label.rs`'s SKIP list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HlsBody {

@@ -347,7 +347,7 @@ fixtures/scte35/
 ```
 
 
-## Folded note: README.md
+## Notes
 
 # SCTE-35 fixtures — issue #1039 / #1040
 

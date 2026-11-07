@@ -545,7 +545,7 @@ const FRAME_PERIOD_WINDOW: usize = 5;
 
 /// Codec class recovered from a PMT `stream_type` (used to pick the sample /
 /// config-recovery path). Data-carrying dispatch discriminant, not a spec label
-/// enum — hence no `name()`/`Display` (see `tests/label_coverage.rs` policy).
+/// enum — hence no `name()`/`Display` (see `workspace-guards/tests/guards/label.rs` policy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Codec {
     H264,

@@ -164,7 +164,7 @@ impl Serialize for RepairFecPayloadId {
 /// This is a dispatch enum selecting between two disjoint wire layouts by an
 /// out-of-band bit the caller already knows (the packet's SPI), not itself a
 /// spec/field token — like the workspace's `Any*` dispatch enums, it is
-/// exempt from the #204 label convention (see `tests/label_coverage.rs`'s
+/// exempt from the #204 label convention (see `workspace-guards/tests/guards/label.rs`'s
 /// SKIP list) and does not implement [`broadcast_common::Parse`] directly:
 /// that trait's single-argument `parse(bytes)` signature has no way to carry
 /// the SPI bit the format needs. Use [`RouteFecPayloadId::parse`] instead.

@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: README.md
+## Notes
 
 # `srat` / `AudioSampleEntryV1` fixtures (audit r05-W31)
 

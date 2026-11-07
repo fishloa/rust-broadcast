@@ -251,7 +251,7 @@ validator that flags a conformant playlist is worse than none.
   a finding (`hls-parse-error`, `dash-parse-error`), never a crash.
 - **One reading of the spec.** Legal duplicates are `broadcast_common::ts_dup`
   (shared with `dvb-conformance` and `ts-fix`, issue #956); PCR wrap arithmetic is
-  `clock33` (`tests/clock33_guard.rs`); HLS syntax is `broadcast-hls`.
+  `clock33` (`workspace-guards/tests/guards/clock33.rs`); HLS syntax is `broadcast-hls`.
 - **Independent oracle.** `tests/mediastreamvalidator_oracle.rs` (macOS, skips
   loudly elsewhere) feeds packager output to Apple's `mediastreamvalidator`.
 - **Allocation-bounded.** `CcAnomalyCheck` keeps a fixed 188-byte array per PID,

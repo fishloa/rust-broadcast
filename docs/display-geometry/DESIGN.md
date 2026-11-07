@@ -850,7 +850,7 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
   bit logic) has unit tests for the by-id activation, the geometry-neutral
   change, the SAR-only change, the unseen PPS/SPS binding and the H.265 ids.
   The streaming delivery order and the event's timing fields are pinned on
-  the real captures (`tests/display_change.rs`); a synthetic TS route was not
+  the real captures (`transmux/tests/it/display_change.rs`); a synthetic TS route was not
   used because `TsMux` rewrites the access-unit layout.
 - **The unseen-parameter binding is exercised by the real captures**
   (`stimmungsgarten` 16:11 -> 1:1: the first slate access unit references a

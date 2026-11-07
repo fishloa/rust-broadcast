@@ -1,7 +1,7 @@
 # Story 56b — `SiMux` scheduler (dvb-si `ts` feature)
 
 Delegated brief for the SI multiplex scheduler, the second half of GitHub issue
-**#56**. **Depends on story 56a** (`SectionPacketizer` in `dvb-si/src/mux.rs`)
+**#56**. **Depends on story 56a** (`SectionPacketizer` in `mpeg-ts/src/mux.rs`)
 being merged to `main` first — build on top of it. Self-contained otherwise.
 Touch only the files listed. Do **not** commit.
 
@@ -28,7 +28,7 @@ Touch only the files listed. Do **not** commit.
 
 ## What to build
 
-Extend `dvb-si/src/mux.rs` (same module as `SectionPacketizer`). Caller drives
+Extend `mpeg-ts/src/mux.rs` (same module as `SectionPacketizer`). Caller drives
 time — **no clock dependency** (mirror the rest of the crate's caller-supplied-time
 design). Time is a `core::time::Duration` measured from an arbitrary epoch the
 caller picks (monotonic since start).
@@ -125,6 +125,6 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p dvb-si --all-features --no-deps --locked
 
 ## Boundaries
 
-- Touch only `dvb-si/src/mux.rs` (extend). No changes to `ts.rs`/`demux.rs`/tables.
+- Touch only `mpeg-ts/src/mux.rs` (extend). No changes to `ts.rs`/`demux.rs`/tables.
 - Do **not** redefine the packetizer — build on story 56a's `SectionPacketizer`.
 - Do **not** commit.

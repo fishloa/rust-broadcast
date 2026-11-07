@@ -1,6 +1,6 @@
 # Provenance of the DASH fixtures
 
-Everything under `fixtures/dash/` other than the original `manifest.mpd` family (see "Folded note: README.md" below) was produced in P0 of
+Everything under `fixtures/dash/` other than the original `manifest.mpd` family (see the "Notes" section below) was produced in P0 of
 `docs/dash-runtime/DESIGN.md` by an **external muxer** from a fixture this workspace already owns. No media byte was
 written by hand; the only hand-written documents are the Annex G example MPDs (our own text) and one derived MPD
 (`multiperiod-continuous/`, below).
@@ -164,7 +164,7 @@ file an MPD in a media-bearing directory references exists. `python3 tools/check
 `SHA256SUMS` after an intentional change.
 
 
-## Folded note: README.md
+## Notes
 
 # `fixtures/dash/` — DASH MPD fixtures
 
@@ -172,7 +172,7 @@ file an MPD in a media-bearing directory references exists. `python3 tools/check
   real ffmpeg-generated DASH presentation (`ffmpeg -i fixtures/ts/h264-aac.ts
   -c copy -f dash`), one video and one audio `AdaptationSet`, each
   `Representation` carrying its own `SegmentTemplate` +
-  `SegmentTimeline`. Used by `transmux/tests/dash.rs`, `dash_mpd.rs`,
+  `SegmentTimeline`. Used by `transmux/tests/it/dash.rs`, `dash_mpd.rs`,
   `dash_parse.rs`.
 
 - `manifest-inheritance.mpd` — **derived** from `manifest.mpd` above (same

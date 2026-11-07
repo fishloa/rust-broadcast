@@ -7,7 +7,7 @@ Every file here is either **real encoder/muxer output** (ffmpeg 8.1.2, own work)
 or **derived from a fixture already in this repo**, except one clearly-marked
 synthetic. All are MIT OR Apache-2.0, no copyleft, no third-party redistribution.
 
-Regenerate with the "Folded note: GENERATE.md" section below.
+Regenerate with the "Regeneration" section below.
 
 ## Real muxer/encoder output
 
@@ -64,7 +64,7 @@ These need no new fixture; the prober's tests reference the corpus in place:
 | MXF | `fixtures/mxf/op1a-mpeg2-pcm.mxf`, `fixtures/mxf/smpte-st377/` |
 
 
-## Folded note: GENERATE.md
+## Regeneration
 
 # Regenerating the `container-probe` fixtures
 

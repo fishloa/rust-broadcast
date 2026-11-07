@@ -19,7 +19,7 @@
 //! # Real fixture, not synthetic bytes
 //!
 //! Reuses the exact same real, ffmpeg-encoded fixture and live-paced
-//! producer shape as `hls-runtime/tests/golden_gate.rs`
+//! producer shape as `multimux/tests/golden_gate.rs`
 //! (`fixtures/ts/h264-aac.ts`, 320x240 Main-profile H.264 @ 25 fps, 3.0 s /
 //! 75 frames, demuxed via `TsDemux`) fed through the same real
 //! `transmux::ll_hls::LlHlsSegmenter` that feeds the shared `RouteHandle` in
@@ -28,7 +28,7 @@
 //!
 //! # Skip-clean discipline
 //!
-//! Mirrors `hls-runtime/tests/golden_gate.rs`/`glass_to_glass.rs`: every
+//! Mirrors `multimux/tests/golden_gate.rs`: every
 //! case skips (printing why) rather than failing when `node`, the vendored
 //! `tests/assets/dash.all.min.js`, or the installed
 //! `tests/assets/node_modules/playwright` aren't present -- `cargo nextest`
@@ -95,7 +95,7 @@ fn harness_ready() -> bool {
 }
 
 /// Demux `h264-aac.ts`'s real AVC video track -- same fixture/shape
-/// `hls-runtime/tests/golden_gate.rs` uses, forced onto
+/// `multimux/tests/golden_gate.rs` uses, forced onto
 /// `hls_runtime::server::DEFAULT_TRACK_ID` so the shared store's
 /// filenames (`init-1.mp4`/`seg-1-<N>.m4s`) match what the LL-DASH
 /// `SegmentTemplate` addresses.

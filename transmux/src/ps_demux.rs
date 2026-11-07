@@ -187,7 +187,7 @@ const DEFAULT_FRAME_DURATION: i128 = 3600;
 
 /// Codec class recovered from a `stream_id`. Data-carrying dispatch discriminant,
 /// not a spec label enum — hence no `name()`/`Display` (see the
-/// `tests/label_coverage.rs` policy).
+/// `workspace-guards/tests/guards/label.rs` policy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Codec {
     /// A `stream_id` in the video range (Table 2-22, 0xE0-0xEF). This range

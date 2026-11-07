@@ -1,6 +1,6 @@
 //! One reconnect schedule for every multimux retry, backed by `backon`
 //! (SP1.5). Verified `backon` 1.6.0 facts that shape this wrapper
-//! (`backon/src/backoff/exponential.rs`):
+//! (its `ExponentialBuilder` source):
 //!
 //! 1. `ExponentialBuilder::new()` defaults `max_times: Some(3)` — an
 //!    un-overridden builder stops yielding after 3 attempts, so every

@@ -6,7 +6,7 @@
 //!
 //! Before task 3, no test in this workspace entered through
 //! `serve_with_registry`/`spawn_ingest` with real bytes flowing all the way
-//! to a served HTTP response: `multimux/tests/rtsp_ingest.rs` drives
+//! to a served HTTP response: `multimux/tests/it/rtsp_ingest.rs` drives
 //! `RtspDialer`/`RtspIngestSession` directly, and `origin_llhls.rs`/
 //! `lldash_dashjs.rs` build a `RouteHandle` and feed it by hand, never
 //! referencing `InputSpec` or `serve_with_registry` at all. That is exactly
@@ -175,7 +175,7 @@ async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> Stri
 }
 
 /// Extracts the first `seg-{track}-{seq}.m4s` URI out of a rendered media
-/// playlist body (mirrors `multimux/tests/origin_llhls.rs`'s own helper).
+/// playlist body (mirrors `multimux/tests/it/origin_llhls.rs`'s own helper).
 fn first_segment_uri(playlist: &str) -> &str {
     let start = playlist
         .find("seg-")
@@ -373,7 +373,7 @@ async fn ts_http_dispatch_serves_real_media_end_to_end() {
 /// its full 20 s hang guard elapses (confirmed: rebuilt with the stub in
 /// place, ran `cargo test -p multimux --test dispatch_ingest
 /// rtmp_dispatch_serves_real_media_end_to_end`, saw that exact panic at
-/// `multimux/tests/dispatch_ingest.rs:141`, then reverted). This test proves
+/// `multimux/tests/it/dispatch_ingest.rs:141`, then reverted). This test proves
 /// the *dispatch wiring* (`InputSpec::Rtmp` -> `run_rtmp` -> a real HTTP
 /// response); `multimux/src/source/rtmp.rs`'s own tests separately
 /// mutation-verify the concurrency fix and the first-sample-not-dropped
@@ -637,7 +637,7 @@ mod custom_dispatch_driver_backed {
     /// `poll_until_extinf`'s 20 s hang guard elapses and its own
     /// `panic!("no #EXTINF: line appeared ... dispatched ingest never
     /// produced a closed segment")` fires at
-    /// `multimux/tests/dispatch_ingest.rs:157:13` -- the session demuxes and
+    /// `multimux/tests/it/dispatch_ingest.rs:157:13` -- the session demuxes and
     /// segments the real fixture correctly (nothing else changed), but every
     /// HTTP request resolves `ProgramResolution::NotYetAnnounced` forever
     /// since nothing ever published `SPTS_PROGRAM_ID` into the registry, so

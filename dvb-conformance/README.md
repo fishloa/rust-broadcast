@@ -147,7 +147,7 @@ bytes, deferred).
 - **Single reading of duplicates.** The "two, and only two" legal-duplicate
   rule is `broadcast_common::ts_dup`, shared with `ts-fix` and `media-doctor`
   so the three tools cannot disagree (issue #956).
-- **No 33-bit arithmetic of its own.** `tests/clock33_guard.rs` bans a local
+- **No 33-bit arithmetic of its own.** `workspace-guards/tests/guards/clock33.rs` bans a local
   2^33 / `abs_diff`; PCR/PTS wrap handling is `broadcast_common::clock33`.
 - **Honest gaps over false positives.** An indicator that cannot be computed
   honestly is documented and not emitted rather than approximated.

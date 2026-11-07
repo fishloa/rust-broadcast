@@ -297,7 +297,7 @@ async fn glass_to_glass_sub_second_over_loopback_with_blocking_reload_and_prefet
 // ===========================================================================
 // Non-LL origin: full-segment fallback, over real HTTP via the same
 // `TokioClient` (proving the *adapter*, not just the sans-IO core, handles
-// it — `hls-runtime/tests/origin_loop.rs` already proves the core alone).
+// it — `hls-runtime/tests/it/origin_loop.rs` already proves the core alone).
 // ===========================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: multimux golden README
+## Multimux goldens
 
 # Golden outputs
 
@@ -146,7 +146,7 @@ asserting.
 
 
 
-## Folded note: transmux golden README
+## Transmux goldens
 
 # Golden outputs
 

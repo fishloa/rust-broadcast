@@ -8,7 +8,7 @@ stated" = rejected). Each upstream's licence file sits next to its fixtures.
 | `libcaption/tos.scc` (8 KB) | https://github.com/szatmary/libcaption (`unit_tests/tos.scc`) | MIT (`libcaption/LICENSE.txt`, "The MIT License ... Copyright 2016-2017 Twitch Interactive") | Scenarist_SCC (CEA-608 byte pairs). Text is Tears of Steel (Blender Foundation, CC-BY 3.0) - attribution: (CC) Blender Foundation | mango.blender.org. |
 | `pycaption/example.scc` (560 B) | https://github.com/pbs/pycaption/blob/main/examples/example.scc | Apache-2.0 (`pycaption/LICENSE`) | Tiny SCC. |
 
-## Moved to the private submodule
+## In the private submodule
 
 `mux.js/*` (multi-channel 608 TS, DASH fMP4) and `shaka/captions-test.ts`, with their
 `*.cc_data.txt` reference lists, are in `private/fixtures/captions/`: the upstream

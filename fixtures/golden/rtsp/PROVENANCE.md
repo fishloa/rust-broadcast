@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: multimux golden README
+## Multimux goldens
 
 # Golden outputs
 
@@ -146,7 +146,7 @@ asserting.
 
 
 
-## Folded note: rtsp-runtime golden README
+## Rtsp-runtime goldens
 
 Goldens for W1-R-low-a. Generated from `main` at commit 182d03f78bd5 with:
 

@@ -13,5 +13,5 @@ ffmpeg 8.1.2. Kept: `init.mp4` (the `EXT-X-MAP` init segment) and
 itself is not kept.
 
 Independent oracle for the codec strings (used by
-`tests/origin_hardening.rs`): `MP4Box -info init.mp4` reports
+`hls-runtime/tests/it/origin_hardening.rs`): `MP4Box -info init.mp4` reports
 `RFC6381 Codec Parameters: avc1.4D400D` (video) and `mp4a.40.2` (audio).

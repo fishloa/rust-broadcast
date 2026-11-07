@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: broadcast-auth golden README
+## Broadcast-auth goldens
 
 # broadcast-auth wire goldens
 
@@ -16,7 +16,7 @@ listed in CHANGELOG `[Unreleased]`.
 
 
 
-## Folded note: media-doctor golden README
+## Media-doctor goldens
 
 # watch goldens
 
@@ -45,8 +45,6 @@ two conformance indicators).
   lower-cased with `date` and `content-length` removed; `content-length` equals
   the body) by
   `src/metrics_server.rs::tests::response_head_matches_the_main_golden_after_normalisation`.
-  The old byte-exact capture test (`tests/watch_metrics_golden.rs`) was deleted
-  once the old server was; both files were captured from the old bin.
 
 ## Text differences between the old renderer and the exporter
 
@@ -68,7 +66,7 @@ All semantically neutral for a Prometheus scraper; checked on `m6-single` with
 
 
 
-## Folded note: multimux golden README
+## Multimux goldens
 
 # Golden outputs
 

@@ -3,7 +3,7 @@
 //! the media licence is unclear; see its `PROVENANCE.md`); these tests skip loudly
 //! without it.
 //!
-//! 1. The workspace extractor (`tests/support/ga94.rs`) reproduces, byte for
+//! 1. The workspace extractor (`caption-convert/tests/it/support/ga94.rs`) reproduces, byte for
 //!    byte, the `cc_data()` list an independent Python extractor wrote
 //!    (`fixtures/captions/gen_cc_data_reference.py`).
 //! 2. Every real `cc_data()` parses and serializes back byte-identical

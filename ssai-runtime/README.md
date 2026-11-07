@@ -140,7 +140,7 @@ about alignment that is not there.
   workspace `name()` + `Display` label pair; ad-decision-supplied strings are
   rejected if they contain `"`, CR or LF (no tag injection).
 - 33-bit clock arithmetic goes through `broadcast_common::clock33`
-  (`tests/clock33_guard.rs` pins the one documented exception).
+  (`workspace-guards/tests/guards/clock33.rs` pins the one documented exception).
 
 ## Related crates
 

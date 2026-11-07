@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: scte35-splice golden README
+## Scte35-splice goldens
 
 # scte35-splice goldens
 

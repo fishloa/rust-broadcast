@@ -14,7 +14,7 @@
 //! and [`free_tcp_port`].
 //!
 //! This is the ONE copy: `hls-runtime`, `multimux` and `media-doctor` used to
-//! carry byte-identical `tests/support/bounded.rs` copies. They now
+//! carry byte-identical `test-bounded/tests/it/bounded.rs` copies. They now
 //! dev-depend on this unpublished crate instead (de-hand-roll W3, spec §7
 //! SP7.3). It is `publish = false`
 //! and takes no workspace-sibling deps, so a path-only dev-dependency on it

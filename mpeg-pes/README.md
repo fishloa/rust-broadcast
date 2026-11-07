@@ -104,7 +104,7 @@ Examples (`cargo run -p mpeg-pes --example <name>`): `parse_pes_packet`,
 - **Shared clock code.** Marker-bit PTS/DTS/ESCR packing is
   `broadcast_common::clock33`.
 - `no_std` + `alloc`, `#![warn(missing_docs)]`; label convention
-  (`name()`/`Display`) guarded by `tests/label_coverage.rs`.
+  (`name()`/`Display`) guarded by `workspace-guards/tests/guards/label.rs`.
 
 ## Related crates and license
 

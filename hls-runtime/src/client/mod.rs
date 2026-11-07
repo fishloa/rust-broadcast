@@ -25,7 +25,7 @@
 //! # Zero IO in the core
 //!
 //! No `tokio`/`reqwest`/socket dependency in [`HlsClient`] itself, ever —
-//! it is driveable by hand (see the crate's `tests/origin_loop.rs` for a
+//! it is driveable by hand (see the crate's `hls-runtime/tests/it/origin_loop.rs` for a
 //! complete in-process example against a real
 //! `transmux::ll_hls::LlHlsSegmenter` origin) with zero IO dependencies at
 //! all (verified by the `--no-default-features` gate).
@@ -40,7 +40,7 @@
 //! failures, and a `CancellationToken` for shutdown (no polling sleeps; the
 //! core exposes [`HlsClient::next_wait`]/[`HlsClient::poll_timeout`] for
 //! callers that schedule themselves). See [`tokio_client`]'s module docs
-//! for the full behaviour and its `tests/glass_to_glass.rs` for a
+//! for the full behaviour and its `multimux/tests/it/glass_to_glass.rs` for a
 //! loopback-HTTP, sub-second glass-to-glass proof against a real
 //! `multimux`-served LL-HLS origin. This feature is entirely additive — the
 //! sans-IO core above is completely unaffected by it either way.

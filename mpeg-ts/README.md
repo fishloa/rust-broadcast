@@ -148,7 +148,7 @@ taken from the wire; there is deliberately no `From<u16>`. `Pid` implements
 - **Shared clock arithmetic.** PCR and the marker-bit timestamp come from
   `broadcast_common::clock33`.
 - **Label convention.** Public field enums expose `name()` and `Display`
-  (`tests/label_coverage.rs` guards it).
+  (`workspace-guards/tests/guards/label.rs` guards it).
 
 ## Related crates
 

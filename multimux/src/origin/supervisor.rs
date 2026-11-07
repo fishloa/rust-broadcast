@@ -409,7 +409,7 @@ mod tests {
     /// SP1.5/m-1: the schedule is equal-jittered and its jitter state mutates
     /// on each call (`Cell`), so the stateless and stepped views can no longer
     /// be compared value-for-value — the exact series is
-    /// `multimux/tests/reconnect_policy.rs`'s job, on a seeded schedule. This
+    /// `multimux/tests/it/reconnect_policy.rs`'s job, on a seeded schedule. This
     /// asserts the band and totality instead.
     #[test]
     fn delay_for_attempt_stays_in_band_and_is_total() {

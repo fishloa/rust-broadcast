@@ -3,7 +3,7 @@
 //! ONE sample per complementary field pair (ITU-T H.264 §3.35-3.37; ISO/IEC
 //! 14496-15 samples are whole access units), PTS/DTS from the first field.
 //!
-//! The streams are spec-built by `tests/support/paff_gen.rs` (I_PCM, losslessly
+//! The streams are spec-built by `transmux/tests/it/support/paff_gen.rs` (I_PCM, losslessly
 //! decodable, every field different), 12 frames of 64x64, TFF and BFF; two are
 //! also committed under `../fixtures/video/paff/` and pinned against the generator.
 

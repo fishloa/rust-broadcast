@@ -125,10 +125,10 @@ Runnable examples: `cargo run -p compliance-probe --example fixture_report`
   `no_std` build).
 - **No second implementation.** TR 101 290 is `dvb-conformance`, structural
   checks are `media-doctor`, SCTE-35 parsing is `scte35-splice` /
-  `timed-metadata`, PCR wrap arithmetic is `clock33` (`tests/clock33_guard.rs`).
+  `timed-metadata`, PCR wrap arithmetic is `clock33` (`workspace-guards/tests/guards/clock33.rs`).
 - **Honest gaps.** Every limitation above is stated rather than left as an
   always-zero metric.
-- Public enums carry `name()` and `Display` (`tests/label_coverage.rs`).
+- Public enums carry `name()` and `Display` (`workspace-guards/tests/guards/label.rs`).
 
 ## Related crates and license
 

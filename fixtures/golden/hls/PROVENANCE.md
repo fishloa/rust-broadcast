@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: hls-runtime golden README
+## Hls-runtime goldens
 
 # HLS client URL golden
 
@@ -17,7 +17,7 @@ GOLDEN_UPDATE=1 cargo test --locked -p hls-runtime --all-features --test it gold
 
 
 
-## Folded note: timed-metadata golden README
+## Timed-metadata goldens
 
 # timed-metadata goldens
 
@@ -31,7 +31,7 @@ Never regenerate on this branch; a deliberate difference is edited into the file
 
 
 
-## Folded note: transmux golden README
+## Transmux goldens
 
 # Golden outputs
 

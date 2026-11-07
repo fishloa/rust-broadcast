@@ -1780,7 +1780,7 @@ impl HlsClient {
             // requests every known part each time it's polled, so by the
             // time the segment closes none can have been missed) — fetching
             // the whole segment *as well* would demux and emit its samples a
-            // second time. Caught by `hls-runtime/tests/glass_to_glass.rs`
+            // second time. Caught by `multimux/tests/it/glass_to_glass.rs`
             // (issue #717 slice 5): every sample was double-delivered for
             // the first two segments of a real, live-paced run.
             let already_have_parts = self

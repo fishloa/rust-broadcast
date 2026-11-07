@@ -382,7 +382,7 @@ fn is_known_standalone_artifact(f: &Finding) -> bool {
 /// the RFC's own bare `...` elision line mid-playlist, which is not
 /// `#`-prefixed and so parses as a Media Segment URI with no preceding
 /// `#EXTINF` — a genuine, permanent parse error, not a fixture defect (the
-/// same reasoning `transmux/tests/hls_fixture_corpus.rs` already documents
+/// same reasoning `broadcast-hls/tests/it/hls_fixture_corpus.rs` already documents
 /// for excluding them from ITS parse-completeness assertions).
 const SPEC_FIXTURES: &[&str] = &[
     "9.1-simple-media-playlist.m3u8",

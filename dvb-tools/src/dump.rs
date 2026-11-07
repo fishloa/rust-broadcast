@@ -3,8 +3,6 @@
 //! Drives [`SiDemux`] over an aligned 188-byte `.ts` capture and prints one
 //! line per emitted (changed) section. With `--json`, the decoded typed table
 //! for each section is pretty-printed via `serde_json`.
-//!
-//! Behaviour is identical to the former `dvb-si/examples/si_dump.rs`.
 use std::process::ExitCode;
 
 use dvb_si::demux::SiDemux;

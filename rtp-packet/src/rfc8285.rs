@@ -396,7 +396,7 @@ impl Serialize for TwoByteElements<'_> {
 /// `profile_id` (see [`parse_extensions`]). A data-carrying dispatch wrapper
 /// (in the same spirit as this workspace's `AnyTableSection`/`AnyDescriptor`
 /// dispatch enums) — not a spec/field label, so it is exempt from the #204
-/// `name()`/`Display` convention (see `tests/label_coverage.rs`'s SKIP list).
+/// `name()`/`Display` convention (see `workspace-guards/tests/guards/label.rs`'s SKIP list).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

@@ -140,7 +140,7 @@ stop.
 - Binary only, `clap` derive with named flags and automatic `--help`/`--version`
   (workspace CLI standard); a std-only crate (no `no_std` claim).
 - Streaming, bounded memory; mid-file read errors are reported and exit non-zero.
-- PCR arithmetic is `broadcast_common::clock33` (`tests/clock33_guard.rs`).
+- PCR arithmetic is `broadcast_common::clock33` (`workspace-guards/tests/guards/clock33.rs`).
 - Regression tests: `tests/it/smoke.rs`, `pids_bitrate_oracle.rs`,
   `services_shared_service_id.rs`, `t2mi_typed_pid.rs`, `stdout_closed.rs`.
 

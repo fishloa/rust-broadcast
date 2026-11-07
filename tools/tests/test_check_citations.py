@@ -180,9 +180,14 @@ def test_retired_manifest_exclude_pattern_fails(tmp_path, monkeypatch, capsys) -
 
 
 def test_golden_gate_file_name_is_not_a_retired_path(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"transmux"})
     _scratch(
         tmp_path,
-        {"docs/good.md": "see transmux/tests/golden_gate.rs and tests/golden.rs and tests/golden_wire\n"},
+        {
+            "docs/good.md": "see transmux/tests/golden_gate.rs and transmux/tests/golden.rs and tests/golden_wire\n",
+            "transmux/tests/golden_gate.rs": "\n",
+            "transmux/tests/golden.rs": "\n",
+        },
     )
     assert _errors(monkeypatch, tmp_path, capsys) == ""
 
@@ -292,4 +297,57 @@ def test_sentence_final_period_after_fixture_doc_citation_passes(tmp_path, monke
         tmp_path,
         {"docs/good.md": "provenance in fixtures/hls/PROVENANCE.md. Next.\n", "fixtures/hls/PROVENANCE.md": "x\n"},
     )
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_comment_naming_moved_test_file_fails(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"foo"})
+    _scratch(
+        tmp_path,
+        {"foo/src/a.rs": "// proven by foo/tests/x.rs\n", "foo/tests/it/x.rs": "fn t() {}\n"},
+    )
+    assert "path does not exist: foo/tests/x.rs" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_comment_naming_existing_test_file_passes(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"foo"})
+    _scratch(
+        tmp_path,
+        {"foo/src/a.rs": "// proven by foo/tests/it/x.rs\n", "foo/tests/it/x.rs": "fn t() {}\n"},
+    )
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_bare_test_path_in_doc_that_only_exists_under_it_fails(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"foo"})
+    _scratch(
+        tmp_path,
+        {"docs/design.md": "see `tests/x.rs`\n", "foo/tests/it/x.rs": "fn t() {}\n"},
+    )
+    assert "path does not exist: tests/x.rs" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_bare_src_path_resolving_in_a_member_passes(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"foo"})
+    _scratch(tmp_path, {"docs/design.md": "see `src/lib.rs`\n", "foo/src/lib.rs": "\n"})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_comment_naming_missing_docs_script_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(
+        tmp_path,
+        {"foo/tests/it/a.rs": "//! regenerate with docs/logs/analysis/oracle.py\n", "docs/analysis/oracle.py": "\n"},
+    )
+    assert "path does not exist: docs/logs/analysis/oracle.py" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_string_literal_path_in_rust_is_not_a_comment_citation(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"foo"})
+    _scratch(tmp_path, {"foo/src/a.rs": 'const P: &str = "foo/tests/nothing.rs";\n'})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_path_in_third_party_crate_is_not_checked(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"foo"})
+    _scratch(tmp_path, {"foo/src/a.rs": "// see backon/src/backoff/exponential.rs\n"})
     assert _errors(monkeypatch, tmp_path, capsys) == ""

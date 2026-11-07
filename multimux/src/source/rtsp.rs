@@ -1775,7 +1775,7 @@ mod tests {
         //! exchange — the TLS analogue of this file's plain-`rtsp://`
         //! centrepiece test
         //! (`multi_round_trip_rtsp_handshake_completes_through_feed_and_poll_transmit_only`),
-        //! and mirroring `multimux/tests/rtsp_ingest.rs`'s real-socket
+        //! and mirroring `multimux/tests/it/rtsp_ingest.rs`'s real-socket
         //! loopback pattern.
         //!
         //! Uses a caller-supplied trust config (rather than
@@ -1793,7 +1793,7 @@ mod tests {
         /// Self-signed `CN=localhost` cert/key fixture
         /// (`fixtures/tls/localhost-{cert,key}.der`, see
         /// `fixtures/tls/PROVENANCE.md`) — the same pair
-        /// `rtsp-runtime`'s own `tests/io_loopback.rs::tls_full_session_over_loopback`
+        /// `rtsp-runtime`'s own `tests/it/io_loopback.rs::tls_full_session_over_loopback`
         /// uses to run a real TLS handshake over `127.0.0.1` loopback.
         fn cert_der() -> Vec<u8> {
             test_fixtures::read("tls/localhost-cert.der")
@@ -1870,7 +1870,7 @@ mod tests {
 
         /// Builds a minimal RFC 3550 §5.1 RTP packet carrying one NAL unit
         /// verbatim (RFC 6184 §5.1) — same shape as this file's centrepiece
-        /// test's inline packets and `multimux/tests/rtsp_ingest.rs`'s
+        /// test's inline packets and `multimux/tests/it/rtsp_ingest.rs`'s
         /// `rtp_packet` helper.
         fn rtp_packet(seq: u16, timestamp: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
             const PT_H264_DYNAMIC: u8 = 96;
@@ -1891,7 +1891,7 @@ mod tests {
 
         /// Real self-signed-cert loopback TLS server: DESCRIBE (SDP) ->
         /// SETUP (interleaved channel 0-1) -> PLAY -> three interleaved RTP
-        /// access units — mirrors `multimux/tests/rtsp_ingest.rs`'s
+        /// access units — mirrors `multimux/tests/it/rtsp_ingest.rs`'s
         /// `serve_one_session`, just over `tokio_rustls` instead of plain
         /// TCP.
         async fn serve_one_tls_session(tcp: TcpStream) {

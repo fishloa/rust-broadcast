@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: transmux golden README
+## Transmux goldens
 
 # Golden outputs
 

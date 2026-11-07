@@ -134,8 +134,8 @@ tokio-util        = { version = "0.7", features = ["rt"] }
 # series. `default-features = false` drops the `tokio-sleep` convenience (the
 # caller applies the delay itself) so this does not pull a second `tokio`.
 backon            = { version = "1.6", default-features = false }
-# Locks without poisoning (SP6.6), replacing `src/lock.rs`'s recovery
-# wrappers: a panicking holder's guard drops and the next acquire succeeds.
+# Locks without poisoning (SP6.6): a panicking holder's guard drops and the
+# next acquire succeeds.
 parking_lot       = "0.13"
 # UDP binds with real `SO_RCVBUF`/`SO_REUSEADDR`/multicast-interface options
 # (SP1.6) rather than `tokio::net::UdpSocket::bind`'s fixed defaults.
@@ -302,13 +302,13 @@ rtc-dtls         = "0.21"
 # `output_bounded`: the deadline-bounded external-tool runner (SP7.3). The
 # runner itself lives in the shared `test-bounded` crate (one copy across
 # hls-runtime/multimux/media-doctor, not three byte-identical
-# `tests/support/bounded.rs` files); this is a path-only dev-dep, so it never
+# `test-bounded/tests/it/bounded.rs` files); this is a path-only dev-dep, so it never
 # reaches a published manifest.
 test-bounded     = { path = "../test-bounded" }
-# The independent ETSI TR 101 290 monitor `tests/push_ts_stream.rs` runs over
+# The independent ETSI TR 101 290 monitor `multimux/tests/it/push_ts_stream.rs` runs over
 # the TS a push output actually delivers (#1024). Dev-only; dvb-conformance
 # depends on neither multimux nor transmux, so there is no cycle.
-# The independent DASH MPD validator `tests/dash_sliding_window.rs` runs over
+# The independent DASH MPD validator `multimux/tests/it/dash_sliding_window.rs` runs over
 # every MPD the origin emits as the window slides (#1058). Dev-only;
 # media-doctor does not depend on multimux (no cycle).
 media-doctor     = { path = "../media-doctor", version = "0.13", default-features = false, features = ["std"] }
@@ -321,15 +321,15 @@ dvb-conformance  = { path = "../dvb-conformance", version = "12.1", default-feat
 # feature). This is the standard self-dev-dependency pattern (Cargo allows a
 # crate to dev-depend on itself); it adds no new package to the lock.
 multimux         = { path = ".", features = ["test-seams"] }
-# `socket2::Socket::get_recv_buffer_size` so `tests/udp_bind.rs` can prove the
+# `socket2::Socket::get_recv_buffer_size` so `multimux/tests/it/udp_bind.rs` can prove the
 # requested `SO_RCVBUF` was APPLIED (the library binds through `socket2`
 # internally but does not re-export it). Already a transitive dependency at
 # the same version, so this adds no new lock entry.
 socket2          = { workspace = true }
-# `ProgramId` for the SPTS program in `tests/origin_gzip.rs` (already a
+# `ProgramId` for the SPTS program in `multimux/tests/it/origin_gzip.rs` (already a
 # dependency of the library, so no new lock entry).
 media-plane         = { path = "../media-plane", version = "0.9", default-features = false, features = ["std"] }
-# `parking_lot::Mutex` so `tests/lock_recovery.rs` can prove the no-poison
+# `parking_lot::Mutex` so a test can prove the no-poison
 # property directly (the library uses it internally but does not re-export it).
 parking_lot      = "0.13"
 

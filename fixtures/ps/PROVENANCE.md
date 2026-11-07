@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: README.md
+## Notes
 
 # `fixtures/ps/` — MPEG-1/2 Program Stream fixtures
 

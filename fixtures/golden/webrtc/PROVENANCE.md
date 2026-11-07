@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: multimux golden README
+## Multimux goldens
 
 # Golden outputs
 
@@ -146,7 +146,7 @@ asserting.
 
 
 
-## Folded note: webrtc-runtime golden README
+## Webrtc-runtime goldens
 
 # WHIP/WHEP HTTP golden
 

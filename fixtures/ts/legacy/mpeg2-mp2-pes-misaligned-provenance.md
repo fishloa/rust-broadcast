@@ -26,7 +26,7 @@ real captured audio bytes rather than fabricated data.
    "MPEG-1 Audio (Audio layer II, ... @44,100Hz)" by TSDuck's own independent
    parser.
 
-The one-off generator script (`transmux/examples/_gen_638_fixture.rs`) is not
+The one-off generator script is not
 committed — it was run once and deleted; this file documents the recipe.
 Regenerate by reproducing the steps above (see
 `transmux/tests/it/mpeg_legacy.rs`'s `mpeg_audio_resyncs_across_pes_boundaries`
