@@ -206,6 +206,12 @@ impl SignallingKind {
     }
 
     #[must_use]
+    /// Decoded BUFSTAT fill status in bytes (integer floor), or `None`.
+    pub fn bufstat_bytes(&self) -> Option<u64> {
+        self.bufstat_bits().map(|b| b / 8)
+    }
+
+    #[must_use]
     /// Decoded time-to-output in units of T/256, or `None` if this is not a
     /// TTO variant.
     ///
@@ -469,6 +475,7 @@ mod tests {
             units: BufsUnit::Mbits,
         };
         assert_eq!(bs.bufstat_bits(), Some(2_000_000));
+        assert_eq!(bs.bufstat_bytes(), Some(250_000));
         // non-BUFSTAT variants return None
         assert_eq!(SignallingKind::Reserved(0).bufstat_bits(), None);
     }
