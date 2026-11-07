@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `rtcp` module file is replaced by `pub use rtcp_packet as rtcp`; paths unchanged (c2 TH8).
 - One `build_chunk` builds the CMAF segment, event segment, LL-DASH chunk and LL-HLS part; `trun` `data_offset` is now range-checked instead of cast (c2 H5).
 - VVC reader/writer, AVS3-audio and HDR10+ serializers share `bitreader::{read_bits_checked, write_bits_checked}`; an AVS3-audio `dca3` write overrun is now `BufferTooShort` (was `InvalidInput`) (c2 M4).
+- The DASH MPD and Smooth manifest parsers share one quick-xml walker (`xml_walk`: tags, attribute decoding, subtree skipping, attribute helpers) over a small error trait (c2 H2).
 
 ### Removed
 - `rtp::hex_decode`, `smooth_parse::hex_decode` and the `smooth_hex_decode` re-export are now crate-private; both only wrapped the `hex` crate with this crate's own error type. Use `hex::decode` (dedupe R6).

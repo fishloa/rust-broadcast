@@ -79,12 +79,8 @@ use core::fmt;
 use core::str::FromStr;
 use core::time::Duration;
 
-use broadcast_common::xml_chars::{char_data, is_xml_char};
-use quick_xml::Reader;
-use quick_xml::XmlVersion;
-use quick_xml::errors::IllFormedError;
-use quick_xml::events::{BytesStart, Event};
-use quick_xml::name::QName;
+use broadcast_common::xml_chars::char_data;
+use quick_xml::events::Event;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -245,144 +241,35 @@ impl std::error::Error for DashParseError {}
 /// Crate-local result alias for this module.
 type Result<T> = core::result::Result<T, DashParseError>;
 
-// ---------------------------------------------------------------------------
-// quick-xml pull plumbing
-// ---------------------------------------------------------------------------
-
-/// A `quick-xml` reader over the manifest text.
-type XmlReader<'a> = Reader<&'a [u8]>;
-
-/// What a parse loop sees: the start of an element (with its decoded
-/// attributes) or the end of one. Text, comments, processing instructions, the
-/// XML declaration and DOCTYPE are consumed by [`next_tag`] and never surface.
-enum Tag {
-    /// `<Name a="b">` or the self-closing `<Name a="b"/>`; `name` is the local
-    /// name (namespace prefix stripped), attribute names keep any prefix.
-    Open {
-        name: String,
-        attrs: Vec<(String, String)>,
-        self_closing: bool,
-    },
-    /// `</Name>`.
-    Close { name: String },
-}
-
-fn new_reader(xml: &str) -> XmlReader<'_> {
-    Reader::from_str(xml)
-}
-
-/// Map a quick-xml error at the reader's current position.
-fn xml_error(reader: &XmlReader<'_>, err: &quick_xml::Error) -> DashParseError {
-    use quick_xml::Error as E;
-    let pos = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
-    match err {
-        E::Syntax(_) => DashParseError::UnterminatedTag { pos },
-        E::IllFormed(IllFormedError::MismatchedEndTag { expected, found }) => {
-            DashParseError::MismatchedEndTag {
-                expected: local_part(expected),
-                found: local_part(found),
-            }
-        }
-        _ => DashParseError::Xml {
-            pos,
-            message: err.to_string(),
-        },
+impl crate::xml_walk::XmlWalkError for DashParseError {
+    fn unterminated_tag(pos: usize) -> Self {
+        Self::UnterminatedTag { pos }
     }
-}
-
-/// A well-formedness error described by `message` at the reader's position.
-fn xml_message(reader: &XmlReader<'_>, message: String) -> DashParseError {
-    DashParseError::Xml {
-        pos: usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX),
-        message,
+    fn mismatched_end_tag(expected: String, found: String) -> Self {
+        Self::MismatchedEndTag { expected, found }
     }
-}
-
-/// The local part of a (possibly prefixed) qualified name.
-fn local_part(qname: &str) -> String {
-    QName(qname).local_name().into_inner().to_string()
-}
-
-fn read_event<'a>(reader: &mut XmlReader<'a>) -> Result<Event<'a>> {
-    match reader.read_event() {
-        Ok(event) => Ok(event),
-        Err(e) => Err(xml_error(reader, &e)),
+    fn xml(pos: usize, message: String) -> Self {
+        Self::Xml { pos, message }
     }
-}
-
-/// Decode a start tag's attributes (values unescaped and normalized by
-/// quick-xml).
-fn read_attrs(reader: &XmlReader<'_>, e: &BytesStart<'_>) -> Result<Vec<(String, String)>> {
-    let pos = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
-    let mut attrs = Vec::new();
-    for attr in e.attributes() {
-        let attr = attr.map_err(|_| DashParseError::MalformedAttribute { pos })?;
-        let value = attr
-            .normalized_value(XmlVersion::Implicit1_0)
-            .map_err(|_| DashParseError::MalformedAttribute { pos })?;
-        if !value.chars().all(is_xml_char) {
-            return Err(DashParseError::MalformedAttribute { pos });
-        }
-        attrs.push((attr.key.as_ref().to_string(), value.into_owned()));
+    fn malformed_attribute(pos: usize) -> Self {
+        Self::MalformedAttribute { pos }
     }
-    Ok(attrs)
-}
-
-/// The next element start/end, or `Ok(None)` at end of input.
-fn next_tag(reader: &mut XmlReader<'_>) -> Result<Option<Tag>> {
-    loop {
-        let event = read_event(reader)?;
-        // Character data between elements (and inside skipped subtrees) is
-        // validated exactly like the modelled path.
-        if char_data(&event)
-            .map_err(|message| xml_message(reader, message))?
-            .is_some()
-        {
-            continue;
-        }
-        match event {
-            Event::Start(e) => {
-                return Ok(Some(Tag::Open {
-                    name: e.local_name().into_inner().to_string(),
-                    attrs: read_attrs(reader, &e)?,
-                    self_closing: false,
-                }));
-            }
-            Event::Empty(e) => {
-                return Ok(Some(Tag::Open {
-                    name: e.local_name().into_inner().to_string(),
-                    attrs: read_attrs(reader, &e)?,
-                    self_closing: true,
-                }));
-            }
-            Event::End(e) => {
-                return Ok(Some(Tag::Close {
-                    name: e.local_name().into_inner().to_string(),
-                }));
-            }
-            Event::Eof => return Ok(None),
-            _ => {}
+    fn unexpected_eof() -> Self {
+        Self::UnexpectedEof
+    }
+    fn missing_attribute(element: &'static str, attr: &'static str) -> Self {
+        Self::MissingAttribute { element, attr }
+    }
+    fn invalid_attribute_value(element: &'static str, attr: &'static str, value: String) -> Self {
+        Self::InvalidAttributeValue {
+            element,
+            attr,
+            value,
         }
     }
 }
 
-/// Skip an already-open element's subtree, up to and including its matching
-/// end tag.
-fn skip_element(reader: &mut XmlReader<'_>) -> Result<()> {
-    let mut depth: usize = 1;
-    while depth > 0 {
-        match next_tag(reader)? {
-            Some(Tag::Open { self_closing, .. }) => {
-                if !self_closing {
-                    depth += 1;
-                }
-            }
-            Some(Tag::Close { .. }) => depth -= 1,
-            None => return Err(DashParseError::UnexpectedEof),
-        }
-    }
-    Ok(())
-}
+crate::xml_walk::xml_walk_fns!(DashParseError);
 
 /// The character data of an already-open element `name` (entity and character
 /// references resolved by quick-xml, CDATA included), consuming its end tag.
@@ -399,8 +286,10 @@ fn text_content(
     let mut text = String::new();
     let mut nested = false;
     loop {
-        let event = read_event(reader)?;
-        if let Some(piece) = char_data(&event).map_err(|message| xml_message(reader, message))? {
+        let event = crate::xml_walk::read_event::<DashParseError>(reader)?;
+        if let Some(piece) = char_data(&event)
+            .map_err(|message| crate::xml_walk::xml_message::<DashParseError>(reader, message))?
+        {
             text.push_str(&piece);
             continue;
         }
@@ -1303,62 +1192,6 @@ fn normalise_xs_duration(s: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 // DASH-specific attribute helpers (XML parsing is in the `xml` module)
 // ---------------------------------------------------------------------------
-
-fn attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    attrs
-        .iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v.as_str())
-}
-
-fn attr_owned(attrs: &[(String, String)], key: &str) -> Option<String> {
-    attr(attrs, key).map(String::from)
-}
-
-fn required_attr_owned(
-    attrs: &[(String, String)],
-    key: &'static str,
-    element: &'static str,
-) -> Result<String> {
-    attr(attrs, key)
-        .map(String::from)
-        .ok_or(DashParseError::MissingAttribute { element, attr: key })
-}
-
-fn parse_attr<T: FromStr>(
-    attrs: &[(String, String)],
-    key: &'static str,
-    element: &'static str,
-) -> Result<Option<T>> {
-    match attr(attrs, key) {
-        Some(v) => {
-            v.trim()
-                .parse::<T>()
-                .map(Some)
-                .map_err(|_| DashParseError::InvalidAttributeValue {
-                    element,
-                    attr: key,
-                    value: v.to_string(),
-                })
-        }
-        None => Ok(None),
-    }
-}
-
-fn required_attr_parse<T: FromStr>(
-    attrs: &[(String, String)],
-    key: &'static str,
-    element: &'static str,
-) -> Result<T> {
-    let v = attr(attrs, key).ok_or(DashParseError::MissingAttribute { element, attr: key })?;
-    v.trim()
-        .parse::<T>()
-        .map_err(|_| DashParseError::InvalidAttributeValue {
-            element,
-            attr: key,
-            value: v.to_string(),
-        })
-}
 
 fn parse_duration_attr(attrs: &[(String, String)], key: &str) -> Result<Option<Duration>> {
     match attr(attrs, key) {
