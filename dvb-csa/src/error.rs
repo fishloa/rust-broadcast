@@ -5,7 +5,7 @@ use thiserror::Error;
 
 /// Errors that can occur during DVB-CSA operations.
 #[non_exhaustive]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     /// The provided buffer is too short for the requested operation.
     #[error("buffer too short: need {need} bytes, have {have}")]

@@ -16,7 +16,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Errors produced by the RTSP session engine.
 #[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum Error {
     /// The RTSP message could not be parsed by the underlying `rtsp-types` codec.
     #[error("failed to parse RTSP message: {0}")]

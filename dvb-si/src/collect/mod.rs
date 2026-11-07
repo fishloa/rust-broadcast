@@ -84,7 +84,7 @@ pub type CollectResult<T> = core::result::Result<T, CollectError>;
 /// These errors are scoped to the current input section. They usually mean
 /// "skip this section and keep going", especially on live streams where a
 /// broadcaster may mutate section bytes without bumping `version_number`.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CollectError {
     /// The section bytes did not parse as a generic PSI/SI section.

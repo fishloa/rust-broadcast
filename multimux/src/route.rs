@@ -396,7 +396,7 @@ impl DashState {
 }
 
 /// Why [`RouteHandle::add_segment`] could not publish a segment.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 #[non_exhaustive]
 pub enum AddSegmentError {
     /// No program with this id has been published on the route yet.

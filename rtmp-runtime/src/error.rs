@@ -7,7 +7,7 @@
 
 /// Errors produced by the RTMP ingest session engine.
 #[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum RtmpError {
     /// Not enough input bytes were available to parse a complete structure
     /// (handshake message, chunk header, or reassembled RTMP message).

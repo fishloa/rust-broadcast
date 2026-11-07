@@ -9,7 +9,7 @@ use thiserror::Error;
 pub type Result<T> = core::result::Result<T, Error>;
 
 /// Errors that can occur during TTML/IMSC processing.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
     /// XML parsing failed (syntax error, not well-formed).

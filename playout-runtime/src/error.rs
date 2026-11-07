@@ -2,7 +2,7 @@
 
 /// Errors produced by schedule construction, transition planning, and
 /// SCTE-35 emission-point construction.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// [`crate::schedule::Schedule::push`] was called with an entry whose

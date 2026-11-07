@@ -7,7 +7,7 @@ use thiserror::Error;
 pub type Result<T> = core::result::Result<T, Error>;
 
 /// Error variants [`crate::client::HlsClient`] can return.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// The playlist bytes fed to [`crate::client::HlsClient::on_playlist`]

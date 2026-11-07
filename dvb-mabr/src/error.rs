@@ -10,7 +10,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Errors that can occur while parsing or serializing a DVB-MABR multicast
 /// session configuration document (ETSI TS 103 769 V1.2.1 clause 10).
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
     /// The input is not well-formed XML.

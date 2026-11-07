@@ -4,7 +4,7 @@ use alloc::string::String;
 
 /// Errors produced by session, decision, splice-conditioning, and playlist
 /// rendering operations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// [`crate::splice::condition_splice_point`] found no candidate boundary

@@ -1,7 +1,7 @@
 //! Error types for WHIP/WHEP signalling.
 
 /// Errors produced during WHIP/WHEP session signalling.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
     /// A response or request was missing a header required by the spec.

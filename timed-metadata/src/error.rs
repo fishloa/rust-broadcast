@@ -2,7 +2,7 @@
 use alloc::string::String;
 
 /// Errors produced by conversions and the [`crate::Timeline`] session.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// A wall-clock conversion was attempted without a [`crate::TimeAnchor`].

@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 /// Loudness measurement error.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// Push was called after `finish()`.

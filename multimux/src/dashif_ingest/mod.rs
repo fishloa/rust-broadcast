@@ -145,7 +145,7 @@ pub struct ManifestGrouping {
 }
 
 /// Errors raised by the ingest core.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IngestError {
     #[error("auth required (§5.3.4)")]

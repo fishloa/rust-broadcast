@@ -14,7 +14,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 // No longer `Eq` (only `PartialEq`): `Error::HlsAttrValue` wraps
 // `broadcast_hls::Error`, which itself carries a non-`Eq` `f64` (issue
 // #1140 T12 decimal validation).
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error, PartialEq, Clone)]
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.

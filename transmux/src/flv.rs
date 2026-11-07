@@ -223,7 +223,7 @@ pub(crate) fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
 // own `Error`, which is no longer `Eq` since gaining `Error::HlsAttrValue`
 // (issue #1140 T12 — wraps `broadcast_hls::Error`, which carries a
 // non-`Eq` `f64`).
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 #[non_exhaustive]
 pub enum FlvError {
     /// The 3-byte signature was not `"FLV"` (§E.2).

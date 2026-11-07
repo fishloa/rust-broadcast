@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Errors returned by [`crate::Session::open`].
 #[non_exhaustive]
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum Error {
     /// The session URL uses a scheme that is not supported in BC-1.
     #[error("unsupported scheme: {0}")]

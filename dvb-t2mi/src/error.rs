@@ -9,7 +9,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 ///
 /// Spec references inside `#[error(...)]` strings quote clauses from
 /// ETSI TS 102 773 v1.4.1 where applicable.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.

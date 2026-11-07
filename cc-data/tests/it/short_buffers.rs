@@ -38,3 +38,15 @@ fn cc_data_rejects_every_short_buffer() {
         },
     );
 }
+
+#[test]
+fn a_one_byte_cc_data_is_a_missing_header() {
+    assert_eq!(
+        <CcData as broadcast_common::Parse>::parse(&[0x40]).unwrap_err(),
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            need: 2,
+            have: 1,
+            what: "cc_data header",
+        })
+    );
+}

@@ -4,3 +4,4 @@ mod diff_libdvben50221;
 mod review_round_trip_findings;
 mod short_buffers;
 mod trailing_bytes;
+mod error_variants;

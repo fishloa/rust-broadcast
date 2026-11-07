@@ -3,3 +3,4 @@ mod round_trip;
 mod spec_fidelity;
 mod truncation;
 mod xml_escaping;
+mod error_variants;
