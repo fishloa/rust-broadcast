@@ -1447,3 +1447,87 @@ fn unresolved_pmt_does_not_yield_a_programless_pat() {
         "an unresolved PMT must not be reported as an empty program loop"
     );
 }
+
+/// ISO/IEC 13818-1 §2.4.4.4 `version_number` is 5 bits: every content change
+/// of the regenerated PAT advances it by one modulo 32, and an unchanged
+/// repeat keeps it. Driven through 34 distinct mappings so the 31 -> 0 wrap is
+/// crossed.
+#[test]
+fn regen_pat_version_number_wraps_modulo_32_and_holds_when_unchanged() {
+    const PHASES: u16 = 34;
+    const FIRST_PMT_PID: u16 = 0x0100;
+    let pat = PatSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        vec![PatEntry::new(1, Pid::new(FIRST_PMT_PID))],
+    );
+    let pat_bytes = serialize_pat(&pat);
+    let pat_pkts = SectionPacketiser::new(PAT_PID).packetise(&[&pat_bytes]);
+
+    let mut ts = Vec::new();
+    for k in 0..PHASES {
+        let pmt_pid = Pid::new(FIRST_PMT_PID + k);
+        let pmt = PmtSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            P1_PCR_PID,
+            DescriptorLoop::new(&[]),
+            vec![PmtStream::new(
+                StreamType::Mpeg2Video,
+                P1_VIDEO_PID,
+                DescriptorLoop::new(&[]),
+            )],
+        );
+        let pmt_bytes = serialize_pmt(&pmt);
+        let pmt_pkts = SectionPacketiser::new(pmt_pid).packetise(&[&pmt_bytes]);
+        for _ in 0..2 {
+            for p in &pat_pkts {
+                ts.extend_from_slice(p);
+            }
+            for p in &pmt_pkts {
+                ts.extend_from_slice(p);
+            }
+        }
+    }
+
+    let output = run(&ts, |b| b.regen_psi());
+    let pats: Vec<PatSection> = find_all_pat_packets(&output)
+        .iter()
+        .map(|p| parse_pat_from_packet(p).expect("regen PAT parses"))
+        .collect();
+
+    let mut changes = 0u32;
+    for w in pats.windows(2) {
+        if w[0].entries == w[1].entries {
+            assert_eq!(
+                w[0].version_number, w[1].version_number,
+                "unchanged content"
+            );
+        } else {
+            changes += 1;
+            assert_eq!(
+                w[1].version_number,
+                (w[0].version_number + 1) % 32,
+                "changed content must advance the version by one modulo 32"
+            );
+        }
+    }
+    assert!(
+        changes >= 33,
+        "expected the stream to cross the wrap, got {changes} changes"
+    );
+    assert!(
+        pats.iter().any(|p| p.version_number == 31)
+            && pats.iter().any(|p| p.version_number == 0)
+            && pats
+                .windows(2)
+                .any(|w| w[0].version_number == 31 && w[1].version_number == 0),
+        "the 31 -> 0 wrap must occur"
+    );
+}

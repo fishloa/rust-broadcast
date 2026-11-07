@@ -263,6 +263,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
         init_template: "init-$RepresentationID$.mp4".to_string(),
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
         availability_start_time: Some(format_iso8601(origin)),
+        publish_time: Some(publish_time(origin, &window)),
         minimum_update_period: Some(xs_duration_secs_checked(
             "minimum_update_period",
             target_duration_secs,
@@ -313,6 +314,36 @@ pub(crate) fn format_iso8601(t: SystemTime) -> String {
 pub fn format_iso8601_for_test(t: SystemTime) -> String {
     format_iso8601(t)
 }
+
+/// `MPD@publishTime` (ISO/IEC 23009-1 §5.3.1.2 Table 3: shall be present for
+/// `@type="dynamic"`, and an MPD with a later value shall be an update of one
+/// with an earlier value). The MPD only changes when a segment closes, so the
+/// stamp is the wall-clock instant the newest listed segment became available
+/// (`origin` plus that segment's end on the program timeline): identical for
+/// an unchanged window, strictly later after every new segment.
+pub(crate) fn publish_time(
+    origin: SystemTime,
+    window: &[crate::route::DashWindowSegment],
+) -> String {
+    let end_ms = window.last().map_or(0, |s| {
+        let dur = Duration::try_from_secs_f64(s.duration_secs).unwrap_or(Duration::ZERO);
+        u128::from(s.timeline_position_ns / NANOS_PER_MILLI).saturating_add(dur.as_millis())
+    });
+    let ast_secs = origin
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs();
+    let total_ms = u128::from(ast_secs)
+        .saturating_mul(MILLIS_PER_SEC)
+        .saturating_add(end_ms);
+    i64::try_from(total_ms)
+        .ok()
+        .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
+        .map_or_else(|| format_iso8601(origin), |ts| ts.to_string())
+}
+
+const NANOS_PER_MILLI: u64 = 1_000_000;
+const MILLIS_PER_SEC: u128 = 1_000;
 
 fn format_iso8601_secs(secs: i64) -> String {
     jiff::Timestamp::from_second(secs)
@@ -394,6 +425,53 @@ mod tests {
         (y + i64::from(m <= 2), m, d)
     }
     use transmux::ll_hls::SegmentInfo;
+
+    fn without_publish_time(mpd: &str) -> String {
+        let at = mpd.find(" publishTime=\"").expect("publishTime present");
+        let close = at + " publishTime=\"".len();
+        let end = close + mpd[close..].find('"').expect("closing quote") + 1;
+        format!("{}{}", &mpd[..at], &mpd[end..])
+    }
+
+    fn publish_time_of(mpd: &str) -> String {
+        let key = "publishTime=\"";
+        let at = mpd.find(key).expect("dynamic MPD carries publishTime") + key.len();
+        mpd[at..]
+            .split('"')
+            .next()
+            .expect("closing quote")
+            .to_string()
+    }
+
+    #[test]
+    fn publish_time_present_stable_when_unchanged_and_later_per_new_segment() {
+        let route = RouteHandle::new(4.0, 500, 2);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![video_spec(TrackId::new(1))],
+        );
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
+        let first = publish_time_of(&render_mpd_at(&route, now).expect("renders"));
+        assert_eq!(
+            first,
+            publish_time_of(&render_mpd_at(&route, now).expect("renders"))
+        );
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 0.5))
+            .expect("add_segment");
+        let second = publish_time_of(&render_mpd_at(&route, now).expect("renders"));
+        let (t1, t2): (jiff::Timestamp, jiff::Timestamp) = (
+            first.parse().expect("xs:dateTime"),
+            second.parse().expect("xs:dateTime"),
+        );
+        assert!(t2 > t1, "{second} must be later than {first}");
+        assert_eq!(first, "2023-11-14T22:13:24Z");
+        assert_eq!(second, "2023-11-14T22:13:24.5Z");
+    }
 
     fn video_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
@@ -572,7 +650,7 @@ mod tests {
             "main's frac golden must carry the raw f64 depth: {main}"
         );
         assert_eq!(
-            ours.replace(
+            without_publish_time(&ours).replace(
                 "timeShiftBufferDepth=\"PT0.3S\"",
                 "timeShiftBufferDepth=\"PT0.30000000000000004S\""
             ),
@@ -618,7 +696,7 @@ mod tests {
         );
         // Exactly the one intended substitution: PT60S -> PT1M.
         assert_eq!(
-            ours.replace(
+            without_publish_time(&ours).replace(
                 "timeShiftBufferDepth=\"PT1M\"",
                 "timeShiftBufferDepth=\"PT60S\""
             ),
@@ -658,7 +736,7 @@ mod tests {
             "main's golden must carry PT3600S: {main}"
         );
         assert_eq!(
-            ours.replace(
+            without_publish_time(&ours).replace(
                 "timeShiftBufferDepth=\"PT1H\"",
                 "timeShiftBufferDepth=\"PT3600S\""
             ),
