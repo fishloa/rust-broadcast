@@ -128,7 +128,7 @@ impl PlayPeer {
                             break;
                         }
                     }
-                    Err(RtmpError::BufferTooShort { .. }) => break,
+                    Err(RtmpError::BufferTooShort(..)) => break,
                     Err(e) => return Err(e),
                 }
             }

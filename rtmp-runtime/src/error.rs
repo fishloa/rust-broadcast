@@ -11,15 +11,8 @@
 pub enum RtmpError {
     /// Not enough input bytes were available to parse a complete structure
     /// (handshake message, chunk header, or reassembled RTMP message).
-    #[error("buffer too short for {what}: need {need}, have {have}")]
-    BufferTooShort {
-        /// Number of bytes required to complete the parse.
-        need: usize,
-        /// Number of bytes actually available.
-        have: usize,
-        /// What was being parsed when the buffer ran out.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// The input did not conform to the expected wire layout (bad handshake
     /// version, invalid chunk `fmt`/CSID encoding, malformed AMF0 value, or
@@ -61,15 +54,5 @@ pub enum RtmpError {
     /// packed it into a 24-bit field) would have silently wrapped and
     /// emitted a misframed chunk stream; this is returned instead.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
-}
-
-impl From<broadcast_common::len::BufferTooShort> for RtmpError {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
+    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
 }

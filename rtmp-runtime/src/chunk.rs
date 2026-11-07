@@ -938,7 +938,7 @@ impl ChunkAssembler {
     ) -> Result<Option<ParsedChunk>> {
         let bh = match BasicHeader::parse(buf) {
             Ok(bh) => bh,
-            Err(RtmpError::BufferTooShort { .. }) => return Ok(None),
+            Err(RtmpError::BufferTooShort(..)) => return Ok(None),
             Err(e) => return Err(e),
         };
         // `BasicHeader::parse` having succeeded means `buf` holds at least
@@ -982,7 +982,7 @@ impl ChunkAssembler {
         let rest = &buf[header_len..];
         let (mh, mh_consumed) = match MessageHeader::parse(bh.fmt, rest) {
             Ok(v) => v,
-            Err(RtmpError::BufferTooShort { .. }) => return Ok(None),
+            Err(RtmpError::BufferTooShort(..)) => return Ok(None),
             Err(e) => return Err(e),
         };
         let mut consumed = header_len + mh_consumed;
@@ -1404,6 +1404,8 @@ fn payload_bytes_copied_for_test() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::BufferTooShort;
+
     use super::*;
 
     // ── u24 helper ───────────────────────────────────────────────────────
@@ -1646,11 +1648,11 @@ mod tests {
     fn basic_header_empty_input_is_buffer_too_short() {
         assert!(matches!(
             BasicHeader::parse(&[]),
-            Err(RtmpError::BufferTooShort {
+            Err(RtmpError::BufferTooShort(BufferTooShort {
                 need: 1,
                 have: 0,
                 ..
-            })
+            }))
         ));
     }
 
@@ -1659,11 +1661,11 @@ mod tests {
         let bytes = [0b00_000000u8]; // marker=0 (2-byte form) but only 1 byte given.
         assert!(matches!(
             BasicHeader::parse(&bytes),
-            Err(RtmpError::BufferTooShort {
+            Err(RtmpError::BufferTooShort(BufferTooShort {
                 need: 2,
                 have: 1,
                 ..
-            })
+            }))
         ));
     }
 
@@ -1672,11 +1674,11 @@ mod tests {
         let bytes = [0b00_000001u8, 0xAB]; // marker=1 (3-byte form) but only 2 bytes given.
         assert!(matches!(
             BasicHeader::parse(&bytes),
-            Err(RtmpError::BufferTooShort {
+            Err(RtmpError::BufferTooShort(BufferTooShort {
                 need: 3,
                 have: 2,
                 ..
-            })
+            }))
         ));
     }
 
@@ -1885,10 +1887,10 @@ mod tests {
         let bytes = [0u8; TYPE0_LEN - 1];
         assert!(matches!(
             MessageHeader::parse(Fmt::Type0, &bytes),
-            Err(RtmpError::BufferTooShort {
+            Err(RtmpError::BufferTooShort(BufferTooShort {
                 need: TYPE0_LEN,
                 ..
-            })
+            }))
         ));
     }
 
@@ -1900,10 +1902,10 @@ mod tests {
         bytes[2] = 0xFF;
         assert!(matches!(
             MessageHeader::parse(Fmt::Type0, &bytes),
-            Err(RtmpError::BufferTooShort {
+            Err(RtmpError::BufferTooShort(BufferTooShort {
                 need,
                 ..
-            }) if need == TYPE0_LEN + 4
+            })) if need == TYPE0_LEN + 4
         ));
     }
 

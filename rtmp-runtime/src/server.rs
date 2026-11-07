@@ -61,6 +61,7 @@
 //! anything other than protocol control/user control traffic.
 
 use broadcast_common::Parse;
+use broadcast_common::error::BufferTooShort;
 
 use crate::RtmpError;
 use crate::amf0::{Amf0Value, Command};
@@ -449,7 +450,7 @@ impl ServerSession {
                         break;
                     }
                 }
-                Err(RtmpError::BufferTooShort { .. }) => break,
+                Err(RtmpError::BufferTooShort(..)) => break,
                 Err(e) => return Err(e),
             }
         }
@@ -513,11 +514,14 @@ impl ServerSession {
             // that opens with an AMF3 `connect` (rather than AMF0) got no
             // reply at all and hung until its own timeout.
             msg_type::COMMAND_AMF3 => {
-                let body = msg.payload.get(1..).ok_or(RtmpError::BufferTooShort {
-                    need: 1,
-                    have: msg.payload.len(),
-                    what: "AMF3 command encoding marker byte",
-                })?;
+                let body =
+                    msg.payload
+                        .get(1..)
+                        .ok_or(RtmpError::BufferTooShort(BufferTooShort {
+                            need: 1,
+                            have: msg.payload.len(),
+                            what: "AMF3 command encoding marker byte",
+                        }))?;
                 let command = Command::parse(body)?;
                 self.handle_command(&command, msg, out, events)
             }
@@ -1928,7 +1932,7 @@ mod tests {
             err,
             RtmpError::Unsupported { .. }
                 | RtmpError::Malformed { .. }
-                | RtmpError::BufferTooShort { .. }
+                | RtmpError::BufferTooShort(..)
         ));
     }
 
