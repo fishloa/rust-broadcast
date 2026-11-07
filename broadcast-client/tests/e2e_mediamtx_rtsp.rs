@@ -27,8 +27,8 @@ const FFMPEG: &str = "ffmpeg";
 const FIXTURE: &str = "ts/h264-aac.ts";
 const STREAM_PATH: &str = "live";
 const READY_DEADLINE: Duration = Duration::from_secs(10);
-const PUBLISHER_READY_DEADLINE: Duration = Duration::from_secs(120);
 static SERVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+const PUBLISHER_WARMUP: Duration = Duration::from_secs(4);
 const SOURCE_LOOPS: &str = "12";
 const SOURCE_SECONDS: &str = "30";
 const RUN: Duration = Duration::from_secs(15);
@@ -76,10 +76,10 @@ fn bail(reason: &str) {
     eprintln!("SKIP e2e_mediamtx_rtsp: {reason} (set {REQUIRE_ENV}=1 to make this a failure)");
 }
 
-fn write_config(dir: &Path, rtsp_port: u16, api_port: u16) -> PathBuf {
+fn write_config(dir: &Path, rtsp_port: u16) -> PathBuf {
     let config = format!(
         "logLevel: error\n\
-         api: yes\napiAddress: 127.0.0.1:{api_port}\nmetrics: no\npprof: no\nplayback: no\nrtmp: no\nhls: no\nwebrtc: no\nsrt: no\nmoq: no\n\
+         api: no\nmetrics: no\npprof: no\nplayback: no\nrtmp: no\nhls: no\nwebrtc: no\nsrt: no\nmoq: no\n\
          rtspTransports: [tcp]\nrtspEncryption: \"no\"\n\
          rtspAddress: 127.0.0.1:{rtsp_port}\n\
          paths:\n  all_others:\n"
@@ -95,25 +95,6 @@ fn wait_for_port(port: u16) {
         assert!(
             Instant::now() < deadline,
             "mediamtx never listened on {port}"
-        );
-        thread::sleep(Duration::from_millis(50));
-    }
-}
-
-fn wait_for_publisher(api_port: u16) {
-    let url = format!("http://127.0.0.1:{api_port}/v3/paths/get/{STREAM_PATH}");
-    let deadline = Instant::now() + PUBLISHER_READY_DEADLINE;
-    loop {
-        let ready = reqwest::blocking::get(&url)
-            .and_then(|r| r.error_for_status())
-            .and_then(|r| r.text())
-            .is_ok_and(|body| body.contains("\"ready\":true"));
-        if ready {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "mediamtx never reported {STREAM_PATH} ready"
         );
         thread::sleep(Duration::from_millis(50));
     }
@@ -161,8 +142,7 @@ struct WireArrivals {
     first_ts: std::collections::BTreeMap<u8, u32>,
     idr_starts: std::collections::BTreeMap<u8, Vec<i64>>,
     order: std::collections::BTreeMap<u8, Vec<i64>>,
-    sr_history: std::collections::BTreeMap<u8, Vec<(u64, f64, u32)>>,
-    rtp_info_times: usize,
+    last_sr: std::collections::BTreeMap<u8, (f64, u32)>,
 }
 
 impl WireArrivals {
@@ -191,10 +171,7 @@ impl WireArrivals {
                         u32::from_be_bytes([frame[at], frame[at + 1], frame[at + 2], frame[at + 3]])
                     };
                     let ntp = f64::from(word(8)) + f64::from(word(12)) / NTP_FRACTION;
-                    self.sr_history
-                        .entry(channel - 1)
-                        .or_default()
-                        .push((now_us, ntp, word(16)));
+                    self.last_sr.insert(channel - 1, (ntp, word(16)));
                 }
                 if channel.is_multiple_of(CHANNELS_PER_TRACK) && frame.len() >= RTP_HEADER_MIN {
                     let ts = u32::from_be_bytes([
@@ -237,16 +214,9 @@ impl WireArrivals {
                 if self.pending.len() < end + 4 + body {
                     return;
                 }
-                self.rtp_info_times = self.rtp_info_times.max(head.matches("rtptime=").count());
                 self.pending.drain(..end + 4 + body);
             }
         }
-    }
-
-    fn sr_in_force(&self, channel: u8, at_us: u64) -> Option<(f64, u32)> {
-        let history = self.sr_history.get(&channel)?;
-        let seen = history.partition_point(|(arrived, _, _)| *arrived <= at_us);
-        history[..seen].last().map(|&(_, ntp, rtp)| (ntp, rtp))
     }
 
     fn has_exact(&self, channel: u8, rel_ticks: i64) -> bool {
@@ -347,8 +317,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         Scratch(std::env::temp_dir().join(format!("e2e-mediamtx-rtsp-{}", std::process::id())));
     fs::create_dir_all(&dir.0).expect("scratch dir");
     let port = free_tcp_port();
-    let api_port = free_tcp_port();
-    let config = write_config(&dir.0, port, api_port);
+    let config = write_config(&dir.0, port);
     let _server = spawn_quiet(Command::new(mediamtx).arg(&config), &dir.0);
     wait_for_port(port);
 
@@ -393,7 +362,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         .args(["-c", "copy", "-f", "rtsp", "-rtsp_transport", "tcp"])
         .arg(&url);
     let _publisher = spawn_quiet(&mut publisher, &dir.0);
-    wait_for_publisher(api_port);
+    thread::sleep(PUBLISHER_WARMUP);
 
     let started = Instant::now();
     let mut first_live_us: Option<u64> = None;
@@ -515,9 +484,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                         let ts = track_timescale.get(&tid).copied().unwrap_or(1).max(1);
                         let seconds = pts as f64 / f64::from(ts);
                         first_sample_pts.entry(tid).or_insert(pts);
-                        if sync_states.last().is_some_and(|(_, s)| {
-                            matches!(*s, AvSync::SenderReport | AvSync::RtpInfo)
-                        }) {
+                        if sync_states
+                            .last()
+                            .is_some_and(|(_, s)| *s == AvSync::SenderReport)
+                        {
                             emitted.push((tid, pts, now));
                             emitted_data.push((is_video, sample.data.to_vec(), seconds));
                             emitted_audio_idx.push(if is_video { -1 } else { audio_count - 1 });
@@ -636,19 +606,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         samples.len()
     );
     let states: Vec<AvSync> = sync_states.iter().map(|(_, s)| *s).collect();
-    let rtp_info_complete = wire.rtp_info_times >= track_channel.len();
-    let sr_path = !rtp_info_complete;
-    let expected_state = if sr_path {
-        AvSync::SenderReport
-    } else {
-        AvSync::RtpInfo
-    };
     assert_eq!(
         states.last(),
-        Some(&expected_state),
-        "PLAY response carried an rtptime for {} of {} tracks; the sync state must settle on {expected_state:?}: {sync_states:?}",
-        wire.rtp_info_times,
-        track_channel.len()
+        Some(&AvSync::SenderReport),
+        "mediamtx sends Sender Reports, the sync state must reach SenderReport: {sync_states:?}"
     );
     let first_gap = match (first_audio_sample_pts, first_video_sample_pts) {
         (Some(a), Some(v)) => {
@@ -725,7 +686,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         std::collections::BTreeMap::new();
     let mut sr_residual: std::collections::BTreeMap<bool, Vec<f64>> =
         std::collections::BTreeMap::new();
-    for (n, &(tid, pts, emitted_at)) in emitted.iter().enumerate() {
+    for (n, &(tid, pts, _)) in emitted.iter().enumerate() {
         let channel = track_channel[&tid];
         let video = track_is_video[&tid];
         let rel = if video {
@@ -741,19 +702,15 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
             .entry(video)
             .or_default()
             .push(seconds - arrival as f64 / 1e6);
-        if sr_path {
-            let (ntp, sr_ts) = wire.sr_in_force(channel, emitted_at).unwrap_or_else(|| {
-                panic!("no Sender Report on channel {channel} before {emitted_at} us")
-            });
-            let sr_rel = f64::from(sr_ts.wrapping_sub(wire.first_ts[&channel]) as i32);
-            let scale = f64::from(track_timescale[&tid]);
-            let wall = ntp + (rel as f64 - sr_rel) / scale;
-            sr_residual.entry(video).or_default().push(seconds - wall);
-            sr_vs_arrival
-                .entry(video)
-                .or_default()
-                .push(wall - arrival as f64 / 1e6);
-        }
+        let (ntp, sr_ts) = wire.last_sr[&channel];
+        let sr_rel = f64::from(sr_ts.wrapping_sub(wire.first_ts[&channel]) as i32);
+        let scale = f64::from(track_timescale[&tid]);
+        let wall = ntp + (rel as f64 - sr_rel) / scale;
+        sr_residual.entry(video).or_default().push(seconds - wall);
+        sr_vs_arrival
+            .entry(video)
+            .or_default()
+            .push(wall - arrival as f64 / 1e6);
         if video {
             let order = &wire.order[&channel];
             let at = order.partition_point(|&r| r != rel);
@@ -782,29 +739,25 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         ground.audio_matched,
         ground.video_matched
     );
-    if sr_path {
-        let sr_faithfulness = median(sr_residual.get_mut(&false).expect("audio"))
-            - median(sr_residual.get_mut(&true).expect("video"));
-        eprintln!(
-            "SRFAITHFUL[{label}] emitted-timeline-minus-SR-mapping audio-vs-video={sr_faithfulness:.4}"
-        );
-        assert!(
-            sr_faithfulness.abs() < SR_FAITHFUL_SECONDS,
-            "{label}: the emitted timeline departs from the Sender Report mapping by {sr_faithfulness} s"
-        );
-    }
+    let sr_faithfulness = median(sr_residual.get_mut(&false).expect("audio"))
+        - median(sr_residual.get_mut(&true).expect("video"));
+    eprintln!(
+        "SRFAITHFUL[{label}] emitted-timeline-minus-SR-mapping audio-vs-video={sr_faithfulness:.4}"
+    );
+    assert!(
+        sr_faithfulness.abs() < SR_FAITHFUL_SECONDS,
+        "{label}: the emitted timeline departs from the Sender Report mapping by {sr_faithfulness} s"
+    );
     let video_sent_early_s =
         (ground.audio_median - audio_offset) - (ground.video_median - video_offset);
     eprintln!(
         "SENDERPACING[{label}] video arrives {video_sent_early_s:.4} s earlier than audio, relative to source pts"
     );
-    if sr_path {
-        let sr_minus_arrival = median(sr_vs_arrival.get_mut(&false).expect("audio"))
-            - median(sr_vs_arrival.get_mut(&true).expect("video"));
-        eprintln!(
-            "SRARRIVAL[{label}] SR wall minus client arrival, audio-vs-video={sr_minus_arrival:.4}"
-        );
-    }
+    let sr_minus_arrival = median(sr_vs_arrival.get_mut(&false).expect("audio"))
+        - median(sr_vs_arrival.get_mut(&true).expect("video"));
+    eprintln!(
+        "SRARRIVAL[{label}] SR wall minus client arrival, audio-vs-video={sr_minus_arrival:.4}"
+    );
     let av_offset_pts = audio_offset - video_offset;
     let av_offset = audio_offset - median(&mut decode_offsets);
     eprintln!(
