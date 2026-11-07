@@ -110,6 +110,11 @@ impl<'a> Parse<'a> for PesDataField<'a> {
 
         // Preserve trailing bytes (including end marker) for byte-exact round-trip
         let suffix = &bytes[pos..];
+        if let [marker] = suffix
+            && *marker != END_OF_PES_MARKER
+        {
+            return Err(Error::BadEndOfPesMarker(*marker));
+        }
 
         Ok(PesDataField {
             subtitle_stream_id,
@@ -243,10 +248,34 @@ mod tests {
     }
 
     #[test]
-    fn no_end_marker_is_ok() {
-        // Per forward-compatibility §7.2.0.2, a missing end marker is tolerated
-        let bytes = [0x20, 0x00, 0x00];
+    fn wrong_end_marker_after_the_last_segment_is_rejected() {
+        let bytes = [
+            0x20, 0x00, // data_identifier + subtitle_stream_id
+            0x0F, 0x80, 0x00, 0x01, 0x00, 0x00, // end of display set
+            0xFE, // end_of_PES_data_field_marker must be 0xFF
+        ];
+        assert_eq!(
+            PesDataField::parse(&bytes).unwrap_err(),
+            Error::BadEndOfPesMarker(0xFE)
+        );
+    }
+
+    #[test]
+    fn wrong_end_marker_with_no_segments_is_rejected() {
+        assert_eq!(
+            PesDataField::parse(&[0x20, 0x00, 0x00]).unwrap_err(),
+            Error::BadEndOfPesMarker(0x00)
+        );
+    }
+
+    #[test]
+    fn truncated_segment_still_parses_with_the_remainder_kept() {
+        let bytes = [
+            0x20, 0x00, //
+            0x0F, 0x10, 0x00, 0x01, 0x00, 0x20, 0x01, // segment_length 0x20, 1 byte present
+        ];
         let field = PesDataField::parse(&bytes).unwrap();
         assert_eq!(field.segments.len(), 0);
+        assert_eq!(field.try_to_bytes().unwrap(), bytes);
     }
 }
