@@ -42,7 +42,6 @@ headers            = { workspace = true }
 cookie             = { version = "0.18", default-features = false }
 cookie_store       = { version = "~0.22.1", default-features = false }
 thiserror          = "2"
-serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [dev-dependencies]
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -63,7 +62,7 @@ tokio = { version = "1", default-features = false, features = ["rt", "time", "ne
 reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
 
 [features]
-serde = ["dep:serde", "serde/std", "broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
+serde = ["broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
 
 __test-seams = []
 

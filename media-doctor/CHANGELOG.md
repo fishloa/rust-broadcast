@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Dropped the unused `thiserror` dependency (c2 TH4).
 
 ## [0.13.0] - 2026-11-03
 
