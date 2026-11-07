@@ -6,78 +6,7 @@
 //! [`FieldOverflow`] instead, so the caller's serializer maps it into its own
 //! error type rather than emitting a corrupt frame.
 
-/// A value did not fit the wire field it is written to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FieldOverflow {
-    /// Spec name of the field, e.g. "section_length".
-    pub field: &'static str,
-    /// The value that did not fit.
-    pub value: u64,
-    /// The largest value the field can hold.
-    pub max: u64,
-}
-
-impl core::fmt::Display for FieldOverflow {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{} = {} exceeds the field maximum {}",
-            self.field, self.value, self.max
-        )
-    }
-}
-
-impl core::error::Error for FieldOverflow {}
-
-/// An input buffer held fewer bytes than the structure being parsed needs.
-///
-/// Mirrors the `BufferTooShort { need, have, what }` variant every parser
-/// crate's error enum carries, so a crate maps it with one `From` impl.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BufferTooShort {
-    /// Bytes required to proceed.
-    pub need: usize,
-    /// Bytes actually available.
-    pub have: usize,
-    /// Name of the type or field being parsed.
-    pub what: &'static str,
-}
-
-impl core::fmt::Display for BufferTooShort {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "buffer too short: need {} bytes, have {} (while parsing {})",
-            self.need, self.have, self.what
-        )
-    }
-}
-
-impl core::error::Error for BufferTooShort {}
-
-/// An output buffer was smaller than the serialized form requires.
-///
-/// Mirrors the `OutputBufferTooSmall { need, have }` variant of the serializer
-/// crates' error enums.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutputBufferTooSmall {
-    /// Required size.
-    pub need: usize,
-    /// Actual size.
-    pub have: usize,
-}
-
-impl core::fmt::Display for OutputBufferTooSmall {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "output buffer too small: need {}, have {}",
-            self.need, self.have
-        )
-    }
-}
-
-impl core::error::Error for OutputBufferTooSmall {}
+pub use crate::error::{BufferTooShort, FieldOverflow, OutputBufferTooSmall};
 
 /// `Ok` if `buf` holds at least `need` bytes, else [`BufferTooShort`] carrying
 /// `what` (the parse-side pre-check).
