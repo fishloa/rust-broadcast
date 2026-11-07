@@ -461,7 +461,7 @@ mod tests {
         let limits = XmlLimits {
             max_bytes: 4,
             max_depth: 2,
-            max_elements: 3,
+            max_elements: 4,
             max_attribute_bytes: 2,
             max_attributes: 1,
         };
