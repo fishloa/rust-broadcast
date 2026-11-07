@@ -5,6 +5,7 @@
 //! frame's bed/object metadata and audio essence.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
@@ -207,13 +208,7 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
                 value: element_size as u64,
                 reason: "overflowed usize",
             })?;
-        if body_end > bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: body_end,
-                have: bytes.len(),
-                what: "ATMOSFrame body",
-            });
-        }
+        need_in(bytes, body_end, "ATMOSFrame body")?;
         let body = &bytes[header_len..body_end];
 
         let mut br = BitReader::new(body);
@@ -287,13 +282,7 @@ impl Serialize for AtmosFrame<'_> {
         self.validate_pan_sub_block_counts()?;
         let body_len = self.body_len();
         let need = element_header_len(ELEMENT_ID_ATMOS_FRAME, body_len) + body_len;
-        if buf.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: buf.len(),
-                what: "ATMOSFrame",
-            });
-        }
+        need_in(buf, need, "ATMOSFrame")?;
         write_element_header(&mut buf[..need], ELEMENT_ID_ATMOS_FRAME, body_len)?;
         let header_len = need - body_len;
 

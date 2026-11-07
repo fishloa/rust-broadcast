@@ -92,6 +92,16 @@ pub enum Error {
     },
 }
 
+impl From<broadcast_common::len::BufferTooShort> for Error {
+    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
+        Self::BufferTooShort {
+            need: e.need,
+            have: e.have,
+            what: e.what,
+        }
+    }
+}
+
 /// Attaches a `what`-context to a [`BitError`], turning it into an
 /// [`Error::Bits`]. Used at every `BitReader`/`BitWriter` call site instead of
 /// a context-free blanket `From` impl, so error messages always name the
