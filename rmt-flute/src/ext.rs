@@ -79,13 +79,7 @@ impl<'a> HeaderExtension<'a> {
     /// Parse a single header extension from the start of `data`. Returns the
     /// extension and the number of bytes consumed.
     pub fn parse(data: &'a [u8]) -> Result<(Self, usize)> {
-        if data.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "header extension HET",
-            });
-        }
+        need_in(data, 1, "header extension HET")?;
         let het = data[0];
         if het >= FIXED_HET_MIN {
             // Fixed-length: one 32-bit word, three content bytes after HET.
