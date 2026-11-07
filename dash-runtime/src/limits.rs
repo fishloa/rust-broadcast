@@ -5,15 +5,15 @@
 //! error ([`crate::error::MpdError::TooLarge`]) instead of an allocation.
 
 /// Largest MPD document accepted, in bytes.
-pub const MAX_MPD_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_MPD_BYTES: usize = broadcast_common::xml_chars::MAX_XML_BYTES;
 /// Deepest element nesting accepted.
-pub const MAX_XML_DEPTH: usize = 32;
+pub const MAX_XML_DEPTH: usize = broadcast_common::xml_chars::MAX_XML_DEPTH;
 /// Most elements (of any namespace) accepted in one document.
-pub const MAX_XML_ELEMENTS: usize = 100_000;
+pub const MAX_XML_ELEMENTS: usize = broadcast_common::xml_chars::MAX_XML_ELEMENTS;
 /// Longest single attribute value accepted, in bytes.
-pub const MAX_ATTRIBUTE_BYTES: usize = 8 * 1024;
+pub const MAX_ATTRIBUTE_BYTES: usize = broadcast_common::xml_chars::MAX_XML_ATTRIBUTE_BYTES;
 /// Most attributes accepted on one element.
-pub const MAX_ATTRIBUTES_PER_ELEMENT: usize = 256;
+pub const MAX_ATTRIBUTES_PER_ELEMENT: usize = broadcast_common::xml_chars::MAX_XML_ATTRIBUTES;
 /// Most `Period` elements accepted.
 pub const MAX_PERIODS: usize = 1_000;
 /// Most `AdaptationSet` elements accepted in one `Period`.

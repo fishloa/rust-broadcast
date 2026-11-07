@@ -79,7 +79,7 @@ use core::fmt;
 use core::str::FromStr;
 use core::time::Duration;
 
-use broadcast_common::xml_chars::char_data;
+use broadcast_common::xml_chars::{XmlLimit, XmlLimits, char_data};
 use quick_xml::events::Event;
 
 // ---------------------------------------------------------------------------
@@ -165,6 +165,16 @@ pub enum DashParseError {
         /// The element name actually found in the closing tag.
         found: String,
     },
+    /// The document exceeds a hostile-input bound
+    /// ([`broadcast_common::xml_chars::XmlLimits`] defaults: 4 MiB, depth 32,
+    /// 100 000 elements, 8 KiB per attribute value, 256 attributes per
+    /// element — the same ceilings `dash-runtime` applies).
+    TooLarge {
+        /// The bound that was exceeded.
+        limit: XmlLimit,
+        /// Its ceiling.
+        max: usize,
+    },
     /// Any other XML well-formedness error reported by `quick-xml` (bad
     /// entity or character reference, mismatched nesting detected by the
     /// reader, invalid encoding, …).
@@ -228,6 +238,9 @@ impl fmt::Display for DashParseError {
                     write!(f, "expected closing tag </{expected}>, found </{found}>")
                 }
             }
+            DashParseError::TooLarge { limit, max } => {
+                write!(f, "MPD exceeds the {limit} limit of {max}")
+            }
             DashParseError::Xml { pos, message } => {
                 write!(f, "XML error at byte offset {pos}: {message}")
             }
@@ -237,6 +250,12 @@ impl fmt::Display for DashParseError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for DashParseError {}
+
+/// ISO/IEC 23009-1 §5.3.1 / Annex B: the MPD schema namespace. An element is
+/// read as DASH only when it resolves to this namespace under any prefix (or,
+/// in a document whose root is unbound, when it is unbound); a foreign
+/// namespace's `BaseURL`, `Period` or attribute is never read as ours.
+const NS_MPD: &str = "urn:mpeg:dash:schema:mpd:2011";
 
 /// Crate-local result alias for this module.
 type Result<T> = core::result::Result<T, DashParseError>;
@@ -267,9 +286,12 @@ impl crate::xml_walk::XmlWalkError for DashParseError {
             value,
         }
     }
+    fn too_large(limit: XmlLimit, max: usize) -> Self {
+        Self::TooLarge { limit, max }
+    }
 }
 
-crate::xml_walk::xml_walk_fns!(DashParseError);
+crate::xml_walk::xml_walk_fns!(DashParseError, Some(NS_MPD), XmlLimits::default());
 
 /// The character data of an already-open element `name` (entity and character
 /// references resolved by quick-xml, CDATA included), consuming its end tag.
@@ -1353,6 +1375,8 @@ impl Mpd {
                 }
             }
         }
+
+        finish(reader)?;
 
         Ok(Mpd {
             profiles,

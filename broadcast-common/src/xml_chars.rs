@@ -150,6 +150,168 @@ pub fn read_attributes_checked<E>(
     Ok(out)
 }
 
+/// Largest XML document the pull parsers accept, in bytes.
+pub const MAX_XML_BYTES: usize = 4 * 1024 * 1024;
+/// Deepest element nesting the pull parsers accept.
+pub const MAX_XML_DEPTH: usize = 32;
+/// Most elements (of any namespace) the pull parsers accept in one document.
+pub const MAX_XML_ELEMENTS: usize = 100_000;
+/// Longest single attribute value the pull parsers accept, in bytes.
+pub const MAX_XML_ATTRIBUTE_BYTES: usize = 8 * 1024;
+/// Most attributes the pull parsers accept on one element.
+pub const MAX_XML_ATTRIBUTES: usize = 256;
+
+/// Hostile-input bounds for a document read from a server the caller does not
+/// control; `Default` is the `MAX_XML_*` constants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct XmlLimits {
+    /// See [`MAX_XML_BYTES`].
+    pub max_bytes: usize,
+    /// See [`MAX_XML_DEPTH`].
+    pub max_depth: usize,
+    /// See [`MAX_XML_ELEMENTS`].
+    pub max_elements: usize,
+    /// See [`MAX_XML_ATTRIBUTE_BYTES`].
+    pub max_attribute_bytes: usize,
+    /// See [`MAX_XML_ATTRIBUTES`].
+    pub max_attributes: usize,
+}
+
+impl Default for XmlLimits {
+    fn default() -> Self {
+        Self {
+            max_bytes: MAX_XML_BYTES,
+            max_depth: MAX_XML_DEPTH,
+            max_elements: MAX_XML_ELEMENTS,
+            max_attribute_bytes: MAX_XML_ATTRIBUTE_BYTES,
+            max_attributes: MAX_XML_ATTRIBUTES,
+        }
+    }
+}
+
+/// Which bound of [`XmlLimits`] was exceeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum XmlLimit {
+    /// Document size in bytes.
+    InputBytes,
+    /// Element nesting depth.
+    Depth,
+    /// Total element count.
+    Elements,
+    /// Length of one attribute value.
+    AttributeBytes,
+    /// Attributes on one element.
+    Attributes,
+}
+
+impl XmlLimit {
+    /// Stable snake_case label.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::InputBytes => "input_bytes",
+            Self::Depth => "depth",
+            Self::Elements => "elements",
+            Self::AttributeBytes => "attribute_bytes",
+            Self::Attributes => "attributes",
+        }
+    }
+}
+
+crate::impl_spec_display!(XmlLimit);
+
+/// A bound that was exceeded and its ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitExceeded {
+    /// The bound that tripped.
+    pub limit: XmlLimit,
+    /// Its ceiling.
+    pub max: usize,
+}
+
+/// Running tally of one document against its [`XmlLimits`].
+#[derive(Debug, Clone)]
+pub struct XmlBudget {
+    limits: XmlLimits,
+    elements: usize,
+    depth: usize,
+}
+
+impl XmlBudget {
+    /// A fresh tally for one document.
+    #[must_use]
+    pub fn new(limits: XmlLimits) -> Self {
+        Self {
+            limits,
+            elements: 0,
+            depth: 0,
+        }
+    }
+
+    /// The bounds this tally enforces.
+    #[must_use]
+    pub fn limits(&self) -> &XmlLimits {
+        &self.limits
+    }
+
+    /// Reject a document longer than [`XmlLimits::max_bytes`].
+    pub fn check_input(&self, len: usize) -> Result<(), LimitExceeded> {
+        if len > self.limits.max_bytes {
+            return Err(LimitExceeded {
+                limit: XmlLimit::InputBytes,
+                max: self.limits.max_bytes,
+            });
+        }
+        Ok(())
+    }
+
+    /// Count a start tag (its end, for an empty element, is
+    /// [`close_element`](Self::close_element)); fails past the element-count
+    /// or depth ceiling.
+    pub fn open_element(&mut self) -> Result<(), LimitExceeded> {
+        self.elements += 1;
+        if self.elements > self.limits.max_elements {
+            return Err(LimitExceeded {
+                limit: XmlLimit::Elements,
+                max: self.limits.max_elements,
+            });
+        }
+        self.depth += 1;
+        if self.depth > self.limits.max_depth {
+            return Err(LimitExceeded {
+                limit: XmlLimit::Depth,
+                max: self.limits.max_depth,
+            });
+        }
+        Ok(())
+    }
+
+    /// Count an end tag.
+    pub fn close_element(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    /// Check the `count`-th (1-based) attribute of a start tag, whose
+    /// normalized value is `value`.
+    pub fn admit_attribute(&self, count: usize, value: &str) -> Result<(), LimitExceeded> {
+        if count > self.limits.max_attributes {
+            return Err(LimitExceeded {
+                limit: XmlLimit::Attributes,
+                max: self.limits.max_attributes,
+            });
+        }
+        if value.len() > self.limits.max_attribute_bytes {
+            return Err(LimitExceeded {
+                limit: XmlLimit::AttributeBytes,
+                max: self.limits.max_attribute_bytes,
+            });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +454,39 @@ mod tests {
     fn unknown_attribute_prefix_is_an_error() {
         let err = start_attributes("<a q:x=\"1\"/>", |_, _| Ok(())).unwrap_err();
         assert!(err.contains("unknown namespace prefix"), "{err}");
+    }
+
+    #[test]
+    fn budget_trips_each_bound() {
+        let limits = XmlLimits {
+            max_bytes: 4,
+            max_depth: 2,
+            max_elements: 4,
+            max_attribute_bytes: 2,
+            max_attributes: 1,
+        };
+        let mut b = XmlBudget::new(limits);
+        assert_eq!(b.check_input(5).unwrap_err().limit, XmlLimit::InputBytes);
+        b.check_input(4).unwrap();
+        b.open_element().unwrap();
+        b.open_element().unwrap();
+        assert_eq!(b.open_element().unwrap_err().limit, XmlLimit::Depth);
+        b.close_element();
+        b.close_element();
+        b.close_element();
+        b.open_element().unwrap();
+        assert_eq!(b.open_element().unwrap_err().limit, XmlLimit::Elements);
+        assert_eq!(
+            b.admit_attribute(2, "").unwrap_err(),
+            LimitExceeded {
+                limit: XmlLimit::Attributes,
+                max: 1
+            }
+        );
+        assert_eq!(
+            b.admit_attribute(1, "abc").unwrap_err().limit,
+            XmlLimit::AttributeBytes
+        );
+        b.admit_attribute(1, "ab").unwrap();
     }
 }

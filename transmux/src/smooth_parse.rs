@@ -76,6 +76,7 @@ use crate::TrackId;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
+use broadcast_common::xml_chars::{XmlLimit, XmlLimits};
 use core::fmt;
 use core::str::FromStr;
 
@@ -170,6 +171,16 @@ pub enum SmoothParseError {
         /// The element name actually found in the closing tag.
         found: String,
     },
+    /// The manifest exceeds a hostile-input bound
+    /// ([`broadcast_common::xml_chars::XmlLimits`] defaults: 4 MiB, depth 32,
+    /// 100 000 elements, 8 KiB per attribute value, 256 attributes per
+    /// element).
+    TooLarge {
+        /// The bound that was exceeded.
+        limit: XmlLimit,
+        /// Its ceiling.
+        max: usize,
+    },
     /// Any other XML well-formedness error reported by `quick-xml` (bad
     /// entity or character reference, mismatched nesting detected by the
     /// reader, invalid encoding, …).
@@ -238,6 +249,9 @@ impl fmt::Display for SmoothParseError {
                     write!(f, "expected closing tag </{expected}>, found </{found}>")
                 }
             }
+            SmoothParseError::TooLarge { limit, max } => {
+                write!(f, "manifest exceeds the {limit} limit of {max}")
+            }
             SmoothParseError::Xml { pos, message } => {
                 write!(f, "XML error at byte offset {pos}: {message}")
             }
@@ -277,9 +291,21 @@ impl crate::xml_walk::XmlWalkError for SmoothParseError {
             value,
         }
     }
+    fn too_large(limit: XmlLimit, max: usize) -> Self {
+        Self::TooLarge { limit, max }
+    }
 }
 
-crate::xml_walk::xml_walk_fns!(SmoothParseError);
+crate::xml_walk::xml_walk_fns!(SmoothParseError, None, smooth_limits());
+
+/// The shared XML limits, with the attribute ceiling raised to twice
+/// [`MAX_CODEC_PRIVATE_DATA_HEX_LEN`] so that parser's own typed cap (not the
+/// generic one) is what rejects an oversized `CodecPrivateData`.
+fn smooth_limits() -> XmlLimits {
+    let mut limits = XmlLimits::default();
+    limits.max_attribute_bytes = 2 * MAX_CODEC_PRIVATE_DATA_HEX_LEN;
+    limits
+}
 
 // ---------------------------------------------------------------------------
 // Unbounded-input caps (remote alloc-DoS defense)
@@ -584,6 +610,8 @@ impl SmoothManifest {
                 }
             }
         }
+
+        finish(reader)?;
 
         Ok(SmoothManifest {
             major_version,
