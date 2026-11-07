@@ -44,13 +44,7 @@ impl InsertDescriptor<'_> {
 impl<'a> Parse<'a> for InsertDescriptor<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "insert_descriptor descriptor_count",
-            });
-        }
+        need_in(bytes, 1, "insert_descriptor descriptor_count")?;
         let count = bytes[0] as usize;
         let mut pos = 1;
         let mut images = Vec::with_capacity(count);

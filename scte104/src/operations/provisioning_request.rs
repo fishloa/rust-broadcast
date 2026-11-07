@@ -268,13 +268,7 @@ pub struct ProvisioningRequest {
 impl<'a> Parse<'a> for ProvisioningRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "provisioning_request_data service_count",
-            });
-        }
+        need_in(bytes, 1, "provisioning_request_data service_count")?;
         let service_count = bytes[0] as usize;
         let mut pos = 1;
         let mut services = Vec::with_capacity(service_count);

@@ -369,13 +369,7 @@ impl crate::traits::OperationDef<'_> for AliveResponse {
 impl<'a> Parse<'a> for InjectResponse {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "inject_response message_number",
-            });
-        }
+        need_in(bytes, 1, "inject_response message_number")?;
         Ok(Self {
             message_number: bytes[0],
         })

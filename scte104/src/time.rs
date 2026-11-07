@@ -225,13 +225,7 @@ impl Timestamp {
 impl<'a> Parse<'a> for Timestamp {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "timestamp time_type",
-            });
-        }
+        need_in(bytes, 1, "timestamp time_type")?;
         match bytes[0] {
             0 => Ok(Self::None),
             1 => {

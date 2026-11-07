@@ -5,7 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::len::need_out;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for transmit_schedule_request (§8.3, Table 8-4).
@@ -25,13 +25,7 @@ pub struct TransmitSchedule {
 impl<'a> Parse<'a> for TransmitSchedule {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "transmit_schedule cancel",
-            });
-        }
+        need_in(bytes, 1, "transmit_schedule cancel")?;
         Ok(Self { cancel: bytes[0] })
     }
 }
