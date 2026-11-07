@@ -17,7 +17,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 [workspace.dependencies]
 axum                        = "0.8"
 chrono                      = { version = "0.4", default-features = false }
-clap                        = "4.5"
+clap                        = "4.6"
 criterion                   = "0.8"
 futures-util                = { version = "0.3", default-features = false }
 headers                     = "0.4"

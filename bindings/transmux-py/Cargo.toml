@@ -18,7 +18,7 @@ name = "transmux_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.24", features = ["extension-module", "abi3-py39"] }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"] }
 # Consumed by VERSION (from crates.io), not path — keeps the binding decoupled
 # from the workspace and its MSRV/lockstep.
 broadcast-common = "10"

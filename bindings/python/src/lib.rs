@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use serde::Serialize;
 
 /// Serialize any `serde::Serialize` value to a Python object via `serde_json`.
-fn to_py<T: Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
+fn to_py<T: Serialize>(py: Python<'_>, value: &T) -> PyResult<Py<PyAny>> {
     let json = serde_json::to_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
     let obj = pythonize::pythonize(py, &json).map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(obj.unbind())
@@ -22,7 +22,7 @@ fn to_py<T: Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
 
 /// Parse a single SI/PSI section (table) from raw bytes into a Python dict.
 #[pyfunction]
-fn parse_section(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
+fn parse_section(py: Python<'_>, data: &[u8]) -> PyResult<Py<PyAny>> {
     let section = AnyTableSection::parse(data).map_err(|e| PyValueError::new_err(e.to_string()))?;
     to_py(py, &section)
 }
@@ -44,7 +44,7 @@ impl Demux {
 
     /// Feed one aligned 188-byte TS packet; return the dicts of any newly
     /// completed, changed sections (empty list if none).
-    fn feed(&mut self, py: Python<'_>, packet: &[u8]) -> PyResult<Vec<PyObject>> {
+    fn feed(&mut self, py: Python<'_>, packet: &[u8]) -> PyResult<Vec<Py<PyAny>>> {
         let mut out = Vec::new();
         for event in self.inner.feed(packet) {
             if let Ok(section) = event.table_section() {
@@ -74,7 +74,7 @@ impl T2miDemux {
     }
 
     /// Feed one TS packet; return dicts of the decoded T2-MI payloads.
-    fn feed(&mut self, py: Python<'_>, packet: &[u8]) -> PyResult<Vec<PyObject>> {
+    fn feed(&mut self, py: Python<'_>, packet: &[u8]) -> PyResult<Vec<Py<PyAny>>> {
         let mut out = Vec::new();
         for event in self.inner.feed_ts(packet) {
             if let Ok(payload) = event.payload() {
