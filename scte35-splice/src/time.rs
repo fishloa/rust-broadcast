@@ -93,13 +93,7 @@ impl SpliceTime {
 impl<'a> Parse<'a> for SpliceTime {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "splice_time",
-            });
-        }
+        need_in(bytes, 1, "splice_time")?;
         let time_specified = bytes[0] & 0x80 != 0;
         if time_specified {
             need_in(bytes, Self::LEN_WITH_TIME, "splice_time pts_time")?;

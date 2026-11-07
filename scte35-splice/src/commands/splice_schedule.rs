@@ -235,13 +235,7 @@ pub struct SpliceSchedule {
 impl<'a> Parse<'a> for SpliceSchedule {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "splice_schedule splice_count",
-            });
-        }
+        need_in(bytes, 1, "splice_schedule splice_count")?;
         let count = bytes[0] as usize;
         let mut pos = 1;
         let mut events = Vec::with_capacity(count);
