@@ -150,6 +150,7 @@ pub mod stuffing;
 pub mod subtitling;
 pub mod svc_extension;
 pub mod system_clock;
+mod tag_namespace;
 pub mod target;
 pub mod target_background_grid;
 pub mod telephone;

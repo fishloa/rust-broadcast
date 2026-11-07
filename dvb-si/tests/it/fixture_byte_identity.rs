@@ -7,7 +7,6 @@
 
 use broadcast_common::Serialize;
 use dvb_si::demux::SiDemux;
-use dvb_si::tables::AnyTableSection;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn read_fixture(filename: &str) -> Vec<u8> {

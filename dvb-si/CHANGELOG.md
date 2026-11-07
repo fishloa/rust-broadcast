@@ -6,6 +6,7 @@
 - `tables::nit::NitTransportStream` and `tables::bat::BatTransportStream`: use `tables::TransportStreamEntry` (same fields and `new`).
 - `collect::CompleteNitTransportStream` and `collect::CompleteBatTransportStream`: use `collect::CompleteTransportStream`.
 ### Changed
+- `declare_ait_descriptors!` and `declare_carousel_descriptors!` are one `declare_tag_namespace!` (internal; c7 G6).
 - `CompleteNit` and `CompleteBat` flatten their transport-stream loops through one `CompleteTransportStream::collect` (c4 M6).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - `libm` dependency dropped: `set_orbital_position_deg` rounds with an exact fraction test (identical to `f64::round` over the allowed 0.0..=6553.5 range, pinned by a test over the boundary values) (c4 T6).
