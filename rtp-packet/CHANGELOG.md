@@ -6,16 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Fixed
 - Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `is_dynamic_payload_type`.
+- BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `is_dynamic_payload_type`.
 ### Added
-- absorbs rtcp-packet as `rtp_packet::rtcp`
+- absorbs the former `rtcp-packet` crate as module `rtp_packet::rtcp` (RFC 3550 section 6 RTCP SR/RR/SDES/BYE/APP and the compound packet; the types and their paths below `rtcp` are unchanged, so `rtcp_packet::X` becomes `rtp_packet::rtcp::X`). The `serde` and `std` features of `rtp-packet` now also cover the RTCP types.
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidValue` now wrap `broadcast_common::error` types (tuple variants); `InvalidVersion(u8)` is replaced by `UnsupportedVersion(broadcast_common::error::UnsupportedVersion)` (`what` = "RTP"). Hand-written `From` impls removed.
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.5.0] - 2026-10-17
 ### Documentation

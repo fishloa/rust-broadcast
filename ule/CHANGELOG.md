@@ -8,8 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `is_mandatory`, `is_next_header`.
+- BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `is_mandatory`, `is_next_header`.
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
@@ -17,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 - `broadcast_common::Parse` / `Serialize` implemented for the crate's wire types, delegating to the existing inherent methods (which stay); each type is round-trip tested through the traits (c6 C6-06).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.5.0] - 2026-10-17
 ### Documentation

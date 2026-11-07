@@ -1,12 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed
 - BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - Dropped the unused `thiserror` dependency (c2 TH4).
 - TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `broadcast-hls` 0.5 -> 0.6, `container-probe` 0.2 -> 0.3, `dvb-conformance` 12 -> 13, `dvb-si` 12 -> 13, `mpeg-pes` 0.6 -> 0.7, `mpeg-ts` 0.6 -> 0.7, `scte35-splice` 4 -> 5, `timed-metadata` 0.8 -> 0.9, `transmux` 0.29 -> 0.30. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.13.0] - 2026-11-03
 

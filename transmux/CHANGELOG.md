@@ -8,17 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - `Mpd::parse_with_limits` and `SmoothManifest::parse_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `dash_parse::default_limits()` and `smooth_parse::default_limits()` are what `parse` applies.
+- `CodecConfig::name()`: one label per codec family (c4 D3); `flv` and `mkv_mux` unsupported-codec errors use it, so MPEG-H, MPEG-2 video and MPEG audio read `MPEG-H 3D Audio`, `MPEG-2 Video`, `MPEG-1/2 Audio` and a subtitle track `Subtitle` in both.
+- `box_types::clamped_boxes` / `ClampedBox`: a tolerant top-level box walk that clamps a truncated tail to the buffer end; `frag_offsets::mdat_ranges` and the hls-runtime iframe helpers use it instead of three private copies (c3 d:B1).
+
 ### Changed
 - The DASH and Smooth manifest writers use the shared `broadcast_common::xml_chars` writer helpers (output byte-identical).
-### Fixed
-- `LlDashPackager`'s MPD rewrite and `smooth_fragment::manifest_declares_protection` resolve XML namespaces: an `MPD`/`Period`/`SegmentTemplate` in a foreign namespace is no longer rewritten, and a `Protection` element counts only when it is in no namespace (a foreign-namespace `<ms:Protection>` no longer reports protection); the probe is bounded by the Smooth manifest limits and reports `false` past them.
-- The DASH MPD and Smooth manifest readers resolve XML namespaces (`quick-xml` `NsReader`) and are bounded (#1708). An element or attribute is read only when it is in the parser's namespace: a foreign-namespace `<ext:BaseURL>` no longer becomes the MPD base URL, a foreign `<ext:Period>` is no longer a Period, and a foreign attribute with a DASH local name is ignored; a DASH default namespace under any prefix (`<d:MPD>`) parses. A root in a wrong namespace is `UnexpectedElement`, an undeclared prefix and content after the root are `Xml` errors, and a manifest over 4 MiB, 32 levels deep, 100 000 elements, 8 KiB per attribute value or 256 attributes per element is the new `DashParseError::TooLarge` / `SmoothParseError::TooLarge` (the `dash-runtime` ceilings; Smooth allows `CodecPrivateData` its own 64 Ki hex cap). A document whose root is unbound keeps parsing as before. `cenc:default_KID` is not read: the MPD model has no `ContentProtection`. transmux has no PlayReady WRMHEADER reader (it only writes one), so there was nothing to change there.
-- `StreamingTsHlsSegmenter` (and the TS muxer's continuing path) increments the PMT `version_number` modulo 32 whenever the PMT content changes, so a track added with `add_track` mid-stream reaches a demuxer that joined earlier; an unchanged PMT keeps its version; the first segment after `add_track` is flagged `#EXT-X-DISCONTINUITY` (RFC 8216bis section 4.4.4.3: track set changed) (#1699).
-- `WebmDemux` reports an `Info` whose `TimestampScale` is 0 or does not fit an `i64` as a malformed unit (the default scale then applies) instead of applying it: 0 collapsed every pts to 0 and values of 2^63 or more made pts negative (c5 R5-2).
-### Changed
 - `transmux::rtcp` re-exports `rtp_packet::rtcp` (the former `rtcp-packet` crate, absorbed by `rtp-packet`); the `serde` feature forwards to `rtp-packet/serde`.
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
-- BREAKING: `DashPackager::package` (and so `LlDashPackager::package`) returns `Error::InvalidField` (new variant) when `dynamic` is set and `publish_time` is `None`; ISO/IEC 23009-1 §5.3.1.2 Table 3 requires `MPD@publishTime` for `type="dynamic"`. `LlDashPackager::new` now starts `base.publish_time` equal to its `availability_start_time`. Static MPDs are unchanged.
 - BREAKING: `DashPackager::package` (and so `LlDashPackager::package`) returns `Error::InvalidField` (new variant) when `dynamic` is set and `publish_time` is `None`; ISO/IEC 23009-1 §5.3.1.2 Table 3 requires `MPD@publishTime` for `type="dynamic"`. `LlDashPackager` (always dynamic) behaves the same: set `base.publish_time` explicitly and advance it on every update. Static MPDs are unchanged.
 - BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` and `InvalidValue` now wrap `broadcast_common::error::{BufferTooShort, OutputBufferTooSmall, InvalidValue}` (`Error::BufferTooShort(e)`); the hand-written `From` impls are replaced by `#[from]`. `OutputBufferTooSmall` and `InvalidValue` display with the shared message text. `FieldOverflow` now names the `broadcast_common::error` path (same type).
@@ -34,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One `ADTS_HEADER_SIZE` constant shared by `aac_asc`, `ts_demux` and `sample_aes` (dedupe C1; the 7/9-byte `sample_aes::adts_header_len` is left as the Apple SAMPLE-AES rule, distinct from the raw-data-block offset in `ts_demux`).
 - The four segmenters build `Stage::demand` with `Demand::saturated_if` (dedupe C3).
 - `ac3` and `dts` import `bitreader::read_bits_checked` instead of declaring forwarding `read_bits` wrappers (dedupe R5).
-- The `rtcp` module file is replaced by `pub use rtcp_packet as rtcp`; paths unchanged (c2 TH8).
+- The `rtcp` module file is replaced by a re-export of `rtp_packet::rtcp`; paths unchanged (c2 TH8).
 - One `build_chunk` builds the CMAF segment, event segment, LL-DASH chunk and LL-HLS part; `trun` `data_offset` is now range-checked instead of cast (c2 H5).
 - VVC reader/writer, AVS3-audio and HDR10+ serializers share `bitreader::{read_bits_checked, write_bits_checked}`; an AVS3-audio `dca3` write overrun is now `BufferTooShort` (was `InvalidInput`) (c2 M4).
 - The DASH MPD and Smooth manifest parsers share one quick-xml walker (`xml_walk`: tags, attribute decoding, subtree skipping, attribute helpers) over a small error trait (c2 H2).
@@ -42,17 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `name()` of the AAC/ESDS label types returns `&'static str` (was `&str`; compatible for callers) (c6 C6-11).
 
 ### Removed
-- `rtp::hex_decode`, `smooth_parse::hex_decode` and the `smooth_hex_decode` re-export are now crate-private; both only wrapped the `hex` crate with this crate's own error type. Use `hex::decode` (dedupe R6).
-- Unused public items `UUID_TYPE_BYTES`, `DashPackager::with_profiles`, `StblOpaque`, `new_vvi1`, `MhaCBox`, `user_data::{MIN_BAR_DATA_LEN, picture_user_data, carriage_for}`, `TrackSpec::with_hdr`/`with_dovi`, `SkippedTrack::with_track_id`, and `ir::sample::NON_SYNC`; `new_avc3`, `new_hev1`, `HdrStaticMetadata::hevc_sei_nal_carries_hdr` and `SENC_OVERRIDE_FIELDS_LEN` are now test-only; the AVS2 FourCC constants are now what `AvsVideoEntryKind` returns (c2 TH1).
+- BREAKING: `rtp::hex_decode`, `smooth_parse::hex_decode` and the `smooth_hex_decode` re-export are now crate-private; both only wrapped the `hex` crate with this crate's own error type. Use `hex::decode` (dedupe R6).
+- BREAKING: Unused public items `UUID_TYPE_BYTES`, `DashPackager::with_profiles`, `StblOpaque`, `new_vvi1`, `MhaCBox`, `user_data::{MIN_BAR_DATA_LEN, picture_user_data, carriage_for}`, `TrackSpec::with_hdr`/`with_dovi`, `SkippedTrack::with_track_id`, and `ir::sample::NON_SYNC`; `new_avc3`, `new_hev1`, `HdrStaticMetadata::hevc_sei_nal_carries_hdr` and `SENC_OVERRIDE_FIELDS_LEN` are now test-only; the AVS2 FourCC constants are now what `AvsVideoEntryKind` returns (c2 TH1).
 
 ### Fixed
+- `LlDashPackager`'s MPD rewrite and `smooth_fragment::manifest_declares_protection` resolve XML namespaces: an `MPD`/`Period`/`SegmentTemplate` in a foreign namespace is no longer rewritten, and a `Protection` element counts only when it is in no namespace (a foreign-namespace `<ms:Protection>` no longer reports protection); the probe is bounded by the Smooth manifest limits and reports `false` past them.
+- The DASH MPD and Smooth manifest readers resolve XML namespaces (`quick-xml` `NsReader`) and are bounded (#1708). An element or attribute is read only when it is in the parser's namespace: a foreign-namespace `<ext:BaseURL>` no longer becomes the MPD base URL, a foreign `<ext:Period>` is no longer a Period, and a foreign attribute with a DASH local name is ignored; a DASH default namespace under any prefix (`<d:MPD>`) parses. A root in a wrong namespace is `UnexpectedElement`, an undeclared prefix and content after the root are `Xml` errors, and a manifest over 4 MiB, 32 levels deep, 100 000 elements, 8 KiB per attribute value or 256 attributes per element is the new `DashParseError::TooLarge` / `SmoothParseError::TooLarge` (the `dash-runtime` ceilings; Smooth allows `CodecPrivateData` its own 64 Ki hex cap). A document whose root is unbound keeps parsing as before. `cenc:default_KID` is not read: the MPD model has no `ContentProtection`. transmux has no PlayReady WRMHEADER reader (it only writes one), so there was nothing to change there.
+- `StreamingTsHlsSegmenter` (and the TS muxer's continuing path) increments the PMT `version_number` modulo 32 whenever the PMT content changes, so a track added with `add_track` mid-stream reaches a demuxer that joined earlier; an unchanged PMT keeps its version; the first segment after `add_track` is flagged `#EXT-X-DISCONTINUITY` (RFC 8216bis section 4.4.4.3: track set changed) (#1699).
+- `WebmDemux` reports an `Info` whose `TimestampScale` is 0 or does not fit an `i64` as a malformed unit (the default scale then applies) instead of applying it: 0 collapsed every pts to 0 and values of 2^63 or more made pts negative (c5 R5-2).
 - The `vvcC` writer no longer indexes the output buffer directly: a short buffer or a short `general_constraint_info` is a typed `BufferTooShort` instead of a panic (c2 M4).
 
-### Added
-- `CodecConfig::name()`: one label per codec family (c4 D3); `flv` and `mkv_mux` unsupported-codec errors use it, so MPEG-H, MPEG-2 video and MPEG audio read `MPEG-H 3D Audio`, `MPEG-2 Video`, `MPEG-1/2 Audio` and a subtitle track `Subtitle` in both.
-- `box_types::clamped_boxes` / `ClampedBox`: a tolerant top-level box walk that clamps a truncated tail to the buffer end; `frag_offsets::mdat_ranges` and the hls-runtime iframe helpers use it instead of three private copies (c3 d:B1).
-
-
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `broadcast-hls` 0.5 -> 0.6, `cc-data` 0.7 -> 0.8, `container-probe` 0.2 -> 0.3, `dvb-si` 12 -> 13, `mp4-emsg` 0.5 -> 0.6, `mpeg-pes` 0.6 -> 0.7, `mpeg-ps` 0.6 -> 0.7, `mpeg-ts` 0.6 -> 0.7, `rtp-packet` 0.5 -> 0.6. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.29.1] - 2026-11-03
 ### Fixed

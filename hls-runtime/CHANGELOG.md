@@ -6,13 +6,16 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - `server::engine` calls `transmux::CodecConfig::is_video` instead of a private copy of its variant list (c4 D2).
 - `server::Generation` is now `media_plane::ids::Generation` re-exported at the same path; the private copy of the `id_newtype!` macro is gone (c2 L5).
 ### Removed
-- `client::Error::UriResolve` (never constructed: URI resolution falls back to the unresolved URI, documented on `resolve`) (c2 TH3).
-- Unused `TokioClientConfig::with_connect_timeout`/`with_max_body_bytes` and `ClosedSegment::with_init_generation` (c2 TH1).
+- BREAKING: `client::Error::UriResolve` (never constructed: URI resolution falls back to the unresolved URI, documented on `resolve`) (c2 TH3).
+- BREAKING: Unused `TokioClientConfig::with_connect_timeout`/`with_max_body_bytes` and `ClosedSegment::with_init_generation` (c2 TH1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `broadcast-hls` 0.5 -> 0.6, `container-probe` 0.2 -> 0.3, `media-plane` 0.9 -> 0.10, `timed-metadata` 0.8 -> 0.9, `transmux` 0.29 -> 0.30. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.11.0] - 2026-11-03
 ### Added

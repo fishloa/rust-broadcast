@@ -6,8 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Added
-- absorbs tshttp-runtime as `broadcast_client::tshttp` (`TsHttpClient`, `TsHttpPolicy`, `Config`, `Action`, `Event`, `StarveKind`, `DemuxEvent`); the `serde` feature now also enables `Serialize`/`Deserialize` on those types. The module is `std` like the rest of the crate (the standalone `no_std` build is gone).
+- absorbs the former `tshttp-runtime` crate as module `broadcast_client::tshttp`, so `tshttp_runtime::X` becomes `broadcast_client::tshttp::X` (`TsHttpClient`, `TsHttpPolicy`, `Config`, `Action`, `Event`, `StarveKind`, `DemuxEvent`); the `serde` feature now also enables `Serialize`/`Deserialize` on those types. The module is `std` like the rest of the crate (the standalone `no_std` build is gone).
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed
@@ -20,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RTSP lane alignment rescales through `broadcast_common::timescale` (same rounding) (c2 H6).
 - SRT caller uses `srt_runtime::arq::seq::contiguous_runs` instead of a private copy (dedupe D15).
 - Dropped the unused direct `serde` dependency (the `serde` feature still forwards to the sibling crates) (c2 TH4).
-
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `broadcast-hls` 0.5 -> 0.6, `buffering-runtime` 0.1 -> 0.2, `dash-runtime` 0.2 -> 0.3, `dvb-si` 12 -> 13, `hls-runtime` 0.11 -> 0.12, `mpeg-ts` 0.6 -> 0.7, `rtmp-runtime` 0.8 -> 0.9, `rtp-packet` 0.5 -> 0.6, `rtsp-runtime` 0.8 -> 0.9, `srt-runtime` 0.7 -> 0.8, `transmux` 0.29 -> 0.30. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.2.1] - 2026-11-03
 ### Fixed

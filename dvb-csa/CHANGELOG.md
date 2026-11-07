@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - Dev-dependency `rand` 0.9 -> 0.10 (bitsliced differential test only; not in public API).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `mpeg-ts` 0.6 -> 0.7. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.4.0] - 2026-10-17
 ### Documentation

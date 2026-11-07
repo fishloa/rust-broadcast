@@ -1,12 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Changed
 - `SectionPump` and `T2miPumpDriver` replaced by one `PacketPump` over a `PacketSink` trait; no public API change (c3 P1).
 
 ### Removed
-- Unused `resync::aligned_packets`; the `resync` module doc no longer claims to wrap `mpeg_ts::resync::TsResync` (c2 H7).
-- Unused `SectionStream::with_builder` and `MulticastConfig::with_interface` (c2 TH1).
+- BREAKING: Unused `resync::aligned_packets`; the `resync` module doc no longer claims to wrap `mpeg_ts::resync::TsResync` (c2 H7).
+- BREAKING: Unused `SectionStream::with_builder` and `MulticastConfig::with_interface` (c2 TH1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `dvb-si` 12 -> 13, `dvb-t2mi` 12 -> 13, `mpeg-ts` 0.6 -> 0.7, `rtp-packet` 0.5 -> 0.6. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.7.0] - 2026-10-17
 ### Documentation

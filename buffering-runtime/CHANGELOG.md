@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tests
 - `start_gate_is_free_at_500ms_and_prevents_the_300ms_stall` (real logs at 300 ms / 500 ms / 1.8 s fill: exact start instants, zero pauses) and `gate_adds_no_start_delay_at_500ms_and_above` (closed-loop simulation, jittered and steady audio, registered and not). Mutation-proved: one learnt step stalls rai-3 at 300 ms, three delays france-5 by 119 ms at 500 ms, dropping the `start_us()` bound delays the simulation start by 100 ms.
 ### Removed
-- The `WRAP_27MHZ` re-export; use `broadcast_common::clock33::PCR_WRAP_27MHZ` (c2 TH8).
+- BREAKING: The `WRAP_27MHZ` re-export; use `broadcast_common::clock33::PCR_WRAP_27MHZ` (c2 TH8).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.1.0] - 2026-10-18
 

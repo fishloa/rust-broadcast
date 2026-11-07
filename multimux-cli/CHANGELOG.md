@@ -3,8 +3,11 @@
 All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
+
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `multimux` 0.15 -> 0.16. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.13.0] - 2026-11-03
 

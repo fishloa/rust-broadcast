@@ -1,8 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `dvb-si` 12 -> 13, `dvb-t2mi` 12 -> 13, `mpeg-ts` 0.6 -> 0.7. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [12.1.0] - 2026-11-03
 

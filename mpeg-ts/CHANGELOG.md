@@ -1,8 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `into_raw`.
+- BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `into_raw`.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Added
@@ -12,6 +13,8 @@
 - BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what` and its message becomes "<what> CRC-32 mismatch: ..."); `InvalidSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`. The hand-written `From` impls are gone (`#[from]` replaces them); error values are otherwise unchanged.
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.6.2] - 2026-10-18
 ### Documentation

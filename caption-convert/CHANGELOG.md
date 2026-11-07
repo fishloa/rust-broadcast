@@ -3,9 +3,12 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
 ### Changed
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `cc-data` 0.7 -> 0.8, `dvb-vbi` 0.5 -> 0.6, `timed-metadata` 0.8 -> 0.9. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.4.0] - 2026-11-01
 

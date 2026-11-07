@@ -3,10 +3,12 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `scte35-splice` 4 -> 5, `ssai-runtime` 0.4 -> 0.5. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.4.0] - 2026-11-01
 

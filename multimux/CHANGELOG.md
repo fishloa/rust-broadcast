@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Fixed
 - The DASH and LL-DASH `type="dynamic"` MPDs now carry `MPD@publishTime` (ISO/IEC 23009-1 section 5.3.1.2 Table 3: shall be present for dynamic MPDs, and a later value marks an update). It is the instant the newest listed segment became available, so it is unchanged while the window is unchanged and later after every new segment.
 - `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
@@ -22,9 +23,11 @@
 - DASH-pull fetch retries use the shared `ReconnectSchedule` (500 ms to 4 s, equal-jittered) instead of a private jitter-free doubling (c2 L2).
 - TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
 ### Removed
-- Unused `origin::limit::RETRY_AFTER_SECS` (c2 TH1).
+- BREAKING: Unused `origin::limit::RETRY_AFTER_SECS` (c2 TH1).
 ### Added
 - `MultimuxError::Flv(transmux::FlvError)`: an RTMP ingest FLV demux failure keeps its source instead of a flattened `Depay` string; WHIP RTP depayload failures surface as `MultimuxError::Transmux` (c6 C6-14).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-client` 0.2 -> 0.3, `broadcast-common` 10 -> 11, `broadcast-hls` 0.5 -> 0.6, `caption-convert` 0.4 -> 0.5, `container-probe` 0.2 -> 0.3, `dash-runtime` 0.2 -> 0.3, `dvb-si` 12 -> 13, `hls-runtime` 0.11 -> 0.12, `media-plane` 0.9 -> 0.10, `mpeg-ts` 0.6 -> 0.7, `rtmp-runtime` 0.8 -> 0.9, `rtp-packet` 0.5 -> 0.6, `rtsp-runtime` 0.8 -> 0.9, `srt-runtime` 0.7 -> 0.8, `timed-metadata` 0.8 -> 0.9, `transmux` 0.29 -> 0.30, `webrtc-runtime` 0.4 -> 0.5. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.15.0] - 2026-11-03
 ### Fixed

@@ -3,10 +3,13 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - `AdBreakDecision::asset_list` and `SessionPlaylistBase::render_plain` are now test-only: nothing outside the unit tests used them (c2 TH1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `broadcast-hls` 0.5 -> 0.6. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.4.0] - 2026-11-01
 

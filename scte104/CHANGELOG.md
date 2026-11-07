@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
@@ -15,10 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_common::error` types (tuple variants); `ReservedSet { field, expected: u16, got: u16 }` is replaced by `ReservedBits(broadcast_common::error::ReservedBits)` (`found` replaces `got`, widened to u64). Hand-written `From` impls removed. `InvalidValue` stays crate-specific (carries no offending value).
 
 ### Removed
-- `Error::UnexpectedOpId`: never constructed; the operation data parsers take the body after `opID` dispatch and cannot see the `opID`.
-- `SingleOpDef` and `MultiOpDef` marker traits (no impls or bounds anywhere).
+- BREAKING: `Error::UnexpectedOpId`: never constructed; the operation data parsers take the body after `opID` dispatch and cannot see the `opID`.
+- BREAKING: `SingleOpDef` and `MultiOpDef` marker traits (no impls or bounds anywhere).
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.6.0] - 2026-10-17
 ### Documentation

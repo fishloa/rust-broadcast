@@ -8,11 +8,14 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ### Fixed
 - A hostile document could use unbounded memory and time: input size, element depth and count, and attribute size and count are now bounded (including inside skipped extension subtrees). Nesting past 32 levels is now `Error::TooLarge` instead of a clean parse.
+
 ### Changed
 - Serialization plumbing (indenting writer, declaration, document finish) comes from `broadcast_common::xml_chars` (c2 XML unify).
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The pull parser reads attributes and events through `broadcast_common::xml_chars` instead of a private copy (c2 H8).
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.3.0] - 2026-10-17
 ### Documentation
