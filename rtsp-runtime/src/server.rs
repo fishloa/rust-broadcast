@@ -315,6 +315,16 @@ mod tests {
     }
 
     #[test]
+    fn a_request_without_cseq_is_rejected() {
+        let mut s = test_session();
+        assert_eq!(
+            s.handle_request(&req("OPTIONS rtsp://h/s RTSP/1.0\n\n"))
+                .unwrap_err(),
+            Error::MissingCSeq
+        );
+    }
+
+    #[test]
     fn setup_transitions_init_to_ready() {
         let mut s = test_session();
         let (resp, events) = s

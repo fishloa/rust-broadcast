@@ -6,6 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Changed
+- Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The Digest server nonce-signing secret is filled with `getrandom::fill` instead of `rand::random`; the `rand` dependency is dropped (c4 T7).
 ### Added
 - `credentials_from_url` / `strip_userinfo` (and `Error::InvalidUserinfo` / `Error::UserinfoNotRemovable`): decode a URL's percent-encoded userinfo into `Credentials` and remove it, shared by `multimux` instead of three private copies (dedupe D7).

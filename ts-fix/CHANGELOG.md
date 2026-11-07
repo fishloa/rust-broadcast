@@ -4,6 +4,7 @@
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed
+- Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).
 - TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
 - BREAKING: `Error::NoSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`.

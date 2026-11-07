@@ -1413,9 +1413,7 @@ impl Stage for WhipIngestSession {
         let samples = self
             .depacketiser
             .push(TrackId::new(track_id.value()), input)
-            .map_err(|e| MultimuxError::Depay {
-                reason: e.to_string(),
-            })?;
+            .map_err(MultimuxError::Transmux)?;
         for sample in samples {
             self.observe_sample(TrackId::new(track_id.value()), sample);
         }
@@ -1434,9 +1432,7 @@ impl Stage for WhipIngestSession {
             let samples = self
                 .depacketiser
                 .flush(track_id)
-                .map_err(|e| MultimuxError::Depay {
-                    reason: e.to_string(),
-                })?;
+                .map_err(MultimuxError::Transmux)?;
             for sample in samples {
                 self.observe_sample(track_id, sample);
             }

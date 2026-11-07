@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed
+- Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The tick to microsecond conversions (`timeline::to_us`, RTSP `ticks_to_us`) use `broadcast_common::timescale::to_micros` (c6 F7).
 - The DASH and HLS sources share the response head routing (redirect and auth replay), body accumulation with oversize reporting, refusal capture and the stalled-request resume decision in `source::fetch::inflight` (c4 D7).
 - The DASH and HLS sources share one in-flight request table (`source::fetch::inflight`: request records, per-class timeouts, deadline/inactivity bookkeeping, `start`) instead of two copies that had drifted (c3 d:S2).

@@ -61,7 +61,12 @@ pub enum Error {
     /// Authentication failed: no credentials were configured, the challenge
     /// could not be parsed, or the digest computation failed (RFC 2326 §14).
     #[error("authentication failure: {0}")]
-    Auth(String),
+    Auth(#[from] broadcast_auth::Error),
+
+    /// The server answered `401 Unauthorized` without a `WWW-Authenticate`
+    /// challenge, so there is nothing to answer (RFC 2326 §14).
+    #[error("authentication failure: 401 without WWW-Authenticate")]
+    MissingAuthChallenge,
 
     /// A socket IO operation failed in the async adapter (feature `tokio`).
     #[error("socket IO error: {0}")]

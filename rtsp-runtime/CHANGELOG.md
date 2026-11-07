@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `Error::Auth` wraps `broadcast_auth::Error` (it was a flattened `String`); a `401` without a `WWW-Authenticate` header is the new `Error::MissingAuthChallenge` (c6 C6-14).
+- Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - Session-id comparison uses `broadcast_auth::constant_time_eq`; the direct `subtle` dependency is gone (c2 L1).
 ### Removed
 - The two `log::warn!` calls on a malformed `Session` header and the `log` dependency: the same warnings stay in `ClientSession::session_warnings()` (c4 T7).

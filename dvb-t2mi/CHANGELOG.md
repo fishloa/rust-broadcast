@@ -4,6 +4,7 @@
 ### Removed
 - Unused public items, with no use in the workspace beyond their own unit tests: `drain_packets`, `emission_time_utc`, `guard_interval_set`, `inband_loop`, `is_relative`, `l1_dynamic_next2`, `parse_with_crc`, `set_emission_offset`, `set_emission_time_utc`.
 ### Changed
+- Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - `PayloadObject` comes from `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H1).
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what` = "T2-MI packet", message "<what> CRC-32 mismatch: ..."). Hand-written `From` impls removed. `ReservedBitsViolation` stays crate-specific (free-text reason).

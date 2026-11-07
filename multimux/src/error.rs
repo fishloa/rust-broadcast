@@ -78,19 +78,22 @@ pub enum MultimuxError {
         reason: String,
     },
 
-    /// Ingest-side framing of samples out of the wire container failed:
-    /// either RTP depayloading into access units, or an ingest container
-    /// demux (e.g. the FLV tag stream a `rtmp::RtmpRoute` publisher
-    /// carries — `transmux::flv::FlvError`) — distinct from a *downstream*
-    /// `transmux` segmentation/mux error (see [`Self::Transmux`]), which
-    /// this crate never produces on the ingest path.
+    /// A wire-level RTP validation failure on the ingest path (for example an
+    /// `rtp_version` other than 2). Demux and depayload failures keep their
+    /// `transmux` error as the source ([`Self::Flv`], [`Self::Transmux`]).
     #[error("depayload error: {reason}")]
     Depay {
         /// The underlying depayload/demux failure.
         reason: String,
     },
 
-    /// A `transmux` segmentation/mux error.
+    /// An ingest FLV tag stream (the `rtmp::RtmpRoute` publisher's media)
+    /// failed to demux; the `transmux::FlvError` is kept as the source.
+    #[error("rtmp/flv: {0}")]
+    Flv(#[from] transmux::FlvError),
+
+    /// A `transmux` error: RTP depayloading on the WHIP ingest path, or a
+    /// downstream segmentation/mux failure.
     #[error("transmux: {0}")]
     Transmux(#[from] transmux::Error),
 
