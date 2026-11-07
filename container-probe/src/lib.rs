@@ -542,6 +542,22 @@ pub(crate) fn prefix_agrees(region: &[u8], offset: usize, pattern: &[u8]) -> boo
     seen[..n] == pattern[..n]
 }
 
+/// The signature check every prober with a fixed leading magic opens with:
+/// `Some(outcome)` when the verdict is already settled (a region shorter than
+/// `min_len` is `Insufficient(min_len)` unless the bytes seen already
+/// contradict `signature`; a full-length region whose leading bytes differ is
+/// `None`), `Option::None` when the prober should go on to its own checks.
+pub(crate) fn signature_gate(region: &[u8], signature: &[u8], min_len: usize) -> Option<Outcome> {
+    if region.len() < min_len {
+        return Some(if prefix_agrees(region, 0, signature) {
+            Outcome::Insufficient(min_len)
+        } else {
+            Outcome::None
+        });
+    }
+    (region[..signature.len()] != *signature).then_some(Outcome::None)
+}
+
 /// The single shared decision every prober must make: is "no match" a *proof of
 /// non-membership* — or merely the walk *running off the end of the supplied
 /// region* mid-structure?

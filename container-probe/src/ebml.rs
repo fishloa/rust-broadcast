@@ -41,18 +41,8 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
 
-    if region.len() < EBML_MAGIC.len() {
-        // Shorter than the 4-byte magic we must rule out: an EBML file read a
-        // few bytes at a time is genuinely undecided, so this is `Insufficient`
-        // (`need` = the magic length), not `Unknown` — more bytes could make it
-        // the exact bytes EBML opens with.
-        if !crate::prefix_agrees(region, 0, &EBML_MAGIC) {
-            return Outcome::None;
-        }
-        return Outcome::Insufficient(EBML_MAGIC.len());
-    }
-    if region[..EBML_MAGIC.len()] != EBML_MAGIC {
-        return Outcome::None;
+    if let Some(outcome) = crate::signature_gate(region, &EBML_MAGIC, EBML_MAGIC.len()) {
+        return outcome;
     }
 
     match find_doc_type(region) {
@@ -183,8 +173,6 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
         (&region[body_start..], false)
     };
 
-    // Walk the header's child elements looking for DocType. `off` is relative
-    // to `data`; `body_start + off` is the absolute offset in `region`.
     let mut off = 0usize;
     while off < data.len() {
         let (id_len, id) = match read_id_vint(&data[off..]) {

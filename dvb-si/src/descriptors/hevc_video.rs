@@ -620,7 +620,10 @@ mod tests {
         d.temporal_layer_subset_flag = false;
         d.temporal_sub = Some(HevcTemporalSub::new(0, 1));
         let mut buf = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::ValueOutOfRange { .. })
+        ));
     }
 
     #[test]

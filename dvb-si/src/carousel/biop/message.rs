@@ -2160,7 +2160,10 @@ mod tests {
             user_info: CarouselDescriptorLoop::new(&[0x09, 0x03, 0x00, 0x00, 0x00]),
             ..info.clone()
         };
-        assert!(bad.compressed_module_descriptor().unwrap().is_err());
+        assert!(matches!(
+            bad.compressed_module_descriptor().unwrap(),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         let none = ModuleInfo {
             user_info: CarouselDescriptorLoop::new(&[0x06, 0x01, 0x07]),
             ..info

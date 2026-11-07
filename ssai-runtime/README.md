@@ -112,7 +112,7 @@ boxes. `examples/condition_real_cue.rs` reproduces the measurement:
 cargo run -p ssai-runtime --example condition_real_cue
 ```
 
-```
+```text
 cue presentation_time = 160767315900000 (90kHz ticks, absolute representation clock)
 tolerance=3000 ticks (~33ms, one 30fps frame) -> Err(NoAlignedBoundary { .. nearest_delta_ticks: 6000 })
 tolerance=10000 ticks (~111ms) -> ConditionedSplicePoint { .. delta_ticks: 6000, direction: After }

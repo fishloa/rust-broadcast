@@ -67,6 +67,57 @@ pub(crate) fn require_exact_len(
     }
 }
 
+/// Shared wire body of the `count:u8 + provider_avail_id[count]` operations.
+pub(crate) fn parse_provider_avail_ids(
+    bytes: &[u8],
+    what_count: &'static str,
+    what_ids: &'static str,
+) -> Result<Vec<u32>> {
+    let Some(&count) = bytes.first() else {
+        return Err(Error::BufferTooShort {
+            need: 1,
+            have: 0,
+            what: what_count,
+        });
+    };
+    let count = usize::from(count);
+    let need = 1 + count * 4;
+    if bytes.len() < need {
+        return Err(Error::BufferTooShort {
+            need,
+            have: bytes.len(),
+            what: what_ids,
+        });
+    }
+    Ok(bytes[1..need]
+        .chunks_exact(4)
+        .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
+}
+
+pub(crate) fn provider_avail_ids_len(ids: &[u32]) -> usize {
+    1 + ids.len() * 4
+}
+
+pub(crate) fn write_provider_avail_ids(
+    ids: &[u32],
+    buf: &mut [u8],
+    what_count: &'static str,
+) -> Result<usize> {
+    let need = provider_avail_ids_len(ids);
+    if buf.len() < need {
+        return Err(Error::OutputBufferTooSmall {
+            need,
+            have: buf.len(),
+        });
+    }
+    buf[0] = broadcast_common::len::fit_u8(ids.len(), what_count)?;
+    for (chunk, &id) in buf[1..need].chunks_exact_mut(4).zip(ids) {
+        chunk.copy_from_slice(&id.to_be_bytes());
+    }
+    Ok(need)
+}
+
 /// A single operation entry within a `multiple_operation_message` data loop,
 /// pairing the wire `opID` with the parsed structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,6 +293,8 @@ pub struct AsAliveRequest;
 pub struct AsAliveResponse;
 
 // ── Parse / Serialize impls for the simple single-operation types ──
+
+use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::time::TIME_LEN;

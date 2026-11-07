@@ -560,7 +560,10 @@ mod tests {
     fn rejects_truncated_entry_header() {
         // count=1 but only 1 byte of the 2-byte entry header present.
         let bytes: &[u8] = &[0x00, 0x03, 0x00, 0x01, 0x01];
-        assert!(CompatibilityDescriptor::parse(bytes).is_err());
+        assert!(matches!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

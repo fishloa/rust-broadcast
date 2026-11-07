@@ -5,6 +5,9 @@
 - Unused public items, with no use in the workspace beyond their own unit tests: `MAX_SECTION_LEN_TS`, `duration_value`, `has_sub_segments`, `preroll_duration`, `pts_adjustment_duration`, `pts_time_duration`, `set_duration_value`, `set_pts_adjustment_duration`, `set_pts_time_duration`.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
+### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
+
 
 ## [4.0.0] - 2026-10-17
 ### Documentation

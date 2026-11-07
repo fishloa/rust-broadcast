@@ -1130,7 +1130,10 @@ mod tests {
             Err(crate::error::Error::InvalidTimeExpression { .. })
         ));
         // No digits before metric
-        assert!(parse_time_expression("s", &default_ctx()).is_err());
+        assert!(matches!(
+            parse_time_expression("s", &default_ctx()),
+            Err(crate::Error::InvalidTimeExpression { .. })
+        ));
     }
 
     #[test]
@@ -1139,7 +1142,10 @@ mod tests {
             time_base: TimeBase::Media,
             ..default_ctx()
         };
-        assert!(parse_time_expression("wallclock(2024-01-01T00:00:00)", &ctx).is_err());
+        assert!(matches!(
+            parse_time_expression("wallclock(2024-01-01T00:00:00)", &ctx),
+            Err(crate::Error::InvalidTimeExpression { .. })
+        ));
     }
 
     #[test]

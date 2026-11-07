@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - The DASH and HLS sources share one in-flight request table (`source::fetch::inflight`: request records, per-class timeouts, deadline/inactivity bookkeeping, `start`) instead of two copies that had drifted (c3 d:S2).
+- `raw_27mhz` and the TS-over-HTTP `to_27mhz` rescale through `broadcast_common::timescale`; a zero timescale now counts as 1 instead of yielding 0 / the unscaled value (c3 L1).
+- `raw_27mhz` and the TS-over-HTTP `to_27mhz` rescale through `broadcast_common::timescale`; `to_27mhz` with a zero clock now counts it as 1 instead of returning the ticks unscaled, `raw_27mhz` keeps its explicit zero-timescale-is-no-mapping rule (pinned by `pts_to_27mhz_clamps_instead_of_truncating`) (c3 L1).
 - RTSP lane alignment rescales through `broadcast_common::timescale` (same rounding) (c2 H6).
 - SRT caller uses `srt_runtime::arq::seq::contiguous_runs` instead of a private copy (dedupe D15).
 - Dropped the unused direct `serde` dependency (the `serde` feature still forwards to the sibling crates) (c2 TH4).

@@ -492,7 +492,10 @@ mod tests {
             },
         ]);
         let mut buf = vec![0xAAu8; 512];
-        assert!(two.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            two.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
         assert!(
             buf.iter().all(|&b| b == 0xAA),
             "two-byte wrote before failing"

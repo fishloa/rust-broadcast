@@ -371,8 +371,6 @@ impl SectionSetCollector {
             version_number: section.version_number,
             last_section_number: section.last_section_number,
         };
-        // Cap check: evict the least-recently-touched key if `key` is new
-        // and the map is already full (see the type-level docs).
         if !self.touch_or_evict(key) {
             return Ok(None);
         }

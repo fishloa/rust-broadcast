@@ -88,11 +88,20 @@ mod tests {
             &(Mpeg4TextDescriptor::parse(&[0x2C, 0])),
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
-        assert!(Mpeg4TextDescriptor::parse(&[TAG, 4, 1]).is_err());
+        assert!(matches!(
+            Mpeg4TextDescriptor::parse(&[TAG, 4, 1]),
+            Err(Error::BufferTooShort { .. })
+        ));
         let big = vec![0u8; 256];
         let d = Mpeg4TextDescriptor::new(&big);
         let mut out = vec![0u8; 300];
-        assert!(d.serialize_into(&mut out).is_err());
-        assert!(d.serialize_into(&mut out[..10]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(Error::FieldOverflow(..))
+        ));
+        assert!(matches!(
+            d.serialize_into(&mut out[..10]),
+            Err(Error::OutputBufferTooSmall { .. })
+        ));
     }
 }

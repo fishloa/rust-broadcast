@@ -53,6 +53,8 @@ SMPTE ST 2038) or as an RTP stream (SMPTE ST 2110-40 IP facilities).
 ## Quick start
 
 ```rust
+# #[cfg(feature = "ts")]
+# fn main() {
 use st291::{AncDataPacket, AncPacket};
 
 let pkt = AncDataPacket {
@@ -75,6 +77,43 @@ let pkt = AncDataPacket {
 let mut bytes = vec![0u8; pkt.serialized_len()];
 pkt.serialize_into(&mut bytes).unwrap();
 assert_eq!(AncDataPacket::parse(&bytes).unwrap(), pkt);
+# }
+# #[cfg(not(feature = "ts"))]
+# fn main() {}
+```
+
+Build an ANC-over-RTP payload from typed fields and round-trip it (feature `rtp`):
+
+```rust
+# #[cfg(feature = "rtp")]
+# fn main() {
+use broadcast_common::{Parse, Serialize};
+use st291::{AncContent, AncRtpPayload, FieldSense, RtpAncPacket};
+
+let payload = AncRtpPayload {
+    extended_sequence_number: 0,
+    field_sense: FieldSense::ProgressiveOrUnspecified,
+    anc_packets: vec![RtpAncPacket {
+        c: false,
+        line_number: 9,
+        horizontal_offset: 0,
+        s: false,
+        stream_num: 0,
+        content: AncContent {
+            did: 0x161,
+            sdid: 0x101,
+            data_count: 0x002,
+            user_data_words: vec![0x2CF, 0x101],
+            checksum: 0x233,
+        },
+    }],
+};
+let mut bytes = vec![0u8; payload.serialized_len()];
+payload.serialize_into(&mut bytes).unwrap();
+assert_eq!(AncRtpPayload::parse(&bytes).unwrap(), payload);
+# }
+# #[cfg(not(feature = "rtp"))]
+# fn main() {}
 ```
 
 More runnable programs: `cargo run -p st291 --example build_anc`,

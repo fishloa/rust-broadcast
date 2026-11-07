@@ -142,7 +142,10 @@ mod tests {
         // truncated body: one Err then fused.
         let bad = [0x14, 0x05, 0x01];
         let mut it = parse_int_loop(&bad);
-        assert!(it.next().unwrap().is_err());
+        assert!(matches!(
+            it.next().unwrap(),
+            Err(crate::Error::BufferTooShort { .. })
+        ));
         assert!(it.next().is_none());
     }
 

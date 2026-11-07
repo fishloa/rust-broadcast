@@ -166,7 +166,10 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 5, 0, 0x80, 0x01, 0x00, 0x02]);
-        assert!(DiiLocationDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            DiiLocationDescriptor::parse(&[TAG, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         assert!(matches!(
             &(DiiLocationDescriptor::parse(&[TAG, 4, 0, 1, 2, 3])),
             Err(crate::error::Error::InvalidDescriptor { .. })
@@ -176,6 +179,9 @@ mod tests {
             locations: vec![DiiLocation::new(0x8000, 0)],
         };
         let mut out = vec![0u8; bad.serialized_len()];
-        assert!(bad.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            bad.serialize_into(&mut out),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 }

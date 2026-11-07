@@ -136,7 +136,10 @@ mod tests {
     #[test]
     fn parse_rejects_bad_length() {
         let bytes = [TAG, 8, 0, 0, 0, 1, 0, 5, 0, 0]; // body not a multiple of 7
-        assert!(ExternalApplicationAuthorisationDescriptor::parse(&bytes).is_err());
+        assert!(matches!(
+            ExternalApplicationAuthorisationDescriptor::parse(&bytes),
+            Err(Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]

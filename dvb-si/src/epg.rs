@@ -1084,7 +1084,10 @@ mod tests {
     #[test]
     fn feed_empty_is_error() {
         let mut store = EpgStore::new();
-        assert!(store.feed(&[]).is_err());
+        assert!(matches!(
+            store.feed(&[]),
+            Err(crate::collect::CollectError::Section(..))
+        ));
     }
 
     #[test]

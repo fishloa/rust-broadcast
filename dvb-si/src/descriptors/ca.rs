@@ -165,7 +165,10 @@ mod tests {
         let err = Pid::try_new(0x2101).unwrap_err();
         assert_eq!(err.value, 0x2101);
         assert!(Pid::try_new(0x1FFF).is_ok());
-        assert!(Pid::try_new(0x2000).is_err());
+        assert!(matches!(
+            Pid::try_new(0x2000),
+            Err(mpeg_ts::pid::PidOutOfRange { .. })
+        ));
         // The wire parse masks to the 13 PID bits and keeps the 3 reserved
         // bits separately, so a parsed descriptor re-serializes identically.
         let bytes = [TAG, 4, 0x05, 0x00, 0xE1, 0x01];

@@ -769,8 +769,14 @@ mod tests {
 
     #[test]
     fn rejects_bad_input() {
-        assert!(Mpeg2ExtensionDescriptor::parse(&[0x3E, 0]).is_err());
-        assert!(Mpeg2ExtensionDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            Mpeg2ExtensionDescriptor::parse(&[0x3E, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            Mpeg2ExtensionDescriptor::parse(&[TAG, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         // Group claims an auxiliary location but is in the main stream.
         let m = MpegH3dAudioMultiStream {
             this_stream_id: 0,

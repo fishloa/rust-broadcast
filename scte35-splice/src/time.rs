@@ -315,7 +315,7 @@ mod tests {
         let st = SpliceTime {
             pts_time: Some(1u64 << 33),
         };
-        assert!(st.try_to_bytes().is_err());
+        assert!(matches!(st.try_to_bytes(), Err(Error::InvalidValue { .. })));
     }
 
     #[test]

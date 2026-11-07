@@ -40,6 +40,7 @@ use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::{Rounding, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
@@ -641,7 +642,7 @@ impl LlHlsSegmenter {
         for p in &plan.parts {
             let ts = p.effective_timescale(plan.timescale);
             if let Some((start, prev_ts)) = previous_part
-                && cmp_time(p.start, ts, start, prev_ts).is_lt()
+                && cmp_ticks(p.start, ts, start, prev_ts).is_lt()
             {
                 return Err(Error::InvalidInput(
                     "follow: part starts must be non-decreasing",
@@ -661,7 +662,7 @@ impl LlHlsSegmenter {
         }
         if let Some(current) = &self.current_plan
             && (plan.segment_seq <= current.segment_seq
-                || cmp_time(
+                || cmp_ticks(
                     plan.segment_start,
                     plan.timescale,
                     current.segment_start,
@@ -756,7 +757,7 @@ impl LlHlsSegmenter {
             .as_mut()
             .ok_or(Error::InvalidInput("follow_part: no open segment"))?;
         if let Some(last) = plan.parts.last()
-            && cmp_time(
+            && cmp_ticks(
                 start,
                 timescale,
                 last.start,
@@ -775,7 +776,7 @@ impl LlHlsSegmenter {
     fn try_emit_inc_parts(&mut self) -> Result<()> {
         while let Some((segment_seq, part_index, next)) = self.next_inc_part() {
             let anchor = &self.tracks[self.anchor];
-            let threshold = ceil_rescale(next.0, next.1, anchor.spec.timescale);
+            let threshold = rescale_i64(next.0, next.1, anchor.spec.timescale, Rounding::Ceil);
             let reached = anchor.pending[anchor.part_start..]
                 .iter()
                 .any(|s| follower_dts(s) >= threshold);
@@ -817,7 +818,7 @@ impl LlHlsSegmenter {
             .iter()
             .map(|t| match end {
                 Some((value, ts)) => {
-                    let threshold = ceil_rescale(value, ts, t.spec.timescale);
+                    let threshold = rescale_i64(value, ts, t.spec.timescale, Rounding::Ceil);
                     t.part_start
                         + t.pending[t.part_start..].partition_point(|s| follower_dts(s) < threshold)
                 }
@@ -909,7 +910,7 @@ impl LlHlsSegmenter {
             .iter()
             .map(|t| match end {
                 Some((value, ts)) => {
-                    let threshold = ceil_rescale(value, ts, t.spec.timescale);
+                    let threshold = rescale_i64(value, ts, t.spec.timescale, Rounding::Ceil);
                     t.pending.partition_point(|s| follower_dts(s) < threshold)
                 }
                 None => t.pending.len(),
@@ -968,7 +969,7 @@ impl LlHlsSegmenter {
         for t in &self.tracks {
             let before = |limit: Option<(i64, u32)>, upto: usize| match limit {
                 Some((value, ts)) => {
-                    let threshold = ceil_rescale(value, ts, t.spec.timescale);
+                    let threshold = rescale_i64(value, ts, t.spec.timescale, Rounding::Ceil);
                     t.pending[..upto].partition_point(|s| follower_dts(s) < threshold)
                 }
                 None => upto,
@@ -1666,25 +1667,6 @@ impl FrameProbe {
 
 fn ticks_to_i64(ticks: u64) -> i64 {
     i64::try_from(ticks).unwrap_or(i64::MAX)
-}
-
-/// `value` ticks of `from_ts` as ticks of `to_ts`, rounded up, saturating at
-/// the `i64` range. Both timescales must be non-zero.
-fn ceil_rescale(value: i64, from_ts: u32, to_ts: u32) -> i64 {
-    let numerator = i128::from(value) * i128::from(to_ts);
-    let from = i128::from(from_ts);
-    let floor = numerator.div_euclid(from);
-    let ceil = if numerator.rem_euclid(from) == 0 {
-        floor
-    } else {
-        floor + 1
-    };
-    i64::try_from(ceil).unwrap_or(if ceil < 0 { i64::MIN } else { i64::MAX })
-}
-
-/// Exact comparison of `a / a_ts` with `b / b_ts` seconds; timescales non-zero.
-fn cmp_time(a: i64, a_ts: u32, b: i64, b_ts: u32) -> core::cmp::Ordering {
-    (i128::from(a) * i128::from(b_ts)).cmp(&(i128::from(b) * i128::from(a_ts)))
 }
 
 /// Decode time a follower segmenter cuts on; `push` rejects samples without one.

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
+- `insert_avail_descriptor` and `start_schedule_download` share one `provider_avail_id` loop parser/writer (internal).
+
 ### Removed
 - `Error::UnexpectedOpId`: never constructed; the operation data parsers take the body after `opID` dispatch and cannot see the `opID`.
 - `SingleOpDef` and `MultiOpDef` marker traits (no impls or bounds anywhere).

@@ -265,11 +265,17 @@ mod tests {
 
     #[test]
     fn rejects_truncation_overflow_and_empty() {
-        assert!(MvcOperationPointDescriptor::parse(&[TAG, 3, 118, 0, 1]).is_err());
+        assert!(matches!(
+            MvcOperationPointDescriptor::parse(&[TAG, 3, 118, 0, 1]),
+            Err(crate::Error::BufferTooShort { .. })
+        ));
         let mut d = MvcOperationPointDescriptor::new(1, [false; 6], 0, vec![]);
         let mut out = [0u8; 16];
         assert!(d.serialize_into(&mut out).is_ok()); // zero levels is legal
         d.avc_compatible_flags = 4;
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(crate::Error::FieldOverflow(..))
+        ));
     }
 }

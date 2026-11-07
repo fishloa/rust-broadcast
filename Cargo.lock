@@ -1285,6 +1285,7 @@ dependencies = [
  "libm",
  "mpeg-ts",
  "num_enum",
+ "quick-xml",
  "serde",
  "serde_json",
  "test-alloc",

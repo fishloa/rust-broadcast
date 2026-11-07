@@ -118,6 +118,9 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
-        assert!(IpMacStreamLocationDescriptor::parse(&[TAG, 8, 0, 0, 0, 0, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            IpMacStreamLocationDescriptor::parse(&[TAG, 8, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
     }
 }

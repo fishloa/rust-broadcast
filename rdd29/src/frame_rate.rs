@@ -128,7 +128,10 @@ mod tests {
 
     #[test]
     fn reserved_frame_rate_has_no_pan_sub_block_count() {
-        assert!(FrameRate::Reserved(0x9).num_pan_sub_blocks().is_err());
+        assert!(matches!(
+            FrameRate::Reserved(0x9).num_pan_sub_blocks(),
+            Err(Error::InvalidValue { .. })
+        ));
     }
 
     #[test]

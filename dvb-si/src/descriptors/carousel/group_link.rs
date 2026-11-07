@@ -97,6 +97,9 @@ mod tests {
         let mut out = [0u8; 7];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
-        assert!(GroupLinkDescriptor::parse(&[TAG, 4, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            GroupLinkDescriptor::parse(&[TAG, 4, 0, 0, 0, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
     }
 }

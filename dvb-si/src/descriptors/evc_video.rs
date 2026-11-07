@@ -229,7 +229,10 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, b);
         // body that stops inside the temporal-id block is rejected
-        assert!(EvcVideoDescriptor::parse(&b[..b.len() - 1]).is_err());
+        assert!(matches!(
+            EvcVideoDescriptor::parse(&b[..b.len() - 1]),
+            Err(crate::Error::BufferTooShort { .. })
+        ));
         let mut bad = d.clone();
         bad.video_properties_tag = 16;
         assert!(matches!(

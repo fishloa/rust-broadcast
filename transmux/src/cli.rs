@@ -27,6 +27,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use broadcast_common::timescale::cmp_ticks;
 use broadcast_common::{Package, Unpackage};
 
 use crate::dash::DashPackager;
@@ -915,11 +916,7 @@ impl Ord for OrderedKey {
                     ticks: b,
                     timescale: bt,
                 },
-            ) => {
-                // Exact cross-multiplication as `i128`: two `u32` timescales and
-                // two `i64` times fit with room to spare.
-                (*a as i128 * *bt as i128).cmp(&(*b as i128 * *at as i128))
-            }
+            ) => cmp_ticks(*a, *at, *b, *bt),
             (OrderedKey::Untimed, OrderedKey::Untimed) => Ordering::Equal,
             (OrderedKey::Untimed, OrderedKey::Timed { .. }) => Ordering::Greater,
             (OrderedKey::Timed { .. }, OrderedKey::Untimed) => Ordering::Less,

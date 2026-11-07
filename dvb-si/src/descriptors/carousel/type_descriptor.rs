@@ -82,7 +82,10 @@ mod tests {
     fn empty_wrong_tag_truncated_and_overflow() {
         let d = TypeDescriptor::parse(&[TAG, 0]).unwrap();
         assert_eq!(d.serialized_len(), 2);
-        assert!(TypeDescriptor::parse(&[0x02, 0]).is_err());
+        assert!(matches!(
+            TypeDescriptor::parse(&[0x02, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         assert!(matches!(
             &(TypeDescriptor::parse(&[TAG, 3, b'a'])),
             Err(crate::error::Error::BufferTooShort { .. })

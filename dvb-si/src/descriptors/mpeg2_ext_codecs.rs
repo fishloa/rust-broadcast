@@ -551,7 +551,10 @@ mod tests {
             &(bad.write_body()),
             Err(crate::error::Error::FieldOverflow(_))
         ));
-        assert!(LcevcVideo::parse_body(&b[..3]).is_err());
+        assert!(matches!(
+            LcevcVideo::parse_body(&b[..3]),
+            Err(crate::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
@@ -561,7 +564,10 @@ mod tests {
         assert_eq!(d.lcevc_stream_tags, [0x10, 0x20]);
         assert_eq!(d.trailing, [0xFF]);
         assert_eq!(d.write_body().unwrap(), b);
-        assert!(LcevcLinkage::parse_body(&[3, 1]).is_err());
+        assert!(matches!(
+            LcevcLinkage::parse_body(&[3, 1]),
+            Err(crate::Error::BufferTooShort { .. })
+        ));
         assert!(matches!(
             &(LcevcLinkage::new(vec![0; 256]).write_body()),
             Err(crate::error::Error::FieldOverflow(_))
@@ -605,7 +611,10 @@ mod tests {
         ));
         // lang_len_idc = 3 is reserved
         let b = [0b0_0_001_01_1, 0b00_000_11_1];
-        assert!(MediaServiceKind::parse_body(&b).is_err());
+        assert!(matches!(
+            MediaServiceKind::parse_body(&b),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
         // identifier length disagrees with ID_length_code
         let id = MediaIdentifier {
             id_length_code: 0,

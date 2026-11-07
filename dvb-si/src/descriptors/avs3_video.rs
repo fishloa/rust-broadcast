@@ -420,7 +420,10 @@ mod tests {
     fn serialize_rejects_overwide_fields() {
         let mut d = Avs3VideoDescriptor::new(1, 1, false, Avs3FrameRateCode::Fps25, 1, 1, 1, 1, 1);
         d.sample_precision = 8;
-        assert!(d.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 16]),
+            Err(Error::FieldOverflow(..))
+        ));
         d.sample_precision = 1;
         d.chroma_format = 4;
         assert!(matches!(

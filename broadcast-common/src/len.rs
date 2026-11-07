@@ -124,9 +124,15 @@ mod tests {
             })
         );
         assert_eq!(fit_mask(0x3FFu16, 0x3FF, "lcn"), Ok(0x3FF));
-        assert!(fit_mask(0x400u16, 0x3FF, "lcn").is_err());
+        assert!(matches!(
+            fit_mask(0x400u16, 0x3FF, "lcn"),
+            Err(FieldOverflow { .. })
+        ));
         // Non-contiguous mask: every set bit must lie inside it.
-        assert!(fit_mask(0b0100u8, 0b1010, "x").is_err());
+        assert!(matches!(
+            fit_mask(0b0100u8, 0b1010, "x"),
+            Err(FieldOverflow { .. })
+        ));
         assert_eq!(fit_mask(0b1010u8, 0b1010, "x"), Ok(0b1010));
     }
 

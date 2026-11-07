@@ -916,316 +916,332 @@ fn sat_body_serialized_len(body: &SatBody) -> usize {
 
 fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
     match body {
-        SatBody::PositionV2(b) => {
-            for sat in &b.satellites {
-                w.write_u(24, sat.satellite_id as u64)?;
-                w.write_u(7, u64::from(sat.reserved_zero_future_use))?;
-                match &sat.position {
-                    PositionSystem::Orbital {
-                        orbital_position,
-                        west_east_flag,
-                        reserved_zero_future_use,
-                    } => {
-                        w.write_u(1, 0)?;
-                        w.write_u(16, *orbital_position as u64)?;
-                        w.write_u(1, *west_east_flag as u64)?;
-                        w.write_u(7, u64::from(*reserved_zero_future_use))?;
-                    }
-                    PositionSystem::Sgp4 {
-                        epoch_year,
-                        day_of_the_year,
-                        day_fraction,
-                        mean_motion_first_derivative,
-                        mean_motion_second_derivative,
-                        drag_term,
-                        inclination,
-                        right_ascension,
-                        eccentricity,
-                        argument_of_perigree,
-                        mean_anomaly,
-                        mean_motion,
-                    } => {
-                        w.write_u(1, 1)?;
-                        w.write_u(8, *epoch_year as u64)?;
-                        w.write_u(16, *day_of_the_year as u64)?;
-                        w.write_u(32, *day_fraction as u64)?;
-                        w.write_u(32, *mean_motion_first_derivative as u64)?;
-                        w.write_u(32, *mean_motion_second_derivative as u64)?;
-                        w.write_u(32, *drag_term as u64)?;
-                        w.write_u(32, *inclination as u64)?;
-                        w.write_u(32, *right_ascension as u64)?;
-                        w.write_u(32, *eccentricity as u64)?;
-                        w.write_u(32, *argument_of_perigree as u64)?;
-                        w.write_u(32, *mean_anomaly as u64)?;
-                        w.write_u(32, *mean_motion as u64)?;
-                    }
+        SatBody::PositionV2(b) => sat_write_position_v2(b, w)?,
+        SatBody::CellFragment(b) => sat_write_cell_fragment(b, w)?,
+        SatBody::TimeAssociation(b) => sat_write_time_association(b, w)?,
+        SatBody::BeamhoppingTimePlan(b) => sat_write_beamhopping_time_plan(b, w)?,
+        SatBody::PositionV3(b) => sat_write_position_v3(b, w)?,
+        SatBody::Raw(_) => {}
+    }
+    Ok(())
+}
+
+fn sat_write_position_v2(b: &PositionV2Body, w: &mut BitWriter<'_>) -> Result<()> {
+    for sat in &b.satellites {
+        w.write_u(24, sat.satellite_id as u64)?;
+        w.write_u(7, u64::from(sat.reserved_zero_future_use))?;
+        match &sat.position {
+            PositionSystem::Orbital {
+                orbital_position,
+                west_east_flag,
+                reserved_zero_future_use,
+            } => {
+                w.write_u(1, 0)?;
+                w.write_u(16, *orbital_position as u64)?;
+                w.write_u(1, *west_east_flag as u64)?;
+                w.write_u(7, u64::from(*reserved_zero_future_use))?;
+            }
+            PositionSystem::Sgp4 {
+                epoch_year,
+                day_of_the_year,
+                day_fraction,
+                mean_motion_first_derivative,
+                mean_motion_second_derivative,
+                drag_term,
+                inclination,
+                right_ascension,
+                eccentricity,
+                argument_of_perigree,
+                mean_anomaly,
+                mean_motion,
+            } => {
+                w.write_u(1, 1)?;
+                w.write_u(8, *epoch_year as u64)?;
+                w.write_u(16, *day_of_the_year as u64)?;
+                w.write_u(32, *day_fraction as u64)?;
+                w.write_u(32, *mean_motion_first_derivative as u64)?;
+                w.write_u(32, *mean_motion_second_derivative as u64)?;
+                w.write_u(32, *drag_term as u64)?;
+                w.write_u(32, *inclination as u64)?;
+                w.write_u(32, *right_ascension as u64)?;
+                w.write_u(32, *eccentricity as u64)?;
+                w.write_u(32, *argument_of_perigree as u64)?;
+                w.write_u(32, *mean_anomaly as u64)?;
+                w.write_u(32, *mean_motion as u64)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn sat_write_cell_fragment(b: &CellFragmentBody, w: &mut BitWriter<'_>) -> Result<()> {
+    for frag in &b.fragments {
+        w.write_u(32, frag.cell_fragment_id as u64)?;
+        w.write_u(1, frag.first_occurrence as u64)?;
+        w.write_u(1, frag.last_occurrence as u64)?;
+        if frag.first_occurrence {
+            let Some(ref c) = frag.centre else {
+                return Err(Error::ValueOutOfRange {
+                    field: "centre",
+                    reason: "required when first_occurrence is set",
+                });
+            };
+            w.write_u(4, u64::from(c.reserved_zero_future_use_4))?;
+            w.write_i(18, c.centre_latitude as i64)?;
+            w.write_u(5, u64::from(c.reserved_zero_future_use_5))?;
+            w.write_i(19, c.centre_longitude as i64)?;
+            w.write_u(24, c.max_distance as u64)?;
+            w.write_u(6, u64::from(c.reserved_zero_future_use_6))?;
+        } else {
+            w.write_u(4, u64::from(frag.reserved_zero_future_use_4))?;
+        }
+        w.write_u(10, frag.delivery_system_ids.len() as u64)?;
+        for id in &frag.delivery_system_ids {
+            w.write_u(32, *id as u64)?;
+        }
+        w.write_u(6, u64::from(frag.reserved_zero_future_use_new))?;
+        w.write_u(10, frag.new_delivery_systems.len() as u64)?;
+        for nds in &frag.new_delivery_systems {
+            w.write_u(32, nds.new_delivery_system_id as u64)?;
+            w.write_u(33, nds.time_of_application_base)?;
+            w.write_u(6, u64::from(nds.reserved_zero_future_use))?;
+            w.write_u(9, nds.time_of_application_ext as u64)?;
+        }
+        w.write_u(6, u64::from(frag.reserved_zero_future_use_obsolescent))?;
+        w.write_u(10, frag.obsolescent_delivery_systems.len() as u64)?;
+        for ods in &frag.obsolescent_delivery_systems {
+            w.write_u(32, ods.obsolescent_delivery_system_id as u64)?;
+            w.write_u(33, ods.time_of_obsolescence_base)?;
+            w.write_u(6, u64::from(ods.reserved_zero_future_use))?;
+            w.write_u(9, ods.time_of_obsolescence_ext as u64)?;
+        }
+    }
+    Ok(())
+}
+
+fn sat_write_time_association(b: &TimeAssociationBody, w: &mut BitWriter<'_>) -> Result<()> {
+    w.write_u(4, b.association_type.to_u8() as u64)?;
+    if b.association_type.to_u8() == 1 {
+        if let Some(ref li) = b.leap_info {
+            w.write_u(1, li.leap59 as u64)?;
+            w.write_u(1, li.leap61 as u64)?;
+            w.write_u(1, li.pastleap59 as u64)?;
+            w.write_u(1, li.pastleap61 as u64)?;
+        } else {
+            w.write_u(4, u64::from(b.reserved_zero_future_use_4))?;
+        }
+    } else {
+        w.write_u(4, u64::from(b.reserved_zero_future_use_4))?;
+    }
+    w.write_u(33, b.ncr_base)?;
+    w.write_u(6, u64::from(b.ncr_reserved_zero_future_use))?;
+    w.write_u(9, b.ncr_ext as u64)?;
+    w.write_u(64, b.association_timestamp_seconds)?;
+    w.write_u(32, b.association_timestamp_nanoseconds as u64)?;
+    Ok(())
+}
+
+fn sat_write_beamhopping_time_plan(
+    b: &BeamhoppingTimePlanBody,
+    w: &mut BitWriter<'_>,
+) -> Result<()> {
+    for plan in &b.plans {
+        w.write_u(32, plan.beamhopping_time_plan_id as u64)?;
+        w.write_u(4, u64::from(plan.reserved_zero_future_use_4))?;
+        let mode_bits = match &plan.mode {
+            BeamhoppingMode::Mode0 { .. } => 33 + 6 + 9 + 33 + 6 + 9,
+            BeamhoppingMode::Mode1 { bit_map_size, .. } => {
+                let bm = *bit_map_size as usize;
+                let raw = 1 + 15 + 1 + 15 + bm;
+                raw + pad_to_byte(raw)
+            }
+            BeamhoppingMode::Mode2 { .. } => 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9,
+            BeamhoppingMode::Reserved(v) => v.len() * 8,
+        };
+        let total_bits_after_length = 8 + 48 + 48 + mode_bits;
+        let plan_length_bytes = total_bits_after_length / 8;
+        w.write_u(12, plan_length_bytes as u64)?;
+        w.write_u(6, u64::from(plan.reserved_zero_future_use_mode))?;
+        w.write_u(2, plan.time_plan_mode.to_u8() as u64)?;
+        w.write_u(33, plan.time_of_application_base)?;
+        w.write_u(
+            6,
+            u64::from(plan.time_of_application_reserved_zero_future_use),
+        )?;
+        w.write_u(9, plan.time_of_application_ext as u64)?;
+        w.write_u(33, plan.cycle_duration_base)?;
+        w.write_u(6, u64::from(plan.cycle_duration_reserved_zero_future_use))?;
+        w.write_u(9, plan.cycle_duration_ext as u64)?;
+        match &plan.mode {
+            BeamhoppingMode::Mode0 {
+                dwell_duration_base,
+                dwell_duration_ext,
+                on_time_base,
+                on_time_ext,
+                dwell_duration_reserved_zero_future_use,
+                on_time_reserved_zero_future_use,
+            } => {
+                w.write_u(33, *dwell_duration_base)?;
+                w.write_u(6, u64::from(*dwell_duration_reserved_zero_future_use))?;
+                w.write_u(9, *dwell_duration_ext as u64)?;
+                w.write_u(33, *on_time_base)?;
+                w.write_u(6, u64::from(*on_time_reserved_zero_future_use))?;
+                w.write_u(9, *on_time_ext as u64)?;
+            }
+            BeamhoppingMode::Mode1 {
+                bit_map_size,
+                current_slot,
+                slot_transmission_on,
+                reserved_zero_future_use_size,
+                reserved_zero_future_use_slot,
+            } => {
+                w.write_u(1, u64::from(*reserved_zero_future_use_size))?;
+                w.write_u(15, *bit_map_size as u64)?;
+                w.write_u(1, u64::from(*reserved_zero_future_use_slot))?;
+                w.write_u(15, *current_slot as u64)?;
+                for &on in slot_transmission_on {
+                    w.write_u(1, on as u64)?;
+                }
+                let total = 1 + 15 + 1 + 15 + *bit_map_size as usize;
+                for _ in 0..pad_to_byte(total) {
+                    w.write_zero(1)?;
+                }
+            }
+            BeamhoppingMode::Mode2 {
+                grid_size_base,
+                grid_size_ext,
+                revisit_duration_base,
+                revisit_duration_ext,
+                sleep_time_base,
+                sleep_time_ext,
+                sleep_duration_base,
+                sleep_duration_ext,
+                grid_size_reserved_zero_future_use,
+                revisit_duration_reserved_zero_future_use,
+                sleep_time_reserved_zero_future_use,
+                sleep_duration_reserved_zero_future_use,
+            } => {
+                w.write_u(33, *grid_size_base)?;
+                w.write_u(6, u64::from(*grid_size_reserved_zero_future_use))?;
+                w.write_u(9, *grid_size_ext as u64)?;
+                w.write_u(33, *revisit_duration_base)?;
+                w.write_u(6, u64::from(*revisit_duration_reserved_zero_future_use))?;
+                w.write_u(9, *revisit_duration_ext as u64)?;
+                w.write_u(33, *sleep_time_base)?;
+                w.write_u(6, u64::from(*sleep_time_reserved_zero_future_use))?;
+                w.write_u(9, *sleep_time_ext as u64)?;
+                w.write_u(33, *sleep_duration_base)?;
+                w.write_u(6, u64::from(*sleep_duration_reserved_zero_future_use))?;
+                w.write_u(9, *sleep_duration_ext as u64)?;
+            }
+            BeamhoppingMode::Reserved(v) => {
+                for &b in v {
+                    w.write_u(8, b as u64)?;
                 }
             }
         }
-        SatBody::CellFragment(b) => {
-            for frag in &b.fragments {
-                w.write_u(32, frag.cell_fragment_id as u64)?;
-                w.write_u(1, frag.first_occurrence as u64)?;
-                w.write_u(1, frag.last_occurrence as u64)?;
-                if frag.first_occurrence {
-                    let Some(ref c) = frag.centre else {
-                        return Err(Error::ValueOutOfRange {
-                            field: "centre",
-                            reason: "required when first_occurrence is set",
-                        });
-                    };
-                    w.write_u(4, u64::from(c.reserved_zero_future_use_4))?;
-                    w.write_i(18, c.centre_latitude as i64)?;
-                    w.write_u(5, u64::from(c.reserved_zero_future_use_5))?;
-                    w.write_i(19, c.centre_longitude as i64)?;
-                    w.write_u(24, c.max_distance as u64)?;
-                    w.write_u(6, u64::from(c.reserved_zero_future_use_6))?;
+    }
+    Ok(())
+}
+
+fn sat_write_position_v3(b: &PositionV3Body, w: &mut BitWriter<'_>) -> Result<()> {
+    w.write_u(4, b.oem_version_major as u64)?;
+    w.write_u(4, b.oem_version_minor as u64)?;
+    w.write_u(8, b.creation_date_year as u64)?;
+    w.write_u(7, u64::from(b.creation_date_reserved_zero_future_use))?;
+    w.write_u(9, b.creation_date_day as u64)?;
+    w.write_u(32, b.creation_date_day_fraction as u64)?;
+    for sat in &b.satellites {
+        w.write_u(24, sat.satellite_id as u64)?;
+        w.write_u(3, u64::from(sat.reserved_zero_future_use))?;
+        w.write_u(1, u8::from(sat.metadata.is_some()) as u64)?;
+        w.write_u(1, sat.usable_start_time_flag as u64)?;
+        w.write_u(1, sat.usable_stop_time_flag as u64)?;
+        w.write_u(1, sat.ephemeris_accel_flag as u64)?;
+        w.write_u(1, sat.covariance_flag as u64)?;
+        if let Some(ref md) = sat.metadata {
+            w.write_u(8, md.total_start_time_year as u64)?;
+            w.write_u(7, u64::from(md.total_start_time_reserved_zero_future_use))?;
+            w.write_u(9, md.total_start_time_day as u64)?;
+            w.write_u(32, md.total_start_time_day_fraction as u64)?;
+            w.write_u(8, md.total_stop_time_year as u64)?;
+            w.write_u(7, u64::from(md.total_stop_time_reserved_zero_future_use))?;
+            w.write_u(9, md.total_stop_time_day as u64)?;
+            w.write_u(32, md.total_stop_time_day_fraction as u64)?;
+            w.write_u(1, u64::from(md.reserved_zero_future_use))?;
+            w.write_u(1, md.interpolation_flag as u64)?;
+            w.write_u(3, md.interpolation_type.to_u8() as u64)?;
+            w.write_u(3, md.interpolation_degree as u64)?;
+            if sat.usable_start_time_flag {
+                if let Some(ref ut) = md.usable_start_time {
+                    w.write_u(8, ut.year as u64)?;
+                    w.write_u(7, u64::from(ut.reserved_zero_future_use))?;
+                    w.write_u(9, ut.day as u64)?;
+                    w.write_u(32, ut.day_fraction as u64)?;
                 } else {
-                    w.write_u(4, u64::from(frag.reserved_zero_future_use_4))?;
+                    w.write_zero(8)?;
+                    w.write_zero(7)?;
+                    w.write_zero(9)?;
+                    w.write_zero(32)?;
                 }
-                w.write_u(10, frag.delivery_system_ids.len() as u64)?;
-                for id in &frag.delivery_system_ids {
-                    w.write_u(32, *id as u64)?;
-                }
-                w.write_u(6, u64::from(frag.reserved_zero_future_use_new))?;
-                w.write_u(10, frag.new_delivery_systems.len() as u64)?;
-                for nds in &frag.new_delivery_systems {
-                    w.write_u(32, nds.new_delivery_system_id as u64)?;
-                    w.write_u(33, nds.time_of_application_base)?;
-                    w.write_u(6, u64::from(nds.reserved_zero_future_use))?;
-                    w.write_u(9, nds.time_of_application_ext as u64)?;
-                }
-                w.write_u(6, u64::from(frag.reserved_zero_future_use_obsolescent))?;
-                w.write_u(10, frag.obsolescent_delivery_systems.len() as u64)?;
-                for ods in &frag.obsolescent_delivery_systems {
-                    w.write_u(32, ods.obsolescent_delivery_system_id as u64)?;
-                    w.write_u(33, ods.time_of_obsolescence_base)?;
-                    w.write_u(6, u64::from(ods.reserved_zero_future_use))?;
-                    w.write_u(9, ods.time_of_obsolescence_ext as u64)?;
+            }
+            if sat.usable_stop_time_flag {
+                if let Some(ref ut) = md.usable_stop_time {
+                    w.write_u(8, ut.year as u64)?;
+                    w.write_u(7, u64::from(ut.reserved_zero_future_use))?;
+                    w.write_u(9, ut.day as u64)?;
+                    w.write_u(32, ut.day_fraction as u64)?;
+                } else {
+                    w.write_zero(8)?;
+                    w.write_zero(7)?;
+                    w.write_zero(9)?;
+                    w.write_zero(32)?;
                 }
             }
         }
-        SatBody::TimeAssociation(b) => {
-            w.write_u(4, b.association_type.to_u8() as u64)?;
-            if b.association_type.to_u8() == 1 {
-                if let Some(ref li) = b.leap_info {
-                    w.write_u(1, li.leap59 as u64)?;
-                    w.write_u(1, li.leap61 as u64)?;
-                    w.write_u(1, li.pastleap59 as u64)?;
-                    w.write_u(1, li.pastleap61 as u64)?;
+        w.write_u(16, sat.ephemeris_data.len() as u64)?;
+        for ed in &sat.ephemeris_data {
+            w.write_u(8, ed.epoch_year as u64)?;
+            w.write_u(7, u64::from(ed.reserved_zero_future_use))?;
+            w.write_u(9, ed.epoch_day as u64)?;
+            w.write_u(32, ed.epoch_day_fraction as u64)?;
+            w.write_u(32, ed.ephemeris_x as u64)?;
+            w.write_u(32, ed.ephemeris_y as u64)?;
+            w.write_u(32, ed.ephemeris_z as u64)?;
+            w.write_u(32, ed.ephemeris_x_dot as u64)?;
+            w.write_u(32, ed.ephemeris_y_dot as u64)?;
+            w.write_u(32, ed.ephemeris_z_dot as u64)?;
+            if sat.ephemeris_accel_flag {
+                if let Some(ref acc) = ed.acceleration {
+                    w.write_u(32, acc.ephemeris_x_ddot as u64)?;
+                    w.write_u(32, acc.ephemeris_y_ddot as u64)?;
+                    w.write_u(32, acc.ephemeris_z_ddot as u64)?;
                 } else {
-                    w.write_u(4, u64::from(b.reserved_zero_future_use_4))?;
+                    w.write_zero(32)?;
+                    w.write_zero(32)?;
+                    w.write_zero(32)?;
+                }
+            }
+        }
+        if sat.covariance_flag {
+            if let Some(ref cov) = sat.covariance {
+                w.write_u(8, cov.covariance_epoch_year as u64)?;
+                w.write_u(7, u64::from(cov.covariance_epoch_reserved_zero_future_use))?;
+                w.write_u(9, cov.covariance_epoch_day as u64)?;
+                w.write_u(32, cov.covariance_epoch_day_fraction as u64)?;
+                for elem in &cov.covariance_elements {
+                    w.write_u(32, *elem as u64)?;
                 }
             } else {
-                w.write_u(4, u64::from(b.reserved_zero_future_use_4))?;
-            }
-            w.write_u(33, b.ncr_base)?;
-            w.write_u(6, u64::from(b.ncr_reserved_zero_future_use))?;
-            w.write_u(9, b.ncr_ext as u64)?;
-            w.write_u(64, b.association_timestamp_seconds)?;
-            w.write_u(32, b.association_timestamp_nanoseconds as u64)?;
-        }
-        SatBody::BeamhoppingTimePlan(b) => {
-            for plan in &b.plans {
-                w.write_u(32, plan.beamhopping_time_plan_id as u64)?;
-                w.write_u(4, u64::from(plan.reserved_zero_future_use_4))?;
-                let mode_bits = match &plan.mode {
-                    BeamhoppingMode::Mode0 { .. } => 33 + 6 + 9 + 33 + 6 + 9,
-                    BeamhoppingMode::Mode1 { bit_map_size, .. } => {
-                        let bm = *bit_map_size as usize;
-                        let raw = 1 + 15 + 1 + 15 + bm;
-                        raw + pad_to_byte(raw)
-                    }
-                    BeamhoppingMode::Mode2 { .. } => {
-                        33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9
-                    }
-                    BeamhoppingMode::Reserved(v) => v.len() * 8,
-                };
-                let total_bits_after_length = 8 + 48 + 48 + mode_bits;
-                let plan_length_bytes = total_bits_after_length / 8;
-                w.write_u(12, plan_length_bytes as u64)?;
-                w.write_u(6, u64::from(plan.reserved_zero_future_use_mode))?;
-                w.write_u(2, plan.time_plan_mode.to_u8() as u64)?;
-                w.write_u(33, plan.time_of_application_base)?;
-                w.write_u(
-                    6,
-                    u64::from(plan.time_of_application_reserved_zero_future_use),
-                )?;
-                w.write_u(9, plan.time_of_application_ext as u64)?;
-                w.write_u(33, plan.cycle_duration_base)?;
-                w.write_u(6, u64::from(plan.cycle_duration_reserved_zero_future_use))?;
-                w.write_u(9, plan.cycle_duration_ext as u64)?;
-                match &plan.mode {
-                    BeamhoppingMode::Mode0 {
-                        dwell_duration_base,
-                        dwell_duration_ext,
-                        on_time_base,
-                        on_time_ext,
-                        dwell_duration_reserved_zero_future_use,
-                        on_time_reserved_zero_future_use,
-                    } => {
-                        w.write_u(33, *dwell_duration_base)?;
-                        w.write_u(6, u64::from(*dwell_duration_reserved_zero_future_use))?;
-                        w.write_u(9, *dwell_duration_ext as u64)?;
-                        w.write_u(33, *on_time_base)?;
-                        w.write_u(6, u64::from(*on_time_reserved_zero_future_use))?;
-                        w.write_u(9, *on_time_ext as u64)?;
-                    }
-                    BeamhoppingMode::Mode1 {
-                        bit_map_size,
-                        current_slot,
-                        slot_transmission_on,
-                        reserved_zero_future_use_size,
-                        reserved_zero_future_use_slot,
-                    } => {
-                        w.write_u(1, u64::from(*reserved_zero_future_use_size))?;
-                        w.write_u(15, *bit_map_size as u64)?;
-                        w.write_u(1, u64::from(*reserved_zero_future_use_slot))?;
-                        w.write_u(15, *current_slot as u64)?;
-                        for &on in slot_transmission_on {
-                            w.write_u(1, on as u64)?;
-                        }
-                        let total = 1 + 15 + 1 + 15 + *bit_map_size as usize;
-                        for _ in 0..pad_to_byte(total) {
-                            w.write_zero(1)?;
-                        }
-                    }
-                    BeamhoppingMode::Mode2 {
-                        grid_size_base,
-                        grid_size_ext,
-                        revisit_duration_base,
-                        revisit_duration_ext,
-                        sleep_time_base,
-                        sleep_time_ext,
-                        sleep_duration_base,
-                        sleep_duration_ext,
-                        grid_size_reserved_zero_future_use,
-                        revisit_duration_reserved_zero_future_use,
-                        sleep_time_reserved_zero_future_use,
-                        sleep_duration_reserved_zero_future_use,
-                    } => {
-                        w.write_u(33, *grid_size_base)?;
-                        w.write_u(6, u64::from(*grid_size_reserved_zero_future_use))?;
-                        w.write_u(9, *grid_size_ext as u64)?;
-                        w.write_u(33, *revisit_duration_base)?;
-                        w.write_u(6, u64::from(*revisit_duration_reserved_zero_future_use))?;
-                        w.write_u(9, *revisit_duration_ext as u64)?;
-                        w.write_u(33, *sleep_time_base)?;
-                        w.write_u(6, u64::from(*sleep_time_reserved_zero_future_use))?;
-                        w.write_u(9, *sleep_time_ext as u64)?;
-                        w.write_u(33, *sleep_duration_base)?;
-                        w.write_u(6, u64::from(*sleep_duration_reserved_zero_future_use))?;
-                        w.write_u(9, *sleep_duration_ext as u64)?;
-                    }
-                    BeamhoppingMode::Reserved(v) => {
-                        for &b in v {
-                            w.write_u(8, b as u64)?;
-                        }
-                    }
+                w.write_zero(8)?;
+                w.write_zero(7)?;
+                w.write_zero(9)?;
+                w.write_zero(32)?;
+                for _ in 0..21 {
+                    w.write_zero(32)?;
                 }
             }
         }
-        SatBody::PositionV3(b) => {
-            w.write_u(4, b.oem_version_major as u64)?;
-            w.write_u(4, b.oem_version_minor as u64)?;
-            w.write_u(8, b.creation_date_year as u64)?;
-            w.write_u(7, u64::from(b.creation_date_reserved_zero_future_use))?;
-            w.write_u(9, b.creation_date_day as u64)?;
-            w.write_u(32, b.creation_date_day_fraction as u64)?;
-            for sat in &b.satellites {
-                w.write_u(24, sat.satellite_id as u64)?;
-                w.write_u(3, u64::from(sat.reserved_zero_future_use))?;
-                w.write_u(1, u8::from(sat.metadata.is_some()) as u64)?;
-                w.write_u(1, sat.usable_start_time_flag as u64)?;
-                w.write_u(1, sat.usable_stop_time_flag as u64)?;
-                w.write_u(1, sat.ephemeris_accel_flag as u64)?;
-                w.write_u(1, sat.covariance_flag as u64)?;
-                if let Some(ref md) = sat.metadata {
-                    w.write_u(8, md.total_start_time_year as u64)?;
-                    w.write_u(7, u64::from(md.total_start_time_reserved_zero_future_use))?;
-                    w.write_u(9, md.total_start_time_day as u64)?;
-                    w.write_u(32, md.total_start_time_day_fraction as u64)?;
-                    w.write_u(8, md.total_stop_time_year as u64)?;
-                    w.write_u(7, u64::from(md.total_stop_time_reserved_zero_future_use))?;
-                    w.write_u(9, md.total_stop_time_day as u64)?;
-                    w.write_u(32, md.total_stop_time_day_fraction as u64)?;
-                    w.write_u(1, u64::from(md.reserved_zero_future_use))?;
-                    w.write_u(1, md.interpolation_flag as u64)?;
-                    w.write_u(3, md.interpolation_type.to_u8() as u64)?;
-                    w.write_u(3, md.interpolation_degree as u64)?;
-                    if sat.usable_start_time_flag {
-                        if let Some(ref ut) = md.usable_start_time {
-                            w.write_u(8, ut.year as u64)?;
-                            w.write_u(7, u64::from(ut.reserved_zero_future_use))?;
-                            w.write_u(9, ut.day as u64)?;
-                            w.write_u(32, ut.day_fraction as u64)?;
-                        } else {
-                            w.write_zero(8)?;
-                            w.write_zero(7)?;
-                            w.write_zero(9)?;
-                            w.write_zero(32)?;
-                        }
-                    }
-                    if sat.usable_stop_time_flag {
-                        if let Some(ref ut) = md.usable_stop_time {
-                            w.write_u(8, ut.year as u64)?;
-                            w.write_u(7, u64::from(ut.reserved_zero_future_use))?;
-                            w.write_u(9, ut.day as u64)?;
-                            w.write_u(32, ut.day_fraction as u64)?;
-                        } else {
-                            w.write_zero(8)?;
-                            w.write_zero(7)?;
-                            w.write_zero(9)?;
-                            w.write_zero(32)?;
-                        }
-                    }
-                }
-                w.write_u(16, sat.ephemeris_data.len() as u64)?;
-                for ed in &sat.ephemeris_data {
-                    w.write_u(8, ed.epoch_year as u64)?;
-                    w.write_u(7, u64::from(ed.reserved_zero_future_use))?;
-                    w.write_u(9, ed.epoch_day as u64)?;
-                    w.write_u(32, ed.epoch_day_fraction as u64)?;
-                    w.write_u(32, ed.ephemeris_x as u64)?;
-                    w.write_u(32, ed.ephemeris_y as u64)?;
-                    w.write_u(32, ed.ephemeris_z as u64)?;
-                    w.write_u(32, ed.ephemeris_x_dot as u64)?;
-                    w.write_u(32, ed.ephemeris_y_dot as u64)?;
-                    w.write_u(32, ed.ephemeris_z_dot as u64)?;
-                    if sat.ephemeris_accel_flag {
-                        if let Some(ref acc) = ed.acceleration {
-                            w.write_u(32, acc.ephemeris_x_ddot as u64)?;
-                            w.write_u(32, acc.ephemeris_y_ddot as u64)?;
-                            w.write_u(32, acc.ephemeris_z_ddot as u64)?;
-                        } else {
-                            w.write_zero(32)?;
-                            w.write_zero(32)?;
-                            w.write_zero(32)?;
-                        }
-                    }
-                }
-                if sat.covariance_flag {
-                    if let Some(ref cov) = sat.covariance {
-                        w.write_u(8, cov.covariance_epoch_year as u64)?;
-                        w.write_u(7, u64::from(cov.covariance_epoch_reserved_zero_future_use))?;
-                        w.write_u(9, cov.covariance_epoch_day as u64)?;
-                        w.write_u(32, cov.covariance_epoch_day_fraction as u64)?;
-                        for elem in &cov.covariance_elements {
-                            w.write_u(32, *elem as u64)?;
-                        }
-                    } else {
-                        w.write_zero(8)?;
-                        w.write_zero(7)?;
-                        w.write_zero(9)?;
-                        w.write_zero(32)?;
-                        for _ in 0..21 {
-                            w.write_zero(32)?;
-                        }
-                    }
-                }
-            }
-        }
-        SatBody::Raw(_) => {}
     }
     Ok(())
 }
@@ -1267,582 +1283,590 @@ fn sat_body_parse_entries(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
     }
     let mut r = BitReader::new(data);
     match sat_table_id {
-        0 => {
-            let mut satellites = Vec::new();
-            while r.remaining_bits() > 24 + 7 {
-                let satellite_id = r.read_u(24)? as u32;
-                let sat_reserved = r.read_u(7)? as u8;
-                let position_system = r.read_u(1)?;
-                let position = if position_system == 0 {
-                    const ORBITAL_BITS: usize = 16 + 1 + 7;
-                    if r.remaining_bits() < ORBITAL_BITS {
-                        return Err(Error::BufferTooShort {
-                            need: ORBITAL_BITS,
-                            have: r.remaining_bits(),
-                            what: "SatSection PositionV2 Orbital fields",
-                        });
-                    }
-                    let orbital_position = r.read_u(16)? as u16;
-                    let west_east_flag = r.read_u(1)? != 0;
-                    let orbital_reserved = r.read_u(7)? as u8;
-                    PositionSystem::Orbital {
-                        orbital_position,
-                        west_east_flag,
-                        reserved_zero_future_use: orbital_reserved,
-                    }
-                } else {
-                    const SGP4_BITS: usize = 8 + 16 + 32 * 10;
-                    if r.remaining_bits() < SGP4_BITS {
-                        return Err(Error::BufferTooShort {
-                            need: SGP4_BITS,
-                            have: r.remaining_bits(),
-                            what: "SatSection PositionV2 SGP4 fields",
-                        });
-                    }
-                    let epoch_year = r.read_u(8)? as u8;
-                    let day_of_the_year = r.read_u(16)? as u16;
-                    let day_fraction = r.read_u(32)? as u32;
-                    let mean_motion_first_derivative = r.read_u(32)? as u32;
-                    let mean_motion_second_derivative = r.read_u(32)? as u32;
-                    let drag_term = r.read_u(32)? as u32;
-                    let inclination = r.read_u(32)? as u32;
-                    let right_ascension = r.read_u(32)? as u32;
-                    let eccentricity = r.read_u(32)? as u32;
-                    let argument_of_perigree = r.read_u(32)? as u32;
-                    let mean_anomaly = r.read_u(32)? as u32;
-                    let mean_motion = r.read_u(32)? as u32;
-                    PositionSystem::Sgp4 {
-                        epoch_year,
-                        day_of_the_year,
-                        day_fraction,
-                        mean_motion_first_derivative,
-                        mean_motion_second_derivative,
-                        drag_term,
-                        inclination,
-                        right_ascension,
-                        eccentricity,
-                        argument_of_perigree,
-                        mean_anomaly,
-                        mean_motion,
-                    }
-                };
-                satellites.push(PositionV2Satellite {
-                    satellite_id,
-                    reserved_zero_future_use: sat_reserved,
-                    position,
-                });
-            }
-            Ok(SatBody::PositionV2(PositionV2Body { satellites }))
-        }
-        1 => {
-            let mut fragments = Vec::new();
-            while r.remaining_bits() >= 32 + 2 {
-                let cell_fragment_id = r.read_u(32)? as u32;
-                let first_occurrence = r.read_u(1)? != 0;
-                let last_occurrence = r.read_u(1)? != 0;
-                let mut frag_r4 = 0u8;
-                let centre = if first_occurrence {
-                    const CENTER_BITS: usize = 4 + 18 + 5 + 19 + 24 + 6;
-                    if r.remaining_bits() < CENTER_BITS {
-                        return Err(Error::BufferTooShort {
-                            need: CENTER_BITS,
-                            have: r.remaining_bits(),
-                            what: "SatSection CellFragment centre",
-                        });
-                    }
-                    let center_r4 = r.read_u(4)? as u8;
-                    let centre_latitude = r.read_i(18)? as i32;
-                    let center_r5 = r.read_u(5)? as u8;
-                    let centre_longitude = r.read_i(19)? as i32;
-                    let max_distance = r.read_u(24)? as u32;
-                    let center_r6 = r.read_u(6)? as u8;
-                    Some(CellCentre {
-                        centre_latitude,
-                        centre_longitude,
-                        max_distance,
-                        reserved_zero_future_use_4: center_r4,
-                        reserved_zero_future_use_5: center_r5,
-                        reserved_zero_future_use_6: center_r6,
-                    })
-                } else {
-                    frag_r4 = r.read_u(4)? as u8;
-                    None
-                };
-                let dsid_count = r.read_u(10)? as usize;
-                if r.remaining_bits() < dsid_count * 32 {
-                    return Err(Error::BufferTooShort {
-                        need: dsid_count * 32,
-                        have: r.remaining_bits(),
-                        what: "SatSection CellFragment delivery_system_ids",
-                    });
-                }
-                let mut delivery_system_ids =
-                    Vec::with_capacity(dsid_count.min(r.remaining_bits() / 32));
-                for _ in 0..dsid_count {
-                    delivery_system_ids.push(r.read_u(32)? as u32);
-                }
-                let frag_new_r = r.read_u(6)? as u8;
-                let nds_count = r.read_u(10)? as usize;
-                const NDS_ENTRY_BITS: usize = 32 + 33 + 6 + 9;
-                if r.remaining_bits() < nds_count * NDS_ENTRY_BITS {
-                    return Err(Error::BufferTooShort {
-                        need: nds_count * NDS_ENTRY_BITS,
-                        have: r.remaining_bits(),
-                        what: "SatSection CellFragment new_delivery_systems",
-                    });
-                }
-                let mut new_delivery_systems =
-                    Vec::with_capacity(nds_count.min(r.remaining_bits() / NDS_ENTRY_BITS));
-                for _ in 0..nds_count {
-                    let new_delivery_system_id = r.read_u(32)? as u32;
-                    let time_of_application_base = r.read_u(33)?;
-                    let nds_r = r.read_u(6)? as u8;
-                    let time_of_application_ext = r.read_u(9)? as u16;
-                    new_delivery_systems.push(NewDeliverySystem {
-                        new_delivery_system_id,
-                        time_of_application_base,
-                        time_of_application_ext,
-                        reserved_zero_future_use: nds_r,
-                    });
-                }
-                let frag_obs_r = r.read_u(6)? as u8;
-                let ods_count = r.read_u(10)? as usize;
-                if r.remaining_bits() < ods_count * NDS_ENTRY_BITS {
-                    return Err(Error::BufferTooShort {
-                        need: ods_count * NDS_ENTRY_BITS,
-                        have: r.remaining_bits(),
-                        what: "SatSection CellFragment obsolescent_delivery_systems",
-                    });
-                }
-                let mut obsolescent_delivery_systems =
-                    Vec::with_capacity(ods_count.min(r.remaining_bits() / NDS_ENTRY_BITS));
-                for _ in 0..ods_count {
-                    let obsolescent_delivery_system_id = r.read_u(32)? as u32;
-                    let time_of_obsolescence_base = r.read_u(33)?;
-                    let ods_r = r.read_u(6)? as u8;
-                    let time_of_obsolescence_ext = r.read_u(9)? as u16;
-                    obsolescent_delivery_systems.push(ObsolescentDeliverySystem {
-                        obsolescent_delivery_system_id,
-                        time_of_obsolescence_base,
-                        time_of_obsolescence_ext,
-                        reserved_zero_future_use: ods_r,
-                    });
-                }
-                fragments.push(CellFragment {
-                    cell_fragment_id,
-                    first_occurrence,
-                    last_occurrence,
-                    centre,
-                    delivery_system_ids,
-                    new_delivery_systems,
-                    obsolescent_delivery_systems,
-                    reserved_zero_future_use_4: frag_r4,
-                    reserved_zero_future_use_new: frag_new_r,
-                    reserved_zero_future_use_obsolescent: frag_obs_r,
-                });
-            }
-            Ok(SatBody::CellFragment(CellFragmentBody { fragments }))
-        }
-        2 => {
-            const TIME_ASSOC_MIN_BITS: usize = 4 + 4 + 33 + 6 + 9 + 64 + 32;
-            if r.remaining_bits() < TIME_ASSOC_MIN_BITS {
-                return Err(Error::BufferTooShort {
-                    need: TIME_ASSOC_MIN_BITS,
-                    have: r.remaining_bits(),
-                    what: "SatSection TimeAssociation body",
-                });
-            }
-            let association_type = AssociationType::from_u8(r.read_u(4)? as u8);
-            let mut assoc_r4 = 0u8;
-            let leap_info = if association_type.to_u8() == 1 {
-                Some(LeapInfo {
-                    leap59: r.read_u(1)? != 0,
-                    leap61: r.read_u(1)? != 0,
-                    pastleap59: r.read_u(1)? != 0,
-                    pastleap61: r.read_u(1)? != 0,
-                })
-            } else {
-                assoc_r4 = r.read_u(4)? as u8;
-                None
-            };
-            let ncr_base = r.read_u(33)?;
-            let ncr_r = r.read_u(6)? as u8;
-            let ncr_ext = r.read_u(9)? as u16;
-            let association_timestamp_seconds = r.read_u(64)?;
-            let association_timestamp_nanoseconds = r.read_u(32)? as u32;
-            Ok(SatBody::TimeAssociation(TimeAssociationBody {
-                association_type,
-                leap_info,
-                ncr_base,
-                ncr_ext,
-                association_timestamp_seconds,
-                association_timestamp_nanoseconds,
-                reserved_zero_future_use_4: assoc_r4,
-                ncr_reserved_zero_future_use: ncr_r,
-            }))
-        }
-        3 => {
-            let mut plans = Vec::new();
-            while r.remaining_bits() >= 32 + 4 + 12 {
-                let beamhopping_time_plan_id = r.read_u(32)? as u32;
-                let plan_r4 = r.read_u(4)? as u8;
-                let plan_length = r.read_u(12)? as usize;
-                let plan_end_bits = r.bits_consumed() + plan_length * 8;
-                let plan_mode_r = r.read_u(6)? as u8;
-                let time_plan_mode = TimePlanMode::from_u8(r.read_u(2)? as u8);
-                let time_of_application_base = r.read_u(33)?;
-                let toa_r = r.read_u(6)? as u8;
-                let time_of_application_ext = r.read_u(9)? as u16;
-                let cycle_duration_base = r.read_u(33)?;
-                let cycle_r = r.read_u(6)? as u8;
-                let cycle_duration_ext = r.read_u(9)? as u16;
-                let mode = match time_plan_mode {
-                    TimePlanMode::DwellOnTime => {
-                        const MODE0_BITS: usize = 33 + 6 + 9 + 33 + 6 + 9;
-                        if r.remaining_bits() < MODE0_BITS {
-                            return Err(Error::BufferTooShort {
-                                need: MODE0_BITS,
-                                have: r.remaining_bits(),
-                                what: "SatSection Beamhopping Mode0",
-                            });
-                        }
-                        let dwell_duration_base = r.read_u(33)?;
-                        let dwell_r = r.read_u(6)? as u8;
-                        let dwell_duration_ext = r.read_u(9)? as u16;
-                        let on_time_base = r.read_u(33)?;
-                        let on_time_r = r.read_u(6)? as u8;
-                        let on_time_ext = r.read_u(9)? as u16;
-                        BeamhoppingMode::Mode0 {
-                            dwell_duration_base,
-                            dwell_duration_ext,
-                            on_time_base,
-                            on_time_ext,
-                            dwell_duration_reserved_zero_future_use: dwell_r,
-                            on_time_reserved_zero_future_use: on_time_r,
-                        }
-                    }
-                    TimePlanMode::Bitmap => {
-                        const MODE1_HEADER_BITS: usize = 1 + 15 + 1 + 15;
-                        if r.remaining_bits() < MODE1_HEADER_BITS {
-                            return Err(Error::BufferTooShort {
-                                need: MODE1_HEADER_BITS,
-                                have: r.remaining_bits(),
-                                what: "SatSection Beamhopping Mode1 header",
-                            });
-                        }
-                        let m1_size_r = r.read_u(1)? as u8;
-                        let bit_map_size = r.read_u(15)? as u16;
-                        let m1_slot_r = r.read_u(1)? as u8;
-                        let current_slot = r.read_u(15)? as u16;
-                        if r.remaining_bits() < bit_map_size as usize {
-                            return Err(Error::BufferTooShort {
-                                need: bit_map_size as usize,
-                                have: r.remaining_bits(),
-                                what: "SatSection Beamhopping Mode1 bitmap",
-                            });
-                        }
-                        let mut slot_transmission_on =
-                            Vec::with_capacity((bit_map_size as usize).min(r.remaining_bits()));
-                        for _ in 0..bit_map_size {
-                            slot_transmission_on.push(r.read_u(1)? != 0);
-                        }
-                        let total = 1 + 15 + 1 + 15 + bit_map_size as usize;
-                        r.skip(pad_to_byte(total) as u8)?;
-                        BeamhoppingMode::Mode1 {
-                            bit_map_size,
-                            current_slot,
-                            slot_transmission_on,
-                            reserved_zero_future_use_size: m1_size_r,
-                            reserved_zero_future_use_slot: m1_slot_r,
-                        }
-                    }
-                    TimePlanMode::GridRevisitSleep => {
-                        const MODE2_BITS: usize = 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9;
-                        if r.remaining_bits() < MODE2_BITS {
-                            return Err(Error::BufferTooShort {
-                                need: MODE2_BITS,
-                                have: r.remaining_bits(),
-                                what: "SatSection Beamhopping Mode2",
-                            });
-                        }
-                        let grid_size_base = r.read_u(33)?;
-                        let grid_r = r.read_u(6)? as u8;
-                        let grid_size_ext = r.read_u(9)? as u16;
-                        let revisit_duration_base = r.read_u(33)?;
-                        let revisit_r = r.read_u(6)? as u8;
-                        let revisit_duration_ext = r.read_u(9)? as u16;
-                        let sleep_time_base = r.read_u(33)?;
-                        let sleep_time_r = r.read_u(6)? as u8;
-                        let sleep_time_ext = r.read_u(9)? as u16;
-                        let sleep_duration_base = r.read_u(33)?;
-                        let sleep_dur_r = r.read_u(6)? as u8;
-                        let sleep_duration_ext = r.read_u(9)? as u16;
-                        BeamhoppingMode::Mode2 {
-                            grid_size_base,
-                            grid_size_ext,
-                            revisit_duration_base,
-                            revisit_duration_ext,
-                            sleep_time_base,
-                            sleep_time_ext,
-                            sleep_duration_base,
-                            sleep_duration_ext,
-                            grid_size_reserved_zero_future_use: grid_r,
-                            revisit_duration_reserved_zero_future_use: revisit_r,
-                            sleep_time_reserved_zero_future_use: sleep_time_r,
-                            sleep_duration_reserved_zero_future_use: sleep_dur_r,
-                        }
-                    }
-                    _ => {
-                        let start_byte = r.bits_consumed().div_ceil(8);
-                        let end_byte = plan_end_bits / 8;
-                        let raw = if start_byte < end_byte && end_byte <= data.len() {
-                            data[start_byte..end_byte].to_vec()
-                        } else {
-                            Vec::new()
-                        };
-                        BeamhoppingMode::Reserved(raw)
-                    }
-                };
-                // A `plan_length` shorter than the fixed + mode-specific
-                // fields already consumed would move the cursor BACKWARDS,
-                // re-reading part of this plan's own body as the next plan
-                // (r02-W14) — reject it instead.
-                if r.bits_consumed() > plan_end_bits {
-                    return Err(Error::BufferTooShort {
-                        need: r.bits_consumed() - plan_end_bits,
-                        have: 0,
-                        what: "SatSection Beamhopping plan_length shorter than plan fields",
-                    });
-                }
-                r.seek_forward(plan_end_bits);
-                plans.push(BeamhoppingPlan {
-                    beamhopping_time_plan_id,
-                    time_plan_mode,
-                    time_of_application_base,
-                    time_of_application_ext,
-                    cycle_duration_base,
-                    cycle_duration_ext,
-                    mode,
-                    reserved_zero_future_use_4: plan_r4,
-                    reserved_zero_future_use_mode: plan_mode_r,
-                    time_of_application_reserved_zero_future_use: toa_r,
-                    cycle_duration_reserved_zero_future_use: cycle_r,
-                });
-            }
-            Ok(SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
-                plans,
-            }))
-        }
-        4 => {
-            const POS_V3_HEADER_BITS: usize = 4 + 4 + 8 + 7 + 9 + 32;
-            if r.remaining_bits() < POS_V3_HEADER_BITS {
-                return Err(Error::BufferTooShort {
-                    need: POS_V3_HEADER_BITS,
-                    have: r.remaining_bits(),
-                    what: "SatSection PositionV3 body header",
-                });
-            }
-            let oem_version_major = r.read_u(4)? as u8;
-            let oem_version_minor = r.read_u(4)? as u8;
-            let creation_date_year = r.read_u(8)? as u8;
-            let creation_r = r.read_u(7)? as u8;
-            let creation_date_day = r.read_u(9)? as u16;
-            let creation_date_day_fraction = r.read_u(32)? as u32;
-            let mut satellites = Vec::new();
-            while r.remaining_bits() >= 24 + 3 + 5 {
-                let satellite_id = r.read_u(24)? as u32;
-                let v3sat_r = r.read_u(3)? as u8;
-                let metadata_flag = r.read_u(1)? != 0;
-                let usable_start_time_flag = r.read_u(1)? != 0;
-                let usable_stop_time_flag = r.read_u(1)? != 0;
-                let ephemeris_accel_flag = r.read_u(1)? != 0;
-                let covariance_flag = r.read_u(1)? != 0;
-                let metadata = if metadata_flag {
-                    const METADATA_FIXED_BITS: usize =
-                        8 + 7 + 9 + 32 + 8 + 7 + 9 + 32 + 1 + 1 + 3 + 3;
-                    if r.remaining_bits() < METADATA_FIXED_BITS {
-                        return Err(Error::BufferTooShort {
-                            need: METADATA_FIXED_BITS,
-                            have: r.remaining_bits(),
-                            what: "SatSection PositionV3 metadata",
-                        });
-                    }
-                    let total_start_time_year = r.read_u(8)? as u8;
-                    let start_r = r.read_u(7)? as u8;
-                    let total_start_time_day = r.read_u(9)? as u16;
-                    let total_start_time_day_fraction = r.read_u(32)? as u32;
-                    let total_stop_time_year = r.read_u(8)? as u8;
-                    let stop_r = r.read_u(7)? as u8;
-                    let total_stop_time_day = r.read_u(9)? as u16;
-                    let total_stop_time_day_fraction = r.read_u(32)? as u32;
-                    let interp_r = r.read_u(1)? as u8;
-                    let interpolation_flag = r.read_u(1)? != 0;
-                    let interpolation_type = InterpolationType::from_u8(r.read_u(3)? as u8);
-                    let interpolation_degree = r.read_u(3)? as u8;
-                    let usable_start_time = if usable_start_time_flag {
-                        const USABLE_TIME_BITS: usize = 8 + 7 + 9 + 32;
-                        if r.remaining_bits() < USABLE_TIME_BITS {
-                            return Err(Error::BufferTooShort {
-                                need: USABLE_TIME_BITS,
-                                have: r.remaining_bits(),
-                                what: "SatSection PositionV3 usable_start_time",
-                            });
-                        }
-                        let year = r.read_u(8)? as u8;
-                        let ustart_r = r.read_u(7)? as u8;
-                        let day = r.read_u(9)? as u16;
-                        let day_fraction = r.read_u(32)? as u32;
-                        Some(UsableTime {
-                            year,
-                            day,
-                            day_fraction,
-                            reserved_zero_future_use: ustart_r,
-                        })
-                    } else {
-                        None
-                    };
-                    let usable_stop_time = if usable_stop_time_flag {
-                        const USABLE_TIME_BITS: usize = 8 + 7 + 9 + 32;
-                        if r.remaining_bits() < USABLE_TIME_BITS {
-                            return Err(Error::BufferTooShort {
-                                need: USABLE_TIME_BITS,
-                                have: r.remaining_bits(),
-                                what: "SatSection PositionV3 usable_stop_time",
-                            });
-                        }
-                        let year = r.read_u(8)? as u8;
-                        let ustop_r = r.read_u(7)? as u8;
-                        let day = r.read_u(9)? as u16;
-                        let day_fraction = r.read_u(32)? as u32;
-                        Some(UsableTime {
-                            year,
-                            day,
-                            day_fraction,
-                            reserved_zero_future_use: ustop_r,
-                        })
-                    } else {
-                        None
-                    };
-                    Some(PositionV3Metadata {
-                        total_start_time_year,
-                        total_start_time_day,
-                        total_start_time_day_fraction,
-                        total_stop_time_year,
-                        total_stop_time_day,
-                        total_stop_time_day_fraction,
-                        interpolation_flag,
-                        interpolation_type,
-                        interpolation_degree,
-                        usable_start_time,
-                        usable_stop_time,
-                        total_start_time_reserved_zero_future_use: start_r,
-                        total_stop_time_reserved_zero_future_use: stop_r,
-                        reserved_zero_future_use: interp_r,
-                    })
-                } else {
-                    None
-                };
-                let ephemeris_data_count = r.read_u(16)? as u16;
-                let entry_bits: usize =
-                    8 + 7 + 9 + 32 + 32 * 6 + if ephemeris_accel_flag { 32 * 3 } else { 0 };
-                let mut ephemeris_data = Vec::with_capacity(
-                    (ephemeris_data_count as usize)
-                        .min(r.remaining_bits().saturating_sub(entry_bits) / entry_bits + 1),
-                );
-                for _ in 0..ephemeris_data_count {
-                    if r.remaining_bits() < entry_bits {
-                        return Err(Error::BufferTooShort {
-                            need: entry_bits,
-                            have: r.remaining_bits(),
-                            what: "SatSection PositionV3 ephemeris_data entry",
-                        });
-                    }
-                    let epoch_year = r.read_u(8)? as u8;
-                    let eph_r = r.read_u(7)? as u8;
-                    let epoch_day = r.read_u(9)? as u16;
-                    let epoch_day_fraction = r.read_u(32)? as u32;
-                    let ephemeris_x = r.read_u(32)? as u32;
-                    let ephemeris_y = r.read_u(32)? as u32;
-                    let ephemeris_z = r.read_u(32)? as u32;
-                    let ephemeris_x_dot = r.read_u(32)? as u32;
-                    let ephemeris_y_dot = r.read_u(32)? as u32;
-                    let ephemeris_z_dot = r.read_u(32)? as u32;
-                    let acceleration = if ephemeris_accel_flag {
-                        Some(EphemerisAccel {
-                            ephemeris_x_ddot: r.read_u(32)? as u32,
-                            ephemeris_y_ddot: r.read_u(32)? as u32,
-                            ephemeris_z_ddot: r.read_u(32)? as u32,
-                        })
-                    } else {
-                        None
-                    };
-                    ephemeris_data.push(EphemerisData {
-                        epoch_year,
-                        epoch_day,
-                        epoch_day_fraction,
-                        ephemeris_x,
-                        ephemeris_y,
-                        ephemeris_z,
-                        ephemeris_x_dot,
-                        ephemeris_y_dot,
-                        ephemeris_z_dot,
-                        acceleration,
-                        reserved_zero_future_use: eph_r,
-                    });
-                }
-                let covariance = if covariance_flag {
-                    const COV_HEADER_BITS: usize = 8 + 7 + 9 + 32;
-                    const COV_ELEMENTS_BITS: usize = 21 * 32;
-                    const COV_BITS: usize = COV_HEADER_BITS + COV_ELEMENTS_BITS;
-                    if r.remaining_bits() < COV_BITS {
-                        return Err(Error::BufferTooShort {
-                            need: COV_BITS,
-                            have: r.remaining_bits(),
-                            what: "SatSection PositionV3 covariance",
-                        });
-                    }
-                    let covariance_epoch_year = r.read_u(8)? as u8;
-                    let cov_r = r.read_u(7)? as u8;
-                    let covariance_epoch_day = r.read_u(9)? as u16;
-                    let covariance_epoch_day_fraction = r.read_u(32)? as u32;
-                    let mut covariance_elements = [0u32; 21];
-                    for elem in &mut covariance_elements {
-                        *elem = r.read_u(32)? as u32;
-                    }
-                    Some(CovarianceData {
-                        covariance_epoch_year,
-                        covariance_epoch_day,
-                        covariance_epoch_day_fraction,
-                        covariance_elements,
-                        covariance_epoch_reserved_zero_future_use: cov_r,
-                    })
-                } else {
-                    None
-                };
-                satellites.push(PositionV3Satellite {
-                    satellite_id,
-                    usable_start_time_flag,
-                    usable_stop_time_flag,
-                    ephemeris_accel_flag,
-                    covariance_flag,
-                    metadata,
-                    ephemeris_data,
-                    covariance,
-                    reserved_zero_future_use: v3sat_r,
-                });
-            }
-            Ok(SatBody::PositionV3(PositionV3Body {
-                oem_version_major,
-                oem_version_minor,
-                creation_date_year,
-                creation_date_day,
-                creation_date_day_fraction,
-                satellites,
-                creation_date_reserved_zero_future_use: creation_r,
-            }))
-        }
+        0 => sat_parse_position_v2(&mut r),
+        1 => sat_parse_cell_fragment(&mut r),
+        2 => sat_parse_time_association(&mut r),
+        3 => sat_parse_beamhopping_time_plan(&mut r, data),
+        4 => sat_parse_position_v3(&mut r),
         _ => Ok(SatBody::Raw(data.to_vec())),
     }
+}
+
+fn sat_parse_position_v2(r: &mut BitReader<'_>) -> Result<SatBody> {
+    let mut satellites = Vec::new();
+    while r.remaining_bits() > 24 + 7 {
+        let satellite_id = r.read_u(24)? as u32;
+        let sat_reserved = r.read_u(7)? as u8;
+        let position_system = r.read_u(1)?;
+        let position = if position_system == 0 {
+            const ORBITAL_BITS: usize = 16 + 1 + 7;
+            if r.remaining_bits() < ORBITAL_BITS {
+                return Err(Error::BufferTooShort {
+                    need: ORBITAL_BITS,
+                    have: r.remaining_bits(),
+                    what: "SatSection PositionV2 Orbital fields",
+                });
+            }
+            let orbital_position = r.read_u(16)? as u16;
+            let west_east_flag = r.read_u(1)? != 0;
+            let orbital_reserved = r.read_u(7)? as u8;
+            PositionSystem::Orbital {
+                orbital_position,
+                west_east_flag,
+                reserved_zero_future_use: orbital_reserved,
+            }
+        } else {
+            const SGP4_BITS: usize = 8 + 16 + 32 * 10;
+            if r.remaining_bits() < SGP4_BITS {
+                return Err(Error::BufferTooShort {
+                    need: SGP4_BITS,
+                    have: r.remaining_bits(),
+                    what: "SatSection PositionV2 SGP4 fields",
+                });
+            }
+            let epoch_year = r.read_u(8)? as u8;
+            let day_of_the_year = r.read_u(16)? as u16;
+            let day_fraction = r.read_u(32)? as u32;
+            let mean_motion_first_derivative = r.read_u(32)? as u32;
+            let mean_motion_second_derivative = r.read_u(32)? as u32;
+            let drag_term = r.read_u(32)? as u32;
+            let inclination = r.read_u(32)? as u32;
+            let right_ascension = r.read_u(32)? as u32;
+            let eccentricity = r.read_u(32)? as u32;
+            let argument_of_perigree = r.read_u(32)? as u32;
+            let mean_anomaly = r.read_u(32)? as u32;
+            let mean_motion = r.read_u(32)? as u32;
+            PositionSystem::Sgp4 {
+                epoch_year,
+                day_of_the_year,
+                day_fraction,
+                mean_motion_first_derivative,
+                mean_motion_second_derivative,
+                drag_term,
+                inclination,
+                right_ascension,
+                eccentricity,
+                argument_of_perigree,
+                mean_anomaly,
+                mean_motion,
+            }
+        };
+        satellites.push(PositionV2Satellite {
+            satellite_id,
+            reserved_zero_future_use: sat_reserved,
+            position,
+        });
+    }
+    Ok(SatBody::PositionV2(PositionV2Body { satellites }))
+}
+
+fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
+    let mut fragments = Vec::new();
+    while r.remaining_bits() >= 32 + 2 {
+        let cell_fragment_id = r.read_u(32)? as u32;
+        let first_occurrence = r.read_u(1)? != 0;
+        let last_occurrence = r.read_u(1)? != 0;
+        let mut frag_r4 = 0u8;
+        let centre = if first_occurrence {
+            const CENTER_BITS: usize = 4 + 18 + 5 + 19 + 24 + 6;
+            if r.remaining_bits() < CENTER_BITS {
+                return Err(Error::BufferTooShort {
+                    need: CENTER_BITS,
+                    have: r.remaining_bits(),
+                    what: "SatSection CellFragment centre",
+                });
+            }
+            let center_r4 = r.read_u(4)? as u8;
+            let centre_latitude = r.read_i(18)? as i32;
+            let center_r5 = r.read_u(5)? as u8;
+            let centre_longitude = r.read_i(19)? as i32;
+            let max_distance = r.read_u(24)? as u32;
+            let center_r6 = r.read_u(6)? as u8;
+            Some(CellCentre {
+                centre_latitude,
+                centre_longitude,
+                max_distance,
+                reserved_zero_future_use_4: center_r4,
+                reserved_zero_future_use_5: center_r5,
+                reserved_zero_future_use_6: center_r6,
+            })
+        } else {
+            frag_r4 = r.read_u(4)? as u8;
+            None
+        };
+        let dsid_count = r.read_u(10)? as usize;
+        if r.remaining_bits() < dsid_count * 32 {
+            return Err(Error::BufferTooShort {
+                need: dsid_count * 32,
+                have: r.remaining_bits(),
+                what: "SatSection CellFragment delivery_system_ids",
+            });
+        }
+        let mut delivery_system_ids = Vec::with_capacity(dsid_count.min(r.remaining_bits() / 32));
+        for _ in 0..dsid_count {
+            delivery_system_ids.push(r.read_u(32)? as u32);
+        }
+        let frag_new_r = r.read_u(6)? as u8;
+        let nds_count = r.read_u(10)? as usize;
+        const NDS_ENTRY_BITS: usize = 32 + 33 + 6 + 9;
+        if r.remaining_bits() < nds_count * NDS_ENTRY_BITS {
+            return Err(Error::BufferTooShort {
+                need: nds_count * NDS_ENTRY_BITS,
+                have: r.remaining_bits(),
+                what: "SatSection CellFragment new_delivery_systems",
+            });
+        }
+        let mut new_delivery_systems =
+            Vec::with_capacity(nds_count.min(r.remaining_bits() / NDS_ENTRY_BITS));
+        for _ in 0..nds_count {
+            let new_delivery_system_id = r.read_u(32)? as u32;
+            let time_of_application_base = r.read_u(33)?;
+            let nds_r = r.read_u(6)? as u8;
+            let time_of_application_ext = r.read_u(9)? as u16;
+            new_delivery_systems.push(NewDeliverySystem {
+                new_delivery_system_id,
+                time_of_application_base,
+                time_of_application_ext,
+                reserved_zero_future_use: nds_r,
+            });
+        }
+        let frag_obs_r = r.read_u(6)? as u8;
+        let ods_count = r.read_u(10)? as usize;
+        if r.remaining_bits() < ods_count * NDS_ENTRY_BITS {
+            return Err(Error::BufferTooShort {
+                need: ods_count * NDS_ENTRY_BITS,
+                have: r.remaining_bits(),
+                what: "SatSection CellFragment obsolescent_delivery_systems",
+            });
+        }
+        let mut obsolescent_delivery_systems =
+            Vec::with_capacity(ods_count.min(r.remaining_bits() / NDS_ENTRY_BITS));
+        for _ in 0..ods_count {
+            let obsolescent_delivery_system_id = r.read_u(32)? as u32;
+            let time_of_obsolescence_base = r.read_u(33)?;
+            let ods_r = r.read_u(6)? as u8;
+            let time_of_obsolescence_ext = r.read_u(9)? as u16;
+            obsolescent_delivery_systems.push(ObsolescentDeliverySystem {
+                obsolescent_delivery_system_id,
+                time_of_obsolescence_base,
+                time_of_obsolescence_ext,
+                reserved_zero_future_use: ods_r,
+            });
+        }
+        fragments.push(CellFragment {
+            cell_fragment_id,
+            first_occurrence,
+            last_occurrence,
+            centre,
+            delivery_system_ids,
+            new_delivery_systems,
+            obsolescent_delivery_systems,
+            reserved_zero_future_use_4: frag_r4,
+            reserved_zero_future_use_new: frag_new_r,
+            reserved_zero_future_use_obsolescent: frag_obs_r,
+        });
+    }
+    Ok(SatBody::CellFragment(CellFragmentBody { fragments }))
+}
+
+fn sat_parse_time_association(r: &mut BitReader<'_>) -> Result<SatBody> {
+    const TIME_ASSOC_MIN_BITS: usize = 4 + 4 + 33 + 6 + 9 + 64 + 32;
+    if r.remaining_bits() < TIME_ASSOC_MIN_BITS {
+        return Err(Error::BufferTooShort {
+            need: TIME_ASSOC_MIN_BITS,
+            have: r.remaining_bits(),
+            what: "SatSection TimeAssociation body",
+        });
+    }
+    let association_type = AssociationType::from_u8(r.read_u(4)? as u8);
+    let mut assoc_r4 = 0u8;
+    let leap_info = if association_type.to_u8() == 1 {
+        Some(LeapInfo {
+            leap59: r.read_u(1)? != 0,
+            leap61: r.read_u(1)? != 0,
+            pastleap59: r.read_u(1)? != 0,
+            pastleap61: r.read_u(1)? != 0,
+        })
+    } else {
+        assoc_r4 = r.read_u(4)? as u8;
+        None
+    };
+    let ncr_base = r.read_u(33)?;
+    let ncr_r = r.read_u(6)? as u8;
+    let ncr_ext = r.read_u(9)? as u16;
+    let association_timestamp_seconds = r.read_u(64)?;
+    let association_timestamp_nanoseconds = r.read_u(32)? as u32;
+    Ok(SatBody::TimeAssociation(TimeAssociationBody {
+        association_type,
+        leap_info,
+        ncr_base,
+        ncr_ext,
+        association_timestamp_seconds,
+        association_timestamp_nanoseconds,
+        reserved_zero_future_use_4: assoc_r4,
+        ncr_reserved_zero_future_use: ncr_r,
+    }))
+}
+
+fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result<SatBody> {
+    let mut plans = Vec::new();
+    while r.remaining_bits() >= 32 + 4 + 12 {
+        let beamhopping_time_plan_id = r.read_u(32)? as u32;
+        let plan_r4 = r.read_u(4)? as u8;
+        let plan_length = r.read_u(12)? as usize;
+        let plan_end_bits = r.bits_consumed() + plan_length * 8;
+        let plan_mode_r = r.read_u(6)? as u8;
+        let time_plan_mode = TimePlanMode::from_u8(r.read_u(2)? as u8);
+        let time_of_application_base = r.read_u(33)?;
+        let toa_r = r.read_u(6)? as u8;
+        let time_of_application_ext = r.read_u(9)? as u16;
+        let cycle_duration_base = r.read_u(33)?;
+        let cycle_r = r.read_u(6)? as u8;
+        let cycle_duration_ext = r.read_u(9)? as u16;
+        let mode = match time_plan_mode {
+            TimePlanMode::DwellOnTime => {
+                const MODE0_BITS: usize = 33 + 6 + 9 + 33 + 6 + 9;
+                if r.remaining_bits() < MODE0_BITS {
+                    return Err(Error::BufferTooShort {
+                        need: MODE0_BITS,
+                        have: r.remaining_bits(),
+                        what: "SatSection Beamhopping Mode0",
+                    });
+                }
+                let dwell_duration_base = r.read_u(33)?;
+                let dwell_r = r.read_u(6)? as u8;
+                let dwell_duration_ext = r.read_u(9)? as u16;
+                let on_time_base = r.read_u(33)?;
+                let on_time_r = r.read_u(6)? as u8;
+                let on_time_ext = r.read_u(9)? as u16;
+                BeamhoppingMode::Mode0 {
+                    dwell_duration_base,
+                    dwell_duration_ext,
+                    on_time_base,
+                    on_time_ext,
+                    dwell_duration_reserved_zero_future_use: dwell_r,
+                    on_time_reserved_zero_future_use: on_time_r,
+                }
+            }
+            TimePlanMode::Bitmap => {
+                const MODE1_HEADER_BITS: usize = 1 + 15 + 1 + 15;
+                if r.remaining_bits() < MODE1_HEADER_BITS {
+                    return Err(Error::BufferTooShort {
+                        need: MODE1_HEADER_BITS,
+                        have: r.remaining_bits(),
+                        what: "SatSection Beamhopping Mode1 header",
+                    });
+                }
+                let m1_size_r = r.read_u(1)? as u8;
+                let bit_map_size = r.read_u(15)? as u16;
+                let m1_slot_r = r.read_u(1)? as u8;
+                let current_slot = r.read_u(15)? as u16;
+                if r.remaining_bits() < bit_map_size as usize {
+                    return Err(Error::BufferTooShort {
+                        need: bit_map_size as usize,
+                        have: r.remaining_bits(),
+                        what: "SatSection Beamhopping Mode1 bitmap",
+                    });
+                }
+                let mut slot_transmission_on =
+                    Vec::with_capacity((bit_map_size as usize).min(r.remaining_bits()));
+                for _ in 0..bit_map_size {
+                    slot_transmission_on.push(r.read_u(1)? != 0);
+                }
+                let total = 1 + 15 + 1 + 15 + bit_map_size as usize;
+                r.skip(pad_to_byte(total) as u8)?;
+                BeamhoppingMode::Mode1 {
+                    bit_map_size,
+                    current_slot,
+                    slot_transmission_on,
+                    reserved_zero_future_use_size: m1_size_r,
+                    reserved_zero_future_use_slot: m1_slot_r,
+                }
+            }
+            TimePlanMode::GridRevisitSleep => {
+                const MODE2_BITS: usize = 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9;
+                if r.remaining_bits() < MODE2_BITS {
+                    return Err(Error::BufferTooShort {
+                        need: MODE2_BITS,
+                        have: r.remaining_bits(),
+                        what: "SatSection Beamhopping Mode2",
+                    });
+                }
+                let grid_size_base = r.read_u(33)?;
+                let grid_r = r.read_u(6)? as u8;
+                let grid_size_ext = r.read_u(9)? as u16;
+                let revisit_duration_base = r.read_u(33)?;
+                let revisit_r = r.read_u(6)? as u8;
+                let revisit_duration_ext = r.read_u(9)? as u16;
+                let sleep_time_base = r.read_u(33)?;
+                let sleep_time_r = r.read_u(6)? as u8;
+                let sleep_time_ext = r.read_u(9)? as u16;
+                let sleep_duration_base = r.read_u(33)?;
+                let sleep_dur_r = r.read_u(6)? as u8;
+                let sleep_duration_ext = r.read_u(9)? as u16;
+                BeamhoppingMode::Mode2 {
+                    grid_size_base,
+                    grid_size_ext,
+                    revisit_duration_base,
+                    revisit_duration_ext,
+                    sleep_time_base,
+                    sleep_time_ext,
+                    sleep_duration_base,
+                    sleep_duration_ext,
+                    grid_size_reserved_zero_future_use: grid_r,
+                    revisit_duration_reserved_zero_future_use: revisit_r,
+                    sleep_time_reserved_zero_future_use: sleep_time_r,
+                    sleep_duration_reserved_zero_future_use: sleep_dur_r,
+                }
+            }
+            _ => {
+                let start_byte = r.bits_consumed().div_ceil(8);
+                let end_byte = plan_end_bits / 8;
+                let raw = if start_byte < end_byte && end_byte <= data.len() {
+                    data[start_byte..end_byte].to_vec()
+                } else {
+                    Vec::new()
+                };
+                BeamhoppingMode::Reserved(raw)
+            }
+        };
+        // A `plan_length` shorter than the fixed + mode-specific
+        // fields already consumed would move the cursor BACKWARDS,
+        // re-reading part of this plan's own body as the next plan
+        // (r02-W14) — reject it instead.
+        if r.bits_consumed() > plan_end_bits {
+            return Err(Error::BufferTooShort {
+                need: r.bits_consumed() - plan_end_bits,
+                have: 0,
+                what: "SatSection Beamhopping plan_length shorter than plan fields",
+            });
+        }
+        r.seek_forward(plan_end_bits);
+        plans.push(BeamhoppingPlan {
+            beamhopping_time_plan_id,
+            time_plan_mode,
+            time_of_application_base,
+            time_of_application_ext,
+            cycle_duration_base,
+            cycle_duration_ext,
+            mode,
+            reserved_zero_future_use_4: plan_r4,
+            reserved_zero_future_use_mode: plan_mode_r,
+            time_of_application_reserved_zero_future_use: toa_r,
+            cycle_duration_reserved_zero_future_use: cycle_r,
+        });
+    }
+    Ok(SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
+        plans,
+    }))
+}
+
+fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
+    const POS_V3_HEADER_BITS: usize = 4 + 4 + 8 + 7 + 9 + 32;
+    if r.remaining_bits() < POS_V3_HEADER_BITS {
+        return Err(Error::BufferTooShort {
+            need: POS_V3_HEADER_BITS,
+            have: r.remaining_bits(),
+            what: "SatSection PositionV3 body header",
+        });
+    }
+    let oem_version_major = r.read_u(4)? as u8;
+    let oem_version_minor = r.read_u(4)? as u8;
+    let creation_date_year = r.read_u(8)? as u8;
+    let creation_r = r.read_u(7)? as u8;
+    let creation_date_day = r.read_u(9)? as u16;
+    let creation_date_day_fraction = r.read_u(32)? as u32;
+    let mut satellites = Vec::new();
+    while r.remaining_bits() >= 24 + 3 + 5 {
+        let satellite_id = r.read_u(24)? as u32;
+        let v3sat_r = r.read_u(3)? as u8;
+        let metadata_flag = r.read_u(1)? != 0;
+        let usable_start_time_flag = r.read_u(1)? != 0;
+        let usable_stop_time_flag = r.read_u(1)? != 0;
+        let ephemeris_accel_flag = r.read_u(1)? != 0;
+        let covariance_flag = r.read_u(1)? != 0;
+        let metadata = if metadata_flag {
+            const METADATA_FIXED_BITS: usize = 8 + 7 + 9 + 32 + 8 + 7 + 9 + 32 + 1 + 1 + 3 + 3;
+            if r.remaining_bits() < METADATA_FIXED_BITS {
+                return Err(Error::BufferTooShort {
+                    need: METADATA_FIXED_BITS,
+                    have: r.remaining_bits(),
+                    what: "SatSection PositionV3 metadata",
+                });
+            }
+            let total_start_time_year = r.read_u(8)? as u8;
+            let start_r = r.read_u(7)? as u8;
+            let total_start_time_day = r.read_u(9)? as u16;
+            let total_start_time_day_fraction = r.read_u(32)? as u32;
+            let total_stop_time_year = r.read_u(8)? as u8;
+            let stop_r = r.read_u(7)? as u8;
+            let total_stop_time_day = r.read_u(9)? as u16;
+            let total_stop_time_day_fraction = r.read_u(32)? as u32;
+            let interp_r = r.read_u(1)? as u8;
+            let interpolation_flag = r.read_u(1)? != 0;
+            let interpolation_type = InterpolationType::from_u8(r.read_u(3)? as u8);
+            let interpolation_degree = r.read_u(3)? as u8;
+            let usable_start_time = if usable_start_time_flag {
+                const USABLE_TIME_BITS: usize = 8 + 7 + 9 + 32;
+                if r.remaining_bits() < USABLE_TIME_BITS {
+                    return Err(Error::BufferTooShort {
+                        need: USABLE_TIME_BITS,
+                        have: r.remaining_bits(),
+                        what: "SatSection PositionV3 usable_start_time",
+                    });
+                }
+                let year = r.read_u(8)? as u8;
+                let ustart_r = r.read_u(7)? as u8;
+                let day = r.read_u(9)? as u16;
+                let day_fraction = r.read_u(32)? as u32;
+                Some(UsableTime {
+                    year,
+                    day,
+                    day_fraction,
+                    reserved_zero_future_use: ustart_r,
+                })
+            } else {
+                None
+            };
+            let usable_stop_time = if usable_stop_time_flag {
+                const USABLE_TIME_BITS: usize = 8 + 7 + 9 + 32;
+                if r.remaining_bits() < USABLE_TIME_BITS {
+                    return Err(Error::BufferTooShort {
+                        need: USABLE_TIME_BITS,
+                        have: r.remaining_bits(),
+                        what: "SatSection PositionV3 usable_stop_time",
+                    });
+                }
+                let year = r.read_u(8)? as u8;
+                let ustop_r = r.read_u(7)? as u8;
+                let day = r.read_u(9)? as u16;
+                let day_fraction = r.read_u(32)? as u32;
+                Some(UsableTime {
+                    year,
+                    day,
+                    day_fraction,
+                    reserved_zero_future_use: ustop_r,
+                })
+            } else {
+                None
+            };
+            Some(PositionV3Metadata {
+                total_start_time_year,
+                total_start_time_day,
+                total_start_time_day_fraction,
+                total_stop_time_year,
+                total_stop_time_day,
+                total_stop_time_day_fraction,
+                interpolation_flag,
+                interpolation_type,
+                interpolation_degree,
+                usable_start_time,
+                usable_stop_time,
+                total_start_time_reserved_zero_future_use: start_r,
+                total_stop_time_reserved_zero_future_use: stop_r,
+                reserved_zero_future_use: interp_r,
+            })
+        } else {
+            None
+        };
+        let ephemeris_data_count = r.read_u(16)? as u16;
+        let entry_bits: usize =
+            8 + 7 + 9 + 32 + 32 * 6 + if ephemeris_accel_flag { 32 * 3 } else { 0 };
+        let mut ephemeris_data = Vec::with_capacity(
+            (ephemeris_data_count as usize)
+                .min(r.remaining_bits().saturating_sub(entry_bits) / entry_bits + 1),
+        );
+        for _ in 0..ephemeris_data_count {
+            if r.remaining_bits() < entry_bits {
+                return Err(Error::BufferTooShort {
+                    need: entry_bits,
+                    have: r.remaining_bits(),
+                    what: "SatSection PositionV3 ephemeris_data entry",
+                });
+            }
+            let epoch_year = r.read_u(8)? as u8;
+            let eph_r = r.read_u(7)? as u8;
+            let epoch_day = r.read_u(9)? as u16;
+            let epoch_day_fraction = r.read_u(32)? as u32;
+            let ephemeris_x = r.read_u(32)? as u32;
+            let ephemeris_y = r.read_u(32)? as u32;
+            let ephemeris_z = r.read_u(32)? as u32;
+            let ephemeris_x_dot = r.read_u(32)? as u32;
+            let ephemeris_y_dot = r.read_u(32)? as u32;
+            let ephemeris_z_dot = r.read_u(32)? as u32;
+            let acceleration = if ephemeris_accel_flag {
+                Some(EphemerisAccel {
+                    ephemeris_x_ddot: r.read_u(32)? as u32,
+                    ephemeris_y_ddot: r.read_u(32)? as u32,
+                    ephemeris_z_ddot: r.read_u(32)? as u32,
+                })
+            } else {
+                None
+            };
+            ephemeris_data.push(EphemerisData {
+                epoch_year,
+                epoch_day,
+                epoch_day_fraction,
+                ephemeris_x,
+                ephemeris_y,
+                ephemeris_z,
+                ephemeris_x_dot,
+                ephemeris_y_dot,
+                ephemeris_z_dot,
+                acceleration,
+                reserved_zero_future_use: eph_r,
+            });
+        }
+        let covariance = if covariance_flag {
+            const COV_HEADER_BITS: usize = 8 + 7 + 9 + 32;
+            const COV_ELEMENTS_BITS: usize = 21 * 32;
+            const COV_BITS: usize = COV_HEADER_BITS + COV_ELEMENTS_BITS;
+            if r.remaining_bits() < COV_BITS {
+                return Err(Error::BufferTooShort {
+                    need: COV_BITS,
+                    have: r.remaining_bits(),
+                    what: "SatSection PositionV3 covariance",
+                });
+            }
+            let covariance_epoch_year = r.read_u(8)? as u8;
+            let cov_r = r.read_u(7)? as u8;
+            let covariance_epoch_day = r.read_u(9)? as u16;
+            let covariance_epoch_day_fraction = r.read_u(32)? as u32;
+            let mut covariance_elements = [0u32; 21];
+            for elem in &mut covariance_elements {
+                *elem = r.read_u(32)? as u32;
+            }
+            Some(CovarianceData {
+                covariance_epoch_year,
+                covariance_epoch_day,
+                covariance_epoch_day_fraction,
+                covariance_elements,
+                covariance_epoch_reserved_zero_future_use: cov_r,
+            })
+        } else {
+            None
+        };
+        satellites.push(PositionV3Satellite {
+            satellite_id,
+            usable_start_time_flag,
+            usable_stop_time_flag,
+            ephemeris_accel_flag,
+            covariance_flag,
+            metadata,
+            ephemeris_data,
+            covariance,
+            reserved_zero_future_use: v3sat_r,
+        });
+    }
+    Ok(SatBody::PositionV3(PositionV3Body {
+        oem_version_major,
+        oem_version_minor,
+        creation_date_year,
+        creation_date_day,
+        creation_date_day_fraction,
+        satellites,
+        creation_date_reserved_zero_future_use: creation_r,
+    }))
 }
 
 // ── SatSection ──────────────────────────────────────────────────────────────

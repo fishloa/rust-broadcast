@@ -34,6 +34,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::{Rounding, rescale, rescale_i64, rescale_u64};
 use broadcast_common::{Package, Parse, Serialize};
 
 use crate::box_types::{BoxHeader, BoxType, find_top_box};
@@ -353,10 +354,7 @@ const MS_PER_SECOND: u64 = 1_000;
 /// time (ties broken by track order, so the result is deterministic). Every
 /// sample of a track still appears exactly once, in decode order.
 fn plan_mdat_layout(media: &Media, movie_timescale: u32) -> Result<MdatLayout> {
-    let mts = i128::from(movie_timescale.max(1));
-    let to_movie = |ticks: i64, ts: u32| -> i64 {
-        (i128::from(ticks) * mts).div_euclid(i128::from(ts.max(1))) as i64
-    };
+    let to_movie = |ticks: i64, ts: u32| rescale_i64(ticks, ts, movie_timescale, Rounding::Floor);
     let chunk_ticks = i128::from(movie_timescale.max(1)) * i128::from(INTERLEAVE_CHUNK_MS)
         / i128::from(MS_PER_SECOND);
     let chunk_ticks = i64::try_from(chunk_ticks).unwrap_or(i64::MAX).max(1);
@@ -705,8 +703,8 @@ struct TrackTiming {
 /// inter-track offsets of the IR survive into the file.
 fn track_timings(media: &Media, movie_timescale: u32) -> Vec<TrackTiming> {
     let origin = TimelineOrigin::of(&media.tracks);
-    let mts = i128::from(movie_timescale.max(1));
-    let to_movie = |ticks: i64, ts: u32| (ticks as i128 * mts).div_euclid(i128::from(ts.max(1)));
+    let to_movie =
+        |ticks: i64, ts: u32| rescale(i128::from(ticks), ts, movie_timescale, Rounding::Floor);
 
     struct Span {
         times: Vec<i64>,
@@ -745,7 +743,8 @@ fn track_timings(media: &Media, movie_timescale: u32) -> Vec<TrackTiming> {
             let ts = track.timescale();
             let deltas = decode_deltas(&track.samples, &sp.times);
             let media_duration: u64 = deltas.iter().map(|&d| u64::from(d)).sum();
-            let plain_duration = (i128::from(media_duration) * mts / i128::from(ts.max(1))) as u64;
+            let plain_duration =
+                rescale_u64(media_duration, ts, movie_timescale, Rounding::TowardZero);
             let (Some((pres_start, pres_end)), Some(&first_dts)) = (sp.pres, sp.times.first())
             else {
                 return TrackTiming {

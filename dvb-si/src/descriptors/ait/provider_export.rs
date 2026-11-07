@@ -180,13 +180,19 @@ mod tests {
                 .is_empty()
         );
         // name present, class length byte missing
-        assert!(ProviderExportDescriptor::parse(&[TAG, 2, 1, b'a']).is_err());
+        assert!(matches!(
+            ProviderExportDescriptor::parse(&[TAG, 2, 1, b'a']),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         // class overruns
         assert!(matches!(
             &(ProviderExportDescriptor::parse(&[TAG, 4, 1, b'a', 3, b'x'])),
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
-        assert!(ProviderExportDescriptor::parse(&[0x13, 0]).is_err());
+        assert!(matches!(
+            ProviderExportDescriptor::parse(&[0x13, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         let long = vec![0u8; 256];
         let d = ProviderExportDescriptor::new(vec![ProviderExport::new(b"a", &long)]);
         let mut out = vec![0u8; d.serialized_len()];

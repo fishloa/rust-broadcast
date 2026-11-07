@@ -484,7 +484,10 @@ mod tests {
         ));
         f.frames = 24;
         assert!(f.validate_for_rate(FrameRate::Fps25).is_ok());
-        assert!(f.validate_for_rate(FrameRate::Fps24).is_err());
+        assert!(matches!(
+            f.validate_for_rate(FrameRate::Fps24),
+            Err(Error::InvalidValue { .. })
+        ));
         f.frames = 23;
         assert!(f.validate_for_rate(FrameRate::Fps24).is_ok());
     }

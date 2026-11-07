@@ -125,6 +125,9 @@ mod tests {
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
         }
-        assert!(TargetMacAddressRangeDescriptor::parse(&[0x0F, 0]).is_err());
+        assert!(matches!(
+            TargetMacAddressRangeDescriptor::parse(&[0x0F, 0]),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
     }
 }

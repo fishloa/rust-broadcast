@@ -369,7 +369,10 @@ mod tests {
     #[test]
     fn parse_video_depth_range_rejects_short_hint() {
         let short = wrap(0x10, &[0x00, 0x02, 0x06, 0x40]);
-        assert!(ExtensionDescriptor::parse(&short).is_err());
+        assert!(matches!(
+            ExtensionDescriptor::parse(&short),
+            Err(Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]

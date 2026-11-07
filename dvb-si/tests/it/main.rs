@@ -40,6 +40,7 @@ mod spec_drift;
 mod table_dispatch;
 mod table_reserved_bits;
 mod truncation_no_panic;
+mod tsduck_decompile_oracle;
 mod tsduck_interop;
 mod typed_pid;
 mod yoke;

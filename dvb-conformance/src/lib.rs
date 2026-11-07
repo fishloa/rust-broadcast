@@ -28,7 +28,7 @@ use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::section::Section;
-use mpeg_ts::ts::{SectionReassembler, TsPacket};
+use mpeg_ts::ts::{SectionReassembler, TsHeader, TsPacket};
 
 // ── Named PID constants ─────────────────────────────────────────────────────
 
@@ -875,26 +875,7 @@ impl ConformanceMonitor {
             self.emit(Indicator::SyncByteError, None, t, "sync_byte != 0x47");
         }
 
-        // ── Step 3: Sync hysteresis state machine (1.1) ──────────────────
-        if sync_ok {
-            self.good_run = self.good_run.saturating_add(1);
-            self.bad_run = 0;
-            if !self.in_sync && self.good_run >= self.config.sync_acquire_packets {
-                self.in_sync = true;
-            }
-        } else {
-            self.bad_run = self.bad_run.saturating_add(1);
-            self.good_run = 0;
-            if self.in_sync && self.bad_run >= self.config.sync_loss_packets {
-                self.in_sync = false;
-                self.emit(
-                    Indicator::TsSyncLoss,
-                    None,
-                    t,
-                    "sync lost after hysteresis threshold",
-                );
-            }
-        }
+        self.update_sync_state(sync_ok, t);
 
         // Per the doc: "If indicator 1.1 is activated then all other
         // indicators are invalid." While not in sync, suppress all other
@@ -941,44 +922,7 @@ impl ConformanceMonitor {
             );
         }
 
-        // ── Step 7: PAT_error_2 — scrambling check (1.3.a) ──────────────
-        if pid == PID_PAT && header.scrambling != 0 {
-            self.emit(
-                Indicator::PatError2,
-                Some(PID_PAT),
-                t,
-                format!(
-                    "scrambling_control_field != 00 on PID 0x0000 (got {})",
-                    header.scrambling
-                ),
-            );
-        }
-
-        // ── Step 8: PMT_error_2 — scrambling check (1.5.a) ──────────────
-        if self.pmt_trackings.contains_key(&pid) && header.scrambling != 0 {
-            self.emit(
-                Indicator::PmtError2,
-                Some(pid),
-                t,
-                format!("scrambling_control_field != 00 on program_map_PID 0x{pid:04X}"),
-            );
-        }
-
-        // ── 2.6 CAT_error — scrambled packet with no CAT (Table 5.0b 2.6)
-        //
-        // At stream start, scrambled packets may arrive before a CAT section
-        // has been acquired; this check fires once in that case. It re-arms
-        // (see `check_cat_table_id`) when a CAT later appears, so the error is
-        // re-detectable after a CAT section is seen.
-        if header.scrambling != 0 && !self.cat_seen && !self.scrambled_without_cat_reported {
-            self.scrambled_without_cat_reported = true;
-            self.emit(
-                Indicator::CatError,
-                Some(pid),
-                t,
-                format!("scrambled packet on PID 0x{pid:04X} but no CAT seen on PID 0x0001"),
-            );
-        }
+        self.check_scrambling(pid, header, t);
 
         // ── Step 6: Section reassembly — PAT ─────────────────────────────
         //
@@ -993,90 +937,11 @@ impl ConformanceMonitor {
             self.tstd.anchor(t);
         }
 
-        if pid == PID_PAT && header.has_payload {
-            if let Some(payload) = packet.payload {
-                // TBsys (indicator 3.3) is fed per TS packet, as bytes
-                // physically arrive — not once with the whole section's
-                // length once it has fully reassembled (issue #1035).
-                self.feed_tbsys_bytes(payload.len() as u64, pid, t);
-                self.pat_reassembler.feed(payload, header.pusi);
-            }
-            // W-CONF-1 (#1096): 1.3.a checks *section* presence, so the timer
-            // is refreshed only by a completed CRC-valid table_id 0x00 section
-            // (see check_crc_and_process_pat), never by payload arrival.
-            while let Some(section_bytes) = self.pat_reassembler.pop_section() {
-                self.check_crc_and_process_pat(&section_bytes, pid, t);
-            }
-        }
+        let payload = packet.payload;
+        self.feed_pat(pid, header, payload, t);
+        self.feed_pmt(pid, header, payload, t);
+        self.feed_si(pid, header, payload, t);
 
-        // ── Step 6b: Section reassembly — PMT PIDs ───────────────────────
-        if self.pmt_trackings.contains_key(&pid) && header.has_payload {
-            if let Some(payload) = packet.payload {
-                // TBsys (indicator 3.3) is fed per TS packet, as bytes
-                // physically arrive — not once with the whole section's
-                // length once it has fully reassembled (issue #1035).
-                self.feed_tbsys_bytes(payload.len() as u64, pid, t);
-                if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
-                    tracking.reassembler.feed(payload, header.pusi);
-                }
-            }
-            let sections: Vec<_> = if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
-                core::iter::from_fn(|| tracking.reassembler.pop_section()).collect()
-            } else {
-                Vec::new()
-            };
-            for section_bytes in &sections {
-                self.check_crc_and_process_pmt(section_bytes, pid, t);
-            }
-        }
-
-        // ── Step 6c: Section reassembly — well-known SI/PSI PIDs (2.2) ───
-        // PAT and PMT PIDs are handled above (they have separate reassembly
-        // for P1 logic). Only process the non-PAT, non-PMT SI PIDs here.
-        if pid != PID_PAT
-            && !self.pmt_trackings.contains_key(&pid)
-            && self.si_reassemblies.contains_key(&pid)
-            && header.has_payload
-        {
-            if let Some(payload) = packet.payload {
-                // TBsys (indicator 3.3) is fed per TS packet, as bytes
-                // physically arrive — not once with the whole section's
-                // length once it has fully reassembled (issue #1035) — and
-                // only for PSI (H.222.0 §2.4.2.1: "system information for
-                // the program being decoded"). Of the well-known SI PIDs
-                // reaching this branch only CAT and NIT are PSI; SDT/BAT,
-                // EIT, RST and TDT/TOT are DVB SI (EN 300 468) the T-STD
-                // does not model, and a real multiplex bursts EIT packets
-                // back-to-back far faster than 1 Mbit/s (#1035).
-                if pid == PID_CAT || pid == PID_NIT {
-                    self.feed_tbsys_bytes(payload.len() as u64, pid, t);
-                }
-                if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
-                    si_ra.reassembler.feed(payload, header.pusi);
-                }
-            }
-            let sections: Vec<_> = if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
-                core::iter::from_fn(|| si_ra.reassembler.pop_section()).collect()
-            } else {
-                Vec::new()
-            };
-            for section_bytes in &sections {
-                self.check_crc_for_si(section_bytes, pid, t);
-                self.check_cat_table_id(section_bytes, pid, t);
-                self.check_nit_table_id(section_bytes, pid, t);
-                self.check_sdt_table_id(section_bytes, pid, t);
-                self.check_eit_table_id(section_bytes, pid, t);
-                self.check_rst_table_id(section_bytes, pid, t);
-                self.check_tdt_table_id(section_bytes, pid, t);
-                let Ok(section) = Section::parse(section_bytes) else {
-                    continue;
-                };
-                self.update_si_repetition(&section, t);
-                self.check_si_min_gap(&section, pid, t);
-                self.check_si_other_section(section_bytes, pid, t);
-                self.track_eit_pf_pair(section_bytes, t);
-            }
-        }
         // Also CRC-check completed PAT/PMT sections via the si_reassemblies
         // map (these share the same PID). PAT and PMT already have their own
         // reassemblers above — the si_reassemblies entries for those PIDs are
@@ -1121,6 +986,157 @@ impl ConformanceMonitor {
         self.check_eit_pf_pairs(t);
 
         &self.events
+    }
+
+    fn update_sync_state(&mut self, sync_ok: bool, t: Duration) {
+        // ── Step 3: Sync hysteresis state machine (1.1) ──────────────────
+        if sync_ok {
+            self.good_run = self.good_run.saturating_add(1);
+            self.bad_run = 0;
+            if !self.in_sync && self.good_run >= self.config.sync_acquire_packets {
+                self.in_sync = true;
+            }
+        } else {
+            self.bad_run = self.bad_run.saturating_add(1);
+            self.good_run = 0;
+            if self.in_sync && self.bad_run >= self.config.sync_loss_packets {
+                self.in_sync = false;
+                self.emit(
+                    Indicator::TsSyncLoss,
+                    None,
+                    t,
+                    "sync lost after hysteresis threshold",
+                );
+            }
+        }
+    }
+
+    fn check_scrambling(&mut self, pid: Pid, header: &TsHeader, t: Duration) {
+        // ── Step 7: PAT_error_2 — scrambling check (1.3.a) ──────────────
+        if pid == PID_PAT && header.scrambling != 0 {
+            self.emit(
+                Indicator::PatError2,
+                Some(PID_PAT),
+                t,
+                format!(
+                    "scrambling_control_field != 00 on PID 0x0000 (got {})",
+                    header.scrambling
+                ),
+            );
+        }
+
+        // ── Step 8: PMT_error_2 — scrambling check (1.5.a) ──────────────
+        if self.pmt_trackings.contains_key(&pid) && header.scrambling != 0 {
+            self.emit(
+                Indicator::PmtError2,
+                Some(pid),
+                t,
+                format!("scrambling_control_field != 00 on program_map_PID 0x{pid:04X}"),
+            );
+        }
+
+        // ── 2.6 CAT_error — scrambled packet with no CAT (Table 5.0b 2.6)
+        //
+        // At stream start, scrambled packets may arrive before a CAT section
+        // has been acquired; this check fires once in that case. It re-arms
+        // (see `check_cat_table_id`) when a CAT later appears, so the error is
+        // re-detectable after a CAT section is seen.
+        if header.scrambling != 0 && !self.cat_seen && !self.scrambled_without_cat_reported {
+            self.scrambled_without_cat_reported = true;
+            self.emit(
+                Indicator::CatError,
+                Some(pid),
+                t,
+                format!("scrambled packet on PID 0x{pid:04X} but no CAT seen on PID 0x0001"),
+            );
+        }
+    }
+
+    fn feed_pat(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+        if pid == PID_PAT && header.has_payload {
+            if let Some(payload) = payload {
+                // TBsys (indicator 3.3) is fed per TS packet, as bytes
+                // physically arrive — not once with the whole section's
+                // length once it has fully reassembled (issue #1035).
+                self.feed_tbsys_bytes(payload.len() as u64, pid, t);
+                self.pat_reassembler.feed(payload, header.pusi);
+            }
+            // W-CONF-1 (#1096): 1.3.a checks *section* presence, so the timer
+            // is refreshed only by a completed CRC-valid table_id 0x00 section
+            // (see check_crc_and_process_pat), never by payload arrival.
+            while let Some(section_bytes) = self.pat_reassembler.pop_section() {
+                self.check_crc_and_process_pat(&section_bytes, pid, t);
+            }
+        }
+    }
+
+    fn feed_pmt(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+        if self.pmt_trackings.contains_key(&pid) && header.has_payload {
+            if let Some(payload) = payload {
+                // TBsys (indicator 3.3) is fed per TS packet, as bytes
+                // physically arrive — not once with the whole section's
+                // length once it has fully reassembled (issue #1035).
+                self.feed_tbsys_bytes(payload.len() as u64, pid, t);
+                if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
+                    tracking.reassembler.feed(payload, header.pusi);
+                }
+            }
+            let sections: Vec<_> = if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
+                core::iter::from_fn(|| tracking.reassembler.pop_section()).collect()
+            } else {
+                Vec::new()
+            };
+            for section_bytes in &sections {
+                self.check_crc_and_process_pmt(section_bytes, pid, t);
+            }
+        }
+    }
+
+    fn feed_si(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+        if pid != PID_PAT
+            && !self.pmt_trackings.contains_key(&pid)
+            && self.si_reassemblies.contains_key(&pid)
+            && header.has_payload
+        {
+            if let Some(payload) = payload {
+                // TBsys (indicator 3.3) is fed per TS packet, as bytes
+                // physically arrive — not once with the whole section's
+                // length once it has fully reassembled (issue #1035) — and
+                // only for PSI (H.222.0 §2.4.2.1: "system information for
+                // the program being decoded"). Of the well-known SI PIDs
+                // reaching this branch only CAT and NIT are PSI; SDT/BAT,
+                // EIT, RST and TDT/TOT are DVB SI (EN 300 468) the T-STD
+                // does not model, and a real multiplex bursts EIT packets
+                // back-to-back far faster than 1 Mbit/s (#1035).
+                if pid == PID_CAT || pid == PID_NIT {
+                    self.feed_tbsys_bytes(payload.len() as u64, pid, t);
+                }
+                if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
+                    si_ra.reassembler.feed(payload, header.pusi);
+                }
+            }
+            let sections: Vec<_> = if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
+                core::iter::from_fn(|| si_ra.reassembler.pop_section()).collect()
+            } else {
+                Vec::new()
+            };
+            for section_bytes in &sections {
+                self.check_crc_for_si(section_bytes, pid, t);
+                self.check_cat_table_id(section_bytes, pid, t);
+                self.check_nit_table_id(section_bytes, pid, t);
+                self.check_sdt_table_id(section_bytes, pid, t);
+                self.check_eit_table_id(section_bytes, pid, t);
+                self.check_rst_table_id(section_bytes, pid, t);
+                self.check_tdt_table_id(section_bytes, pid, t);
+                let Ok(section) = Section::parse(section_bytes) else {
+                    continue;
+                };
+                self.update_si_repetition(&section, t);
+                self.check_si_min_gap(&section, pid, t);
+                self.check_si_other_section(section_bytes, pid, t);
+                self.track_eit_pf_pair(section_bytes, t);
+            }
+        }
     }
 
     /// Diagnostic counters.
@@ -1389,8 +1405,6 @@ impl ConformanceMonitor {
             );
         }
 
-        // Feed the packet's payload bytes into TBsys regardless (the buffer
-        // model tracks occupancy for empty-interval and delay checks).
         let _overflow = self.tstd.tb_sys.feed(n_bytes, t);
 
         // Indicator 3.9: TBsys empty at least once per second?
@@ -2117,9 +2131,6 @@ impl ConformanceMonitor {
             entry.has_section_1 = true;
         }
 
-        // If one section is present but the other is not, record the time
-        // of this first incomplete observation (so the pairing check can
-        // wait for the partner to arrive).
         if entry.first_incomplete_at.is_none() && (entry.has_section_0 != entry.has_section_1) {
             entry.first_incomplete_at = Some(t);
         }
@@ -2145,8 +2156,6 @@ impl ConformanceMonitor {
                 }
                 match (state.has_section_0, state.has_section_1) {
                     (true, false) | (false, true) => {
-                        // Only fire if the incomplete pair has persisted
-                        // longer than the EIT P/F repetition interval.
                         if let Some(first_at) = state.first_incomplete_at {
                             if t.saturating_sub(first_at) > limit {
                                 Some(key)

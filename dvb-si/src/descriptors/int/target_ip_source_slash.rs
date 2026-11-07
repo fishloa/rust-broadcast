@@ -96,7 +96,10 @@ mod tests {
         let mut d = TargetIpSourceSlashDescriptor::parse(&[TAG, 0]).unwrap();
         let long = [0u8; ENTRY_LEN];
         d.trailing = &long;
-        assert!(d.serialize_into(&mut [0u8; 64]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 64]),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
         let mut buf = [0u8; 64];
         d.trailing = &long[..ENTRY_LEN - 1];
         let n = d.serialize_into(&mut buf).unwrap();
@@ -126,6 +129,9 @@ mod tests {
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
         }
-        assert!(TargetIpSourceSlashDescriptor::parse(&[0x0F, 0]).is_err());
+        assert!(matches!(
+            TargetIpSourceSlashDescriptor::parse(&[0x0F, 0]),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
     }
 }

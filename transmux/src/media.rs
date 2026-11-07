@@ -34,6 +34,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
+use broadcast_common::timescale::{Rounding, cmp_ticks, rescale_i64};
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
@@ -513,7 +514,7 @@ impl TimelineOrigin {
             let ts = t.spec.timescale.max(1);
             let earlier = match best {
                 None => true,
-                Some((bd, bts)) => (d as i128) * (bts as i128) < (bd as i128) * (ts as i128),
+                Some((bd, bts)) => cmp_ticks(d, ts, bd, bts).is_lt(),
             };
             if earlier {
                 best = Some((d, ts));
@@ -525,9 +526,7 @@ impl TimelineOrigin {
 
     /// The origin expressed in `timescale` ticks, rounded down.
     pub(crate) fn in_timescale(&self, timescale: u32) -> i64 {
-        let n = self.ticks as i128 * timescale.max(1) as i128;
-        let v = n.div_euclid(self.timescale.max(1) as i128);
-        v.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+        rescale_i64(self.ticks, self.timescale, timescale, Rounding::Floor)
     }
 }
 

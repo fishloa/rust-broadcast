@@ -421,7 +421,10 @@ mod tests {
             Err(crate::error::Error::BufferTooShort { .. })
         ));
         let mut bad = Mpeg2StereoscopicVideoFormatDescriptor::new(Some(0x80));
-        assert!(bad.serialize_into(&mut [0u8; 8]).is_err());
+        assert!(matches!(
+            bad.serialize_into(&mut [0u8; 8]),
+            Err(crate::Error::FieldOverflow(..))
+        ));
         bad.arrangement_type = Some(0x7F);
         assert!(bad.serialize_into(&mut [0u8; 8]).is_ok());
     }

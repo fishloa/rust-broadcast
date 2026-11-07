@@ -6,6 +6,8 @@
 - `tables::nit::NitTransportStream` and `tables::bat::BatTransportStream`: use `tables::TransportStreamEntry` (same fields and `new`).
 - `collect::CompleteNitTransportStream` and `collect::CompleteBatTransportStream`: use `collect::CompleteTransportStream`.
 ### Changed
+- `tables::sat`: the 600-line SAT body parse and 300-line write matches are one function per satellite_table_id (internal, c3 t:S7).
+- `build.rs` generates the CA-system and private-data-specifier name functions from one writer (c3 d:D1).
 - NIT and BAT share one section parse/serialize core, CAT and TSDT another, and the three descriptor registries use `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H4, H1).
 - The H.222.0 descriptor bit reader and the SAT bit reader are error-mapping adapters over `broadcast_common::bits::BitReader`; the SAT reader no longer rebuilds and re-skips a reader on every read (dedupe D6). The two writers stay local: one grows a `Vec`, the other emits into a slice with this crate's own overflow errors.
 

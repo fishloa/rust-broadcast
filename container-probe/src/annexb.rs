@@ -189,8 +189,6 @@ fn annexb_nal_chain(data: &[u8]) -> (usize, bool) {
         if cnt >= ANNEXB_MIN_NALS_STRONG {
             return (cnt, false);
         }
-        // Advance to the next start code strictly after the current header
-        // byte; the first plausible start-code location is the unit boundary.
         let mut next = i + sc + 1;
         while next + 2 <= n && start_code_len(data, next) == 0 {
             next += 1;

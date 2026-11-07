@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `Monitor::feed` delegates sync hysteresis, scrambling checks and PAT, PMT and SI section reassembly to private methods (internal, c3 t:S7).
 
 ## [12.1.0] - 2026-11-03
 

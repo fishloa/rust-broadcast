@@ -375,8 +375,6 @@ impl AncDataPacket {
         }
         let payload = &b[payload_start..payload_end];
 
-        // Walk ANC records until the remaining bytes are all stuffing (0xFF).
-        // Each record is byte-aligned (its '1' padding ends on a byte boundary).
         let mut anc_packets = Vec::new();
         let mut pos = 0usize;
         while pos < payload.len() {

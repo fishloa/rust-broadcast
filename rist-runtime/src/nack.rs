@@ -23,20 +23,13 @@ use crate::{
 
 /// The end of the unpadded body of the `total_len`-byte sub-packet at the
 /// front of `bytes` (RFC 3550 §6.4.1): `total_len` when the P bit is clear,
-/// otherwise `total_len` minus the padding count carried in the sub-packet's
-/// last byte. A set P bit with a zero count, or a count larger than the body
-/// (everything after the common header), is [`Error::InvalidPaddingCount`]
-/// (RIST-W5, #1086: the bit used to be ignored, so padding words parsed as
-/// FCI entries).
+/// otherwise `total_len` minus the padding count (RIST-W5, #1086: the bit used
+/// to be ignored, so padding words parsed as FCI entries).
 fn unpadded_end(bytes: &[u8], total_len: usize) -> Result<usize> {
     if bytes[0] & RTCP_PADDING_MASK == 0 {
         return Ok(total_len);
     }
-    let body = total_len - RTCP_HEADER_LEN;
-    let count = usize::from(bytes[total_len - 1]);
-    if count == 0 || count > body {
-        return Err(Error::InvalidPaddingCount { count, body });
-    }
+    let count = rtcp_packet::padding_count(&bytes[RTCP_HEADER_LEN..total_len])?;
     Ok(total_len - count)
 }
 
@@ -76,6 +69,41 @@ fn padding_total(padding: &[u8], body: usize) -> Result<usize> {
         return Err(Error::InvalidPaddingCount { count, body });
     }
     Ok(count)
+}
+
+/// Length of an unpadded body of `body_len` bytes plus its preserved padding
+/// region and the count byte.
+fn padded_len(body_len: usize, padding: &[u8]) -> usize {
+    body_len + padding.len() + usize::from(!padding.is_empty())
+}
+
+/// Serialize a sub-packet: `write_body` writes the unpadded packet, then the
+/// preserved padding region, the count byte, the P bit and the length field
+/// are applied on top.
+fn serialize_padded(
+    body_len: usize,
+    padding: &[u8],
+    buf: &mut [u8],
+    write_body: impl FnOnce(&mut [u8]) -> Result<usize>,
+) -> Result<usize> {
+    let len = padded_len(body_len, padding);
+    if buf.len() < len {
+        return Err(Error::OutputBufferTooSmall {
+            need: len,
+            have: buf.len(),
+        });
+    }
+    let written = write_body(buf)?;
+    let pad = padding_total(padding, written - RTCP_HEADER_LEN)?;
+    if pad > 0 {
+        let total = written + pad;
+        let length_field = broadcast_common::len::fit_u16(total / WORD_LEN - 1, "RTCP length")?;
+        buf[0] |= RTCP_PADDING_MASK;
+        buf[2..4].copy_from_slice(&length_field.to_be_bytes());
+        buf[written..total - 1].copy_from_slice(padding);
+        buf[total - 1] = pad as u8;
+    }
+    Ok(len)
 }
 
 // ---------------------------------------------------------------------------
@@ -264,28 +292,11 @@ impl Serialize for GenericNack {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        self.body_len() + self.padding.len() + usize::from(!self.padding.is_empty())
+        padded_len(self.body_len(), &self.padding)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
-        let written = self.write_body(buf)?;
-        let pad = padding_total(&self.padding, written - RTCP_HEADER_LEN)?;
-        if pad > 0 {
-            let total = written + pad;
-            let length_field = broadcast_common::len::fit_u16(total / WORD_LEN - 1, "RTCP length")?;
-            buf[0] |= RTCP_PADDING_MASK;
-            buf[2..4].copy_from_slice(&length_field.to_be_bytes());
-            buf[written..total - 1].copy_from_slice(&self.padding);
-            buf[total - 1] = pad as u8;
-        }
-        Ok(len)
+        serialize_padded(self.body_len(), &self.padding, buf, |b| self.write_body(b))
     }
 }
 
@@ -473,28 +484,11 @@ impl Serialize for RangeNack {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        self.body_len() + self.padding.len() + usize::from(!self.padding.is_empty())
+        padded_len(self.body_len(), &self.padding)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
-        let written = self.write_body(buf)?;
-        let pad = padding_total(&self.padding, written - RTCP_HEADER_LEN)?;
-        if pad > 0 {
-            let total = written + pad;
-            let length_field = broadcast_common::len::fit_u16(total / WORD_LEN - 1, "RTCP length")?;
-            buf[0] |= RTCP_PADDING_MASK;
-            buf[2..4].copy_from_slice(&length_field.to_be_bytes());
-            buf[written..total - 1].copy_from_slice(&self.padding);
-            buf[total - 1] = pad as u8;
-        }
-        Ok(len)
+        serialize_padded(self.body_len(), &self.padding, buf, |b| self.write_body(b))
     }
 }
 

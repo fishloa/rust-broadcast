@@ -55,7 +55,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, PaddingCountError, Result};
 
 // ---------------------------------------------------------------------------
 // Named constants (no magic numbers — RFC 3550 §6)
@@ -110,32 +110,45 @@ fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32> {
         })
 }
 
+/// The padding count (RFC 3550 §6.4.1) of a packet whose `P` bit is set:
+/// "the last octet of the padding is a count of how many padding octets
+/// should be ignored, including itself." `body` is everything after the
+/// 4-byte common header; the count must be nonzero and no larger than it.
+pub fn padding_count(body: &[u8]) -> core::result::Result<usize, PaddingCountError> {
+    let count = body.last().map_or(0, |&c| usize::from(c));
+    if count == 0 || count > body.len() {
+        return Err(PaddingCountError {
+            count,
+            body: body.len(),
+        });
+    }
+    Ok(count)
+}
+
 /// Validates and strips the trailing `P` (padding) octets from a packet
-/// body, per RFC 3550 §6.4.1: "the last octet of the padding is a count of
-/// how many padding octets should be ignored, including itself." Every
-/// per-type `parse` calls this on its body slice before any type-specific
-/// parsing — without it, the `P` bit was parsed but never acted on, so a
-/// padded BYE's first padding byte was misread as the reason-length octet,
-/// and a padded APP's padding bytes became part of `data` (audit run-09
-/// RTCP-W1).
+/// body, per RFC 3550 §6.4.1. Every per-type `parse` calls this on its body
+/// slice before any type-specific parsing — without it, the `P` bit was
+/// parsed but never acted on, so a padded BYE's first padding byte was
+/// misread as the reason-length octet, and a padded APP's padding bytes
+/// became part of `data` (audit run-09 RTCP-W1).
 ///
 /// Returns `Ok(body)` unchanged when `padding` is `false`.
 fn strip_padding<'a>(body: &'a [u8], padding: bool, what: &'static str) -> Result<&'a [u8]> {
     if !padding {
         return Ok(body);
     }
-    let count = *body.last().ok_or(Error::BufferTooShort {
-        need: 1,
-        have: 0,
-        what,
-    })? as usize;
-    if count == 0 || count > body.len() {
-        return Err(Error::InvalidValue {
-            field: "rtcp_padding_count",
-            value: count as u64,
-            reason: "must be nonzero and no larger than the packet body",
+    if body.is_empty() {
+        return Err(Error::BufferTooShort {
+            need: 1,
+            have: 0,
+            what,
         });
     }
+    let count = padding_count(body).map_err(|e| Error::InvalidValue {
+        field: "rtcp_padding_count",
+        value: e.count as u64,
+        reason: "must be nonzero and no larger than the packet body",
+    })?;
     Ok(&body[..body.len() - count])
 }
 
@@ -1520,6 +1533,28 @@ mod tests {
     use alloc::string::ToString;
     use alloc::vec;
 
+    #[test]
+    fn padding_count_reads_the_last_octet() {
+        assert_eq!(padding_count(&[0xAA, 0, 0, 3]), Ok(3));
+    }
+
+    #[test]
+    fn padding_count_rejects_zero_oversize_and_empty() {
+        assert_eq!(
+            padding_count(&[1, 2, 0]),
+            Err(PaddingCountError { count: 0, body: 3 })
+        );
+        assert_eq!(
+            padding_count(&[1, 2, 9]),
+            Err(PaddingCountError { count: 9, body: 3 })
+        );
+        assert_eq!(
+            padding_count(&[]),
+            Err(PaddingCountError { count: 0, body: 0 })
+        );
+        assert_eq!(padding_count(&[0, 0, 3]), Ok(3));
+    }
+
     fn sample_block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
         ReportBlock {
             ssrc,
@@ -1659,7 +1694,10 @@ mod tests {
             })
         ));
         let rr = ReceiverReport::new(1, vec![]).with_profile_extensions(vec![1; 5]);
-        assert!(rr.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            rr.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
 
         // Parse side: a well-formed packet whose trailing bytes are not a
         // multiple of 4 after padding strip (P=1, 4 trailing bytes with the

@@ -443,7 +443,10 @@ mod tests {
         let sl = (truncated.len() - HEADER_LEN) as u16;
         truncated[1] = (truncated[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
         truncated[2] = (sl & 0xFF) as u8;
-        assert!(CitSection::parse(&truncated).is_err());
+        assert!(matches!(
+            CitSection::parse(&truncated),
+            Err(Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

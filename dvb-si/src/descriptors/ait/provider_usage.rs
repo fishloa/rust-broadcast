@@ -121,7 +121,10 @@ mod tests {
     fn empty_loop_and_errors() {
         let d = ProviderUsageDescriptor::parse(&[TAG, 0]).unwrap();
         assert!(d.provider_names.is_empty());
-        assert!(ProviderUsageDescriptor::parse(&[TAG, 2, 5, b'a']).is_err());
+        assert!(matches!(
+            ProviderUsageDescriptor::parse(&[TAG, 2, 5, b'a']),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         assert!(matches!(
             &(ProviderUsageDescriptor::parse(&[0x12, 0])),
             Err(crate::error::Error::InvalidDescriptor { .. })
@@ -129,6 +132,9 @@ mod tests {
         let long = vec![0u8; 256];
         let d = ProviderUsageDescriptor::new(vec![&long]);
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 }

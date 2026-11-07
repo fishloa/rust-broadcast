@@ -60,6 +60,12 @@ fn audio_descriptor_component_field_widths() {
     let ok = desc(component(7, 15));
     let bytes = ok.try_to_bytes().unwrap();
     assert_eq!(AudioDescriptor::parse(&bytes).unwrap(), ok);
-    assert!(desc(component(8, 0)).try_to_bytes().is_err());
-    assert!(desc(component(0, 16)).try_to_bytes().is_err());
+    assert!(matches!(
+        desc(component(8, 0)).try_to_bytes(),
+        Err(scte35_splice::Error::FieldOverflow(..))
+    ));
+    assert!(matches!(
+        desc(component(0, 16)).try_to_bytes(),
+        Err(scte35_splice::Error::FieldOverflow(..))
+    ));
 }

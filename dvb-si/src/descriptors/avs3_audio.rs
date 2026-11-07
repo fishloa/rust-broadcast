@@ -737,10 +737,16 @@ mod tests {
             Avs3AudioBody::Codec1(Avs3AudioCodec1::new(None, false, 8, 2)),
             0,
         );
-        assert!(d.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 32]),
+            Err(Error::FieldOverflow(..))
+        ));
         // resolution wider than 2 bits
         let d = Avs3AudioDescriptor::new(0, Avs3AudioBody::Other(5), 4);
-        assert!(d.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 32]),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 
     #[test]

@@ -65,17 +65,8 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     let region = &data[..limit];
 
     // Key at offset 0, first the fixed 7-byte UL prefix, then a 16-byte key.
-    if region.len() < UL_KEY_LEN {
-        // Shorter than the 16-byte Partition Pack Key (the fixture's key runs
-        // through byte 15): a truncated .mxf read a few bytes at a time is
-        // undecided (`Insufficient`), not `Unknown`.
-        if !crate::prefix_agrees(region, 0, &MXF_KEY_PREFIX) {
-            return Outcome::None;
-        }
-        return Outcome::Insufficient(UL_KEY_LEN);
-    }
-    if region[..MXF_KEY_PREFIX.len()] != MXF_KEY_PREFIX {
-        return Outcome::None;
+    if let Some(outcome) = crate::signature_gate(region, &MXF_KEY_PREFIX, UL_KEY_LEN) {
+        return outcome;
     }
     // The BER length begins immediately after the 16-byte key.
     let ber = &region[UL_KEY_LEN..];

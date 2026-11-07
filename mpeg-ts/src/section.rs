@@ -36,8 +36,6 @@ use crate::error::{Error, Result};
 use broadcast_common::crc32_mpeg2 as crc;
 use broadcast_common::{Parse, Serialize};
 
-// Minimum bytes to read the section header (table_id + section_syntax_indicator
-// + section_length field = 3 bytes).
 const MIN_HEADER_LEN: usize = 3;
 
 // Long-form header adds: extension_id(2) + version/cni(1) + sec_num(1) +
@@ -259,8 +257,6 @@ impl<'a> Parse<'a> for Section<'a> {
 impl Serialize for Section<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        // Total size = section_length + 3 (the 3-byte base header precedes
-        // the bytes counted by section_length).
         usize::from(self.section_length) + MIN_HEADER_LEN
     }
 

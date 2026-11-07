@@ -3565,11 +3565,6 @@ impl NamespaceMap {
         if let Some(prev) = self.scoped.iter().position(|(p, _)| p == prefix) {
             self.scoped.remove(prev);
         }
-        // If the prefix is owned by a *different* URI (an ancestor
-        // declaration, or a fallback that outer-scope content still needs),
-        // record the override; it is re-emitted on `<tt>` after all other
-        // declarations of the prefix. If the prefix is free, it simply
-        // becomes a normal declaration.
         if self.bindings.iter().any(|(p, _)| p == prefix) {
             self.scoped.push((String::from(prefix), String::from(uri)));
         } else {

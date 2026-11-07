@@ -683,7 +683,7 @@ mod tests {
     fn time_signal_duration_over_40_bits_is_rejected_not_masked() {
         let mut ts = sample_time_signal();
         ts.segmentation_duration = 1u64 << 40;
-        assert!(ts.try_to_bytes().is_err());
+        assert!(matches!(ts.try_to_bytes(), Err(Error::InvalidValue { .. })));
     }
 
     #[test]
