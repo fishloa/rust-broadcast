@@ -300,7 +300,7 @@ mod tests {
     fn replace_oversized_pid_is_unrepresentable() {
         // Both PID fields are typed 13-bit `Pid`s: 14-bit values are refused
         // at construction instead of at serialize time.
-        assert!(Pid::try_new(0x2010).is_err());
+        assert_eq!(Pid::try_new(0x2010).unwrap_err().value, 0x2010);
         assert!(Pid::try_new(0x1FFF).is_ok());
     }
 

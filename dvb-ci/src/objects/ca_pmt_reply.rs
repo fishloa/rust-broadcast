@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn oversized_pid_is_unrepresentable() {
         // A 14-bit value cannot become the typed 13-bit `elementary_pid`.
-        assert!(Pid::try_new(0x2001).is_err());
+        assert_eq!(Pid::try_new(0x2001).unwrap_err().value, 0x2001);
     }
 
     #[test]

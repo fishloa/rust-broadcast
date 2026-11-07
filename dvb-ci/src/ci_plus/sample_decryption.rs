@@ -1128,7 +1128,7 @@ mod tests {
     fn oversized_pids_are_unrepresentable() {
         // The 13-bit PID fields are typed `Pid`: a value that previously had
         // to be rejected at serialize time cannot be constructed at all.
-        assert!(Pid::try_new(0x2064).is_err());
+        assert_eq!(Pid::try_new(0x2064).unwrap_err().value, 0x2064);
         assert!(Pid::try_new(0x1FFF).is_ok());
     }
 }
