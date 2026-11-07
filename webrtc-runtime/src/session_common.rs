@@ -25,6 +25,94 @@ pub(crate) enum PendingRequest {
     Delete,
 }
 
+/// The request-building state a WHIP client and a WHEP player share: the
+/// endpoint, the bound bearer token and the request awaiting a response.
+pub(crate) struct SessionCore {
+    endpoint_url: String,
+    bearer_token: Option<String>,
+    pending: Option<PendingRequest>,
+}
+
+impl SessionCore {
+    pub(crate) fn new(endpoint_url: String, bearer_token: Option<String>) -> Self {
+        Self {
+            endpoint_url,
+            bearer_token,
+            pending: None,
+        }
+    }
+
+    /// Manual `Debug` body: the bearer token never renders (issue #1142).
+    pub(crate) fn debug(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+        name: &str,
+        state: &dyn core::fmt::Debug,
+    ) -> core::fmt::Result {
+        f.debug_struct(name)
+            .field("endpoint_url", &self.endpoint_url)
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("state", state)
+            .field("pending", &self.pending)
+            .finish()
+    }
+
+    pub(crate) fn origin(&self) -> Origin<'_> {
+        Origin {
+            endpoint_url: &self.endpoint_url,
+            bearer_token: self.bearer_token.as_deref(),
+        }
+    }
+
+    pub(crate) fn post_offer(&self, sdp_offer: Vec<u8>) -> Result<HttpRequest, Error> {
+        self.origin().request(
+            Method::POST,
+            self.endpoint_url.clone(),
+            Some(crate::whep::content_type::SDP),
+            sdp_offer,
+        )
+    }
+
+    pub(crate) fn trickle(
+        &mut self,
+        session_url: String,
+        etag: Option<String>,
+        fragment: Vec<u8>,
+    ) -> Result<HttpRequest, Error> {
+        let req = self.origin().trickle(session_url, etag, fragment)?;
+        self.pending = Some(PendingRequest::Trickle);
+        Ok(req)
+    }
+
+    pub(crate) fn ice_restart(
+        &mut self,
+        session_url: String,
+        fragment: Vec<u8>,
+    ) -> Result<HttpRequest, Error> {
+        let req = self.origin().ice_restart(session_url, fragment)?;
+        self.pending = Some(PendingRequest::IceRestart);
+        Ok(req)
+    }
+
+    pub(crate) fn delete(&mut self, session_url: String) -> Result<HttpRequest, Error> {
+        let req = self.origin().delete(session_url)?;
+        self.pending = Some(PendingRequest::Delete);
+        Ok(req)
+    }
+
+    /// Classify an established-session response by the request in flight.
+    pub(crate) fn classify(
+        &mut self,
+        resp: HttpResponse,
+        etag: &mut Option<String>,
+    ) -> Result<Established, Error> {
+        classify_established(self.pending.take(), resp, etag)
+    }
+}
+
 /// What an established-session response means.
 pub(crate) enum Established {
     Terminated,

@@ -5,6 +5,7 @@ All notable changes to this crate will be documented in this file.
 ## [Unreleased]
 ### Changed
 - The WHIP client and WHEP player share one private `session_common` (request building with origin-bound bearer, trickle/restart/delete PATCH and DELETE, established-response classification); public API unchanged (dedupe D1). The WHIP/WHEP servers differ in state machine and `If-Match` policy and are left separate.
+- The WHIP client and WHEP player share a `SessionCore` (endpoint, bearer token, pending request, request builders, redacting `Debug`) (c2 M3).
 
 ## [0.4.1] - 2026-11-01
 ### Added
