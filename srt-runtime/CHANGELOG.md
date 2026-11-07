@@ -13,6 +13,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `io.rs` uses the shared `contiguous_runs` instead of a private copy (dedupe D15).
 - The caller, listener and rendezvous handshakes share one `Retransmit` tick/bookkeeping type (c2 M2).
 ### Removed
+- `SrtSocket::connect_from` and `SrtSocket::rendezvous`, never called: use `connect_from_with` / `rendezvous_with` with `IoConfig::default()` (c3 t:S3).
 - Unused public items `FileCc::pkt_snd_period`, the `HandshakeExtensionMessageFlags` accessors `hsreq`/`tsbpdsnd`/`tsbpdrcv`/`periodicnak`/`rexmitflg`/`packet_filter`, and `SrtListener::accept_overflow_dropped` with its counter; `TsbpdScheduler::time_base_us`, `FileCc::set_max_bw_bytes_per_sec` and `GroupFlags::message_number_sync` are now test-only (c2 TH1).
 
 ## [0.7.0] - 2026-11-03

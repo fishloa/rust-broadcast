@@ -673,11 +673,6 @@ impl AsyncRtspServer<TcpStream> {
     pub fn accept(stream: TcpStream) -> Self {
         Self::with_stream(stream, ServerSession::new(os_session_id))
     }
-
-    /// Wraps an accepted plain-TCP connection with a pre-configured session.
-    pub fn accept_with(stream: TcpStream, session: ServerSession) -> Self {
-        Self::with_stream(stream, session)
-    }
 }
 
 #[cfg(feature = "tls")]

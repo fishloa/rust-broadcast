@@ -539,20 +539,12 @@ impl SrtSocket {
         Self::connect_from_with(local, remote_addr, config, io).await
     }
 
-    /// Connect from a specific local address.
+    /// Connect from a specific local address, with explicit timeouts and
+    /// datagram size.
     ///
     /// # Encryption
     /// Like [`Self::connect`], negotiates and applies payload encryption when
     /// `crypto` is set in the [`HandshakeConfig`].
-    pub async fn connect_from<A: tokio::net::ToSocketAddrs>(
-        local_addr: std::net::SocketAddr,
-        remote_addr: A,
-        config: HandshakeConfig,
-    ) -> Result<Self> {
-        Self::connect_from_with(local_addr, remote_addr, config, IoConfig::default()).await
-    }
-
-    /// Like [`Self::connect_from`], with explicit timeouts and datagram size.
     pub async fn connect_from_with<A: tokio::net::ToSocketAddrs>(
         local_addr: std::net::SocketAddr,
         remote_addr: A,
@@ -774,21 +766,13 @@ impl SrtSocket {
     /// and send to each other's address at the same time, so neither is
     /// Caller or Listener; the cookie contest picks Initiator / Responder.
     /// Runs the sans-IO [`crate::rendezvous::RendezvousHandshake`] over a UDP
-    /// socket bound to `local_addr` (its port must be the one the peer targets).
+    /// socket bound to `local_addr` (its port must be the one the peer targets),
+    /// with explicit timeouts and datagram size.
     ///
     /// # Errors
     /// [`Error::Rejected`] carries the peer's [`RejectionReason`];
     /// [`Error::HandshakeTimedOut`] means the peer never completed the
     /// exchange within the handshake budget.
-    pub async fn rendezvous<A: tokio::net::ToSocketAddrs>(
-        local_addr: std::net::SocketAddr,
-        remote_addr: A,
-        config: HandshakeConfig,
-    ) -> Result<Self> {
-        Self::rendezvous_with(local_addr, remote_addr, config, IoConfig::default()).await
-    }
-
-    /// Like [`Self::rendezvous`], with explicit timeouts and datagram size.
     pub async fn rendezvous_with<A: tokio::net::ToSocketAddrs>(
         local_addr: std::net::SocketAddr,
         remote_addr: A,
