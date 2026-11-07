@@ -1405,8 +1405,6 @@ impl ConformanceMonitor {
             );
         }
 
-        // Feed the packet's payload bytes into TBsys regardless (the buffer
-        // model tracks occupancy for empty-interval and delay checks).
         let _overflow = self.tstd.tb_sys.feed(n_bytes, t);
 
         // Indicator 3.9: TBsys empty at least once per second?
@@ -2133,9 +2131,6 @@ impl ConformanceMonitor {
             entry.has_section_1 = true;
         }
 
-        // If one section is present but the other is not, record the time
-        // of this first incomplete observation (so the pairing check can
-        // wait for the partner to arrive).
         if entry.first_incomplete_at.is_none() && (entry.has_section_0 != entry.has_section_1) {
             entry.first_incomplete_at = Some(t);
         }
@@ -2161,8 +2156,6 @@ impl ConformanceMonitor {
                 }
                 match (state.has_section_0, state.has_section_1) {
                     (true, false) | (false, true) => {
-                        // Only fire if the incomplete pair has persisted
-                        // longer than the EIT P/F repetition interval.
                         if let Some(first_at) = state.first_incomplete_at {
                             if t.saturating_sub(first_at) > limit {
                                 Some(key)

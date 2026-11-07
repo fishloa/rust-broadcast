@@ -173,8 +173,6 @@ fn find_doc_type(region: &[u8]) -> DocTypeResult {
         (&region[body_start..], false)
     };
 
-    // Walk the header's child elements looking for DocType. `off` is relative
-    // to `data`; `body_start + off` is the absolute offset in `region`.
     let mut off = 0usize;
     while off < data.len() {
         let (id_len, id) = match read_id_vint(&data[off..]) {

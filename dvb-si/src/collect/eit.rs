@@ -223,9 +223,6 @@ impl EitCollector {
                     });
                 }
 
-                // Cap check: schedules map (before marking the section set
-                // emitted) — evict the least-recently-touched key if
-                // `logical_key` is new and the map is already full.
                 self.schedules_tick = self.schedules_tick.wrapping_add(1).max(1);
                 if !self.schedules.contains_key(&logical_key)
                     && self.schedules.len() >= self.max_logical_keys

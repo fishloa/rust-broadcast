@@ -124,9 +124,6 @@ pub fn run(path: &str) -> ExitCode {
 
     for (idx, packet) in packets.by_ref().enumerate() {
         total_packets = idx as u64 + 1;
-        // Every `for_each_packet` chunk should be parseable (sync-byte checked,
-        // length is exactly 188 bytes). Keep going on a parse error instead
-        // of failing the whole CLI over one malformed packet.
         let Ok(parsed) = TsPacket::parse(&packet) else {
             continue;
         };
@@ -180,8 +177,6 @@ pub fn run(path: &str) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // Build the per-PID row set and sort by descending packet count, breaking
-    // ties on PID ascending so the output is stable.
     let mut rows: Vec<PidRow> = counts
         .into_iter()
         .map(|(pid, packets)| PidRow { pid, packets })

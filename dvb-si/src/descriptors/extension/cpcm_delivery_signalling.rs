@@ -369,8 +369,6 @@ impl<'a> Parse<'a> for CpcmUsi {
             });
         }
         let length = bytes[0] as usize;
-        // Total bytes available: 1 (length byte) + length.
-        // We need at least 1 + USI_FLAGS_LEN (3) = 4 bytes.
         if bytes.len() < 1 + USI_FLAGS_LEN {
             return Err(Error::BufferTooShort {
                 need: 1 + USI_FLAGS_LEN,
