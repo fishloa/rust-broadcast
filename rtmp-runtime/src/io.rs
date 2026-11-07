@@ -284,7 +284,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
 }
 
 /// A publishing RTMP client over a stream (a [`TcpStream`] by default): the
-/// adapter for [`ClientSession`](crate::client::ClientSession), mirroring
+/// adapter for [`ClientSession`], mirroring
 /// [`RtmpConnection`]. Every awaited IO is bounded by [`RtmpTimeouts`].
 #[derive(Debug)]
 pub struct AsyncRtmpClient<S = TcpStream> {
