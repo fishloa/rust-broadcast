@@ -38,7 +38,7 @@ use dvb_si::tables::pmt::PmtSection;
 pub const REQUERY_DEFAULT: Duration = Duration::ZERO;
 
 /// Sentinel `PCR_PID` value meaning "no PCR carried for this programme" (ISO/IEC
-/// 13818-1 §2.4.4.8, Table 2-33's `PCR_PID` field). A `ManagedService` whose
+/// 13818-1 §2.4.4.9, Table 2-33's `PCR_PID` field). A `ManagedService` whose
 /// `pcr_pid` is this value carries no dedicated PCR PID to route — it must be
 /// excluded from [`ManagedCa::required_pids`], never treated as a routable PID.
 const PCR_PID_NONE: Pid = Pid::new(0x1FFF);
@@ -48,7 +48,7 @@ const PCR_PID_NONE: Pid = Pid::new(0x1FFF);
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CaError {
-    /// The PMT carries no `CA_descriptor` (ETSI EN 300 468 §6.2.16, tag
+    /// The PMT carries no `CA_descriptor` (ISO/IEC 13818-1 §2.6.16, tag
     /// `0x09`) at programme or elementary-stream level — there is nothing for
     /// the CAM to descramble, so no `ca_pmt` is built or sent.
     #[error("PMT for program_number {program_number} has no CA_descriptor at program or ES level")]
@@ -74,8 +74,8 @@ pub enum CaError {
     /// `dvb_si::error::Error` payload of the `Cat` arm.
     #[error("stored PMT re-parse failed: {0}")]
     PmtParse(dvb_si::error::Error),
-    /// The CAT's descriptor loop (ISO/IEC 13818-1 §2.4.4.5) carried a
-    /// truncated `CA_descriptor` (EN 300 468 §6.2.16) — [`Driver::set_cat`](crate::driver::Driver::set_cat)
+    /// The CAT's descriptor loop (ISO/IEC 13818-1 §2.4.4.7) carried a
+    /// truncated `CA_descriptor` (ISO/IEC 13818-1 §2.6.16) — [`Driver::set_cat`](crate::driver::Driver::set_cat)
     /// could not extract the CAID/EMM-PID map.
     #[error("CAT CA_descriptor parse failed: {0}")]
     Cat(#[from] dvb_si::error::Error),
@@ -109,13 +109,13 @@ pub struct ManagedService {
     /// `CA_PID`s (ECM PIDs) advertised by this programme's `CA_descriptor`s,
     /// programme- and ES-level combined.
     pub ca_pids: Vec<Pid>,
-    /// This programme's PMT `PCR_PID` (ISO/IEC 13818-1 §2.4.4.8) — the PID
+    /// This programme's PMT `PCR_PID` (ISO/IEC 13818-1 §2.4.4.9) — the PID
     /// carrying the programme clock reference. May coincide with an
     /// `es_pids` entry (PCR piggybacked on a component stream) or be a PID of
     /// its own (a dedicated PCR PID, carrying no other stream) — either way a
     /// caller routing PIDs into `ci0` needs it, or the descrambled TS loses
     /// its clock reference. `0x1FFF` means the programme carries no PCR (ISO/IEC
-    /// 13818-1 §2.4.4.8) and is excluded from routing.
+    /// 13818-1 §2.4.4.9) and is excluded from routing.
     pub pcr_pid: Pid,
     /// The `ca_pmt_cmd_id` last sent for this service (EN 50221 §8.4.3.4
     /// Table 25).
@@ -159,8 +159,8 @@ pub struct ManagedCa {
     /// [`tick`](Self::tick), mirroring `resource.rs`'s `DateTime::tick`
     /// accumulate-then-fire pattern).
     since: Duration,
-    /// The last `set_cat`'s (CAID, EMM PID) entries, one per `CA_descriptor` (a CAID may list several EMM PIDs; ISO/IEC 13818-1 §2.4.4.5's
-    /// `CA_descriptor`s, EN 300 468 §6.2.16). Kept even when it yields no
+    /// The last `set_cat`'s (CAID, EMM PID) entries, one per `CA_descriptor` (a CAID may list several EMM PIDs; ISO/IEC 13818-1 §2.4.4.7's
+    /// `CA_descriptor`s, ISO/IEC 13818-1 §2.6.16). Kept even when it yields no
     /// `emm_pids` (no `ca_info` seen yet) so a later `ca_info` can recompute
     /// against it (#763 Task 4).
     cat_emm_pids: Vec<(u16, Pid)>,
@@ -303,7 +303,7 @@ impl ManagedCa {
     /// caller must route into `ci0` for this slot to both descramble the
     /// tracked services (ES + ECM), keep entitlements current (EMM), and
     /// carry each active service's programme clock reference (PCR — ISO/IEC
-    /// 13818-1 §2.4.4.8). The PCR PID is folded in here rather than into
+    /// 13818-1 §2.4.4.9). The PCR PID is folded in here rather than into
     /// [`descramble_pids`](Self::descramble_pids) because a dedicated PCR PID
     /// carries no elementary stream of its own; a service whose `pcr_pid` is
     /// `0x1FFF` ("no PCR") contributes nothing. Computed on demand (small
@@ -330,8 +330,8 @@ impl ManagedCa {
         pids.into_iter().collect()
     }
 
-    /// Store the CAT's CAID → EMM-PID map (ISO/IEC 13818-1 §2.4.4.5's
-    /// `CA_descriptor`s, EN 300 468 §6.2.16) and recompute [`emm_pids`](Self::emm_pids).
+    /// Store the CAT's CAID → EMM-PID map (ISO/IEC 13818-1 §2.4.4.7's
+    /// `CA_descriptor`s, ISO/IEC 13818-1 §2.6.16) and recompute [`emm_pids`](Self::emm_pids).
     /// Calling this before any `ca_info` is not an error: the map is kept so
     /// a later [`set_cam_caids`](Self::set_cam_caids) recomputes against it.
     pub(crate) fn set_cat(&mut self, entries: &[CatCaEntry]) {
@@ -439,7 +439,7 @@ impl ManagedCa {
 }
 
 /// `true` if `loop_` carries at least one `CA_descriptor` (ISO/IEC 13818-1
-/// §2.6.16 / ETSI EN 300 468 §6.2.16, tag `0x09`).
+/// §2.6.16, tag `0x09`).
 fn has_ca_descriptor(loop_: &DescriptorLoop<'_>) -> bool {
     loop_.raw_tags().any(|(tag, _)| tag == CA_DESCRIPTOR_TAG)
 }
@@ -472,8 +472,8 @@ fn ca_pids_in(loop_: &DescriptorLoop<'_>) -> Vec<Pid> {
         .collect()
 }
 
-/// Whether `pmt` carries a `CA_descriptor` at programme or any ES level (EN
-/// 300 468 §6.2.16) — used to reject a CA-free PMT before building a useless
+/// Whether `pmt` carries a `CA_descriptor` at programme or any ES level (ISO/IEC
+/// 13818-1 §2.6.16) — used to reject a CA-free PMT before building a useless
 /// `ca_pmt`.
 pub(crate) fn pmt_has_ca(pmt: &PmtSection<'_>) -> bool {
     has_ca_descriptor(&pmt.program_info)
@@ -937,7 +937,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![Pid::new(0x0100)],
                 ca_pids: vec![Pid::new(0x0064)],
-                // PCR_PID_NONE (0x1FFF, ISO/IEC 13818-1 §2.4.4.8) — this
+                // PCR_PID_NONE (0x1FFF, ISO/IEC 13818-1 §2.4.4.9) — this
                 // programme carries no PCR of its own.
                 pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,

@@ -26,8 +26,8 @@
 //!   carrying `PCR` (§2.4.3.5) and stuffing (§2.4.3.4).
 //! - **PES header**: ISO/IEC 13818-1 §2.4.3.6 / §2.4.3.7 — `packet_start_code`
 //!   `00 00 01`, `stream_id`, `PES_packet_length`, PTS/DTS (33-bit @ 90 kHz).
-//! - **PAT / PMT program-specific information**: ISO/IEC 13818-1 §2.4.4.3 /
-//!   §2.4.4.8 — long-form sections with a trailing `CRC_32`
+//! - **PAT / PMT program-specific information**: ISO/IEC 13818-1 §2.4.4.4 /
+//!   §2.4.4.9 — long-form sections with a trailing `CRC_32`
 //!   ([`broadcast_common::crc32_mpeg2`]).
 //! - **stream_type → codec**: ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154 §G
 //!   (AC-3 / E-AC-3 / DTS user-private assignments) — mirrors [`TsDemux`](crate::TsDemux).
@@ -63,7 +63,7 @@
 //! - The merged loop is rejected with a typed error
 //!   ([`Error::BufferCapExceeded`]) rather than silently truncated if it
 //!   would exceed the 12-bit `ES_info_length` field's 4095-byte maximum
-//!   (§2.4.4.8) — a truncated descriptor loop is a malformed PMT.
+//!   (§2.4.4.9) — a truncated descriptor loop is a malformed PMT.
 
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
@@ -84,7 +84,7 @@ use crate::pipeline::{CodecConfig, DataCarriage, Sample};
 
 // ── PID / PSI constants (ISO/IEC 13818-1 §2.4.4) ────────────────────────────
 
-/// PID carrying the Program Association Table (§2.4.4.3).
+/// PID carrying the Program Association Table (§2.4.4.4).
 const PAT_PID: Pid = Pid::new(0x0000);
 /// PID chosen for the single Program Map Table this muxer emits.
 const PMT_PID: Pid = Pid::new(0x1000);
@@ -92,9 +92,9 @@ const PMT_PID: Pid = Pid::new(0x1000);
 const ES_PID_BASE: Pid = Pid::new(0x0100);
 /// `program_number` assigned to the single program.
 const PROGRAM_NUMBER: u16 = 1;
-/// `table_id` of a PAT section (§2.4.4.3, Table 2-31).
+/// `table_id` of a PAT section (§2.4.4.4, Table 2-31).
 const TABLE_ID_PAT: u8 = 0x00;
-/// `table_id` of a PMT section (§2.4.4.8, Table 2-31).
+/// `table_id` of a PMT section (§2.4.4.9, Table 2-31).
 const TABLE_ID_PMT: u8 = 0x02;
 /// Trailing `CRC_32` length on every long-form PSI section (§2.4.4.1).
 const CRC32_LEN: usize = 4;
@@ -103,7 +103,7 @@ const CRC32_LEN: usize = 4;
 const SECTION_SYNTAX_FLAGS_HI: u8 = 0xB0;
 /// Mask for the low 4 bits of the 12-bit `section_length` high byte.
 const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
-/// Maximum `section_length` this crate accepts (§2.4.4.8): the 12-bit wire
+/// Maximum `section_length` this crate accepts (§2.4.4.9): the 12-bit wire
 /// field can encode up to 4095, but §2.4.4.4 additionally bounds every
 /// section other than the private/DSM-CC forms to 1021 bytes, so a PMT past
 /// this — about 20 audio tracks with language/AC-3/DVB descriptors — is
@@ -114,10 +114,10 @@ const MAX_SECTION_LENGTH: usize = 0x3FD;
 /// reserved bits set to 1 (`11` per the spec reserved convention) → 0xC1.
 const VERSION_CURRENT_NEXT: u8 = 0xC1;
 /// Reserved 3-bit prefix (all 1s) on the 13-bit `network_PID` / `program_map_PID`
-/// / `PCR_PID` / `elementary_PID` fields (§2.4.4.3 / §2.4.4.8).
+/// / `PCR_PID` / `elementary_PID` fields (§2.4.4.4 / §2.4.4.9).
 const PID_RESERVED_HI: u8 = 0xE0;
 /// Reserved 4-bit prefix (all 1s) on the 12-bit `program_info_length` /
-/// `ES_info_length` fields (§2.4.4.8) — combined into their high byte.
+/// `ES_info_length` fields (§2.4.4.9) — combined into their high byte.
 const INFO_RESERVED_HI: u8 = 0xF0;
 
 // ── stream_type → codec (ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154) ──────
@@ -153,7 +153,7 @@ const OTI_MPEG1_AUDIO: u8 = 0x6B;
 /// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 14496-1 Table 5).
 const OTI_MPEG2_AUDIO: u8 = 0x69;
 
-/// Maximum value of the 12-bit `ES_info_length` field (§2.4.4.8).
+/// Maximum value of the 12-bit `ES_info_length` field (§2.4.4.9).
 const MAX_ES_INFO_LENGTH: usize = 0x0FFF;
 
 /// `CA_descriptor` tag (ISO/IEC 13818-1 §2.6.16) — denied from ES_info
@@ -845,7 +845,7 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
 /// side's own defensive TLV walk (`ts_demux::Codec::refine_with_descriptors`).
 ///
 /// Returns [`Error::BufferCapExceeded`] — naming the 4095-byte `ES_info_length`
-/// cap (§2.4.4.8) — if the merged loop would overflow it, rather than
+/// cap (§2.4.4.9) — if the merged loop would overflow it, rather than
 /// silently truncating into a malformed PMT.
 fn merge_es_info_descriptors(inherited: &[u8], synthesized: &[Vec<u8>]) -> Result<Vec<u8>> {
     let synthesized_keys: Vec<(u8, Option<u8>)> = synthesized
@@ -1649,7 +1649,7 @@ fn annexb_first_nal(annexb: &[u8]) -> Option<&[u8]> {
 }
 
 /// Build a PAT section (one program → `pmt_pid`) with its trailing CRC_32.
-/// ISO/IEC 13818-1 §2.4.4.3.
+/// ISO/IEC 13818-1 §2.4.4.4.
 fn build_pat_section(pmt_pid: Pid) -> Result<Vec<u8>> {
     // table_body: transport_stream_id(2) + version/cni(1) + section_number(1) +
     // last_section_number(1) + one program-loop entry (program_number(2) +
@@ -1666,7 +1666,7 @@ fn build_pat_section(pmt_pid: Pid) -> Result<Vec<u8>> {
 }
 
 /// Build a PMT section listing every planned elementary stream, with its
-/// trailing CRC_32. ISO/IEC 13818-1 §2.4.4.8.
+/// trailing CRC_32. ISO/IEC 13818-1 §2.4.4.9.
 ///
 /// Each ES's `ES_info` descriptor loop carries its already-merged
 /// [`EsPlan::descriptors`] verbatim — every track kind, not only an opaque

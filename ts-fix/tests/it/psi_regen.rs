@@ -696,7 +696,7 @@ fn continuity_counter(pkt: &[u8]) -> u8 {
 }
 
 /// Build the synthetic 2-program TS (as `build_two_program_ts`) but with a
-/// `network_pid` entry (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.3) in
+/// `network_pid` entry (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.4) in
 /// the original PAT — the entry `rebuild_pat` cannot derive from any PMT.
 fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
     let pat = PatSection::new(

@@ -414,7 +414,7 @@ const SUBTITLING_DESCRIPTOR_TAG: u8 = 0x59;
 /// Independently reassemble & parse every PMT section on `pmt_pid`, returning
 /// `(stream_type, elementary_pid, ES_info descriptor bytes)` for every ES
 /// loop entry across every distinct section seen. Written from scratch here
-/// (ISO/IEC 13818-1 §2.4.4.8) rather than reusing `TsDemux`'s private parser.
+/// (ISO/IEC 13818-1 §2.4.4.9) rather than reusing `TsDemux`'s private parser.
 fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
     const TABLE_ID_PMT: u8 = 0x02;
     let mut reasm = SectionReassembler::default();

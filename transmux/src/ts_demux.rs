@@ -105,7 +105,7 @@
 //! disambiguated Dolby/DTS carriage), reaching the same syncframe-recovery
 //! path as the native `0x81`/`0x87`/`0x8*` stream_types. `descriptors`
 //! preserves the raw PMT ES_info descriptor loop for the caller to classify.
-//! ISO/IEC 13818-1 §2.4.4.8 / Table 2-34 splits
+//! ISO/IEC 13818-1 §2.4.4.9 / Table 2-34 splits
 //! `stream_type` into two carriage families, and the two are reassembled
 //! completely differently (PES-reassembling a section stream, or vice versa,
 //! silently yields nothing): most `stream_type`s (including every
@@ -208,9 +208,9 @@
 //!
 //! # Spec
 //!
-//! - **PAT / PMT section syntax**: ITU-T H.222.0 (= ISO/IEC 13818-1) §2.4.4.3 /
-//!   §2.4.4.8 — see `private/specs-verified/mpeg/transmux/codec/ts-demux-13818-1.md`.
-//! - **stream_type → codec / carriage**: ISO/IEC 13818-1 §2.4.4.8, Table 2-34
+//! - **PAT / PMT section syntax**: ITU-T H.222.0 (= ISO/IEC 13818-1) §2.4.4.4 /
+//!   §2.4.4.9 — see `private/specs-verified/mpeg/transmux/codec/ts-demux-13818-1.md`.
+//! - **stream_type → codec / carriage**: ISO/IEC 13818-1 §2.4.4.9, Table 2-34
 //!   (PES- vs section-carried `stream_type`s) + ETSI TS 101 154 §G (DVB
 //!   user-private AC-3/E-AC-3/DTS assignments).
 //! - **PES-over-TS reassembly + PTS/DTS**: ISO/IEC 13818-1 §2.4.3.6 / §2.4.3.7
@@ -265,11 +265,11 @@ use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 
-/// PID carrying the Program Association Table (§2.4.4.3).
+/// PID carrying the Program Association Table (§2.4.4.4).
 const PAT_PID: Pid = Pid::new(0x0000);
-/// `table_id` of a PAT section (§2.4.4.3, Table 2-31).
+/// `table_id` of a PAT section (§2.4.4.4, Table 2-31).
 pub(crate) const TABLE_ID_PAT: u8 = 0x00;
-/// `table_id` of a PMT section (§2.4.4.8, Table 2-31).
+/// `table_id` of a PMT section (§2.4.4.9, Table 2-31).
 pub(crate) const TABLE_ID_PMT: u8 = 0x02;
 /// Long-form section header length before the table body: `table_id`(1) +
 /// flags/`section_length`(2) + `table_id_extension`(2) + version/cni(1) +
@@ -287,7 +287,7 @@ const CURRENT_NEXT_INDICATOR_BIT: u8 = 0x01;
 const CRC32_LEN: usize = 4;
 /// `section_syntax_indicator` bit within a section's byte 1 (§2.4.4.1). `1`
 /// marks the long form — a `table_id_extension`/`version_number` header **and**
-/// a trailing [`CRC32_LEN`]-byte `CRC_32`. A PAT (§2.4.4.5 Table 2-30) and a
+/// a trailing [`CRC32_LEN`]-byte `CRC_32`. A PAT (§2.4.4.4 Table 2-30) and a
 /// PMT (§2.4.4.9 Table 2-33) both fix it at `1`, so a PAT/PMT section that
 /// clears it is malformed and carries no CRC to check.
 const SECTION_SYNTAX_INDICATOR_BIT: u8 = 0x80;
@@ -630,7 +630,7 @@ impl Codec {
 }
 
 /// Classify a [`Codec::Data`] `stream_type` as PES- or section-carried
-/// (ISO/IEC 13818-1 §2.4.4.8 / Table 2-34) — see [`DataCarriage`]. A fixed set
+/// (ISO/IEC 13818-1 §2.4.4.9 / Table 2-34) — see [`DataCarriage`]. A fixed set
 /// of `stream_type`s carry PSI/private sections directly; every other
 /// `stream_type` (the historical 0x06/0x15 carriage, plus any unrecognised
 /// value) is PES-packetised.
@@ -1197,7 +1197,7 @@ fn adts_frame_payload<'a>(
 
 /// Parse a PAT section, returning every `(program_number, program_map_PID)`
 /// pair it lists (network entries — `program_number == 0` — are skipped).
-/// ISO/IEC 13818-1 §2.4.4.3. The `program_number` is kept (not just the PID)
+/// ISO/IEC 13818-1 §2.4.4.4. The `program_number` is kept (not just the PID)
 /// so a PMT section can be cross-checked against the program it was learned
 /// under (issue #774).
 fn parse_pat(section: &[u8]) -> Result<Vec<(u16, Pid)>> {
@@ -1218,7 +1218,7 @@ fn parse_pat(section: &[u8]) -> Result<Vec<(u16, Pid)>> {
     Ok(programs)
 }
 
-/// A PMT section's header fields beyond `table_id` (ISO/IEC 13818-1 §2.4.4.8 /
+/// A PMT section's header fields beyond `table_id` (ISO/IEC 13818-1 §2.4.4.9 /
 /// Table 2-33), read directly from `section[]` (the whole section including
 /// its 8-byte header) — the version-diffing prerequisite for issue #774.
 struct PmtSectionHeader {
@@ -1234,14 +1234,14 @@ struct PmtSectionHeader {
     /// `last_section_number` (`section[7]`). A PMT is always single-section,
     /// so a genuine PMT always has `section_number == last_section_number == 0`.
     last_section_number: u8,
-    /// `PCR_PID` (`section[8..10]`, 13 bits — §2.4.4.8 Table 2-33): the PID
+    /// `PCR_PID` (`section[8..10]`, 13 bits — §2.4.4.9 Table 2-33): the PID
     /// whose adaptation fields carry this program's `PCR`, and therefore the
     /// PID on which a system time-base discontinuity is signalled
     /// (§2.4.3.5). `0x1FFF` means "no PCR for this program".
     pcr_pid: Pid,
 }
 
-/// Parse a PMT section's header fields (§2.4.4.8) — everything needed to
+/// Parse a PMT section's header fields (§2.4.4.9) — everything needed to
 /// decide whether a newly-reassembled section should be *applied*
 /// (`current_next_indicator == 1` and `version_number` differs from the last
 /// **applied** version), before paying for the ES-loop walk in [`parse_pmt`].
@@ -1276,7 +1276,7 @@ fn parse_pmt_section_header(section: &[u8]) -> Result<PmtSectionHeader> {
 /// Parse a PMT section, returning `(elementary_PID, codec, ES_info
 /// descriptors)` for every elementary stream listed (issue #576: every
 /// PMT-listed ES becomes a track — typed when the `stream_type` maps to a
-/// decoded codec, else opaque [`Codec::Data`]). ISO/IEC 13818-1 §2.4.4.8.
+/// decoded codec, else opaque [`Codec::Data`]). ISO/IEC 13818-1 §2.4.4.9.
 /// `descriptors` is the raw ES_info descriptor-loop bytes for that stream
 /// (empty when `ES_info_length` is 0); consumers that don't need it (every
 /// codec but [`Codec::Data`]) simply ignore it.
@@ -1350,7 +1350,7 @@ fn section_body<'a>(section: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
 /// entry binds a PID to a `program_number` that every later PMT on that PID is
 /// cross-checked against — so a single flipped bit in a version byte or an ES
 /// loop must never be believed. Both tables fix `section_syntax_indicator` at
-/// `1` (§2.4.4.5 Table 2-30 / §2.4.4.9 Table 2-33), i.e. both always carry the
+/// `1` (§2.4.4.4 Table 2-30 / §2.4.4.9 Table 2-33), i.e. both always carry the
 /// CRC this checks; a PAT/PMT section that clears the bit is malformed and
 /// carries no checkable trailer, so it is rejected here rather than acted on
 /// unverified.
@@ -4885,7 +4885,7 @@ pub struct StreamingTsDemux {
 struct PmtState {
     reasm: SectionReassembler,
     program_number: u16,
-    /// The program's `PCR_PID` (§2.4.4.8 Table 2-33), or `None` until a PMT
+    /// The program's `PCR_PID` (§2.4.4.9 Table 2-33), or `None` until a PMT
     /// has been applied. A system time-base discontinuity is signalled on this
     /// PID (§2.4.3.5), and only this program's elementary streams are rebased
     /// by it (r04-W50 review).
@@ -5146,7 +5146,7 @@ impl StreamingTsDemux {
                 });
             }
             if let Some(pcr) = af.pcr {
-                // Issue #1354 / §2.4.3.5 + §2.4.4.8: only a program's
+                // Issue #1354 / §2.4.3.5 + §2.4.4.9: only a program's
                 // PCR_PID carries that program's clock. One event per
                 // program naming this PID; see `DemuxEvent::ClockReference`
                 // for the pre-PMT (`program_number: None`) policy.
@@ -5276,7 +5276,7 @@ impl StreamingTsDemux {
                     continue;
                 }
                 if header.section_number != 0 || header.last_section_number != 0 {
-                    // A PMT is always single-section (§2.4.4.8) — a
+                    // A PMT is always single-section (§2.4.4.9) — a
                     // multi-section claim is malformed, ignore it.
                     continue;
                 }
@@ -5576,7 +5576,7 @@ impl StreamingTsDemux {
     }
 
     /// Bind `pmt_pid` to the `program_number` a currently-applicable PAT
-    /// (§2.4.4.3) just listed it under.
+    /// (§2.4.4.4) just listed it under.
     ///
     /// The binding is **updatable**, not write-once. A PAT may legitimately
     /// remap a PMT PID to a different program mid-stream, and the previous
@@ -7310,7 +7310,7 @@ pub(crate) mod tests {
     }
 
     /// A PMT body with **two** elementary streams, declaring `pcr_pid` as the
-    /// program's `PCR_PID` (§2.4.4.8 Table 2-33) — the A/V program shape the
+    /// program's `PCR_PID` (§2.4.4.9 Table 2-33) — the A/V program shape the
     /// multi-PID discontinuity tests need.
     fn pmt_body_two_es_with_pcr_pid(
         video_pid: Pid,
@@ -7331,7 +7331,7 @@ pub(crate) mod tests {
     }
 
     /// A PMT body declaring `pcr_pid` as the program's `PCR_PID`
-    /// (§2.4.4.8 Table 2-33) — what a real multiplexer sets to the video PID
+    /// (§2.4.4.9 Table 2-33) — what a real multiplexer sets to the video PID
     /// (or a dedicated PCR PID).
     fn pmt_body_with_pcr_pid(es_pid: Pid, stream_type: u8, pcr_pid: Pid) -> Vec<u8> {
         let mut body = Vec::new();

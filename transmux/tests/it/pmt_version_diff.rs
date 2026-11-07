@@ -11,7 +11,7 @@
 //! (long-form header, `version_number`/`current_next_indicator` byte,
 //! ES-loop entries, trailing `CRC_32`) mirrors this crate's own
 //! `ts_mux.rs::build_pat_section`/`build_pmt_section`/`finish_section`
-//! byte-for-byte (ISO/IEC 13818-1 §2.4.4.1/§2.4.4.3/§2.4.4.8) — verified
+//! byte-for-byte (ISO/IEC 13818-1 §2.4.4.1/§2.4.4.4/§2.4.4.9) — verified
 //! against that module rather than invented. Every elementary stream here
 //! uses an unrecognised `stream_type` (`Codec::Data`, PES-carried), whose
 //! `ConfigProbe::Data` resolves on the very first access unit with no
@@ -78,14 +78,14 @@ fn finish_section(table_id: u8, body: &[u8]) -> Vec<u8> {
     section
 }
 
-/// Build a one-program PAT section (ISO/IEC 13818-1 §2.4.4.3), fixed at
+/// Build a one-program PAT section (ISO/IEC 13818-1 §2.4.4.4), fixed at
 /// version 0 / `current_next_indicator = 1` — the default PAT for scenarios
 /// that only vary the PMT.
 fn build_pat() -> Vec<u8> {
     build_pat_full(0, true, &[(PROGRAM_NUMBER, PMT_PID.value())])
 }
 
-/// Build a PAT section (§2.4.4.3) with an explicit `version_number`,
+/// Build a PAT section (§2.4.4.4) with an explicit `version_number`,
 /// `current_next_indicator`, and `(program_number, program_map_PID)` list —
 /// the general form the PAT-remap / "next" PAT / corrupt-PAT scenarios need.
 fn build_pat_full(version: u8, current_next_indicator: bool, programs: &[(u16, u16)]) -> Vec<u8> {
@@ -103,7 +103,7 @@ fn build_pat_full(version: u8, current_next_indicator: bool, programs: &[(u16, u
     finish_section(TABLE_ID_PAT, &body)
 }
 
-/// Build a PMT section (ISO/IEC 13818-1 §2.4.4.8), always single-section
+/// Build a PMT section (ISO/IEC 13818-1 §2.4.4.9), always single-section
 /// (`section_number == last_section_number == 0`) — every scenario here
 /// varies only `version`/`current_next_indicator`/the ES loop.
 fn build_pmt(version: u8, current_next_indicator: bool, entries: &[(u16, u8, &[u8])]) -> Vec<u8> {

@@ -32,9 +32,9 @@ use mpeg_ts::ts::{SectionReassembler, TsHeader, TsPacket};
 
 // ── Named PID constants ─────────────────────────────────────────────────────
 
-/// PID 0x0000 — Program Association Table (ISO/IEC 13818-1 §2.4.4.3).
+/// PID 0x0000 — Program Association Table (ISO/IEC 13818-1 §2.4.4.4).
 const PID_PAT: Pid = Pid::new(0x0000);
-/// PID 0x0001 — Conditional Access Table (ISO/IEC 13818-1 §2.4.4.5).
+/// PID 0x0001 — Conditional Access Table (ISO/IEC 13818-1 §2.4.4.7).
 const PID_CAT: Pid = Pid::new(0x0001);
 /// PID 0x0010 — Network Information Table (EN 300 468 §5.2.1).
 const PID_NIT: Pid = Pid::new(0x0010);
@@ -157,7 +157,7 @@ const PES_PTS_DTS_FLAGS_MASK: u8 = 0b1100_0000;
 /// Value indicating PTS is present in `PTS_DTS_flags` (bit 7 set).
 const PES_PTS_PRESENT: u8 = 0b1000_0000;
 
-/// CAT `table_id` value (ISO/IEC 13818-1 §2.4.4.5).
+/// CAT `table_id` value (ISO/IEC 13818-1 §2.4.4.7).
 const CAT_TABLE_ID: u8 = dvb_si::table_id::TableId::Cat as u8;
 
 /// NIT_actual `table_id` (EN 300 468 §5.2.1, table_id 0x40).

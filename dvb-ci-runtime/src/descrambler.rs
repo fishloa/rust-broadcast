@@ -16,7 +16,7 @@
 //! 13818-1 §2.6.16 `CA_descriptor` `CA_PID`, carrying the control words
 //! without which the module has ES to descramble but no key to do it with),
 //! the **EMM PIDs** ([`emm_pids`](crate::driver::Driver::emm_pids) —
-//! entitlements), and each service's **PCR PID** (ISO/IEC 13818-1 §2.4.4.8 —
+//! entitlements), and each service's **PCR PID** (ISO/IEC 13818-1 §2.4.4.9 —
 //! when it names a dedicated PID distinct from every ES/CA PID, a legitimate
 //! DVB configuration, the descrambled TS still needs its clock reference).
 //! [`CaDescrambler::feed_ts`] filters the input TS to

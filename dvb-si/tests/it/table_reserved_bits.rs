@@ -621,7 +621,7 @@ fn defaults_carry_spec_fill_psi_private_indicator_zero() {
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};
     use dvb_si::tables::tsdt::TsdtSection;
-    // PAT: H.222.0 §2.4.4.3: section_syntax_indicator '1', '0', reserved '11'
+    // PAT: H.222.0 §2.4.4.4: section_syntax_indicator '1', '0', reserved '11'
     // => byte1 0xB0|len_hi; reserved(2)=11 before version; reserved(3)=111 on PIDs.
     let pat = ser(&PatSection::new(
         1,

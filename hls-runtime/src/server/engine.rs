@@ -432,7 +432,7 @@ pub struct ClosedSegment {
     /// Segment duration in seconds.
     pub duration_secs: f64,
     /// Whether `#EXT-X-DISCONTINUITY` precedes this segment (RFC 8216
-    /// §4.3.4.3).
+    /// §4.3.2.3).
     pub discontinuous: bool,
     /// The init-segment generation this segment was cut against (see
     /// [`HlsOrigin::init_name`]).
@@ -564,7 +564,7 @@ impl Window {
     /// sequence numbers. An entry that does not directly follow the last one
     /// (numbers skipped, a repeat or a decrease), or that follows reported
     /// lost segments, starts a new run: the old entries are cleared and the
-    /// entry is marked discontinuous (RFC 8216 §4.3.4.3) rather than being
+    /// entry is marked discontinuous (RFC 8216 §4.3.2.3) rather than being
     /// appended under a wrong implied number.
     fn push(
         &mut self,

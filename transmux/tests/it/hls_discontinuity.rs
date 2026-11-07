@@ -1,5 +1,5 @@
 //! Gate tests for `#EXT-X-DISCONTINUITY` and `#EXT-X-DISCONTINUITY-SEQUENCE`
-//! support in HLS playlist generation (RFC 8216 §4.3.4.3 / §4.3.3.3).
+//! support in HLS playlist generation (RFC 8216 §4.3.2.3 / §4.3.3.3).
 //!
 //! Four tests match the four acceptance criteria:
 //!

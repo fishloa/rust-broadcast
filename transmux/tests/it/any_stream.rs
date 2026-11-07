@@ -137,7 +137,7 @@ fn find_pmt_pid(data: &[u8]) -> u16 {
 
 /// `(stream_type, elementary_pid, ES_info descriptor bytes)` for every ES
 /// loop entry across every distinct PMT section seen on `pmt_pid` in `data`
-/// (ISO/IEC 13818-1 §2.4.4.8) — written from scratch here, not reusing the
+/// (ISO/IEC 13818-1 §2.4.4.9) — written from scratch here, not reusing the
 /// crate's own PMT parser (mirrors `tests/it/ir_timing.rs`'s `collect_pmt_es`).
 fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
     const TABLE_ID_PMT: u8 = 0x02;

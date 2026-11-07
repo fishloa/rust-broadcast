@@ -618,7 +618,7 @@ pub struct MediaSegment {
     /// The segment duration in seconds (e.g. `9.009`).
     pub duration: DecimalSeconds,
     /// If `true`, emit `#EXT-X-DISCONTINUITY` immediately before this
-    /// segment's `#EXTINF` line — RFC 8216 §4.3.4.3.
+    /// segment's `#EXTINF` line — RFC 8216 §4.3.2.3.
     pub discontinuous: bool,
     /// Low-Latency HLS partial segments of this segment (RFC 8216bis §4.4.4.9).
     /// Rendered as `#EXT-X-PART` lines *before* this segment's `#EXTINF`, but
@@ -939,7 +939,7 @@ const VERSION_REQ_ATTRIBUTE: u8 = 12;
 /// attribute for a non-`CLOSED-CAPTIONS` `TYPE`.
 const VERSION_MEDIA_INSTREAM_ID_NON_CC: u8 = 13;
 
-/// RFC 8216bis §4.2.2's variable-substitution marker (`{$name}`, inside a
+/// RFC 8216bis §4.3's variable-substitution marker (`{$name}`, inside a
 /// quoted-string attribute value or a URI) — §8 row 8's trigger. This is
 /// *not* part of the version-compatibility transcription (that section
 /// states only the rule, not the substitution grammar, which lives in a
@@ -1488,7 +1488,7 @@ impl MediaPlaylist {
     /// header when `discontinuity_sequence > 0` (RFC 8216 §4.3.3.3), and
     /// `#EXT-X-DISCONTINUITY` immediately before the `#EXTINF` of every
     /// segment whose [`MediaSegment::discontinuous`] flag is `true`
-    /// (RFC 8216 §4.3.4.3).
+    /// (RFC 8216 §4.3.2.3).
     ///
     /// When [`Self::iframes_only`] is `true`, emits `#EXT-X-I-FRAMES-ONLY`
     /// (RFC 8216 §4.3.3.6) in the header block; the version this (and every
@@ -3634,7 +3634,7 @@ pub struct Variant {
     pub extra_attrs: Vec<(String, AttrValue)>,
 }
 
-/// An I-frame-only rendition entry for a master playlist — RFC 8216 §4.3.4.2
+/// An I-frame-only rendition entry for a master playlist — RFC 8216 §4.3.4.3
 /// (`#EXT-X-I-FRAME-STREAM-INF`).
 ///
 /// Unlike [`Variant`] / `#EXT-X-STREAM-INF`, the URI is an *attribute* on the
@@ -3676,7 +3676,7 @@ pub struct MasterPlaylist {
     pub media: Vec<MediaRendition>,
     /// Ordered list of variant streams.
     pub variants: Vec<Variant>,
-    /// Ordered list of I-frame-only renditions (RFC 8216 §4.3.4.2).
+    /// Ordered list of I-frame-only renditions (RFC 8216 §4.3.4.3).
     ///
     /// Each entry is rendered as an `#EXT-X-I-FRAME-STREAM-INF` line with the
     /// URI as an attribute (not a following line).  An empty `Vec` (the
@@ -3736,7 +3736,7 @@ impl MasterPlaylist {
     ///
     /// After the regular `#EXT-X-STREAM-INF` variant lines, emits one
     /// `#EXT-X-I-FRAME-STREAM-INF` line per entry in
-    /// [`Self::iframe_variants`] (RFC 8216 §4.3.4.2).  The URI is rendered
+    /// [`Self::iframe_variants`] (RFC 8216 §4.3.4.3).  The URI is rendered
     /// as an attribute on the tag line itself — *not* on a following line.
     /// # Errors
     ///
@@ -3908,7 +3908,7 @@ impl MasterPlaylist {
             s.push('\n');
         }
 
-        // I-frame-only renditions — RFC 8216 §4.3.4.2.
+        // I-frame-only renditions — RFC 8216 §4.3.4.3.
         // URI is an attribute on the tag line, not a following URI line.
         for iv in &self.iframe_variants {
             s.push_str(&format!(
@@ -4822,7 +4822,7 @@ fn parse_media_rendition(rest: &str, line_no: usize, line: &str) -> Result<Media
 }
 
 /// Auto-detect init-segment changes across a sequence of segments and mark the
-/// first segment that follows an init change as discontinuous (RFC 8216 §4.3.4.3).
+/// first segment that follows an init change as discontinuous (RFC 8216 §4.3.2.3).
 ///
 /// `entries` is an ordered list of `(init_bytes, segment)` pairs — one per
 /// media segment in playlist order. For each segment after the first, if its

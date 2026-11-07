@@ -8,7 +8,7 @@
 //!
 //! A PAT maps `program_number → PMT PID`, but a corrupt or stripped PAT can't
 //! be trusted to supply that mapping.  Instead, every PMT section (table_id
-//! `0x02`, ISO/IEC 13818-1 §2.4.4.8) carries its own `program_number` in its
+//! `0x02`, ISO/IEC 13818-1 §2.4.4.9) carries its own `program_number` in its
 //! body and arrives on a known PID.  This op therefore *discovers* the mapping
 //! by scanning sections:
 //!
@@ -71,7 +71,7 @@
 //!
 //! # Spec
 //!
-//! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.3 (PAT) / §2.4.4.8 (PMT).
+//! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.4 (PAT) / §2.4.4.9 (PMT).
 
 use alloc::collections::BTreeMap;
 use alloc::vec;
@@ -86,7 +86,7 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_paylo
 
 use crate::ops::{Op, StreamModel};
 
-/// PAT well-known PID (ISO/IEC 13818-1 §2.4.4.3).
+/// PAT well-known PID (ISO/IEC 13818-1 §2.4.4.4).
 const PAT_PID: Pid = Pid::new(0x0000);
 /// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
 const NULL_PID: Pid = Pid::new(0x1FFF);
@@ -112,7 +112,7 @@ pub(crate) struct PsiRegenOp {
     /// spans several TS packets is parsed as one section, not per packet.
     pat_reasm: SectionReassembler,
     /// network_pid hint (the PAT entry with `program_number == 0`,
-    /// ISO/IEC 13818-1 §2.4.4.3), copied from the original PAT if one carries
+    /// ISO/IEC 13818-1 §2.4.4.4), copied from the original PAT if one carries
     /// one. Not derivable from PMTs, so a regenerated PAT would otherwise
     /// silently drop this entry.
     network_pid: Option<Pid>,
@@ -180,7 +180,7 @@ impl PsiRegenOp {
 
     /// Observe the original PAT only to capture hints not derivable from the
     /// PMT scan: the `transport_stream_id` and the `network_pid` entry
-    /// (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.3).
+    /// (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.4).
     fn observe_pat_hints(&mut self, payload: &[u8], pusi: bool) {
         if self.pat_hints_observed {
             return;
@@ -241,7 +241,7 @@ impl PsiRegenOp {
     /// Build the PAT entries for the current mapping: the PMT-derived
     /// program entries plus the original PAT's `network_pid` entry
     /// (`program_number == 0`), if one was observed — ISO/IEC 13818-1
-    /// §2.4.4.3. Returns `None` if no programs have been discovered yet,
+    /// §2.4.4.4. Returns `None` if no programs have been discovered yet,
     /// unless `allow_empty` (end of stream, a PAT slot seen, and no PMT
     /// candidate left unresolved) in which case a program-less PAT — the loop
     /// count `N` of Table 2-30 is unconstrained — is built.

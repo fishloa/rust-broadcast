@@ -27,7 +27,7 @@
 //! The playlist is a VOD media playlist: `#EXTM3U`, `#EXT-X-VERSION`,
 //! `#EXT-X-TARGETDURATION` (≥ every `#EXTINF`), `#EXT-X-MEDIA-SEQUENCE`, one
 //! `#EXTINF` + `.ts` URI per segment, and a trailing `#EXT-X-ENDLIST`
-//! (RFC 8216 §4.3.3). `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.4.3) and
+//! (RFC 8216 §4.3.3). `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.2.3) and
 //! `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.3.3) are forwarded from the
 //! underlying [`MediaPlaylist`] when the [`MediaSegment::discontinuous`] flag
 //! is set; this packager itself produces a single continuous timeline from one
@@ -581,7 +581,7 @@ pub struct TsSegment {
     /// Segment duration in seconds (the anchor track's buffered duration).
     pub duration: f64,
     /// `true` when this segment should be preceded by `#EXT-X-DISCONTINUITY`
-    /// (RFC 8216 §4.3.4.3) — set via
+    /// (RFC 8216 §4.3.2.3) — set via
     /// [`StreamingTsHlsSegmenter::mark_discontinuity`].
     pub discontinuous: bool,
     /// The playlist URI assigned to this segment (`"{uri_prefix}{sequence}.ts"`).
@@ -1207,7 +1207,7 @@ impl StreamingTsHlsSegmenter {
     }
 
     /// Mark the *next* segment cut as a media-timeline discontinuity
-    /// (RFC 8216 §4.3.4.3) — call this when the caller detects a PID/PCR
+    /// (RFC 8216 §4.3.2.3) — call this when the caller detects a PID/PCR
     /// reset in the live source (e.g. an upstream PMT/PCR-PID change)
     /// between one push and the next.
     ///

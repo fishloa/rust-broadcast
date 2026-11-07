@@ -18,7 +18,7 @@
 //! make a mux that pre-announces a version flip-flop findings.
 //!
 //! Version state is keyed on `(pid, table_id, table_id_extension)` — two
-//! PMTs may legally share a PID (ISO/IEC 13818-1 §2.4.4.8), and they are
+//! PMTs may legally share a PID (ISO/IEC 13818-1 §2.4.4.9), and they are
 //! distinguished only by their `table_id_extension` (the `program_number`),
 //! so keying on PID alone emits a finding on every repetition.
 
@@ -40,7 +40,7 @@ use crate::report::{Finding, Location, Severity};
 /// carried on, its `table_id` and its `table_id_extension`.
 ///
 /// All three are required — see the module docs for why the PID alone is not
-/// enough (ISO/IEC 13818-1 §2.4.4.8).
+/// enough (ISO/IEC 13818-1 §2.4.4.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TableKey {
     pid: Pid,
@@ -82,7 +82,7 @@ fn current_pat(raw: &[u8]) -> Option<PatSection> {
 }
 
 /// The PMT PIDs a current PAT declares, ignoring the NIT entry
-/// (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.3) and any reserved PID.
+/// (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.4) and any reserved PID.
 ///
 /// A PAT entry naming PID 0 would otherwise collide with the PAT PID itself;
 /// PID 0x1FFF (`NULL`) is reserved and can never carry a PMT
@@ -238,7 +238,7 @@ mod tests {
     /// ISO/IEC 13818-1 Annex B: the CRC-32 suffix closing a long-form section.
     const CRC_LEN: usize = 4;
     /// PID field width used by a PAT program entry (`reserved` 3 bits + 13-bit
-    /// PID, ISO/IEC 13818-1 §2.4.4.3).
+    /// PID, ISO/IEC 13818-1 §2.4.4.4).
     const PID_HI_MASK: u8 = 0x1F;
     /// Offset of a TS packet's payload when it carries no adaptation field
     /// (4-byte fixed header, ISO/IEC 13818-1 §2.4.3.2/§2.4.3.4). Every

@@ -31,7 +31,7 @@ pub const NORM_NODE_NONE: u32 = 0x0000_0000;
 /// Reserved NormNodeId: wildcard / any.
 pub const NORM_NODE_ANY: u32 = 0xFFFF_FFFF;
 
-/// HET for NORM EXT_AUTH (variable-length) — RFC 5740 §8.5.
+/// HET for NORM EXT_AUTH (variable-length) — RFC 5740 §7.
 pub const HET_EXT_AUTH: u8 = 1;
 /// HET for NORM EXT_CC (variable-length, hel = 3) — RFC 5740 §4.2.3.
 pub const HET_EXT_CC: u8 = 3;

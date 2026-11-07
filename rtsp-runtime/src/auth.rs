@@ -1,4 +1,4 @@
-//! Authentication wiring — RFC 2326 §14 (RTSP reuses HTTP auth).
+//! Authentication wiring — RFC 2326 §16 (RTSP reuses HTTP auth).
 //!
 //! RTSP shares HTTP's Basic and Digest schemes verbatim (RFC 2326 §16); see
 //! `private/specs-verified/rtp/rtsp-runtime/auth.md`. The [`Credentials`] model and the

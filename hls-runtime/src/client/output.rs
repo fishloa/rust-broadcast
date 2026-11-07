@@ -101,7 +101,7 @@ pub enum Output {
         /// The samples, in decode order.
         samples: Vec<Sample>,
     },
-    /// `EXT-X-DISCONTINUITY` (RFC 8216 §4.3.4.3): the encoding, timestamps,
+    /// `EXT-X-DISCONTINUITY` (RFC 8216 §4.3.2.3): the encoding, timestamps,
     /// tracks, or codec parameters may have changed between the previously
     /// emitted samples and the ones that follow this marker. Forwarded
     /// verbatim so the sink can flush/reset its decoder pipeline.

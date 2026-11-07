@@ -53,7 +53,7 @@ impl fmt::Display for TrackId {
     }
 }
 
-/// An MPEG-2 TS `program_number` (ISO/IEC 13818-1 §2.4.4.3): the PAT/PMT
+/// An MPEG-2 TS `program_number` (ISO/IEC 13818-1 §2.4.4.4): the PAT/PMT
 /// program identifier, 16 bits on the wire. Distinct from [`TrackId`] and from
 /// `media_plane`'s `ProgramId`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
