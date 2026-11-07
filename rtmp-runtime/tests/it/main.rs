@@ -1,9 +1,9 @@
 mod client_adapter;
 mod client_play;
+mod error_variants;
 mod ffmpeg_publish;
 mod golden_wire;
 mod ingest_fixture;
 mod io_timeouts;
 mod play_peer;
 mod secret_hygiene;
-mod error_variants;

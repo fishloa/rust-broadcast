@@ -506,5 +506,4 @@ mod tests {
             Err(Error::UnknownPartitionStatus { byte: 0x05 })
         ));
     }
-
 }

@@ -1,6 +1,7 @@
 mod arq_recovery;
 mod crypto_handshake;
 mod crypto_vectors;
+mod error_variants;
 mod filecc_congestion;
 mod handshake_round_trip;
 mod io_concurrent_listener;
@@ -27,4 +28,3 @@ mod rfc_vectors;
 mod tokio_crypto_interop;
 mod trait_round_trip;
 mod tsbpd_delivery;
-mod error_variants;

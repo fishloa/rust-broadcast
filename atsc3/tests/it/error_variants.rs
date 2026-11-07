@@ -6,6 +6,9 @@ fn malformed_xml_is_an_xml_parse_error_carrying_the_parser_message() {
     let reason = roxmltree::Document::parse(xml).unwrap_err().to_string();
     assert_eq!(
         Slt::parse(xml).unwrap_err(),
-        Error::XmlParse { what: "SLT", reason }
+        Error::XmlParse {
+            what: "SLT",
+            reason
+        }
     );
 }

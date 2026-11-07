@@ -563,5 +563,4 @@ mod tests {
         assert_eq!(decode_utf16_be(&[0x00]), Err(invalid.clone()));
         assert_eq!(decode_utf16_be(&[0xD8, 0x00]), Err(invalid));
     }
-
 }

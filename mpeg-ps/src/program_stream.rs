@@ -442,5 +442,4 @@ mod tests {
         let expected = mpeg_pes::PesPacket::parse(&pes).unwrap_err();
         assert_eq!(parse_pack(&b).unwrap_err(), crate::Error::Pes(expected));
     }
-
 }

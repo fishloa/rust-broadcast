@@ -1,5 +1,6 @@
 mod arq_frame15_loss_reproduction;
 mod compound_padding_unknown;
+mod error_variants;
 mod librist_capture;
 mod nack_padding;
 mod review_transport_ancillary;
