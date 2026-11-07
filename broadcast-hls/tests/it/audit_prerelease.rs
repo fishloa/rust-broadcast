@@ -54,7 +54,13 @@ fn frame_rate_accepts_any_number_of_fraction_digits() {
 #[test]
 fn frame_rate_still_rejects_malformed_and_overflowing_values() {
     for bad in ["", ".5", "25.", "-25", "2x", "99999999999"] {
-        assert!(bad.parse::<FrameRate>().is_err(), "{bad:?}");
+        assert!(
+            matches!(
+                bad.parse::<FrameRate>(),
+                Err(broadcast_hls::Error::HlsParse { .. })
+            ),
+            "{bad:?}"
+        );
     }
 }
 

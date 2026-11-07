@@ -23,7 +23,10 @@ fn instream_id_strict_grammar_rejects_signs_and_leading_zeros() {
         "CC 1",
     ] {
         let r = InstreamId::parse_closed_captions(bad);
-        assert!(r.is_err(), "{bad:?} must be rejected, got {r:?}");
+        assert!(
+            matches!(r, Err(broadcast_hls::Error::InvalidInstreamId { .. })),
+            "{bad:?} must be rejected, got {r:?}"
+        );
     }
     assert_eq!(
         InstreamId::parse_closed_captions("CC1").unwrap(),
@@ -57,7 +60,10 @@ fn render_rejects_out_of_range_cc_and_service() {
         InstreamId::Service(200),
     ] {
         let r = render_with(id.clone(), "CLOSED-CAPTIONS");
-        assert!(r.is_err(), "{id:?} must not render, got {r:?}");
+        assert!(
+            matches!(r, Err(broadcast_hls::Error::InvalidInstreamId { .. })),
+            "{id:?} must not render, got {r:?}"
+        );
     }
     assert!(render_with(InstreamId::Cc(4), "CLOSED-CAPTIONS").is_ok());
     assert!(render_with(InstreamId::Service(63), "CLOSED-CAPTIONS").is_ok());
@@ -67,13 +73,19 @@ fn render_rejects_out_of_range_cc_and_service() {
 fn render_rejects_other_on_closed_captions_and_cc_on_other_types() {
     let r = render_with(InstreamId::Other("x".into()), "CLOSED-CAPTIONS");
     assert!(
-        r.is_err(),
+        matches!(r, Err(broadcast_hls::Error::InstreamIdTypeMismatch { .. })),
         "Other on CLOSED-CAPTIONS must not render, got {r:?}"
     );
     let r = render_with(InstreamId::Cc(1), "AUDIO");
-    assert!(r.is_err(), "Cc(1) on AUDIO re-parses as Other, got {r:?}");
+    assert!(
+        matches!(r, Err(broadcast_hls::Error::InstreamIdTypeMismatch { .. })),
+        "Cc(1) on AUDIO re-parses as Other, got {r:?}"
+    );
     let r = render_with(InstreamId::Service(1), "AUDIO");
-    assert!(r.is_err(), "Service(1) on AUDIO must not render, got {r:?}");
+    assert!(
+        matches!(r, Err(broadcast_hls::Error::InstreamIdTypeMismatch { .. })),
+        "Service(1) on AUDIO must not render, got {r:?}"
+    );
     assert!(render_with(InstreamId::Other("x".into()), "AUDIO").is_ok());
 }
 
@@ -104,11 +116,17 @@ fn group_rules_enforced_on_render() {
     p.media[1].default = true;
     p.media[1].autoselect = true;
     let r = p.to_m3u8();
-    assert!(r.is_err(), "two DEFAULT=YES must not render, got {r:?}");
+    assert!(
+        matches!(r, Err(broadcast_hls::Error::DuplicateDefaultInGroup { .. })),
+        "two DEFAULT=YES must not render, got {r:?}"
+    );
     let mut p = MasterPlaylist::parse(&base).unwrap();
     p.media[1].name = "1".into();
     let r = p.to_m3u8();
-    assert!(r.is_err(), "duplicate NAME must not render, got {r:?}");
+    assert!(
+        matches!(r, Err(broadcast_hls::Error::DuplicateNameInGroup { .. })),
+        "duplicate NAME must not render, got {r:?}"
+    );
 }
 
 #[test]
@@ -126,7 +144,10 @@ fn boolean_attributes_accept_only_exact_yes_and_no() {
             "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"g\",NAME=\"n\",URI=\"s.m3u8\",{attr}"
         ));
         let r = MasterPlaylist::parse(&text);
-        assert!(r.is_err(), "{attr} must be rejected, got {r:?}");
+        assert!(
+            matches!(r, Err(broadcast_hls::Error::InvalidYesNo { .. })),
+            "{attr} must be rejected, got {r:?}"
+        );
     }
     let ok = master(
         "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"g\",NAME=\"n\",URI=\"s.m3u8\",DEFAULT=NO,AUTOSELECT=YES,FORCED=YES",
@@ -153,13 +174,13 @@ fn segment_key_playlist(iv: &str) -> String {
 fn iv_requires_hex_prefix() {
     let r = MasterPlaylist::parse(&session_key(IV_HEX));
     assert!(
-        r.is_err(),
+        matches!(r, Err(broadcast_hls::Error::InvalidIv { .. })),
         "session-key IV without 0x must be rejected, got {r:?}"
     );
     let r = MediaPlaylist::parse(&segment_key_playlist(IV_HEX))
         .and_then(|p| p.segment_keys().map(|_| ()));
     assert!(
-        r.is_err(),
+        matches!(r, Err(broadcast_hls::Error::InvalidIv { .. })),
         "segment-key IV without 0x must be rejected, got {r:?}"
     );
     for prefix in ["0x", "0X"] {
@@ -174,9 +195,21 @@ fn unterminated_quoted_string_rejected() {
     let r = MasterPlaylist::parse(&master(
         "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"g\",NAME=\"n\",LANGUAGE=\"en",
     ));
-    assert!(r.is_err(), "unterminated quote, got {r:?}");
+    assert!(
+        matches!(
+            r,
+            Err(broadcast_hls::Error::UnterminatedQuotedString { .. })
+        ),
+        "unterminated quote, got {r:?}"
+    );
     let r = MasterPlaylist::parse(&master("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"g\",NAME=\"n"));
-    assert!(r.is_err(), "unterminated quote at end, got {r:?}");
+    assert!(
+        matches!(
+            r,
+            Err(broadcast_hls::Error::UnterminatedQuotedString { .. })
+        ),
+        "unterminated quote at end, got {r:?}"
+    );
 }
 
 #[test]
@@ -184,7 +217,10 @@ fn duplicate_attribute_names_rejected() {
     let r = MasterPlaylist::parse(&master(
         "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"g\",NAME=\"n\",NAME=\"m\"",
     ));
-    assert!(r.is_err(), "duplicate NAME attribute, got {r:?}");
+    assert!(
+        matches!(r, Err(broadcast_hls::Error::DuplicateAttribute { .. })),
+        "duplicate NAME attribute, got {r:?}"
+    );
 }
 
 #[test]
