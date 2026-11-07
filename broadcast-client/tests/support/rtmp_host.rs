@@ -242,3 +242,44 @@ impl RtmpHost {
             .collect()
     }
 }
+
+pub fn connect_and_play(h: &mut RtmpHost) {
+    h.collect();
+    assert!(
+        h.peer.as_ref().is_some_and(|p| p.is_playing()),
+        "play was accepted"
+    );
+}
+
+pub fn assert_samples_equal_direct(samples: &[(u32, transmux::Sample)]) {
+    assert_samples_equal_direct_with(samples, 1);
+}
+
+pub fn assert_complete_samples_equal_direct(samples: &[(u32, transmux::Sample)]) {
+    assert_samples_equal_direct_with(samples, 0);
+}
+
+/// A live demuxer holds each track's newest sample until the next tag of that track fixes its
+/// duration; `held` is how many trailing samples per track are still held back.
+pub fn assert_samples_equal_direct_with(samples: &[(u32, transmux::Sample)], held: usize) {
+    let d = direct();
+    for track in &d.tracks {
+        let got: Vec<&transmux::Sample> = samples
+            .iter()
+            .filter(|(id, _)| *id == track.spec.track_id.value())
+            .map(|(_, s)| s)
+            .collect();
+        assert_eq!(
+            got.len(),
+            track.samples.len() - held,
+            "track {}",
+            track.spec.track_id
+        );
+        for (a, b) in got.iter().zip(track.samples.iter()) {
+            assert_eq!(a.data, b.data);
+            assert_eq!(a.dts, b.dts);
+            assert_eq!(a.pts, b.pts);
+            assert_eq!(a.duration, b.duration);
+        }
+    }
+}
