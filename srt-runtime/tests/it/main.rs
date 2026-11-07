@@ -27,3 +27,4 @@ mod rfc_vectors;
 mod tokio_crypto_interop;
 mod trait_round_trip;
 mod tsbpd_delivery;
+mod error_variants;

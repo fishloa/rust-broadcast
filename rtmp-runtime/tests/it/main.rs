@@ -6,3 +6,4 @@ mod ingest_fixture;
 mod io_timeouts;
 mod play_peer;
 mod secret_hygiene;
+mod error_variants;

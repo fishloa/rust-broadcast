@@ -17,3 +17,4 @@ mod serialize_field_width;
 mod short_buffers;
 mod spec_drift;
 mod spec_samples;
+mod error_variants;
