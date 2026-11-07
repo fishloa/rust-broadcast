@@ -66,6 +66,8 @@ fn short_output_is_output_buffer_too_small() {
     };
     assert_eq!(
         Serialize::serialize_into(&fdt, &mut [0u8; 2]),
-        Err(Error::OutputBufferTooSmall { need: 3, have: 2 })
+        Err(Error::OutputBufferTooSmall(
+            broadcast_common::error::OutputBufferTooSmall { need: 3, have: 2 }
+        ))
     );
 }

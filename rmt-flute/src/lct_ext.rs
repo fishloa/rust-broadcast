@@ -158,10 +158,10 @@ impl ExtTime {
         // byte-exact round-trip) rather than an error.
         let use_reserved = use_field & USE_RESERVED_MASK;
         if (use_field & USE_SCT_LOW != 0) && (use_field & USE_SCT_HIGH == 0) {
-            return Err(Error::InvalidField {
-                what: "EXT_TIME Use",
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "EXT_TIME Use",
                 reason: "SCT-Low set without SCT-High",
-            });
+            }));
         }
 
         let mut off = 2;
@@ -295,7 +295,7 @@ mod tests {
         let content = [0x40u8, 0x00, 0x00, 0x00, 0x00, 0x01];
         assert!(matches!(
             ExtTime::parse(&content),
-            Err(Error::InvalidField { .. })
+            Err(Error::InvalidField(..))
         ));
     }
 

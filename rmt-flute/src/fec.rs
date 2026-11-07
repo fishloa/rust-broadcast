@@ -79,16 +79,16 @@ impl SourceBlockPartition {
         max_source_block_length: u32,
     ) -> Result<Self> {
         if encoding_symbol_length == 0 {
-            return Err(Error::InvalidField {
-                what: "Encoding-Symbol-Length",
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "Encoding-Symbol-Length",
                 reason: "must be non-zero",
-            });
+            }));
         }
         if max_source_block_length == 0 {
-            return Err(Error::InvalidField {
-                what: "Maximum-Source-Block-Length",
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "Maximum-Source-Block-Length",
                 reason: "must be non-zero",
-            });
+            }));
         }
         let e = encoding_symbol_length as u64;
         let b = max_source_block_length as u64;
@@ -164,17 +164,17 @@ mod tests {
     fn rejects_zero_divisors() {
         assert!(matches!(
             SourceBlockPartition::new(100, 0, 10),
-            Err(Error::InvalidField {
-                what: "Encoding-Symbol-Length",
+            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "Encoding-Symbol-Length",
                 ..
-            })
+            }))
         ));
         assert!(matches!(
             SourceBlockPartition::new(100, 10, 0),
-            Err(Error::InvalidField {
-                what: "Maximum-Source-Block-Length",
+            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "Maximum-Source-Block-Length",
                 ..
-            })
+            }))
         ));
     }
 
