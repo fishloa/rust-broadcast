@@ -8,9 +8,10 @@
 //! External tools skip loudly when absent.
 
 use crate::support::hdr_route::{
-    Source, contains, dump_route, init_bytes, load, master_text, route_app, route_app_from, scratch,
+    Source, contains, dump_route, init_bytes, load, master_text, route_app, route_app_from,
+    scratch, validator_comments,
 };
-use test_bounded::tool_available;
+use test_bounded::{msv, tool_available};
 
 use broadcast_hls::MasterPlaylist;
 
@@ -194,41 +195,6 @@ async fn gpac_dumps_the_mdcv_and_clli_boxes() {
     }
 }
 
-async fn validator_comments(fixture: &str, name: &str) -> Vec<String> {
-    let app = route_app(fixture);
-    let dir = scratch(name);
-    dump_route(&app, &dir).await;
-    let report = dir.join("report.json");
-    let mut cmd = std::process::Command::new("mediastreamvalidator");
-    cmd.current_dir(&dir)
-        .arg("--quiet")
-        .arg("-t")
-        .arg("5")
-        .arg("-O")
-        .arg(&report)
-        .arg("master.m3u8");
-    test_bounded::output_bounded(&mut cmd, std::time::Duration::from_secs(35)).expect("run");
-    let text = std::fs::read_to_string(&report).expect("validator report");
-    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let mut comments = Vec::new();
-    fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
-        match v {
-            serde_json::Value::Object(m) => {
-                if let Some(c) = m.get("errorComment").and_then(|c| c.as_str()) {
-                    out.push(c.to_string());
-                }
-                m.values().for_each(|c| walk(c, out));
-            }
-            serde_json::Value::Array(a) => a.iter().for_each(|c| walk(c, out)),
-            _ => {}
-        }
-    }
-    walk(&json, &mut comments);
-    comments.sort();
-    comments.dedup();
-    comments
-}
-
 #[tokio::test]
 async fn mediastreamvalidator_reports_no_hdr_specific_finding() {
     if test_fixtures::require(HDR_FIXTURE, "hdr10_route").is_none()
@@ -236,17 +202,22 @@ async fn mediastreamvalidator_reports_no_hdr_specific_finding() {
     {
         return;
     }
-    if !tool_available("mediastreamvalidator", "--version") {
+    if !msv::available() {
         eprintln!(
             "SKIP mediastreamvalidator_reports_no_hdr_specific_finding: mediastreamvalidator not on PATH"
         );
         return;
     }
     let (hdr, sdr) = std::thread::scope(|scope| {
-        let hdr =
-            scope.spawn(|| shared::run_async(validator_comments(HDR_FIXTURE, "hdr10-validator")));
-        let sdr =
-            scope.spawn(|| shared::run_async(validator_comments(SDR_FIXTURE, "sdr-validator")));
+        let hdr = scope.spawn(|| {
+            shared::run_async(validator_comments(
+                route_app(HDR_FIXTURE),
+                "hdr10-validator",
+            ))
+        });
+        let sdr = scope.spawn(|| {
+            shared::run_async(validator_comments(route_app(SDR_FIXTURE), "sdr-validator"))
+        });
         (
             hdr.join().expect("validator thread"),
             sdr.join().expect("validator thread"),

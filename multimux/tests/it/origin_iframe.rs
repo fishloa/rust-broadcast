@@ -485,16 +485,10 @@ async fn ts_hls_no_iframe() {
 async fn iframe_validator_clean() {
     use std::fs;
     use std::path::PathBuf;
-    use std::process::Command;
     use std::time::Duration;
 
     // availability check
-    let available = std::process::Command::new("mediastreamvalidator")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !available {
+    if !test_bounded::msv::available() {
         eprintln!("SKIP iframe_validator_clean: `mediastreamvalidator` not on PATH ...");
         return;
     }
@@ -581,56 +575,8 @@ async fn iframe_validator_clean() {
     }
 
     // run validator
-    use test_bounded::output_bounded;
-    let mut cmd = Command::new("mediastreamvalidator");
-    cmd.current_dir(&scratch);
-    cmd.arg("--quiet")
-        .arg("-t")
-        .arg("5")
-        .arg("-O")
-        .arg(std::env::temp_dir().join("iframe-validator.json"))
-        .arg("master.m3u8");
-    let out = output_bounded(&mut cmd, Duration::from_secs(35)).expect("run");
-    let text = fs::read_to_string(std::env::temp_dir().join("iframe-validator.json")).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let _ = out;
-    // collect findings
-    fn collect(value: &serde_json::Value, path: &str, out: &mut Vec<(String, i64, String)>) {
-        if let serde_json::Value::Object(map) = value {
-            let parse_failed = map
-                .get("parseFailed")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if let Some(serde_json::Value::Array(messages)) = map.get("messages") {
-                for m in messages {
-                    let level = m
-                        .get("errorRequirementLevel")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-                    let lvl = if parse_failed { 1 } else { level };
-                    out.push((
-                        path.to_string(),
-                        lvl,
-                        m.get("errorComment")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    ));
-                }
-            }
-            for (k, v) in map {
-                if k != "messages" {
-                    collect(v, &format!("{path}/{k}"), out);
-                }
-            }
-        } else if let serde_json::Value::Array(items) = value {
-            for (i, v) in items.iter().enumerate() {
-                collect(v, &format!("{path}[{i}]"), out);
-            }
-        }
-    }
-    let mut findings = Vec::new();
-    collect(&json, "$", &mut findings);
+    let json = test_bounded::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(35));
+    let findings = test_bounded::msv::findings(&json);
     // Level-1 (MUST) findings Apple's validator still reports against the
     // live LL-HLS origin, each tied to its open issue. This is an exact
     // allow-list, not a suppression: any other level-1 finding fails the
