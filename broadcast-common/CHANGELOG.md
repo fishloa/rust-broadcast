@@ -3,7 +3,6 @@
 ## [Unreleased]
 ### Removed
 - `Timestamp::checked_add_nanos` (deprecated since 9.5.0): use `saturating_add_nanos`.
-- `CencScheme::to_four_cc`: no use in the workspace.
 ### Added
 - `timescale::Rounding::Ceil` and `timescale::cmp_ticks` (exact cross-timescale comparison, 0 counts as 1) for the call sites that still rescaled or compared ticks by hand (c3 L1).
 - `xml_chars::{TagAttribute, read_attributes, read_attributes_checked, read_event, message_at}`: the start-tag attribute loop (xmlns skipping, normalization, `Char` validation, namespace resolution) and the event-read / error-position helpers that `dvb-mabr`, `ttml-subtitle` and `dash-runtime` each carried a copy of (c2 H8).
