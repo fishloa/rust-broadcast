@@ -85,8 +85,6 @@ fn avc_keyframes_agree_with_demuxer_and_oracle() {
 
 // ── Test 2: HEVC — first AU is IRAP, a later AU is not ───────────────────────
 
-
-
 #[test]
 fn hevc_first_au_is_irap_rest_are_not() {
     let ts = std::fs::read(fixtures_dir().join("ts/hevc/main.ts")).expect("hevc/main.ts fixture");

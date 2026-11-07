@@ -38,8 +38,6 @@ const VIDEO_PID: u16 = 0x0100;
 // — this is a from-scratch re-implementation so Test 1's "is_sync count
 // matches the independent count" assertion is a real cross-check.
 
-
-
 /// Split an Annex B byte stream into its NAL units (start code `00 00 01`
 /// stripped, trailing `zero_byte` padding stripped).
 fn split_annexb_nals(annexb: &[u8]) -> Vec<&[u8]> {
