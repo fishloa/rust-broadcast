@@ -80,8 +80,13 @@ fn a_sentinel_with_alignment_stuffing_is_an_error_not_a_guess() {
     b[11] |= 0x0F;
     b[12] = 0xFF;
     recrc(&mut b);
-    assert!(matches!(
-        SpliceInfoSection::parse(&b),
-        Err(scte35_splice::Error::InvalidValue { .. })
-    ));
+    assert_eq!(
+        SpliceInfoSection::parse(&b).err(),
+        Some(scte35_splice::Error::InvalidField(
+            broadcast_common::error::InvalidField {
+                field: "splice_info_section.splice_command_length",
+                reason: "0xFFF sentinel and the command's extent cannot be derived from its structure"
+            }
+        ))
+    );
 }

@@ -88,10 +88,11 @@ impl Serialize for DtmfDescriptor {
         let need = self.serialized_len();
         need_out(buf, need)?;
         if self.dtmf_chars.len() > 7 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "DTMF_descriptor.dtmf_count",
-                reason: "more than 7 DTMF characters (3-bit count)",
-            });
+                value: self.dtmf_chars.len() as u64,
+                max: 7,
+            }));
         }
         header::write_header(buf, TAG, self.identifier, 2 + self.dtmf_chars.len())?;
         buf[HEADER_LEN] = self.preroll;

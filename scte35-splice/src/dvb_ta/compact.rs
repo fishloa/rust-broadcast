@@ -84,10 +84,26 @@ fn bit_err(e: BitError, have: usize, what: &'static str) -> Error {
             have,
             what,
         }),
-        _ => Error::InvalidValue {
+        BitError::ValueTooWide { value, bits } => {
+            Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: what,
+                value,
+                max: u64::MAX
+                    .checked_shr(u64::BITS.saturating_sub(bits))
+                    .unwrap_or(0),
+            })
+        }
+        BitError::TooManyBits { requested } => {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: what,
+                value: u64::from(requested),
+                reason: "bit width exceeds the 64-bit carrier",
+            })
+        }
+        _ => Error::InvalidField(broadcast_common::error::InvalidField {
             field: what,
-            reason: "value does not fit its bit width",
-        },
+            reason: "unrepresentable bit-field value",
+        }),
     }
 }
 
@@ -130,10 +146,11 @@ impl<'a> Parse<'a> for CompactScte35 {
         match message_type {
             MESSAGE_TYPE_TIME_SIGNAL => Ok(Self::TimeSignal(CompactTimeSignal::parse(body)?)),
             MESSAGE_TYPE_SPLICE_INSERT => Ok(Self::SpliceInsert(CompactSpliceInsert::parse(body)?)),
-            _ => Err(Error::InvalidValue {
+            _ => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "compact_SCTE_35.message_type",
+                value: u64::from(message_type),
                 reason: "unknown / reserved message_type",
-            }),
+            })),
         }
     }
 }
@@ -262,22 +279,25 @@ impl Serialize for CompactTimeSignal {
             "compact_time_signal.segmentation_upid_length",
         )?;
         if self.pts_time > MASK_33 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "compact_time_signal.pts_time",
-                reason: "exceeds 33-bit range",
-            });
+                value: self.pts_time,
+                max: MASK_33,
+            }));
         }
         if self.segmentation_duration > MASK_40 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "compact_time_signal.segmentation_duration",
-                reason: "exceeds 40-bit range",
-            });
+                value: self.segmentation_duration,
+                max: MASK_40,
+            }));
         }
         if self.encryption_algorithm > 0x3F {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "compact_time_signal.encryption_algorithm",
-                reason: "exceeds 6-bit range",
-            });
+                value: u64::from(self.encryption_algorithm),
+                max: 0x3F,
+            }));
         }
         let have = buf.len();
         let e = |e| bit_err(e, have, WHAT);
@@ -317,10 +337,10 @@ fn check_e_crc(encrypted_packet: bool, e_crc_32: Option<u32>) -> Result<()> {
     if encrypted_packet == e_crc_32.is_some() {
         Ok(())
     } else {
-        Err(Error::InvalidValue {
+        Err(Error::InvalidField(broadcast_common::error::InvalidField {
             field: "e_crc_32",
             reason: "must be Some exactly when encrypted_packet is set",
-        })
+        }))
     }
 }
 
@@ -427,10 +447,11 @@ impl CompactSpliceInsert {
             // descriptor_length (N) counts break_num + breaks_expected + the
             // type/reserved byte (3) plus the upid.
             if desc_len < 3 {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "compact_splice_insert.descriptor_length",
+                    value: desc_len as u64,
                     reason: "DAS body length must be at least 3 (break_num, breaks_expected, type)",
-                });
+                }));
             }
             if r.bits_remaining() < desc_len * 8 {
                 return Err(Error::LengthOverflow {
@@ -522,16 +543,18 @@ impl CompactSpliceInsert {
             None => None,
         };
         if self.pts_time > MASK_33 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "compact_splice_insert.pts_time",
-                reason: "exceeds 33-bit range",
-            });
+                value: self.pts_time,
+                max: MASK_33,
+            }));
         }
         if self.duration > MASK_33 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "compact_splice_insert.duration",
-                reason: "exceeds 33-bit range",
-            });
+                value: self.duration,
+                max: MASK_33,
+            }));
         }
         let have = buf.len();
         let e = |e| bit_err(e, have, WHAT);
@@ -665,17 +688,30 @@ mod tests {
     fn time_signal_pts_over_33_bits_is_rejected_not_masked() {
         let mut ts = sample_time_signal();
         ts.pts_time = 1u64 << 33;
-        assert!(matches!(
-            &(ts.try_to_bytes()),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            ts.try_to_bytes().err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "compact_time_signal.pts_time",
+                    value: 1u64 << 33,
+                    max: MASK_33
+                }
+            ))
+        );
     }
 
     #[test]
     fn time_signal_duration_over_40_bits_is_rejected_not_masked() {
         let mut ts = sample_time_signal();
         ts.segmentation_duration = 1u64 << 40;
-        assert!(matches!(ts.try_to_bytes(), Err(Error::InvalidValue { .. })));
+        assert_eq!(
+            ts.try_to_bytes().err(),
+            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "compact_time_signal.segmentation_duration",
+                value: 1u64 << 40,
+                max: MASK_40
+            }))
+        );
     }
 
     #[test]
@@ -728,20 +764,32 @@ mod tests {
     fn splice_insert_pts_over_33_bits_is_rejected_not_masked() {
         let mut si = sample_splice_insert(None);
         si.pts_time = 1u64 << 33;
-        assert!(matches!(
-            &(si.try_to_bytes()),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            si.try_to_bytes().err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "compact_splice_insert.pts_time",
+                    value: 1u64 << 33,
+                    max: MASK_33
+                }
+            ))
+        );
     }
 
     #[test]
     fn splice_insert_duration_over_33_bits_is_rejected_not_masked() {
         let mut si = sample_splice_insert(None);
         si.duration = 1u64 << 33;
-        assert!(matches!(
-            &(si.try_to_bytes()),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            si.try_to_bytes().err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "compact_splice_insert.duration",
+                    value: 1u64 << 33,
+                    max: MASK_33
+                }
+            ))
+        );
     }
 
     /// Table 8 against the independent packer: 152 fixed bits, the
@@ -843,10 +891,14 @@ mod tests {
     #[test]
     fn rejects_unknown_message_type() {
         let bytes = [0x7F, 0, 0, 0, 0];
-        assert!(matches!(
+        assert_eq!(
             CompactScte35::parse(&bytes).unwrap_err(),
-            Error::InvalidValue { .. }
-        ));
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "compact_SCTE_35.message_type",
+                value: 0x7F,
+                reason: "unknown / reserved message_type"
+            })
+        );
     }
 
     #[test]
