@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Session-id comparison uses `broadcast_auth::constant_time_eq`; the direct `subtle` dependency is gone (c2 L1).
 
 ## [0.8.1] - 2026-11-01
 ### Added

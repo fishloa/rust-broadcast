@@ -265,7 +265,7 @@ impl ServerSession {
                 let theirs = crate::session_header::SessionHeader::parse(value)
                     .map(|h| h.id)
                     .unwrap_or_default();
-                ids_equal(theirs.as_bytes(), ours.as_bytes())
+                broadcast_auth::constant_time_eq(theirs.as_bytes(), ours.as_bytes())
             }
             (Some(_), None) => false,
             (None, Some(_)) => !SESSION_SCOPED_METHODS.contains(method),
@@ -284,12 +284,6 @@ impl ServerSession {
             .header(headers::SERVER, self.server_header.clone());
         f(builder).build(Vec::new())
     }
-}
-
-/// Equality that does not stop at the first differing byte; lengths are not
-/// secret.
-fn ids_equal(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && bool::from(subtle::ConstantTimeEq::ct_eq(a, b))
 }
 
 fn header_value(h: Option<&headers::HeaderValue>) -> Option<&str> {

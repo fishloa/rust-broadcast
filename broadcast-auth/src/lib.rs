@@ -4,6 +4,7 @@
 
 mod authenticator;
 pub mod challenge;
+mod constant_time;
 mod credentials;
 mod error;
 mod request;
@@ -13,6 +14,7 @@ mod userinfo;
 
 pub use authenticator::{Authenticator, respond};
 pub use challenge::{BearerError, Challenge, ParsedChallenges, Scheme, parse_challenges};
+pub use constant_time::constant_time_eq;
 pub use credentials::Credentials;
 pub use error::{Error, Result};
 pub use request::RequestContext;

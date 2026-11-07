@@ -1,5 +1,7 @@
 //! The scheme-agnostic credential model shared by every auth-facing client.
 
+use crate::constant_time_eq;
+
 /// Credentials for one of the supported auth schemes.
 ///
 /// `Basic` and `Digest` both carry a username/password and are treated
@@ -42,9 +44,7 @@ pub enum Credentials {
 /// different variants are never equal.
 impl PartialEq for Credentials {
     fn eq(&self, other: &Self) -> bool {
-        use subtle::ConstantTimeEq;
-        let ct =
-            |a: &str, b: &str| a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()));
+        let ct = |a: &str, b: &str| constant_time_eq(a.as_bytes(), b.as_bytes());
         match (self, other) {
             (
                 Credentials::Basic {
