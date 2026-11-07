@@ -419,11 +419,13 @@ impl<'a> PesExtension<'a> {
             let arr: [u8; 16] = data
                 .get(cursor..end)
                 .and_then(|s| s.try_into().ok())
-                .ok_or(Error::BufferTooShort {
-                    need: end,
-                    have: data.len(),
-                    what: "PES_private_data",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: end,
+                        have: data.len(),
+                        what: "PES_private_data",
+                    },
+                ))?;
             cursor = end;
             Some(arr)
         } else {
@@ -431,18 +433,22 @@ impl<'a> PesExtension<'a> {
         };
 
         let pack_header = if flags & EXT_PACK_HEADER != 0 {
-            let pack_len = *data.get(cursor).ok_or(Error::BufferTooShort {
-                need: cursor + 1,
-                have: data.len(),
-                what: "pack_field_length",
-            })? as usize;
+            let pack_len = *data.get(cursor).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cursor + 1,
+                    have: data.len(),
+                    what: "pack_field_length",
+                },
+            ))? as usize;
             cursor += 1;
             let end = cursor + pack_len;
-            let slice = data.get(cursor..end).ok_or(Error::BufferTooShort {
-                need: end,
-                have: data.len(),
-                what: "pack_header",
-            })?;
+            let slice = data.get(cursor..end).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: end,
+                    have: data.len(),
+                    what: "pack_header",
+                },
+            ))?;
             cursor = end;
             Some(slice)
         } else {
@@ -477,29 +483,35 @@ impl<'a> PesExtension<'a> {
         };
 
         let pes_extension_field = if flags & EXT_FLAG_2 != 0 {
-            let len_byte = *data.get(cursor).ok_or(Error::BufferTooShort {
-                need: cursor + 1,
-                have: data.len(),
-                what: "PES_extension_field_length",
-            })?;
+            let len_byte = *data.get(cursor).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cursor + 1,
+                    have: data.len(),
+                    what: "PES_extension_field_length",
+                },
+            ))?;
             // Table 2-21: marker_bit(1) + PES_extension_field_length(7), not a
             // plain 8-bit length (issue #1052) — the high bit is a marker,
             // not part of the count.
             let ext_len = (len_byte & LOW7_MASK) as usize;
             cursor += 1;
             let end = cursor + ext_len;
-            let field_bytes = data.get(cursor..end).ok_or(Error::BufferTooShort {
-                need: end,
-                have: data.len(),
-                what: "PES_extension_field",
-            })?;
+            let field_bytes = data.get(cursor..end).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: end,
+                    have: data.len(),
+                    what: "PES_extension_field",
+                },
+            ))?;
             cursor = end;
             // First byte: stream_id_extension_flag(1) + 7 more bits (Table 2-21).
-            let (sie_byte, rest) = field_bytes.split_first().ok_or(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "PES_extension_field.stream_id_extension byte",
-            })?;
+            let (sie_byte, rest) = field_bytes.split_first().ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: 0,
+                    what: "PES_extension_field.stream_id_extension byte",
+                },
+            ))?;
             Some(PesExtensionField {
                 stream_id_extension_flag: (sie_byte & MSB_FLAG) != 0,
                 low_bits: sie_byte & LOW7_MASK,
@@ -762,9 +774,11 @@ impl<'a> PesPacket<'a> {
     pub fn parse(b: &'a [u8]) -> Result<Self> {
         need_in(b, MIN_LEN, "PES packet header")?;
         if b[0..3] != PACKET_START_CODE_PREFIX {
-            return Err(Error::BadStartCode(
-                (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
-            ));
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "packet_start_code_prefix",
+                expected: 0x000001,
+                found: (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
+            }));
         }
         let stream_id = StreamId(b[3]);
         let pes_packet_length = u16::from_be_bytes([b[4], b[5]]);
@@ -801,11 +815,13 @@ impl<'a> PesPacket<'a> {
         // small to hold `PES_header_data_length` is malformed (and would make
         // serialize write header bytes beyond the declared length).
         if pes_packet_length != 0 && hdr_end > payload_end {
-            return Err(Error::BufferTooShort {
-                need: hdr_end,
-                have: payload_end,
-                what: "PES_header_data_length exceeds PES_packet_length",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: hdr_end,
+                    have: payload_end,
+                    what: "PES_header_data_length exceeds PES_packet_length",
+                },
+            ));
         }
         let opt = &b[hdr_start..hdr_end];
         let mut cursor = 0usize;
@@ -1113,10 +1129,12 @@ mod tests {
         let mut out = vec![0u8; b.len() - 1];
         assert_eq!(
             pkt.serialize_into(&mut out),
-            Err(Error::OutputBufferTooSmall {
-                need: b.len(),
-                have: b.len() - 1
-            })
+            Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need: b.len(),
+                    have: b.len() - 1
+                }
+            ))
         );
     }
 
@@ -1254,13 +1272,13 @@ mod tests {
     #[test]
     fn rejects_bad_start_code() {
         let err = PesPacket::parse(&[0x00, 0x00, 0x02, 0xE0, 0x00, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BadStartCode(0x000002)));
+        assert!(matches!(err, Error::InvalidSync(e) if e.found == 0x000002));
     }
 
     #[test]
     fn rejects_short() {
         let err = PesPacket::parse(&[0x00, 0x00, 0x01]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

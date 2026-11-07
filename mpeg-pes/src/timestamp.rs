@@ -76,11 +76,13 @@ impl Dts {
 /// `marker_bit`s must be `1`.
 pub(crate) fn read(b: &[u8], prefix: u8, what: &'static str) -> Result<u64> {
     if b.len() < 5 {
-        return Err(Error::BufferTooShort {
-            need: 5,
-            have: b.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 5,
+                have: b.len(),
+                what,
+            },
+        ));
     }
     if (b[0] >> 4) != prefix {
         return Err(Error::BadTimestampPrefix(what));

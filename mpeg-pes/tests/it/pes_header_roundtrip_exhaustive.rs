@@ -365,7 +365,7 @@ fn header_overrunning_pes_packet_length_is_rejected() {
     ];
     assert!(matches!(
         PesPacket::parse(&b),
-        Err(mpeg_pes::Error::BufferTooShort { .. })
+        Err(mpeg_pes::Error::BufferTooShort(..))
     ));
 }
 
