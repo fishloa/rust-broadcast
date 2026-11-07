@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use crate::box_walk::{Box4, iter_boxes};
+use crate::box_iter::{Box4, iter_boxes};
 use broadcast_common::{Package, Serialize, Unpackage};
 use transmux::TsDemux;
 use transmux::media::{CmafMux, Media};
