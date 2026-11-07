@@ -1008,11 +1008,23 @@ mod tests {
             let skipped = format!(
                 "<SmoothStreamingMedia><Protection><ProtectionHeader>{bad}</ProtectionHeader></Protection></SmoothStreamingMedia>"
             );
-            assert!(SmoothManifest::parse(&skipped).is_err(), "skipped {bad:?}");
+            assert!(
+                matches!(
+                    SmoothManifest::parse(&skipped),
+                    Err(crate::smooth_parse::SmoothParseError::Xml { .. })
+                ),
+                "skipped {bad:?}"
+            );
             let between = format!(
                 "<SmoothStreamingMedia>{bad}<StreamIndex Type=\"video\"/></SmoothStreamingMedia>"
             );
-            assert!(SmoothManifest::parse(&between).is_err(), "between {bad:?}");
+            assert!(
+                matches!(
+                    SmoothManifest::parse(&between),
+                    Err(crate::smooth_parse::SmoothParseError::Xml { .. })
+                ),
+                "between {bad:?}"
+            );
         }
     }
 
@@ -1201,12 +1213,18 @@ mod tests {
 
     #[test]
     fn hex_decode_rejects_odd_length() {
-        assert!(hex_decode("ABC").is_err());
+        assert!(matches!(
+            hex_decode("ABC"),
+            Err(crate::smooth_parse::SmoothParseError::InvalidHex { .. })
+        ));
     }
 
     #[test]
     fn hex_decode_rejects_non_hex() {
-        assert!(hex_decode("ZZ").is_err());
+        assert!(matches!(
+            hex_decode("ZZ"),
+            Err(crate::smooth_parse::SmoothParseError::InvalidHex { .. })
+        ));
     }
 
     #[test]
@@ -1768,10 +1786,10 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        assert!(
-            track_spec_from_quality_level(TrackId::new(3), 1000, StreamType::Text, &quality)
-                .is_err()
-        );
+        assert!(matches!(
+            track_spec_from_quality_level(TrackId::new(3), 1000, StreamType::Text, &quality),
+            Err(crate::error::Error::UnsupportedCodec { .. })
+        ));
     }
 
     #[test]
@@ -1789,9 +1807,9 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        assert!(
-            track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality)
-                .is_err()
-        );
+        assert!(matches!(
+            track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 }

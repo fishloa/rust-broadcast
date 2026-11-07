@@ -454,11 +454,17 @@ fn splice_snaps_to_preceding_keyframe() {
     bad_ad_track.samples[0].flags.is_sync = false;
     let bad_ad = media_of(bad_ad_track, 0);
     assert!(
-        splice_insert(&base, &bad_ad, 9000).is_err(),
+        matches!(
+            splice_insert(&base, &bad_ad, 9000),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
         "non-sync ad first sample must error"
     );
     // concat likewise rejects a non-sync first appended sample.
-    assert!(concat(&base, &bad_ad).is_err());
+    assert!(matches!(
+        concat(&base, &bad_ad),
+        Err(transmux::error::Error::InvalidInput(..))
+    ));
 }
 
 // ---------------------------------------------------------------------------

@@ -716,31 +716,46 @@ mod tests {
     #[test]
     fn from_es_rejects_missing_sync() {
         let junk = [0u8; 32];
-        assert!(DtsCoreFrameInfo::from_es(&junk).is_err());
+        assert!(matches!(
+            DtsCoreFrameInfo::from_es(&junk),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]
     fn from_es_rejects_nblks_below_minimum() {
         let hdr = build_core_header(3, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
-        assert!(DtsCoreFrameInfo::from_es(&hdr).is_err());
+        assert!(matches!(
+            DtsCoreFrameInfo::from_es(&hdr),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]
     fn from_es_rejects_fsize_below_minimum() {
         let hdr = build_core_header(FX_NBLKS, 50, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
-        assert!(DtsCoreFrameInfo::from_es(&hdr).is_err());
+        assert!(matches!(
+            DtsCoreFrameInfo::from_es(&hdr),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]
     fn from_es_rejects_invalid_sfreq() {
         let hdr = build_core_header(FX_NBLKS, FX_FSIZE, FX_AMODE, 0b0000, FX_RATE, FX_LFF);
-        assert!(DtsCoreFrameInfo::from_es(&hdr).is_err());
+        assert!(matches!(
+            DtsCoreFrameInfo::from_es(&hdr),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]
     fn from_es_rejects_user_defined_amode() {
         let hdr = build_core_header(FX_NBLKS, FX_FSIZE, 0b010000, FX_SFREQ, FX_RATE, FX_LFF);
-        assert!(DtsCoreFrameInfo::from_es(&hdr).is_err());
+        assert!(matches!(
+            DtsCoreFrameInfo::from_es(&hdr),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]

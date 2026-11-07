@@ -106,13 +106,19 @@ mod tests {
 
     #[test]
     fn av2c_rejects_truncation_and_overlong_header() {
-        assert!(Avs2ConfigurationBox::parse(&[1, 0]).is_err());
-        assert!(Avs2ConfigurationBox::parse(&[1, 0, 3, 0, 0]).is_err());
+        assert!(matches!(
+            Avs2ConfigurationBox::parse(&[1, 0]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            Avs2ConfigurationBox::parse(&[1, 0, 3, 0, 0]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let c = Avs2ConfigurationBox::new(vec![0; 70_000]);
-        assert!(
-            c.serialize_into(&mut vec![0u8; c.serialized_len()])
-                .is_err()
-        );
+        assert!(matches!(
+            c.serialize_into(&mut vec![0u8; c.serialized_len()]),
+            Err(crate::error::Error::FieldOverflow(..))
+        ));
     }
 
     /// An `avst` entry with `av2c` round-trips; the fourcc constants agree with

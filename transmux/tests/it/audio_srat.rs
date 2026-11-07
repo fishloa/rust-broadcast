@@ -518,7 +518,10 @@ fn srat_round_trips_byte_exact() {
 #[test]
 fn truncated_srat_is_rejected() {
     let short = [0u8, 0, 0, 16, b's', b'r', b'a', b't', 0, 0, 0];
-    assert!(SamplingRateBox::parse(&short).is_err());
+    assert!(matches!(
+        SamplingRateBox::parse(&short),
+        Err(transmux::error::Error::BufferTooShort { .. })
+    ));
     // Every shorter prefix too, down to empty.
     let full = {
         let b = SamplingRateBox::new(192_000);
@@ -528,7 +531,10 @@ fn truncated_srat_is_rejected() {
     };
     for n in 0..full.len() {
         assert!(
-            SamplingRateBox::parse(&full[..n]).is_err(),
+            matches!(
+                SamplingRateBox::parse(&full[..n]),
+                Err(transmux::error::Error::BufferTooShort { .. })
+            ),
             "a {n}-byte prefix must be rejected"
         );
     }
@@ -542,7 +548,10 @@ fn srat_parser_rejects_a_foreign_four_cc() {
     buf[0..4].copy_from_slice(&16u32.to_be_bytes());
     buf[4..8].copy_from_slice(b"free");
     buf[12..16].copy_from_slice(&192_000u32.to_be_bytes());
-    assert!(SamplingRateBox::parse(&buf).is_err());
+    assert!(matches!(
+        SamplingRateBox::parse(&buf),
+        Err(transmux::error::Error::InvalidInput(..))
+    ));
     // The same bytes with the right four-CC do parse.
     buf[4..8].copy_from_slice(b"srat");
     assert_eq!(

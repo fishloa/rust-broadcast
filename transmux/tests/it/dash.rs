@@ -459,7 +459,13 @@ fn bandwidth_present_and_positive() {
 fn empty_media_rejected() {
     let media = transmux::media::Media::new(vec![], 90_000);
     let mut pkg = DashPackager::default();
-    assert!(pkg.package(&media).is_err(), "empty Media must not package");
+    assert!(
+        matches!(
+            pkg.package(&media),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
+        "empty Media must not package"
+    );
 }
 
 // ---------------------------------------------------------------------------

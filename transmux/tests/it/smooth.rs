@@ -539,7 +539,13 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
 fn empty_media_rejected() {
     let media = Media::new(vec![], 90_000);
     let mut pkg = SmoothPackager::default();
-    assert!(pkg.package(&media).is_err(), "empty Media must not package");
+    assert!(
+        matches!(
+            pkg.package(&media),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
+        "empty Media must not package"
+    );
 }
 
 /// #1022: two same-type tracks (two audio languages) must get distinct

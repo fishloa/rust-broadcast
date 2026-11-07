@@ -56,9 +56,15 @@ fn ber_length_mutation_bites() {
 #[test]
 fn ber_length_indefinite_form_rejected() {
     // 0x80 alone (indefinite form) is not permitted in KLV → error, no panic.
-    assert!(ber_length(&[0x80]).is_err());
+    assert!(matches!(
+        ber_length(&[0x80]),
+        Err(transmux::error::Error::InvalidValue { .. })
+    ));
     // Long form promising bytes that aren't there → error, no panic.
-    assert!(ber_length(&[0x82, 0x01]).is_err());
+    assert!(matches!(
+        ber_length(&[0x82, 0x01]),
+        Err(transmux::error::Error::BufferTooShort { .. })
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -255,7 +261,10 @@ fn klv_rtp_small_unit_single_packet() {
 
 #[test]
 fn klv_rtp_empty_unit_rejected() {
-    assert!(packetise_klv(&bytes::Bytes::new(), 98, 0, 0, 0, 1400).is_err());
+    assert!(matches!(
+        packetise_klv(&bytes::Bytes::new(), 98, 0, 0, 0, 1400),
+        Err(transmux::error::Error::InvalidInput(..))
+    ));
 }
 
 // ---------------------------------------------------------------------------

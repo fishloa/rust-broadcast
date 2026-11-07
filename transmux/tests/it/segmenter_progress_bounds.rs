@@ -311,19 +311,31 @@ fn section_only_track_set_is_rejected_by_every_segmenter() {
     let tracks = || vec![scte35_track(10), scte35_track(11)];
 
     assert!(
-        Segmenter::new(tracks(), TS_TIMESCALE, 1.0).is_err(),
+        matches!(
+            Segmenter::new(tracks(), TS_TIMESCALE, 1.0),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
         "CMAF Segmenter must refuse a track set with no anchor-capable track"
     );
     assert!(
-        LlSegmenter::new(tracks(), TS_TIMESCALE, 1.0, 1).is_err(),
+        matches!(
+            LlSegmenter::new(tracks(), TS_TIMESCALE, 1.0, 1),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
         "LL-DASH LlSegmenter must refuse it too"
     );
     assert!(
-        LlHlsSegmenter::with_part_target(tracks(), TS_TIMESCALE, 1.0, 250).is_err(),
+        matches!(
+            LlHlsSegmenter::with_part_target(tracks(), TS_TIMESCALE, 1.0, 250),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
         "LL-HLS LlHlsSegmenter must refuse it too"
     );
     assert!(
-        StreamingTsHlsSegmenter::new(tracks(), 1, 4).is_err(),
+        matches!(
+            StreamingTsHlsSegmenter::new(tracks(), 1, 4),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
         "streaming TS-HLS already refused it; it must keep doing so"
     );
 }

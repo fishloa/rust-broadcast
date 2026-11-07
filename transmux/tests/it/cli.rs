@@ -185,8 +185,14 @@ fn autodetect_recognises_each_container() {
         Container::MpegPs
     );
     // Garbage must not be mistaken for any container.
-    assert!(detect_container(&[0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11, 0x22, 0x33, 0x44]).is_err());
-    assert!(detect_container(&[]).is_err());
+    assert!(matches!(
+        detect_container(&[0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11, 0x22, 0x33, 0x44]),
+        Err(transmux::cli::CliError::UnknownContainer)
+    ));
+    assert!(matches!(
+        detect_container(&[]),
+        Err(transmux::cli::CliError::UnknownContainer)
+    ));
 }
 
 /// M2TS (192-byte packets: a 4-byte timecode prefix before each 188-byte packet)
@@ -338,7 +344,10 @@ fn args_parse_representative_argv() {
     assert_eq!(b.tracks, vec![1, 2]);
 
     // Missing both input and output must be an error, not a panic.
-    assert!(Args::try_parse_from(["transmux"]).is_err());
+    assert!(matches!(
+        Args::try_parse_from(["transmux"]),
+        Err(e) if e.kind() == clap::error::ErrorKind::MissingRequiredArgument
+    ));
 
     // The command builds (so --help/--version are wired) without panic.
     Args::command().debug_assert();

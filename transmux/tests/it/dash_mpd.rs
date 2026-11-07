@@ -476,7 +476,10 @@ fn timeline_addressing_without_segments_is_rejected() {
         ..DashPackager::default()
     };
     assert!(
-        pkg.package(&media).is_err(),
+        matches!(
+            pkg.package(&media),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
         "Addressing::Timeline with no DashPackager::segments must error, not silently \
          fall back to a whole-track SegmentTimeline"
     );

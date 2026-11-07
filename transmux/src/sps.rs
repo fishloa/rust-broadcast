@@ -2398,7 +2398,10 @@ mod tests {
             // in it.
             for cut in 4..nal.len() {
                 assert!(
-                    decode_vvc_sps(&nal[..cut]).is_err(),
+                    matches!(
+                        decode_vvc_sps(&nal[..cut]),
+                        Err(crate::error::Error::BufferTooShort { .. })
+                    ),
                     "additional={additional} cut={cut} of {} must error",
                     nal.len()
                 );
@@ -2532,9 +2535,15 @@ mod tests {
     fn vvc_sps_gci_present_truncated_is_error_not_panic() {
         // Only the header + a few bits: the dimensions are never reached.
         let nal: &[u8] = &[0x00, 0x78, 0x00, 0x40];
-        assert!(decode_vvc_sps(nal).is_err());
+        assert!(matches!(
+            decode_vvc_sps(nal),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         // A two-byte header alone (the minimum for the reader to start).
-        assert!(decode_vvc_sps(&[0x00, 0x78]).is_err());
+        assert!(matches!(
+            decode_vvc_sps(&[0x00, 0x78]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     // -------------------------------------------------------------------
@@ -4118,7 +4127,11 @@ mod tests {
         s.bits(1, 32);
         nal.extend(s.finish());
         let r = decode_hevc_vps_timing(&nal);
-        assert!(r.is_err(), "expected Err, got {:?}", r);
+        assert!(
+            matches!(r, Err(crate::error::Error::InvalidValue { .. })),
+            "expected Err, got {:?}",
+            r
+        );
     }
 
     /// A synthetic VPS (profile_tier_level for one sub-layer, `vps_max_layer_id = 0`) with
@@ -4166,7 +4179,10 @@ mod tests {
         let t = ok.expect("timing present");
         assert_eq!((t.num_units_in_tick, t.time_scale), (7, 9));
         assert!(
-            decode_hevc_vps_timing(&synth_vps(1024, 7, 9)).is_err(),
+            matches!(
+                decode_hevc_vps_timing(&synth_vps(1024, 7, 9)),
+                Err(crate::error::Error::InvalidValue { .. })
+            ),
             "1024 layer sets is out of range"
         );
     }

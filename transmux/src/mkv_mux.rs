@@ -971,7 +971,10 @@ mod tests {
             width: 640,
             height: 480,
         };
-        assert!(build_track_entry(1, TrackId::new(1), &config).is_err());
+        assert!(matches!(
+            build_track_entry(1, TrackId::new(1), &config),
+            Err(crate::error::Error::FieldOverflow(..))
+        ));
     }
 
     #[test]
@@ -1552,6 +1555,9 @@ mod tests {
     fn empty_media_rejected() {
         let media = Media::new(Vec::new(), 1000);
         let mut mux = MkvMux::new();
-        assert!(mux.package(&media).is_err());
+        assert!(matches!(
+            mux.package(&media),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 }

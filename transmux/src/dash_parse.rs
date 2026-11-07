@@ -2039,11 +2039,29 @@ mod tests {
         for bad in ["&nope;", "&#1;", "&#x1;", "\u{1}", "<![CDATA[\u{1}]]>"] {
             let skipped =
                 format!(r#"<MPD profiles="p"><Foo><Deep>{bad}</Deep></Foo><Period/></MPD>"#);
-            assert!(Mpd::parse(&skipped).is_err(), "skipped subtree {bad:?}");
+            assert!(
+                matches!(
+                    Mpd::parse(&skipped),
+                    Err(crate::dash_parse::DashParseError::Xml { .. })
+                ),
+                "skipped subtree {bad:?}"
+            );
             let between = format!(r#"<MPD profiles="p">{bad}<Period/></MPD>"#);
-            assert!(Mpd::parse(&between).is_err(), "between elements {bad:?}");
+            assert!(
+                matches!(
+                    Mpd::parse(&between),
+                    Err(crate::dash_parse::DashParseError::Xml { .. })
+                ),
+                "between elements {bad:?}"
+            );
             let base = format!(r#"<MPD profiles="p"><BaseURL>a<x>{bad}</x></BaseURL></MPD>"#);
-            assert!(Mpd::parse(&base).is_err(), "nested in BaseURL {bad:?}");
+            assert!(
+                matches!(
+                    Mpd::parse(&base),
+                    Err(crate::dash_parse::DashParseError::Xml { .. })
+                ),
+                "nested in BaseURL {bad:?}"
+            );
         }
     }
 
@@ -2491,18 +2509,27 @@ mod tests {
 
     #[test]
     fn iso8601_duration_rejects_bare_p() {
-        assert!(parse_iso8601_duration("P").is_err());
+        assert!(matches!(
+            parse_iso8601_duration("P"),
+            Err(crate::dash_parse::DashParseError::InvalidDuration { .. })
+        ));
     }
 
     #[test]
     fn iso8601_duration_rejects_missing_prefix() {
-        assert!(parse_iso8601_duration("1H2M3S").is_err());
+        assert!(matches!(
+            parse_iso8601_duration("1H2M3S"),
+            Err(crate::dash_parse::DashParseError::InvalidDuration { .. })
+        ));
     }
 
     #[test]
     fn iso8601_duration_rejects_calendar_months() {
         // `nM` in the date part (calendar months) is deliberately unsupported.
-        assert!(parse_iso8601_duration("P1M").is_err());
+        assert!(matches!(
+            parse_iso8601_duration("P1M"),
+            Err(crate::dash_parse::DashParseError::InvalidDuration { .. })
+        ));
     }
 
     // -- template resolution ------------------------------------------------

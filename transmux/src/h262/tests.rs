@@ -198,7 +198,10 @@ fn display_extension_size_feeds_the_spec_relation() {
 
 #[test]
 fn no_sequence_header_is_an_error() {
-    assert!(DisplayGeometry::from_mpeg2_es(&[0x00, 0x00, 0x01, 0x00, 0x08]).is_err());
+    assert!(matches!(
+        DisplayGeometry::from_mpeg2_es(&[0x00, 0x00, 0x01, 0x00, 0x08]),
+        Err(crate::error::Error::InvalidInput(..))
+    ));
 }
 
 #[test]

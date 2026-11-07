@@ -703,13 +703,22 @@ mod tests {
     fn dca3_other_codec_id_is_preserved_and_malformed_rejected() {
         let b = round_trip(&[0x70, 0xAB, 0xCD]);
         assert_eq!(b.config.audio_codec_id(), 7);
-        assert!(Ca3SpecificBox::parse(&[]).is_err());
+        assert!(matches!(
+            Ca3SpecificBox::parse(&[]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         assert!(
-            Ca3SpecificBox::parse(&[0x22, 0x20]).is_err(),
+            matches!(
+                Ca3SpecificBox::parse(&[0x22, 0x20]),
+                Err(crate::error::Error::BufferTooShort { .. })
+            ),
             "truncated GA config"
         );
         assert!(
-            Ca3SpecificBox::parse(&[0x22, 0x20, 0x04, 0x01, 0x40, 0x80, 0xFF]).is_err(),
+            matches!(
+                Ca3SpecificBox::parse(&[0x22, 0x20, 0x04, 0x01, 0x40, 0x80, 0xFF]),
+                Err(crate::error::Error::InvalidInput(..))
+            ),
             "trailing"
         );
         // an Other body that claims id 2 would not round-trip as GA
@@ -719,7 +728,10 @@ mod tests {
                 body: vec![0x20],
             },
         };
-        assert!(bad.serialize_into(&mut [0u8; 4]).is_err());
+        assert!(matches!(
+            bad.serialize_into(&mut [0u8; 4]),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]
@@ -732,7 +744,10 @@ mod tests {
         let b = Ca3SpecificBox {
             config: Ca3Config::GeneralBitrate(g),
         };
-        assert!(b.serialize_into(&mut [0u8; 8]).is_err());
+        assert!(matches!(
+            b.serialize_into(&mut [0u8; 8]),
+            Err(crate::error::Error::FieldOverflow(..))
+        ));
         let b = Ca3SpecificBox {
             config: Ca3Config::Lossless(Avs3AudioLlConfig {
                 sampling_frequency_index: 0xF,
@@ -745,6 +760,9 @@ mod tests {
                 reserved: 0,
             }),
         };
-        assert!(b.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            b.serialize_into(&mut [0u8; 16]),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 }

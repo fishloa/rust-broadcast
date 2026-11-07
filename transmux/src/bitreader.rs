@@ -352,7 +352,10 @@ mod tests {
         for _ in 0..8 {
             assert_eq!(r.read_ue("test").unwrap(), 0);
         }
-        assert!(r.read_ue("ue at EOF").is_err());
+        assert!(matches!(
+            r.read_ue("ue at EOF"),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     /// H.264 §9.1 / H.265 §9.2.2 bound `leadingZeroBits` (codeNum < 2^33):
@@ -367,6 +370,9 @@ mod tests {
         let mut rbsp = vec![0x00u8; 5];
         rbsp.extend_from_slice(&[0xFFu8; 6]);
         let mut r = BitReader::from_rbsp(&rbsp, "test").unwrap();
-        assert!(r.read_ue("huge ue").is_err());
+        assert!(matches!(
+            r.read_ue("huge ue"),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 }

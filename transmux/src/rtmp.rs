@@ -1639,7 +1639,10 @@ mod tests {
                 "{t} is not protocol control"
             );
             // ...and `parse` agrees, so the guard is not a second source of truth.
-            assert!(ProtocolControl::parse(t, &[]).is_err());
+            assert!(matches!(
+                ProtocolControl::parse(t, &[]),
+                Err(crate::rtmp::RtmpError::UnknownControlMsgType(..))
+            ));
         }
     }
 

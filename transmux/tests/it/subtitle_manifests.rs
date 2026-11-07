@@ -173,5 +173,8 @@ fn smooth_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
         },
     );
     let media = Media::new(vec![Track::new(spec, vec![])], 1000);
-    assert!(SmoothPackager::default().package(&media).is_err());
+    assert!(matches!(
+        SmoothPackager::default().package(&media),
+        Err(transmux::error::Error::InvalidInput(..))
+    ));
 }

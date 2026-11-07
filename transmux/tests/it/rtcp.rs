@@ -185,15 +185,15 @@ fn compound_sr_then_sdes() {
 #[test]
 fn compound_not_starting_with_report_rejected() {
     // Construction rejects a non-report leader.
-    assert!(
+    assert!(matches!(
         CompoundPacket::new(vec![RtcpPacket::App(App {
             subtype: 0,
             ssrc: 1,
             name: *b"NOPE",
             data: vec![],
-        })])
-        .is_err()
-    );
+        })]),
+        Err(rtcp_packet::Error::InvalidValue { .. })
+    ));
 
     // Parse rejects it too: serialize a lone BYE and parse as compound.
     let bye_bytes = Bye {
@@ -202,7 +202,10 @@ fn compound_not_starting_with_report_rejected() {
     }
     .try_to_bytes()
     .unwrap();
-    assert!(CompoundPacket::parse(&bye_bytes).is_err());
+    assert!(matches!(
+        CompoundPacket::parse(&bye_bytes),
+        Err(rtcp_packet::Error::InvalidValue { .. })
+    ));
 }
 
 // --- Gate 4: mutation bites (proves field decode, not passthrough). --------

@@ -592,10 +592,16 @@ mod tests {
 
     #[test]
     fn lengths_are_rejected() {
-        assert!(DoviDecoderConfigurationRecord::parse(&P81_RECORD[..23]).is_err());
+        assert!(matches!(
+            DoviDecoderConfigurationRecord::parse(&P81_RECORD[..23]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let mut long = P81_RECORD.to_vec();
         long.push(0);
-        assert!(DoviDecoderConfigurationRecord::parse(&long).is_err());
+        assert!(matches!(
+            DoviDecoderConfigurationRecord::parse(&long),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]

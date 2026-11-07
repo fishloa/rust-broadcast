@@ -1000,7 +1000,10 @@ mod tests {
     fn ctts_parse_wrong_type() {
         let bytes = [0, 0, 0, 16, b'x', b'x', b'x', b'x', 0, 0, 0, 0, 0, 0, 0, 0];
         let result = CompositionOffsetBox::parse(&bytes);
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     // -----------------------------------------------------------------------

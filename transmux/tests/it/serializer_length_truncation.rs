@@ -83,15 +83,24 @@ fn v0_header_boxes_reject_values_above_u32() {
     ];
     for (ct, mt, dur) in cases {
         assert!(
-            serialize(&mvhd(0, ct, mt, dur)).is_err(),
+            matches!(
+                serialize(&mvhd(0, ct, mt, dur)),
+                Err(transmux::error::Error::FieldOverflow(..))
+            ),
             "mvhd {ct} {mt} {dur}"
         );
         assert!(
-            serialize(&tkhd(0, ct, mt, dur)).is_err(),
+            matches!(
+                serialize(&tkhd(0, ct, mt, dur)),
+                Err(transmux::error::Error::FieldOverflow(..))
+            ),
             "tkhd {ct} {mt} {dur}"
         );
         assert!(
-            serialize(&mdhd(0, ct, mt, dur)).is_err(),
+            matches!(
+                serialize(&mdhd(0, ct, mt, dur)),
+                Err(transmux::error::Error::FieldOverflow(..))
+            ),
             "mdhd {ct} {mt} {dur}"
         );
         // Version 1 holds the same values in 64 bits.
@@ -99,7 +108,10 @@ fn v0_header_boxes_reject_values_above_u32() {
         assert!(serialize(&tkhd(1, ct, mt, dur)).is_ok());
         assert!(serialize(&mdhd(1, ct, mt, dur)).is_ok());
     }
-    assert!(serialize(&prft(0, OVER_U32)).is_err());
+    assert!(matches!(
+        serialize(&prft(0, OVER_U32)),
+        Err(transmux::error::Error::FieldOverflow(..))
+    ));
     assert!(serialize(&prft(1, OVER_U32)).is_ok());
 }
 
