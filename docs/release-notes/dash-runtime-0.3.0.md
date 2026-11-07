@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dash-runtime 0.3.0
 

@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dvb-ci-runtime 0.19.0
 

@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # rtp-packet 0.6.0
 

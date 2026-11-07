@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # broadcast-common 11.0.0
 

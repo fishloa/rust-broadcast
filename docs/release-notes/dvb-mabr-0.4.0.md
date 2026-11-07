@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dvb-mabr 0.4.0
 

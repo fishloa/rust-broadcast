@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-07
 ### Added
 - absorbs the former `tshttp-runtime` crate as module `broadcast_client::tshttp`, so `tshttp_runtime::X` becomes `broadcast_client::tshttp::X` (`TsHttpClient`, `TsHttpPolicy`, `Config`, `Action`, `Event`, `StarveKind`, `DemuxEvent`); the `serde` feature now also enables `Serialize`/`Deserialize` on those types. The module is `std` like the rest of the crate (the standalone `no_std` build is gone).
 ### Documentation

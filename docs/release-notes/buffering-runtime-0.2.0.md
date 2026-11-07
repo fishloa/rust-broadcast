@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # buffering-runtime 0.2.0
 

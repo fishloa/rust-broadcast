@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # rtmp-runtime 0.9.0
 

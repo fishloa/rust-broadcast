@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-07
 ### Removed
 - BREAKING: `Probe::feed_scte35_section` (an unused-`self` passthrough). Call `compliance_probe::scte35::check_section` directly (dedupe R2).
 ### Dependencies

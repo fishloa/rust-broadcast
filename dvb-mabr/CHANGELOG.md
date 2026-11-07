@@ -3,6 +3,8 @@
 All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-11-07
 ### Added
 - `MulticastServerConfiguration::parse_str_with_limits` and `MulticastGatewayConfiguration::parse_str_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `default_limits()` is what `parse_str` applies; `Error::TooLarge { limit, max }` reports a tripped bound.
 

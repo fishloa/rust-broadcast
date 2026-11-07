@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-07
 ### Changed
 - BREAKING: `Error::Auth` wraps `broadcast_auth::Error` (it was a flattened `String`); a `401` without a `WWW-Authenticate` header is the new `Error::MissingAuthChallenge` (c6 C6-14).
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).

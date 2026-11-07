@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # media-doctor 0.14.0
 

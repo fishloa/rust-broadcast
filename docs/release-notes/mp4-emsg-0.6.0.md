@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # mp4-emsg 0.6.0
 

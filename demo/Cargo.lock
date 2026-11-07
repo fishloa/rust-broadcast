@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "chrono",
  "erased-serde",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -237,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "12.1.0"
+version = "13.0.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "12.1.0"
+version = "13.0.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-subtitle"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -610,7 +610,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mp4-emsg"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -628,7 +628,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "rtp-packet"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -778,7 +778,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scte35-splice"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "base64",
  "broadcast-common",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.29.1"
+version = "0.30.0"
 dependencies = [
  "aes",
  "base64",

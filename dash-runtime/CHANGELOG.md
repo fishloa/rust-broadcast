@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+
+## [0.3.0] - 2026-11-07
 ### Added
 - `Limits::xml_limits()`: the XML-level bounds as the shared `broadcast_common::xml_chars::XmlLimits`; `From<XmlLimit> for Limit`.
 

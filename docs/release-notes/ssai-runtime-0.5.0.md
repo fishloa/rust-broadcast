@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # ssai-runtime 0.5.0
 

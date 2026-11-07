@@ -47,7 +47,7 @@ the specification each primitive follows.
 
 ```toml
 [dependencies]
-broadcast-common = "10"
+broadcast-common = "11"
 # embedded (no_std + alloc):
 # broadcast-common = { version = "9", default-features = false }
 ```

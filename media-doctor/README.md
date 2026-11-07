@@ -52,14 +52,14 @@ in the private repo: `private/specs` set (ISO/IEC 14496-12/-15 and 23009-1) the 
 `serde` is opt-in and off by default; enable it explicitly:
 
 ```toml
-media-doctor = { version = "0.13", features = ["serde"] }
+media-doctor = { version = "0.14", features = ["serde"] }
 ```
 
 Without `std` the library is `no_std` + `alloc`.
 
 ```toml
 [dependencies]
-media-doctor = { version = "0.13", default-features = false } # library only
+media-doctor = { version = "0.14", default-features = false } # library only
 ```
 
 ## Library quick start

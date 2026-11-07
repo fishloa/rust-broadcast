@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # broadcast-auth 0.5.2
 

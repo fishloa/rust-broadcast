@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # broadcast-hls 0.6.0
 

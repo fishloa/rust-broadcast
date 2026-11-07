@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # rmt-flute 0.8.0
 

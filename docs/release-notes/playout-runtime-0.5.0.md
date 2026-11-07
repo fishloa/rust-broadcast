@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # playout-runtime 0.5.0
 

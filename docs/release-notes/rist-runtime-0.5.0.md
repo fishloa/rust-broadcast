@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # rist-runtime 0.5.0
 

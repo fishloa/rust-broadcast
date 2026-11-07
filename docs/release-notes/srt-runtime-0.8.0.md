@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # srt-runtime 0.8.0
 

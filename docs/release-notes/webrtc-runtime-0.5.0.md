@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # webrtc-runtime 0.5.0
 

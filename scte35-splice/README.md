@@ -12,7 +12,7 @@ cueing) parser **and builder**, with the rust-broadcast family's symmetric
 
 ```toml
 [dependencies]
-scte35-splice = "4"
+scte35-splice = "5"
 ```
 
 ## What it does / what it does not
@@ -76,7 +76,7 @@ pinned by `tests/it/das_nibble_order.rs`. Independent-oracle compact vectors:
 `serde` is opt-in and off by default; enable it explicitly:
 
 ```toml
-scte35-splice = { version = "4", features = ["serde"] }
+scte35-splice = { version = "5", features = ["serde"] }
 ```
 
 ## Quick start

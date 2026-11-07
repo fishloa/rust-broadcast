@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # cc-data 0.8.0
 

@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # mpeg-ps 0.7.0
 

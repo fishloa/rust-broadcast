@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [13.0.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `COMPRESSED_MODULE_DESCRIPTOR_TAG`, `application_type_name`, `bit_rate_kbits`, `bit_rate_name`, `extended_surround_name`, `is_valid_pid`, `peid`, `phy_stream`, `sample_rate_name`, `serialize_into_at`, `surround_mode_name`, `table_section_with`, `tdm`, `usage_type_name`.
 - BREAKING: `tables::nit::NitTransportStream` and `tables::bat::BatTransportStream`: use `tables::TransportStreamEntry` (same fields and `new`).

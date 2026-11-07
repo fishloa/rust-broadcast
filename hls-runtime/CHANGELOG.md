@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-07
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - `server::engine` calls `transmux::CodecConfig::is_video` instead of a private copy of its variant list (c4 D2).

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-07
 ### Added
 - `ids::Generation`, the init-segment generation newtype, next to `SegmentSeq`/`PartIndex` (c2 L5).
 ### Removed

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-07
 ### Documented
 - Start-fill cost of the granularity gate, measured (DESIGN 0.7d): on the Apple TV input logs (rai-3, rai-3 per-chunk, rai-3-stall, france-5; closed loop, tracks registered up front) the gate costs nothing at `initial_us` 500 ms and 1.8 s; the first frame is bound by the audio lead filling in one-PES lumps (lead 703 ms at the rai-3 start for a 500 ms fill) and by audio's first delivery arriving ~0.43-0.62 s after video's. A one-step gate would start 0.1-0.2 s earlier at 300 ms but stalls rai-3 and rai-3 per-chunk, so the two-step gate and its bound are unchanged. No behaviour change.
 

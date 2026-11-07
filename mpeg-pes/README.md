@@ -40,7 +40,7 @@ Depends only on `broadcast-common`; WASM-clean.
 
 ```toml
 [dependencies]
-mpeg-pes = "0.6"
+mpeg-pes = "0.7"
 ```
 
 ## Quick start

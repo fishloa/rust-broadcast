@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # ttml-subtitle 0.5.0
 

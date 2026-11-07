@@ -6,6 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-07
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The Digest server nonce-signing secret is filled with `getrandom::fill` instead of `rand::random`; the `rand` dependency is dropped (c4 T7).

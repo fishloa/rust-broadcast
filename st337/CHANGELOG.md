@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
 ### Fixed
 - Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Changed

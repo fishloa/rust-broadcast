@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.30.0] - 2026-11-07
 ### Added
 - `Mpd::parse_with_limits` and `SmoothManifest::parse_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `dash_parse::default_limits()` and `smooth_parse::default_limits()` are what `parse` applies.
 - `CodecConfig::name()`: one label per codec family (c4 D3); `flv` and `mkv_mux` unsupported-codec errors use it, so MPEG-H, MPEG-2 video and MPEG audio read `MPEG-H 3D Audio`, `MPEG-2 Video`, `MPEG-1/2 Audio` and a subtitle track `Subtitle` in both.

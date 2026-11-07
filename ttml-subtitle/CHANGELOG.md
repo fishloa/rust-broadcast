@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-11-07
 ### Added
 - `Document::parse_str_with_limits` takes a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `default_limits()` and `MAX_TTML_BYTES` (64 MiB), `MAX_TTML_DEPTH` (128), `MAX_TTML_ELEMENTS` (2 000 000), `MAX_TTML_ATTRIBUTE_BYTES` (64 KiB) are what `parse_str` applies; `Error::TooLarge { limit, max }` reports a tripped bound.
 ### Fixed

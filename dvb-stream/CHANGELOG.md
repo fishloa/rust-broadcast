@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-07
 ### Changed
 - `SectionPump` and `T2miPumpDriver` replaced by one `PacketPump` over a `PacketSink` trait; no public API change (c3 P1).
 

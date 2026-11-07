@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # hls-runtime 0.12.0
 

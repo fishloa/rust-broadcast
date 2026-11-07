@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `into_raw`.
 ### Documentation
