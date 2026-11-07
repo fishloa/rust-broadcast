@@ -14,7 +14,7 @@
 //! - [`Segmenter::take_ready`] — drain media segments finished so far.
 //! - [`Segmenter::flush`] — finalize the trailing partial segment at end-of-stream.
 //! - [`Segmenter::mark_discontinuity`] — mark the *next* cut as discontinuous
-//!   (RFC 8216 §4.3.4.3).
+//!   (RFC 8216 §4.3.2.3).
 //! - [`Segmenter::take_ready_with_meta`] — like `take_ready` but also returns
 //!   per-segment [`SegmentMeta`] that carries the discontinuity flag for HLS
 //!   playlist assembly.
@@ -49,7 +49,7 @@
 //!
 //! # Discontinuity detection
 //!
-//! A media-timeline discontinuity (RFC 8216 §4.3.4.3) is signalled explicitly:
+//! A media-timeline discontinuity (RFC 8216 §4.3.2.3) is signalled explicitly:
 //! call [`Segmenter::mark_discontinuity`] before the next [`Segmenter::push`]
 //! call that triggers a segment cut. The *next* segment that is cut will be
 //! marked discontinuous. (A `Segmenter` cannot change its tracks' codec
@@ -265,7 +265,7 @@ pub(crate) fn no_sync_sample_error() -> Error {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegmentMeta {
     /// `true` when this segment is a media-timeline discontinuity — the
-    /// caller should emit `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.4.3)
+    /// caller should emit `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.2.3)
     /// immediately before this segment's `#EXTINF` line in the HLS playlist.
     ///
     /// Set by [`Segmenter::mark_discontinuity`].
@@ -523,7 +523,7 @@ impl Segmenter {
     }
 
     /// Mark the *next* segment cut as a media-timeline discontinuity
-    /// (RFC 8216 §4.3.4.3). The flag is consumed at the next segment boundary
+    /// (RFC 8216 §4.3.2.3). The flag is consumed at the next segment boundary
     /// and reset; call this again before each discontinuous cut.
     pub fn mark_discontinuity(&mut self) {
         self.pending_discontinuity = true;

@@ -52,7 +52,7 @@ const MILLIS_PER_SECOND: u64 = 1000;
 
 /// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
 /// parsed in: the lowest version that allows `EXT-X-MAP` without
-/// `EXT-X-I-FRAMES-ONLY` (RFC 8216 §4.4.4.5).
+/// `EXT-X-I-FRAMES-ONLY` (RFC 8216 §4.3.3.6).
 /// `moov` (ISO/IEC 14496-12 §8.2.1).
 const MOVIE_BOX: [u8; 4] = *b"moov";
 
@@ -198,7 +198,7 @@ enum InitFetch {
 }
 
 /// One Media Initialization Section: the `EXT-X-MAP` of one map-run
-/// (RFC 8216 §4.4.4.5 — a map applies to every following segment until the
+/// (RFC 8216bis §4.4.4.5 — a map applies to every following segment until the
 /// next map).
 #[derive(Debug)]
 struct InitSlot {
@@ -338,7 +338,7 @@ fn parse_rfc3339_ms(text: &str) -> Option<i64> {
 ///   means immediately after the previous sub-range of the same resource"
 ///   rule (tracked per resource URL). Each Media Initialization Section
 ///   (`EXT-X-MAP`) is fetched once, one at a time, and used for exactly the
-///   segments of its own map-run (RFC 8216 §4.4.4.5: a map applies to every
+///   segments of its own map-run (RFC 8216bis §4.4.4.5: a map applies to every
 ///   following segment until the next map).
 /// - **Dedup / coalescing**: once *any* of a segment's parts have been
 ///   individually fetched, that segment is never re-fetched whole — when it
@@ -1199,7 +1199,7 @@ impl HlsClient {
     }
 
     /// Bind Media Sequence Number `msn` to the init of `map`, the one that
-    /// applies to it (RFC 8216 §4.4.4.5), creating that init on first use.
+    /// applies to it (RFC 8216bis §4.4.4.5), creating that init on first use.
     fn bind_init(&mut self, msn: u64, map: Option<&MapTag>) -> Result<()> {
         if let Some(map) = map {
             let id = self.init_for_map(map)?;
@@ -1976,7 +1976,7 @@ impl HlsClient {
 
     /// Emit the pending `EXT-X-DISCONTINUITY` for `msn` and, when one fires,
     /// restart the TS demuxer's timeline: the timestamps after a
-    /// discontinuity are a new timeline (RFC 8216 §4.3.4.3), so the previous
+    /// discontinuity are a new timeline (RFC 8216 §4.3.2.3), so the previous
     /// 33-bit unwrap anchor must not carry across it. The old timeline's
     /// held-back final access units are flushed *before* the marker. The
     /// track set is kept ([`StreamingTsDemux::restart_timeline`]): a fresh
@@ -2769,7 +2769,7 @@ mod tests {
 
     fn byte_range_playlist(first_msn: u64, file: &str) -> String {
         // Two sub-ranges of one resource; the second omits its offset
-        // (RFC 8216 §4.4.4.9 / §4.3.2.2), so the per-URL cursor matters.
+        // (RFC 8216 §4.3.2.2), so the per-URL cursor matters.
         format!(
             "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:2\n\
              #EXT-X-MEDIA-SEQUENCE:{first_msn}\n\

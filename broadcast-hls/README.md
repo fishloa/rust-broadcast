@@ -76,7 +76,7 @@ Runnable programs: `cargo run -p broadcast-hls --example build_playlist` and `--
 ## What is implemented
 
 - **`MediaPlaylist` and `MediaSegment`:** segments with `title`, `map` (carry-forward on parse, deduplicated on render), `bitrate`, `gap`, `discontinuous`, byte ranges, and `pre_tags` (segment-defining tags kept in place), plus playlist-level `extra_tags` for unrecognised tags.
-- **`MasterPlaylist`, `Variant`, `IFrameVariant`:** multivariant playlists with `EXT-X-I-FRAME-STREAM-INF` trick-play (RFC 8216 §4.3.4.2) and `MasterPlaylist::extra_tags`.
+- **`MasterPlaylist`, `Variant`, `IFrameVariant`:** multivariant playlists with `EXT-X-I-FRAME-STREAM-INF` trick-play (RFC 8216 §4.3.4.3) and `MasterPlaylist::extra_tags`.
 - **The 28 typed tags:** including `EXT-X-INDEPENDENT-SEGMENTS`, `EXT-X-START` (`StartPoint`), `EXT-X-DEFINE` (`Define`), `EXT-X-PLAYLIST-TYPE` (`PlaylistType`), `EXT-X-GAP`, `EXT-X-BITRATE`, `EXT-X-SESSION-DATA` (`SessionData`), `EXT-X-SESSION-KEY` (`SessionKey`, `EncryptionMethod`) and `EXT-X-CONTENT-STEERING` (`ContentSteering`). `tests/it/hls_tag_completeness.rs` parses a fixture carrying all 32 and asserts typed tags populate their field and the four opaque ones survive verbatim.
 - **Low-Latency HLS** (opt-in, so a plain playlist is unchanged): `LowLatencyConfig`, `PartSpec`, `OpenSegment` (the in-progress segment at the live edge), `MapTag`, `ByteRange`, `PreloadHintType`, `RenditionReport`, `SkipInfo`. `PART-HOLD-BACK` must be at least three part targets.
 - **Discontinuities:** `EXT-X-DISCONTINUITY` and `EXT-X-DISCONTINUITY-SEQUENCE`, and `mark_init_discontinuities` (detect an init-segment change across a run).

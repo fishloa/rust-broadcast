@@ -301,7 +301,7 @@ impl<D: CaDevice> Driver<D> {
     ///
     /// # Errors
     /// [`CaError::NoCaDescriptor`] if `pmt` carries no `CA_descriptor`
-    /// (ETSI EN 300 468 §6.2.16, tag `0x09`) at programme or
+    /// (ISO/IEC 13818-1 §2.6.16, tag `0x09`) at programme or
     /// elementary-stream level — there would be nothing for the CAM to
     /// descramble. [`CaError::Io`] if sending the built `ca_pmt` fails.
     pub fn add_service(&mut self, pmt: &PmtSection<'_>) -> Result<(), CaError> {
@@ -340,7 +340,7 @@ impl<D: CaDevice> Driver<D> {
     /// # Errors
     /// [`CaError::NotManaged`] if `pmt.program_number` is not currently
     /// managed. [`CaError::NoCaDescriptor`] if `pmt` carries no
-    /// `CA_descriptor` (ETSI EN 300 468 §6.2.16, tag `0x09`) — the stored
+    /// `CA_descriptor` (ISO/IEC 13818-1 §2.6.16, tag `0x09`) — the stored
     /// record is left unchanged. [`CaError::Serialize`] if the projected
     /// `ca_pmt` has no valid wire encoding — the record is left unchanged and
     /// nothing is sent. [`CaError::Io`] if sending the built `ca_pmt` fails.
@@ -400,8 +400,8 @@ impl<D: CaDevice> Driver<D> {
         self.managed.set_requery_interval(interval);
     }
 
-    /// Feed a freshly-parsed CAT (ISO/IEC 13818-1 §2.4.4.5) to the managed
-    /// CAS-layer state: extracts its `CA_descriptor`s (EN 300 468 §6.2.16,
+    /// Feed a freshly-parsed CAT (ISO/IEC 13818-1 §2.4.4.7) to the managed
+    /// CAS-layer state: extracts its `CA_descriptor`s (ISO/IEC 13818-1 §2.6.16,
     /// CAID → EMM PID) and recomputes [`emm_pids`](Self::emm_pids) against
     /// the CAM's advertised CAIDs (last `Notification::CaInfo`, captured
     /// automatically as it arrives — see [`pump`](Self::pump)).
@@ -447,7 +447,7 @@ impl<D: CaDevice> Driver<D> {
     /// `descramble_pids() ∪ ca_pids() ∪ emm_pids() ∪ PCR ∪ CAT` — every PID class
     /// this slot needs on `ci0` (ES to descramble ∪ ECM for control words ∪
     /// EMM for entitlements ∪ each active service's PCR PID — ISO/IEC
-    /// 13818-1 §2.4.4.8 — so the descrambled TS keeps its clock reference
+    /// 13818-1 §2.4.4.9 — so the descrambled TS keeps its clock reference
     /// even when the PCR rides a dedicated PID). #763 Task 7's turnkey
     /// [`CaDescrambler`](crate::descrambler::CaDescrambler) filters its
     /// `feed_ts` input to exactly this set.
@@ -2011,7 +2011,7 @@ pub(crate) mod tests {
     /// five PMTs (verified via `cargo run -p dvb-tools -- dump ... --json`)
     /// are all clear/FTA services, and no CA-descriptor-bearing capture exists
     /// under `private/fixtures/` either. This hand-rolls the wire bytes per
-    /// ISO/IEC 13818-1 §2.4.4.8's PMT syntax instead, mirroring the exact
+    /// ISO/IEC 13818-1 §2.4.4.9's PMT syntax instead, mirroring the exact
     /// precedent already established by `dvb-ci/src/builder.rs`'s
     /// `build_test_pmt()` (a hand-rolled buffer "that mirrors a real
     /// CA-protected service") — real `CA_system_id`/`stream_type` values, real
@@ -2059,7 +2059,7 @@ pub(crate) mod tests {
     /// Same layout as [`build_ca_pmt_fixture`] but with the PCR carried on its
     /// own **dedicated** `PCR_PID` (`0x00FF`) — distinct from every ES PID
     /// (`0x0100`/`0x0101`) and CA PID (`0x0064`/`0x0065`) — a legitimate DVB
-    /// config (ISO/IEC 13818-1 §2.4.4.8) that `build_ca_pmt_fixture`'s
+    /// config (ISO/IEC 13818-1 §2.4.4.9) that `build_ca_pmt_fixture`'s
     /// `PCR_PID == video ES PID` masks: the #763 final-review regression
     /// fixture for `required_pids`/`feed_ts` PCR routing.
     pub(crate) fn build_ca_pmt_fixture_dedicated_pcr(program_number: u16) -> Vec<u8> {
@@ -2560,8 +2560,8 @@ pub(crate) mod tests {
 
     // --- #763 Task 4: set_cat + emm_pids/descramble_pids ---
 
-    /// A hand-built CAT section (ISO/IEC 13818-1 §2.4.4.5): table_id 0x01, a
-    /// flat descriptor loop of `CA_descriptor`s (EN 300 468 §6.2.16, tag
+    /// A hand-built CAT section (ISO/IEC 13818-1 §2.4.4.7): table_id 0x01, a
+    /// flat descriptor loop of `CA_descriptor`s (ISO/IEC 13818-1 §2.6.16, tag
     /// 0x09; the `ca_descriptor` helper above builds the same TLV used for
     /// PMTs). No off-air CAT capture exists in this repo's fixture corpus
     /// (verified: none of the committed `.ts` captures carry PID 0x0001),

@@ -1,4 +1,4 @@
-//! RFC 8216 §4.4.4.5: an `EXT-X-MAP` applies to every Media Segment after it
+//! RFC 8216bis §4.4.4.5: an `EXT-X-MAP` applies to every Media Segment after it
 //! until the next map, so each segment is demuxed with the init of its own
 //! map-run, however the fetches interleave. Round-6 audit F3.
 

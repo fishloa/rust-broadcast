@@ -24,7 +24,7 @@ use crate::vvc_config::VvcConfigurationBox;
 /// Whether a [`CodecConfig::Data`] elementary stream carries PES packets or
 /// PSI/private sections on its PID.
 ///
-/// ISO/IEC 13818-1 §2.4.4.8 / Table 2-34 splits `stream_type` into two
+/// ISO/IEC 13818-1 §2.4.4.9 / Table 2-34 splits `stream_type` into two
 /// carriage families: most types (subtitles, teletext, SMPTE 2038 ANC,
 /// metadata, and any unrecognised value) are PES-packetised (§2.4.3.6); a
 /// fixed set (`0x05` private_sections, `0x0A`-`0x0D` DSM-CC, `0x14` DSM-CC
@@ -370,7 +370,7 @@ pub enum CodecConfig {
         /// The raw PMT ES_info descriptor-loop bytes for this stream.
         descriptors: Vec<u8>,
         /// Whether this elementary stream carries PES packets or PSI/private
-        /// sections (ISO/IEC 13818-1 §2.4.4.8) — determines how a demuxer
+        /// sections (ISO/IEC 13818-1 §2.4.4.9) — determines how a demuxer
         /// reassembles it and how a muxer re-emits it.
         carriage: DataCarriage,
     },

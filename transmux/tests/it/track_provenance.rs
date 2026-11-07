@@ -102,7 +102,7 @@ fn parse_pat(sec: &[u8]) -> Vec<(u16, u16)> {
 }
 
 /// PMT → `(elementary_PID, stream_type, ES_info descriptor-loop bytes)` for
-/// every elementary stream (ISO/IEC 13818-1 §2.4.4.8).
+/// every elementary stream (ISO/IEC 13818-1 §2.4.4.9).
 fn parse_pmt(sec: &[u8]) -> Vec<(u16, u8, Vec<u8>)> {
     assert_eq!(sec[0], TABLE_ID_PMT, "PMT table_id");
     let body = &sec[8..sec.len() - 4]; // strip 8-byte section header + 4-byte CRC_32

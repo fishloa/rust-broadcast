@@ -22,7 +22,7 @@
 //!   the archive was last polled (the straddle boundary — see
 //!   `crate::catchup`'s own module doc). `window_secs` bounds it to the
 //!   trailing N seconds (the "catch-up window"); omitted, the whole
-//!   archive plus live tail (RFC 8216 §4.4.3.5 `EVENT` semantics — segments
+//!   archive plus live tail (RFC 8216 §4.3.3.5 `EVENT` semantics — segments
 //!   only ever get appended, never removed, since nothing here evicts
 //!   archived history the way a live rolling window does).
 //! - `GET /vod/p{N}.m3u8` — exactly one archived period's segments,

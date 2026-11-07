@@ -1,6 +1,6 @@
 //! `DemuxEvent::ClockReference` attribution on multi-program TS (issue #1354).
 //!
-//! ISO/IEC 13818-1 §2.4.3.5 / §2.4.4.8-9: a program's PCRs ride the `PCR_PID`
+//! ISO/IEC 13818-1 §2.4.3.5 / §2.4.4.9: a program's PCRs ride the `PCR_PID`
 //! its PMT names, and a multiplex has one independent clock per program. Before
 //! #1354 `StreamingTsDemux` emitted a `ClockReference` for the PCR on *any*
 //! PID and carried no program number — on the real Hot Bird capture that

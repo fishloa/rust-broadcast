@@ -16,7 +16,7 @@
 //! [`crate::build_media_segment`] already emits, but scoped to K samples:
 //!
 //! - the **first chunk** of a segment carries the segment-type box
-//!   `styp` (§8.16.4) followed by `moof` (§8.8.4) + `mdat` (§8.1.1);
+//!   `styp` (§8.16.2) followed by `moof` (§8.8.4) + `mdat` (§8.1.1);
 //! - **subsequent chunks** are a bare `moof` + `mdat`.
 //!
 //! Each chunk's `moof` has its own `mfhd.sequence_number` (§8.8.5) — contiguous

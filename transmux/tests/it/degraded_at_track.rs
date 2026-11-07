@@ -10,7 +10,7 @@
 //! `provenance.pid` against those tracks' `source_pid`.
 //!
 //! The synthetic stream hand-builds a PAT + a PMT (section byte layout as in
-//! `pmt_version_diff.rs`, ISO/IEC 13818-1 §2.4.4.3/§2.4.4.8) declaring one
+//! `pmt_version_diff.rs`, ISO/IEC 13818-1 §2.4.4.4/§2.4.4.9) declaring one
 //! DSM-CC PID, then damages the continuity counter on it and on a PID the
 //! PMT does not declare. The real-capture test is
 //! `ts/orf3-dvbs2-raw-zenith-tv.ts` (private).

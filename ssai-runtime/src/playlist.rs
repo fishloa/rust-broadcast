@@ -228,7 +228,7 @@ impl InterstitialDateRange {
     }
 }
 
-/// `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.3) — the tag an
+/// `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.6) — the tag an
 /// `EXT-X-DATERANGE` playlist must contain at least one of (§4.4.5.1).
 const PDT_TAG: &str = "#EXT-X-PROGRAM-DATE-TIME:";
 

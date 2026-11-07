@@ -35,7 +35,7 @@ fn playlist_has_discontinuity_at_each_splice_point() {
     );
 
     // Every #EXT-X-DISCONTINUITY line must be immediately followed by an
-    // #EXTINF line (RFC 8216 §4.3.4.3: the tag precedes the segment it marks).
+    // #EXTINF line (RFC 8216 §4.3.2.3: the tag precedes the segment it marks).
     for (line, next) in demo.m3u8.lines().zip(demo.m3u8.lines().skip(1)) {
         if line == "#EXT-X-DISCONTINUITY" {
             assert!(

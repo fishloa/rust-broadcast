@@ -38,7 +38,7 @@ pub struct EventProvenance {
     /// whatever unit the container demuxes in (e.g. the 188-byte TS packet
     /// index), when the container has one.
     pub packet_index: Option<u64>,
-    /// The MPEG-2 TS `program_number` (ISO/IEC 13818-1 §2.4.4.8, PAT/PMT)
+    /// The MPEG-2 TS `program_number` (ISO/IEC 13818-1 §2.4.4.9, PAT/PMT)
     /// the event is attributed to, when the container has programs and the
     /// attribution is known. Today only [`DemuxEvent::ClockReference`] sets
     /// it: the program whose PMT names the carrying PID as its `PCR_PID`.
@@ -355,7 +355,7 @@ pub enum DemuxEvent {
     /// concept (FLV, RTP) never emits this.
     ///
     /// **TS attribution (issue #1354).** A program's clock is the PCR carried
-    /// on the `PCR_PID` its PMT names (§2.4.4.8-9, Table 2-33; §2.4.3.5: the PCR
+    /// on the `PCR_PID` its PMT names (§2.4.4.9, Table 2-33; §2.4.3.5: the PCR
     /// fields are "carried in the adaptation field of the transport stream
     /// packets with a PID value equal to the PCR_PID"), and a multiplex has one
     /// independent clock per program. So once the PMTs the PAT announces are

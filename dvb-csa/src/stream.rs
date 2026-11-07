@@ -1,6 +1,6 @@
 //! Stream cipher — LFSR-based keystream generator.
 //!
-//! Match-exact reimplementation of libdvbcsa's dvbcsa_stream_xor.
+//! Match-exact reimplementation of libdvbcsa's dvbcsa_stream_xor (the CSA2 algorithm text is not vendored in private/specs; ETSI TS 100 289 covers CSA v3 signalling only).
 //! Uses two 40-bit shift registers (A, B) with sboxes, CFED chain,
 //! and output table STREAM_OUT.
 use super::tables::{STREAM_CDEF, STREAM_OUT, STREAM_SBOX};

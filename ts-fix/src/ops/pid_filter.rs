@@ -24,8 +24,8 @@
 //!
 //! # Spec
 //!
-//! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.3 (PAT) / §2.4.4.6 (CAT) /
-//! §2.4.4.8 (PMT) / §2.6.16 (CA_descriptor).
+//! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.4 (PAT) / §2.4.4.7 (CAT) /
+//! §2.4.4.9 (PMT) / §2.6.16 (CA_descriptor).
 
 use alloc::collections::BTreeSet;
 use mpeg_ts::pid::Pid;
@@ -40,9 +40,9 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_paylo
 
 use crate::ops::{Op, StreamModel};
 
-/// PAT well-known PID (ISO/IEC 13818-1 §2.4.4.3).
+/// PAT well-known PID (ISO/IEC 13818-1 §2.4.4.4).
 const PAT_PID: Pid = Pid::new(0x0000);
-/// CAT well-known PID (ISO/IEC 13818-1 §2.4.4.6).
+/// CAT well-known PID (ISO/IEC 13818-1 §2.4.4.7).
 const CAT_PID: Pid = Pid::new(0x0001);
 /// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
 const NULL_PID: Pid = Pid::new(0x1FFF);
@@ -133,12 +133,12 @@ enum ServiceState {
     Resolved {
         program_number: u16,
         pmt_pid: Pid,
-        /// Last observed PAT `version_number` (ISO/IEC 13818-1 §2.4.4.3).
+        /// Last observed PAT `version_number` (ISO/IEC 13818-1 §2.4.4.4).
         pat_version: u8,
-        /// Last observed PMT `version_number` (ISO/IEC 13818-1 §2.4.4.8).
+        /// Last observed PMT `version_number` (ISO/IEC 13818-1 §2.4.4.9).
         pmt_version: u8,
         /// Last observed CAT `version_number`, or `None` until a CAT section
-        /// has been parsed (ISO/IEC 13818-1 §2.4.4.6).
+        /// has been parsed (ISO/IEC 13818-1 §2.4.4.7).
         cat_version: Option<u8>,
         /// Reassembles PAT sections on PID 0x0000.
         pat_reasm: SectionReassembler,
@@ -194,7 +194,7 @@ fn resolve_keep_set(
     for stream in &pmt.streams {
         keep.insert(stream.elementary_pid);
     }
-    // ECM PIDs from the PMT program-info loop (§2.4.4.8 / §2.6.16).
+    // ECM PIDs from the PMT program-info loop (§2.4.4.9 / §2.6.16).
     let mut has_ca = false;
     for pid in ca_pids_in_loop(pmt.program_info.raw()) {
         keep.insert(pid);
@@ -361,7 +361,7 @@ impl PidFilterOp {
                         };
                         // The PMT that initially resolved the state is the
                         // reference version; only a *different* version is a
-                        // change (§2.4.4.8).
+                        // change (§2.4.4.9).
                         if pmt.version_number == *pmt_version {
                             continue;
                         }
@@ -388,7 +388,7 @@ impl PidFilterOp {
                         };
                         // The PAT version observed when the state resolved is
                         // the reference; only a different version is a change
-                        // (§2.4.4.3).
+                        // (§2.4.4.4).
                         if pat.version_number == *pat_version {
                             continue;
                         }
@@ -421,7 +421,7 @@ impl PidFilterOp {
                         }
                         *cat_version = Some(cat.version_number);
                         // Add the CAT's EMM PIDs to the keep-set (ISO/IEC
-                        // 13818-1 §2.4.4.6 — the CA_descriptor's ca_pid here
+                        // 13818-1 §2.4.4.7 — the CA_descriptor's ca_pid here
                         // is an EMM PID).
                         keep.insert(CAT_PID);
                         if let Ok(entries) = cat.ca_descriptors() {

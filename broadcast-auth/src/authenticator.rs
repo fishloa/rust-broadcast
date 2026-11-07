@@ -18,7 +18,7 @@ enum SchemeState {
 }
 
 /// Negotiates a challenge once, then answers every subsequent request in the
-/// session (RFC 7235 `WWW-Authenticate`/`Authorization`; RFC 2326 §14 for
+/// session (RFC 7235 `WWW-Authenticate`/`Authorization`; RFC 2326 §16 for
 /// RTSP; RFC 6750 for Bearer).
 ///
 /// Construct with [`Authenticator::from_challenge`] on the first `401`/`407`,

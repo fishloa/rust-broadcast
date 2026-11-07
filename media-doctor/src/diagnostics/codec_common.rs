@@ -274,7 +274,7 @@ pub(crate) mod tests {
     }
 
     /// A PAT declaring several programs whose PMTs share one PSI PID (legal —
-    /// ISO/IEC 13818-1 §2.4.4.8; the sub-tables are distinguished by
+    /// ISO/IEC 13818-1 §2.4.4.9; the sub-tables are distinguished by
     /// `table_id_extension`), each PMT carrying one elementary stream
     /// `(program_number, elementary_pid, stream_type, version_number)`.
     pub(crate) fn build_shared_pid_pmt_ts(programs: &[(u16, u16, StreamType, u8)]) -> Vec<u8> {

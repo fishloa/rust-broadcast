@@ -1,4 +1,4 @@
-//! T2-MI packet header and type parsing.
+//! T2-MI packet header and type parsing — ETSI TS 102 773 §5.1, Table 1.
 
 use num_enum::TryFromPrimitive;
 

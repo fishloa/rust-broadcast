@@ -535,7 +535,7 @@ pub(crate) fn write_pid(buf: &mut [u8], pid: mpeg_ts::pid::Pid) {
     write_pid_r(buf, pid, RESERVED_3).expect("RESERVED_3 fits 3 bits");
 }
 
-/// All-ones `reserved(3)` fill (ISO/IEC 13818-1 §2.4.4.8 etc.).
+/// All-ones `reserved(3)` fill (ISO/IEC 13818-1 §2.4.4.9 etc.).
 pub const RESERVED_3: u8 = 0x07;
 /// All-ones `reserved(4)` / `reserved_future_use(4)` fill.
 pub const RESERVED_4: u8 = 0x0F;

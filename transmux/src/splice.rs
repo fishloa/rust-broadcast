@@ -86,7 +86,7 @@
 //!
 //! # Discontinuity signalling
 //!
-//! Each join is a media-timeline discontinuity (RFC 8216 §4.3.4.3). The result
+//! Each join is a media-timeline discontinuity (RFC 8216 §4.3.2.3). The result
 //! is a [`SpliceResult`] carrying the [`Media`] plus the [`SplicePoint`]s (track
 //! id + sample index + presentation time of each join), so a downstream HLS
 //! packager / [`Segmenter`](crate::segmenter::Segmenter) can emit
@@ -115,7 +115,7 @@ use crate::pipeline::{CodecConfig, Sample};
 ///
 /// Identifies the first sample of the spliced-in contribution so a downstream
 /// packager can mark the containing segment discontinuous
-/// (`#EXT-X-DISCONTINUITY`, RFC 8216 §4.3.4.3).
+/// (`#EXT-X-DISCONTINUITY`, RFC 8216 §4.3.2.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SplicePoint {

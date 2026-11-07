@@ -711,10 +711,10 @@ impl Serialize for MovieHeaderBox {
 }
 
 // ---------------------------------------------------------------------------
-// TrackHeaderBox — tkhd (ISO/IEC 14496-12:2015 §8.2.3)
+// TrackHeaderBox — tkhd (ISO/IEC 14496-12:2015 §8.3.2)
 // ---------------------------------------------------------------------------
 
-/// Track Header Box (`tkhd`) — §8.2.3.
+/// Track Header Box (`tkhd`) — §8.3.2.
 /// v0: 32-bit creation_time, modification_time, duration.
 /// v1: 64-bit equivalents.
 #[derive(Debug, Clone, PartialEq, Eq)]

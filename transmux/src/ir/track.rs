@@ -25,11 +25,11 @@ pub struct TrackSpec {
     /// sources (fMP4/FLV/WebM/PS/RTP). (issue #582)
     pub source_pid: Option<Pid>,
     /// Raw PMT ES_info descriptor-loop bytes for this elementary stream
-    /// (ISO/IEC 13818-1 §2.4.4.8), verbatim; empty for non-TS sources.
+    /// (ISO/IEC 13818-1 §2.4.4.9), verbatim; empty for non-TS sources.
     /// transmux does not parse these — consumers use dvb-si. (issue #582)
     pub es_info_descriptors: Vec<u8>,
     /// MPEG-2 TS program_number from the declaring PMT (ISO/IEC 13818-1
-    /// §2.4.4.3); `None` for non-TS sources (fMP4/FLV/WebM/PS/RTP).
+    /// §2.4.4.4); `None` for non-TS sources (fMP4/FLV/WebM/PS/RTP).
     pub program_number: Option<ProgramNumber>,
     /// Display geometry (coded size + SPS VUI sample aspect ratio) of the
     /// track's *current* codec config, derived by [`TrackSpec::new`] from the
