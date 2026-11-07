@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn frequency_source_try_from_rejects_11() {
-        assert!(FrequencySource::try_from(0b11).is_err());
+        assert_eq!((FrequencySource::try_from(0b11)).unwrap_err().number, 3);
     }
 
     #[test]

@@ -299,7 +299,13 @@ mod tests {
     fn parse_rejects_nonzero_rfu2_byte11() {
         let mut buf = [0u8; 15];
         buf[11] = 0x01;
-        assert!(FefSubPartPayload::parse(&buf).is_err());
+        assert_eq!(
+            FefSubPartPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "10-bit RFU (rfu2)",
+                reason: "Must be zero (ETSI TS 102 773 §5.2.12)"
+            })
+        );
     }
 
     #[test]
@@ -357,8 +363,11 @@ mod tests {
 
     #[test]
     fn subpart_variety_try_from_reserved() {
-        assert!(SubpartVariety::try_from(0x0004).is_err());
-        assert!(SubpartVariety::try_from(0xFFFF).is_err());
+        assert_eq!((SubpartVariety::try_from(0x0004)).unwrap_err().number, 4);
+        assert_eq!(
+            (SubpartVariety::try_from(0xFFFF)).unwrap_err().number,
+            65535
+        );
     }
 
     #[test]

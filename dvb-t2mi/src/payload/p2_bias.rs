@@ -114,7 +114,13 @@ mod tests {
             Err(crate::error::Error::ReservedBitsViolation { .. })
         ));
         // a byte in the middle of the RFU span
-        assert!(P2BiasPayload::parse(&[0x00u8, 0x01, 0x00, 0x00, 0x00]).is_err());
+        assert_eq!(
+            P2BiasPayload::parse(&[0x00u8, 0x01, 0x00, 0x00, 0x00]).err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "17-bit RFU",
+                reason: "Must be zero (ETSI TS 102 773 §5.2.6)"
+            })
+        );
     }
 
     #[test]
@@ -144,6 +150,9 @@ mod tests {
             num_active_bias_cells_per_p2: 0,
         };
         let mut buf = [0u8; 4];
-        assert!(payload.serialize_into(&mut buf).is_err());
+        assert_eq!(
+            payload.serialize_into(&mut buf).err(),
+            Some(crate::Error::OutputBufferTooSmall { need: 5, have: 4 })
+        );
     }
 }

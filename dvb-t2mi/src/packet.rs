@@ -291,14 +291,16 @@ mod tests {
     fn packet_type_rejects_reserved() {
         // 0x22..=0x2F and 0x34..=0xFF are RFU
         for v in 0x22..=0x2F {
-            assert!(
-                PacketType::try_from(v).is_err(),
+            assert_eq!(
+                PacketType::try_from(v).unwrap_err().number,
+                v,
                 "0x{v:02x} should be rejected"
             );
         }
         for v in 0x34..=0xFF {
-            assert!(
-                PacketType::try_from(v).is_err(),
+            assert_eq!(
+                PacketType::try_from(v).unwrap_err().number,
+                v,
                 "0x{v:02x} should be rejected"
             );
         }
@@ -320,7 +322,6 @@ mod tests {
     fn parse_rejects_buffer_shorter_than_6() {
         let buf = [0x00u8; 5];
         let result = Header::parse(&buf);
-        assert!(result.is_err());
         let err = result.unwrap_err();
         if let crate::Error::BufferTooShort { need, have, what } = err {
             assert_eq!(need, HEADER_LEN);
@@ -369,7 +370,6 @@ mod tests {
     fn parse_rejects_reserved_packet_type_0x22() {
         let buf = [0x22u8, 0x00, 0x00, 0x00, 0x00, 0x08];
         let result = Header::parse(&buf);
-        assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
             crate::Error::InvalidPacketType { found: 0x22 }
@@ -390,7 +390,6 @@ mod tests {
         // byte 2 bit 3 (0x08) is rfu — must be 0
         let buf = [0x00u8, 0x00, 0x08, 0x00, 0x00, 0x08];
         let result = Header::parse(&buf);
-        assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
             crate::Error::ReservedBitsViolation { .. }
@@ -401,7 +400,13 @@ mod tests {
     fn parse_rejects_nonzero_byte3() {
         let buf = [0x00u8, 0x00, 0x00, 0x01, 0x00, 0x08];
         let result = Header::parse(&buf);
-        assert!(result.is_err());
+        assert_eq!(
+            result.err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "byte 3",
+                reason: "All 8 RFU bits must be zero (ETSI TS 102 773 §5.1)"
+            })
+        );
     }
 
     #[test]
@@ -505,7 +510,13 @@ mod tests {
         };
         let mut buf = [0u8; HEADER_LEN];
         let result = hdr.serialize_into(&mut buf);
-        assert!(result.is_err());
+        assert_eq!(
+            result.err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "t2mi_stream_id",
+                reason: "Must be in range 0..=7 (3-bit field)"
+            })
+        );
     }
 
     #[test]

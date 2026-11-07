@@ -121,7 +121,13 @@ mod tests {
     fn parse_rejects_aux_id_zero() {
         let buf = [0x00u8, 0x00, 0x00, 0xCA];
         let result = AuxIqPayload::parse(&buf);
-        assert!(result.is_err());
+        assert_eq!(
+            result.err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "aux_id",
+                reason: "aux_id out of range 1..=15 (ETSI TS 102 773 §5.2.2)"
+            })
+        );
     }
 
     #[test]
@@ -136,7 +142,13 @@ mod tests {
         let buf = [0x00u8, 0x1F, 0xFF, 0xCA];
         // rfu = 0x0F_F0 != 0 → reject
         let result = AuxIqPayload::parse(&buf);
-        assert!(result.is_err());
+        assert_eq!(
+            result.err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "byte 1 [3:0] + byte 2",
+                reason: "12-bit RFU must be zero (ETSI TS 102 773 §5.2.2)"
+            })
+        );
     }
 
     #[test]
@@ -150,7 +162,14 @@ mod tests {
 
     #[test]
     fn parse_rejects_buffer_shorter_than_3() {
-        assert!(AuxIqPayload::parse(&[0x00]).is_err());
+        assert_eq!(
+            AuxIqPayload::parse(&[0x00]).err(),
+            Some(crate::Error::BufferTooShort {
+                need: 3,
+                have: 1,
+                what: "AuxIqPayload header"
+            })
+        );
         assert!(matches!(
             &(AuxIqPayload::parse(&[])),
             Err(crate::error::Error::BufferTooShort { .. })
@@ -178,7 +197,13 @@ mod tests {
             aux_stream_data: &[],
         };
         let mut buf = [0u8; 3];
-        assert!(payload.serialize_into(&mut buf).is_err());
+        assert_eq!(
+            payload.serialize_into(&mut buf).err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "aux_id",
+                reason: "aux_id out of range 1..=15 (ETSI TS 102 773 §5.2.2)"
+            })
+        );
     }
 
     #[test]

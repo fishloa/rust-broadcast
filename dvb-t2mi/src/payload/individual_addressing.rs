@@ -1383,8 +1383,14 @@ mod tests {
 
     #[test]
     fn addressing_function_tag_try_from_rejects_unknown() {
-        assert!(AddressingFunctionTag::try_from(0x14).is_err());
-        assert!(AddressingFunctionTag::try_from(0xFF).is_err());
+        assert_eq!(
+            (AddressingFunctionTag::try_from(0x14)).unwrap_err().number,
+            20
+        );
+        assert_eq!(
+            (AddressingFunctionTag::try_from(0xFF)).unwrap_err().number,
+            255
+        );
     }
 
     #[test]
@@ -1436,7 +1442,14 @@ mod tests {
 
     #[test]
     fn parse_rejects_truncated_data() {
-        assert!(IndividualAddressingPayload::parse(&[0x00, 0x04, 0xAA, 0xBB]).is_err());
+        assert_eq!(
+            IndividualAddressingPayload::parse(&[0x00, 0x04, 0xAA, 0xBB]).err(),
+            Some(crate::Error::BufferTooShort {
+                need: 6,
+                have: 4,
+                what: "IndividualAddressingPayload data"
+            })
+        );
     }
 
     #[test]
@@ -1608,7 +1621,14 @@ mod tests {
     fn parse_truncated_function_header() {
         let tx_loop = [0x00, 0x01, 0x02, 0x10];
         let buf = [0x00u8, tx_loop.len() as u8, 0x00, 0x01, 0x02, 0x10];
-        assert!(IndividualAddressingPayload::parse(&buf).is_err());
+        assert_eq!(
+            IndividualAddressingPayload::parse(&buf).err(),
+            Some(crate::Error::BufferTooShort {
+                need: 5,
+                have: 4,
+                what: "function loop"
+            })
+        );
     }
 
     #[test]

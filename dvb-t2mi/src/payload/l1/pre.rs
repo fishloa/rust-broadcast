@@ -422,7 +422,14 @@ mod tests {
 
     #[test]
     fn parse_rejects_short_buffer() {
-        assert!(L1Pre::parse(&[0u8; 20]).is_err());
+        assert_eq!(
+            L1Pre::parse(&[0u8; 20]).err(),
+            Some(crate::Error::BufferTooShort {
+                need: 21,
+                have: 20,
+                what: "L1Pre"
+            })
+        );
     }
 
     /// W-T2-3: every field is `pub` and mutable; a caller can set one
@@ -432,8 +439,11 @@ mod tests {
     fn to_bytes_rejects_out_of_range_field_instead_of_panicking() {
         let mut pre = synthetic_pre();
         pre.num_rf = 8; // 3-bit field: max value is 7
-        assert!(
-            pre.to_bytes().is_err(),
+        assert_eq!(
+            pre.to_bytes().err(),
+            Some(crate::Error::L1Bits(
+                broadcast_common::bits::BitError::ValueTooWide { value: 8, bits: 3 }
+            )),
             "an out-of-range field must be rejected, not silently serialised or panic"
         );
     }

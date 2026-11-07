@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn bandwidth_try_from_rejects_6() {
-        assert!(Bandwidth::try_from(6).is_err());
+        assert_eq!((Bandwidth::try_from(6)).unwrap_err().number, 6);
     }
 
     #[test]
@@ -389,12 +389,25 @@ mod tests {
         let buf = [
             0x80u8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
-        assert!(T2TimestampPayload::parse(&buf).is_err());
+        assert_eq!(
+            T2TimestampPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "4-bit RFU",
+                reason: "Must be zero (ETSI TS 102 773 §5.2.7)"
+            })
+        );
     }
 
     #[test]
     fn parse_rejects_short_buffer() {
-        assert!(T2TimestampPayload::parse(&[0x00; 10]).is_err());
+        assert_eq!(
+            T2TimestampPayload::parse(&[0x00; 10]).err(),
+            Some(crate::Error::BufferTooShort {
+                need: 11,
+                have: 10,
+                what: "T2TimestampPayload header"
+            })
+        );
     }
 
     #[test]
