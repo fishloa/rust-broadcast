@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::string::String;
+#[cfg(feature = "std")]
 use broadcast_common::xml_chars::XmlLimit;
 use thiserror::Error;
 
@@ -20,6 +21,7 @@ pub enum Error {
     /// The document exceeded an input bound
     /// ([`XmlLimits`](broadcast_common::xml_chars::XmlLimits)); raise it with
     /// [`Document::parse_str_with_limits`](crate::Document::parse_str_with_limits).
+    #[cfg(feature = "std")]
     #[error("document exceeds the {limit} limit of {max}")]
     TooLarge {
         /// The bound that tripped.
