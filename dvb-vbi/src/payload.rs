@@ -23,6 +23,7 @@
 //!   retained for round-trip fidelity.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::data_unit_id::DataUnitId;
 use crate::error::{Error, Result};
@@ -140,13 +141,7 @@ impl TeletextDataField {
     /// Parse exactly one Teletext data field from `data` (`data` must be the
     /// data-unit body of `data_unit_length` bytes).
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < TELETEXT_FIELD_LEN {
-            return Err(Error::BufferTooShort {
-                need: TELETEXT_FIELD_LEN,
-                have: data.len(),
-                what: "txt_data_field",
-            });
-        }
+        need_in(data, TELETEXT_FIELD_LEN, "txt_data_field")?;
         let header = LineHeader::from_byte(data[0]);
         let framing_code = data[1];
         let mut txt_data_block = [0u8; TXT_DATA_BLOCK_LEN];
@@ -160,12 +155,7 @@ impl TeletextDataField {
 
     /// Serialize into `out`, returning the number of bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
-        if out.len() < TELETEXT_FIELD_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: TELETEXT_FIELD_LEN,
-                have: out.len(),
-            });
-        }
+        need_out(out, TELETEXT_FIELD_LEN)?;
         out[0] = self.header.to_byte()?;
         out[1] = self.framing_code;
         out[2..2 + TXT_DATA_BLOCK_LEN].copy_from_slice(&self.txt_data_block);
@@ -200,13 +190,7 @@ impl VpsDataField {
 
     /// Parse exactly one VPS data field from `data`.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < VPS_FIELD_LEN {
-            return Err(Error::BufferTooShort {
-                need: VPS_FIELD_LEN,
-                have: data.len(),
-                what: "vps_data_field",
-            });
-        }
+        need_in(data, VPS_FIELD_LEN, "vps_data_field")?;
         let header = LineHeader::from_byte(data[0]);
         let mut vps_data_block = [0u8; VPS_DATA_BLOCK_LEN];
         vps_data_block.copy_from_slice(&data[1..1 + VPS_DATA_BLOCK_LEN]);
@@ -218,12 +202,7 @@ impl VpsDataField {
 
     /// Serialize into `out`, returning the number of bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
-        if out.len() < VPS_FIELD_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: VPS_FIELD_LEN,
-                have: out.len(),
-            });
-        }
+        need_out(out, VPS_FIELD_LEN)?;
         out[0] = self.header.to_byte()?;
         out[1..1 + VPS_DATA_BLOCK_LEN].copy_from_slice(&self.vps_data_block);
         Ok(VPS_FIELD_LEN)
@@ -272,13 +251,7 @@ impl WssDataField {
     /// not validated (decoders ignore RFU) but is kept in
     /// [`reserved_tail`](Self::reserved_tail).
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < WSS_FIELD_LEN {
-            return Err(Error::BufferTooShort {
-                need: WSS_FIELD_LEN,
-                have: data.len(),
-                what: "wss_data_field",
-            });
-        }
+        need_in(data, WSS_FIELD_LEN, "wss_data_field")?;
         let header = LineHeader::from_byte(data[0]);
         // wss bits [13:6] in byte1, [5:0] in the high 6 bits of byte2.
         let wss_data_block =
@@ -293,12 +266,7 @@ impl WssDataField {
     /// Serialize into `out`, returning the number of bytes written. The 14-bit
     /// `wss_data_block` is range-checked and the preserved RFU tail is emitted.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
-        if out.len() < WSS_FIELD_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: WSS_FIELD_LEN,
-                have: out.len(),
-            });
-        }
+        need_out(out, WSS_FIELD_LEN)?;
         if self.wss_data_block > WSS_DATA_BLOCK_MASK {
             return Err(Error::FieldTooWide {
                 what: "wss_data_block",
@@ -346,13 +314,7 @@ impl ClosedCaptioningDataField {
 
     /// Parse exactly one Closed Captioning data field from `data`.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < CC_FIELD_LEN {
-            return Err(Error::BufferTooShort {
-                need: CC_FIELD_LEN,
-                have: data.len(),
-                what: "closed_captioning_data_field",
-            });
-        }
+        need_in(data, CC_FIELD_LEN, "closed_captioning_data_field")?;
         let header = LineHeader::from_byte(data[0]);
         let closed_captioning_data_block = u16::from_be_bytes([data[1], data[2]]);
         Ok(ClosedCaptioningDataField {
@@ -363,12 +325,7 @@ impl ClosedCaptioningDataField {
 
     /// Serialize into `out`, returning the number of bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
-        if out.len() < CC_FIELD_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: CC_FIELD_LEN,
-                have: out.len(),
-            });
-        }
+        need_out(out, CC_FIELD_LEN)?;
         out[0] = self.header.to_byte()?;
         out[1..3].copy_from_slice(&self.closed_captioning_data_block.to_be_bytes());
         Ok(CC_FIELD_LEN)
@@ -411,13 +368,7 @@ impl<'a> MonochromeDataField<'a> {
     /// data-unit body of `data_unit_length` bytes). `n_pixels` is taken from the
     /// wire and the sample slice is borrowed from `data`.
     pub fn parse(data: &'a [u8]) -> Result<Self> {
-        if data.len() < MONO_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: MONO_HEADER_LEN,
-                have: data.len(),
-                what: "monochrome_data_field header",
-            });
-        }
+        need_in(data, MONO_HEADER_LEN, "monochrome_data_field header")?;
         let b0 = data[0];
         let first_segment = (b0 & MONO_FIRST_SEGMENT) != 0;
         let last_segment = (b0 & MONO_LAST_SEGMENT) != 0;
@@ -432,13 +383,11 @@ impl<'a> MonochromeDataField<'a> {
                 reason: "n_pixels shall be > 0 (ETSI EN 301 775 §4.9.2)",
             });
         }
-        if data.len() < MONO_HEADER_LEN + n_pixels {
-            return Err(Error::BufferTooShort {
-                need: MONO_HEADER_LEN + n_pixels,
-                have: data.len(),
-                what: "monochrome Y_value samples",
-            });
-        }
+        need_in(
+            data,
+            MONO_HEADER_LEN + n_pixels,
+            "monochrome Y_value samples",
+        )?;
         let samples = &data[MONO_HEADER_LEN..MONO_HEADER_LEN + n_pixels];
         Ok(MonochromeDataField {
             first_segment,
@@ -454,12 +403,7 @@ impl<'a> MonochromeDataField<'a> {
     /// is derived from `samples.len()`.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         if self.line_offset > MONO_LINE_OFFSET {
             return Err(Error::FieldTooWide {
                 what: "line_offset",
@@ -618,24 +562,14 @@ impl<'a> DataUnitPayload<'a> {
             DataUnitPayload::Monochrome(f) => f.serialize_into(out),
             DataUnitPayload::Stuffing { length } => {
                 let n = *length as usize;
-                if out.len() < n {
-                    return Err(Error::OutputBufferTooSmall {
-                        need: n,
-                        have: out.len(),
-                    });
-                }
+                need_out(out, n)?;
                 for b in out.iter_mut().take(n) {
                     *b = crate::data_unit_id::ID_STUFFING; // 0xFF
                 }
                 Ok(n)
             }
             DataUnitPayload::Opaque(b) => {
-                if out.len() < b.len() {
-                    return Err(Error::OutputBufferTooSmall {
-                        need: b.len(),
-                        have: out.len(),
-                    });
-                }
+                need_out(out, b.len())?;
                 out[..b.len()].copy_from_slice(b);
                 Ok(b.len())
             }
@@ -789,23 +723,11 @@ impl<'a> DataUnit<'a> {
     /// Parse a single data unit from the start of `data`, returning it and the
     /// number of bytes consumed.
     pub fn parse(data: &'a [u8]) -> Result<(Self, usize)> {
-        if data.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: data.len(),
-                what: "data_unit header (id + length)",
-            });
-        }
+        need_in(data, 2, "data_unit header (id + length)")?;
         let id = DataUnitId::from_u8(data[0]);
         let length = data[1] as usize;
         let body_end = 2 + length;
-        if data.len() < body_end {
-            return Err(Error::BufferTooShort {
-                need: body_end,
-                have: data.len(),
-                what: "data_unit body",
-            });
-        }
+        need_in(data, body_end, "data_unit body")?;
         let body = &data[2..body_end];
         let payload = DataUnitPayload::parse(id, body)?;
         // Spec fidelity: the typed payload must fit in data_unit_length; any
@@ -845,12 +767,7 @@ impl<'a> DataUnit<'a> {
         }
         self.check_stuffing_allowed()?;
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         let length = self.data_unit_length();
         if length > u8::MAX as usize {
             return Err(Error::FieldTooWide {
@@ -931,12 +848,7 @@ impl<'a> DataField<'a> {
     /// Serialize the data field into `out`, returning bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         out[0] = self.data_identifier;
         let mut off = 1;
         for unit in &self.data_units {
