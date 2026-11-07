@@ -6,7 +6,7 @@
 
 use broadcast_common::impl_spec_display;
 
-use super::model::Descriptor;
+use super::model::{Descriptor, UrlQueryInfo};
 
 /// 5.8.5.5: the role scheme.
 pub const SCHEME_ROLE: &str = "urn:mpeg:dash:role:2011";
@@ -18,10 +18,15 @@ pub const SCHEME_PERIOD_CONNECTIVITY: &str = "urn:mpeg:dash:period-connectivity:
 pub const SCHEME_RESET: &str = "urn:mpeg:dash:reset:2016";
 /// Annex I.2: URL parameter signalling (media Segment requests).
 pub const SCHEME_URLPARAM: &str = "urn:mpeg:dash:urlparam:2014";
+/// Annex I.3: the 2016 superset scheme (not understood).
+pub const SCHEME_URLPARAM_2016: &str = "urn:mpeg:dash:urlparam:2016";
 /// DASH-IF IOP v4.3: the last Segment number of a live Period.
 pub const SCHEME_LAST_SEGMENT_NUMBER: &str = "http://dashif.org/guidelines/last-segment-number";
 /// 5.5.3 rule 4: an xlink that removes its element.
 pub const XLINK_RESOLVE_TO_ZERO: &str = "urn:mpeg:dash:resolve-to-zero:2013";
+/// 5.8.5.2: the MP4 protection scheme descriptor.
+pub const SCHEME_MP4_PROTECTION: &str = "urn:mpeg:dash:mp4protection:2011";
+
 /// A 5.8.5.5 role value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -124,6 +129,15 @@ pub fn find<'a>(descriptors: &'a [Descriptor], scheme: &str) -> Option<&'a Descr
     descriptors.iter().find(|d| d.scheme_id_uri == scheme)
 }
 
+/// The `urn:mpeg:dash:urlparam:2014` information among `descriptors`.
+#[must_use]
+pub fn url_query_info(descriptors: &[Descriptor]) -> Option<&UrlQueryInfo> {
+    descriptors
+        .iter()
+        .filter(|d| d.scheme_id_uri == SCHEME_URLPARAM)
+        .find_map(|d| d.url_query.as_ref())
+}
+
 /// Schemes an `EssentialProperty` may name without making the parent element
 /// unprocessable (5.8.4.8: a client that does not understand an essential
 /// scheme drops the parent).
@@ -139,4 +153,38 @@ pub const UNDERSTOOD_ESSENTIAL: &[&str] = &[
 #[must_use]
 pub fn essential_understood(descriptor: &Descriptor) -> bool {
     UNDERSTOOD_ESSENTIAL.contains(&descriptor.scheme_id_uri.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn descriptor(scheme: &str) -> Descriptor {
+        Descriptor {
+            scheme_id_uri: scheme.into(),
+            ..Descriptor::default()
+        }
+    }
+
+    #[test]
+    fn url_query_info_picks_the_urlparam_2014_descriptor() {
+        let mut with_info = descriptor(SCHEME_URLPARAM);
+        with_info.url_query = Some(UrlQueryInfo {
+            use_mpd_url_query: true,
+            query_string: Some("a=1".into()),
+            query_template: None,
+        });
+        let mut other_scheme = descriptor(SCHEME_URLPARAM_2016);
+        other_scheme.url_query = Some(UrlQueryInfo::default());
+        let list = [other_scheme, descriptor(SCHEME_URLPARAM), with_info];
+        let info = url_query_info(&list).unwrap();
+        assert_eq!(info.query_string.as_deref(), Some("a=1"));
+        assert!(url_query_info(&list[..2]).is_none());
+    }
+
+    #[test]
+    fn scheme_constants_are_the_dash_uris() {
+        assert_eq!(SCHEME_URLPARAM_2016, "urn:mpeg:dash:urlparam:2016");
+        assert_eq!(SCHEME_MP4_PROTECTION, "urn:mpeg:dash:mp4protection:2011");
+    }
 }
