@@ -257,7 +257,14 @@ fn registry_truncation_semantics_match() {
     let reg = DescriptorRegistry::new();
     let mut it = reg.parse_loop(&bytes);
     assert!(matches!(it.next(), Some(Ok(AnyDescriptor::ShortEvent(_)))));
-    assert!(matches!(it.next(), Some(Err(_))));
+    assert_eq!(
+        it.next().and_then(Result::err),
+        Some(dvb_si::Error::BufferTooShort {
+            need: 257,
+            have: 3,
+            what: "descriptor body in loop"
+        })
+    );
     assert!(it.next().is_none());
     assert!(it.next().is_none(), "must stay fused");
 }

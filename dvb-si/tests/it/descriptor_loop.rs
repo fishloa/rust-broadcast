@@ -77,7 +77,14 @@ fn truncated_tail_yields_ok_then_err_then_fuses() {
 
     let mut it = parse_loop(&bytes);
     assert!(matches!(it.next(), Some(Ok(AnyDescriptor::ShortEvent(_)))));
-    assert!(matches!(it.next(), Some(Err(_))));
+    assert_eq!(
+        it.next().and_then(Result::err),
+        Some(dvb_si::Error::BufferTooShort {
+            need: 257,
+            have: 3,
+            what: "descriptor body in loop"
+        })
+    );
     assert!(it.next().is_none());
     assert!(it.next().is_none(), "iterator must stay fused");
 }
@@ -94,7 +101,13 @@ fn per_descriptor_error_continues() {
 
     let items: Vec<_> = parse_loop(&bytes).collect();
     assert_eq!(items.len(), 2);
-    assert!(items[0].is_err(), "malformed PDC should be Err");
+    assert_eq!(
+        items[0].as_ref().err(),
+        Some(&dvb_si::Error::InvalidDescriptor {
+            tag: 0x69,
+            reason: "PDC_descriptor length must be exactly 3"
+        })
+    );
     assert!(matches!(items[1], Ok(AnyDescriptor::Stuffing(_))));
 }
 

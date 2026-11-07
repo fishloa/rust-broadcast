@@ -1099,10 +1099,12 @@ mod tests {
     fn operation_point_rejects_bad_idc_and_truncation() {
         let mut e = HevcOperationPointEntry::new(0, vec![], vec![], 0);
         e.frame_rate = Some(HevcOpFrameRate::new(0, 1));
-        assert!(
-            HevcOperationPoint::new(vec![], vec![e])
-                .write_body()
-                .is_err()
+        assert_eq!(
+            HevcOperationPoint::new(vec![], vec![e]).write_body().err(),
+            Some(crate::error::Error::InvalidDescriptor {
+                tag: 63,
+                reason: "HEVC_operation_point_descriptor constant_frame_rate_info_idc must be 1..=3 when a frame rate is present"
+            })
         );
         assert!(matches!(
             &(HevcOperationPoint::parse_body(&[0xC1, 0x00])),

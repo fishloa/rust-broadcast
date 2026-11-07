@@ -254,8 +254,12 @@ mod tests {
 
     #[test]
     fn rejects_short_body_and_wrong_tag() {
-        assert!(
-            SchedulingDescriptor::parse(&[TAG, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_err()
+        assert_eq!(
+            SchedulingDescriptor::parse(&[TAG, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).err(),
+            Some(crate::error::Error::InvalidDescriptor {
+                tag: 1,
+                reason: "scheduling_descriptor body shorter than 14 bytes"
+            })
         );
         assert!(matches!(
             &(SchedulingDescriptor::parse(&[0x02, 0])),

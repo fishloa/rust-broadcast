@@ -358,7 +358,15 @@ mod tests {
         assert_eq!(l.raw_tags().count(), 1);
         let items: Vec<_> = l.iter().collect();
         assert_eq!(items.len(), 2);
-        assert!(items[0].is_ok() && items[1].is_err());
+        assert!(items[0].is_ok());
+        assert_eq!(
+            items[1].as_ref().err(),
+            Some(&crate::error::Error::BufferTooShort {
+                need: 6,
+                have: 3,
+                what: "descriptor body in loop"
+            })
+        );
         assert!(CarouselDescriptorLoop::default().is_empty());
     }
 
@@ -368,7 +376,13 @@ mod tests {
         let buf = [0x06, 0x02, 0x01, 0x02, 0x06, 0x01, 0x09];
         let items: Vec<_> = parse_carousel_loop(&buf).collect();
         assert_eq!(items.len(), 2);
-        assert!(items[0].is_err());
+        assert_eq!(
+            items[0].as_ref().err(),
+            Some(&crate::error::Error::InvalidDescriptor {
+                tag: 6,
+                reason: "location_descriptor body must be 1 byte"
+            })
+        );
         assert!(matches!(
             items[1].as_ref().unwrap(),
             AnyCarouselDescriptor::Location(l) if l.location_tag == 9
