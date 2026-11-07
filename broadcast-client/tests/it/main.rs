@@ -83,3 +83,4 @@ mod tracks_hold_config;
 mod ts_http_events;
 mod udp;
 mod vod;
+mod srt_rejections;
