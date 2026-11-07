@@ -1430,14 +1430,27 @@ mod tests {
             stuffing: 0,
         };
         let mut out = vec![0u8; unit.serialized_len()];
-        assert!(unit.serialize_into(&mut out).is_err());
+        assert_eq!(
+            unit.serialize_into(&mut out).err(),
+            Some(crate::Error::DataUnitIdPayloadMismatch {
+                id: 195,
+                payload: "Opaque"
+            })
+        );
     }
 
     #[test]
     fn rejects_truncated_data_unit() {
         // id 0xC3 (VPS) claims length 14 but body is short.
         let data = [0xC3u8, 0x0E, 0x00];
-        assert!(DataUnit::parse(&data).is_err());
+        assert_eq!(
+            DataUnit::parse(&data).err(),
+            Some(crate::Error::BufferTooShort {
+                need: 16,
+                have: 3,
+                what: "data_unit body"
+            })
+        );
     }
 
     #[test]
@@ -1752,7 +1765,14 @@ mod tests {
         back.serialize_into(&mut again).unwrap();
         assert_eq!(again, wire);
         // padding past what the payload allows is an error
-        assert!(vps.clone().padded_to(5).is_err());
+        assert_eq!(
+            vps.clone().padded_to(5).err(),
+            Some(crate::Error::InvalidDataUnitLength {
+                length: 5,
+                id: 195,
+                reason: "typed payload is longer than the requested data_unit_length"
+            })
+        );
     }
 
     /// #1106 W3: `stuffing_byte` is 0xFF; anything else is rejected instead of
@@ -1773,7 +1793,13 @@ mod tests {
             })
         ));
         // A bare stuffing data unit (0xFF) is checked the same way.
-        assert!(DataUnit::parse(&[0xFF, 0x02, 0xFF, 0x00]).is_err());
+        assert_eq!(
+            DataUnit::parse(&[0xFF, 0x02, 0xFF, 0x00]).err(),
+            Some(crate::Error::InvalidField {
+                what: "stuffing_byte",
+                reason: "stuffing_byte shall be 0xFF (ETSI EN 301 775 Table 1)"
+            })
+        );
         assert!(DataUnit::parse(&[0xFF, 0x02, 0xFF, 0xFF]).is_ok());
     }
 
@@ -1829,12 +1855,24 @@ mod tests {
                 vps_data_block: [0; VPS_DATA_BLOCK_LEN],
             })],
         );
-        assert!(short.validate().is_err());
+        assert_eq!(
+            short.validate().err(),
+            Some(crate::Error::InvalidField {
+                what: "data_unit_length",
+                reason: "shall be 0x2C when data_identifier is 0x10-0x1F (EN 301 775 §4.4.2); pad with DataUnit::padded_to"
+            })
+        );
 
         // Not a VBI data_identifier.
         let mut bad_di = good.clone();
         bad_di.data_identifier = 0x20;
-        assert!(bad_di.validate().is_err());
+        assert_eq!(
+            bad_di.validate().err(),
+            Some(crate::Error::InvalidField {
+                what: "data_identifier",
+                reason: "shall be 0x10-0x1F or 0x99-0x9B for VBI data (EN 301 775 §4.1)"
+            })
+        );
 
         // VPS on the wrong line parses fine but does not validate.
         let wrong_line = DataField::new(
@@ -1847,7 +1885,13 @@ mod tests {
         let mut wire = vec![0u8; wrong_line.serialized_len()];
         wrong_line.serialize_into(&mut wire).unwrap();
         let reparsed = DataField::parse(&wire).unwrap();
-        assert!(reparsed.validate().is_err());
+        assert_eq!(
+            reparsed.validate().err(),
+            Some(crate::Error::InvalidField {
+                what: "line_offset",
+                reason: "VPS is generated only on field_parity 1, line_offset 16 (§4.6.2)"
+            })
+        );
 
         // Teletext framing code vs id.
         let txt = |id, fc| {
@@ -1869,10 +1913,14 @@ mod tests {
         txt(DataUnitId::InvertedTeletext, FRAMING_CODE_INVERTED)
             .validate()
             .unwrap();
-        assert!(
+        assert_eq!(
             txt(DataUnitId::InvertedTeletext, FRAMING_CODE_EBU)
                 .validate()
-                .is_err()
+                .err(),
+            Some(crate::Error::InvalidField {
+                what: "framing_code",
+                reason: "does not match the data_unit_id's Teletext variant (§4.5.2)"
+            })
         );
 
         // Monochrome sample range.
@@ -1890,7 +1938,19 @@ mod tests {
             )
         };
         mono(&[0x80; 4]).validate().unwrap();
-        assert!(mono(&[0x00; 4]).validate().is_err());
-        assert!(mono(&[0xF0; 4]).validate().is_err());
+        assert_eq!(
+            mono(&[0x00; 4]).validate().err(),
+            Some(crate::Error::InvalidField {
+                what: "Y_value",
+                reason: "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)"
+            })
+        );
+        assert_eq!(
+            mono(&[0xF0; 4]).validate().err(),
+            Some(crate::Error::InvalidField {
+                what: "Y_value",
+                reason: "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)"
+            })
+        );
     }
 }
