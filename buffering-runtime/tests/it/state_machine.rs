@@ -1,10 +1,11 @@
 //! The state machine, policy, configuration and event queue, driven by hand.
 //! DESIGN.md section 2.4: every state x input cell is asserted.
 use crate::support::*;
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use buffering_runtime::policy::Policy;
 use buffering_runtime::{
     BufferController, ConfigField, ControllerConfig, Error, Event, Hint, JitterConfig,
-    PolicyConfig, Reason, StallMemorySnapshot, State, WRAP_27MHZ,
+    PolicyConfig, Reason, StallMemorySnapshot, State,
 };
 
 const STEP_US: u64 = 35_000;
@@ -38,7 +39,7 @@ impl Rig {
     }
     fn pos(&self) -> u64 {
         if self.running {
-            (self.clock + (self.now - self.t_set) * TICKS_PER_US) % WRAP_27MHZ
+            (self.clock + (self.now - self.t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ
         } else {
             self.clock
         }
@@ -69,8 +70,8 @@ impl Rig {
             self.now += STEP_US;
             self.media += STEP_TICKS;
             self.c
-                .on_chunk(self.now, 1316, Some(self.media % WRAP_27MHZ));
-            self.c.on_media(self.now, self.media % WRAP_27MHZ);
+                .on_chunk(self.now, 1316, Some(self.media % PCR_WRAP_27MHZ));
+            self.c.on_media(self.now, self.media % PCR_WRAP_27MHZ);
         }
     }
     fn tick(&mut self) -> Vec<Event> {
@@ -207,7 +208,7 @@ fn table_playing() {
     r.running = true;
     // clock overruns the media by 1 ms (still within th): chunks were arriving 5 ms ago
     r.feed(1);
-    let media_end = r.media % WRAP_27MHZ;
+    let media_end = r.media % PCR_WRAP_27MHZ;
     let ev = {
         r.c.on_tick(r.now + 5_000, Some(media_end - 10_000 * TICKS_PER_US));
         r.drain()
@@ -232,7 +233,7 @@ fn table_playing() {
     // silent for >= nodata_after: NoData
     let mut r = Rig::playing();
     r.advance(300_000);
-    let p = r.media % WRAP_27MHZ;
+    let p = r.media % PCR_WRAP_27MHZ;
     r.c.on_tick(r.now, Some(p));
     match r.drain()[..] {
         [Event::Pause { reason, .. }] => assert_eq!(reason, Reason::NoData),
@@ -241,7 +242,7 @@ fn table_playing() {
     // the clock ran AHEAD of the data: hold_at is clamped to the data
     let mut r = Rig::playing();
     r.advance(400_000);
-    let ahead = (r.media + 5_000_000 * TICKS_PER_US) % WRAP_27MHZ;
+    let ahead = (r.media + 5_000_000 * TICKS_PER_US) % PCR_WRAP_27MHZ;
     r.c.on_tick(r.now, Some(ahead));
     match r.drain()[..] {
         [
@@ -253,7 +254,7 @@ fn table_playing() {
         ] => {
             assert_eq!(
                 hold_at_27mhz,
-                r.media % WRAP_27MHZ,
+                r.media % PCR_WRAP_27MHZ,
                 "never ahead of the data"
             );
             assert_eq!(depth_us, 0);
@@ -377,9 +378,9 @@ fn table_buffering_discontinuity() {
     assert_eq!(kinds(&r.drain()), ["rebaselined"]);
     // refill at the TARGET (not after_rebuffer): Resume at the new timeline's first media
     r.media += 99_000_000 * TICKS_PER_US; // new timeline, far away
-    let first = r.media % WRAP_27MHZ;
+    let first = r.media % PCR_WRAP_27MHZ;
     r.feed(1);
-    let first_end = r.media % WRAP_27MHZ;
+    let first_end = r.media % PCR_WRAP_27MHZ;
     r.feed(10);
     let ev = r.tick();
     match ev[..] {
@@ -613,7 +614,7 @@ fn source_ended_turns_a_later_pause_into_no_data() {
     r.c.on_hint(r.now, Hint::SourceEnded);
     // chunks keep arriving (reason would be DataArriving) but the clock overruns
     r.feed(1);
-    let p = r.media % WRAP_27MHZ;
+    let p = r.media % PCR_WRAP_27MHZ;
     r.c.on_tick(r.now + 1_000, Some(p));
     match r.drain()[..] {
         [Event::Pause { reason, .. }] => assert_eq!(reason, Reason::NoData),
@@ -956,7 +957,7 @@ fn abi_surface_codes_are_stable() {
     assert_eq!(buffering_runtime::pts90k_to_27mhz(1 << 33), 0);
     assert_eq!(
         buffering_runtime::pts90k_to_27mhz((1 << 33) - 1),
-        WRAP_27MHZ - 300
+        PCR_WRAP_27MHZ - 300
     );
     // config() accessor
     let c = BufferController::new(ControllerConfig::DEFAULT, None).unwrap();

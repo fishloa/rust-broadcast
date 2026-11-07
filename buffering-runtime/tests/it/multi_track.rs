@@ -8,9 +8,10 @@
 //! 27 MHz wrap so every comparison also crosses it.
 
 use broadcast_common::clock33::PCR_HZ;
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use buffering_runtime::{
     BufferController, ControllerConfig, DEFAULT_TRACK, Event, EventRecord, MAX_TRACKS, State,
-    Ticks27, WRAP_27MHZ,
+    Ticks27,
 };
 
 const AUDIO: u32 = 1;
@@ -19,10 +20,10 @@ const STEP_US: u64 = 35_000;
 const VIDEO_AHEAD_US: u64 = 900_000;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
 /// 10 s before the 27 MHz wrap.
-const BASE: Ticks27 = WRAP_27MHZ - 10 * PCR_HZ;
+const BASE: Ticks27 = PCR_WRAP_27MHZ - 10 * PCR_HZ;
 
 fn at(base: Ticks27, offset_us: u64) -> Ticks27 {
-    (base + offset_us * TICKS_PER_US) % WRAP_27MHZ
+    (base + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ
 }
 
 /// Renderer + controller driven in lock step.

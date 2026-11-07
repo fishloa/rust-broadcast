@@ -282,7 +282,7 @@ fn pdv_equals_d_minus_the_windowed_minimum_on_a_long_random_trace() {
     let mut dj = DeliveryJitter::new(cfg).unwrap();
     let mut rng = Rng(2024);
     // a PCR stream that crosses the 27 MHz wrap, 35 ms spacing, random delay
-    let pcr0 = buffering_runtime::WRAP_27MHZ - 20 * 27_000_000;
+    let pcr0 = broadcast_common::clock33::PCR_WRAP_27MHZ - 20 * 27_000_000;
     let mut hist: Vec<(u64, i64)> = Vec::new(); // (arrival, D)
     let mut max_hold: Vec<(u64, u64)> = Vec::new();
     let n = 300_000u64;
@@ -295,7 +295,7 @@ fn pdv_equals_d_minus_the_windowed_minimum_on_a_long_random_trace() {
         };
         // arrival strictly follows media + delay but must be non-decreasing
         let arrival = (media_us + delay).max(hist.last().map_or(0, |h| h.0));
-        let pcr = (pcr0 + media_us * 27) % buffering_runtime::WRAP_27MHZ;
+        let pcr = (pcr0 + media_us * 27) % broadcast_common::clock33::PCR_WRAP_27MHZ;
         assert_eq!(dj.on_chunk(arrival, pcr, 1316), SampleOutcome::Accepted);
         let d = arrival as i64 - media_us as i64;
         hist.push((arrival, d));

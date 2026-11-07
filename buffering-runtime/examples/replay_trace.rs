@@ -25,7 +25,8 @@
 //! A silence longer than `--reconnect-gap-ms` before a chunk is treated as a
 //! reconnect: `SourceEnded` at the last chunk, `Reconnected` before the new one.
 
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, WRAP_27MHZ};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use buffering_runtime::{BufferController, ControllerConfig, Event, Hint};
 use std::process::ExitCode;
 
 const TICKS_PER_US: u64 = 27;
@@ -67,7 +68,7 @@ fn synthetic() -> Vec<(u64, u32, Option<u64>)> {
         v.push((
             arrival,
             1316,
-            Some((media * TICKS_PER_US + 27_000_000) % WRAP_27MHZ),
+            Some((media * TICKS_PER_US + 27_000_000) % PCR_WRAP_27MHZ),
         ));
     }
     v
@@ -125,7 +126,7 @@ fn main() -> ExitCode {
     let mut running = false;
     let (mut clock, mut t_set) = (0u64, 0u64);
     let pos =
-        |clock: u64, t_set: u64, now: u64| (clock + (now - t_set) * TICKS_PER_US) % WRAP_27MHZ;
+        |clock: u64, t_set: u64, now: u64| (clock + (now - t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ;
     let mut next_tick = 0u64;
     let mut last_arrival = 0u64;
     let out = |c: &mut BufferController,
@@ -182,7 +183,7 @@ fn main() -> ExitCode {
         }
         c.on_chunk(arrival, *bytes, *pcr);
         if let Some(pcr) = pcr {
-            let end = (*pcr + WRAP_27MHZ - offset % WRAP_27MHZ) % WRAP_27MHZ;
+            let end = (*pcr + PCR_WRAP_27MHZ - offset % PCR_WRAP_27MHZ) % PCR_WRAP_27MHZ;
             c.on_media(arrival, end);
         }
         last_arrival = arrival;

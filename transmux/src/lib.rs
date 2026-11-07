@@ -213,7 +213,7 @@ pub mod progressive_demux;
 pub mod ps_demux;
 pub mod rebase;
 pub mod repackage;
-pub mod rtcp;
+pub use rtcp_packet as rtcp;
 pub mod rtmp;
 pub mod rtp;
 pub mod rtp_dts;

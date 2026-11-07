@@ -5,9 +5,8 @@
 //! with exponential backoff (RFC 6298); the real ~1.4 s stalls have an
 //! undetermined cause, the controller must survive them from any cause.
 use crate::support::*;
-use buffering_runtime::{
-    BufferController, ControllerConfig, Event, Hint, Reason, State, WRAP_27MHZ,
-};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, Reason, State};
 
 const MIN: u64 = 300_000;
 const MAX: u64 = 3_000_000;
@@ -193,7 +192,7 @@ fn pcr_wrap_is_invisible() {
     s.gaps = vec![(15 * SEC, 1_400_000)];
     let base = run(&s, &opts(500_000));
     let mut w = s.clone();
-    w.pcr0 = WRAP_27MHZ - 20 * 27_000_000; // the stream crosses the 2^33 x 300 boundary at 20 s
+    w.pcr0 = PCR_WRAP_27MHZ - 20 * 27_000_000; // the stream crosses the 2^33 x 300 boundary at 20 s
     let r = run(&w, &opts(500_000));
     assert_eq!(r.count(|e| matches!(e, Event::Rebaselined)), 0);
     let times = |x: &Run| {
@@ -300,7 +299,7 @@ fn model_a_free_running_clock_starves_forever_model_b_obeys_and_recovers() {
     let mut next_tick = 0;
     for ch in &chunks {
         while next_tick <= ch.arrival_us {
-            let pos = clock.map(|(p0, t0)| (p0 + (next_tick - t0) * TICKS_PER_US) % WRAP_27MHZ);
+            let pos = clock.map(|(p0, t0)| (p0 + (next_tick - t0) * TICKS_PER_US) % PCR_WRAP_27MHZ);
             c.on_tick(next_tick, pos);
             while let Some(e) = c.poll_event() {
                 match e {
@@ -320,7 +319,7 @@ fn model_a_free_running_clock_starves_forever_model_b_obeys_and_recovers() {
             && ch.arrival_us > 12 * SEC
         {
             let pos = p0 + (ch.arrival_us - t0) * TICKS_PER_US;
-            let lead = (i128::from(pcr) - i128::from(pos % WRAP_27MHZ)) / 27;
+            let lead = (i128::from(pcr) - i128::from(pos % PCR_WRAP_27MHZ)) / 27;
             leads_after_gap.push(lead);
         }
     }
@@ -482,7 +481,7 @@ fn with_a_pcr_present_media_end_never_feeds_the_estimator() {
         a.on_media(ch.arrival_us, shift27(pcr, -1));
         b.on_chunk(ch.arrival_us, ch.bytes, Some(pcr));
         // wildly wrong media ends: only the lead may change, never the estimate
-        b.on_media(ch.arrival_us, rng.below(WRAP_27MHZ));
+        b.on_media(ch.arrival_us, rng.below(PCR_WRAP_27MHZ));
     }
     assert_eq!(a.stats().est, b.stats().est);
     assert_eq!(a.target_us(), b.target_us());

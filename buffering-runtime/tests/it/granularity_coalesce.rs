@@ -5,17 +5,16 @@
 //! never engaged).
 
 use broadcast_common::clock33::PCR_HZ;
-use buffering_runtime::{
-    BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27, WRAP_27MHZ,
-};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27};
 
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = WRAP_27MHZ - 5 * PCR_HZ;
+const BASE: Ticks27 = PCR_WRAP_27MHZ - 5 * PCR_HZ;
 
 fn at(offset_us: u64) -> Ticks27 {
-    (BASE + offset_us * TICKS_PER_US) % WRAP_27MHZ
+    (BASE + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ
 }
 
 fn cfg() -> ControllerConfig {
@@ -55,7 +54,7 @@ fn pes_run(per_frame: bool, between_us: u64) -> Run {
             audio += 300_000;
         }
         let pos = if running {
-            (clock + (t - t_set) * TICKS_PER_US) % WRAP_27MHZ
+            (clock + (t - t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ
         } else {
             clock
         };
