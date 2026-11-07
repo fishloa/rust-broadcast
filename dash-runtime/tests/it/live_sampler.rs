@@ -170,7 +170,13 @@ fn an_answer_for_an_unknown_id_is_an_error_not_a_panic() {
     let body = xs_datetime_ms(AST_US + 41 * MICROS).into_bytes();
     let r = UtcResponse::new(0, 0, &body);
     c.on_utc_response(0, id, &r).unwrap();
-    assert!(c.on_utc_response(0, id, &r).is_err(), "answered twice");
+    assert!(
+        matches!(
+            c.on_utc_response(0, id, &r),
+            Err(dash_runtime::client::Error::UnrequestedUtc { .. })
+        ),
+        "answered twice"
+    );
     assert!(
         c.on_utc_failure(0, id, dash_runtime::client::Failure::Timeout)
             .is_err()

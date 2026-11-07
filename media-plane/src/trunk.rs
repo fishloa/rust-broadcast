@@ -3190,7 +3190,10 @@ mod tests {
             }
         );
         // A wrapped number is also refused.
-        assert!(writer.publish_segment(segment_entry(3, 0)).is_err());
+        assert!(matches!(
+            writer.publish_segment(segment_entry(3, 0)),
+            Err(NonMonotonicSequenceNumber { .. })
+        ));
         assert_eq!(trunk.last_closed_segment(), Some(max));
     }
 
@@ -6143,7 +6146,10 @@ mod tests {
         let mut term = trunk.pin_segments(ArchiveOverrun::Terminate);
         w.try_publish_segment(segment_entry(1, 1))
             .expect("room for the first segment");
-        assert!(w.try_publish_segment(segment_entry(2, 2)).is_err());
+        assert!(matches!(
+            w.try_publish_segment(segment_entry(2, 2)),
+            Err(TryPublishSegmentError::WouldStall(_))
+        ));
         // seq 1 is still resident; the Terminate pin must still read it —
         // it must not have been marked terminated for an eviction that,
         // because of the StallIngest pin, never actually happened.

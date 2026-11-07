@@ -375,7 +375,6 @@ impl TsbpdScheduler {
         // After the drift sample: it may have just moved the time base.
         let pkt_tsbpd_time = self.pkt_tsbpd_time(unwrapped_ts);
 
-        // Check if this packet is already too late on arrival.
         // Rule 17-18/21: drop a packet whose PktTsbpdTime is before
         // (now - TLPKTDROP_THRESHOLD).
         if self.tlpktdrop_enabled {

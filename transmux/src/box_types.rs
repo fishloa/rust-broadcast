@@ -102,8 +102,6 @@ impl BoxType {
 
     /// Label for the box type, per the #204 convention.
     pub fn name(&self) -> &'static str {
-        // Return a static ASCII representation — since four-CCs are a fixed
-        // set in practice, this returns a best-effort string.
         match &self.0 {
             b"ftyp" => "ftyp",
             b"moov" => "moov",

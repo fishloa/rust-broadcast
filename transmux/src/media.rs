@@ -138,7 +138,6 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
     type Error = Error;
 
     fn unpackage(&mut self, input: &'a [u8]) -> Result<Media> {
-        // 1. Locate and parse the init `moov` for track specs.
         let moov_bytes =
             find_top_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let moov = MovieBox::parse(moov_bytes)?;

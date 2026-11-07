@@ -946,7 +946,10 @@ Content-Length: {over}
         .await
         .expect("must return");
         server.abort();
-        assert!(result.is_err(), "a 403 resource must fail the session");
+        assert!(
+            matches!(result, Err(crate::error::MultimuxError::Auth { .. })),
+            "a 403 resource must fail the session"
+        );
         // It must NOT have retried 8 times (~2 min of backoff).
         assert!(
             requests.load(Ordering::SeqCst) <= 2,
