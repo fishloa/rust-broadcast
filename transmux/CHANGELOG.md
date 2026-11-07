@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The four segmenters build `Stage::demand` with `Demand::saturated_if` (dedupe C3).
 - `ac3` and `dts` import `bitreader::read_bits_checked` instead of declaring forwarding `read_bits` wrappers (dedupe R5).
 - The `rtcp` module file is replaced by `pub use rtcp_packet as rtcp`; paths unchanged (c2 TH8).
+- One `build_chunk` builds the CMAF segment, event segment, LL-DASH chunk and LL-HLS part; `trun` `data_offset` is now range-checked instead of cast (c2 H5).
 
 ### Removed
 - `rtp::hex_decode`, `smooth_parse::hex_decode` and the `smooth_hex_decode` re-export are now crate-private; both only wrapped the `hex` crate with this crate's own error type. Use `hex::decode` (dedupe R6).
