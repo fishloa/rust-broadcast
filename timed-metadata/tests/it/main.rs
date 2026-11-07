@@ -2,6 +2,7 @@ mod daterange_fixture;
 mod daterange_hex;
 mod emsg_convert;
 mod emsg_interop;
+mod error_variants;
 mod golden_wire;
 mod rfc3339_range;
 mod scte35_pts_adjustment;

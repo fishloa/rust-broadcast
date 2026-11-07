@@ -20,6 +20,7 @@ mod origin_loop;
 mod pdt_arrival;
 mod pdt_origin;
 mod playlist_base;
+mod rendition_validators;
 mod resolution;
 mod segment_failure;
 mod subtitle_renditions;

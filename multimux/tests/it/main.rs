@@ -46,6 +46,8 @@ mod push_rtsp;
 mod push_rtsp_bounds;
 mod push_ts_stream;
 mod reconnect_policy;
+#[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
+mod rtmp_read_failure;
 mod rtsp_ingest;
 mod secret_hygiene;
 mod server_timeouts;

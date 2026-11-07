@@ -79,6 +79,7 @@ mod start_gate;
 #[macro_use]
 #[cfg(feature = "__test-seams")]
 mod timeline_jump;
+mod srt_rejections;
 mod tracks_hold_config;
 mod ts_http_events;
 mod udp;

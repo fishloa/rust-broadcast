@@ -3,6 +3,7 @@ mod ait_carousel_descriptors;
 mod biop_fixture;
 mod carousel_fixture;
 mod collect;
+mod content_genre_table;
 mod convention_audit;
 mod demux;
 mod demux_e2e;

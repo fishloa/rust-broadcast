@@ -21,7 +21,7 @@ mod true_peak;
 
 pub use channel_layout::ChannelLayout;
 pub use error::{Error, Result};
-pub use loudness_meter::LoudnessMeter;
+pub use loudness_meter::{LoudnessMeter, MAX_SAMPLE_RATE};
 pub use profile::{
     ACCEPTABLE_MAX_RATIO, CHINESE_PROFILES, GY_T_282_2014, GY_T_377_2023_NOISY,
     GY_T_377_2023_QUIET, LoudnessProfile, MONITOR_OVER_LIMIT_LKFS, MonitorUnit, MonitorVerdict,

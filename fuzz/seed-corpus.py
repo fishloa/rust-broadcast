@@ -73,6 +73,14 @@ WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
         "fixtures/golden/dash/ll-dash-mpd.golden",
     ),
     "dash_address": ("fixtures/dash/**/*.mpd",),
+    "srt_packet": ("fixtures/srt/*.bin",),
+    "simulcrypt_message": ("fixtures/simulcrypt/*.bin",),
+    "vbi_data_field": ("fixtures/subtitles/vbi-data-field.bin",),
+    "emsg": ("fixtures/scte35/*emsg*.bin",),
+    "timed_metadata_convert": ("fixtures/scte35/*emsg*.bin", "fixtures/hls/handbuilt/daterange*.m3u8"),
+    "transmux_webm_demux": ("fixtures/mkv/*.webm", "fixtures/mkv/*.mkv"),
+    "transmux_progressive_demux": ("fixtures/mp4/h264-aac-prog.mp4", "fixtures/mp4/h264-high.mp4"),
+    "hls_client_feed": ("fixtures/hls/handbuilt/*.m3u8", "fixtures/hls/*.m3u8"),
 }
 
 
@@ -198,6 +206,23 @@ def dash_client_scenarios() -> dict[str, bytes]:
             flaky = b"".join(bytes([9 if n % 5 == 2 else 0, 0]) for n in range(DASH_CLIENT_STEPS))
             out[f"mpd{sel}_window{window + 1}_flaky"] = bytes([window | 0b1000, sel, 0, 0]) + flaky
     return out
+
+
+TS_FIX_MODES = 4
+TS_FIX_PACKETS = 64
+TS_PACKET = 188
+
+
+def seed_ts_fix(check_only: bool) -> int:
+    source = REPO / "fixtures/ts/h264-aac.ts"
+    if check_only or not source.exists():
+        return 0
+    stream = source.read_bytes()[: TS_PACKET * TS_FIX_PACKETS]
+    out = REPO / "fuzz" / "corpus" / "ts_fix"
+    out.mkdir(parents=True, exist_ok=True)
+    for mode in range(TS_FIX_MODES):
+        (out / f"h264-aac_mode{mode}").write_bytes(bytes([mode]) + stream)
+    return TS_FIX_MODES
 
 
 def seed_dash_client(check_only: bool) -> int:
@@ -345,6 +370,9 @@ def main() -> int:
     scripted = seed_scripts("broadcast_client", args.check)
     if not args.check:
         print(f"broadcast_client: {scripted} scripted scenario seeds")
+    ts_fix = seed_ts_fix(args.check)
+    if not args.check:
+        print(f"ts_fix: {ts_fix} seeds")
     dash_client = seed_dash_client(args.check)
     if not args.check:
         print(f"dash_client_static: {dash_client} scripted scenario seeds")

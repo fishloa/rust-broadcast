@@ -620,6 +620,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -3846,6 +3847,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 

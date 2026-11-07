@@ -23,6 +23,7 @@ serde      = { version = "1", default-features = false, optional = true, feature
 
 [dev-dependencies]
 serde_json = { workspace = true }
+test-fixtures = { path = "../test-fixtures" }
 
 [features]
 default = ["std"]

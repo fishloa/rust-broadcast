@@ -425,7 +425,11 @@ impl<'a> WebmDemux<'a> {
         let mut r = EbmlReader::new(body);
         while let Some((id, child)) = r.next_element()? {
             if id == TIMESTAMP_SCALE {
-                *timestamp_scale_ns = read_uint(child);
+                let scale = read_uint(child);
+                if scale == 0 || i64::try_from(scale).is_err() {
+                    return Err(Error::InvalidInput("webm: TimestampScale out of range"));
+                }
+                *timestamp_scale_ns = scale;
             }
         }
         Ok(())
