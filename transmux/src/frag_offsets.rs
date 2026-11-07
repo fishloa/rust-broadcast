@@ -38,9 +38,7 @@
 use crate::TrackId;
 use alloc::vec::Vec;
 
-use broadcast_common::Parse;
-
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, SIZE_TO_EOF};
+use crate::box_types::clamped_boxes;
 use crate::error::{Error, Result};
 use crate::movie_fragment::{MovieFragmentBox, TFHD_DEFAULT_BASE_IS_MOOF};
 
@@ -84,43 +82,18 @@ thread_local! {
 ///
 /// A box whose declared size runs past the file (a truncated capture) is
 /// clamped to the file end rather than rejected: the caller may legitimately
-/// hold a cut-short recording whose early fragments are intact. (`parse_box`
-/// itself reports such a box as `BufferTooShort`, so the header is read with
-/// [`BoxHeader::parse`] and the extent computed here.)
+/// hold a cut-short recording whose early fragments are intact, which is why
+/// the walk is [`clamped_boxes`] and not the strict `box_iter`.
 pub fn mdat_ranges(file: &[u8]) -> Vec<MdatRange> {
     #[cfg(test)]
     MDAT_SCANS.with(|c| c.set(c.get() + 1));
-    let mut out = Vec::new();
-    let mut offset = 0usize;
-    while offset + BOX_HEADER_MIN_SIZE <= file.len() {
-        let rest = &file[offset..];
-        let Ok(header) = BoxHeader::parse(rest) else {
-            break;
-        };
-        let hdr_sz = header.header_size();
-        let total = if header.size == SIZE_TO_EOF as u64 {
-            rest.len()
-        } else {
-            match usize::try_from(header.size) {
-                Ok(t) if t >= hdr_sz => t,
-                // A size below the header (framing is wrong) or one that does
-                // not fit `usize`: nothing after it can be trusted.
-                Ok(_) => break,
-                Err(_) => rest.len(),
-            }
-        };
-        if hdr_sz > rest.len() {
-            break;
-        }
-        if header.box_type.is(b"mdat") {
-            out.push(MdatRange {
-                start: offset + hdr_sz,
-                end: offset + total.min(rest.len()),
-            });
-        }
-        offset += total.min(rest.len());
-    }
-    out
+    clamped_boxes(file)
+        .filter(|b| b.header.box_type.is(b"mdat"))
+        .map(|b| MdatRange {
+            start: b.payload_start(),
+            end: b.end,
+        })
+        .collect()
 }
 
 /// Whether `[start, end)` lies inside at least one `mdat` payload.

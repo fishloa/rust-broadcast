@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - The `vvcC` writer no longer indexes the output buffer directly: a short buffer or a short `general_constraint_info` is a typed `BufferTooShort` instead of a panic (c2 M4).
 
+### Added
+- `box_types::clamped_boxes` / `ClampedBox`: a tolerant top-level box walk that clamps a truncated tail to the buffer end; `frag_offsets::mdat_ranges` and the hls-runtime iframe helpers use it instead of three private copies (c3 d:B1).
+
+
 ## [0.29.1] - 2026-11-03
 ### Fixed
 - The `cc-data` requirement is raised from `0.7` to `0.7.1` (and every other workspace-sibling requirement now names the sibling's full current version). `caption_detect` uses `Cea608Channel`'s `Ord`/`Hash` impls, `Cea608Channel::number`, `Cea608Decoder::has_caption_text` and `Cea708Decoder::services_seen`, which arrived in `cc-data` 0.7.1; 0.29.0 declared `0.7`, so a lock file holding `cc-data` 0.7.0 failed to compile `transmux` with 6 errors.

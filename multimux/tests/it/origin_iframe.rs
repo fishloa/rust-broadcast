@@ -6,7 +6,6 @@ use crate::support::origin::{body_bytes, body_string, get};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use broadcast_common::traits::Parse;
 use transmux::TrackId;
 
 use axum::body::Body;
@@ -268,40 +267,11 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
 }
 
 fn first_sample_end(seg: &[u8]) -> u64 {
-    // find moof
-    let mut offset = 0usize;
-    let mut moof_off: Option<usize> = None;
-    let mut moof_total: usize = 0;
-    let mut moof_hdr: usize = 0;
-    while offset + transmux::box_types::BOX_HEADER_MIN_SIZE <= seg.len() {
-        let rest = &seg[offset..];
-        let header = transmux::box_types::BoxHeader::parse(rest).expect("box header");
-        let hdr_sz = header.header_size();
-        if hdr_sz > rest.len() {
-            break;
-        }
-        let total = if header.size == u64::from(transmux::box_types::SIZE_TO_EOF) {
-            rest.len()
-        } else {
-            match usize::try_from(header.size) {
-                Ok(t) if t >= hdr_sz => t,
-                _ => break,
-            }
-        };
-        if header.box_type.is(b"moof") {
-            moof_off = Some(offset);
-            moof_total = total.min(rest.len());
-            moof_hdr = hdr_sz;
-            break;
-        }
-        let step = total.min(rest.len());
-        if step == 0 {
-            break;
-        }
-        offset += step;
-    }
-    let moof_off = moof_off.expect("moof");
-    let body = &seg[moof_off + moof_hdr..moof_off + moof_total];
+    let found = transmux::box_types::clamped_boxes(seg)
+        .find(|b| b.header.box_type.is(b"moof"))
+        .expect("moof");
+    let moof_off = found.start;
+    let body = &seg[found.payload_start()..found.end];
     let moof = transmux::movie_fragment::MovieFragmentBox::parse_body(body).expect("moof parse");
     let mdats = transmux::frag_offsets::mdat_ranges(seg);
     let samples =

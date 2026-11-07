@@ -829,6 +829,63 @@ impl<'a> Iterator for BoxIter<'a> {
     }
 }
 
+/// One top-level box located by [`clamped_boxes`]: its header and its byte
+/// range `[start, end)` in the scanned buffer (header included).
+#[derive(Debug, Clone, Copy)]
+pub struct ClampedBox {
+    /// Parsed box header.
+    pub header: BoxHeader,
+    /// Offset of the first header byte.
+    pub start: usize,
+    /// Offset one past the last byte, clamped to the buffer end.
+    pub end: usize,
+}
+
+impl ClampedBox {
+    /// Offset of the first body byte.
+    pub fn payload_start(&self) -> usize {
+        self.start + self.header.header_size()
+    }
+}
+
+/// Walk the top-level boxes of `data`, clamping a box whose declared size runs
+/// past the buffer (a truncated capture) to the buffer end instead of failing
+/// as [`box_iter`] does. The walk ends at an unparseable header, a size below
+/// the header size or a zero step.
+pub fn clamped_boxes(data: &[u8]) -> impl Iterator<Item = ClampedBox> + '_ {
+    let mut offset = 0usize;
+    core::iter::from_fn(move || {
+        let rest = data
+            .get(offset..)
+            .filter(|r| r.len() >= BOX_HEADER_MIN_SIZE)?;
+        let header = BoxHeader::parse(rest).ok()?;
+        let hdr_sz = header.header_size();
+        if hdr_sz > rest.len() {
+            return None;
+        }
+        let total = if header.size == u64::from(SIZE_TO_EOF) {
+            rest.len()
+        } else {
+            match usize::try_from(header.size) {
+                Ok(t) if t >= hdr_sz => t,
+                Ok(_) => return None,
+                Err(_) => rest.len(),
+            }
+        };
+        let step = total.min(rest.len());
+        if step == 0 {
+            return None;
+        }
+        let found = ClampedBox {
+            header,
+            start: offset,
+            end: offset + step,
+        };
+        offset += step;
+        Some(found)
+    })
+}
+
 /// Convenience function to create a `BoxIter`.
 pub fn box_iter(data: &[u8]) -> BoxIter<'_> {
     BoxIter::new(data)
