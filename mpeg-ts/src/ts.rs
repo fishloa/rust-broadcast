@@ -133,6 +133,17 @@ impl AdaptationFieldControl {
         }
     }
 
+    /// The `(has_adaptation, has_payload)` flag pair stored on [`TsHeader`];
+    /// the inverse of [`from_flags`](Self::from_flags).
+    pub fn to_flags(self) -> (bool, bool) {
+        match self {
+            Self::Reserved => (false, false),
+            Self::PayloadOnly => (false, true),
+            Self::AdaptationOnly => (true, false),
+            Self::AdaptationAndPayload => (true, true),
+        }
+    }
+
     /// Encode as the 2-bit `adaptation_field_control` field value (`[1:0]`).
     ///
     /// Bit 1 = adaptation present, bit 0 = payload present (H.222.0 Table 2-5).
@@ -2090,6 +2101,7 @@ mod tests {
         for (has_af, has_pl, expected_bits) in cases {
             let afc = AdaptationFieldControl::from_flags(has_af, has_pl);
             assert_eq!(afc.to_bits(), expected_bits);
+            assert_eq!(afc.to_flags(), (has_af, has_pl));
         }
     }
 

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `as_uuid_bytes`, `from_ul`, `from_uuid`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `from_ul`.
 - `Error::InvalidKeyLength`: never constructed; a short buffer is reported as `BufferTooShort`.
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).

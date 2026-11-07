@@ -31,6 +31,23 @@ impl Color {
             b: b & 0x03,
         }
     }
+
+    /// Map this colour onto the minimum 8-colour list (CEA-708 §8.8, Table 30):
+    /// component `0 | 1 -> 0`, `2 | 3 -> 2`.
+    #[must_use]
+    pub const fn to_8_color(self) -> Color {
+        const fn quantise(c: u8) -> u8 {
+            match c {
+                0 | 1 => 0,
+                _ => 2,
+            }
+        }
+        Color {
+            r: quantise(self.r),
+            g: quantise(self.g),
+            b: quantise(self.b),
+        }
+    }
 }
 
 /// Opacity of a foreground / background / fill (§8.8; SPC/SWA opacity field,
@@ -376,6 +393,22 @@ broadcast_common::impl_spec_display!(ScrollDirection);
 mod tests {
     use super::*;
     use alloc::string::ToString;
+
+    #[test]
+    fn to_8_color_follows_the_section_8_8_mapping() {
+        assert_eq!(Color::new(1, 2, 3).to_8_color(), Color::new(0, 2, 2));
+        assert_eq!(Color::new(3, 3, 3).to_8_color(), Color::WHITE);
+        assert_eq!(Color::new(1, 1, 1).to_8_color(), Color::BLACK);
+        for r in 0..4 {
+            for g in 0..4 {
+                for b in 0..4 {
+                    let c = Color::new(r, g, b).to_8_color();
+                    assert!([c.r, c.g, c.b].iter().all(|&v| v == 0 || v == 2));
+                    assert_eq!(c.to_8_color(), c);
+                }
+            }
+        }
+    }
 
     #[test]
     fn opacity_bits() {

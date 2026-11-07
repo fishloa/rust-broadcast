@@ -36,7 +36,16 @@ impl Default for DtmfDescriptor {
     }
 }
 
-impl DtmfDescriptor {}
+/// `preroll` is expressed in tenths of a second (§10.3.2.1).
+const PREROLL_UNIT_MILLIS: u64 = 100;
+
+impl DtmfDescriptor {
+    /// `preroll` as a [`Duration`](core::time::Duration) (0 to 25.5 s).
+    #[must_use]
+    pub fn preroll_duration(&self) -> core::time::Duration {
+        core::time::Duration::from_millis(u64::from(self.preroll) * PREROLL_UNIT_MILLIS)
+    }
+}
 
 impl<'a> Parse<'a> for DtmfDescriptor {
     type Error = Error;
@@ -114,6 +123,18 @@ mod tests {
         let back = DtmfDescriptor::parse(&bytes).unwrap();
         assert_eq!(d, back);
         assert_eq!(back.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn preroll_duration_is_in_tenths_of_a_second() {
+        use core::time::Duration;
+        let at = |preroll| DtmfDescriptor {
+            preroll,
+            ..DtmfDescriptor::default()
+        };
+        assert_eq!(at(0).preroll_duration(), Duration::ZERO);
+        assert_eq!(at(40).preroll_duration(), Duration::from_secs(4));
+        assert_eq!(at(255).preroll_duration(), Duration::from_millis(25_500));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `MAX_SECTION_LEN_TS`, `duration_value`, `has_sub_segments`, `preroll_duration`, `pts_adjustment_duration`, `pts_time_duration`, `set_duration_value`, `set_pts_adjustment_duration`, `set_pts_time_duration`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `duration_value`, `pts_adjustment_duration`, `pts_time_duration`, `set_duration_value`, `set_pts_adjustment_duration`, `set_pts_time_duration`.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Changed

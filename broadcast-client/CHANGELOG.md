@@ -17,8 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RTSP lane alignment rescales through `broadcast_common::timescale` (same rounding) (c2 H6).
 - SRT caller uses `srt_runtime::arq::seq::contiguous_runs` instead of a private copy (dedupe D15).
 - Dropped the unused direct `serde` dependency (the `serde` feature still forwards to the sibling crates) (c2 TH4).
-### Removed
-- Unused `TsHttpSource::set_url` (c2 TH1).
 
 
 ## [0.2.1] - 2026-11-03

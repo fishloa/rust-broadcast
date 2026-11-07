@@ -552,6 +552,20 @@ impl DemuxEvent {
         }
     }
 
+    /// Construct a [`DemuxEvent::TrackAbandoned`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn track_abandoned(
+        track_id: Option<TrackId>,
+        reason: AbandonReason,
+        provenance: EventProvenance,
+    ) -> Self {
+        DemuxEvent::TrackAbandoned {
+            track_id,
+            reason,
+            provenance,
+        }
+    }
+
     /// Construct a [`DemuxEvent::Sample`] — see [`Self::clock_reference`] for
     /// why this variant needs a constructor.
     pub fn sample(track_id: TrackId, sample: Sample) -> Self {
@@ -576,5 +590,89 @@ impl DemuxEvent {
     /// [`Self::clock_reference`] for why this variant needs a constructor.
     pub fn tracks_resolved(generation: u32) -> Self {
         DemuxEvent::TracksResolved { generation }
+    }
+
+    /// Construct a [`DemuxEvent::DisplayChanged`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn display_changed(
+        track_id: TrackId,
+        display: Arc<DisplayInfo>,
+        changed: DisplayChangeSet,
+        dts: Option<i64>,
+        pts: Option<i64>,
+        random_access: bool,
+        provenance: EventProvenance,
+    ) -> Self {
+        DemuxEvent::DisplayChanged {
+            track_id,
+            display,
+            changed,
+            dts,
+            pts,
+            random_access,
+            provenance,
+        }
+    }
+}
+
+#[cfg(test)]
+mod constructor_tests {
+    use super::*;
+
+    #[test]
+    fn track_abandoned_builds_the_matching_variant() {
+        let provenance = EventProvenance::default();
+        let ev = DemuxEvent::track_abandoned(
+            Some(TrackId::new(7)),
+            AbandonReason::ConfigUnrecoverable,
+            provenance,
+        );
+        match ev {
+            DemuxEvent::TrackAbandoned {
+                track_id,
+                reason,
+                provenance: p,
+            } => {
+                assert_eq!(track_id, Some(TrackId::new(7)));
+                assert_eq!(reason, AbandonReason::ConfigUnrecoverable);
+                assert_eq!(p, provenance);
+            }
+            other => panic!("expected TrackAbandoned, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn display_changed_builds_the_matching_variant() {
+        let display = Arc::new(DisplayInfo::new(None));
+        let changed = DisplayChangeSet {
+            initial: true,
+            ..DisplayChangeSet::default()
+        };
+        let ev = DemuxEvent::display_changed(
+            TrackId::new(3),
+            Arc::clone(&display),
+            changed,
+            Some(10),
+            Some(20),
+            true,
+            EventProvenance::default(),
+        );
+        match ev {
+            DemuxEvent::DisplayChanged {
+                track_id,
+                display: d,
+                changed: c,
+                dts,
+                pts,
+                random_access,
+                ..
+            } => {
+                assert_eq!(track_id, TrackId::new(3));
+                assert_eq!(d, display);
+                assert_eq!(c, changed);
+                assert_eq!((dts, pts, random_access), (Some(10), Some(20), true));
+            }
+            other => panic!("expected DisplayChanged, got {other:?}"),
+        }
     }
 }

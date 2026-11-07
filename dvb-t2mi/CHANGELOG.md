@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `drain_packets`, `emission_time_utc`, `guard_interval_set`, `inband_loop`, `is_relative`, `l1_dynamic_next2`, `parse_with_crc`, `set_emission_offset`, `set_emission_time_utc`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `drain_packets`, `guard_interval_set`, `inband_loop`.
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - `PayloadObject` comes from `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H1).

@@ -40,6 +40,9 @@ use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::len::need_out;
 
+/// SDP `a=rtpmap` encoding name and MIME subtype of the payload
+/// (T/AI 109.7 10.1.3.2, 10.1.4.2).
+pub const ENCODING_NAME: &str = "AV3A-AATF";
 /// Default RTP timestamp clock rate (10.1.2.2; 10.1.4.2 `rate` default 90000).
 pub const DEFAULT_CLOCK_RATE: u32 = 90_000;
 /// `syncword` of an `aatf_frame()` (Table A.4): `'1111 1111 1111'`.
@@ -1101,6 +1104,11 @@ mod tests {
         d.push(false, &[1]).unwrap();
         d.reset();
         assert_eq!(d.buffered(), 0);
+    }
+
+    #[test]
+    fn encoding_name_is_the_registered_mime_subtype() {
+        assert_eq!(ENCODING_NAME, "AV3A-AATF");
     }
 
     #[test]

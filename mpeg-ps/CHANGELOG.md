@@ -6,8 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `PSM_START_CODE`.
 ### Fixed
 - `PackHeader`, `SystemHeader` and `ProgramStreamMap` `serialize_into` returned `Error::BufferTooShort` for a too-small OUTPUT buffer; they now return the new `Error::OutputBufferTooSmall { need, have }` (c3 S1).
 ### Added

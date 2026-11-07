@@ -26,6 +26,10 @@ use broadcast_common::{Parse, Serialize};
 /// `uri_message` fixed length — 64 bits (8 bytes).
 pub const URI_MESSAGE_LEN: usize = 8;
 
+/// `protocol_version` value for URI version 3 (ETSI TS 103 205 clause 11,
+/// Table 90).
+pub const PROTOCOL_VERSION_V3: u8 = 0x03;
+
 /// The EMI-case-selected fields of a [`UriMessage`] (Table 91). The variant is
 /// chosen by `emi_copy_control_info`; in the non-matching cases the corresponding
 /// bit positions are reserved (encoded as zero) and not carried.
@@ -187,7 +191,7 @@ mod tests {
         // Table 90 default: protocol 0x03, emi 0b11 (no-more-copies), aps 0b00,
         // ict 0, dot 0, rl 0x00.
         let u = UriMessage {
-            protocol_version: 0x03,
+            protocol_version: PROTOCOL_VERSION_V3,
             aps: 0b00,
             ict: false,
             emi_data: EmiData::NoMoreCopies { dot: false, rl: 0 },
@@ -204,7 +208,7 @@ mod tests {
     #[test]
     fn one_generation_trick_mode_enabled_bites() {
         let u = UriMessage {
-            protocol_version: 0x03,
+            protocol_version: PROTOCOL_VERSION_V3,
             aps: 0b10,
             ict: true,
             emi_data: EmiData::OneGenerationCopy { trick_mode: true },
@@ -221,7 +225,7 @@ mod tests {
         assert_eq!(parsed, u);
         // Mutation: disable trick mode.
         let off = UriMessage {
-            protocol_version: 0x03,
+            protocol_version: PROTOCOL_VERSION_V3,
             aps: 0b10,
             ict: true,
             emi_data: EmiData::OneGenerationCopy { trick_mode: false },
@@ -233,7 +237,7 @@ mod tests {
     #[test]
     fn copying_not_restricted_rct_bit() {
         let u = UriMessage {
-            protocol_version: 0x03,
+            protocol_version: PROTOCOL_VERSION_V3,
             aps: 0b00,
             ict: false,
             emi_data: EmiData::CopyingNotRestricted { rct: true },
@@ -247,7 +251,7 @@ mod tests {
     #[test]
     fn no_more_copies_dot_rl_round_trips() {
         let u = UriMessage {
-            protocol_version: 0x03,
+            protocol_version: PROTOCOL_VERSION_V3,
             aps: 0b01,
             ict: true,
             emi_data: EmiData::NoMoreCopies {
@@ -270,7 +274,7 @@ mod tests {
     #[test]
     fn copy_once_has_no_case_bits() {
         let u = UriMessage {
-            protocol_version: 0x03,
+            protocol_version: PROTOCOL_VERSION_V3,
             aps: 0b11,
             ict: false,
             emi_data: EmiData::CopyOnce,
@@ -288,7 +292,7 @@ mod tests {
         // parses to CopyOnce (case bits ignored), and re-serializes those reserved
         // bits as zero (lossless within the typed model).
         let u = UriMessage {
-            protocol_version: 0x03,
+            protocol_version: PROTOCOL_VERSION_V3,
             aps: 0,
             ict: false,
             emi_data: EmiData::CopyOnce,

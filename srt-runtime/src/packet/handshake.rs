@@ -187,6 +187,10 @@ pub const HS_EXT_FLAG_CONFIG: u16 = 0x0004;
 pub struct HandshakeExtensionFlags(pub u16);
 
 impl HandshakeExtensionFlags {
+    /// `HSREQ` bit set.
+    pub fn hsreq(self) -> bool {
+        self.0 & HS_EXT_FLAG_HSREQ != 0
+    }
     /// `KMREQ` bit set.
     pub fn kmreq(self) -> bool {
         self.0 & HS_EXT_FLAG_KMREQ != 0
@@ -314,6 +318,14 @@ pub const HS_MSG_FLAG_PACKET_FILTER: u32 = 0x0000_0080;
 pub struct HandshakeExtensionMessageFlags(pub u32);
 
 impl HandshakeExtensionMessageFlags {
+    /// `TSBPDSND`: TSBPD is used for sending.
+    pub fn tsbpdsnd(self) -> bool {
+        self.0 & HS_MSG_FLAG_TSBPDSND != 0
+    }
+    /// `TSBPDRCV`: TSBPD is used for receiving.
+    pub fn tsbpdrcv(self) -> bool {
+        self.0 & HS_MSG_FLAG_TSBPDRCV != 0
+    }
     /// Legacy flag: peer understands the data packet `KK` field. MUST be set.
     pub fn crypt(self) -> bool {
         self.0 & HS_MSG_FLAG_CRYPT != 0
@@ -322,9 +334,21 @@ impl HandshakeExtensionMessageFlags {
     pub fn tlpktdrop(self) -> bool {
         self.0 & HS_MSG_FLAG_TLPKTDROP != 0
     }
+    /// `PERIODICNAK`: the peer will send periodic NAK packets.
+    pub fn periodicnak(self) -> bool {
+        self.0 & HS_MSG_FLAG_PERIODICNAK != 0
+    }
+    /// Legacy flag: peer understands the data packet `R` field. MUST be set.
+    pub fn rexmitflg(self) -> bool {
+        self.0 & HS_MSG_FLAG_REXMITFLG != 0
+    }
     /// Buffer mode (`true`) vs message mode (`false`).
     pub fn stream(self) -> bool {
         self.0 & HS_MSG_FLAG_STREAM != 0
+    }
+    /// `PACKET_FILTER`: the peer supports packet filter.
+    pub fn packet_filter(self) -> bool {
+        self.0 & HS_MSG_FLAG_PACKET_FILTER != 0
     }
 }
 
@@ -947,6 +971,54 @@ mod tests {
             HandshakeType::Induction,
         ] {
             assert_eq!(HandshakeType::from_bits(t.to_bits()), t);
+        }
+    }
+
+    #[test]
+    fn every_flag_accessor_reads_only_its_own_bit() {
+        assert!(HandshakeExtensionFlags(HS_EXT_FLAG_HSREQ).hsreq());
+        assert!(!HandshakeExtensionFlags(HS_EXT_FLAG_KMREQ | HS_EXT_FLAG_CONFIG).hsreq());
+
+        type Accessor = fn(HandshakeExtensionMessageFlags) -> bool;
+        let accessors: [(u32, Accessor); 8] = [
+            (
+                HS_MSG_FLAG_TSBPDSND,
+                HandshakeExtensionMessageFlags::tsbpdsnd,
+            ),
+            (
+                HS_MSG_FLAG_TSBPDRCV,
+                HandshakeExtensionMessageFlags::tsbpdrcv,
+            ),
+            (HS_MSG_FLAG_CRYPT, HandshakeExtensionMessageFlags::crypt),
+            (
+                HS_MSG_FLAG_TLPKTDROP,
+                HandshakeExtensionMessageFlags::tlpktdrop,
+            ),
+            (
+                HS_MSG_FLAG_PERIODICNAK,
+                HandshakeExtensionMessageFlags::periodicnak,
+            ),
+            (
+                HS_MSG_FLAG_REXMITFLG,
+                HandshakeExtensionMessageFlags::rexmitflg,
+            ),
+            (HS_MSG_FLAG_STREAM, HandshakeExtensionMessageFlags::stream),
+            (
+                HS_MSG_FLAG_PACKET_FILTER,
+                HandshakeExtensionMessageFlags::packet_filter,
+            ),
+        ];
+        for (i, (bit, accessor)) in accessors.iter().enumerate() {
+            assert_eq!(*bit, 1 << i, "Table 6 assigns bit {i}");
+            for (j, (_, other)) in accessors.iter().enumerate() {
+                assert_eq!(
+                    other(HandshakeExtensionMessageFlags(*bit)),
+                    i == j,
+                    "flag {i} read by accessor {j}"
+                );
+            }
+            assert!(!accessor(HandshakeExtensionMessageFlags(!*bit)));
+            assert!(accessor(HandshakeExtensionMessageFlags(u32::MAX)));
         }
     }
 }

@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `BAT_MAX_INTERVAL`, `EIT_PF_ACTUAL_MAX_INTERVAL`, `EIT_PF_OTHER_MAX_INTERVAL`, `EIT_SCHED_EXT_MAX_INTERVAL`, `EIT_SCHED_MAX_INTERVAL`, `INBAND_SIGNALLING`, `SDT_OTHER_MAX_INTERVAL`, `into_raw`, `to_flags`, `upsert_nit`, `upsert_pat`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `into_raw`.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Added

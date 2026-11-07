@@ -207,6 +207,24 @@ impl ExtensionHeader {
         }
     }
 
+    /// The typed [`MandatoryHType`] of a Mandatory header, or `None` for an
+    /// Optional one.
+    pub fn mandatory_h_type(&self) -> Option<MandatoryHType> {
+        match self {
+            ExtensionHeader::Mandatory { h_type, .. } => Some(MandatoryHType::from_u8(*h_type)),
+            ExtensionHeader::Optional { .. } => None,
+        }
+    }
+
+    /// The typed [`OptionalHType`] of an Optional header, or `None` for a
+    /// Mandatory one.
+    pub fn optional_h_type(&self) -> Option<OptionalHType> {
+        match self {
+            ExtensionHeader::Optional { h_type, .. } => Some(OptionalHType::from_u8(*h_type)),
+            ExtensionHeader::Mandatory { .. } => None,
+        }
+    }
+
     /// Spec label for this header kind.
     pub fn name(&self) -> &'static str {
         match self {
@@ -544,7 +562,51 @@ mod tests {
         assert_eq!(parsed, sndu);
     }
 
-    // typed H-Type accessors return the expected variants.
+    #[test]
+    fn typed_h_type_accessors_return_the_expected_variants() {
+        let timestamp = ExtensionHeader::Optional {
+            h_len: 3,
+            h_type: H_TYPE_TIMESTAMP,
+            body: alloc::vec![0, 0, 0, 0],
+        };
+        assert_eq!(timestamp.optional_h_type(), Some(OptionalHType::TimeStamp));
+        assert_eq!(timestamp.mandatory_h_type(), None);
+
+        let bridged = ExtensionHeader::Mandatory {
+            h_type: H_TYPE_BRIDGED_FRAME,
+            body: alloc::vec![],
+        };
+        assert_eq!(
+            bridged.mandatory_h_type(),
+            Some(MandatoryHType::BridgedFrame)
+        );
+        assert_eq!(bridged.optional_h_type(), None);
+
+        let unknown_mandatory = ExtensionHeader::Mandatory {
+            h_type: 0xF0,
+            body: alloc::vec![],
+        };
+        assert_eq!(
+            unknown_mandatory.mandatory_h_type(),
+            Some(MandatoryHType::Other(0xF0))
+        );
+        let unknown_optional = ExtensionHeader::Optional {
+            h_len: 2,
+            h_type: 0xF0,
+            body: alloc::vec![0, 0],
+        };
+        assert_eq!(
+            unknown_optional.optional_h_type(),
+            Some(OptionalHType::Other(0xF0))
+        );
+        for header in [&timestamp, &bridged, &unknown_mandatory, &unknown_optional] {
+            let typed_name = header
+                .mandatory_h_type()
+                .map(|t| t.name())
+                .or(header.optional_h_type().map(|t| t.name()));
+            assert_eq!(typed_name, Some(header.name()));
+        }
+    }
 
     // Every H_TYPE_* constant must map to a non-default name() — so a new
     // registered H-Type without a label arm fails CI.

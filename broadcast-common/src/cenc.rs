@@ -57,6 +57,15 @@ impl CencScheme {
         }
     }
 
+    /// The scheme's `schm.scheme_type` four-CC bytes, the inverse of
+    /// [`CencScheme::from_four_cc`].
+    pub fn to_four_cc(&self) -> [u8; 4] {
+        match self {
+            CencScheme::Cenc => SCHEME_CENC,
+            CencScheme::Cbcs => SCHEME_CBCS,
+        }
+    }
+
     /// Map a `schm.scheme_type` four-CC to a known scheme, or `None` if it is
     /// one this workspace does not implement (e.g. `cens`/`cbc1`).
     pub fn from_four_cc(four_cc: &[u8; 4]) -> Option<Self> {
@@ -97,6 +106,15 @@ mod tests {
             CencScheme::from_four_cc(&SCHEME_CBCS),
             Some(CencScheme::Cbcs)
         );
+    }
+
+    #[test]
+    fn four_cc_round_trips() {
+        assert_eq!(CencScheme::Cenc.to_four_cc(), SCHEME_CENC);
+        assert_eq!(CencScheme::Cbcs.to_four_cc(), SCHEME_CBCS);
+        for scheme in [CencScheme::Cenc, CencScheme::Cbcs] {
+            assert_eq!(CencScheme::from_four_cc(&scheme.to_four_cc()), Some(scheme));
+        }
     }
 
     #[test]

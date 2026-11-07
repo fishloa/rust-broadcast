@@ -147,7 +147,25 @@ impl ExtensionBodyDef<'_> for NetworkChangeNotify {
     const NAME: &'static str = "NETWORK_CHANGE_NOTIFY";
 }
 
-impl NetworkChange {}
+impl NetworkChange {
+    /// `start_time_of_change` (40-bit MJD + BCD UTC) as a UTC datetime; `None`
+    /// if a field is out of range.
+    #[cfg(feature = "chrono")]
+    #[must_use]
+    pub fn start_time_of_change_utc(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        let raw = self.start_time_of_change.to_be_bytes();
+        broadcast_common::time::decode_mjd_bcd_utc([raw[3], raw[4], raw[5], raw[6], raw[7]])
+    }
+
+    /// `change_duration` (24-bit BCD `HHMMSS`) in seconds; `None` if a BCD
+    /// nibble is not a decimal digit or a field is out of range.
+    #[must_use]
+    pub fn change_duration_secs(&self) -> Option<u32> {
+        let raw = self.change_duration.to_be_bytes();
+        broadcast_common::time::decode_bcd_duration([raw[1], raw[2], raw[3]])
+            .and_then(|d| u32::try_from(d.as_secs()).ok())
+    }
+}
 
 fn change_serialized_len(ch: &NetworkChange) -> usize {
     CHANGE_BASE_LEN
@@ -454,6 +472,14 @@ mod tests {
                 assert_eq!(ch1.network_change_version, 0x67);
                 assert_eq!(ch1.start_time_of_change, 0xE5E2023456);
                 assert_eq!(ch1.change_duration, 0x113245);
+                assert_eq!(ch1.change_duration_secs(), Some(11 * 3600 + 32 * 60 + 45));
+                #[cfg(feature = "chrono")]
+                {
+                    use chrono::{Datelike, Timelike};
+                    let start = ch1.start_time_of_change_utc().expect("valid MJD+BCD");
+                    assert_eq!((start.year(), start.month(), start.day()), (2020, 1, 2));
+                    assert_eq!((start.hour(), start.minute(), start.second()), (2, 34, 56));
+                }
                 assert_eq!(ch1.receiver_category, 1);
                 assert_eq!(ch1.change_type, ChangeType::MajorMultiplexAdded);
                 assert_eq!(ch1.message_id, 0x83);
@@ -471,6 +497,22 @@ mod tests {
             bytes[..],
             "byte-exact re-serialize for TSDuck vector"
         );
+    }
+
+    #[test]
+    fn change_duration_rejects_non_bcd_nibbles() {
+        let change = |change_duration| NetworkChange {
+            network_change_id: 0,
+            network_change_version: 0,
+            start_time_of_change: 0,
+            change_duration,
+            receiver_category: 0,
+            change_type: ChangeType::MessageOnly,
+            message_id: 0,
+            invariant_ts: None,
+        };
+        assert_eq!(change(0x013045).change_duration_secs(), Some(5445));
+        assert_eq!(change(0x01_1A_00).change_duration_secs(), None);
     }
 
     #[test]

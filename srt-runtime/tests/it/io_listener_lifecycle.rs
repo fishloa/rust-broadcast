@@ -137,3 +137,39 @@ async fn a_handshake_after_the_handle_is_gone_does_not_break_an_accepted_connect
         .unwrap();
     assert_eq!(&got[..], b"still routed");
 }
+
+/// The pending-accept queue holds 64; a connection that completes its handshake
+/// beyond that is dropped, and `accept_overflow_dropped` is the only trace of it.
+#[tokio::test]
+async fn connections_beyond_the_accept_backlog_are_counted_and_the_backlog_is_kept() {
+    const BACKLOG: usize = 64;
+    const EXTRA: u64 = 3;
+    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    assert_eq!(listener.accept_overflow_dropped(), 0);
+    let mut callers = Vec::new();
+    for _ in 0..(BACKLOG as u64 + EXTRA) {
+        callers.push(
+            SrtSocket::connect(addr, HandshakeConfig::default())
+                .await
+                .unwrap(),
+        );
+    }
+    tokio::time::timeout(WAIT, async {
+        while listener.accept_overflow_dropped() < EXTRA {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the overflow counter never reached the number of excess connections");
+    assert_eq!(listener.accept_overflow_dropped(), EXTRA);
+    for _ in 0..BACKLOG {
+        tokio::time::timeout(WAIT, listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    assert_eq!(listener.accept_overflow_dropped(), EXTRA);
+}

@@ -2048,6 +2048,7 @@ pub struct SrtListener {
     #[cfg_attr(not(test), allow(dead_code))]
     routes: RouteTable,
     unrouted_dropped: Arc<AtomicU64>,
+    overflow_dropped: Arc<AtomicU64>,
     send_errors: Arc<AtomicU64>,
 }
 
@@ -2103,6 +2104,8 @@ struct ListenerCore {
     life: std::sync::Weak<ListenerLife>,
     /// Finished handshakes, for [`SrtListener::accept`].
     accepted_tx: mpsc::Sender<Result<SrtSocket>>,
+    /// Connections dropped because `accepted_tx` was full.
+    overflow_dropped: Arc<AtomicU64>,
     /// Send failures met while answering peers (counted, never queued: they
     /// must not compete with finished connections for `accepted_tx` slots).
     send_errors: Arc<AtomicU64>,
@@ -2252,6 +2255,7 @@ impl SrtListener {
         let (unrouted_tx, unrouted_rx) = mpsc::channel(UNROUTED_CHANNEL_CAPACITY);
         let (accepted_tx, accepted) = mpsc::channel(ACCEPT_BACKLOG);
         let unrouted_dropped = Arc::new(AtomicU64::new(0));
+        let overflow_dropped = Arc::new(AtomicU64::new(0));
         let send_errors = Arc::new(AtomicU64::new(0));
         let life = Arc::new(ListenerLife {
             cancel: CancellationToken::new(),
@@ -2270,6 +2274,7 @@ impl SrtListener {
             unrouted_rx,
             life: Arc::downgrade(&life),
             accepted_tx,
+            overflow_dropped: Arc::clone(&overflow_dropped),
             send_errors: Arc::clone(&send_errors),
             accepting: true,
             last_pending_tick: Instant::now(),
@@ -2289,6 +2294,7 @@ impl SrtListener {
             accepted,
             routes,
             unrouted_dropped,
+            overflow_dropped,
             send_errors,
         })
     }
@@ -2298,6 +2304,13 @@ impl SrtListener {
     /// or because they exceeded [`IoConfig::max_datagram`].
     pub fn unrouted_dropped(&self) -> u64 {
         self.unrouted_dropped.load(Ordering::Relaxed)
+    }
+
+    /// Connections that completed their handshake but were dropped because
+    /// [`accept`](Self::accept) was not keeping up (the pending-accept queue
+    /// holds 64); each dropped peer is sent a SHUTDOWN.
+    pub fn accept_overflow_dropped(&self) -> u64 {
+        self.overflow_dropped.load(Ordering::Relaxed)
     }
 
     /// Send failures the background task met while answering peers (for
@@ -2346,6 +2359,7 @@ impl ListenerCore {
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Full(_dropped)) => {
                         // Dropping the SrtSocket sends the peer a SHUTDOWN.
+                        self.overflow_dropped.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         // The handle is gone but accepted connections may
@@ -3395,6 +3409,7 @@ mod adapter_tests {
             unrouted_rx,
             life: std::sync::Weak::new(),
             accepted_tx,
+            overflow_dropped: Arc::new(AtomicU64::new(0)),
             send_errors: Arc::new(AtomicU64::new(0)),
             accepting: true,
             last_pending_tick: Instant::now(),

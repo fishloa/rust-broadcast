@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - `rtp::hex_decode`, `smooth_parse::hex_decode` and the `smooth_hex_decode` re-export are now crate-private; both only wrapped the `hex` crate with this crate's own error type. Use `hex::decode` (dedupe R6).
-- Unused public items `UUID_TYPE_BYTES`, `DashPackager::with_profiles`, `TELG_FOURCC`/`LRAP_FOURCC`/`A3LG_FOURCC`, `StblOpaque`, the RTMP `CSID_CONTROL`/`SOFT` constants, `new_vvi1`, `video_stream_descriptor_bytes`, `MhaCBox`, `user_data::{MIN_BAR_DATA_LEN, picture_user_data, carriage_for}`, `TrackSpec::with_hdr`/`with_dovi`, `SkippedTrack::with_track_id`, the `track_abandoned`/`display_changed` event constructors, `ir::sample::NON_SYNC` and the five `ll_dash` `UTCTIMING_*_2014` constants; `new_avc3`, `new_hev1`, `HdrStaticMetadata::hevc_sei_nal_carries_hdr` and `SENC_OVERRIDE_FIELDS_LEN` are now test-only; the AVS2 FourCC constants are now what `AvsVideoEntryKind` returns (c2 TH1).
+- Unused public items `UUID_TYPE_BYTES`, `DashPackager::with_profiles`, `StblOpaque`, `new_vvi1`, `MhaCBox`, `user_data::{MIN_BAR_DATA_LEN, picture_user_data, carriage_for}`, `TrackSpec::with_hdr`/`with_dovi`, `SkippedTrack::with_track_id`, and `ir::sample::NON_SYNC`; `new_avc3`, `new_hev1`, `HdrStaticMetadata::hevc_sei_nal_carries_hdr` and `SENC_OVERRIDE_FIELDS_LEN` are now test-only; the AVS2 FourCC constants are now what `AvsVideoEntryKind` returns (c2 TH1).
 
 ### Fixed
 - The `vvcC` writer no longer indexes the output buffer directly: a short buffer or a short `general_constraint_info` is a typed `BufferTooShort` instead of a panic (c2 M4).

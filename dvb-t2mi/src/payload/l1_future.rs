@@ -4,6 +4,7 @@
 //! signalling data. Per §5.5, this is always the **last** T2-MI packet
 //! for a given `frame_idx` (if used in current frame).
 
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -26,6 +27,34 @@ pub struct L1FuturePayload<'a> {
 }
 
 const L1_FUTURE_HEADER_LEN: usize = 2;
+const LENGTH_FIELD_BYTES: usize = 2;
+
+/// One `LEN(16) | block(8 x ceil(LEN/8))` pair of Table 3 starting at
+/// `data[pos..]`: the block bytes and the position after them.
+fn length_prefixed_block<'d>(
+    data: &'d [u8],
+    pos: usize,
+    len_what: &'static str,
+    block_what: &'static str,
+) -> crate::error::Result<(&'d [u8], usize)> {
+    let len_field = data
+        .get(pos..)
+        .and_then(|rest| rest.first_chunk::<LENGTH_FIELD_BYTES>())
+        .ok_or(BufferTooShort {
+            need: pos.saturating_add(LENGTH_FIELD_BYTES),
+            have: data.len(),
+            what: len_what,
+        })?;
+    let block_len = usize::from(u16::from_be_bytes(*len_field)).div_ceil(8);
+    let start = pos + LENGTH_FIELD_BYTES;
+    let end = start.saturating_add(block_len);
+    let block = data.get(start..end).ok_or(BufferTooShort {
+        need: end,
+        have: data.len(),
+        what: block_what,
+    })?;
+    Ok((block, end))
+}
 
 impl L1FuturePayload<'_> {
     /// Parse the "dynamic, next frame" block from `l1_future_data`.
@@ -65,6 +94,36 @@ impl L1FuturePayload<'_> {
             num_plp,
             num_aux,
         )?))
+    }
+
+    /// Parse the "dynamic, next-but-one frame" block from `l1_future_data`
+    /// (Table 3 `L1DYN_NEXT2`, TFS mode only).
+    ///
+    /// `num_plp` and `num_aux` must be supplied by the caller, as for
+    /// [`l1_dynamic_next`](Self::l1_dynamic_next).
+    ///
+    /// Returns `None` when `L1DYN_NEXT2_LEN == 0` (block absent).
+    ///
+    /// # Errors
+    /// [`crate::Error::BufferTooShort`] if the data is truncated.
+    /// [`crate::Error::L1Bits`] on bit-field errors.
+    pub fn l1_dynamic_next2(
+        &self,
+        num_plp: u8,
+        num_aux: u8,
+    ) -> crate::error::Result<Option<L1PostDynamic>> {
+        let data = self.l1_future_data;
+        let (_, next2_pos) = length_prefixed_block(
+            data,
+            0,
+            "L1DYN_NEXT_LEN (scanning for NEXT2)",
+            "L1DYN_NEXT (scanning for NEXT2)",
+        )?;
+        let (block, _) = length_prefixed_block(data, next2_pos, "L1DYN_NEXT2_LEN", "L1DYN_NEXT2")?;
+        if block.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(L1PostDynamic::parse(block, num_plp, num_aux)?))
     }
 }
 
@@ -161,5 +220,72 @@ mod tests {
         let buf = [0x05u8, 0x00];
         let result = L1FuturePayload::parse(&buf).unwrap();
         assert!(result.l1_future_data.is_empty());
+    }
+
+    const DYNAMIC_BLOCK_79_BITS: [u8; 10] = [0x05, 0, 0, 0, 0, 0, 0x0A, 0xBA, 0, 0];
+    const DYNAMIC_BLOCK_LEN_BITS: [u8; 2] = [0x00, 0x4F];
+
+    fn dynamic_block(frame_idx: u8) -> Vec<u8> {
+        let mut block = DYNAMIC_BLOCK_79_BITS.to_vec();
+        block[0] = frame_idx;
+        block
+    }
+
+    #[test]
+    fn l1_dynamic_next2_decodes_the_block_after_a_present_next_block() {
+        let mut data = DYNAMIC_BLOCK_LEN_BITS.to_vec();
+        data.extend_from_slice(&dynamic_block(5));
+        data.extend_from_slice(&DYNAMIC_BLOCK_LEN_BITS);
+        data.extend_from_slice(&dynamic_block(6));
+        let pkt = L1FuturePayload {
+            frame_idx: 0,
+            l1_future_data: &data,
+        };
+        let next = pkt.l1_dynamic_next(0, 0).unwrap().unwrap();
+        let next2 = pkt.l1_dynamic_next2(0, 0).unwrap().unwrap();
+        assert_eq!(next.frame_idx, 5);
+        assert_eq!(next2.frame_idx, 6);
+        assert_eq!(next2.l1_change_counter, 0xAB);
+        assert_eq!(next2.start_rf_idx, 5);
+    }
+
+    #[test]
+    fn l1_dynamic_next2_is_none_when_its_length_is_zero() {
+        let mut data = vec![0x00, 0x00, 0x00, 0x00];
+        let pkt = L1FuturePayload {
+            frame_idx: 0,
+            l1_future_data: &data,
+        };
+        assert_eq!(pkt.l1_dynamic_next2(0, 0).unwrap(), None);
+        data.truncate(3);
+        let pkt = L1FuturePayload {
+            frame_idx: 0,
+            l1_future_data: &data,
+        };
+        assert_eq!(
+            pkt.l1_dynamic_next2(0, 0),
+            Err(crate::Error::BufferTooShort(BufferTooShort {
+                need: 4,
+                have: 3,
+                what: "L1DYN_NEXT2_LEN",
+            }))
+        );
+    }
+
+    #[test]
+    fn l1_dynamic_next2_oversized_next_len_is_an_error_not_a_panic() {
+        let data = [0xFFu8, 0xFF];
+        let pkt = L1FuturePayload {
+            frame_idx: 0,
+            l1_future_data: &data,
+        };
+        assert_eq!(
+            pkt.l1_dynamic_next2(0, 0),
+            Err(crate::Error::BufferTooShort(BufferTooShort {
+                need: 2 + 0xFFFF_usize.div_ceil(8),
+                have: 2,
+                what: "L1DYN_NEXT (scanning for NEXT2)",
+            }))
+        );
     }
 }

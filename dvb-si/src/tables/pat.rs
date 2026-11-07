@@ -216,6 +216,15 @@ impl PatSection {
             .iter()
             .filter(|e| e.program_number != PROGRAM_NUMBER_NIT)
     }
+
+    /// The NIT PID: the entry with `program_number == 0` (ISO/IEC 13818-1
+    /// Table 2-30 `network_PID`), if the PAT carries one.
+    pub fn nit_pid(&self) -> Option<Pid> {
+        self.entries
+            .iter()
+            .find(|e| e.program_number == PROGRAM_NUMBER_NIT)
+            .map(|e| e.pid)
+    }
 }
 
 #[cfg(test)]
@@ -364,6 +373,7 @@ mod tests {
     fn network_pid_entry_identified_by_program_number_0() {
         let bytes = build_pat(1, 0, &[(0, 0x0010), (1, 0x0100)]);
         let pat = PatSection::parse(&bytes).unwrap();
+        assert_eq!(pat.nit_pid(), Some(Pid::new(0x0010)));
         assert_eq!(pat.programmes().count(), 1);
         assert_eq!(pat.programmes().next().unwrap().program_number, 1);
     }
