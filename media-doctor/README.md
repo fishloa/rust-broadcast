@@ -44,10 +44,10 @@ in the private repo: `private/specs` set (ISO/IEC 14496-12/-15 and 23009-1) the 
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | `std::error::Error` impls and `check_dash_mpd` (the MPD parser, `quick-xml`, needs `std`) |
-| `serde` | yes | JSON report output (`serde`, `serde_json`) |
+| `serde` | no | JSON report output (`serde`, `serde_json`) |
 | `metrics` | no | `render_metrics` / `publish_metrics`: the `metrics` facade and `metrics-exporter-prometheus` (implies `std`) |
 | `net` | no | `metrics_server` (`hyper` http1 `GET /metrics`) and `udp` (`socket2` bind); implies `metrics` |
-| `cli` | yes | The `media-doctor` binary (`clap`), including `watch`; implies `std` and `net`, and pulls in `container-probe` |
+| `cli` | yes | The `media-doctor` binary (`clap`), including `watch`; implies `std`, `net` and `serde`, and pulls in `container-probe` |
 
 Without `std` the library is `no_std` + `alloc`.
 

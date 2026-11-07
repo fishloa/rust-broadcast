@@ -135,7 +135,7 @@ jobs:
       - uses: taiki-e/install-action@nextest
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
-      # ts/serde; dvb-stream always depends on tokio. Including any of them would
+      # ts; dvb-stream always depends on tokio. Including any of them would
       # — via workspace feature unification — force those features on and mask a
       # regression in the library crates' bare --no-default-features build.
       - name: Build (no default features)

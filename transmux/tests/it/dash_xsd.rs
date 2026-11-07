@@ -11,7 +11,7 @@ use transmux::dash::{
     Addressing, ContentProtectionSystem, DashPackager, TrackSegments, TrickModeAdaptationSet,
     TrickModeRepr,
 };
-use transmux::ll_dash::{LlDashPackager, UTCTIMING_HTTP_HEAD_2014};
+use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::media::Media;
 use transmux::ts_demux::TsDemux;
 
@@ -110,6 +110,7 @@ fn dash_mpds_validate_against_iso_schema() {
             DashPackager {
                 dynamic: true,
                 availability_start_time: Some("2026-01-01T00:00:00Z".into()),
+                publish_time: Some("2026-01-01T00:00:00Z".into()),
                 ..DashPackager::default()
             },
         ),
@@ -161,15 +162,11 @@ fn dash_mpds_validate_against_iso_schema() {
         validate(&schema, &format!("dash-{name}"), &mpd);
     }
 
-    let plain = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z").expect("packager");
-    let rate = LlDashPackager::new(4.0, 1.0, 5000, "2026-01-01T00:00:00Z")
-        .expect("packager")
-        .with_playback_rate(0.96, 1.04);
-    let utc = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
-        .expect("packager")
+    let plain = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let rate = crate::ll_packager::ll_packager(4.0, 1.0, 5000).with_playback_rate(0.96, 1.04);
+    let utc = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
         .with_utc_timing(UTCTIMING_HTTP_HEAD_2014, "https://time.example/x?a=1&b=2");
-    let mut timeline =
-        LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z").expect("packager");
+    let mut timeline = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
     timeline.base.addressing = Addressing::Timeline;
     timeline.base.segments = timeline_segments(&media);
     for (name, mut pkg) in [

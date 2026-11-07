@@ -17,7 +17,7 @@ bytes      = { version = "1", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [features]
-default = ["std", "serde"]
+default = ["std"]
 std    = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 serde  = ["dep:serde"]
 

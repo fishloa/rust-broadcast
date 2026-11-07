@@ -7,6 +7,8 @@ SMPTE ST 291-1 ancillary (ANC) data packets, parsed and serialized as typed
 Rust structs for their two transports: MPEG-2 Transport Stream carriage
 (SMPTE ST 2038:2021) and RTP carriage (RFC 8331 / SMPTE ST 2110-40).
 
+> Formerly `smpte2038` (and `dvb-smpte2038` before it); both names are yanked.
+
 ## What it does / what it does not
 
 ST 291-1 defines the ANC data packet: the generic carrier for VANC/HANC

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - `Monitor::feed` delegates sync hysteresis, scrambling checks and PAT, PMT and SI section reassembly to private methods (internal, c3 t:S7).
 - TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
 

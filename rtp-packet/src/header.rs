@@ -66,7 +66,7 @@ pub const MAX_PADDING_COUNT: usize = u8::MAX as usize;
 /// The `data` bytes are genuinely opaque at this layer — RFC 3550 itself
 /// defines no further structure ("the actual format of the extension is
 /// specified by the profile"). This mirrors the project's precedent for
-/// spec-opaque payloads (e.g. `smpte2038`'s undecoded ST 291-1
+/// spec-opaque payloads (e.g. `st291`'s undecoded ST 291-1
 /// checksum/parity): a raw `&[u8]` here is not a "raw-byte API" violation
 /// because there is no further spec structure to type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

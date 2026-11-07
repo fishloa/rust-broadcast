@@ -56,6 +56,10 @@ pub enum Error {
     #[error(transparent)]
     InvalidValue(#[from] broadcast_common::error::InvalidValue),
 
+    /// A field was missing or structurally invalid.
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
+
     /// A box did not carry the four-CC the parser expected.
     #[error("unexpected box: expected {expected}")]
     UnexpectedBox {

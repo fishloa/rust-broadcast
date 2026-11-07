@@ -20,7 +20,7 @@ mpeg-ts     = { path = "../mpeg-ts", version = "0.6", default-features = false }
 serde       = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [features]
-default = ["std", "serde"]
+default = ["std"]
 std     = ["broadcast-common/std", "dvb-si/std", "mpeg-ts/std", "serde?/std"]
 
 serde = ["dep:serde", "dvb-si/serde"]

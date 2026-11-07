@@ -253,7 +253,7 @@ lifecycle = "active"
 domain = "captions"
 summary = "SMPTE ST 291-1 ancillary (ANC) data packets over ST 2038 (TS/PES) and RFC 8331 / ST 2110-40 (RTP)."
 standards = "SMPTE ST 291-1:2011; ST 2038:2021 (`ts` feature); RFC 8331 / ST 2110-40:2023 (`rtp` feature)"
-what = "Parses and builds ANC data packets (DID/SDID, user data words, parity and checksum) and their two carriages: the ST 2038 `anc_data_descriptor` + ANC PES packet in MPEG-2 TS, and the RFC 8331 RTP payload. Renamed from `smpte2038` / `dvb-smpte2038` (both yanked)."
+what = "Parses and builds ANC data packets (DID/SDID, user data words, parity and checksum) and their two carriages: the ST 2038 `anc_data_descriptor` + ANC PES packet in MPEG-2 TS, and the RFC 8331 RTP payload."
 crates_io = true
 lifecycle = "active"
 
@@ -387,7 +387,7 @@ lifecycle = "active"
 domain = "live"
 summary = "Sans-IO Low-Latency HLS client and origin engines; optional tokio+reqwest client adapter."
 standards = "RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS)"
-what = "A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 demux output) and a sans-IO origin (`server`, feature `std`) that renders playlists and serves init/segment/part bytes straight from a `media-plane` `Trunk`. Earlier releases were published as `ll-hls-runtime` (those versions are still live on crates.io)."
+what = "A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 demux output) and a sans-IO origin (`server`, feature `std`) that renders playlists and serves init/segment/part bytes straight from a `media-plane` `Trunk`."
 crates_io = true
 lifecycle = "active"
 
@@ -521,7 +521,7 @@ lifecycle = "active"
 domain = "delivery"
 summary = "ALC/LCT/FLUTE/NORM multicast object-delivery wire formats."
 standards = "RFC 5651 (LCT); RFC 5775 (ALC); RFC 6726 (FLUTE); RFC 5740 (NORM); RFC 5052 (FEC building block)"
-what = "LCT headers with flag-driven field sizing, header-extension chains, ALC and FEC payload IDs, FLUTE EXT_FDT/EXT_CENC and NORM messages. Pure IETF RMT; DVB, 3GPP and ATSC profiles sit on top of it. Renamed from `dvb-flute` (yanked)."
+what = "LCT headers with flag-driven field sizing, header-extension chains, ALC and FEC payload IDs, FLUTE EXT_FDT/EXT_CENC and NORM messages. Pure IETF RMT; DVB, 3GPP and ATSC profiles sit on top of it."
 crates_io = true
 lifecycle = "active"
 

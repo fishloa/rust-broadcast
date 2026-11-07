@@ -41,7 +41,7 @@ test-fixtures = { path = "../test-fixtures" }
 transmux = { path = "../transmux", default-features = false }
 
 [features]
-default = ["std", "serde"]
+default = ["std"]
 std     = ["jiff/std", "scte35-splice/std", "mp4-emsg/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std", "broadcast-hls/std"]
 serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde", "dvb-vbi?/serde", "broadcast-hls/serde"]
 # CEA-608/708 -> WebVTT cue extraction (`webvtt::Cea608CueExtractor` /
