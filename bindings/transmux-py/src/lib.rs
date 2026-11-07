@@ -73,7 +73,7 @@ use transmux::{EsdsBox, TsDemux};
 /// }
 /// ```
 #[pyfunction]
-fn demux_ts(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
+fn demux_ts(py: Python<'_>, data: &[u8]) -> PyResult<Py<PyAny>> {
     let mut demux = TsDemux::new();
     let media: Media = demux
         .demux(data)
@@ -81,7 +81,7 @@ fn demux_ts(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
     media_to_py(py, &media)
 }
 
-fn media_to_py(py: Python<'_>, media: &Media) -> PyResult<PyObject> {
+fn media_to_py(py: Python<'_>, media: &Media) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("movie_timescale", media.movie_timescale)?;
     let tracks = PyList::empty(py);
@@ -92,7 +92,7 @@ fn media_to_py(py: Python<'_>, media: &Media) -> PyResult<PyObject> {
     Ok(dict.into())
 }
 
-fn track_to_py(py: Python<'_>, track: &Track) -> PyResult<PyObject> {
+fn track_to_py(py: Python<'_>, track: &Track) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     let spec = &track.spec;
     // `TrackId` / `Pid` are typed newtypes (transmux 0.27 / mpeg-ts 0.6); the
@@ -114,7 +114,7 @@ fn track_to_py(py: Python<'_>, track: &Track) -> PyResult<PyObject> {
     // Cache of already-built display dicts keyed by the `Arc<DisplayInfo>` pointer,
     // so consecutive samples sharing one `Arc` share one Python dict object
     // (no per-sample allocation on a long track).
-    let mut display_cache: HashMap<usize, PyObject> = HashMap::new();
+    let mut display_cache: HashMap<usize, Py<PyAny>> = HashMap::new();
     for s in &track.samples {
         samples.append(sample_to_py(py, s, &mut display_cache)?)?;
     }
@@ -129,8 +129,8 @@ fn track_to_py(py: Python<'_>, track: &Track) -> PyResult<PyObject> {
 fn sample_to_py(
     py: Python<'_>,
     sample: &Sample,
-    display_cache: &mut HashMap<usize, PyObject>,
-) -> PyResult<PyObject> {
+    display_cache: &mut HashMap<usize, Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("data", PyBytes::new(py, &sample.data))?;
     dict.set_item("duration", sample.duration)?;
@@ -152,7 +152,7 @@ fn sample_to_py(
 /// Convert a `DisplayGeometry` into the Python dict shape documented in the
 /// README. Returns a fresh `PyDict` (callers cache by `Arc` pointer for
 /// `DisplayInfo`).
-fn display_geometry_to_py(py: Python<'_>, geom: &DisplayGeometry) -> PyResult<PyObject> {
+fn display_geometry_to_py(py: Python<'_>, geom: &DisplayGeometry) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("coded_width", geom.coded_width)?;
     dict.set_item("coded_height", geom.coded_height)?;
@@ -188,7 +188,7 @@ fn display_geometry_to_py(py: Python<'_>, geom: &DisplayGeometry) -> PyResult<Py
 fn display_geometry_to_py_opt(
     py: Python<'_>,
     geom: Option<&DisplayGeometry>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     match geom {
         None => Ok(py.None()),
         Some(g) => display_geometry_to_py(py, g),
@@ -198,8 +198,8 @@ fn display_geometry_to_py_opt(
 fn display_info_to_py(
     py: Python<'_>,
     info: Option<&Arc<DisplayInfo>>,
-    cache: &mut HashMap<usize, PyObject>,
-) -> PyResult<PyObject> {
+    cache: &mut HashMap<usize, Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let Some(info) = info else {
         return Ok(py.None());
     };
