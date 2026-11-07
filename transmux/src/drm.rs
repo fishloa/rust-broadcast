@@ -20,9 +20,9 @@
 //!   is a packager convention, **not** a formal Apple specification.
 //! - **DRM system-ID UUIDs** — `private/specs-verified/mpeg/transmux/drm/public-notes/pssh.md` §1 (DASH-IF registry).
 
+#[cfg(feature = "std")]
 use alloc::string::String;
 use alloc::vec::Vec;
-#[cfg(feature = "std")]
 use broadcast_common::error::InvalidValue;
 
 use crate::cenc::ProtectionSystemSpecificHeaderBox;

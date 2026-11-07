@@ -152,7 +152,7 @@ impl Sender {
     /// buffer is searched by binary search, and a debug build asserts it.
     ///
     /// # Errors
-    /// [`Error::FieldOverflow`] if `seq` does not fit its 31-bit field or
+    /// [`crate::error::Error::FieldOverflow`] if `seq` does not fit its 31-bit field or
     /// `message_number` its 26-bit one; nothing is buffered then.
     pub fn on_data(
         &mut self,
