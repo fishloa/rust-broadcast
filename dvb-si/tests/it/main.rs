@@ -16,6 +16,7 @@ mod downloaded_mhp;
 mod downloaded_mpegh;
 mod downloaded_streams;
 mod epg_capture;
+mod error_variants;
 mod fixture_byte_identity;
 mod fixture_parse;
 mod h222_descriptors;
