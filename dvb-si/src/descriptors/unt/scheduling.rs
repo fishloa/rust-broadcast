@@ -10,6 +10,7 @@
 use crate::descriptors::mjd_time::{MJD_BCD_LEN, MjdBcdTime};
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for scheduling_descriptor (UNT namespace).
@@ -152,12 +153,7 @@ impl Serialize for SchedulingDescriptor<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let b = &mut buf[HEADER_LEN..];
         self.start_date_time.write(b, 0);

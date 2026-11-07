@@ -6,6 +6,7 @@
 use crate::descriptors::{AitDescriptorLoop, DescriptorLoop};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// AIT table_id (ETSI TS 102 809 §5.3.4).
@@ -315,13 +316,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
             + COMMON_DESC_LEN_BYTES
             + APP_LOOP_LEN_BYTES
             + CRC_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "AitSection",
-            });
-        }
+        need_in(bytes, min_len, "AitSection")?;
 
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
@@ -457,12 +452,7 @@ impl Serialize for AitSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         // 15-bit field: reject rather than silently drop bit 15 of a
         // constructed `ApplicationType::Reserved(v)` with `v >= 0x8000`

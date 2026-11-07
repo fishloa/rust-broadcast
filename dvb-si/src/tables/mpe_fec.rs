@@ -38,6 +38,7 @@
 
 use crate::error::{Error, Result};
 use crate::tables::real_time_parameters::{RTP_LEN, RealTimeParametersBits};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the MPE-FEC section.
@@ -179,13 +180,7 @@ impl<'a> Parse<'a> for MpeFecSection<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_LEN,
-                have: bytes.len(),
-                what: "MpeFecSection",
-            });
-        }
+        need_in(bytes, MIN_LEN, "MpeFecSection")?;
 
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
@@ -244,12 +239,7 @@ impl Serialize for MpeFecSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         // Byte 0: table_id.
         buf[0] = TABLE_ID;

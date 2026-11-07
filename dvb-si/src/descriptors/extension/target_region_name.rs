@@ -1,6 +1,7 @@
 //! Target Region Name Descriptor — ETSI EN 300 468 §6.4.13 (tag_extension 0x0A).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for TargetRegionName<'a> {
     const TAG_EXTENSION: u8 = 0x0A;
@@ -39,13 +40,7 @@ pub struct TargetRegionNameEntry<'a> {
 impl<'a> Parse<'a> for TargetRegionName<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < 2 * ISO_639_LEN {
-            return Err(Error::BufferTooShort {
-                need: 2 * ISO_639_LEN,
-                have: sel.len(),
-                what: "target_region_name body",
-            });
-        }
+        need_in(sel, 2 * ISO_639_LEN, "target_region_name body")?;
         let country_code = LangCode([sel[0], sel[1], sel[2]]);
         let iso_639_language_code = LangCode([sel[3], sel[4], sel[5]]);
         let mut regions = Vec::new();
@@ -55,13 +50,7 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             pos += 1;
             let region_depth = byte >> 6;
             let name_length = (byte & 0x3F) as usize;
-            if pos + name_length > sel.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + name_length,
-                    have: sel.len(),
-                    what: "target_region_name body",
-                });
-            }
+            need_in(sel, pos + name_length, "target_region_name body")?;
             let region_name = DvbText::new(&sel[pos..pos + name_length]);
             pos += name_length;
             if pos >= sel.len() {
@@ -145,12 +134,7 @@ impl Serialize for TargetRegionName<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[..ISO_639_LEN].copy_from_slice(&self.country_code.0);
         buf[ISO_639_LEN..2 * ISO_639_LEN].copy_from_slice(&self.iso_639_language_code.0);
         let mut pos = 2 * ISO_639_LEN;

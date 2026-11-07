@@ -4,6 +4,7 @@
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
     const TAG_EXTENSION: u8 = 0x20;
@@ -102,13 +103,7 @@ impl<'a> TtmlSubtitling<'a> {
 impl<'a> Parse<'a> for TtmlSubtitling<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < TTML_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: TTML_FIXED_LEN,
-                have: sel.len(),
-                what: "TTML_subtitling body",
-            });
-        }
+        need_in(sel, TTML_FIXED_LEN, "TTML_subtitling body")?;
         let iso_639_language_code = LangCode([sel[0], sel[1], sel[2]]);
         let b3 = sel[ISO_639_LEN];
         let subtitle_purpose = b3 >> 2;
@@ -122,13 +117,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         let mut pos = TTML_FIXED_LEN;
 
         // dvb_ttml_profile loop
-        if sel.len() < pos + dvb_ttml_profile_count {
-            return Err(Error::BufferTooShort {
-                need: pos + dvb_ttml_profile_count,
-                have: sel.len(),
-                what: "TTML_subtitling body",
-            });
-        }
+        need_in(sel, pos + dvb_ttml_profile_count, "TTML_subtitling body")?;
         let dvb_ttml_profiles = sel[pos..pos + dvb_ttml_profile_count].to_vec();
         pos += dvb_ttml_profile_count;
 
@@ -160,13 +149,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
             }
             let font_count = sel[pos] as usize;
             pos += 1;
-            if sel.len() < pos + font_count {
-                return Err(Error::BufferTooShort {
-                    need: pos + font_count,
-                    have: sel.len(),
-                    what: "TTML_subtitling body",
-                });
-            }
+            need_in(sel, pos + font_count, "TTML_subtitling body")?;
             let ids: Vec<TtmlFont> = sel[pos..pos + font_count]
                 .iter()
                 .map(|b| TtmlFont {
@@ -190,13 +173,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         }
         let text_length = sel[pos] as usize;
         pos += 1;
-        if sel.len() < pos + text_length {
-            return Err(Error::BufferTooShort {
-                need: pos + text_length,
-                have: sel.len(),
-                what: "TTML_subtitling body",
-            });
-        }
+        need_in(sel, pos + text_length, "TTML_subtitling body")?;
         let text = DvbText::new(&sel[pos..pos + text_length]);
         pos += text_length;
 
@@ -230,12 +207,7 @@ impl Serialize for TtmlSubtitling<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[..ISO_639_LEN].copy_from_slice(&self.iso_639_language_code.0);
         // byte 3: subtitle_purpose(6) | TTS_suitability(2)
         buf[ISO_639_LEN] =

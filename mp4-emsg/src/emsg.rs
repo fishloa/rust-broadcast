@@ -36,6 +36,7 @@
 //! integers first / strings last in v1) per `private/specs-verified/mpeg/mp4-emsg/emsg.md`.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::version::EmsgVersion;
@@ -176,13 +177,7 @@ impl<'a> EmsgBox<'a> {
     /// [`Self::flags`] so [`Self::serialize_into`] reproduces them (EM-W2 /
     /// #1104).
     pub fn parse(data: &'a [u8]) -> Result<Self> {
-        if data.len() < FULLBOX_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_HEADER_LEN,
-                have: data.len(),
-                what: "emsg FullBox header",
-            });
-        }
+        need_in(data, FULLBOX_HEADER_LEN, "emsg FullBox header")?;
 
         let size = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
         let box_type = [data[4], data[5], data[6], data[7]];
@@ -227,13 +222,7 @@ impl<'a> EmsgBox<'a> {
         let (value, rest) = parse_cstr(rest, "value")?;
 
         let need = U32_LEN * 4;
-        if rest.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: rest.len(),
-                what: "emsg v0 integer fields",
-            });
-        }
+        need_in(rest, need, "emsg v0 integer fields")?;
         let timescale = read_u32(&rest[0..U32_LEN]);
         let delta = read_u32(&rest[U32_LEN..U32_LEN * 2]);
         let event_duration = read_u32(&rest[U32_LEN * 2..U32_LEN * 3]);
@@ -256,13 +245,7 @@ impl<'a> EmsgBox<'a> {
     /// scheme\0 value\0 message_data[].
     fn parse_v1(body: &'a [u8]) -> Result<Self> {
         let need = U32_LEN + U64_LEN + U32_LEN + U32_LEN;
-        if body.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: body.len(),
-                what: "emsg v1 integer fields",
-            });
-        }
+        need_in(body, need, "emsg v1 integer fields")?;
         let timescale = read_u32(&body[0..U32_LEN]);
         let presentation_time = read_u64(&body[U32_LEN..U32_LEN + U64_LEN]);
         let mut off = U32_LEN + U64_LEN;
@@ -310,12 +293,7 @@ impl<'a> EmsgBox<'a> {
         reject_interior_nul(self.value, "value")?;
 
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         if total > u32::MAX as usize {
             return Err(Error::FieldTooWide {
                 what: "size",

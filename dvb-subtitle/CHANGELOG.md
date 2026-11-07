@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Error::UnknownDataType` and `Error::UnknownObjectCodingMethod`: never constructed. Reserved `data_type` and `object_coding_method` values are carried losslessly as `DataType::Reserved` / `ObjectCodingMethod::Reserved`, and EN 300 743 requires no rejection of them.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
+### Added
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+### Changed
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 
 ## [0.6.0] - 2026-10-17
 ### Documentation

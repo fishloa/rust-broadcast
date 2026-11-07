@@ -14,6 +14,7 @@
 use crate::descriptors::carousel::SubgroupTag;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for SSU_subgroup_association_descriptor.
@@ -56,12 +57,7 @@ impl Serialize for SsuSubgroupAssociationDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         let tag = self.subgroup_tag.to_bytes()?;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[HEADER_LEN..len].copy_from_slice(&tag);
         Ok(len)

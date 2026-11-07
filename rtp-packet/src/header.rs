@@ -3,6 +3,7 @@
 //! transcription this module implements field-for-field.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -154,13 +155,7 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FIXED_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_HEADER_LEN,
-                have: bytes.len(),
-                what: "RTP fixed header",
-            });
-        }
+        need_in(bytes, FIXED_HEADER_LEN, "RTP fixed header")?;
 
         let byte0 = bytes[0];
         let version = byte0 >> VERSION_SHIFT;
@@ -183,13 +178,7 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
 
         // --- CSRC list (§5.1) ---
         let csrc_bytes_len = cc * CSRC_ITEM_LEN;
-        if bytes.len() < pos + csrc_bytes_len {
-            return Err(Error::BufferTooShort {
-                need: pos + csrc_bytes_len,
-                have: bytes.len(),
-                what: "CSRC list",
-            });
-        }
+        need_in(bytes, pos + csrc_bytes_len, "CSRC list")?;
         let mut csrc = Vec::with_capacity(cc);
         for i in 0..cc {
             let off = pos + i * CSRC_ITEM_LEN;
@@ -204,25 +193,17 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
 
         // --- Header extension (§5.3.1) ---
         let extension = if extension_flag {
-            if bytes.len() < pos + EXTENSION_HEADER_LEN {
-                return Err(Error::BufferTooShort {
-                    need: pos + EXTENSION_HEADER_LEN,
-                    have: bytes.len(),
-                    what: "header extension profile-id/length",
-                });
-            }
+            need_in(
+                bytes,
+                pos + EXTENSION_HEADER_LEN,
+                "header extension profile-id/length",
+            )?;
             let profile_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
             let length_words = usize::from(u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]));
             let data_len = length_words * EXTENSION_WORD_LEN;
             let data_start = pos + EXTENSION_HEADER_LEN;
             let data_end = data_start + data_len;
-            if bytes.len() < data_end {
-                return Err(Error::BufferTooShort {
-                    need: data_end,
-                    have: bytes.len(),
-                    what: "header extension data",
-                });
-            }
+            need_in(bytes, data_end, "header extension data")?;
             pos = data_end;
             Some(HeaderExtension {
                 profile_id,
@@ -291,13 +272,7 @@ impl Serialize for RtpPacket<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "RTP packet serialize output",
-            });
-        }
+        need_in(buf, len, "RTP packet serialize output")?;
         if self.csrc.len() > MAX_CSRC_COUNT {
             return Err(Error::InvalidValue {
                 field: "csrc.len()",

@@ -20,6 +20,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -575,13 +576,7 @@ impl<'a> Parse<'a> for SdStartReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::SD_START_REPLY, "sd_start_reply")?;
-        if body.len() < SD_START_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: SD_START_REPLY_BODY,
-                have: body.len(),
-                what: "sd_start_reply",
-            });
-        }
+        need_in(body, SD_START_REPLY_BODY, "sd_start_reply")?;
         crate::objects::reject_trailing_body(body, SD_START_REPLY_BODY, "sd_start_reply")?;
         let mut r = Reader::new(body, "sd_start_reply");
         Ok(Self {
@@ -708,13 +703,7 @@ impl<'a> Parse<'a> for SdUpdateReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::SD_UPDATE_REPLY, "sd_update_reply")?;
-        if body.len() < SD_UPDATE_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: SD_UPDATE_REPLY_BODY,
-                have: body.len(),
-                what: "sd_update_reply",
-            });
-        }
+        need_in(body, SD_UPDATE_REPLY_BODY, "sd_update_reply")?;
         crate::objects::reject_trailing_body(body, SD_UPDATE_REPLY_BODY, "sd_update_reply")?;
         Ok(Self {
             length_form,

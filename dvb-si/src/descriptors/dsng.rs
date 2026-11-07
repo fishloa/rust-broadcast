@@ -7,6 +7,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for DSNG_descriptor.
@@ -50,12 +51,7 @@ impl Serialize for DsngDescriptor<'_> {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, self.bytes.len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.bytes);
         Ok(len)

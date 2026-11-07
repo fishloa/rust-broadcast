@@ -12,6 +12,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for time_slice_fec_identifier_descriptor.
@@ -165,12 +166,7 @@ impl Serialize for TimeSliceFecIdentifierDescriptor<'_> {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.id_selector.len())?;
         buf[2] = (u8::from(self.time_slicing) << 7)
             | (broadcast_common::len::fit_mask(self.mpe_fec, MPE_FEC_MAX, "mpe_fec")? << 5)

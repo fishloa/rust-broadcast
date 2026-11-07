@@ -14,6 +14,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AAC_descriptor.
@@ -278,13 +279,7 @@ pub struct AacDescriptor<'a> {
 impl<'a> Parse<'a> for AacDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + 1 {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + 1,
-                have: bytes.len(),
-                what: "AacDescriptor header+profile",
-            });
-        }
+        need_in(bytes, HEADER_LEN + 1, "AacDescriptor header+profile")?;
         let body = descriptor_body(
             bytes,
             TAG,
@@ -352,12 +347,7 @@ impl Serialize for AacDescriptor<'_> {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[2] = self.profile_and_level;
         let mut pos = 3;

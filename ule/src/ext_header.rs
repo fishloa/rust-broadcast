@@ -17,6 +17,7 @@
 //!   EtherType); handled by [`TypeField`], never reaches this module.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use crate::error::{Error, Result};
 use crate::type_field::TypeField;
@@ -386,12 +387,7 @@ impl<'a> PayloadChain<'a> {
             h.validate()?;
         }
         let need = self.serialized_len();
-        if out.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: out.len(),
-            });
-        }
+        need_out(out, need)?;
         // Wire order after the base-header Type field is:
         //   body₀, type₁, body₁, type₂, …, type_final, pdu
         // where typeᵢ introduces headerᵢ and the first header is introduced by

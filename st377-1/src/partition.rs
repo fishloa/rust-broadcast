@@ -5,6 +5,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -258,13 +259,7 @@ impl<'a> Parse<'a> for PartitionPack {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "Partition Pack key",
-            });
-        }
+        need_in(bytes, 16, "Partition Pack key")?;
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         let (kind, status) = Self::parse_key(&key)?;
 
@@ -283,23 +278,11 @@ impl<'a> Parse<'a> for PartitionPack {
             have: bytes.len(),
             what: "Partition Pack value (length overflow)",
         })?;
-        if bytes.len() < value_end {
-            return Err(Error::BufferTooShort {
-                need: value_end,
-                have: bytes.len(),
-                what: "Partition Pack value",
-            });
-        }
+        need_in(bytes, value_end, "Partition Pack value")?;
         let v = &bytes[value_start..value_end];
 
         const FIXED_FIELDS_LEN: usize = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16;
-        if v.len() < FIXED_FIELDS_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_FIELDS_LEN,
-                have: v.len(),
-                what: "Partition Pack fixed fields",
-            });
-        }
+        need_in(v, FIXED_FIELDS_LEN, "Partition Pack fixed fields")?;
         let u16_at = |o: usize| u16::from_be_bytes([v[o], v[o + 1]]);
         let u32_at = |o: usize| u32::from_be_bytes([v[o], v[o + 1], v[o + 2], v[o + 3]]);
         let u64_at = |o: usize| {
@@ -366,13 +349,7 @@ impl Serialize for PartitionPack {
             });
         }
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: buf.len(),
-                what: "Partition Pack",
-            });
-        }
+        need_in(buf, total, "Partition Pack")?;
         buf[0..16].copy_from_slice(&Self::key(self.kind, self.status));
         let batch = serialize_uid_batch(&self.essence_containers);
         let value_len = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16 + batch.len();

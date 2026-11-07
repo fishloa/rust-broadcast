@@ -8,6 +8,7 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_descriptor (AIT namespace).
@@ -231,12 +232,7 @@ impl Serialize for ApplicationDescriptor {
                 reason: "application_descriptor body exceeds 255 bytes",
             });
         }
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[2] = profiles_length as u8;
         let mut pos = 3;

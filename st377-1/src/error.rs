@@ -134,3 +134,13 @@ pub enum Error {
     #[error("duplicate UL/UUID within a Primer Pack (tags {0:#06X} and {1:#06X})")]
     DuplicatePrimerUl(u16, u16),
 }
+
+impl From<broadcast_common::len::BufferTooShort> for Error {
+    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
+        Self::BufferTooShort {
+            need: e.need,
+            have: e.have,
+            what: e.what,
+        }
+    }
+}

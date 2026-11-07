@@ -13,6 +13,7 @@
 //! loop round-trips byte-for-byte.
 
 use crate::error::Result;
+use broadcast_common::len::need_out;
 
 /// Declares [`AnySpliceDescriptor`] + its dispatcher from one tag list.
 macro_rules! declare_splice_descriptors {
@@ -104,12 +105,7 @@ macro_rules! declare_splice_descriptors {
                     )+
                     Self::Unknown { tag, body } => {
                         let need = 2 + body.len();
-                        if buf.len() < need {
-                            return Err(crate::error::Error::OutputBufferTooSmall {
-                                need,
-                                have: buf.len(),
-                            });
-                        }
+                        need_out(buf, need)?;
                         buf[0] = *tag;
                         buf[1] = broadcast_common::len::fit_u8(
                             body.len(),

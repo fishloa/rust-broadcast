@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -40,13 +41,7 @@ impl<'a> Parse<'a> for Tune {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::TUNE, "tune")?;
-        if body.len() < TUNE_BODY {
-            return Err(Error::BufferTooShort {
-                need: TUNE_BODY,
-                have: body.len(),
-                what: "tune",
-            });
-        }
+        need_in(body, TUNE_BODY, "tune")?;
         super::reject_trailing_body(body, TUNE_BODY, "tune")?;
         Ok(Self {
             length_form,
@@ -114,13 +109,7 @@ impl<'a> Parse<'a> for Replace {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::REPLACE, "replace")?;
-        if body.len() < REPLACE_BODY {
-            return Err(Error::BufferTooShort {
-                need: REPLACE_BODY,
-                have: body.len(),
-                what: "replace",
-            });
-        }
+        need_in(body, REPLACE_BODY, "replace")?;
         super::reject_trailing_body(body, REPLACE_BODY, "replace")?;
         let replacement_ref = body[0];
         let replaced_pid = Pid::new((((body[1] & 0x1F) as u16) << 8) | body[2] as u16);

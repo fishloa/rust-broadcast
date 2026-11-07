@@ -6,6 +6,7 @@
 //! `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 3 for the exact boundary and why.
 
 use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{BitResultExt, Error, Result};
@@ -73,13 +74,7 @@ impl<'a> Parse<'a> for AudioDataDlc<'a> {
                 value: dlc_size as u64,
                 reason: "DLCSize overflowed usize",
             })?;
-        if payload_end > bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: payload_end,
-                have: bytes.len(),
-                what: "AudioDataDLC.payload",
-            });
-        }
+        need_in(bytes, payload_end, "AudioDataDLC.payload")?;
         if payload_end != bytes.len() {
             // §5.5.1: "DLCSize shall indicate the size in bytes of the
             // remainder of the AudioDataDLC Element" — i.e. it must consume
@@ -107,13 +102,7 @@ impl Serialize for AudioDataDlc<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: buf.len(),
-                what: "AudioDataDLC",
-            });
-        }
+        need_in(buf, need, "AudioDataDLC")?;
         let header_len;
         {
             let mut w = BitWriter::new(&mut buf[..need]);

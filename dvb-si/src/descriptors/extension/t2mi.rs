@@ -3,6 +3,7 @@
 //! The `reserved_tail` field holds trailing `reserved_zero_future_use` bytes
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
+use broadcast_common::len::{need_in, need_out};
 
 /// Spec default of every `reserved_zero_future_use` region of the T2-MI
 /// descriptor (Table 158; V1.16.1-V1.20.1 `reserved_zero_future_use`, and the
@@ -73,13 +74,7 @@ impl<'a> T2mi<'a> {
 impl<'a> Parse<'a> for T2mi<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < T2MI_MIN_LEN {
-            return Err(Error::BufferTooShort {
-                need: T2MI_MIN_LEN,
-                have: sel.len(),
-                what: "T2MI body",
-            });
-        }
+        need_in(sel, T2MI_MIN_LEN, "T2MI body")?;
         Ok(T2mi {
             // Table 158 bytes 0-2:
             //   byte 0: reserved_zero_future_use(5) | t2mi_stream_id(3)
@@ -103,12 +98,7 @@ impl Serialize for T2mi<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // Table 158 bytes 0-2:
         // reserved_zero_future_use(5) | t2mi_stream_id(3)
         buf[0] = (broadcast_common::len::fit_mask(

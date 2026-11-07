@@ -12,6 +12,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id value for BAT.
@@ -116,13 +117,7 @@ impl<'a> Parse<'a> for BatSection<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = MIN_SECTION_LEN + LOOP_LENGTH_FIELD_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: LABELS.section,
-            });
-        }
+        need_in(bytes, min_len, LABELS.section)?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],

@@ -181,12 +181,7 @@ macro_rules! impl_h222_descriptor {
             fn serialize_into(&self, buf: &mut [u8]) -> crate::error::Result<usize> {
                 let body = self.write_body()?;
                 let len = 2 + body.len();
-                if buf.len() < len {
-                    return Err(crate::error::Error::OutputBufferTooSmall {
-                        need: len,
-                        have: buf.len(),
-                    });
-                }
+                ::broadcast_common::len::need_out(buf, len)?;
                 $crate::descriptors::write_descriptor_header(buf, $tag, body.len())?;
                 buf[2..len].copy_from_slice(&body);
                 Ok(len)

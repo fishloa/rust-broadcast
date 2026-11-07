@@ -14,8 +14,9 @@
 //! Payload ID and no payload; that maps to an [`AlcPacket`] with an empty
 //! `fec_payload_id` and empty `payload`.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lct::LctHeader;
+use broadcast_common::len::{need_in, need_out};
 
 /// HET for ALC's EXT_FTI (FEC Object Transmission Information) — RFC 5775 §4.2.
 /// Variable-length form (HET 0..=127). The HEC body is FEC-scheme dependent.
@@ -71,13 +72,7 @@ impl<'a> AlcPacket<'a> {
     pub fn parse(data: &'a [u8], fec_payload_id_len: usize) -> Result<Self> {
         let (lct, used) = LctHeader::parse(data)?;
         let rest = &data[used..];
-        if rest.len() < fec_payload_id_len {
-            return Err(Error::BufferTooShort {
-                need: fec_payload_id_len,
-                have: rest.len(),
-                what: "ALC FEC Payload ID",
-            });
-        }
+        need_in(rest, fec_payload_id_len, "ALC FEC Payload ID")?;
         let fec_payload_id = &rest[..fec_payload_id_len];
         let payload = &rest[fec_payload_id_len..];
         Ok(AlcPacket {
@@ -90,12 +85,7 @@ impl<'a> AlcPacket<'a> {
     /// Serialize the ALC packet into `out`. Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         let mut off = self.lct.serialize_into(out)?;
         out[off..off + self.fec_payload_id.len()].copy_from_slice(self.fec_payload_id);
         off += self.fec_payload_id.len();
@@ -131,13 +121,11 @@ impl FecPayloadId128 {
 
     /// Parse from exactly the first 8 bytes of `data`.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < FEC_PAYLOAD_ID_128_LEN {
-            return Err(Error::BufferTooShort {
-                need: FEC_PAYLOAD_ID_128_LEN,
-                have: data.len(),
-                what: "FEC Payload ID (fec_id 128/129)",
-            });
-        }
+        need_in(
+            data,
+            FEC_PAYLOAD_ID_128_LEN,
+            "FEC Payload ID (fec_id 128/129)",
+        )?;
         Ok(FecPayloadId128 {
             source_block_number: u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
             source_block_length: u16::from_be_bytes([data[4], data[5]]),
@@ -147,12 +135,7 @@ impl FecPayloadId128 {
 
     /// Serialize into `out` (8 bytes). Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
-        if out.len() < FEC_PAYLOAD_ID_128_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: FEC_PAYLOAD_ID_128_LEN,
-                have: out.len(),
-            });
-        }
+        need_out(out, FEC_PAYLOAD_ID_128_LEN)?;
         out[0..4].copy_from_slice(&self.source_block_number.to_be_bytes());
         out[4..6].copy_from_slice(&self.source_block_length.to_be_bytes());
         out[6..8].copy_from_slice(&self.encoding_symbol_id.to_be_bytes());

@@ -17,6 +17,7 @@
 //! the space up to `HDR_LEN` words ([`crate::ext`]).
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{self, HeaderExtension, WORD};
@@ -186,13 +187,7 @@ impl<'a> LctHeader<'a> {
     /// end of the header (incl. extensions); trailing bytes (FEC Payload ID /
     /// payload) are left for the caller. Returns the header and bytes consumed.
     pub fn parse(data: &'a [u8]) -> Result<(Self, usize)> {
-        if data.len() < FIXED_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_HEADER_LEN,
-                have: data.len(),
-                what: "LCT fixed header",
-            });
-        }
+        need_in(data, FIXED_HEADER_LEN, "LCT fixed header")?;
         // First 16 bits: V(4) C(2) PSI(2) S(1) O(2) H(1) Res(2) A(1) B(1).
         let w = u16::from_be_bytes([data[0], data[1]]);
         let version = (w >> 12) as u8 & 0x0F;
@@ -214,13 +209,7 @@ impl<'a> LctHeader<'a> {
                 reason: "HDR_LEN smaller than the fixed header word",
             });
         }
-        if data.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: data.len(),
-                what: "LCT header (per HDR_LEN)",
-            });
-        }
+        need_in(data, total, "LCT header (per HDR_LEN)")?;
 
         let cci_len = Self::cci_len(c);
         let tsi_len = Self::tsi_len(s, h);
@@ -263,12 +252,7 @@ impl<'a> LctHeader<'a> {
     /// `HDR_LEN` from the typed fields. Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         if self.version > 0x0F {
             return Err(Error::FieldTooWide {
                 what: "version",

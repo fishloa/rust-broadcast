@@ -27,6 +27,7 @@
 //! but has **no real-capture corroboration**. [`SourceFecPayloadId`] and the
 //! SPI-bit dispatch in [`crate::RoutePacket`] *are* real-fixture verified.
 
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
@@ -59,13 +60,11 @@ impl<'a> Parse<'a> for SourceFecPayloadId {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < ROUTE_FEC_PAYLOAD_ID_LEN {
-            return Err(Error::BufferTooShort {
-                need: ROUTE_FEC_PAYLOAD_ID_LEN,
-                have: bytes.len(),
-                what: "source-flow FEC Payload ID (start_offset)",
-            });
-        }
+        need_in(
+            bytes,
+            ROUTE_FEC_PAYLOAD_ID_LEN,
+            "source-flow FEC Payload ID (start_offset)",
+        )?;
         Ok(SourceFecPayloadId {
             start_offset: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
         })
@@ -80,12 +79,7 @@ impl Serialize for SourceFecPayloadId {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < ROUTE_FEC_PAYLOAD_ID_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: ROUTE_FEC_PAYLOAD_ID_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, ROUTE_FEC_PAYLOAD_ID_LEN)?;
         buf[0..4].copy_from_slice(&self.start_offset.to_be_bytes());
         Ok(ROUTE_FEC_PAYLOAD_ID_LEN)
     }
@@ -112,13 +106,11 @@ impl<'a> Parse<'a> for RepairFecPayloadId {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < ROUTE_FEC_PAYLOAD_ID_LEN {
-            return Err(Error::BufferTooShort {
-                need: ROUTE_FEC_PAYLOAD_ID_LEN,
-                have: bytes.len(),
-                what: "repair-flow FEC Payload ID (SBN/ESI)",
-            });
-        }
+        need_in(
+            bytes,
+            ROUTE_FEC_PAYLOAD_ID_LEN,
+            "repair-flow FEC Payload ID (SBN/ESI)",
+        )?;
         let sbn = bytes[0];
         let esi = u32::from_be_bytes([0, bytes[1], bytes[2], bytes[3]]);
         Ok(RepairFecPayloadId { sbn, esi })
@@ -133,12 +125,7 @@ impl Serialize for RepairFecPayloadId {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < ROUTE_FEC_PAYLOAD_ID_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: ROUTE_FEC_PAYLOAD_ID_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, ROUTE_FEC_PAYLOAD_ID_LEN)?;
         if self.esi > MAX_ESI {
             return Err(Error::FieldTooWide {
                 what: "ESI",

@@ -8,6 +8,7 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for module_link_descriptor (data-carousel namespace).
@@ -107,12 +108,7 @@ impl Serialize for ModuleLinkDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2] = self.position.to_u8();
         buf[3..5].copy_from_slice(&self.module_id.to_be_bytes());

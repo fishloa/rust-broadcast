@@ -11,6 +11,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::tables::RunningStatus;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for present/following on the actual TS.
@@ -168,13 +169,7 @@ impl<'a> Parse<'a> for EitSection<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "EitSection",
-            });
-        }
+        need_in(bytes, min_len, "EitSection")?;
 
         let table_id = bytes[0];
         let kind = EitKind::from_table_id(table_id).ok_or(Error::UnexpectedTableId {
@@ -293,12 +288,7 @@ impl Serialize for EitSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.table_id;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;

@@ -11,6 +11,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Copy Protection (Tables 69-73).
@@ -165,13 +166,7 @@ impl<'a> Parse<'a> for CpQuery {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = objects::parse_apdu_header(bytes, tag::CP_QUERY, "cp_query")?;
-        if body.len() < CP_ID_LEN {
-            return Err(Error::BufferTooShort {
-                need: CP_ID_LEN,
-                have: body.len(),
-                what: "cp_query",
-            });
-        }
+        need_in(body, CP_ID_LEN, "cp_query")?;
         objects::reject_trailing_body(body, CP_ID_LEN, "cp_query")?;
         Ok(Self {
             length_form,
@@ -200,13 +195,7 @@ impl<'a> Parse<'a> for CpReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = objects::parse_apdu_header(bytes, tag::CP_REPLY, "cp_reply")?;
-        if body.len() < CP_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: CP_REPLY_BODY,
-                have: body.len(),
-                what: "cp_reply",
-            });
-        }
+        need_in(body, CP_REPLY_BODY, "cp_reply")?;
         crate::objects::reject_trailing_body(body, CP_REPLY_BODY, "cp_reply")?;
         Ok(Self {
             length_form,
@@ -234,13 +223,7 @@ impl<'a> Parse<'a> for CpCommand<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = objects::parse_apdu_header(bytes, tag::CP_COMMAND, "cp_command")?;
-        if body.len() < CP_ID_LEN {
-            return Err(Error::BufferTooShort {
-                need: CP_ID_LEN,
-                have: body.len(),
-                what: "cp_command",
-            });
-        }
+        need_in(body, CP_ID_LEN, "cp_command")?;
         Ok(Self {
             length_form,
             copy_protection_id: read_cp_id(body),
@@ -270,13 +253,7 @@ impl<'a> Parse<'a> for CpResponse<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::CP_RESPONSE, "cp_response")?;
-        if body.len() < CP_ID_LEN {
-            return Err(Error::BufferTooShort {
-                need: CP_ID_LEN,
-                have: body.len(),
-                what: "cp_response",
-            });
-        }
+        need_in(body, CP_ID_LEN, "cp_response")?;
         Ok(Self {
             length_form,
             copy_protection_id: read_cp_id(body),

@@ -16,6 +16,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use super::{
     BINDING_NCONTEXT, BINDING_NOBJECT, BIOP_MAGIC, BIOP_VERSION_MAJOR, BIOP_VERSION_MINOR,
@@ -233,12 +234,7 @@ impl<'a> Binding<'a> {
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.name.len() > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: self.name.len(),
@@ -580,12 +576,7 @@ impl<'a> DirectoryMessage<'a> {
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let inner_len = self.serialized_len_inner();
         let total = BIOP_HEADER_LEN + inner_len;
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         write_biop_header(
             buf,
             broadcast_common::len::fit_u32(inner_len, "messageSize")?,
@@ -766,12 +757,7 @@ impl<'a> FileMessage<'a> {
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let inner_len = self.serialized_len_inner();
         let total = BIOP_HEADER_LEN + inner_len;
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         write_biop_header(
             buf,
             broadcast_common::len::fit_u32(inner_len, "messageSize")?,
@@ -899,12 +885,7 @@ impl<'a> DsmStreamInfo<'a> {
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.description.len() > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: self.description.len(),
@@ -1058,12 +1039,7 @@ impl<'a> StreamMessage<'a> {
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let inner_len = self.serialized_len_inner();
         let total = BIOP_HEADER_LEN + inner_len;
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         write_biop_header(
             buf,
             broadcast_common::len::fit_u32(inner_len, "messageSize")?,
@@ -1332,12 +1308,7 @@ impl<'a> StreamEventMessage<'a> {
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let inner_len = self.serialized_len_inner();
         let total = BIOP_HEADER_LEN + inner_len;
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         write_biop_header(
             buf,
             broadcast_common::len::fit_u32(inner_len, "messageSize")?,
@@ -1515,12 +1486,7 @@ impl Serialize for BiopMessage<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len_total();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         match self {
             Self::Directory(d) | Self::ServiceGateway(d) => {
                 d.serialize_into_buf(buf)?;
@@ -1655,12 +1621,7 @@ impl Serialize for ModuleInfo<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0..4].copy_from_slice(&self.module_timeout.to_be_bytes());
         buf[4..8].copy_from_slice(&self.block_timeout.to_be_bytes());
         buf[8..12].copy_from_slice(&self.min_block_time.to_be_bytes());
@@ -1860,12 +1821,7 @@ impl<'a> Serialize for ServiceGatewayInfo<'a> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let mut pos = self.ior.serialize_into(buf)?;
         buf[pos] = broadcast_common::len::fit_u8(self.download_taps.len(), "downloadTaps_count")?;
         pos += SGI_DOWNLOAD_TAPS_COUNT_FIELD;

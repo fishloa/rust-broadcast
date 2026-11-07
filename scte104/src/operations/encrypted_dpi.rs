@@ -4,6 +4,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for encrypted_DPI_request (§8.3, Table 8-4).
@@ -25,13 +26,7 @@ pub struct EncryptedDpi {
 impl<'a> Parse<'a> for EncryptedDpi {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < LEN {
-            return Err(Error::BufferTooShort {
-                need: LEN,
-                have: bytes.len(),
-                what: "encrypted_DPI_request_data",
-            });
-        }
+        need_in(bytes, LEN, "encrypted_DPI_request_data")?;
         Ok(Self {
             encryption_algorithm: bytes[0],
             cw_index: bytes[1],
@@ -45,12 +40,7 @@ impl Serialize for EncryptedDpi {
         LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, LEN)?;
         buf[0] = self.encryption_algorithm;
         buf[1] = self.cw_index;
         Ok(LEN)

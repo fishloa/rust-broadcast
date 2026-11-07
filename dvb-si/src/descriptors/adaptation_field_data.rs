@@ -6,6 +6,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for adaptation_field_data_descriptor.
@@ -85,12 +86,7 @@ impl Serialize for AdaptationFieldDataDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[HEADER_LEN] = self.adaptation_field_data_identifier;
         Ok(len)

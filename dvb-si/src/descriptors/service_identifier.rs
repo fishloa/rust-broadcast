@@ -8,6 +8,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for service_identifier_descriptor.
@@ -52,12 +53,7 @@ impl Serialize for ServiceIdentifierDescriptor<'_> {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(
             buf,
             TAG,

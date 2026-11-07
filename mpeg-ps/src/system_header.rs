@@ -6,6 +6,7 @@
 //! buffer-size bounds.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize};
@@ -93,13 +94,7 @@ impl<'a> Parse<'a> for SystemHeader {
     type Error = Error;
 
     fn parse(b: &'a [u8]) -> Result<Self> {
-        if b.len() < PREFIX_LEN {
-            return Err(Error::BufferTooShort {
-                need: PREFIX_LEN,
-                have: b.len(),
-                what: "system_header prefix",
-            });
-        }
+        need_in(b, PREFIX_LEN, "system_header prefix")?;
 
         if u32::from_be_bytes([b[0], b[1], b[2], b[3]]) != SYSTEM_HEADER_START_CODE {
             return Err(Error::BadSystemHeaderStartCode(u32::from_be_bytes([
@@ -175,13 +170,7 @@ impl<'a> Parse<'a> for SystemHeader {
             let stream_id = body[pos];
             if stream_id == EXT_STREAM_ID {
                 // Extension form (6 bytes)
-                if pos + 6 > body.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 6,
-                        have: body.len(),
-                        what: "system_header extended stream entry",
-                    });
-                }
+                need_in(body, pos + 6, "system_header extended stream entry")?;
                 // byte pos+1: '11' + '000000'(6 bits)
                 if body[pos + 1] & 0xC0 != 0xC0 {
                     return Err(Error::BadStreamIdExtensionPrefix(body[pos + 1]));
@@ -210,13 +199,7 @@ impl<'a> Parse<'a> for SystemHeader {
                 pos += 6;
             } else {
                 // Normal form (3 bytes)
-                if pos + 3 > body.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 3,
-                        have: body.len(),
-                        what: "system_header stream entry",
-                    });
-                }
+                need_in(body, pos + 3, "system_header stream entry")?;
                 // byte pos+1: '11' + scale(1) + size[12:7](5)
                 if body[pos + 1] & 0xC0 != 0xC0 {
                     return Err(Error::BadMarker("P-STD_buffer_bound_scale prefix"));
@@ -315,13 +298,7 @@ impl Serialize for SystemHeader {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: buf.len(),
-                what: "system_header serialize output",
-            });
-        }
+        need_in(buf, total, "system_header serialize output")?;
 
         // system_header_start_code
         buf[0..4].copy_from_slice(&SYSTEM_HEADER_START_CODE.to_be_bytes());

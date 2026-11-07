@@ -4,6 +4,7 @@
 //! a shared timestamp.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::operations::{AnyOperation, Operation};
@@ -67,13 +68,7 @@ impl<'a> MultipleOperationMessage<'a> {
 impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "multiple_operation_message header",
-            });
-        }
+        need_in(bytes, HEADER_LEN, "multiple_operation_message header")?;
         let reserved = u16::from_be_bytes([bytes[0], bytes[1]]);
         if reserved != RESERVED {
             return Err(Error::ReservedSet {
@@ -93,35 +88,17 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
         let timestamp = Timestamp::parse(&bytes[pos..])?;
         pos += timestamp.serialized_len();
 
-        if bytes.len() < pos + 1 {
-            return Err(Error::BufferTooShort {
-                need: pos + 1,
-                have: bytes.len(),
-                what: "num_ops",
-            });
-        }
+        need_in(bytes, pos + 1, "num_ops")?;
         let num_ops = bytes[pos] as usize;
         pos += 1;
 
         let mut operations = Vec::with_capacity(num_ops);
         for _ in 0..num_ops {
-            if bytes.len() < pos + 4 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 4,
-                    have: bytes.len(),
-                    what: "operation opID+data_length",
-                });
-            }
+            need_in(bytes, pos + 4, "operation opID+data_length")?;
             let op_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
             let data_length = u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]) as usize;
             pos += 4;
-            if bytes.len() < pos + data_length {
-                return Err(Error::BufferTooShort {
-                    need: pos + data_length,
-                    have: bytes.len(),
-                    what: "operation data",
-                });
-            }
+            need_in(bytes, pos + data_length, "operation data")?;
             let body = &bytes[pos..pos + data_length];
             pos += data_length;
             let any_op = AnyOperation::dispatch(op_id, body)?;
@@ -180,12 +157,7 @@ impl Serialize for MultipleOperationMessage<'_> {
         // never make this buffer-size check pass when the real body does
         // not fit.
         let need = actual_size;
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0..2].copy_from_slice(&RESERVED.to_be_bytes());
         buf[2..4].copy_from_slice(&message_size.to_be_bytes());
         buf[4] = self.protocol_version;

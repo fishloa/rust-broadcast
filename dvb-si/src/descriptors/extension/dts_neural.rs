@@ -1,5 +1,6 @@
 //! DTS Neural Descriptor — ETSI EN 300 468 Annex L.1, Table L.1 (tag_extension 0x0F).
 use super::*;
+use broadcast_common::len::need_out;
 
 impl<'a> ExtensionBodyDef<'a> for DtsNeural<'a> {
     const TAG_EXTENSION: u8 = 0x0F;
@@ -40,12 +41,7 @@ impl Serialize for DtsNeural<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.config_id;
         buf[1..len].copy_from_slice(self.additional_info);
         Ok(len)

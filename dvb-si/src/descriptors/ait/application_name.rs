@@ -9,9 +9,10 @@ use crate::descriptors::descriptor_body;
 use crate::descriptors::lang_text::{
     EntryReader, LANG_LEN, text_field_len, write_lang, write_text,
 };
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_name_descriptor (AIT namespace).
@@ -76,12 +77,7 @@ impl Serialize for ApplicationNameDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         let body_len = len - HEADER_LEN;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
@@ -100,6 +96,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for ApplicationNameDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
 
     /// Drift fix (#1141): the over-range name check is the shared
     /// `lang_text::write_text` one, exercised here through this former copy.

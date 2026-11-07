@@ -1,6 +1,7 @@
 //! Service Prominence Descriptor — ETSI EN 300 468 §6.4.18 (tag_extension 0x22).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
     const TAG_EXTENSION: u8 = 0x22;
@@ -78,13 +79,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             });
         }
         let sogi_list_length = sel[0] as usize;
-        if sel.len() < 1 + sogi_list_length {
-            return Err(Error::BufferTooShort {
-                need: 1 + sogi_list_length,
-                have: sel.len(),
-                what: "service_prominence body",
-            });
-        }
+        need_in(sel, 1 + sogi_list_length, "service_prominence body")?;
         let sogi_slice = &sel[1..1 + sogi_list_length];
         let mut sogi_list = Vec::new();
         let mut k = 0;
@@ -179,12 +174,7 @@ impl Serialize for ServiceProminence<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let sogi_len = len - 1 - self.private_data.len();
         let sogi_len = broadcast_common::len::fit_bits(sogi_len as u64, 8, "sogi_list_length")?;
         buf[0] = sogi_len as u8;

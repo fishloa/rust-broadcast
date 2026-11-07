@@ -4,6 +4,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for insert_tier_data (§8.3, Table 8-4).
@@ -23,13 +24,7 @@ pub struct InsertTier {
 impl<'a> Parse<'a> for InsertTier {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < LEN {
-            return Err(Error::BufferTooShort {
-                need: LEN,
-                have: bytes.len(),
-                what: "insert_tier_data",
-            });
-        }
+        need_in(bytes, LEN, "insert_tier_data")?;
         Ok(Self {
             tier_data: u16::from_be_bytes([bytes[0], bytes[1]]),
         })
@@ -42,12 +37,7 @@ impl Serialize for InsertTier {
         LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, LEN)?;
         buf[0..2].copy_from_slice(&self.tier_data.to_be_bytes());
         Ok(LEN)
     }

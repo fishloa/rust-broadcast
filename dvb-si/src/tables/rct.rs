@@ -9,6 +9,7 @@
 //! [`DvbBinaryLocator`] (Table 31, §7.3.2.3.3).
 
 use crate::descriptors::DescriptorLoop;
+use broadcast_common::len::{need_in, need_out};
 
 /// Identifier type — ETSI TS 102 323 v1.4.1 §7.3.2.3.3 Table 32
 /// (`private/specs-verified/dvb/dvb-si/`, Table 32 — Identifier type).
@@ -568,13 +569,7 @@ impl<'a> RctSection<'a> {
 }
 
 fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
-    if data.len() < 2 {
-        return Err(Error::BufferTooShort {
-            need: 2,
-            have: data.len(),
-            what: "RctSection dvb_binary_locator header",
-        });
-    }
+    need_in(data, 2, "RctSection dvb_binary_locator header")?;
     let b0 = data[0];
     let b1 = data[1];
     let identifier_type =
@@ -586,13 +581,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
 
     let mut pos = 2;
     let service = if inline_service {
-        if pos + 6 > data.len() {
-            return Err(Error::BufferTooShort {
-                need: pos + 6,
-                have: data.len(),
-                what: "RctSection dvb_binary_locator full triplet",
-            });
-        }
+        need_in(data, pos + 6, "RctSection dvb_binary_locator full triplet")?;
         let tsid = crate::wire::be_u16(data, pos, "rct")?;
         let onid = crate::wire::be_u16(data, pos + 2, "rct")?;
         let sid = crate::wire::be_u16(data, pos + 4, "rct")?;
@@ -603,13 +592,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
             service_id: sid,
         }
     } else {
-        if data.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: data.len(),
-                what: "RctSection dvb_binary_locator triplet",
-            });
-        }
+        need_in(data, 3, "RctSection dvb_binary_locator triplet")?;
         let triplet_id = ((b1 as u16 & 0x03) << 8) | data[2] as u16;
         pos = 3;
         DvbLocatorService::Triplet {
@@ -617,13 +600,11 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
         }
     };
 
-    if pos + 4 > data.len() {
-        return Err(Error::BufferTooShort {
-            need: pos + 4,
-            have: data.len(),
-            what: "RctSection dvb_binary_locator start_time/duration",
-        });
-    }
+    need_in(
+        data,
+        pos + 4,
+        "RctSection dvb_binary_locator start_time/duration",
+    )?;
     let (b2, rest) = data
         .get(pos..)
         .and_then(|s| s.split_first_chunk::<2>())
@@ -644,13 +625,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
     let identifier = match identifier_type {
         IdentifierType::None => DvbLocatorIdentifier::None,
         IdentifierType::EventId => {
-            if pos + 2 > data.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: data.len(),
-                    what: "RctSection dvb_binary_locator event_id",
-                });
-            }
+            need_in(data, pos + 2, "RctSection dvb_binary_locator event_id")?;
             let (b2, _) = data
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
@@ -664,13 +639,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
             DvbLocatorIdentifier::EventId { event_id }
         }
         IdentifierType::TvaIdEit => {
-            if pos + 2 > data.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: data.len(),
-                    what: "RctSection dvb_binary_locator TVA_id (EIT)",
-                });
-            }
+            need_in(data, pos + 2, "RctSection dvb_binary_locator TVA_id (EIT)")?;
             let (b2, _) = data
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
@@ -684,13 +653,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
             DvbLocatorIdentifier::TvaIdEit { tva_id }
         }
         IdentifierType::TvaIdPes => {
-            if pos + 3 > data.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + 3,
-                    have: data.len(),
-                    what: "RctSection dvb_binary_locator TVA_id (PES)",
-                });
-            }
+            need_in(data, pos + 3, "RctSection dvb_binary_locator TVA_id (PES)")?;
             let (b2, _) = data
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
@@ -845,13 +808,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
 }
 
 fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>> {
-    if data.len() < 4 {
-        return Err(Error::BufferTooShort {
-            need: 4,
-            have: data.len(),
-            what: "RctSection link_info header",
-        });
-    }
+    need_in(data, 4, "RctSection link_info header")?;
     let link_type = LinkType::from_u8((data[0] & LINK_TYPE_MASK) >> LINK_TYPE_SHIFT);
     let how_related_raw = (data[0] & HOW_RELATED_HI_MASK) << 4 | (data[1] >> 4) & 0x0F;
     let how_related = HowRelated::from_u8(how_related_raw);
@@ -1058,13 +1015,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_SECTION_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_SECTION_LEN,
-                have: bytes.len(),
-                what: "RctSection",
-            });
-        }
+        need_in(bytes, MIN_SECTION_LEN, "RctSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -1184,12 +1135,7 @@ impl Serialize for RctSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         buf[0] = TABLE_ID;
         buf[1] = super::b1_of(

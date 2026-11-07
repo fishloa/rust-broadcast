@@ -17,6 +17,7 @@ use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::resource::ResourceId;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Resource Manager v2 (Table 87 / Tables 3-7).
@@ -246,13 +247,7 @@ impl<'a> Parse<'a> for ModuleIdSend {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::MODULE_ID_SEND, "module_id_send")?;
-        if body.len() < MODULE_ID_SEND_BODY {
-            return Err(Error::BufferTooShort {
-                need: MODULE_ID_SEND_BODY,
-                have: body.len(),
-                what: "module_id_send",
-            });
-        }
+        need_in(body, MODULE_ID_SEND_BODY, "module_id_send")?;
         crate::objects::reject_trailing_body(body, MODULE_ID_SEND_BODY, "module_id_send")?;
         Ok(Self {
             length_form,
@@ -290,13 +285,7 @@ impl<'a> Parse<'a> for ModuleIdCommand {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::MODULE_ID_COMMAND, "module_id_command")?;
-        if body.len() < MODULE_ID_COMMAND_BODY {
-            return Err(Error::BufferTooShort {
-                need: MODULE_ID_COMMAND_BODY,
-                have: body.len(),
-                what: "module_id_command",
-            });
-        }
+        need_in(body, MODULE_ID_COMMAND_BODY, "module_id_command")?;
         crate::objects::reject_trailing_body(body, MODULE_ID_COMMAND_BODY, "module_id_command")?;
         Ok(Self {
             length_form,

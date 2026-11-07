@@ -4,6 +4,7 @@
 //! a character string, or a progressive (zlib-compressed) pixel block.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The object_data_segment segment_type.
@@ -738,13 +739,7 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + FIXED_LEN,
-                have: bytes.len(),
-                what: "object_data_segment",
-            });
-        }
+        need_in(bytes, HEADER_LEN + FIXED_LEN, "object_data_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -754,21 +749,9 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
         let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
         let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let total = HEADER_LEN + segment_length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "object_data_segment data",
-            });
-        }
+        need_in(bytes, total, "object_data_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
-        if body.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: body.len(),
-                what: "object_data_segment body",
-            });
-        }
+        need_in(body, FIXED_LEN, "object_data_segment body")?;
         let object_id = u16::from_be_bytes([body[0], body[1]]);
         let object_version_number = body[2] >> 4;
         let coding_method_bits = (body[2] >> 2) & 0x03;
@@ -788,13 +771,11 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
 
         let payload = match coding_method_bits {
             0x00 => {
-                if payload_data.len() < INTERLACE_LEN_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: INTERLACE_LEN_LEN,
-                        have: payload_data.len(),
-                        what: "object_data interlace lengths",
-                    });
-                }
+                need_in(
+                    payload_data,
+                    INTERLACE_LEN_LEN,
+                    "object_data interlace lengths",
+                )?;
                 let top_len = u16::from_be_bytes([payload_data[0], payload_data[1]]) as usize;
                 let bottom_len = u16::from_be_bytes([payload_data[2], payload_data[3]]) as usize;
 
@@ -803,13 +784,7 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 let bottom_start = top_end;
                 let bottom_end = bottom_start + bottom_len;
 
-                if payload_data.len() < bottom_end {
-                    return Err(Error::BufferTooShort {
-                        need: bottom_end,
-                        have: payload_data.len(),
-                        what: "object_data pixel sub-blocks",
-                    });
-                }
+                need_in(payload_data, bottom_end, "object_data pixel sub-blocks")?;
 
                 // stuffing_length (Table 18) = segment_length - 7 - top_len -
                 // bottom_len (7 = FIXED_LEN + INTERLACE_LEN_LEN); this is
@@ -848,22 +823,10 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 })
             }
             0x01 => {
-                if payload_data.is_empty() {
-                    return Err(Error::BufferTooShort {
-                        need: 1,
-                        have: 0,
-                        what: "character count",
-                    });
-                }
+                need_in(payload_data, 1, "character count")?;
                 let number_of_codes = payload_data[0] as usize;
                 let codes_len = 1 + number_of_codes * 2;
-                if payload_data.len() < codes_len {
-                    return Err(Error::BufferTooShort {
-                        need: codes_len,
-                        have: payload_data.len(),
-                        what: "character codes",
-                    });
-                }
+                need_in(payload_data, codes_len, "character codes")?;
                 let mut codes = alloc::vec::Vec::with_capacity(number_of_codes);
                 for i in 0..number_of_codes {
                     let ci = 1 + i * 2;
@@ -874,24 +837,20 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 }
             }
             0x02 => {
-                if payload_data.len() < PROGRESSIVE_HEADER_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: PROGRESSIVE_HEADER_LEN,
-                        have: payload_data.len(),
-                        what: "progressive pixel block",
-                    });
-                }
+                need_in(
+                    payload_data,
+                    PROGRESSIVE_HEADER_LEN,
+                    "progressive pixel block",
+                )?;
                 let bitmap_width = u16::from_be_bytes([payload_data[0], payload_data[1]]);
                 let bitmap_height = u16::from_be_bytes([payload_data[2], payload_data[3]]);
                 let compressed_len =
                     u16::from_be_bytes([payload_data[4], payload_data[5]]) as usize;
-                if payload_data.len() < PROGRESSIVE_HEADER_LEN + compressed_len {
-                    return Err(Error::BufferTooShort {
-                        need: PROGRESSIVE_HEADER_LEN + compressed_len,
-                        have: payload_data.len(),
-                        what: "compressed bitmap data",
-                    });
-                }
+                need_in(
+                    payload_data,
+                    PROGRESSIVE_HEADER_LEN + compressed_len,
+                    "compressed bitmap data",
+                )?;
                 ObjectDataPayload::ProgressivePixels(ProgressivePixelBlock {
                     bitmap_width,
                     bitmap_height,
@@ -944,13 +903,7 @@ impl Serialize for ObjectDataSegment<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "object_data_segment serialize",
-            });
-        }
+        need_in(buf, len, "object_data_segment serialize")?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

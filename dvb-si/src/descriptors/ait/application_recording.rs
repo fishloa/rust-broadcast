@@ -12,6 +12,7 @@ use super::label_bytes::LabelBytes;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_recording_descriptor (AIT namespace).
@@ -259,12 +260,7 @@ impl Serialize for ApplicationRecordingDescriptor<'_> {
         let tag_list_len =
             broadcast_common::len::fit_u8(self.component_tags.len(), "component_tag_list_length")?;
         let private_len = broadcast_common::len::fit_u8(self.private.len(), "private_length")?;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = reserved
             | (u8::from(self.scheduled_recording_flag) * SCHEDULED_RECORDING_FLAG)

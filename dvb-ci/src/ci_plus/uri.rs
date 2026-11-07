@@ -20,6 +20,7 @@
 //! always-present fields plus an [`EmiData`] enum selected by the EMI value.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `uri_message` fixed length — 64 bits (8 bytes).
@@ -98,13 +99,7 @@ const EMI_NO_MORE_COPIES: u8 = 0b11;
 impl<'a> Parse<'a> for UriMessage {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < URI_MESSAGE_LEN {
-            return Err(Error::BufferTooShort {
-                need: URI_MESSAGE_LEN,
-                have: bytes.len(),
-                what: "uri_message",
-            });
-        }
+        need_in(bytes, URI_MESSAGE_LEN, "uri_message")?;
         let protocol_version = bytes[0];
         // Assemble the 56 bits following protocol_version into a u64 (in the low
         // 56 bits), MSB-first, so we can index bit positions from the top.
@@ -155,12 +150,7 @@ impl Serialize for UriMessage {
         URI_MESSAGE_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < URI_MESSAGE_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: URI_MESSAGE_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, URI_MESSAGE_LEN)?;
         let mut acc: u64 = 0;
         let mut put = |value: u64, hi_from_top: u32, width: u32| {
             let shift = 56 - hi_from_top - width;

@@ -4,6 +4,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for system_clock_descriptor.
@@ -99,12 +100,7 @@ impl Serialize for SystemClockDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         buf[HEADER_LEN] = ((self.external_clock_reference_indicator as u8) << 7)

@@ -16,6 +16,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -65,13 +66,7 @@ impl<'a> Parse<'a> for CicamMultistreamCapability {
             tag::CICAM_MULTISTREAM_CAPABILITY,
             "CICAM_multistream_capability",
         )?;
-        if body.len() < CAPABILITY_BODY {
-            return Err(Error::BufferTooShort {
-                need: CAPABILITY_BODY,
-                have: body.len(),
-                what: "CICAM_multistream_capability",
-            });
-        }
+        need_in(body, CAPABILITY_BODY, "CICAM_multistream_capability")?;
         crate::objects::reject_trailing_body(
             body,
             CAPABILITY_BODY,
@@ -150,23 +145,11 @@ impl<'a> Parse<'a> for PidSelectReq {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::PID_SELECT_REQ, "PID_select_req")?;
         // LTS_id(1) + num_PID(1).
-        if body.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: body.len(),
-                what: "PID_select_req",
-            });
-        }
+        need_in(body, 2, "PID_select_req")?;
         let lts_id = body[0];
         let num_pid = body[1] as usize;
         let loop_bytes = &body[2..];
-        if loop_bytes.len() < num_pid * PID_ENTRY_LEN {
-            return Err(Error::BufferTooShort {
-                need: num_pid * PID_ENTRY_LEN,
-                have: loop_bytes.len(),
-                what: "PID_select_req loop",
-            });
-        }
+        need_in(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_req loop")?;
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
             let critical = chunk[0] & CRITICAL_FLAG_BIT != 0;
@@ -262,24 +245,12 @@ impl<'a> Parse<'a> for PidSelectReply {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::PID_SELECT_REPLY, "PID_select_reply")?;
         // LTS_id(1) + reserved(7)+flag(1) byte + num_PID(1).
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "PID_select_reply",
-            });
-        }
+        need_in(body, 3, "PID_select_reply")?;
         let lts_id = body[0];
         let pid_selection = body[1] & PID_SELECTION_FLAG_BIT != 0;
         let num_pid = body[2] as usize;
         let loop_bytes = &body[3..];
-        if loop_bytes.len() < num_pid * PID_ENTRY_LEN {
-            return Err(Error::BufferTooShort {
-                need: num_pid * PID_ENTRY_LEN,
-                have: loop_bytes.len(),
-                what: "PID_select_reply loop",
-            });
-        }
+        need_in(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_reply loop")?;
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
             let selected = chunk[0] & PID_SELECTED_FLAG_BIT != 0;

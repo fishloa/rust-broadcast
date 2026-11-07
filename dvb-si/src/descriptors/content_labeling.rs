@@ -9,6 +9,7 @@
 use super::descriptor_body;
 use crate::descriptors::content_time_base_indicator::ContentTimeBaseIndicator;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for content_labeling_descriptor.
@@ -352,12 +353,7 @@ impl Serialize for ContentLabelingDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // The indicator selects which optional blocks are on the wire; a
         // disagreement with the Options would misframe on re-parse (r03-W5).
         let ind = broadcast_common::len::fit_mask(

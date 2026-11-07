@@ -6,6 +6,7 @@
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for time_descriptor (§10.1, Table 16).
@@ -84,12 +85,7 @@ impl Serialize for TimeDescriptor {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         if self.tai_seconds > (1u64 << 48) - 1 {
             return Err(Error::InvalidValue {
                 field: "time_descriptor.tai_seconds",

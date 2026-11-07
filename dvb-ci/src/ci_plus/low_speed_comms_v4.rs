@@ -37,6 +37,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -230,13 +231,7 @@ impl<'a> Parse<'a> for CommsInfoReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::COMMS_INFO_REPLY, "comms_info_reply")?;
-        if body.len() < INFO_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: INFO_REPLY_BODY,
-                have: body.len(),
-                what: "comms_info_reply",
-            });
-        }
+        need_in(body, INFO_REPLY_BODY, "comms_info_reply")?;
         crate::objects::reject_trailing_body(body, INFO_REPLY_BODY, "comms_info_reply")?;
         let lts_id = body[0];
         let status = body[1] & STATUS_BIT != 0;
@@ -388,25 +383,17 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::COMMS_IP_CONFIG_REPLY, "comms_IP_config_reply")?;
-        if body.len() < IP_CONFIG_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: IP_CONFIG_PREFIX,
-                have: body.len(),
-                what: "comms_IP_config_reply",
-            });
-        }
+        need_in(body, IP_CONFIG_PREFIX, "comms_IP_config_reply")?;
         // connection_state(2) + reserved(6); take the high 2 bits.
         let connection_state = ConnectionState::from_u8(body[0] >> 6);
         let mut physical_address = [0u8; MAC_LEN];
         physical_address.copy_from_slice(&body[1..1 + MAC_LEN]);
         let ip_config = if connection_state.to_u8() == CONNECTION_STATE_CONNECTED {
-            if body.len() < IP_CONFIG_PREFIX + IP_CONFIG_FIXED {
-                return Err(Error::BufferTooShort {
-                    need: IP_CONFIG_PREFIX + IP_CONFIG_FIXED,
-                    have: body.len(),
-                    what: "comms_IP_config_reply ip_config",
-                });
-            }
+            need_in(
+                body,
+                IP_CONFIG_PREFIX + IP_CONFIG_FIXED,
+                "comms_IP_config_reply ip_config",
+            )?;
             let mut p = IP_CONFIG_PREFIX;
             let ip_address = read_addr(body, p);
             p += IP_ADDR_LEN;
@@ -418,13 +405,11 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
             p += IP_ADDR_LEN;
             let n = body[p] as usize;
             p += 1;
-            if body.len() < p + n * IP_ADDR_LEN {
-                return Err(Error::BufferTooShort {
-                    need: p + n * IP_ADDR_LEN,
-                    have: body.len(),
-                    what: "comms_IP_config_reply dns_servers",
-                });
-            }
+            need_in(
+                body,
+                p + n * IP_ADDR_LEN,
+                "comms_IP_config_reply dns_servers",
+            )?;
             let mut dns_server_addresses = Vec::with_capacity(n);
             for _ in 0..n {
                 dns_server_addresses.push(read_addr(body, p));
@@ -592,13 +577,7 @@ impl<'a> HybridDescriptor<'a> {
     /// body) from the start of `bytes`.
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         let data = parse_descriptor_header(bytes, HYBRID_DESCRIPTOR_TAG, "hybrid_descriptor")?;
-        if data.len() < HYBRID_FIXED {
-            return Err(Error::BufferTooShort {
-                need: HYBRID_FIXED,
-                have: data.len(),
-                what: "hybrid_descriptor",
-            });
-        }
+        need_in(data, HYBRID_FIXED, "hybrid_descriptor")?;
         Ok(Self {
             lts_id: data[0],
             ip_connection_type: IpConnectionType::from_u8(data[1]),
@@ -657,13 +636,7 @@ impl MulticastDescriptor {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let data =
             parse_descriptor_header(bytes, MULTICAST_DESCRIPTOR_TAG, "multicast_descriptor")?;
-        if data.len() < MULTICAST_FIXED {
-            return Err(Error::BufferTooShort {
-                need: MULTICAST_FIXED,
-                have: data.len(),
-                what: "multicast_descriptor",
-            });
-        }
+        need_in(data, MULTICAST_FIXED, "multicast_descriptor")?;
         let ip_protocol_version = IpProtocolVersion::from_u8(data[0]);
         let ip_address = read_addr(data, 1);
         let multicast_port = u16::from_be_bytes([data[1 + IP_ADDR_LEN], data[2 + IP_ADDR_LEN]]);
@@ -671,13 +644,7 @@ impl MulticastDescriptor {
         let include_sources = data[flags_pos] & INCLUDE_SOURCES_BIT != 0;
         let n = data[flags_pos + 1] as usize;
         let mut pos = MULTICAST_FIXED;
-        if data.len() < pos + n * IP_ADDR_LEN {
-            return Err(Error::BufferTooShort {
-                need: pos + n * IP_ADDR_LEN,
-                have: data.len(),
-                what: "multicast_descriptor sources",
-            });
-        }
+        need_in(data, pos + n * IP_ADDR_LEN, "multicast_descriptor sources")?;
         let mut source_addresses = Vec::with_capacity(n);
         for _ in 0..n {
             source_addresses.push(read_addr(data, pos));
@@ -760,12 +727,7 @@ fn descriptor_len(data_len: usize) -> usize {
 
 fn write_descriptor_header(tag: u8, data_len: usize, buf: &mut [u8]) -> Result<usize> {
     let total = descriptor_len(data_len);
-    if buf.len() < total {
-        return Err(Error::OutputBufferTooSmall {
-            need: total,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, total)?;
     if data_len > u8::MAX as usize {
         return Err(Error::LengthTooLarge(data_len));
     }

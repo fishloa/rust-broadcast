@@ -7,6 +7,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for data_broadcast_descriptor.
@@ -134,12 +135,7 @@ impl Serialize for DataBroadcastDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         let body = len - HEADER_LEN;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         let mut pos = HEADER_LEN;
         buf[pos..pos + ID_LEN].copy_from_slice(&self.data_broadcast_id.to_be_bytes());

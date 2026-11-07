@@ -19,6 +19,7 @@ use crate::commands::AnyCommand;
 use crate::descriptors::{SpliceDescriptorIter, parse_loop};
 use crate::error::{Error, Result};
 use crate::time::PTS_MAX;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` of a splice_info_section (§9.6.1).
@@ -192,13 +193,11 @@ fn derive_command_length(command_type: u8, payload: &[u8]) -> Result<usize> {
 impl<'a> Parse<'a> for SpliceInfoSection<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FIXED_HEADER_LEN + CRC_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_HEADER_LEN + CRC_LEN,
-                have: bytes.len(),
-                what: "splice_info_section header",
-            });
-        }
+        need_in(
+            bytes,
+            FIXED_HEADER_LEN + CRC_LEN,
+            "splice_info_section header",
+        )?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId { table_id: bytes[0] });
         }
@@ -290,13 +289,11 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             splice_command_length as usize
         };
         // payload = [command_type][command_body(scl)][dll(2)][loop]
-        if payload.len() < 1 + scl + 2 {
-            return Err(Error::BufferTooShort {
-                need: 1 + scl + 2,
-                have: payload.len(),
-                what: "splice_info_section command + descriptor_loop_length",
-            });
-        }
+        need_in(
+            payload,
+            1 + scl + 2,
+            "splice_info_section command + descriptor_loop_length",
+        )?;
         let command_body = &payload[1..1 + scl];
         let command = AnyCommand::dispatch(splice_command_type, command_body)?;
 
@@ -344,12 +341,7 @@ impl Serialize for SpliceInfoSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         if self.pts_adjustment > PTS_MAX {
             return Err(Error::InvalidValue {
                 field: "splice_info_section.pts_adjustment",

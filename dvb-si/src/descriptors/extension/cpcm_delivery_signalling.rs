@@ -2,6 +2,7 @@
 //! (tag_extension 0x01); typed CPCM USI decode per ETSI TS 102 825-4 §5.4 Table 8.
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for CpcmDeliverySignalling<'a> {
     const TAG_EXTENSION: u8 = 0x01;
@@ -61,12 +62,7 @@ impl Serialize for CpcmDeliverySignalling<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.cpcm_version;
         buf[1..len].copy_from_slice(self.selector_bytes);
         Ok(len)
@@ -361,39 +357,15 @@ impl<'a> Parse<'a> for CpcmUsi {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // byte 0: length (counts bytes after itself)
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "CpcmUsi length",
-            });
-        }
+        need_in(bytes, 1, "CpcmUsi length")?;
         let length = bytes[0] as usize;
-        if bytes.len() < 1 + USI_FLAGS_LEN {
-            return Err(Error::BufferTooShort {
-                need: 1 + USI_FLAGS_LEN,
-                have: bytes.len(),
-                what: "CpcmUsi fixed flags",
-            });
-        }
+        need_in(bytes, 1 + USI_FLAGS_LEN, "CpcmUsi fixed flags")?;
         // The `length` field describes how many bytes follow it.
         // We validate that the slice is exactly that long.
-        if bytes.len() < 1 + length {
-            return Err(Error::BufferTooShort {
-                need: 1 + length,
-                have: bytes.len(),
-                what: "CpcmUsi body",
-            });
-        }
+        need_in(bytes, 1 + length, "CpcmUsi body")?;
         // Work within the declared extent: bytes[1 .. 1+length].
         let body = &bytes[1..1 + length];
-        if body.len() < USI_FLAGS_LEN {
-            return Err(Error::BufferTooShort {
-                need: USI_FLAGS_LEN,
-                have: body.len(),
-                what: "CpcmUsi flag bytes",
-            });
-        }
+        need_in(body, USI_FLAGS_LEN, "CpcmUsi flag bytes")?;
 
         // ── byte 1 ─────────────────────────────────────────────────────────
         let b1 = body[0];
@@ -430,13 +402,11 @@ impl<'a> Parse<'a> for CpcmUsi {
         let view_window_start;
         let view_window_end;
         if view_window_activated {
-            if body.len() < pos + CPCM_DATE_TIME_LEN * 2 {
-                return Err(Error::BufferTooShort {
-                    need: pos + CPCM_DATE_TIME_LEN * 2,
-                    have: body.len(),
-                    what: "CpcmUsi view_window_start/end",
-                });
-            }
+            need_in(
+                body,
+                pos + CPCM_DATE_TIME_LEN * 2,
+                "CpcmUsi view_window_start/end",
+            )?;
             let mut start = [0u8; CPCM_DATE_TIME_LEN];
             start.copy_from_slice(&body[pos..pos + CPCM_DATE_TIME_LEN]);
             pos += CPCM_DATE_TIME_LEN;
@@ -451,13 +421,11 @@ impl<'a> Parse<'a> for CpcmUsi {
         }
 
         let view_period_from_first_playback = if view_period_activated {
-            if body.len() < pos + CPCM_PLAYBACK_PERIOD_LEN {
-                return Err(Error::BufferTooShort {
-                    need: pos + CPCM_PLAYBACK_PERIOD_LEN,
-                    have: body.len(),
-                    what: "CpcmUsi view_period_from_first_playback",
-                });
-            }
+            need_in(
+                body,
+                pos + CPCM_PLAYBACK_PERIOD_LEN,
+                "CpcmUsi view_period_from_first_playback",
+            )?;
             let mut vp = [0u8; CPCM_PLAYBACK_PERIOD_LEN];
             vp.copy_from_slice(&body[pos..pos + CPCM_PLAYBACK_PERIOD_LEN]);
             pos += CPCM_PLAYBACK_PERIOD_LEN;
@@ -468,13 +436,11 @@ impl<'a> Parse<'a> for CpcmUsi {
 
         let simultaneous_view_count;
         if simultaneous_view_count_activated {
-            if body.len() < pos + SIMULTANEOUS_VIEW_COUNT_LEN {
-                return Err(Error::BufferTooShort {
-                    need: pos + SIMULTANEOUS_VIEW_COUNT_LEN,
-                    have: body.len(),
-                    what: "CpcmUsi simultaneous_view_count",
-                });
-            }
+            need_in(
+                body,
+                pos + SIMULTANEOUS_VIEW_COUNT_LEN,
+                "CpcmUsi simultaneous_view_count",
+            )?;
             simultaneous_view_count = Some(body[pos]);
             pos += SIMULTANEOUS_VIEW_COUNT_LEN;
         } else {
@@ -483,13 +449,7 @@ impl<'a> Parse<'a> for CpcmUsi {
 
         let remote_access_date =
             if remote_access_date_immediate_flag || remote_access_date_moving_window_flag {
-                if body.len() < pos + CPCM_DATE_TIME_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: pos + CPCM_DATE_TIME_LEN,
-                        have: body.len(),
-                        what: "CpcmUsi remote_access_date",
-                    });
-                }
+                need_in(body, pos + CPCM_DATE_TIME_LEN, "CpcmUsi remote_access_date")?;
                 let mut rad = [0u8; CPCM_DATE_TIME_LEN];
                 rad.copy_from_slice(&body[pos..pos + CPCM_DATE_TIME_LEN]);
                 pos += CPCM_DATE_TIME_LEN;
@@ -500,33 +460,15 @@ impl<'a> Parse<'a> for CpcmUsi {
 
         let mut cps_vectors = Vec::new();
         if export_controlled_cps {
-            if body.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: body.len(),
-                    what: "CpcmUsi cps_vector_count",
-                });
-            }
+            need_in(body, pos + 1, "CpcmUsi cps_vector_count")?;
             let cps_vector_count = body[pos] as usize;
             pos += 1;
             for _ in 0..cps_vector_count {
-                if body.len() < pos + CPS_ENTRY_HDR_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: pos + CPS_ENTRY_HDR_LEN,
-                        have: body.len(),
-                        what: "CpcmUsi CPS entry header",
-                    });
-                }
+                need_in(body, pos + CPS_ENTRY_HDR_LEN, "CpcmUsi CPS entry header")?;
                 let c_and_r_regime_mask = body[pos];
                 let cps_vector_length = u16::from_be_bytes([body[pos + 1], body[pos + 2]]) as usize;
                 pos += CPS_ENTRY_HDR_LEN;
-                if body.len() < pos + cps_vector_length {
-                    return Err(Error::BufferTooShort {
-                        need: pos + cps_vector_length,
-                        have: body.len(),
-                        what: "CpcmUsi cps_vector_byte",
-                    });
-                }
+                need_in(body, pos + cps_vector_length, "CpcmUsi cps_vector_byte")?;
                 let cps_vector = body[pos..pos + cps_vector_length].to_vec();
                 pos += cps_vector_length;
                 cps_vectors.push(CpsVectorEntry {
@@ -629,12 +571,7 @@ impl Serialize for CpcmUsi {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         self.check_conditional_presence()?;
         let body_len = self.body_len();
         let body_len = broadcast_common::len::fit_u8(body_len, "usi_length")?;

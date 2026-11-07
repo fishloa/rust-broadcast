@@ -13,8 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Unused public items, with no use in the workspace beyond their own unit tests: `to_8_color`.
 ### Changed
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).
+### Added
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 
 ## [0.7.1] - 2026-11-03
 ### Added

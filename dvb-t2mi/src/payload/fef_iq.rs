@@ -1,5 +1,6 @@
 //! T2-MI payload type 0x31: FEF part — I/Q data — §5.2.10.
 
+use broadcast_common::len::{need_in, need_out};
 use core::fmt;
 
 use broadcast_common::{Parse, Serialize};
@@ -41,13 +42,7 @@ impl<'a> Parse<'a> for FefIqPayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < FEF_IQ_HEADER_LEN {
-            return Err(crate::Error::BufferTooShort {
-                need: FEF_IQ_HEADER_LEN,
-                have: bytes.len(),
-                what: "FefIqPayload header",
-            });
-        }
+        need_in(bytes, FEF_IQ_HEADER_LEN, "FefIqPayload header")?;
 
         // Layout (Figure 13): fef_idx(8) | rfu(9) | s1_field(3) | s2_field(4) | data.
         // rfu spans all of byte 1 plus the top bit of byte 2.
@@ -81,12 +76,7 @@ impl Serialize for FefIqPayload<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         if self.s2_field > 0x0F {
             return Err(crate::Error::ReservedBitsViolation {

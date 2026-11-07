@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::operations::AnySingleOperation;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Wire constants.
@@ -101,13 +102,7 @@ impl<'a> SingleOperationMessage<'a> {
 impl<'a> Parse<'a> for SingleOperationMessage<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "single_operation_message header",
-            });
-        }
+        need_in(bytes, HEADER_LEN, "single_operation_message header")?;
         let op_id = u16::from_be_bytes([bytes[0], bytes[1]]);
         let message_size = u16::from_be_bytes([bytes[2], bytes[3]]);
         let result = u16::from_be_bytes([bytes[4], bytes[5]]);
@@ -128,13 +123,11 @@ impl<'a> Parse<'a> for SingleOperationMessage<'a> {
 
         let body_start = HEADER_LEN;
         let body_len = (message_size as usize) - HEADER_LEN;
-        if bytes.len() < body_start + body_len {
-            return Err(Error::BufferTooShort {
-                need: body_start + body_len,
-                have: bytes.len(),
-                what: "single_operation_message body",
-            });
-        }
+        need_in(
+            bytes,
+            body_start + body_len,
+            "single_operation_message body",
+        )?;
         let body = &bytes[body_start..body_start + body_len];
         let data = AnySingleOperation::dispatch(op_id, body)?;
 
@@ -158,12 +151,7 @@ impl Serialize for SingleOperationMessage<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let message_size = u16::try_from(need).map_err(|_| Error::InvalidValue {
             field: "messageSize",
             reason: "message exceeds the 16-bit messageSize field",

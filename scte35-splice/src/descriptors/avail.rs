@@ -6,6 +6,7 @@
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for avail_descriptor (§10.1, Table 16).
@@ -61,12 +62,7 @@ impl Serialize for AvailDescriptor {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         header::write_header(buf, TAG, self.identifier, 4)?;
         buf[HEADER_LEN..need].copy_from_slice(&self.provider_avail_id.to_be_bytes());
         Ok(need)

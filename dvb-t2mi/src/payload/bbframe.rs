@@ -1,5 +1,6 @@
 //! T2-MI payload type 0x00: Baseband Frame (BBFRAME) — §5.2.1.
 
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// BBFrame payload (type 0x00) per ETSI TS 102 773 §5.2.1.
@@ -28,13 +29,11 @@ impl<'a> Parse<'a> for BbframePayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < 3 {
-            return Err(crate::Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "BbframePayload header (frame_idx + plp_id + intl_frame_start + rfu)",
-            });
-        }
+        need_in(
+            bytes,
+            3,
+            "BbframePayload header (frame_idx + plp_id + intl_frame_start + rfu)",
+        )?;
 
         let frame_idx = bytes[0];
         let plp_id = bytes[1];
@@ -72,12 +71,7 @@ impl Serialize for BbframePayload<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         buf[0] = self.frame_idx;
         buf[1] = self.plp_id;

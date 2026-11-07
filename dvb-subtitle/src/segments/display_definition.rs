@@ -3,6 +3,7 @@
 //! Defines the display resolution and optional display window for a subtitle service.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The display_definition_segment segment_type as listed in Table 7.
@@ -45,13 +46,7 @@ impl<'a> Parse<'a> for DisplayDefinitionSegment {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min = HEADER_LEN + FIXED_BODY_LEN;
-        if bytes.len() < min {
-            return Err(Error::BufferTooShort {
-                need: min,
-                have: bytes.len(),
-                what: "display_definition_segment",
-            });
-        }
+        need_in(bytes, min, "display_definition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -61,21 +56,9 @@ impl<'a> Parse<'a> for DisplayDefinitionSegment {
         let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
         let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let total = HEADER_LEN + segment_length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "display_definition_segment data",
-            });
-        }
+        need_in(bytes, total, "display_definition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
-        if body.len() < FIXED_BODY_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_BODY_LEN,
-                have: body.len(),
-                what: "display_definition_segment body",
-            });
-        }
+        need_in(body, FIXED_BODY_LEN, "display_definition_segment body")?;
         let b0 = body[0];
         let dds_version_number = b0 >> 4;
         let display_window_flag = (b0 & 0x08) != 0;
@@ -84,13 +67,11 @@ impl<'a> Parse<'a> for DisplayDefinitionSegment {
         let display_height = u16::from_be_bytes([body[3], body[4]]);
 
         if display_window_flag {
-            if body.len() < FIXED_BODY_LEN + WINDOW_LEN {
-                return Err(Error::BufferTooShort {
-                    need: FIXED_BODY_LEN + WINDOW_LEN,
-                    have: body.len(),
-                    what: "display_definition_segment window",
-                });
-            }
+            need_in(
+                body,
+                FIXED_BODY_LEN + WINDOW_LEN,
+                "display_definition_segment window",
+            )?;
             let dw = &body[FIXED_BODY_LEN..FIXED_BODY_LEN + WINDOW_LEN];
             Ok(DisplayDefinitionSegment {
                 page_id,
@@ -140,13 +121,7 @@ impl Serialize for DisplayDefinitionSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "display_definition_segment serialize",
-            });
-        }
+        need_in(buf, len, "display_definition_segment serialize")?;
         // Generic header
         buf[0] = 0x0F; // sync_byte
         buf[1] = SEGMENT_TYPE;

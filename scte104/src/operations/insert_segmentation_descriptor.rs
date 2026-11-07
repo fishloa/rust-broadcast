@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for insert_segmentation_descriptor_request (§8.3, Table 8-4).
@@ -63,26 +64,18 @@ pub const TAIL_LEN: usize = 12;
 impl<'a> Parse<'a> for InsertSegmentationDescriptor<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FIXED_LEN + TAIL_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN + TAIL_LEN,
-                have: bytes.len(),
-                what: "insert_segmentation_descriptor (minimum)",
-            });
-        }
+        need_in(
+            bytes,
+            FIXED_LEN + TAIL_LEN,
+            "insert_segmentation_descriptor (minimum)",
+        )?;
         let segmentation_event_id = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let segmentation_event_cancel_indicator = bytes[4];
         let duration = u16::from_be_bytes([bytes[5], bytes[6]]);
         let segmentation_upid_type = bytes[7];
         let upid_len = bytes[8] as usize;
         let need = FIXED_LEN + 2 + upid_len + TAIL_LEN;
-        if bytes.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: bytes.len(),
-                what: "insert_segmentation_descriptor upid",
-            });
-        }
+        need_in(bytes, need, "insert_segmentation_descriptor upid")?;
         let upid = &bytes[9..9 + upid_len];
         let tail_off = 9 + upid_len;
         Ok(Self {
@@ -114,12 +107,7 @@ impl Serialize for InsertSegmentationDescriptor<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0..4].copy_from_slice(&self.segmentation_event_id.to_be_bytes());
         buf[4] = self.segmentation_event_cancel_indicator;
         buf[5..7].copy_from_slice(&self.duration.to_be_bytes());

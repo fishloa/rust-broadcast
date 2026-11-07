@@ -8,6 +8,7 @@
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// `application_type` (Table, p. 28).
@@ -158,13 +159,7 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::APPLICATION_INFO, "application_info")?;
-        if body.len() < APP_INFO_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: APP_INFO_PREFIX,
-                have: body.len(),
-                what: "application_info",
-            });
-        }
+        need_in(body, APP_INFO_PREFIX, "application_info")?;
         let application_type = ApplicationType::from_u8(body[0]);
         let application_manufacturer = u16::from_be_bytes([body[1], body[2]]);
         let manufacturer_code = u16::from_be_bytes([body[3], body[4]]);

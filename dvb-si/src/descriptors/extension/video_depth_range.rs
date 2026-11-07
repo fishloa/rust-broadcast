@@ -1,6 +1,7 @@
 //! Video Depth Range Descriptor — ETSI EN 300 468 §6.4.16.1 (tag_extension 0x10).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 /// Range type — ETSI EN 300 468 §6.4.16.1 Table 161
 /// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/161-range-type-coding.md`).
@@ -127,13 +128,7 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
             let range_type = RangeType::from_u8(sel[pos]);
             let range_length = sel[pos + 1] as usize;
             pos += VD_RANGE_HDR_LEN;
-            if sel.len() < pos + range_length {
-                return Err(Error::BufferTooShort {
-                    need: pos + range_length,
-                    have: sel.len(),
-                    what: "video_depth_range body",
-                });
-            }
+            need_in(sel, pos + range_length, "video_depth_range body")?;
             let body = match range_type {
                 // Table 161: production_disparity_hint_info() — Table 162.
                 RangeType::ProductionDisparityHint if range_length >= VD_DISPARITY_LEN => {
@@ -202,12 +197,7 @@ impl Serialize for VideoDepthRange<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let mut p = 0;
         for r in &self.ranges {
             buf[p] = r.range_type.to_u8();

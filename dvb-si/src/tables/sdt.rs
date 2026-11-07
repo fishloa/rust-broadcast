@@ -9,6 +9,7 @@ use super::RunningStatus;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// table_id value for SDT describing services on the actual TS.
@@ -162,13 +163,7 @@ impl<'a> Parse<'a> for SdtSection<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "SdtSection",
-            });
-        }
+        need_in(bytes, min_len, "SdtSection")?;
         let kind = match bytes[0] {
             TABLE_ID_ACTUAL => SdtKind::Actual,
             TABLE_ID_OTHER => SdtKind::Other,
@@ -274,12 +269,7 @@ impl Serialize for SdtSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = match self.kind {
             SdtKind::Actual => TABLE_ID_ACTUAL,
             SdtKind::Other => TABLE_ID_OTHER,

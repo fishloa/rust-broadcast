@@ -14,6 +14,7 @@ use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -213,13 +214,7 @@ impl<'a> Parse<'a> for CaPmt<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::CA_PMT, "ca_pmt")?;
-        if body.len() < CA_PMT_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: CA_PMT_PREFIX,
-                have: body.len(),
-                what: "ca_pmt prefix",
-            });
-        }
+        need_in(body, CA_PMT_PREFIX, "ca_pmt prefix")?;
         let list_management = CaPmtListManagement::from_u8(body[0]);
         let program_number = u16::from_be_bytes([body[1], body[2]]);
         let version_number = (body[3] >> 1) & 0x1F;
@@ -292,13 +287,7 @@ pub(crate) fn parse_streams<'a>(
 ) -> Result<Vec<CaPmtStream<'a>>> {
     let mut streams = Vec::new();
     while pos < body.len() {
-        if pos + ES_PREFIX > body.len() {
-            return Err(Error::BufferTooShort {
-                need: pos + ES_PREFIX,
-                have: body.len(),
-                what: prefix_what,
-            });
-        }
+        need_in(body, pos + ES_PREFIX, prefix_what)?;
         let stream_type = body[pos];
         let reserved_pid = ReservedOnes::from_bits(body[pos + 1] >> 5);
         let reserved_es_info = ReservedOnes::from_bits(body[pos + 3] >> 4);
@@ -406,12 +395,7 @@ pub(crate) fn write_info_block(
     if len == 0 {
         return Ok(0);
     }
-    if buf.len() < len {
-        return Err(Error::OutputBufferTooSmall {
-            need: len,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, len)?;
     // Table 25: `ca_pmt_cmd_id` is present exactly when the info block is
     // (`program_info_length`/`ES_info_length != 0`, which is why `len > 0`
     // here). A caller that hand-builds a non-empty descriptor loop without a

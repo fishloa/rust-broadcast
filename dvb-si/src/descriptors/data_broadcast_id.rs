@@ -14,6 +14,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// SSU `update_type` — ETSI TS 102 006 §7.1 Table 5
@@ -326,12 +327,7 @@ impl Serialize for SsuIdSelector<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let oui_body: usize = self
             .oui_entries
             .iter()
@@ -435,12 +431,7 @@ impl Serialize for DataBroadcastIdDescriptor<'_> {
                 reason: "data_broadcast_id_descriptor body exceeds 255 bytes",
             });
         }
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         buf[HEADER_LEN..HEADER_LEN + ID_LEN].copy_from_slice(&self.data_broadcast_id.to_be_bytes());
         buf[HEADER_LEN + ID_LEN..len].copy_from_slice(self.id_selector);

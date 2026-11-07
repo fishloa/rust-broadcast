@@ -5,6 +5,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use crate::error::{Error, Result};
 
@@ -49,13 +50,7 @@ impl Rational {
 
     /// Serialize into an 8-byte buffer.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < RATIONAL_LEN {
-            return Err(Error::BufferTooShort {
-                need: RATIONAL_LEN,
-                have: buf.len(),
-                what: "Rational",
-            });
-        }
+        need_in(buf, RATIONAL_LEN, "Rational")?;
         buf[0..4].copy_from_slice(&self.numerator.to_be_bytes());
         buf[4..8].copy_from_slice(&self.denominator.to_be_bytes());
         Ok(RATIONAL_LEN)
@@ -204,13 +199,7 @@ impl MxfTimestamp {
 
     /// Serialize into an 8-byte buffer.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < TIMESTAMP_LEN {
-            return Err(Error::BufferTooShort {
-                need: TIMESTAMP_LEN,
-                have: buf.len(),
-                what: "Timestamp",
-            });
-        }
+        need_in(buf, TIMESTAMP_LEN, "Timestamp")?;
         let yb = self.year.to_be_bytes();
         buf[0] = yb[0];
         buf[1] = yb[1];
@@ -333,13 +322,7 @@ impl ProductVersion {
 
     /// Serialize into a 10-byte buffer.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < PRODUCT_VERSION_LEN {
-            return Err(Error::BufferTooShort {
-                need: PRODUCT_VERSION_LEN,
-                have: buf.len(),
-                what: "ProductVersion",
-            });
-        }
+        need_in(buf, PRODUCT_VERSION_LEN, "ProductVersion")?;
         let put =
             |buf: &mut [u8], i: usize, v: u16| buf[i..i + 2].copy_from_slice(&v.to_be_bytes());
         put(buf, 0, self.major);

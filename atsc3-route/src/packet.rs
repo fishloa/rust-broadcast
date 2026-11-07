@@ -8,6 +8,7 @@
 //! piece of the ROUTE delta that a caller could also use directly against a
 //! hand-driven [`rmt_flute::AlcPacket`].
 
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use rmt_flute::{LctHeader, PSI_SPI};
 
@@ -119,13 +120,7 @@ impl<'a> Parse<'a> for RoutePacket<'a> {
         validate_route_lct(&lct)?;
 
         let rest = &data[used..];
-        if rest.len() < ROUTE_FEC_PAYLOAD_ID_LEN {
-            return Err(Error::BufferTooShort {
-                need: ROUTE_FEC_PAYLOAD_ID_LEN,
-                have: rest.len(),
-                what: "ROUTE FEC Payload ID",
-            });
-        }
+        need_in(rest, ROUTE_FEC_PAYLOAD_ID_LEN, "ROUTE FEC Payload ID")?;
         let spi = lct.psi & PSI_SPI != 0;
         let fec_payload_id = RouteFecPayloadId::parse(&rest[..ROUTE_FEC_PAYLOAD_ID_LEN], spi)?;
         let payload = &rest[ROUTE_FEC_PAYLOAD_ID_LEN..];
@@ -147,12 +142,7 @@ impl Serialize for RoutePacket<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         validate_route_lct(&self.lct)?;
 
         let mut off = self.lct.serialize_into(buf)?;

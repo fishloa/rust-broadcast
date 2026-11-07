@@ -5,6 +5,7 @@
 //! It uses start-code prefix `0x000001` + `map_stream_id` `0xBC`.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize, crc32_mpeg2};
@@ -187,13 +188,7 @@ fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> 
         let es_info_length = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
         let entry_hdr_end = pos + 4;
         let entry_end = entry_hdr_end + es_info_length;
-        if entry_end > data.len() {
-            return Err(Error::BufferTooShort {
-                need: entry_end,
-                have: data.len(),
-                what: "elementary_stream_map entry descriptors",
-            });
-        }
+        need_in(data, entry_end, "elementary_stream_map entry descriptors")?;
 
         let (stream_id_extension, descriptors) = if elementary_stream_id == 0xFD && !single_flag {
             // Extension form with pseudo descriptor
@@ -287,13 +282,7 @@ impl Serialize for ProgramStreamMap<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: buf.len(),
-                what: "program_stream_map serialize output",
-            });
-        }
+        need_in(buf, total, "program_stream_map serialize output")?;
 
         // packet_start_code_prefix (3 bytes)
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX.to_be_bytes()[1..]);

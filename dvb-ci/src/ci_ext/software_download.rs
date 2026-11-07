@@ -26,6 +26,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Download resource (Tables 75-78).
@@ -171,13 +172,7 @@ macro_rules! user_auth_object {
             type Error = Error;
             fn parse(bytes: &'a [u8]) -> Result<Self> {
                 let (length_form, body) = objects::parse_apdu_header(bytes, $tag, $what)?;
-                if body.len() < BINARY_ID_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: BINARY_ID_LEN,
-                        have: body.len(),
-                        what: $what,
-                    });
-                }
+                need_in(body, BINARY_ID_LEN, $what)?;
                 Ok(Self {
                     length_form,
                     binary_id: BinaryId::read(body),
@@ -415,12 +410,7 @@ impl Serialize for DownloadInfoRequest<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         // messageLength = everything after the messageLength field itself.
         let message_length = total - 12;
         objects::fit_bits(
@@ -586,12 +576,7 @@ impl Serialize for DownloadInfoResponse<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         let message_length = total - 12;
         objects::fit_bits(
             self.private_data.len() as u64,
@@ -697,12 +682,7 @@ impl Serialize for DownloadCancel<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         let message_length = total - 12;
         objects::fit_bits(
             self.private_data.len() as u64,
@@ -858,12 +838,7 @@ impl Serialize for DownloadDataRequest<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         let message_length = total - 12;
         let mut pos = write_dsmcc_data_header(
             buf,
@@ -935,12 +910,7 @@ impl Serialize for DownloadDataBlock<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         let message_length = total - 12;
         let mut pos = write_dsmcc_data_header(
             buf,

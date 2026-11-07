@@ -44,3 +44,22 @@ pub enum Error {
         mask: u8,
     },
 }
+
+impl From<broadcast_common::len::BufferTooShort> for Error {
+    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
+        Self::BufferTooShort {
+            need: e.need,
+            have: e.have,
+            what: e.what,
+        }
+    }
+}
+
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
+        }
+    }
+}

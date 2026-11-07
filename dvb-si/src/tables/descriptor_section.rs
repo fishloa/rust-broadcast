@@ -6,6 +6,7 @@
 use super::{CRC_LEN, SectionBits};
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
@@ -75,12 +76,7 @@ pub(super) fn serialized_len(descriptors: &DescriptorLoop<'_>) -> usize {
 
 pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) -> Result<usize> {
     let len = serialized_len(view.descriptors);
-    if buf.len() < len {
-        return Err(Error::OutputBufferTooSmall {
-            need: len,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, len)?;
     buf[0] = table_id;
     buf[1] = view.bits.b1()?;
     super::write_section_length(buf, len - MIN_HEADER_LEN)?;

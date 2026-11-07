@@ -14,6 +14,7 @@
 use crate::error::{Error, Result};
 use crate::length::{self, LengthForm};
 use crate::resource::ResourceId;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `spdu_tag` values — Table 14 (p. 23). One byte each.
@@ -148,12 +149,7 @@ fn spdu_len(value_len: usize, form: LengthForm) -> usize {
 
 fn write_spdu_header(tag: u8, value_len: usize, form: LengthForm, buf: &mut [u8]) -> Result<usize> {
     let total = spdu_len(value_len, form);
-    if buf.len() < total {
-        return Err(Error::OutputBufferTooSmall {
-            need: total,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, total)?;
     buf[0] = tag;
     let n = length::encode_with(value_len, form, &mut buf[1..])?;
     Ok(1 + n)

@@ -38,6 +38,7 @@ use crate::objects::ca_pmt_reply::{
 use crate::reserved::ReservedOnes;
 use crate::tag::{CA_PMT, CA_PMT_REPLY};
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -104,13 +105,7 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = crate::objects::parse_apdu_header(bytes, CA_PMT, "ms ca_pmt")?;
-        if body.len() < MS_CA_PMT_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: MS_CA_PMT_PREFIX,
-                have: body.len(),
-                what: "ms ca_pmt prefix",
-            });
-        }
+        need_in(body, MS_CA_PMT_PREFIX, "ms ca_pmt prefix")?;
         let lts_id = body[0];
         let list_management = CaPmtListManagement::from_u8(body[1]);
         let program_number = u16::from_be_bytes([body[2], body[3]]);
@@ -244,13 +239,7 @@ impl<'a> Parse<'a> for MsCaPmtReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             crate::objects::parse_apdu_header(bytes, CA_PMT_REPLY, "ms ca_pmt_reply")?;
-        if body.len() < MS_REPLY_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: MS_REPLY_PREFIX,
-                have: body.len(),
-                what: "ms ca_pmt_reply prefix",
-            });
-        }
+        need_in(body, MS_REPLY_PREFIX, "ms ca_pmt_reply prefix")?;
         let lts_id = body[0];
         let program_number = u16::from_be_bytes([body[1], body[2]]);
         let version_number = (body[3] >> 1) & 0x1F;

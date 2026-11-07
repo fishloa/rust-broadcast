@@ -7,6 +7,7 @@
 //! [`SpliceInsert::components`].
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::time::{BreakDuration, SpliceTime};
@@ -108,13 +109,7 @@ impl<'a> Parse<'a> for SpliceInsert {
             return Ok(out);
         }
 
-        if bytes.len() < pos + 1 {
-            return Err(Error::BufferTooShort {
-                need: pos + 1,
-                have: bytes.len(),
-                what: "splice_insert flags",
-            });
-        }
+        need_in(bytes, pos + 1, "splice_insert flags")?;
         let flags = bytes[pos];
         pos += 1;
         out.out_of_network_indicator = flags & 0x80 != 0;
@@ -131,23 +126,11 @@ impl<'a> Parse<'a> for SpliceInsert {
             }
         } else {
             // Component Splice Mode (deprecated).
-            if bytes.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: bytes.len(),
-                    what: "splice_insert component_count",
-                });
-            }
+            need_in(bytes, pos + 1, "splice_insert component_count")?;
             let component_count = bytes[pos] as usize;
             pos += 1;
             for _ in 0..component_count {
-                if bytes.len() < pos + 1 {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: bytes.len(),
-                        what: "splice_insert component_tag",
-                    });
-                }
+                need_in(bytes, pos + 1, "splice_insert component_tag")?;
                 let component_tag = bytes[pos];
                 pos += 1;
                 let splice_time = if !out.splice_immediate_flag {
@@ -213,12 +196,7 @@ impl Serialize for SpliceInsert {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0..4].copy_from_slice(&self.splice_event_id.to_be_bytes());
         // cancel (1) + 7 reserved bits = 1.
         buf[4] = (u8::from(self.splice_event_cancel_indicator) << 7) | 0x7F;

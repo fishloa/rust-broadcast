@@ -19,6 +19,7 @@ use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// `display_control_cmd` values (Table 34, p. 37).
@@ -159,13 +160,7 @@ impl<'a> Parse<'a> for DisplayControl {
         })?;
         let cmd = DisplayControlCmd::from_u8(cmd_byte);
         let mmi_mode = if cmd == DisplayControlCmd::SetMmiMode {
-            if body.len() < 2 {
-                return Err(Error::BufferTooShort {
-                    need: 2,
-                    have: body.len(),
-                    what: "display_control mmi_mode",
-                });
-            }
+            need_in(body, 2, "display_control mmi_mode")?;
             Some(MmiMode::from_u8(body[1]))
         } else {
             None
@@ -358,13 +353,7 @@ pub struct DisplayReply {
 
 impl DisplayReply {
     fn parse_graphics(b: &[u8]) -> Result<GraphicsCharacteristics> {
-        if b.len() < GFX_FIXED {
-            return Err(Error::BufferTooShort {
-                need: GFX_FIXED,
-                have: b.len(),
-                what: "display_reply graphics",
-            });
-        }
+        need_in(b, GFX_FIXED, "display_reply graphics")?;
         let display_horizontal_size = u16::from_be_bytes([b[0], b[1]]);
         let display_vertical_size = u16::from_be_bytes([b[2], b[3]]);
         let aspect_ratio_information = (b[4] >> 4) & 0x0F;
@@ -379,13 +368,7 @@ impl DisplayReply {
         let mut depths = Vec::with_capacity(number_pixel_depths);
         let mut pos = GFX_FIXED;
         for _ in 0..number_pixel_depths {
-            if pos + 2 > b.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: b.len(),
-                    what: "display_reply pixel_depth",
-                });
-            }
+            need_in(b, pos + 2, "display_reply pixel_depth")?;
             depths.push(PixelDepth {
                 display_depth: (b[pos] >> 5) & 0x07,
                 pixels_per_byte: (b[pos] >> 2) & 0x07,
@@ -769,13 +752,7 @@ impl SubtitleSegment<'_> {
 impl<'a> Parse<'a> for SubtitleSegment<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "subtitle_segment tag",
-            });
-        }
+        need_in(bytes, 3, "subtitle_segment tag")?;
         let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
         let (expected, more) = match t {
             tag::SUBTITLE_SEGMENT_MORE => (tag::SUBTITLE_SEGMENT_MORE, true),
@@ -1186,13 +1163,7 @@ impl SubtitleDownload<'_> {
 impl<'a> Parse<'a> for SubtitleDownload<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "subtitle_download tag",
-            });
-        }
+        need_in(bytes, 3, "subtitle_download tag")?;
         let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
         let (expected, more) = match t {
             tag::SUBTITLE_DOWNLOAD_MORE => (tag::SUBTITLE_DOWNLOAD_MORE, true),
@@ -1333,13 +1304,7 @@ impl<'a> Parse<'a> for DownloadReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::DOWNLOAD_REPLY, "download_reply")?;
-        if body.len() < DOWNLOAD_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: DOWNLOAD_REPLY_BODY,
-                have: body.len(),
-                what: "download_reply",
-            });
-        }
+        need_in(body, DOWNLOAD_REPLY_BODY, "download_reply")?;
         super::reject_trailing_body(body, DOWNLOAD_REPLY_BODY, "download_reply")?;
         Ok(Self {
             length_form,

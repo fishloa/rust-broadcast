@@ -4,6 +4,7 @@ use crate::PACKET_START_CODE_PREFIX;
 use crate::error::{Error, Result};
 use crate::stream_id::StreamId;
 use crate::timestamp::{self, Dts, Pts};
+use broadcast_common::len::need_in;
 
 const MIN_LEN: usize = 6; // start_code(3) + stream_id(1) + PES_packet_length(2)
 const HEADER_FIXED: usize = 3; // 2 flag bytes + PES_header_data_length
@@ -409,13 +410,7 @@ impl<'a> PesExtension<'a> {
     }
 
     fn parse(data: &'a [u8]) -> Result<Self> {
-        if data.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "PES_extension flags byte",
-            });
-        }
+        need_in(data, 1, "PES_extension flags byte")?;
         let flags = data[0];
         let mut cursor = 1usize;
 
@@ -455,13 +450,7 @@ impl<'a> PesExtension<'a> {
         };
 
         let program_packet_sequence_counter = if flags & EXT_PROGRAM_PACKET_SEQUENCE_COUNTER != 0 {
-            if data.len() < cursor + 2 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 2,
-                    have: data.len(),
-                    what: "program_packet_sequence_counter",
-                });
-            }
+            need_in(data, cursor + 2, "program_packet_sequence_counter")?;
             let b0 = data[cursor];
             let b1 = data[cursor + 1];
             cursor += 2;
@@ -475,13 +464,7 @@ impl<'a> PesExtension<'a> {
         };
 
         let p_std_buffer = if flags & EXT_P_STD_BUFFER != 0 {
-            if data.len() < cursor + 2 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 2,
-                    have: data.len(),
-                    what: "P-STD_buffer",
-                });
-            }
+            need_in(data, cursor + 2, "P-STD_buffer")?;
             let b0 = data[cursor];
             let b1 = data[cursor + 1];
             cursor += 2;
@@ -561,13 +544,7 @@ impl<'a> PesExtension<'a> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: buf.len(),
-                what: "PES_extension serialize output",
-            });
-        }
+        need_in(buf, need, "PES_extension serialize output")?;
 
         let mut flags = broadcast_common::len::fit_mask(
             self.reserved_bits,
@@ -783,13 +760,7 @@ pub struct PesPacket<'a> {
 impl<'a> PesPacket<'a> {
     /// Parse a PES packet from the bytes starting at its `packet_start_code_prefix`.
     pub fn parse(b: &'a [u8]) -> Result<Self> {
-        if b.len() < MIN_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_LEN,
-                have: b.len(),
-                what: "PES packet header",
-            });
-        }
+        need_in(b, MIN_LEN, "PES packet header")?;
         if b[0..3] != PACKET_START_CODE_PREFIX {
             return Err(Error::BadStartCode(
                 (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
@@ -813,13 +784,7 @@ impl<'a> PesPacket<'a> {
             });
         }
 
-        if b.len() < MIN_LEN + HEADER_FIXED {
-            return Err(Error::BufferTooShort {
-                need: MIN_LEN + HEADER_FIXED,
-                have: b.len(),
-                what: "PES optional header",
-            });
-        }
+        need_in(b, MIN_LEN + HEADER_FIXED, "PES optional header")?;
         let f1 = b[6];
         let f2 = b[7];
         // Table 2-21: the first two bits are the fixed `'10'`. Anything else
@@ -831,13 +796,7 @@ impl<'a> PesPacket<'a> {
         let hdl = usize::from(b[8]);
         let hdr_start = MIN_LEN + HEADER_FIXED; // = 9
         let hdr_end = hdr_start + hdl;
-        if b.len() < hdr_end {
-            return Err(Error::BufferTooShort {
-                need: hdr_end,
-                have: b.len(),
-                what: "PES_header_data_length",
-            });
-        }
+        need_in(b, hdr_end, "PES_header_data_length")?;
         // The header lies inside a bounded packet: a `PES_packet_length` too
         // small to hold `PES_header_data_length` is malformed (and would make
         // serialize write header bytes beyond the declared length).
@@ -855,25 +814,13 @@ impl<'a> PesPacket<'a> {
         let pts_dts_flags = (f2 >> 6) & 0x03;
         let (pts, dts) = match pts_dts_flags {
             0b10 => {
-                if opt.len() < cursor + 5 {
-                    return Err(Error::BufferTooShort {
-                        need: cursor + 5,
-                        have: opt.len(),
-                        what: "PTS",
-                    });
-                }
+                need_in(opt, cursor + 5, "PTS")?;
                 let pts = Pts(timestamp::read(&opt[cursor..], 0b0010, "PTS")?);
                 cursor += 5;
                 (Some(pts), None)
             }
             0b11 => {
-                if opt.len() < cursor + 10 {
-                    return Err(Error::BufferTooShort {
-                        need: cursor + 10,
-                        have: opt.len(),
-                        what: "PTS+DTS",
-                    });
-                }
+                need_in(opt, cursor + 10, "PTS+DTS")?;
                 let pts = Pts(timestamp::read(&opt[cursor..], 0b0011, "PTS")?);
                 cursor += 5;
                 let dts = Dts(timestamp::read(&opt[cursor..], 0b0001, "DTS")?);
@@ -891,13 +838,7 @@ impl<'a> PesPacket<'a> {
 
         // ESCR (6 bytes, ISO/IEC 13818-1 §2.4.3.7).
         let escr = if f2 & F2_ESCR != 0 {
-            if opt.len() < cursor + 6 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 6,
-                    have: opt.len(),
-                    what: "ESCR",
-                });
-            }
+            need_in(opt, cursor + 6, "ESCR")?;
             let arr: &[u8; 6] = opt[cursor..cursor + 6].try_into().unwrap();
             let e = Escr::from_field_bytes(arr)?;
             cursor += 6;
@@ -909,13 +850,7 @@ impl<'a> PesPacket<'a> {
         // ES_rate (3 bytes: 1 marker + 22-bit rate + 1 marker).
         let mut es_rate_marker_bits = ES_RATE_MARKERS_VALUE;
         let es_rate = if f2 & F2_ES_RATE != 0 {
-            if opt.len() < cursor + 3 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 3,
-                    have: opt.len(),
-                    what: "ES_rate",
-                });
-            }
+            need_in(opt, cursor + 3, "ES_rate")?;
             es_rate_marker_bits = ((opt[cursor] >> 7) << 1) | (opt[cursor + 2] & 1);
             let rate = (((opt[cursor] & 0x7F) as u32) << 15)
                 | ((opt[cursor + 1] as u32) << 7)
@@ -928,13 +863,7 @@ impl<'a> PesPacket<'a> {
 
         // DSM trick mode (1 byte).
         let dsm_trick_mode = if f2 & F2_DSM_TRICK_MODE != 0 {
-            if opt.len() < cursor + 1 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 1,
-                    have: opt.len(),
-                    what: "trick_mode",
-                });
-            }
+            need_in(opt, cursor + 1, "trick_mode")?;
             let tm = TrickMode::from_byte(opt[cursor]);
             cursor += 1;
             Some(tm)
@@ -944,13 +873,7 @@ impl<'a> PesPacket<'a> {
 
         // additional_copy_info (1 byte: marker + 7-bit info).
         let additional_copy_info = if f2 & F2_ADDITIONAL_COPY_INFO != 0 {
-            if opt.len() < cursor + 1 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 1,
-                    have: opt.len(),
-                    what: "additional_copy_info",
-                });
-            }
+            need_in(opt, cursor + 1, "additional_copy_info")?;
             let v = AdditionalCopyInfo {
                 info: opt[cursor] & 0x7F,
                 marker: opt[cursor] & ADDITIONAL_COPY_INFO_MARKER != 0,
@@ -963,13 +886,7 @@ impl<'a> PesPacket<'a> {
 
         // PES_CRC (2 bytes).
         let pes_crc = if f2 & F2_PES_CRC != 0 {
-            if opt.len() < cursor + 2 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 2,
-                    have: opt.len(),
-                    what: "PES_CRC",
-                });
-            }
+            need_in(opt, cursor + 2, "PES_CRC")?;
             let crc = u16::from_be_bytes([opt[cursor], opt[cursor + 1]]);
             cursor += 2;
             Some(crc)
@@ -1030,13 +947,7 @@ impl<'a> PesPacket<'a> {
     /// Serialize back to bytes (byte-identical to a spec-compliant input).
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "PES serialize output",
-            });
-        }
+        need_in(buf, len, "PES serialize output")?;
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX);
         buf[3] = self.stream_id.0;
         buf[4..6].copy_from_slice(&self.pes_packet_length.to_be_bytes());

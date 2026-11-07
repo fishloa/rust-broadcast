@@ -5,6 +5,7 @@
 use super::*;
 use crate::descriptors::satellite_delivery_system::{Polarization, RollOff};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for S2XSatelliteDeliverySystem<'a> {
     const TAG_EXTENSION: u8 = 0x17;
@@ -365,13 +366,7 @@ struct ChannelCommon {
 }
 
 fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
-    if sel.len() < *pos + BOND_BASE_LEN {
-        return Err(Error::BufferTooShort {
-            need: *pos + BOND_BASE_LEN,
-            have: sel.len(),
-            what: "S2X body",
-        });
-    }
+    need_in(sel, *pos + BOND_BASE_LEN, "S2X body")?;
     let (freq_bytes, _) = sel[*pos..]
         .split_first_chunk::<4>()
         .ok_or(Error::BufferTooShort {
@@ -461,13 +456,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         // receiver_profiles byte + S2X mode/flags byte = 2 fixed bytes.
-        if sel.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: sel.len(),
-                what: "S2X body",
-            });
-        }
+        need_in(sel, 2, "S2X body")?;
         let receiver_profiles = sel[0] >> 3;
         let reserved_zero_future_use_3a = sel[0] & RZFU_3_MASK;
         let b1 = sel[1];
@@ -480,13 +469,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         let mut pos = 2;
         let mut reserved_zero_future_use_6 = S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT;
         let scrambling_sequence_index = if scrambling_sequence_selector {
-            if sel.len() < pos + S2X_SCRAMBLING_LEN {
-                return Err(Error::BufferTooShort {
-                    need: pos + S2X_SCRAMBLING_LEN,
-                    have: sel.len(),
-                    what: "S2X body",
-                });
-            }
+            need_in(sel, pos + S2X_SCRAMBLING_LEN, "S2X body")?;
             reserved_zero_future_use_6 = sel[pos] >> RZFU_6_SHIFT;
             let idx = (u32::from(sel[pos] & 0x03) << 16)
                 | (u32::from(sel[pos + 1]) << 8)
@@ -511,13 +494,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             reserved_zero_future_use_4,
         } = parse_channel_common(sel, &mut pos)?;
         let input_stream_identifier = if multiple_input_stream_flag {
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "S2X body",
-                });
-            }
+            need_in(sel, pos + 1, "S2X body")?;
             let isi = sel[pos];
             pos += 1;
             Some(isi)
@@ -525,13 +502,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             None
         };
         let timeslice_number = if s2x_mode == S2XMode::S2XTimeSlicing {
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "S2X body",
-                });
-            }
+            need_in(sel, pos + 1, "S2X body")?;
             let ts = sel[pos];
             pos += 1;
             Some(ts)
@@ -541,13 +512,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         let mut reserved_zero_future_use_7 = S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT;
         let (channel_bonds, reserved_tail) = if s2x_mode == S2XMode::S2XChannelBonding {
             // --- channel bonding loop (Table 140) ---
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "S2X body",
-                });
-            }
+            need_in(sel, pos + 1, "S2X body")?;
             let bond_byte = sel[pos];
             pos += 1;
             // reserved_zero_future_use(7) | num_channel_bonds_minus_one(1)
@@ -557,13 +522,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             for _ in 0..num_channel_bonds {
                 let ch = parse_channel_common(sel, &mut pos)?;
                 let isi = if ch.multiple_input_stream_flag {
-                    if sel.len() < pos + 1 {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 1,
-                            have: sel.len(),
-                            what: "S2X body",
-                        });
-                    }
+                    need_in(sel, pos + 1, "S2X body")?;
                     let v = sel[pos];
                     pos += 1;
                     Some(v)
@@ -638,12 +597,7 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // `receiver_profiles` is a raw 5-bit field and `ts_gs_s2x_mode` a raw
         // 2-bit field; mask at the shift so high bits cannot bleed (r03-W2).
         buf[0] = (broadcast_common::len::fit_mask(

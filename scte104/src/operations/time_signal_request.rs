@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for time_signal_request (§8.3, Table 8-4).
@@ -24,13 +25,7 @@ pub struct TimeSignalRequest {
 impl<'a> Parse<'a> for TimeSignalRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < LEN {
-            return Err(Error::BufferTooShort {
-                need: LEN,
-                have: bytes.len(),
-                what: "time_signal_request_data",
-            });
-        }
+        need_in(bytes, LEN, "time_signal_request_data")?;
         Ok(Self {
             pre_roll_time: u16::from_be_bytes([bytes[0], bytes[1]]),
         })
@@ -43,12 +38,7 @@ impl Serialize for TimeSignalRequest {
         LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, LEN)?;
         buf[0..2].copy_from_slice(&self.pre_roll_time.to_be_bytes());
         Ok(LEN)
     }

@@ -3,6 +3,7 @@
 //! L1-current carries the complete L1 signalling for the current T2 frame:
 //! L1PRE + L1CONF + L1DYN_CURR + optionally L1EXT.
 
+use broadcast_common::len::{need_in, need_out};
 use num_enum::TryFromPrimitive;
 
 use broadcast_common::{Parse, Serialize};
@@ -81,13 +82,11 @@ impl L1CurrentPayload<'_> {
     /// [`crate::Error::BufferTooShort`] if `l1_current_data` is shorter than 21 bytes.
     /// [`crate::Error::L1Bits`] on bit-field errors.
     pub fn l1_pre(&self) -> crate::error::Result<L1Pre> {
-        if self.l1_current_data.len() < L1PRE_BYTES {
-            return Err(crate::Error::BufferTooShort {
-                need: L1PRE_BYTES,
-                have: self.l1_current_data.len(),
-                what: "L1PRE in l1_current_data",
-            });
-        }
+        need_in(
+            self.l1_current_data,
+            L1PRE_BYTES,
+            "L1PRE in l1_current_data",
+        )?;
         L1Pre::parse(&self.l1_current_data[..L1PRE_BYTES])
     }
 
@@ -112,13 +111,7 @@ impl<'a> Parse<'a> for L1CurrentPayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < L1_CURRENT_HEADER_LEN {
-            return Err(crate::Error::BufferTooShort {
-                need: L1_CURRENT_HEADER_LEN,
-                have: bytes.len(),
-                what: "L1CurrentPayload header",
-            });
-        }
+        need_in(bytes, L1_CURRENT_HEADER_LEN, "L1CurrentPayload header")?;
 
         let frame_idx = bytes[0];
         let freq_source = FrequencySource::try_from(bytes[1] >> 6)?;
@@ -153,12 +146,7 @@ impl Serialize for L1CurrentPayload<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         buf[0] = self.frame_idx;
         buf[1] = (u8::from(self.freq_source) << 6) & 0xC0; // freq_source in top 2 bits, RFU = 0

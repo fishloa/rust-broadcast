@@ -1,6 +1,7 @@
 //! SH Delivery System Descriptor — ETSI EN 300 468 §6.4.6.2 (tag_extension 0x05).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 impl ExtensionBodyDef<'_> for ShDeliverySystem {
     const TAG_EXTENSION: u8 = 0x05;
@@ -910,12 +911,7 @@ impl Serialize for ShDeliverySystem {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = (broadcast_common::len::fit_mask(
             self.diversity_mode.to_u8(),
             DIVERSITY_MODE_VALUE_MASK,

@@ -11,6 +11,7 @@ use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -134,13 +135,7 @@ impl<'a> Parse<'a> for CaPmtReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::CA_PMT_REPLY, "ca_pmt_reply")?;
-        if body.len() < REPLY_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: REPLY_PREFIX,
-                have: body.len(),
-                what: "ca_pmt_reply prefix",
-            });
-        }
+        need_in(body, REPLY_PREFIX, "ca_pmt_reply prefix")?;
         let program_number = u16::from_be_bytes([body[0], body[1]]);
         let version_number = (body[2] >> 1) & 0x1F;
         let current_next_indicator = (body[2] & 0x01) != 0;

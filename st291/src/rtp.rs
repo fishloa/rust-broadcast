@@ -13,6 +13,7 @@
 //! `parse_anc_rtp` examples).
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
@@ -347,13 +348,7 @@ impl<'a> Parse<'a> for AncRtpPayload {
     /// either desyncs the two); a bit-stream error if a packet runs past the
     /// declared `Length`.
     fn parse(b: &'a [u8]) -> Result<Self> {
-        if b.len() < ANC_RTP_PAYLOAD_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: ANC_RTP_PAYLOAD_HEADER_LEN,
-                have: b.len(),
-                what: "ANC RTP payload header",
-            });
-        }
+        need_in(b, ANC_RTP_PAYLOAD_HEADER_LEN, "ANC RTP payload header")?;
         let extended_sequence_number = u16::from_be_bytes([b[0], b[1]]);
         let length = usize::from(u16::from_be_bytes([b[2], b[3]]));
         let anc_count = usize::from(b[4]);
@@ -370,13 +365,7 @@ impl<'a> Parse<'a> for AncRtpPayload {
         let field_sense = FieldSense::from_bits(f_bits);
 
         let end = ANC_RTP_PAYLOAD_HEADER_LEN + length;
-        if b.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: b.len(),
-                what: "ANC RTP payload body",
-            });
-        }
+        need_in(b, end, "ANC RTP payload body")?;
         let body = &b[ANC_RTP_PAYLOAD_HEADER_LEN..end];
 
         let mut r = BitReader::new(body);
@@ -419,13 +408,7 @@ impl Serialize for AncRtpPayload {
     /// any [`RtpAncPacket`].
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "ANC RTP payload serialize output",
-            });
-        }
+        need_in(buf, len, "ANC RTP payload serialize output")?;
         let anc_count = self.anc_count();
         if anc_count > MAX_ANC_COUNT {
             return Err(Error::FieldTooWide {

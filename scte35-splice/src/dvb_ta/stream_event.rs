@@ -19,6 +19,7 @@
 //! consumes 4 bytes for it first). See `private/specs-verified/scte/scte35-splice/dvb_ta/dsmcc-stream-event.md`.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::section::SpliceInfoSection;
@@ -178,13 +179,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // DVB_data_length(8) + [reserved(3)+event_type(1)+timeline_type(4)](8) ...
-        if bytes.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: bytes.len(),
-                what: "DSM-CC_stream_event_payload_binary header",
-            });
-        }
+        need_in(bytes, 2, "DSM-CC_stream_event_payload_binary header")?;
         let dvb_data_length = bytes[0] as usize;
         // The DVB_data region begins at byte 1 and is dvb_data_length bytes long.
         if bytes.len() < 1 + dvb_data_length {
@@ -306,12 +301,7 @@ impl Serialize for StreamEventPayload<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let dvb_data_len = self.dvb_data_len();
         buf[0] = fit_u8(
             dvb_data_len,

@@ -10,6 +10,7 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_storage_descriptor (AIT namespace).
@@ -154,12 +155,7 @@ impl Serialize for ApplicationStorageDescriptor {
         let reserved =
             broadcast_common::len::fit_mask(self.reserved_flags, RESERVED_FLAGS_MASK, "reserved")?;
         let version = broadcast_common::len::fit_mask(self.version, VERSION_MASK, "version")?;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2] = self.storage_property.to_u8();
         buf[3] = (u8::from(self.not_launchable_from_broadcast) * NOT_LAUNCHABLE_FROM_BROADCAST)

@@ -7,6 +7,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for short_event_descriptor.
@@ -91,12 +92,7 @@ impl Serialize for ShortEventDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2..5].copy_from_slice(&self.language_code.0);
         buf[5] = broadcast_common::len::fit_u8(self.event_name.len(), "event_name_length")?;

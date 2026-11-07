@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for proprietary_command_request (§8.3, Table 8-4).
@@ -29,13 +30,7 @@ pub struct ProprietaryCommand<'a> {
 impl<'a> Parse<'a> for ProprietaryCommand<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: bytes.len(),
-                what: "proprietary_command_request_data",
-            });
-        }
+        need_in(bytes, FIXED_LEN, "proprietary_command_request_data")?;
         Ok(Self {
             proprietary_id: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
             proprietary_command: bytes[4],
@@ -51,12 +46,7 @@ impl Serialize for ProprietaryCommand<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0..4].copy_from_slice(&self.proprietary_id.to_be_bytes());
         buf[4] = self.proprietary_command;
         buf[5..need].copy_from_slice(self.proprietary_data);

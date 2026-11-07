@@ -1,6 +1,7 @@
 //! C2 Delivery System Descriptor — ETSI EN 300 468 §6.4.6.1 (tag_extension 0x0D).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl ExtensionBodyDef<'_> for C2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x0D;
@@ -202,13 +203,7 @@ impl C2DeliverySystem {
 impl<'a> Parse<'a> for C2DeliverySystem {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < C2_LEN {
-            return Err(Error::BufferTooShort {
-                need: C2_LEN,
-                have: sel.len(),
-                what: "C2_delivery_system body",
-            });
-        }
+        need_in(sel, C2_LEN, "C2_delivery_system body")?;
         let packed = sel[6];
         let (freq_bytes, _) = sel[2..]
             .split_first_chunk::<4>()
@@ -236,12 +231,7 @@ impl Serialize for C2DeliverySystem {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.plp_id;
         buf[1] = self.data_slice_id;
         buf[2..6].copy_from_slice(&self.c2_system_tuning_frequency.to_be_bytes());

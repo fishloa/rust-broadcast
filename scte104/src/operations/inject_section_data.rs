@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for inject_section_data_request (§8.3, Table 8-4).
@@ -32,24 +33,16 @@ pub const FIXED_LEN: usize = 4;
 impl<'a> Parse<'a> for InjectSectionData<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: bytes.len(),
-                what: "inject_section_data header",
-            });
-        }
+        need_in(bytes, FIXED_LEN, "inject_section_data header")?;
         let scte35_command_length = u16::from_be_bytes([bytes[0], bytes[1]]);
         let scte35_protocol_version = bytes[2];
         let scte35_command_type = bytes[3];
         let contents_len = usize::from(scte35_command_length);
-        if bytes.len() < FIXED_LEN + contents_len {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN + contents_len,
-                have: bytes.len(),
-                what: "inject_section_data contents",
-            });
-        }
+        need_in(
+            bytes,
+            FIXED_LEN + contents_len,
+            "inject_section_data contents",
+        )?;
         Ok(Self {
             scte35_protocol_version,
             scte35_command_type,
@@ -65,12 +58,7 @@ impl Serialize for InjectSectionData<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let command_length = broadcast_common::len::fit_u16(
             self.scte35_command_contents.len(),
             "inject_section_data.SCTE35_command_length",

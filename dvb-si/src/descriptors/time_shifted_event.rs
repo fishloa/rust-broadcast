@@ -6,6 +6,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for time_shifted_event_descriptor.
@@ -59,12 +60,7 @@ impl Serialize for TimeShiftedEventDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2..4].copy_from_slice(&self.reference_service_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.reference_event_id.to_be_bytes());

@@ -29,6 +29,80 @@ impl core::fmt::Display for FieldOverflow {
 
 impl core::error::Error for FieldOverflow {}
 
+/// An input buffer held fewer bytes than the structure being parsed needs.
+///
+/// Mirrors the `BufferTooShort { need, have, what }` variant every parser
+/// crate's error enum carries, so a crate maps it with one `From` impl.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BufferTooShort {
+    /// Bytes required to proceed.
+    pub need: usize,
+    /// Bytes actually available.
+    pub have: usize,
+    /// Name of the type or field being parsed.
+    pub what: &'static str,
+}
+
+impl core::fmt::Display for BufferTooShort {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "buffer too short: need {} bytes, have {} (while parsing {})",
+            self.need, self.have, self.what
+        )
+    }
+}
+
+impl core::error::Error for BufferTooShort {}
+
+/// An output buffer was smaller than the serialized form requires.
+///
+/// Mirrors the `OutputBufferTooSmall { need, have }` variant of the serializer
+/// crates' error enums.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputBufferTooSmall {
+    /// Required size.
+    pub need: usize,
+    /// Actual size.
+    pub have: usize,
+}
+
+impl core::fmt::Display for OutputBufferTooSmall {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "output buffer too small: need {}, have {}",
+            self.need, self.have
+        )
+    }
+}
+
+impl core::error::Error for OutputBufferTooSmall {}
+
+/// `Ok` if `buf` holds at least `need` bytes, else [`BufferTooShort`] carrying
+/// `what` (the parse-side pre-check).
+#[inline]
+pub fn need_in(buf: &[u8], need: usize, what: &'static str) -> Result<(), BufferTooShort> {
+    let have = buf.len();
+    if have < need {
+        Err(BufferTooShort { need, have, what })
+    } else {
+        Ok(())
+    }
+}
+
+/// `Ok` if `buf` can hold `need` bytes, else [`OutputBufferTooSmall`] (the
+/// serialize-side pre-check).
+#[inline]
+pub fn need_out(buf: &[u8], need: usize) -> Result<(), OutputBufferTooSmall> {
+    let have = buf.len();
+    if have < need {
+        Err(OutputBufferTooSmall { need, have })
+    } else {
+        Ok(())
+    }
+}
+
 /// `value` if it fits in an unsigned field of `bits` bits, else `Err`.
 ///
 /// The comparison happens in `u64` before any narrowing, so a value that an
@@ -110,6 +184,49 @@ pub fn fit_u32(value: usize, field: &'static str) -> Result<u32, FieldOverflow> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn need_in_boundaries() {
+        assert_eq!(need_in(&[0; 4], 4, "x"), Ok(()));
+        assert_eq!(need_in(&[0; 5], 4, "x"), Ok(()));
+        assert_eq!(need_in(&[], 0, "x"), Ok(()));
+        assert_eq!(
+            need_in(&[0; 3], 4, "pat"),
+            Err(BufferTooShort {
+                need: 4,
+                have: 3,
+                what: "pat"
+            })
+        );
+    }
+
+    #[test]
+    fn need_out_boundaries() {
+        let b = [0u8; 4];
+        assert_eq!(need_out(&b, 4), Ok(()));
+        assert_eq!(need_out(&b, 0), Ok(()));
+        assert_eq!(
+            need_out(&b, 5),
+            Err(OutputBufferTooSmall { need: 5, have: 4 })
+        );
+    }
+
+    #[test]
+    fn displays_match_the_crate_error_texts() {
+        assert_eq!(
+            BufferTooShort {
+                need: 4,
+                have: 3,
+                what: "pat"
+            }
+            .to_string(),
+            "buffer too short: need 4 bytes, have 3 (while parsing pat)"
+        );
+        assert_eq!(
+            OutputBufferTooSmall { need: 5, have: 4 }.to_string(),
+            "output buffer too small: need 5, have 4"
+        );
+    }
 
     #[test]
     fn fit_mask_accepts_in_range_and_rejects_over_range() {

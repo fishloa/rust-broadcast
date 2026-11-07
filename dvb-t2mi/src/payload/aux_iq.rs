@@ -4,6 +4,7 @@
 //! Each sample: 12-bit two's complement I, then 12-bit two's complement Q.
 //! `Re(x) = I / 2^9`, `Im(x) = Q / 2^9`. Can span multiple T2-MI packets.
 
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Minimum valid aux_id value.
@@ -34,13 +35,7 @@ impl<'a> Parse<'a> for AuxIqPayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < 3 {
-            return Err(crate::Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "AuxIqPayload header",
-            });
-        }
+        need_in(bytes, 3, "AuxIqPayload header")?;
 
         let frame_idx = bytes[0];
         let aux_id = (bytes[1] >> 4) & 0x0F;
@@ -82,12 +77,7 @@ impl Serialize for AuxIqPayload<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         if !(AUX_ID_MIN..=AUX_ID_MAX).contains(&self.aux_id) {
             return Err(crate::Error::ReservedBitsViolation {

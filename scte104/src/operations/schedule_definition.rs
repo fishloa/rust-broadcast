@@ -6,6 +6,7 @@
 use crate::error::{Error, Result};
 use crate::time::SpliceScheduleTime;
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for schedule_definition_data (§8.3, Table 8-4).
@@ -114,13 +115,7 @@ impl Default for ScheduleDefinition {
 impl<'a> Parse<'a> for ScheduleDefinition {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < LEN {
-            return Err(Error::BufferTooShort {
-                need: LEN,
-                have: bytes.len(),
-                what: "schedule_definition_data",
-            });
-        }
+        need_in(bytes, LEN, "schedule_definition_data")?;
         Ok(Self {
             splice_schedule_command: SpliceScheduleCommand::from_byte(bytes[0]),
             splice_event_id: u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]),
@@ -140,12 +135,7 @@ impl Serialize for ScheduleDefinition {
         LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, LEN)?;
         buf[0] = self.splice_schedule_command.to_byte();
         buf[1..5].copy_from_slice(&self.splice_event_id.to_be_bytes());
         self.time.serialize_into(&mut buf[5..9])?;

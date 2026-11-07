@@ -6,6 +6,7 @@
 //! `private/specs-verified/scte/scte104/ansi_scte_104/audio-and-alternate-break.md`.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
@@ -140,12 +141,7 @@ impl Serialize for InsertAudioProvisioning {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = broadcast_common::len::fit_u8(
             self.entries.len(),
             "insert_audio_provisioning.audio_count",

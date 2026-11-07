@@ -12,6 +12,7 @@
 //! (`audio_rendering_indication`) matches EN 300 468 Table 111.
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl Preselection<'_> {
     /// Whether this entry stays inside the GY/T 422-2025 Table 1 subset: none of
@@ -177,13 +178,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
         let mut pos = 1;
         let mut preselections = Vec::with_capacity(num_preselections as usize);
         for _ in 0..num_preselections {
-            if pos + 2 > sel.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: sel.len(),
-                    what: "audio_preselection body",
-                });
-            }
+            need_in(sel, pos + 2, "audio_preselection body")?;
             let byte_a = sel[pos];
             let byte_b = sel[pos + 1];
             pos += 2;
@@ -199,13 +194,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
             let future_extension = byte_b & 1 != 0;
 
             let language_code = if language_code_present {
-                if pos + ISO_639_LEN > sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + ISO_639_LEN,
-                        have: sel.len(),
-                        what: "audio_preselection body",
-                    });
-                }
+                need_in(sel, pos + ISO_639_LEN, "audio_preselection body")?;
                 let lc = LangCode([sel[pos], sel[pos + 1], sel[pos + 2]]);
                 pos += ISO_639_LEN;
                 Some(lc)
@@ -241,13 +230,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                 let num_aux = sel[pos] >> 5;
                 reserved_zero_future_use_5 = Some(sel[pos] & RESERVED_ZERO_5_MASK);
                 pos += 1;
-                if pos + num_aux as usize > sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + num_aux as usize,
-                        have: sel.len(),
-                        what: "audio_preselection body",
-                    });
-                }
+                need_in(sel, pos + num_aux as usize, "audio_preselection body")?;
                 let tags = &sel[pos..pos + num_aux as usize];
                 pos += num_aux as usize;
                 Some(tags)
@@ -266,13 +249,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                 let ext_len = (sel[pos] & 0x1F) as usize;
                 reserved_zero_future_use_3 = Some(sel[pos] >> 5);
                 pos += 1;
-                if pos + ext_len > sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + ext_len,
-                        have: sel.len(),
-                        what: "audio_preselection body",
-                    });
-                }
+                need_in(sel, pos + ext_len, "audio_preselection body")?;
                 let ext = &sel[pos..pos + ext_len];
                 pos += ext_len;
                 Some(ext)
@@ -320,12 +297,7 @@ impl Serialize for AudioPreselection<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let num_preselections = broadcast_common::len::fit_bits(
             self.preselections.len() as u64,
             5,

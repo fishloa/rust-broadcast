@@ -14,6 +14,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::len::need_in;
 
 use super::enums::{
     AuxStreamType, PlpCodeRate, PlpFecType, PlpMode, PlpModulation, PlpPayloadType, PlpType,
@@ -824,13 +825,7 @@ pub(crate) fn parse_l1_post_from_framed(
     let l1conf_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1conf_bytes = l1conf_len_bits.div_ceil(8);
-    if framed.len() < pos + l1conf_bytes {
-        return Err(crate::Error::BufferTooShort {
-            need: pos + l1conf_bytes,
-            have: framed.len(),
-            what: "L1CONF",
-        });
-    }
+    need_in(framed, pos + l1conf_bytes, "L1CONF")?;
     let configurable =
         L1PostConfigurable::parse(&framed[pos..pos + l1conf_bytes], num_rf, fef_present)?;
     pos += l1conf_bytes;
@@ -850,13 +845,7 @@ pub(crate) fn parse_l1_post_from_framed(
     let l1dyn_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1dyn_bytes = l1dyn_len_bits.div_ceil(8);
-    if framed.len() < pos + l1dyn_bytes {
-        return Err(crate::Error::BufferTooShort {
-            need: pos + l1dyn_bytes,
-            have: framed.len(),
-            what: "L1DYN_CURR",
-        });
-    }
+    need_in(framed, pos + l1dyn_bytes, "L1DYN_CURR")?;
     let dynamic_current = L1PostDynamic::parse(&framed[pos..pos + l1dyn_bytes], num_plp, num_aux)?;
     pos += l1dyn_bytes;
 
@@ -872,13 +861,7 @@ pub(crate) fn parse_l1_post_from_framed(
     let l1ext_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1ext_bytes = l1ext_len_bits.div_ceil(8);
-    if framed.len() < pos + l1ext_bytes {
-        return Err(crate::Error::BufferTooShort {
-            need: pos + l1ext_bytes,
-            have: framed.len(),
-            what: "L1EXT",
-        });
-    }
+    need_in(framed, pos + l1ext_bytes, "L1EXT")?;
     let extension = if l1ext_bytes > 0 {
         parse_ext_blocks(&framed[pos..pos + l1ext_bytes], l1ext_len_bits)?
     } else {

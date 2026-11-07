@@ -3,6 +3,7 @@
 //! Carries CI Plus ancillary data as an opaque byte run; its format is defined
 //! by the CI ecosystem, so it is preserved verbatim as a borrowed slice.
 use super::*;
+use broadcast_common::len::need_out;
 
 impl<'a> ExtensionBodyDef<'a> for CiAncillaryData<'a> {
     const TAG_EXTENSION: u8 = 0x14;
@@ -35,12 +36,7 @@ impl Serialize for CiAncillaryData<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[..len].copy_from_slice(self.ancillary_data);
         Ok(len)
     }

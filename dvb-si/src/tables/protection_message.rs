@@ -24,6 +24,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for all protection messages (TS 102 809 §9.3.4; coded per EN 300 468 §5.1.3).
@@ -240,13 +241,7 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = HEADER_LEN + CRC_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "ProtectionMessageSection",
-            });
-        }
+        need_in(bytes, min_len, "ProtectionMessageSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -289,13 +284,11 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
 
 /// Parse the authentication-message body (§9.4.3 Table 42, PDF pp. 70-71).
 fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>> {
-    if body.len() < AUTH_FIXED_PREFIX {
-        return Err(Error::BufferTooShort {
-            need: AUTH_FIXED_PREFIX,
-            have: body.len(),
-            what: "ProtectionMessageSection::AuthenticationMessage",
-        });
-    }
+    need_in(
+        body,
+        AUTH_FIXED_PREFIX,
+        "ProtectionMessageSection::AuthenticationMessage",
+    )?;
     let section_hash_algorithm_identifier = body[0];
     let section_hash_length = body[1];
     let signature_algorithm_identifier = body[2];
@@ -389,26 +382,18 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
 
 /// Parse the certificate-collection body (§9.5.4.9 Table 51, PDF p. 91).
 fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>> {
-    if body.is_empty() {
-        return Err(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "ProtectionMessageSection::CertificateCollection",
-        });
-    }
+    need_in(body, 1, "ProtectionMessageSection::CertificateCollection")?;
     // byte 0: reserved(4) | certificate_count(4)
     let certificate_count = (body[0] & LOOP_LEN_HI_MASK) as usize;
     let mut certificates = Vec::with_capacity(certificate_count);
     let mut reserved_certificate_lengths = Vec::with_capacity(certificate_count);
     let mut pos = 1;
     for _ in 0..certificate_count {
-        if pos + 2 > body.len() {
-            return Err(Error::BufferTooShort {
-                need: pos + 2,
-                have: body.len(),
-                what: "ProtectionMessageSection::certificate_length",
-            });
-        }
+        need_in(
+            body,
+            pos + 2,
+            "ProtectionMessageSection::certificate_length",
+        )?;
         // reserved(4) | certificate_length(12)
         let certificate_length = super::desc_loop_len_of(body[pos], body[pos + 1]);
         let cert_start = pos + 2;
@@ -621,12 +606,7 @@ impl Serialize for ProtectionMessageSection<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;

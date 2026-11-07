@@ -15,6 +15,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Application MMI (Tables 62-68).
@@ -198,23 +199,11 @@ impl<'a> Parse<'a> for RequestStart<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::REQUEST_START, "RequestStart")?;
-        if body.len() < REQUEST_START_FIXED {
-            return Err(Error::BufferTooShort {
-                need: REQUEST_START_FIXED,
-                have: body.len(),
-                what: "RequestStart",
-            });
-        }
+        need_in(body, REQUEST_START_FIXED, "RequestStart")?;
         let domain_len = body[0] as usize;
         let object_len = body[1] as usize;
         let need = REQUEST_START_FIXED + domain_len + object_len;
-        if body.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: body.len(),
-                what: "RequestStart",
-            });
-        }
+        need_in(body, need, "RequestStart")?;
         objects::reject_trailing_body(body, need, "RequestStart")?;
         let domain_start = REQUEST_START_FIXED;
         let object_start = domain_start + domain_len;
@@ -270,13 +259,7 @@ impl<'a> Parse<'a> for RequestStartAck {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::REQUEST_START_ACK, "RequestStartAck")?;
-        if body.len() < REQUEST_START_ACK_BODY {
-            return Err(Error::BufferTooShort {
-                need: REQUEST_START_ACK_BODY,
-                have: body.len(),
-                what: "RequestStartAck",
-            });
-        }
+        need_in(body, REQUEST_START_ACK_BODY, "RequestStartAck")?;
         crate::objects::reject_trailing_body(body, REQUEST_START_ACK_BODY, "RequestStartAck")?;
         Ok(Self {
             length_form,
@@ -336,13 +319,7 @@ impl<'a> Parse<'a> for FileAck<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = objects::parse_apdu_header(bytes, tag::FILE_ACK, "FileAck")?;
-        if body.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "FileAck",
-            });
-        }
+        need_in(body, 1, "FileAck")?;
         Ok(Self {
             length_form,
             file_ok: body[0] & FILE_OK_BIT != 0,

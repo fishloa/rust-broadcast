@@ -5,6 +5,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for multiplex_buffer_utilization_descriptor.
@@ -89,12 +90,7 @@ impl Serialize for MultiplexBufferUtilizationDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // 15-bit LTW offsets; a wider value used to be masked down silently
         // (audit r03-W3 class).
         broadcast_common::len::fit_bits(

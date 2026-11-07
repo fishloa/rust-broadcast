@@ -35,6 +35,7 @@
 //! field inside the typed function bodies.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use core::fmt;
 
 use num_enum::TryFromPrimitive;
@@ -650,13 +651,7 @@ fn parse_bandwidth(body: &[u8]) -> Result<BandwidthBody, crate::Error> {
 }
 
 fn parse_ace_papr(body: &[u8]) -> Result<AcePaprBody, crate::Error> {
-    if body.len() < ACE_PAPR_BODY_LEN {
-        return Err(crate::Error::BufferTooShort {
-            need: ACE_PAPR_BODY_LEN,
-            have: body.len(),
-            what: "ACE-PAPR function body",
-        });
-    }
+    need_in(body, ACE_PAPR_BODY_LEN, "ACE-PAPR function body")?;
     Ok(AcePaprBody {
         ace_gain: (body[0] >> 3) & 0x1F,
         ace_maximal_extension: body[0] & 0x07,
@@ -666,13 +661,7 @@ fn parse_ace_papr(body: &[u8]) -> Result<AcePaprBody, crate::Error> {
 }
 
 fn parse_miso_group(body: &[u8]) -> Result<MisoGroupBody, crate::Error> {
-    if body.len() < MISO_GROUP_BODY_LEN {
-        return Err(crate::Error::BufferTooShort {
-            need: MISO_GROUP_BODY_LEN,
-            have: body.len(),
-            what: "MISO group function body",
-        });
-    }
+    need_in(body, MISO_GROUP_BODY_LEN, "MISO group function body")?;
     Ok(MisoGroupBody {
         miso_group: body[0] & 0x80 != 0,
         rfu: body[0] & 0x7F,
@@ -680,13 +669,7 @@ fn parse_miso_group(body: &[u8]) -> Result<MisoGroupBody, crate::Error> {
 }
 
 fn parse_tr_papr(body: &[u8]) -> Result<TrPaprBody, crate::Error> {
-    if body.len() < TR_PAPR_BODY_LEN {
-        return Err(crate::Error::BufferTooShort {
-            need: TR_PAPR_BODY_LEN,
-            have: body.len(),
-            what: "TR-PAPR function body",
-        });
-    }
+    need_in(body, TR_PAPR_BODY_LEN, "TR-PAPR function body")?;
     Ok(TrPaprBody {
         rfu1: (body[0] >> 4) & 0x0F,
         tr_clipping_threshold: ((body[0] as u16 & 0x0F) << 8) | body[1] as u16,
@@ -710,13 +693,11 @@ fn parse_l1_ace_papr(body: &[u8]) -> Result<L1AcePaprBody, crate::Error> {
 }
 
 fn parse_tx_sig_fef_seq_num(body: &[u8]) -> Result<TxSigFefSeqNumBody, crate::Error> {
-    if body.len() < TX_SIG_FEF_SEQ_NUM_BODY_LEN {
-        return Err(crate::Error::BufferTooShort {
-            need: TX_SIG_FEF_SEQ_NUM_BODY_LEN,
-            have: body.len(),
-            what: "TX-SIG FEF sequence numbers function body",
-        });
-    }
+    need_in(
+        body,
+        TX_SIG_FEF_SEQ_NUM_BODY_LEN,
+        "TX-SIG FEF sequence numbers function body",
+    )?;
     Ok(TxSigFefSeqNumBody {
         rfu1: (body[0] >> 3) & 0x1F,
         seq_num_1: body[0] & 0x07,
@@ -727,13 +708,11 @@ fn parse_tx_sig_fef_seq_num(body: &[u8]) -> Result<TxSigFefSeqNumBody, crate::Er
 }
 
 fn parse_tx_sig_aux_stream_tx_id(body: &[u8]) -> Result<TxSigAuxStreamTxIdBody, crate::Error> {
-    if body.len() < TX_SIG_AUX_STREAM_TX_ID_BODY_LEN {
-        return Err(crate::Error::BufferTooShort {
-            need: TX_SIG_AUX_STREAM_TX_ID_BODY_LEN,
-            have: body.len(),
-            what: "TX-SIG aux stream TX ID function body",
-        });
-    }
+    need_in(
+        body,
+        TX_SIG_AUX_STREAM_TX_ID_BODY_LEN,
+        "TX-SIG aux stream TX ID function body",
+    )?;
     Ok(TxSigAuxStreamTxIdBody {
         tx_sig_aux_tx_id: ((body[0] as u16) << 4) | ((body[1] as u16) >> 4),
         rfu: ((body[1] as u32 & 0x0F) << 16) | (body[2] as u32) << 8 | body[3] as u32,
@@ -741,13 +720,7 @@ fn parse_tx_sig_aux_stream_tx_id(body: &[u8]) -> Result<TxSigAuxStreamTxIdBody, 
 }
 
 fn parse_frequency(body: &[u8]) -> Result<FrequencyBody, crate::Error> {
-    if body.len() < FREQUENCY_BODY_LEN {
-        return Err(crate::Error::BufferTooShort {
-            need: FREQUENCY_BODY_LEN,
-            have: body.len(),
-            what: "Frequency function body",
-        });
-    }
+    need_in(body, FREQUENCY_BODY_LEN, "Frequency function body")?;
     Ok(FrequencyBody {
         rf_idx: (body[0] >> 5) & 0x07,
         frequency: ((body[0] as u32 & 0x1F) << 27)
@@ -1150,24 +1123,12 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < HEADER_LEN {
-            return Err(crate::Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "IndividualAddressingPayload header",
-            });
-        }
+        need_in(bytes, HEADER_LEN, "IndividualAddressingPayload header")?;
 
         let rfu = bytes[0];
         let individual_addressing_length = bytes[1] as usize;
         let need = HEADER_LEN + individual_addressing_length;
-        if bytes.len() < need {
-            return Err(crate::Error::BufferTooShort {
-                need,
-                have: bytes.len(),
-                what: "IndividualAddressingPayload data",
-            });
-        }
+        need_in(bytes, need, "IndividualAddressingPayload data")?;
 
         let data = &bytes[HEADER_LEN..need];
         let mut pos: usize = 0;
@@ -1286,12 +1247,7 @@ impl Serialize for IndividualAddressingPayload<'_> {
             .sum();
         let total = HEADER_LEN + data_len;
 
-        if buf.len() < total {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
 
         if data_len > u8::MAX as usize {
             return Err(crate::Error::ReservedBitsViolation {

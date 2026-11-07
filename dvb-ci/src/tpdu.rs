@@ -10,6 +10,7 @@
 use crate::error::{Error, Result};
 use crate::length::{self, LengthForm};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `tpdu_tag` values — Table A.16 (p. 70). One byte each.
@@ -138,13 +139,7 @@ impl TcObject {
 impl<'a> Parse<'a> for TcObject {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "TcObject",
-            });
-        }
+        need_in(bytes, 1, "TcObject")?;
         let tag = bytes[0];
         if !Self::is_tc_tag(tag) {
             return Err(Error::InvalidObject {
@@ -179,12 +174,7 @@ impl Serialize for TcObject {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         if !Self::is_tc_tag(self.tag) {
             return Err(Error::InvalidObject {
                 what: "TcObject",
@@ -302,13 +292,7 @@ pub struct CommandTpdu<'a> {
 impl<'a> Parse<'a> for CommandTpdu<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "C_TPDU",
-            });
-        }
+        need_in(bytes, 1, "C_TPDU")?;
         let tag = bytes[0];
         let (len, hdr, length_form) = length::decode_form(&bytes[1..])?;
         if len == 0 {
@@ -343,12 +327,7 @@ impl Serialize for CommandTpdu<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len_value = 1 + self.data.len();
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         buf[0] = self.tag;
         let mut pos = 1 + length::encode_with(len_value, self.length_form, &mut buf[1..])?;
         buf[pos] = self.t_c_id;
@@ -389,13 +368,7 @@ pub struct ResponseTpdu<'a> {
 impl<'a> Parse<'a> for ResponseTpdu<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "R_TPDU",
-            });
-        }
+        need_in(bytes, 1, "R_TPDU")?;
         let tag = bytes[0];
         let (len, hdr, length_form) = length::decode_form(&bytes[1..])?;
         if len == 0 {
@@ -408,13 +381,7 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
         let data_end = start + len;
         // Status trailer: SB_tag + length_field(value 2) + t_c_id + SB_value.
         // Need at least the tag and one length byte to learn the field's width.
-        if bytes.len() < data_end + 2 {
-            return Err(Error::BufferTooShort {
-                need: data_end + 2,
-                have: bytes.len(),
-                what: "R_TPDU status",
-            });
-        }
+        need_in(bytes, data_end + 2, "R_TPDU status")?;
         if bytes[data_end] != tags::SB {
             return Err(Error::UnexpectedTpduTag {
                 got: bytes[data_end],
@@ -431,13 +398,7 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
         }
         let sb_body = data_end + 1 + sb_hdr;
         let status_end = sb_body + 2;
-        if bytes.len() < status_end {
-            return Err(Error::BufferTooShort {
-                need: status_end,
-                have: bytes.len(),
-                what: "R_TPDU status",
-            });
-        }
+        need_in(bytes, status_end, "R_TPDU status")?;
         // bytes[sb_body] = t_c_id (status), bytes[sb_body+1] = SB_value.
         // The status trailer names the same transport connection as the
         // TPDU body's own leading t_c_id (bytes[start]) — a mismatch means
@@ -471,12 +432,7 @@ impl Serialize for ResponseTpdu<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         let len_value = 1 + self.data.len();
         buf[0] = self.tag;
         let mut pos = 1 + length::encode_with(len_value, self.length_form, &mut buf[1..])?;
@@ -537,12 +493,7 @@ fn parse_fixed<'a>(
 
 fn write_fixed(tag: u8, form: LengthForm, body: &[u8], buf: &mut [u8]) -> Result<usize> {
     let total = 1 + length::encoded_len_with(body.len(), form) + body.len();
-    if buf.len() < total {
-        return Err(Error::OutputBufferTooSmall {
-            need: total,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, total)?;
     buf[0] = tag;
     let pos = 1 + length::encode_with(body.len(), form, &mut buf[1..])?;
     buf[pos..pos + body.len()].copy_from_slice(body);

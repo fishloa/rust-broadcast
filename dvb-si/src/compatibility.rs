@@ -34,7 +34,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_u8, fit_u16};
+use broadcast_common::len::{fit_u8, fit_u16, need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 pub(crate) const COMPAT_DESC_LEN_FIELD: usize = 2;
@@ -255,13 +255,11 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < COMPAT_DESC_LEN_FIELD {
-            return Err(Error::BufferTooShort {
-                need: COMPAT_DESC_LEN_FIELD,
-                have: bytes.len(),
-                what: "CompatibilityDescriptor length field",
-            });
-        }
+        need_in(
+            bytes,
+            COMPAT_DESC_LEN_FIELD,
+            "CompatibilityDescriptor length field",
+        )?;
         let (b2, _) = bytes
             .split_first_chunk::<2>()
             .ok_or(Error::BufferTooShort {
@@ -413,12 +411,7 @@ impl Serialize for CompatibilityDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.descriptors.is_empty() {
             if self.empty_count_present {
                 // compatibilityDescriptorLength = 2, descriptorCount = 0.

@@ -4,6 +4,7 @@
 //! descriptor loop of the resulting splice_info_section.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
@@ -43,33 +44,15 @@ impl InsertDescriptor<'_> {
 impl<'a> Parse<'a> for InsertDescriptor<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "insert_descriptor descriptor_count",
-            });
-        }
+        need_in(bytes, 1, "insert_descriptor descriptor_count")?;
         let count = bytes[0] as usize;
         let mut pos = 1;
         let mut images = Vec::with_capacity(count);
         for _ in 0..count {
-            if bytes.len() < pos + 2 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: bytes.len(),
-                    what: "insert_descriptor tag+length",
-                });
-            }
+            need_in(bytes, pos + 2, "insert_descriptor tag+length")?;
             let desc_len = bytes[pos + 1] as usize;
             let total = 2 + desc_len;
-            if bytes.len() < pos + total {
-                return Err(Error::BufferTooShort {
-                    need: pos + total,
-                    have: bytes.len(),
-                    what: "insert_descriptor image",
-                });
-            }
+            need_in(bytes, pos + total, "insert_descriptor image")?;
             images.push(&bytes[pos..pos + total]);
             pos += total;
         }
@@ -90,12 +73,7 @@ impl Serialize for InsertDescriptor<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = broadcast_common::len::fit_u8(
             self.descriptor_images.len(),
             "insert_descriptor.descriptor_count",

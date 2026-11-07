@@ -4,6 +4,7 @@
 //! associated service/bouquet — a loop of 16-bit identifiers.
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 impl ExtensionBodyDef<'_> for CpIdentifier {
     const TAG_EXTENSION: u8 = 0x03;
@@ -43,12 +44,7 @@ impl Serialize for CpIdentifier {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         for (i, id) in self.cp_system_ids.iter().enumerate() {
             buf[i * 2..i * 2 + 2].copy_from_slice(&id.to_be_bytes());
         }

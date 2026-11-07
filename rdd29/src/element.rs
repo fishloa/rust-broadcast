@@ -2,6 +2,7 @@
 
 use broadcast_common::Parse;
 use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::len::need_in;
 
 use crate::audio_data_dlc::AudioDataDlc;
 use crate::bed_definition::BedDefinition1;
@@ -143,13 +144,7 @@ impl<'a> AnyElement<'a> {
         // the element's own `serialized_len`, so it is not free.
         let body_len = self.body_len();
         let need = element_header_len(self.element_id_wire(), body_len) + body_len;
-        if buf.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: buf.len(),
-                what: "AnyElement",
-            });
-        }
+        need_in(buf, need, "AnyElement")?;
         write_element_header(&mut buf[..need], self.element_id_wire(), body_len)?;
         let header_len = need - body_len;
         match self {
@@ -202,13 +197,7 @@ impl<'a> AnyElement<'a> {
                 value: element_size as u64,
                 reason: "overflowed usize",
             })?;
-        if body_end > bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: body_end,
-                have: bytes.len(),
-                what: "element body",
-            });
-        }
+        need_in(bytes, body_end, "element body")?;
         let body = &bytes[header_len..body_end];
         let element = match element_id {
             ELEMENT_ID_BED_DEFINITION1 => Self::BedDefinition1(BedDefinition1::parse(body)?),

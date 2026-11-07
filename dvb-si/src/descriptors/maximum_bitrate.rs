@@ -5,6 +5,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for maximum_bitrate_descriptor.
@@ -78,12 +79,7 @@ impl Serialize for MaximumBitrateDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let mb = broadcast_common::len::fit_bits(
             u64::from(self.maximum_bitrate),
             MAXIMUM_BITRATE_BITS,

@@ -6,6 +6,7 @@
 
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use super::enums::{
@@ -218,13 +219,7 @@ impl<'a> Parse<'a> for L1Pre {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> crate::error::Result<Self> {
-        if bytes.len() < L1PRE_BYTES {
-            return Err(crate::Error::BufferTooShort {
-                need: L1PRE_BYTES,
-                have: bytes.len(),
-                what: "L1Pre",
-            });
-        }
+        need_in(bytes, L1PRE_BYTES, "L1Pre")?;
         let mut r = BitReader::new(&bytes[..L1PRE_BYTES]);
 
         let type_ = TxInputStreamType::from_u8(r.read_bits(TYPE_BITS)? as u8);
@@ -299,12 +294,7 @@ impl Serialize for L1Pre {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> crate::error::Result<usize> {
-        if buf.len() < L1PRE_BYTES {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: L1PRE_BYTES,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, L1PRE_BYTES)?;
         // zero first to allow align_to_byte padding to be 0
         buf[..L1PRE_BYTES].fill(0);
         let mut w = BitWriter::new(&mut buf[..L1PRE_BYTES]);

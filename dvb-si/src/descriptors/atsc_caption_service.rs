@@ -25,7 +25,7 @@ use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, fit_u8};
+use broadcast_common::len::{fit_bits, fit_u8, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for the ATSC caption_service_descriptor.
@@ -235,12 +235,7 @@ impl Serialize for AtscCaptionServiceDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.services.len() > MAX_SERVICES {
             return Err(Error::ValueOutOfRange {
                 field: "number_of_services",

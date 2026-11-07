@@ -19,6 +19,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for StreamInput (Tables 13-20).
@@ -257,13 +258,7 @@ impl<'a> Parse<'a> for ScanAck<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = objects::parse_apdu_header(bytes, tag::SCAN_ACK, "ScanAck")?;
-        if body.len() < SCAN_ACK_BODY {
-            return Err(Error::BufferTooShort {
-                need: SCAN_ACK_BODY,
-                have: body.len(),
-                what: "ScanAck",
-            });
-        }
+        need_in(body, SCAN_ACK_BODY, "ScanAck")?;
         crate::objects::reject_trailing_body(body, SCAN_ACK_BODY, "ScanAck")?;
         Ok(Self {
             length_form,
@@ -345,13 +340,7 @@ impl<'a> Parse<'a> for TuneTSAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = objects::parse_apdu_header(bytes, tag::TUNE_TS_ACK, "TuneTSAck")?;
-        if body.len() < TUNE_TS_ACK_BODY {
-            return Err(Error::BufferTooShort {
-                need: TUNE_TS_ACK_BODY,
-                have: body.len(),
-                what: "TuneTSAck",
-            });
-        }
+        need_in(body, TUNE_TS_ACK_BODY, "TuneTSAck")?;
         crate::objects::reject_trailing_body(body, TUNE_TS_ACK_BODY, "TuneTSAck")?;
         Ok(Self {
             length_form,

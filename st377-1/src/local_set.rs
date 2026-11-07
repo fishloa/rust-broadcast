@@ -13,6 +13,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -401,13 +402,7 @@ impl<'a> LocalSet<'a> {
     /// `bytes`, returning it with the total bytes consumed — use this to
     /// walk a sequence of Header Metadata Sets in a stream.
     pub fn parse_prefix(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "Local Set key",
-            });
-        }
+        need_in(bytes, 16, "Local Set key")?;
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         if !is_local_set_key(&key) {
             return Err(Error::KeyPrefixMismatch {
@@ -432,35 +427,17 @@ impl<'a> LocalSet<'a> {
             have: bytes.len(),
             what: "Local Set value (length overflow)",
         })?;
-        if bytes.len() < value_end {
-            return Err(Error::BufferTooShort {
-                need: value_end,
-                have: bytes.len(),
-                what: "Local Set value",
-            });
-        }
+        need_in(bytes, value_end, "Local Set value")?;
 
         let mut cursor = &bytes[value_start..value_end];
         let mut items = Vec::new();
         while !cursor.is_empty() {
-            if cursor.len() < 2 {
-                return Err(Error::BufferTooShort {
-                    need: 2,
-                    have: cursor.len(),
-                    what: "Local Set item tag",
-                });
-            }
+            need_in(cursor, 2, "Local Set item tag")?;
             let tag = u16::from_be_bytes([cursor[0], cursor[1]]);
             let rest = &cursor[2..];
             let (item_len, item_len_size) = match mode {
                 ItemLengthMode::TwoByte => {
-                    if rest.len() < 2 {
-                        return Err(Error::BufferTooShort {
-                            need: 2,
-                            have: rest.len(),
-                            what: "Local Set item 2-byte length",
-                        });
-                    }
+                    need_in(rest, 2, "Local Set item 2-byte length")?;
                     (u64::from(u16::from_be_bytes([rest[0], rest[1]])), 2)
                 }
                 ItemLengthMode::Ber => decode_ber_length(rest)?,
@@ -481,13 +458,7 @@ impl<'a> LocalSet<'a> {
                     have: rest.len(),
                     what: "Local Set item value (length overflow)",
                 })?;
-            if rest.len() < value_end {
-                return Err(Error::BufferTooShort {
-                    need: value_end,
-                    have: rest.len(),
-                    what: "Local Set item value",
-                });
-            }
+            need_in(rest, value_end, "Local Set item value")?;
             items.push(LocalSetItem {
                 tag,
                 value: &rest[value_start..value_end],
@@ -566,13 +537,7 @@ impl Serialize for LocalSet<'_> {
             });
         }
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: buf.len(),
-                what: "Local Set",
-            });
-        }
+        need_in(buf, total, "Local Set")?;
         buf[..16].copy_from_slice(&self.key);
         let mode = self.item_length_mode();
         let items_len: usize = self

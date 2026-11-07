@@ -8,6 +8,7 @@ use super::descriptor_body;
 use crate::descriptors::decoder_config_flags::DecoderConfigFlags;
 use crate::descriptors::metadata_format::MetadataFormat;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for metadata_descriptor.
@@ -362,12 +363,7 @@ impl Serialize for MetadataDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         buf[HEADER_LEN] = (self.metadata_application_format >> 8) as u8;

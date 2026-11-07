@@ -1,7 +1,8 @@
 //! Network Name Descriptor — ETSI EN 300 468 V1.20.1 §6.2.27 (tag 0x40).
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 use super::descriptor_body;
@@ -45,12 +46,7 @@ impl Serialize for NetworkNameDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         crate::descriptors::write_descriptor_header(buf, TAG, self.network_name.len())?;
         buf[HEADER_LEN..need].copy_from_slice(self.network_name.raw());
@@ -66,6 +62,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for NetworkNameDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
 
     /// Encode a 4-byte name, confirm parse extracts it.
     #[test]

@@ -1,6 +1,7 @@
 //! Target Region Descriptor — ETSI EN 300 468 §6.4.12 (tag_extension 0x09).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 /// Shift of `reserved_future_use(5)` in the per-entry flags byte.
 const ENTRY_RESERVED_SHIFT: u8 = 3;
@@ -88,13 +89,7 @@ pub enum RegionCodes {
 impl<'a> Parse<'a> for TargetRegion {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < ISO_639_LEN {
-            return Err(Error::BufferTooShort {
-                need: ISO_639_LEN,
-                have: sel.len(),
-                what: "target_region body",
-            });
-        }
+        need_in(sel, ISO_639_LEN, "target_region body")?;
         let country_code = LangCode([sel[0], sel[1], sel[2]]);
         let regions = parse_region_entries(sel, ISO_639_LEN)?;
         Ok(TargetRegion {
@@ -119,13 +114,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
         let country_code_flag = (flags >> 2) & 1;
         let region_depth = flags & 0x03;
         let country_code = if country_code_flag == 1 {
-            if pos + ISO_639_LEN > sel.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + ISO_639_LEN,
-                    have: sel.len(),
-                    what: "target_region body",
-                });
-            }
+            need_in(sel, pos + ISO_639_LEN, "target_region body")?;
             let cc = LangCode([sel[pos], sel[pos + 1], sel[pos + 2]]);
             pos += ISO_639_LEN;
             Some(cc)
@@ -286,12 +275,7 @@ impl Serialize for TargetRegion {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[..ISO_639_LEN].copy_from_slice(&self.country_code.0);
         write_region_entries(&self.regions, buf, ISO_639_LEN)?;
         Ok(len)

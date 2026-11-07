@@ -4,6 +4,7 @@
 //! to be ascribed to regions or subregions.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The disparity_signalling_segment segment_type.
@@ -63,21 +64,9 @@ impl DisparityShiftUpdateSequence {
     }
 
     fn parse(bytes: &[u8]) -> Result<(Self, usize)> {
-        if bytes.len() < 5 {
-            return Err(Error::BufferTooShort {
-                need: 5,
-                have: bytes.len(),
-                what: "disparity_shift_update_sequence",
-            });
-        }
+        need_in(bytes, 5, "disparity_shift_update_sequence")?;
         let seq_len = bytes[0] as usize;
-        if bytes.len() < 1 + seq_len {
-            return Err(Error::BufferTooShort {
-                need: 1 + seq_len,
-                have: bytes.len(),
-                what: "disparity_shift_update_sequence data",
-            });
-        }
+        need_in(bytes, 1 + seq_len, "disparity_shift_update_sequence data")?;
         let dur = ((bytes[1] as u32) << 16) | ((bytes[2] as u32) << 8) | (bytes[3] as u32);
         let count = bytes[4];
         let total = 1 + seq_len;
@@ -244,13 +233,11 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + FIXED_LEN,
-                have: bytes.len(),
-                what: "disparity_signalling_segment",
-            });
-        }
+        need_in(
+            bytes,
+            HEADER_LEN + FIXED_LEN,
+            "disparity_signalling_segment",
+        )?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -260,21 +247,9 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
         let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
         let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let total = HEADER_LEN + segment_length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "disparity_signalling_segment data",
-            });
-        }
+        need_in(bytes, total, "disparity_signalling_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
-        if body.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: body.len(),
-                what: "disparity_signalling_segment body",
-            });
-        }
+        need_in(body, FIXED_LEN, "disparity_signalling_segment body")?;
         let dss_version_number = body[0] >> 4;
         let update_sequence_page_flag = (body[0] & 0x08) != 0;
         let reserved = body[0] & 0x07;
@@ -295,13 +270,7 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
             // segment_length)` with no stuffing provision, so 1 leftover
             // byte means the segment is malformed, not that it should be
             // silently dropped (#1108/DS-W6: this used to just `break`).
-            if pos + 2 > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: body.len(),
-                    what: "disparity_signalling_segment region header",
-                });
-            }
+            need_in(body, pos + 2, "disparity_signalling_segment region header")?;
             let region_id = body[pos];
             pos += 1;
             let update_flag = (body[pos] & 0x80) != 0;
@@ -313,13 +282,7 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
             for _n in 0..=num_subregions_minus_1 {
                 let has_pos = num_subregions_minus_1 > 0;
                 let entry_len = if has_pos { 4 + 2 } else { 2 };
-                if pos + entry_len > body.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + entry_len,
-                        have: body.len(),
-                        what: "subregion entry",
-                    });
-                }
+                need_in(body, pos + entry_len, "subregion entry")?;
 
                 let (hpos, width) = if has_pos {
                     let h = u16::from_be_bytes([body[pos], body[pos + 1]]);
@@ -392,13 +355,7 @@ impl Serialize for DisparitySignallingSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "disparity_signalling_segment serialize",
-            });
-        }
+        need_in(buf, len, "disparity_signalling_segment serialize")?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

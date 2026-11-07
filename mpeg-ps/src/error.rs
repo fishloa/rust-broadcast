@@ -101,3 +101,13 @@ pub enum Error {
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }
+
+impl From<broadcast_common::len::BufferTooShort> for Error {
+    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
+        Self::BufferTooShort {
+            need: e.need,
+            have: e.have,
+            what: e.what,
+        }
+    }
+}

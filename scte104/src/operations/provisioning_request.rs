@@ -10,6 +10,7 @@
 //! `pdf2md` against ANSI/SCTE 104 2023 pp. 75-76 and p. 80-81).
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
@@ -41,13 +42,11 @@ pub struct DpiPidEntry {
 
 impl DpiPidEntry {
     fn parse_one(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < DPI_PID_ENTRY_LEN {
-            return Err(Error::BufferTooShort {
-                need: DPI_PID_ENTRY_LEN,
-                have: bytes.len(),
-                what: "provisioning_request_data DPI PID entry",
-            });
-        }
+        need_in(
+            bytes,
+            DPI_PID_ENTRY_LEN,
+            "provisioning_request_data DPI PID entry",
+        )?;
         Ok(Self {
             dpi_pid_index: u16::from_be_bytes([bytes[0], bytes[1]]),
             shared_pid: bytes[2],
@@ -79,34 +78,24 @@ impl InjectorComponentList {
     /// Parse from the front of `bytes`; returns the value and the number of
     /// bytes consumed (the caller has more fields possibly following).
     fn parse_prefix(bytes: &[u8]) -> Result<(Self, usize)> {
-        if bytes.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: bytes.len(),
-                what: "injector_component_list header",
-            });
-        }
+        need_in(bytes, 2, "injector_component_list header")?;
         let video_component_tag = bytes[0];
         let n_audio = bytes[1] as usize;
         let mut pos = 2;
-        if bytes.len() < pos + n_audio + 1 {
-            return Err(Error::BufferTooShort {
-                need: pos + n_audio + 1,
-                have: bytes.len(),
-                what: "injector_component_list audio_component_tags",
-            });
-        }
+        need_in(
+            bytes,
+            pos + n_audio + 1,
+            "injector_component_list audio_component_tags",
+        )?;
         let audio_component_tags = bytes[pos..pos + n_audio].to_vec();
         pos += n_audio;
         let n_data = bytes[pos] as usize;
         pos += 1;
-        if bytes.len() < pos + n_data {
-            return Err(Error::BufferTooShort {
-                need: pos + n_data,
-                have: bytes.len(),
-                what: "injector_component_list data_component_tags",
-            });
-        }
+        need_in(
+            bytes,
+            pos + n_data,
+            "injector_component_list data_component_tags",
+        )?;
         let data_component_tags = bytes[pos..pos + n_data].to_vec();
         pos += n_data;
         Ok((
@@ -183,13 +172,7 @@ impl Default for ProvisioningService {
 impl ProvisioningService {
     fn parse_prefix(bytes: &[u8]) -> Result<(Self, usize)> {
         const HEAD_LEN: usize = 4 + 2 + SERVICE_NAME_LEN + 1; // up to number_of_DPI_PIDs
-        if bytes.len() < HEAD_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEAD_LEN,
-                have: bytes.len(),
-                what: "provisioning_request_data service header",
-            });
-        }
+        need_in(bytes, HEAD_LEN, "provisioning_request_data service header")?;
         let injector_ip_address = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let injector_socket_number = u16::from_be_bytes([bytes[4], bytes[5]]);
         let mut service_name = [0u8; SERVICE_NAME_LEN];
@@ -204,13 +187,7 @@ impl ProvisioningService {
             pos += DPI_PID_ENTRY_LEN;
         }
 
-        if bytes.len() < pos + 1 {
-            return Err(Error::BufferTooShort {
-                need: pos + 1,
-                have: bytes.len(),
-                what: "provisioning_request_data component_mode",
-            });
-        }
+        need_in(bytes, pos + 1, "provisioning_request_data component_mode")?;
         let component_mode = bytes[pos];
         pos += 1;
 
@@ -291,13 +268,7 @@ pub struct ProvisioningRequest {
 impl<'a> Parse<'a> for ProvisioningRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "provisioning_request_data service_count",
-            });
-        }
+        need_in(bytes, 1, "provisioning_request_data service_count")?;
         let service_count = bytes[0] as usize;
         let mut pos = 1;
         let mut services = Vec::with_capacity(service_count);
@@ -321,12 +292,7 @@ impl Serialize for ProvisioningRequest {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = broadcast_common::len::fit_u8(
             self.services.len(),
             "provisioning_request_data.service_count",

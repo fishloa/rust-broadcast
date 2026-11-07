@@ -20,6 +20,7 @@ use super::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 // ── wire-layout byte counts ────────────────────────────────────────────────────
@@ -185,12 +186,7 @@ impl<'a> Tap<'a> {
 
     pub(crate) fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.selector.len() > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: self.selector.len(),
@@ -265,12 +261,7 @@ impl<'a> ObjectLocation<'a> {
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.object_key.len() > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: self.object_key.len(),
@@ -325,12 +316,7 @@ impl<'a> ConnBinder<'a> {
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.taps.len() > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: self.taps.len(),
@@ -544,12 +530,7 @@ impl<'a> BiopProfileBody<'a> {
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let total_components = 2 + self.extra.len();
         if total_components > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
@@ -669,12 +650,7 @@ impl NsapAddress {
     }
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < NSAP_ADDRESS_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: NSAP_ADDRESS_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, NSAP_ADDRESS_LEN)?;
         buf[0] = Self::AFI;
         buf[1] = Self::NSAP_TYPE;
         buf[2..6].copy_from_slice(&self.carousel_id.to_be_bytes());
@@ -739,12 +715,7 @@ impl<'a> NameComponent<'a> {
     /// Serialize one CosNaming name component with 32-bit length prefixes.
     pub(crate) fn serialize_32bit(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len_32bit();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let id_len = broadcast_common::len::fit_u32(self.id.len(), "NameComponent id_length")?;
         buf[0..4].copy_from_slice(&id_len.to_be_bytes());
         buf[4..4 + self.id.len()].copy_from_slice(self.id);
@@ -802,12 +773,7 @@ impl<'a> NameComponent<'a> {
     /// Serialize one BIOP Directory name component with 8-bit length prefixes.
     pub(crate) fn serialize_8bit(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len_8bit();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.id.len() > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: self.id.len(),
@@ -925,12 +891,7 @@ impl<'a> ServiceLocation<'a> {
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = NSAP_ADDRESS_LEN as u8; // serviceDomain_length = 0x14
         self.service_domain
             .serialize_into_buf(&mut buf[1..1 + NSAP_ADDRESS_LEN])?;
@@ -1073,12 +1034,7 @@ impl<'a> LiteOptionsProfileBody<'a> {
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let total_components = 1 + self.extra.len();
         if total_components > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
@@ -1155,12 +1111,7 @@ impl TaggedProfile<'_> {
 
     fn serialize_into_buf(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let (tag, data_len) = match self {
             Self::Biop(b) => (TAG_BIOP, b.serialized_len()),
             Self::LiteOptions(l) => (TAG_LITE_OPTIONS, l.serialized_len()),
@@ -1331,12 +1282,7 @@ impl Serialize for Ior<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if !self.type_id.len().is_multiple_of(4) {
             return Err(Error::ValueOutOfRange {
                 field: "IOR.type_id_length",

@@ -6,6 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for splice_request (§8.3, Table 8-4).
@@ -127,13 +128,7 @@ impl Default for SpliceRequest {
 impl<'a> Parse<'a> for SpliceRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < LEN {
-            return Err(Error::BufferTooShort {
-                need: LEN,
-                have: bytes.len(),
-                what: "splice_request_data",
-            });
-        }
+        need_in(bytes, LEN, "splice_request_data")?;
         Ok(Self {
             splice_insert_type: SpliceInsertType::from_byte(bytes[0]),
             splice_event_id: u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]),
@@ -154,12 +149,7 @@ impl Serialize for SpliceRequest {
         LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, LEN)?;
         buf[0] = self.splice_insert_type.to_byte();
         buf[1..5].copy_from_slice(&self.splice_event_id.to_be_bytes());
         buf[5..7].copy_from_slice(&self.unique_program_id.to_be_bytes());

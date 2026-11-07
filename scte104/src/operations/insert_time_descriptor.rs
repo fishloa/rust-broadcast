@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for insert_time_descriptor (§8.3, Table 8-4).
@@ -28,13 +29,7 @@ pub struct InsertTimeDescriptor {
 impl<'a> Parse<'a> for InsertTimeDescriptor {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < LEN {
-            return Err(Error::BufferTooShort {
-                need: LEN,
-                have: bytes.len(),
-                what: "insert_time_descriptor",
-            });
-        }
+        need_in(bytes, LEN, "insert_time_descriptor")?;
         // TAI_seconds: 6 bytes (48-bit)
         let tai_seconds = (u64::from(bytes[0]) << 40)
             | (u64::from(bytes[1]) << 32)
@@ -58,12 +53,7 @@ impl Serialize for InsertTimeDescriptor {
         LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, LEN)?;
         if self.tai_seconds >> 48 != 0 {
             return Err(Error::InvalidValue {
                 field: "insert_time_descriptor.TAI_seconds",

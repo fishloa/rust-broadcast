@@ -10,6 +10,7 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_icons_descriptor (AIT namespace).
@@ -216,12 +217,7 @@ impl Serialize for ApplicationIconsDescriptor<'_> {
         let len = self.serialized_len();
         let loc_len =
             broadcast_common::len::fit_u8(self.icon_locator.len(), "icon_locator_length")?;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         buf[pos] = loc_len;

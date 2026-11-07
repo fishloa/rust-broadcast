@@ -1,6 +1,7 @@
 //! Page Composition Segment — ETSI EN 300 743 §7.2.2, Table 9 (segment_type 0x10).
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The page_composition_segment segment_type.
@@ -80,13 +81,7 @@ impl PageRegionEntry {
     }
 
     fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < REGION_ENTRY_LEN {
-            return Err(Error::BufferTooShort {
-                need: REGION_ENTRY_LEN,
-                have: bytes.len(),
-                what: "page_region_entry",
-            });
-        }
+        need_in(bytes, REGION_ENTRY_LEN, "page_region_entry")?;
         let reserved = bytes[1];
         Ok(PageRegionEntry {
             region_id: bytes[0],
@@ -119,13 +114,7 @@ impl<'a> Parse<'a> for PageCompositionSegment {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + FIXED_LEN,
-                have: bytes.len(),
-                what: "page_composition_segment",
-            });
-        }
+        need_in(bytes, HEADER_LEN + FIXED_LEN, "page_composition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -135,21 +124,9 @@ impl<'a> Parse<'a> for PageCompositionSegment {
         let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
         let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let total = HEADER_LEN + segment_length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "page_composition_segment data",
-            });
-        }
+        need_in(bytes, total, "page_composition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
-        if body.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: body.len(),
-                what: "page_composition_segment body",
-            });
-        }
+        need_in(body, FIXED_LEN, "page_composition_segment body")?;
         let page_time_out = body[0];
         let page_version_number = body[1] >> 4;
         let page_state_bits = (body[1] >> 2) & 0x03;
@@ -202,13 +179,7 @@ impl Serialize for PageCompositionSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "page_composition_segment serialize",
-            });
-        }
+        need_in(buf, len, "page_composition_segment serialize")?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

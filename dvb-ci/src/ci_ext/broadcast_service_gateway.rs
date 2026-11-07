@@ -21,6 +21,7 @@ use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Broadcast Service Gateway EIT extension
@@ -162,13 +163,7 @@ impl<'a> Parse<'a> for EitSectionReq {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::EIT_SECTION_REQ, "EITSectionReq")?;
-        if body.len() < EIT_SECTION_REQ_BODY {
-            return Err(Error::BufferTooShort {
-                need: EIT_SECTION_REQ_BODY,
-                have: body.len(),
-                what: "EITSectionReq",
-            });
-        }
+        need_in(body, EIT_SECTION_REQ_BODY, "EITSectionReq")?;
         crate::objects::reject_trailing_body(body, EIT_SECTION_REQ_BODY, "EITSectionReq")?;
         Ok(Self {
             length_form,
@@ -215,13 +210,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::EIT_SECTION_ACK, "EITSectionAck")?;
-        if body.len() < EIT_SECTION_ACK_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: EIT_SECTION_ACK_PREFIX,
-                have: body.len(),
-                what: "EITSectionAck",
-            });
-        }
+        need_in(body, EIT_SECTION_ACK_PREFIX, "EITSectionAck")?;
         // byte0: Reserved(2) + ResponseCode(2) + Length high nibble(4 → top of 12).
         let response_code = EitResponseCode::from_u8((body[0] >> 4) & 0x03);
         let length = ((u16::from(body[0] & 0x0F) << 8) | u16::from(body[1])) as usize;
@@ -366,13 +355,7 @@ impl<'a> BroadcastServiceGatewayApdu<'a> {
     /// objects; any other tag is delegated to the inherited Generic Service
     /// Gateway dispatch.
     pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "broadcast_service_gateway apdu_tag",
-            });
-        }
+        need_in(body, 3, "broadcast_service_gateway apdu_tag")?;
         let t = ApduTag::from_bytes(body[0], body[1], body[2]);
         match t {
             tag::EIT_SECTION_REQ => Ok(Self::EitSectionReq(EitSectionReq::parse(body)?)),

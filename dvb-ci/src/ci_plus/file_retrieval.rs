@@ -22,6 +22,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Auxiliary File System resource (Table 75).
@@ -111,13 +112,7 @@ impl<'a> Parse<'a> for FileSystemOffer<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::FILE_SYSTEM_OFFER, "FileSystemOffer")?;
-        if body.len() < OFFER_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: OFFER_PREFIX,
-                have: body.len(),
-                what: "FileSystemOffer",
-            });
-        }
+        need_in(body, OFFER_PREFIX, "FileSystemOffer")?;
         let len = body[0] as usize;
         let end = OFFER_PREFIX + len;
         if body.len() < end {
@@ -182,13 +177,7 @@ impl<'a> Parse<'a> for FileSystemAck {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::FILE_SYSTEM_ACK, "FileSystemAck")?;
-        if body.len() < ACK_BODY {
-            return Err(Error::BufferTooShort {
-                need: ACK_BODY,
-                have: body.len(),
-                what: "FileSystemAck",
-            });
-        }
+        need_in(body, ACK_BODY, "FileSystemAck")?;
         crate::objects::reject_trailing_body(body, ACK_BODY, "FileSystemAck")?;
         Ok(Self {
             length_form,

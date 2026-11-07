@@ -41,6 +41,7 @@ use super::mpegh_3d_audio::{
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag of the MPEG-2 `Extension_descriptor` (Table 2-45: 63).
@@ -479,12 +480,7 @@ impl Serialize for Mpeg2ExtensionDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body = self.encode_body()?;
         let len = HEADER_LEN + body.len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, body.len())?;
         buf[HEADER_LEN..len].copy_from_slice(&body);
         Ok(len)

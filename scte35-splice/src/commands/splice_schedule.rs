@@ -6,6 +6,7 @@
 //! (`program_splice_flag == 0`) is deprecated but parsed/serialized losslessly.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::time::BreakDuration;
@@ -117,13 +118,7 @@ impl SpliceScheduleEvent {
             return Ok(ev);
         }
 
-        if bytes.len() < *pos + 1 {
-            return Err(Error::BufferTooShort {
-                need: *pos + 1,
-                have: bytes.len(),
-                what: "splice_schedule event flags",
-            });
-        }
+        need_in(bytes, *pos + 1, "splice_schedule event flags")?;
         let flags = bytes[*pos];
         *pos += 1;
         ev.out_of_network_indicator = flags & 0x80 != 0;
@@ -141,13 +136,7 @@ impl SpliceScheduleEvent {
             ev.utc_splice_time = Some(u32::from_be_bytes(*t));
             *pos += 4;
         } else {
-            if bytes.len() < *pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: *pos + 1,
-                    have: bytes.len(),
-                    what: "splice_schedule component_count",
-                });
-            }
+            need_in(bytes, *pos + 1, "splice_schedule component_count")?;
             let count = bytes[*pos] as usize;
             *pos += 1;
             for _ in 0..count {
@@ -246,13 +235,7 @@ pub struct SpliceSchedule {
 impl<'a> Parse<'a> for SpliceSchedule {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "splice_schedule splice_count",
-            });
-        }
+        need_in(bytes, 1, "splice_schedule splice_count")?;
         let count = bytes[0] as usize;
         let mut pos = 1;
         let mut events = Vec::with_capacity(count);
@@ -274,12 +257,7 @@ impl Serialize for SpliceSchedule {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = broadcast_common::len::fit_u8(self.events.len(), "splice_schedule.splice_count")?;
         let mut pos = 1;
         for ev in &self.events {

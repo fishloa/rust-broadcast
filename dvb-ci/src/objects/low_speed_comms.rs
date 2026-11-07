@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::length;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// `comms_command_id` values (Table 52, p. 52).
@@ -144,13 +145,7 @@ impl<'a> ConnectionDescriptor<'a> {
     /// Parse a nested `connection_descriptor()` at the front of `bytes`, returning
     /// the object and how many bytes it consumed (tag + length + body).
     pub(crate) fn parse_component(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        if bytes.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "connection_descriptor tag",
-            });
-        }
+        need_in(bytes, 3, "connection_descriptor tag")?;
         let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
         if t != tag::CONNECTION_DESCRIPTOR {
             return Err(Error::UnexpectedApduTag {
@@ -300,13 +295,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
             CommsCommandId::ConnectOnChannel => {
                 let (cd, consumed) = ConnectionDescriptor::parse_component(rest)?;
                 let tail = &rest[consumed..];
-                if tail.len() < 2 {
-                    return Err(Error::BufferTooShort {
-                        need: 2,
-                        have: tail.len(),
-                        what: "comms_cmd connect retry/timeout",
-                    });
-                }
+                need_in(tail, 2, "comms_cmd connect retry/timeout")?;
                 super::reject_trailing_body(tail, COMMS_CONNECT_TAIL, "comms_cmd connect")?;
                 CommsCmdParams::Connect {
                     connection_descriptor: cd,
@@ -315,13 +304,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
                 }
             }
             CommsCommandId::SetParams => {
-                if rest.len() < 2 {
-                    return Err(Error::BufferTooShort {
-                        need: 2,
-                        have: rest.len(),
-                        what: "comms_cmd set_params",
-                    });
-                }
+                need_in(rest, 2, "comms_cmd set_params")?;
                 super::reject_trailing_body(rest, COMMS_SET_PARAMS_BODY, "comms_cmd set_params")?;
                 CommsCmdParams::SetParams {
                     buffer_size: rest[0],
@@ -533,13 +516,7 @@ impl<'a> Parse<'a> for CommsReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::COMMS_REPLY, "comms_reply")?;
-        if body.len() < COMMS_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: COMMS_REPLY_BODY,
-                have: body.len(),
-                what: "comms_reply",
-            });
-        }
+        need_in(body, COMMS_REPLY_BODY, "comms_reply")?;
         super::reject_trailing_body(body, COMMS_REPLY_BODY, "comms_reply")?;
         Ok(Self {
             length_form,
@@ -606,13 +583,7 @@ impl CommsSend<'_> {
 impl<'a> Parse<'a> for CommsSend<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "comms_send tag",
-            });
-        }
+        need_in(bytes, 3, "comms_send tag")?;
         let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
         let (expected, more) = match t {
             tag::COMMS_SEND_MORE => (tag::COMMS_SEND_MORE, true),
@@ -691,13 +662,7 @@ impl CommsRcv<'_> {
 impl<'a> Parse<'a> for CommsRcv<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "comms_rcv tag",
-            });
-        }
+        need_in(bytes, 3, "comms_rcv tag")?;
         let t = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
         let (expected, more) = match t {
             tag::COMMS_RCV_MORE => (tag::COMMS_RCV_MORE, true),

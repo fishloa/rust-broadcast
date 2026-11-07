@@ -11,6 +11,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -86,13 +87,7 @@ impl<'a> KlvItem<'a> {
     /// with the total number of bytes consumed (key + length + value) — use
     /// this to walk a sequence of KLV items in a stream.
     pub fn parse_prefix(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "KLV key",
-            });
-        }
+        need_in(bytes, 16, "KLV key")?;
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
         let value_start = 16 + len_token_size;
@@ -106,13 +101,7 @@ impl<'a> KlvItem<'a> {
             have: bytes.len(),
             what: "KLV value (length overflow)",
         })?;
-        if bytes.len() < value_end {
-            return Err(Error::BufferTooShort {
-                need: value_end,
-                have: bytes.len(),
-                what: "KLV value",
-            });
-        }
+        need_in(bytes, value_end, "KLV value")?;
         Ok((
             KlvItem {
                 key,
@@ -149,13 +138,7 @@ impl Serialize for KlvItem<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: buf.len(),
-                what: "KLV item",
-            });
-        }
+        need_in(buf, total, "KLV item")?;
         buf[..16].copy_from_slice(&self.key);
         let len_size =
             encode_ber_length_as(self.value.len() as u64, self.len_size, &mut buf[16..])?;

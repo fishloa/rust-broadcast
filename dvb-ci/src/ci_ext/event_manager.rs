@@ -10,6 +10,7 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Event Manager (Tables 56, 59, 61).
@@ -171,13 +172,7 @@ impl<'a> Parse<'a> for EventRequest<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::EVENT_REQUEST, "event_request")?;
-        if body.len() < EVENT_REQUEST_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: EVENT_REQUEST_PREFIX,
-                have: body.len(),
-                what: "event_request",
-            });
-        }
+        need_in(body, EVENT_REQUEST_PREFIX, "event_request")?;
         Ok(Self {
             length_form,
             event_type: EventType::from_u8(body[0]),
@@ -214,13 +209,7 @@ impl<'a> Parse<'a> for EventRequestAck {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::EVENT_REQUEST_ACK, "event_request_ack")?;
-        if body.len() < EVENT_REQUEST_ACK_BODY {
-            return Err(Error::BufferTooShort {
-                need: EVENT_REQUEST_ACK_BODY,
-                have: body.len(),
-                what: "event_request_ack",
-            });
-        }
+        need_in(body, EVENT_REQUEST_ACK_BODY, "event_request_ack")?;
         crate::objects::reject_trailing_body(body, EVENT_REQUEST_ACK_BODY, "event_request_ack")?;
         Ok(Self {
             length_form,
@@ -257,13 +246,7 @@ impl<'a> Parse<'a> for EventNotification {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::EVENT_NOTIFICATION, "event_notification")?;
-        if body.len() < EVENT_NOTIFICATION_BODY {
-            return Err(Error::BufferTooShort {
-                need: EVENT_NOTIFICATION_BODY,
-                have: body.len(),
-                what: "event_notification",
-            });
-        }
+        need_in(body, EVENT_NOTIFICATION_BODY, "event_notification")?;
         crate::objects::reject_trailing_body(body, EVENT_NOTIFICATION_BODY, "event_notification")?;
         Ok(Self {
             length_form,

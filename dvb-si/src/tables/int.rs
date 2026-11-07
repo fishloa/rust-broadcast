@@ -9,6 +9,7 @@
 use crate::descriptors::int::IntDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for IP/MAC Notification Table.
@@ -163,13 +164,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_SECTION_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_SECTION_LEN,
-                have: bytes.len(),
-                what: "IntSection",
-            });
-        }
+        need_in(bytes, MIN_SECTION_LEN, "IntSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -297,12 +292,7 @@ impl Serialize for IntSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         // 24-bit field: the top byte of a wider value used to be dropped
         // silently (audit r03-W3 class).

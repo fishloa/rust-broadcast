@@ -23,6 +23,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::{ReservedOnes, ReservedZero};
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Generic Service Gateway (Tables 22-30).
@@ -231,13 +232,7 @@ macro_rules! version_byte_object {
             type Error = Error;
             fn parse(bytes: &'a [u8]) -> Result<Self> {
                 let (length_form, body) = objects::parse_apdu_header(bytes, $tag, $what)?;
-                if body.is_empty() {
-                    return Err(Error::BufferTooShort {
-                        need: 1,
-                        have: 0,
-                        what: $what,
-                    });
-                }
+                need_in(body, 1, $what)?;
                 objects::reject_trailing_body(body, 1, $what)?;
                 Ok(Self {
                     length_form,
@@ -282,13 +277,7 @@ impl<'a> Parse<'a> for ServiceListAck {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::SERVICE_LIST_ACK, "ServiceListAck")?;
-        if body.len() < SERVICE_LIST_ACK_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: SERVICE_LIST_ACK_PREFIX,
-                have: body.len(),
-                what: "ServiceListAck",
-            });
-        }
+        need_in(body, SERVICE_LIST_ACK_PREFIX, "ServiceListAck")?;
         let version_number = body[0];
         let count = u16::from_be_bytes([body[1], body[2]]) as usize;
         let list = &body[SERVICE_LIST_ACK_PREFIX..];
@@ -351,13 +340,7 @@ impl<'a> Parse<'a> for ServiceDescReq {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::SERVICE_DESC_REQ, "ServiceDescReq")?;
-        if body.len() < SERVICE_REF_LEN {
-            return Err(Error::BufferTooShort {
-                need: SERVICE_REF_LEN,
-                have: body.len(),
-                what: "ServiceDescReq",
-            });
-        }
+        need_in(body, SERVICE_REF_LEN, "ServiceDescReq")?;
         objects::reject_trailing_body(body, SERVICE_REF_LEN, "ServiceDescReq")?;
         Ok(Self {
             length_form,
@@ -396,13 +379,7 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::SERVICE_DESC_ACK, "ServiceDescAck")?;
-        if body.len() < SERVICE_DESC_ACK_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: SERVICE_DESC_ACK_PREFIX,
-                have: body.len(),
-                what: "ServiceDescAck",
-            });
-        }
+        need_in(body, SERVICE_DESC_ACK_PREFIX, "ServiceDescAck")?;
         // byte 4: reserved_future_use(6) + EIT_schedule(1) + EIT_present_following(1)
         let flags = body[4];
         // byte 5..6: running_status(3) + free_CA_mode(1) + descriptors_loop_length(12)
@@ -488,13 +465,7 @@ impl<'a> Parse<'a> for GetServiceReq {
         let service = if body.is_empty() {
             None
         } else {
-            if body.len() < SERVICE_REF_LEN {
-                return Err(Error::BufferTooShort {
-                    need: SERVICE_REF_LEN,
-                    have: body.len(),
-                    what: "GetServiceReq",
-                });
-            }
+            need_in(body, SERVICE_REF_LEN, "GetServiceReq")?;
             objects::reject_trailing_body(body, SERVICE_REF_LEN, "GetServiceReq")?;
             Some(ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
@@ -547,13 +518,7 @@ impl<'a> Parse<'a> for GetServiceAck {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::GET_SERVICE_ACK, "GetServiceAck")?;
-        if body.len() < GET_SERVICE_ACK_BODY {
-            return Err(Error::BufferTooShort {
-                need: GET_SERVICE_ACK_BODY,
-                have: body.len(),
-                what: "GetServiceAck",
-            });
-        }
+        need_in(body, GET_SERVICE_ACK_BODY, "GetServiceAck")?;
         crate::objects::reject_trailing_body(body, GET_SERVICE_ACK_BODY, "GetServiceAck")?;
         // byte 4: Reserved(5) + ServiceTerminated(1) + ServiceNotAvailable(1) + CAServiceFlag(1)
         let flags = body[4];

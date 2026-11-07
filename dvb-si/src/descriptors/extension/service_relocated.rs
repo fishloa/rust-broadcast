@@ -1,5 +1,6 @@
 //! Service Relocated Descriptor — ETSI EN 300 468 §6.4.10 (tag_extension 0x0B).
 use super::*;
+use broadcast_common::len::need_out;
 
 impl ExtensionBodyDef<'_> for ServiceRelocated {
     const TAG_EXTENSION: u8 = 0x0B;
@@ -51,12 +52,7 @@ impl Serialize for ServiceRelocated {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0..2].copy_from_slice(&self.old_original_network_id.to_be_bytes());
         buf[2..4].copy_from_slice(&self.old_transport_stream_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.old_service_id.to_be_bytes());

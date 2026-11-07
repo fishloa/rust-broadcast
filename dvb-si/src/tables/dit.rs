@@ -5,6 +5,7 @@
 //! byte: `transition_flag(1) | reserved_future_use(7)`. No CRC.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Discontinuity Information Table.
@@ -56,13 +57,7 @@ impl<'a> Parse<'a> for DitSection {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = HEADER_LEN + BODY_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "DitSection",
-            });
-        }
+        need_in(bytes, min_len, "DitSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -96,12 +91,7 @@ impl Serialize for DitSection {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0 (short form), reserved_future_use=1,
         // reserved=11, section_length high nibble.

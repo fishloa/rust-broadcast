@@ -12,6 +12,7 @@
 use super::*;
 use crate::descriptors::satellite_delivery_system::{Polarization, RollOff};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for S2Xv2SatelliteDeliverySystem<'a> {
     const TAG_EXTENSION: u8 = 0x24;
@@ -296,13 +297,7 @@ impl Default for S2Xv2SatelliteDeliverySystem<'_> {
 impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < S2XV2_CORE_LEN {
-            return Err(Error::BufferTooShort {
-                need: S2XV2_CORE_LEN,
-                have: sel.len(),
-                what: "S2Xv2 body",
-            });
-        }
+        need_in(sel, S2XV2_CORE_LEN, "S2Xv2 body")?;
         // Bytes 0–3: delivery_system_id.
         let (dsid_bytes, _) = sel.split_first_chunk::<4>().ok_or(Error::BufferTooShort {
             need: S2XV2_CORE_LEN,
@@ -363,13 +358,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
 
         // Conditional: input_stream_identifier.
         let input_stream_identifier = if multiple_input_stream_flag {
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "S2Xv2 body (input_stream_identifier)",
-                });
-            }
+            need_in(sel, pos + 1, "S2Xv2 body (input_stream_identifier)")?;
             let isi = sel[pos];
             pos += 1;
             Some(isi)
@@ -380,13 +369,11 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         // Conditional: scrambling_sequence_index (mode 1 or 2, selector == 1).
         let mut reserved_zero_future_use_6 = S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT;
         let scrambling_sequence_index = if scrambling_sequence_selector == Some(true) {
-            if sel.len() < pos + S2XV2_SCRAMBLING_LEN {
-                return Err(Error::BufferTooShort {
-                    need: pos + S2XV2_SCRAMBLING_LEN,
-                    have: sel.len(),
-                    what: "S2Xv2 body (scrambling_sequence_index)",
-                });
-            }
+            need_in(
+                sel,
+                pos + S2XV2_SCRAMBLING_LEN,
+                "S2Xv2 body (scrambling_sequence_index)",
+            )?;
             // reserved(6) | scrambling_sequence_index(18).
             reserved_zero_future_use_6 = sel[pos] >> 2;
             let idx = (u32::from(sel[pos] & 0x03) << 16)
@@ -400,13 +387,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
 
         // Conditional: timeslice_number (mode 2 or 5).
         let timeslice_number = if s2xv2_mode.has_timeslice() {
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "S2Xv2 body (timeslice_number)",
-                });
-            }
+            need_in(sel, pos + 1, "S2Xv2 body (timeslice_number)")?;
             let ts = sel[pos];
             pos += 1;
             Some(ts)
@@ -417,13 +398,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         // Conditional: channel_bond loop.
         let mut reserved_zero_future_use_7 = S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT;
         let secondary_delivery_system_ids = if channel_bond == 1 {
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "S2Xv2 body (channel_bond header)",
-                });
-            }
+            need_in(sel, pos + 1, "S2Xv2 body (channel_bond header)")?;
             let bond_byte = sel[pos];
             pos += 1;
             // reserved(7) | num_channel_bonds_minus_one(1).
@@ -431,13 +406,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             let n = (bond_byte & 0x01) as usize + 1;
             let mut ids = Vec::with_capacity(n);
             for _ in 0..n {
-                if sel.len() < pos + 4 {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 4,
-                        have: sel.len(),
-                        what: "S2Xv2 body (secondary_delivery_system_id)",
-                    });
-                }
+                need_in(sel, pos + 4, "S2Xv2 body (secondary_delivery_system_id)")?;
                 let (id_bytes, _) = sel
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<4>())
@@ -457,13 +426,11 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
 
         // Conditional: superframe block (mode 4 or 5).
         let superframe = if s2xv2_mode.has_superframe() {
-            if sel.len() < pos + S2XV2_SUPERFRAME_MIN_LEN {
-                return Err(Error::BufferTooShort {
-                    need: pos + S2XV2_SUPERFRAME_MIN_LEN,
-                    have: sel.len(),
-                    what: "S2Xv2 body (superframe)",
-                });
-            }
+            need_in(
+                sel,
+                pos + S2XV2_SUPERFRAME_MIN_LEN,
+                "S2Xv2 body (superframe)",
+            )?;
             let sosf_wh_sequence_number = sel[pos];
             // pos+1: SFFI_selector(1) | BH_selector(1) | reserved(2) | ref_scram_hi(4).
             let b1 = sel[pos + 1];
@@ -487,13 +454,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             pos += 7;
             // Conditional: beamhopping_time_plan_id.
             let beamhopping_time_plan_id = if beam_hopping_time_plan_selector {
-                if sel.len() < pos + 4 {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 4,
-                        have: sel.len(),
-                        what: "S2Xv2 body (beamhopping_time_plan_id)",
-                    });
-                }
+                need_in(sel, pos + 4, "S2Xv2 body (beamhopping_time_plan_id)")?;
                 let (bh_bytes, _) = sel
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<4>())
@@ -509,13 +470,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                 None
             };
             // Final superframe byte: pilots(5) | postamble_PLI(3).
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "S2Xv2 body (superframe final byte)",
-                });
-            }
+            need_in(sel, pos + 1, "S2Xv2 body (superframe final byte)")?;
             let last = sel[pos];
             let superframe_pilots_wh_sequence_number = (last >> 3) & 0x1F;
             let postamble_pli = last & 0x07;
@@ -588,12 +543,7 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // Bytes 0–3: delivery_system_id.
         buf[0..4].copy_from_slice(&self.delivery_system_id.to_be_bytes());
         // Byte 4: S2Xv2_mode(4) | multiple_input_stream_flag(1) | roll_off(3).

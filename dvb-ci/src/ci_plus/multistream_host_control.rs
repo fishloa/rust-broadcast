@@ -42,6 +42,7 @@ use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s, inherited from the DVB Host Control v3 resource
@@ -152,13 +153,7 @@ impl<'a> Parse<'a> for TuneTripletReq {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::TUNE_TRIPLET_REQ, "tune_triplet_req")?;
-        if body.len() < TRIPLET_BODY {
-            return Err(Error::BufferTooShort {
-                need: TRIPLET_BODY,
-                have: body.len(),
-                what: "tune_triplet_req",
-            });
-        }
+        need_in(body, TRIPLET_BODY, "tune_triplet_req")?;
         crate::objects::reject_trailing_body(body, TRIPLET_BODY, "tune_triplet_req")?;
         let flags = body[0];
         let dsd_tag = body[7];
@@ -263,13 +258,7 @@ impl<'a> Parse<'a> for TuneLcnReq {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::TUNE_LCN_REQ, "tune_lcn_req")?;
-        if body.len() < LCN_BODY {
-            return Err(Error::BufferTooShort {
-                need: LCN_BODY,
-                have: body.len(),
-                what: "tune_lcn_req",
-            });
-        }
+        need_in(body, LCN_BODY, "tune_lcn_req")?;
         crate::objects::reject_trailing_body(body, LCN_BODY, "tune_lcn_req")?;
         let background_tune = body[0] & LCN_BACKGROUND_BIT != 0;
         let tune_quietly = body[1] & LCN_QUIETLY_BIT != 0;
@@ -371,13 +360,7 @@ impl<'a> TuneIpReq<'a> {
     pub fn parse_mode(bytes: &'a [u8], mode: HostControlMode) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::TUNE_IP_REQ, "tune_ip_req")?;
-        if body.len() < TUNE_IP_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: TUNE_IP_PREFIX,
-                have: body.len(),
-                what: "tune_ip_req",
-            });
-        }
+        need_in(body, TUNE_IP_PREFIX, "tune_ip_req")?;
         let (background_tune, tune_quietly, keep_app_running) = match mode {
             HostControlMode::MultiStream => (
                 body[0] & IP_MS_BACKGROUND_BIT != 0,
@@ -392,13 +375,7 @@ impl<'a> TuneIpReq<'a> {
         };
         let sll = (((body[0] & SLL_HI_MASK) as usize) << 8) | body[1] as usize;
         let data = &body[TUNE_IP_PREFIX..];
-        if data.len() < sll {
-            return Err(Error::BufferTooShort {
-                need: sll,
-                have: data.len(),
-                what: "tune_ip_req service_location_data",
-            });
-        }
+        need_in(data, sll, "tune_ip_req service_location_data")?;
         objects::reject_trailing_body(data, sll, "tune_ip_req")?;
         let reserved_bits = match mode {
             HostControlMode::MultiStream => (body[0] >> 6) & 0b10,
@@ -555,25 +532,13 @@ impl<'a> Parse<'a> for TunerStatusReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::TUNER_STATUS_REPLY, "tuner_status_reply")?;
-        if body.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "tuner_status_reply",
-            });
-        }
+        need_in(body, 1, "tuner_status_reply")?;
         let ip_tune_capable = body[0] & IP_TUNE_CAPABLE_BIT != 0;
         let num_dsd = (body[0] & NUM_DSD_MASK) as usize;
         let mut rest = &body[1..];
         let mut dsds = Vec::with_capacity(num_dsd);
         for _ in 0..num_dsd {
-            if rest.len() < DSD_ENTRY_LEN {
-                return Err(Error::BufferTooShort {
-                    need: DSD_ENTRY_LEN,
-                    have: rest.len(),
-                    what: "tuner_status_reply dsd",
-                });
-            }
+            need_in(rest, DSD_ENTRY_LEN, "tuner_status_reply dsd")?;
             let connected = rest[0] & DSD_CONNECTED_BIT != 0;
             let dsd_tag = rest[1];
             let descriptor_tag_extension = if dsd_tag == DSD_TAG_EXTENSION {
@@ -656,13 +621,7 @@ impl<'a> MultistreamHostControlApdu<'a> {
     /// Parse a Multi-stream Host Control APDU, dispatching on the leading
     /// `apdu_tag`. `mode` selects the [`TuneIpReq`] reserved-bit budget.
     pub fn parse_mode(body: &'a [u8], mode: HostControlMode) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "multistream_host_control apdu_tag",
-            });
-        }
+        need_in(body, 3, "multistream_host_control apdu_tag")?;
         let t = ApduTag::from_bytes(body[0], body[1], body[2]);
         match t {
             tag::TUNE_TRIPLET_REQ => Ok(Self::TuneTripletReq(TuneTripletReq::parse(body)?)),

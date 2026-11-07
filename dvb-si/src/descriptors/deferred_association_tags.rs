@@ -36,6 +36,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for deferred_association_tags_descriptor.
@@ -193,12 +194,7 @@ impl Serialize for DeferredAssociationTagsDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         crate::descriptors::write_descriptor_header(buf, TAG, self.body_len())?;
         let mut pos = HEADER_LEN;
         buf[pos] = broadcast_common::len::fit_u8(
