@@ -11,7 +11,10 @@ fn appendix_b_sndu_rejects_every_short_buffer() {
         sndu.serialized_len(),
         |buf| sndu.serialize_into(buf),
         |e| match e {
-            Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+                need,
+                have,
+            }) => Some((*need, *have)),
             _ => None,
         },
     );
