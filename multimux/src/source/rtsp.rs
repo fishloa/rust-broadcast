@@ -569,8 +569,7 @@ impl Dialer for RtspDialer {
                 crate::redact::redact_url(&self.url)
             ),
         })?;
-        let credentials =
-            resolve_credentials(self.auth.clone(), credentials_from_url(&base_url)?);
+        let credentials = resolve_credentials(self.auth.clone(), credentials_from_url(&base_url)?);
         let request_url = strip_userinfo(&base_url)?;
         let request_uri = request_url.to_string();
 

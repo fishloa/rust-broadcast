@@ -9,6 +9,7 @@
 - hls-pull, smooth-pull and dash-pull share one `source::driver::terminal_result` (dedupe D13).
 - WHIP and WHEP offer parsing share `webrtc_session::single_video_media` (c2 M6).
 - The five pull routes (`RtspRoute`, `HlsPullRoute`, `SmoothPullRoute`, `TsHttpRoute`, `DashPullRoute`) share a crate-private `PullTarget` (name, URL, timeouts, credentials, redacting `Debug`); public constructors unchanged (c2 M1).
+- DASH-pull fetch retries use the shared `ReconnectSchedule` (500 ms to 4 s, equal-jittered) instead of a private jitter-free doubling (c2 L2).
 
 ## [0.15.0] - 2026-11-03
 ### Fixed

@@ -1786,14 +1786,22 @@ mod exchange {
 
 #[test]
 fn the_retry_delay_doubles_from_half_a_second_to_a_cap() {
-    let ms = |attempt| u64::try_from(drive::backoff(attempt).as_millis()).unwrap();
-    assert_eq!(ms(1), 500);
-    assert_eq!(ms(2), 1_000);
-    assert_eq!(ms(3), 2_000);
-    assert_eq!(ms(4), 4_000);
-    assert_eq!(ms(5), 4_000, "capped");
-    assert_eq!(ms(0), 500, "attempt zero is not a free retry");
-    assert_eq!(ms(u32::MAX), 4_000, "no shift overflow");
+    let in_band = |attempt: u32, raw_ms: u64| {
+        let d = drive::backoff(attempt);
+        let raw = Duration::from_millis(raw_ms);
+        assert!(
+            d >= raw / 2 && d < raw,
+            "attempt {attempt}: {d:?} outside [{:?}, {raw:?})",
+            raw / 2
+        );
+    };
+    in_band(1, 500);
+    in_band(2, 1_000);
+    in_band(3, 2_000);
+    in_band(4, 4_000);
+    in_band(5, 4_000);
+    in_band(0, 500);
+    in_band(u32::MAX, 4_000);
 }
 
 #[test]
