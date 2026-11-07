@@ -105,12 +105,7 @@ fn header_of(bytes: &[u8]) -> Result<(usize, u8, usize)> {
     let total = peek_total_len(bytes)?;
     let packet_type = bytes[PT_OFFSET];
     let padding = if bytes[0] & RTCP_PADDING_MASK != 0 {
-        let body = total - RTCP_HEADER_LEN;
-        let count = bytes[total - 1] as usize;
-        if count == 0 || count > body {
-            return Err(Error::InvalidPaddingCount { count, body });
-        }
-        count
+        rtcp_packet::padding_count(&bytes[RTCP_HEADER_LEN..total])?
     } else {
         0
     };

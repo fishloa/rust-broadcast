@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `padding_count` and `PaddingCountError`: the RFC 3550 §6.4.1 padding-count rule (nonzero, at most the body) as one public function, now also used by `rist-runtime` instead of two private copies (c3 N1).
+
 
 ## [0.6.0] - 2026-10-17
 ### Documentation

@@ -6,6 +6,17 @@
 /// Result alias for `rtcp-packet` parsing/serialization.
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// A padded RTCP packet whose padding count (RFC 3550 §6.4.1) is zero or
+/// larger than the packet body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("invalid padding count {count}: body is {body} byte(s)")]
+pub struct PaddingCountError {
+    /// The padding-count byte (last byte of the body).
+    pub count: usize,
+    /// Bytes in the packet body (everything after the common header).
+    pub body: usize,
+}
+
 /// An RTCP packet parse / serialize error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]

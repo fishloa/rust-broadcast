@@ -116,3 +116,12 @@ pub enum Error {
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }
+
+impl From<rtcp_packet::PaddingCountError> for Error {
+    fn from(e: rtcp_packet::PaddingCountError) -> Self {
+        Error::InvalidPaddingCount {
+            count: e.count,
+            body: e.body,
+        }
+    }
+}
