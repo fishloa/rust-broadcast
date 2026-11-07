@@ -1084,6 +1084,20 @@ mod tests {
         assert_eq!(out, bytes, "2 trailing stuffing bytes must round-trip");
     }
 
+    #[test]
+    fn nonzero_first_stuffing_byte_is_rejected_with_its_value() {
+        let bytes = [
+            0x0F, 0x13, 0x00, 0x01, 0x00, 0x08, // header, segment_length=8
+            0x00, 0x0A, 0x00, // object_id=10, version/method/flags=0 (Pixels)
+            0x00, 0x00, 0x00, 0x00, // top_len=0, bottom_len=0
+            0x5A, // stuffing_byte must be 0x00
+        ];
+        assert_eq!(
+            ObjectDataSegment::parse(&bytes).unwrap_err(),
+            Error::BadStuffingByte(0x5A)
+        );
+    }
+
     /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.
     #[test]
     fn rejects_bad_sync_byte() {
