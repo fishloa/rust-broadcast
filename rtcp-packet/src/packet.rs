@@ -52,6 +52,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -247,13 +248,7 @@ impl CommonHeader {
 
     /// Parse the common header, validating the version field.
     fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < RTCP_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: RTCP_HEADER_LEN,
-                have: bytes.len(),
-                what: "RTCP common header",
-            });
-        }
+        need_in(bytes, RTCP_HEADER_LEN, "RTCP common header")?;
         let version = bytes[0] >> 6;
         if version != RTCP_VERSION {
             return Err(Error::InvalidValue {
@@ -361,13 +356,7 @@ impl<'a> Parse<'a> for ReportBlock {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < REPORT_BLOCK_LEN {
-            return Err(Error::BufferTooShort {
-                need: REPORT_BLOCK_LEN,
-                have: bytes.len(),
-                what: "RTCP report block",
-            });
-        }
+        need_in(bytes, REPORT_BLOCK_LEN, "RTCP report block")?;
         let ssrc = be_u32(bytes, 0, "report block ssrc")?;
         let fraction_lost = bytes[4];
         let cumulative_raw = u32::from_be_bytes([0, bytes[5], bytes[6], bytes[7]]);
@@ -391,12 +380,7 @@ impl Serialize for ReportBlock {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < REPORT_BLOCK_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: REPORT_BLOCK_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, REPORT_BLOCK_LEN)?;
         buf[0..4].copy_from_slice(&self.ssrc.to_be_bytes());
         buf[4] = self.fraction_lost;
         let cum = self.encode_cumulative_lost()?.to_be_bytes();
@@ -415,13 +399,7 @@ fn parse_report_blocks(bytes: &[u8], count: usize) -> Result<Vec<ReportBlock>> {
     let mut off = 0;
     for _ in 0..count {
         let end = off + REPORT_BLOCK_LEN;
-        if end > bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "RTCP report blocks",
-            });
-        }
+        need_in(bytes, end, "RTCP report blocks")?;
         blocks.push(ReportBlock::parse(&bytes[off..end])?);
         off = end;
     }
@@ -525,25 +503,13 @@ impl<'a> Parse<'a> for SenderReport {
             });
         }
         let total = hdr.total_len();
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "RTCP SR",
-            });
-        }
+        need_in(bytes, total, "RTCP SR")?;
         let body = strip_padding(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
             "RTCP SR padding",
         )?;
-        if body.len() < WORD_LEN + SR_SENDER_INFO_LEN {
-            return Err(Error::BufferTooShort {
-                need: WORD_LEN + SR_SENDER_INFO_LEN,
-                have: body.len(),
-                what: "RTCP SR sender info",
-            });
-        }
+        need_in(body, WORD_LEN + SR_SENDER_INFO_LEN, "RTCP SR sender info")?;
         let ssrc = be_u32(body, 0, "SR ssrc")?;
         let ntp_msw = be_u32(body, 4, "SR ntp msw")?;
         let ntp_lsw = be_u32(body, 8, "SR ntp lsw")?;
@@ -581,12 +547,7 @@ impl Serialize for SenderReport {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let rc = check_report_count(&self.report_blocks)?;
         check_profile_extensions(&self.profile_extensions)?;
         let hdr = CommonHeader::new(rc, PT_SENDER_REPORT, length_words_minus_one(len)?);
@@ -657,13 +618,7 @@ impl<'a> Parse<'a> for ReceiverReport {
             });
         }
         let total = hdr.total_len();
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "RTCP RR",
-            });
-        }
+        need_in(bytes, total, "RTCP RR")?;
         let body = strip_padding(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
@@ -694,12 +649,7 @@ impl Serialize for ReceiverReport {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let rc = check_report_count(&self.report_blocks)?;
         check_profile_extensions(&self.profile_extensions)?;
         let hdr = CommonHeader::new(rc, PT_RECEIVER_REPORT, length_words_minus_one(len)?);
@@ -867,13 +817,7 @@ impl<'a> Parse<'a> for SourceDescription {
             });
         }
         let total = hdr.total_len();
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "RTCP SDES",
-            });
-        }
+        need_in(bytes, total, "RTCP SDES")?;
         let body = strip_padding(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
@@ -933,13 +877,7 @@ fn parse_sdes_chunk(bytes: &[u8]) -> Result<(SdesChunk, usize)> {
     }
     // Advance past the type-0 terminator to the next 32-bit boundary.
     let padded = off.div_ceil(WORD_LEN) * WORD_LEN;
-    if padded > bytes.len() {
-        return Err(Error::BufferTooShort {
-            need: padded,
-            have: bytes.len(),
-            what: "SDES chunk padding",
-        });
-    }
+    need_in(bytes, padded, "SDES chunk padding")?;
     Ok((SdesChunk { source, items }, padded))
 }
 
@@ -952,12 +890,7 @@ impl Serialize for SourceDescription {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.chunks.len() > MAX_COUNT {
             return Err(Error::InvalidValue {
                 field: "rtcp_source_count",
@@ -1037,26 +970,14 @@ impl<'a> Parse<'a> for Bye {
             });
         }
         let total = hdr.total_len();
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "RTCP BYE",
-            });
-        }
+        need_in(bytes, total, "RTCP BYE")?;
         let body = strip_padding(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
             "RTCP BYE padding",
         )?;
         let sc = hdr.count as usize;
-        if body.len() < sc * WORD_LEN {
-            return Err(Error::BufferTooShort {
-                need: sc * WORD_LEN,
-                have: body.len(),
-                what: "RTCP BYE sources",
-            });
-        }
+        need_in(body, sc * WORD_LEN, "RTCP BYE sources")?;
         let mut sources = Vec::with_capacity(sc);
         let mut off = 0;
         for _ in 0..sc {
@@ -1068,13 +989,7 @@ impl<'a> Parse<'a> for Bye {
             let len = body[off] as usize;
             off += 1;
             let end = off + len;
-            if end > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: body.len(),
-                    what: "RTCP BYE reason text",
-                });
-            }
+            need_in(body, end, "RTCP BYE reason text")?;
             let text = core::str::from_utf8(&body[off..end])
                 .map(String::from)
                 .map_err(|_| Error::InvalidValue {
@@ -1100,12 +1015,7 @@ impl Serialize for Bye {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.sources.len() > MAX_COUNT {
             return Err(Error::InvalidValue {
                 field: "rtcp_source_count",
@@ -1177,25 +1087,13 @@ impl<'a> Parse<'a> for App {
             });
         }
         let total = hdr.total_len();
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "RTCP APP",
-            });
-        }
+        need_in(bytes, total, "RTCP APP")?;
         let body = strip_padding(
             &bytes[RTCP_HEADER_LEN..total],
             hdr.padding,
             "RTCP APP padding",
         )?;
-        if body.len() < WORD_LEN + APP_NAME_LEN {
-            return Err(Error::BufferTooShort {
-                need: WORD_LEN + APP_NAME_LEN,
-                have: body.len(),
-                what: "RTCP APP ssrc+name",
-            });
-        }
+        need_in(body, WORD_LEN + APP_NAME_LEN, "RTCP APP ssrc+name")?;
         let ssrc = be_u32(body, 0, "APP ssrc")?;
         let mut name = [0u8; APP_NAME_LEN];
         name.copy_from_slice(&body[WORD_LEN..WORD_LEN + APP_NAME_LEN]);
@@ -1218,12 +1116,7 @@ impl Serialize for App {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if !len.is_multiple_of(WORD_LEN) {
             return Err(Error::InvalidValue {
                 field: "app_data_len",
@@ -1340,13 +1233,7 @@ impl<'a> Parse<'a> for RtcpPacket {
             RtcpPacketType::App => RtcpPacket::App(App::parse(bytes)?),
             RtcpPacketType::Unknown(packet_type) => {
                 let total = hdr.total_len();
-                if bytes.len() < total {
-                    return Err(Error::BufferTooShort {
-                        need: total,
-                        have: bytes.len(),
-                        what: "RTCP packet (unrecognized PT)",
-                    });
-                }
+                need_in(bytes, total, "RTCP packet (unrecognized PT)")?;
                 RtcpPacket::Unknown {
                     packet_type,
                     count: hdr.count,
@@ -1400,12 +1287,7 @@ impl Serialize for RtcpPacket {
                     });
                 }
                 let len = RTCP_HEADER_LEN + payload.len();
-                if buf.len() < len {
-                    return Err(Error::OutputBufferTooSmall {
-                        need: len,
-                        have: buf.len(),
-                    });
-                }
+                need_out(buf, len)?;
                 if !len.is_multiple_of(WORD_LEN) {
                     return Err(Error::InvalidValue {
                         field: "unknown_payload_len",
@@ -1486,13 +1368,7 @@ impl<'a> Parse<'a> for CompoundPacket {
             let hdr = CommonHeader::parse(&bytes[off..])?;
             let total = hdr.total_len();
             let end = off + total;
-            if end > bytes.len() {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: bytes.len(),
-                    what: "RTCP compound sub-packet",
-                });
-            }
+            need_in(bytes, end, "RTCP compound sub-packet")?;
             packets.push(RtcpPacket::parse(&bytes[off..end])?);
             off = end;
         }
@@ -1512,12 +1388,7 @@ impl Serialize for CompoundPacket {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.check_leading_report()?;
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let mut off = 0;
         for pkt in &self.packets {
             let n = pkt.serialize_into(&mut buf[off..])?;
