@@ -82,3 +82,5 @@ mod whip_session_resource;
 mod whip_whep_sdp;
 #[cfg(all(feature = "whip", feature = "test-hooks"))]
 mod whip_whep_timers;
+#[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
+mod rtmp_read_failure;
