@@ -146,6 +146,6 @@ fn rejects_bad_crc() {
     bytes[4] ^= 0xFF; // flip the encryption/pts_adjustment byte
     assert!(matches!(
         SpliceInfoSection::parse(&bytes),
-        Err(scte35_splice::Error::CrcMismatch { .. })
+        Err(scte35_splice::Error::CrcMismatch(..))
     ));
 }

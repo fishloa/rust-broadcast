@@ -12,24 +12,12 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
-    #[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]
-    BufferTooShort {
-        /// Bytes required to proceed.
-        need: usize,
-        /// Bytes actually available.
-        have: usize,
-        /// Human-readable name of the type or field being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// CRC-32 validation failed for a splice_info_section (§9.6.1).
-    #[error("CRC-32 mismatch: computed {computed:#010x}, expected {expected:#010x}")]
-    CrcMismatch {
-        /// CRC we calculated over the section bytes.
-        computed: u32,
-        /// CRC carried at the end of the section.
-        expected: u32,
-    },
+    #[error(transparent)]
+    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
 
     /// `table_id` byte was not the expected `0xFC` (§9.6.1).
     #[error("unexpected table_id {table_id:#04x} for splice_info_section (expected 0xFC)")]
@@ -73,35 +61,11 @@ pub enum Error {
     },
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
-    #[error("serialize: output buffer too small — need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Required size.
-        need: usize,
-        /// Actual size.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// A length or count field's value does not fit its wire field
     /// (see `broadcast_common::len`, #1129).
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

@@ -86,13 +86,13 @@ impl<'a> Parse<'a> for SpliceInsert {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // splice_event_id (4) + flags byte (1).
-        let (hdr, _) = bytes
-            .split_first_chunk::<5>()
-            .ok_or(Error::BufferTooShort {
+        let (hdr, _) = bytes.split_first_chunk::<5>().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
                 need: 5,
                 have: bytes.len(),
                 what: "splice_insert header",
-            })?;
+            },
+        ))?;
         let splice_event_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
         let cancel = hdr[4] & 0x80 != 0;
         let mut pos = 5;
@@ -155,11 +155,13 @@ impl<'a> Parse<'a> for SpliceInsert {
 
         let (trailer, _) = bytes[pos..]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: pos + 4,
-                have: bytes.len(),
-                what: "splice_insert trailer",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + 4,
+                    have: bytes.len(),
+                    what: "splice_insert trailer",
+                },
+            ))?;
         out.unique_program_id = u16::from_be_bytes([trailer[0], trailer[1]]);
         out.avail_num = trailer[2];
         out.avails_expected = trailer[3];

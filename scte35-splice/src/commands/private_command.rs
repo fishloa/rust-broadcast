@@ -33,11 +33,13 @@ impl<'a> Parse<'a> for PrivateCommand<'a> {
         let (id_bytes, private_bytes) =
             bytes
                 .split_first_chunk::<IDENTIFIER_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: IDENTIFIER_LEN,
-                    have: bytes.len(),
-                    what: "private_command identifier",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: IDENTIFIER_LEN,
+                        have: bytes.len(),
+                        what: "private_command identifier",
+                    },
+                ))?;
         let identifier = u32::from_be_bytes(*id_bytes);
         Ok(Self {
             identifier,
@@ -97,7 +99,7 @@ mod tests {
     fn rejects_short_identifier() {
         assert!(matches!(
             PrivateCommand::parse(&[0x00, 0x01]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 }

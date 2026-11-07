@@ -272,5 +272,5 @@ fn section_length_zero_no_underflow() {
     // Construct bytes: table_id=0xFC, section_length=0 (<= bytes 1-2).
     let data = [0xFC, 0x00, 0x00];
     let err = SpliceInfoSection::parse(&data).unwrap_err();
-    assert!(matches!(err, scte35_splice::Error::BufferTooShort { .. }));
+    assert!(matches!(err, scte35_splice::Error::BufferTooShort(..)));
 }

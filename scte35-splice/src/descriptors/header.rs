@@ -24,11 +24,13 @@ pub fn descriptor_body<'a>(
     what: &'static str,
 ) -> Result<(u32, &'a [u8])> {
     if bytes.len() < 2 {
-        return Err(Error::BufferTooShort {
-            need: 2,
-            have: bytes.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 2,
+                have: bytes.len(),
+                what,
+            },
+        ));
     }
     if bytes[0] != expected_tag {
         return Err(Error::UnexpectedDescriptorTag {
@@ -47,20 +49,24 @@ pub fn descriptor_body<'a>(
         });
     }
     if declared < 4 {
-        return Err(Error::BufferTooShort {
-            need: 6,
-            have: total,
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 6,
+                have: total,
+                what,
+            },
+        ));
     }
     // bytes[0..2] are tag + descriptor_length; bytes[2..6] are the identifier.
     let (id_bytes, _) = bytes[2..total]
         .split_first_chunk::<4>()
-        .ok_or(Error::BufferTooShort {
-            need: 6,
-            have: total,
-            what,
-        })?;
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 6,
+                have: total,
+                what,
+            },
+        ))?;
     let identifier = u32::from_be_bytes(*id_bytes);
     Ok((identifier, &bytes[HEADER_LEN..total]))
 }

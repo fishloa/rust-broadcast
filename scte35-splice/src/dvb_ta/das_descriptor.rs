@@ -236,11 +236,13 @@ impl<'a> DvbDasDescriptor<'a> {
     pub fn parse_with_order(bytes: &'a [u8], order: DasNibbleOrder) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "DVB_DAS_descriptor")?;
         if body.len() < FIXED_BODY_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + FIXED_BODY_LEN,
-                have: bytes.len(),
-                what: "DVB_DAS_descriptor body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + FIXED_BODY_LEN,
+                    have: bytes.len(),
+                    what: "DVB_DAS_descriptor body",
+                },
+            ));
         }
         let break_num = body[0];
         let breaks_expected = body[1];

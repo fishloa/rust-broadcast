@@ -162,17 +162,21 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "segmentation_descriptor")?;
         // segmentation_event_id (4) + flags byte (1).
         if body.len() < 5 {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + 5,
+                    have: bytes.len(),
+                    what: "segmentation_descriptor header",
+                },
+            ));
+        }
+        let (eid_bytes, rest) = body.split_first_chunk::<4>().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
                 need: HEADER_LEN + 5,
                 have: bytes.len(),
                 what: "segmentation_descriptor header",
-            });
-        }
-        let (eid_bytes, rest) = body.split_first_chunk::<4>().ok_or(Error::BufferTooShort {
-            need: HEADER_LEN + 5,
-            have: bytes.len(),
-            what: "segmentation_descriptor header",
-        })?;
+            },
+        ))?;
         let segmentation_event_id = u32::from_be_bytes(*eid_bytes);
         let b = rest[0];
         let cancel = b & 0x80 != 0;
@@ -190,11 +194,13 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         }
 
         if body.len() < 6 {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + 6,
-                have: bytes.len(),
-                what: "segmentation_descriptor flags",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + 6,
+                    have: bytes.len(),
+                    what: "segmentation_descriptor flags",
+                },
+            ));
         }
         let flags = body[5];
         out.program_segmentation_flag = flags & 0x80 != 0;
@@ -212,21 +218,25 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
 
         if !out.program_segmentation_flag {
             if body.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: HEADER_LEN + pos + 1,
-                    have: bytes.len(),
-                    what: "segmentation_descriptor component_count",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: HEADER_LEN + pos + 1,
+                        have: bytes.len(),
+                        what: "segmentation_descriptor component_count",
+                    },
+                ));
             }
             let count = body[pos] as usize;
             pos += 1;
             for _ in 0..count {
                 if body.len() < pos + 6 {
-                    return Err(Error::BufferTooShort {
-                        need: HEADER_LEN + pos + 6,
-                        have: bytes.len(),
-                        what: "segmentation_descriptor component",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: HEADER_LEN + pos + 6,
+                            have: bytes.len(),
+                            what: "segmentation_descriptor component",
+                        },
+                    ));
                 }
                 let component_tag = body[pos];
                 // 7 reserved bits, then 33-bit pts_offset.
@@ -245,11 +255,13 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
 
         if duration_flag {
             if body.len() < pos + 5 {
-                return Err(Error::BufferTooShort {
-                    need: HEADER_LEN + pos + 5,
-                    have: bytes.len(),
-                    what: "segmentation_descriptor segmentation_duration",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: HEADER_LEN + pos + 5,
+                        have: bytes.len(),
+                        what: "segmentation_descriptor segmentation_duration",
+                    },
+                ));
             }
             let d = (u64::from(body[pos]) << 32)
                 | (u64::from(body[pos + 1]) << 24)
@@ -262,11 +274,13 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
 
         // segmentation_upid_type (1) + segmentation_upid_length (1).
         if body.len() < pos + 2 {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + pos + 2,
-                have: bytes.len(),
-                what: "segmentation_descriptor upid header",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + pos + 2,
+                    have: bytes.len(),
+                    what: "segmentation_descriptor upid header",
+                },
+            ));
         }
         out.segmentation_upid_type = SegmentationUpidType::from_u8(body[pos]);
         let upid_len = body[pos + 1] as usize;
@@ -283,11 +297,13 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
 
         // segmentation_type_id (1) + segment_num (1) + segments_expected (1).
         if body.len() < pos + 3 {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + pos + 3,
-                have: bytes.len(),
-                what: "segmentation_descriptor type/segment",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + pos + 3,
+                    have: bytes.len(),
+                    what: "segmentation_descriptor type/segment",
+                },
+            ));
         }
         out.segmentation_type_id = SegmentationTypeId::from_u8(body[pos]);
         out.segment_num = body[pos + 1];
@@ -342,11 +358,13 @@ impl<'a> SegmentationDescriptor<'a> {
         Some(
             bytes
                 .split_first_chunk::<MPU_FORMAT_IDENTIFIER_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: MPU_FORMAT_IDENTIFIER_LEN,
-                    have: bytes.len(),
-                    what: "MPU() format_identifier",
-                })
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: MPU_FORMAT_IDENTIFIER_LEN,
+                        have: bytes.len(),
+                        what: "MPU() format_identifier",
+                    },
+                ))
                 .map(|(fi_bytes, private_data)| Mpu {
                     format_identifier: u32::from_be_bytes(*fi_bytes),
                     private_data,
@@ -370,11 +388,13 @@ impl<'a> SegmentationDescriptor<'a> {
         let bytes = self.segmentation_upid;
         while pos < bytes.len() {
             if bytes.len() - pos < MID_ENTRY_HEADER_LEN {
-                return Some(Err(Error::BufferTooShort {
-                    need: pos + MID_ENTRY_HEADER_LEN,
-                    have: bytes.len(),
-                    what: "MID() entry header",
-                }));
+                return Some(Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + MID_ENTRY_HEADER_LEN,
+                        have: bytes.len(),
+                        what: "MID() entry header",
+                    },
+                )));
             }
             let upid_type = SegmentationUpidType::from_u8(bytes[pos]);
             let entry_len = bytes[pos + 1] as usize;
@@ -685,10 +705,12 @@ mod tests {
         };
         assert!(matches!(
             d.mpu(),
-            Some(Err(Error::BufferTooShort {
-                what: "MPU() format_identifier",
-                ..
-            }))
+            Some(Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    what: "MPU() format_identifier",
+                    ..
+                }
+            )))
         ));
     }
 

@@ -215,25 +215,33 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         // decryption (§9.6.1). Guard total >= FIXED_HEADER_LEN + CRC_LEN before
         // computing crc_pos so that section_length == 0 doesn't underflow (#216).
         if total < FIXED_HEADER_LEN + CRC_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_HEADER_LEN + CRC_LEN,
-                have: total,
-                what: "splice_info_section body + CRC",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: FIXED_HEADER_LEN + CRC_LEN,
+                    have: total,
+                    what: "splice_info_section body + CRC",
+                },
+            ));
         }
         let crc_pos = total - CRC_LEN;
         let (crc_region, crc_bytes) =
             bytes[..total]
                 .split_last_chunk::<CRC_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: FIXED_HEADER_LEN + CRC_LEN,
-                    have: bytes.len(),
-                    what: "splice_info_section header",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: FIXED_HEADER_LEN + CRC_LEN,
+                        have: bytes.len(),
+                        what: "splice_info_section header",
+                    },
+                ))?;
         let expected = u32::from_be_bytes(*crc_bytes);
         let computed = broadcast_common::crc32_mpeg2::compute(crc_region);
         if computed != expected {
-            return Err(Error::CrcMismatch { computed, expected });
+            return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+                what: "splice_info_section",
+                computed,
+                expected,
+            }));
         }
 
         let protocol_version = bytes[3];
@@ -301,11 +309,13 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         let (dll_bytes, _) = payload
             .get(dll_pos..)
             .and_then(|s| s.split_first_chunk::<2>())
-            .ok_or(Error::BufferTooShort {
-                need: 1 + scl + 2,
-                have: payload.len(),
-                what: "splice_info_section command + descriptor_loop_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1 + scl + 2,
+                    have: payload.len(),
+                    what: "splice_info_section command + descriptor_loop_length",
+                },
+            ))?;
         let descriptor_loop_length = usize::from(u16::from_be_bytes(*dll_bytes));
         let loop_start = dll_pos + 2;
         if payload.len() < loop_start + descriptor_loop_length {

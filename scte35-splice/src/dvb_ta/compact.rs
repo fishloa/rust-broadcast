@@ -79,11 +79,11 @@ fn bit_err(e: BitError, have: usize, what: &'static str) -> Error {
         BitError::OutOfBounds {
             needed_bits,
             remaining_bits,
-        } => Error::BufferTooShort {
+        } => Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: have + needed_bits.saturating_sub(remaining_bits).div_ceil(8),
             have,
             what,
-        },
+        }),
         _ => Error::InvalidValue {
             field: what,
             reason: "value does not fit its bit width",
@@ -119,11 +119,13 @@ impl CompactScte35 {
 impl<'a> Parse<'a> for CompactScte35 {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let &message_type = bytes.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "compact_SCTE_35 message_type",
-        })?;
+        let &message_type = bytes.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "compact_SCTE_35 message_type",
+            },
+        ))?;
         let body = &bytes[1..];
         match message_type {
             MESSAGE_TYPE_TIME_SIGNAL => Ok(Self::TimeSignal(CompactTimeSignal::parse(body)?)),
@@ -198,11 +200,13 @@ impl<'a> Parse<'a> for CompactTimeSignal {
         const WHAT: &str = "compact_time_signal";
         let have = bytes.len();
         if have * 8 < TS_FIXED_BITS {
-            return Err(Error::BufferTooShort {
-                need: TS_FIXED_BITS / 8,
-                have,
-                what: "compact_time_signal fixed prefix",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: TS_FIXED_BITS / 8,
+                    have,
+                    what: "compact_time_signal fixed prefix",
+                },
+            ));
         }
         let e = |e| bit_err(e, have, WHAT);
         let mut r = BitReader::new(bytes);
@@ -397,11 +401,13 @@ impl CompactSpliceInsert {
         const WHAT: &str = "compact_splice_insert";
         let have = bytes.len();
         if have * 8 < SI_FIXED_BITS {
-            return Err(Error::BufferTooShort {
-                need: SI_FIXED_BITS / 8,
-                have,
-                what: "compact_splice_insert fixed fields",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: SI_FIXED_BITS / 8,
+                    have,
+                    what: "compact_splice_insert fixed fields",
+                },
+            ));
         }
         let e = |e| bit_err(e, have, WHAT);
         let mut r = BitReader::new(bytes);
@@ -677,7 +683,11 @@ mod tests {
         let bytes = sample_time_signal().try_to_bytes().unwrap();
         for cut in 0..bytes.len() {
             match CompactTimeSignal::parse(&bytes[..cut]) {
-                Err(Error::BufferTooShort { need, have, .. }) => {
+                Err(Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                    need,
+                    have,
+                    ..
+                })) => {
                     assert_eq!(have, cut);
                     assert!(need > cut, "cut {cut}: need {need}");
                 }

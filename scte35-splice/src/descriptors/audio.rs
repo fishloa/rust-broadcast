@@ -58,22 +58,26 @@ impl<'a> Parse<'a> for AudioDescriptor {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "audio_descriptor")?;
         if body.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + 1,
-                have: bytes.len(),
-                what: "audio_descriptor audio_count",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + 1,
+                    have: bytes.len(),
+                    what: "audio_descriptor audio_count",
+                },
+            ));
         }
         let audio_count = (body[0] >> 4) as usize; // 4-bit count, 4 reserved
         let mut pos = 1;
         let mut components = Vec::with_capacity(audio_count);
         for _ in 0..audio_count {
             if body.len() < pos + COMPONENT_LEN {
-                return Err(Error::BufferTooShort {
-                    need: HEADER_LEN + pos + COMPONENT_LEN,
-                    have: bytes.len(),
-                    what: "audio_descriptor component",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: HEADER_LEN + pos + COMPONENT_LEN,
+                        have: bytes.len(),
+                        what: "audio_descriptor component",
+                    },
+                ));
             }
             let component_tag = body[pos];
             let iso_code = [body[pos + 1], body[pos + 2], body[pos + 3]];
