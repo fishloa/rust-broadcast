@@ -6,7 +6,10 @@ use rtcp_packet::{CompoundPacket, Error, ReceiverReport, SenderReport};
 
 fn too_small(e: &Error) -> Option<(usize, usize)> {
     match e {
-        Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+        Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+            need,
+            have,
+        }) => Some((*need, *have)),
         _ => None,
     }
 }

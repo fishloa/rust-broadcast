@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `padding_count` and `PaddingCountError`: the RFC 3550 §6.4.1 padding-count rule (nonzero, at most the body) as one public function, now also used by `rist-runtime` instead of two private copies (c3 N1).
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidValue` now wrap `broadcast_common::error` types (tuple variants). Hand-written `From` impls removed; messages follow the common wording.
 
 ## [0.6.0] - 2026-10-17
 ### Documentation

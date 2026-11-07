@@ -224,10 +224,10 @@ fn compound_sdes_first_is_rejected() {
     let err = CompoundPacket::parse(&SDES_VECTOR);
     assert!(matches!(
         err,
-        Err(Error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "rtcp_compound",
             ..
-        })
+        }))
     ));
 }
 
@@ -237,7 +237,7 @@ fn compound_sdes_first_is_rejected() {
 fn rejects_short_buffer() {
     assert!(matches!(
         SenderReport::parse(&SR_VECTOR[..3]),
-        Err(Error::BufferTooShort { .. })
+        Err(Error::BufferTooShort(..))
     ));
 }
 
@@ -247,7 +247,7 @@ fn rejects_bad_version() {
     bytes[0] = 0x40; // V=1
     assert!(matches!(
         RtcpPacket::parse(&bytes),
-        Err(Error::InvalidValue { .. })
+        Err(Error::InvalidValue(..))
     ));
 }
 
@@ -256,10 +256,10 @@ fn rejects_wrong_packet_type_for_typed_parse() {
     // RR_VECTOR is PT 201; parsing it directly as a SenderReport must fail.
     assert!(matches!(
         SenderReport::parse(&RR_VECTOR),
-        Err(Error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "rtcp_pt",
             ..
-        })
+        }))
     ));
 }
 

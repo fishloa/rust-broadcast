@@ -22,61 +22,23 @@ pub struct PaddingCountError {
 #[non_exhaustive]
 pub enum Error {
     /// Input (on parse) or output buffer (on serialize) shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed/serialized.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
     /// Output buffer passed to `serialize_into` was smaller than
     /// `serialized_len()`.
-    #[error("serialize: output buffer too small — need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
     /// A field value did not fit its wire bit-width, or the two's-complement
     /// version field was not `2` (RFC 3550 §6.4.1: "The version defined by
     /// this specification is two (2)"), or a derived count (report/source
     /// count, item/reason length) overflowed its field, or SDES/BYE text was
     /// not valid UTF-8 (RFC 3550 §6.5: "encoded according to the UTF-8
     /// encoding").
-    #[error("field {field} value {value} invalid: {reason}")]
-    InvalidValue {
-        /// The offending field/derived-count name.
-        field: &'static str,
-        /// The offending value.
-        value: u64,
-        /// Why it is invalid.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
     /// A caller-supplied argument violated a documented precondition (e.g. an
     /// empty [`CompoundPacket`](crate::CompoundPacket) or one not starting
     /// with SR/RR per RFC 3550 §6.1).
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }
