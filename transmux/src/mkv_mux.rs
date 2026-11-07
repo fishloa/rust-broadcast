@@ -425,32 +425,6 @@ fn build_opus_head(dops: &OpusSpecificBox) -> Vec<u8> {
     out
 }
 
-/// A human-readable name for a [`CodecConfig`] variant, for
-/// [`Error::UnsupportedMkvCodec`]'s message.
-fn codec_debug_name(config: &CodecConfig) -> &'static str {
-    match config {
-        CodecConfig::Avc { .. } => "AVC",
-        CodecConfig::Hevc { .. } => "HEVC",
-        CodecConfig::Vvc { .. } => "VVC",
-        CodecConfig::Aac { .. } => "AAC",
-        CodecConfig::Ac3 { .. } => "AC-3",
-        CodecConfig::Eac3 { .. } => "E-AC-3",
-        CodecConfig::Av1 { .. } => "AV1",
-        CodecConfig::Vp9 { .. } => "VP9",
-        CodecConfig::Vp8 { .. } => "VP8",
-        CodecConfig::Opus { .. } => "Opus",
-        CodecConfig::Flac { .. } => "FLAC",
-        CodecConfig::Ac4 { .. } => "AC-4",
-        CodecConfig::MpegH { .. } => "MPEG-H 3D Audio",
-        CodecConfig::Mpeg2Video { .. } => "MPEG-2 Video",
-        CodecConfig::MpegAudio { .. } => "MPEG-1/2 Audio",
-        CodecConfig::Dts { .. } => "DTS",
-        CodecConfig::Vorbis { .. } => "Vorbis",
-        CodecConfig::Subtitle { .. } => "Subtitle",
-        CodecConfig::Data { .. } => "Data",
-    }
-}
-
 /// Build one `TrackEntry`, returning its bytes plus whether it is a video
 /// track. `track_number` is the 1-based Matroska track number (this crate
 /// assigns them sequentially in [`Media::tracks`] order); `track_id` supplies
@@ -553,7 +527,7 @@ fn build_track_entry(
             } => (CODEC_A_EAC3, None, audio_elem(*channel_count, *sample_rate)),
             other => {
                 return Err(Error::UnsupportedMkvCodec {
-                    codec: codec_debug_name(other),
+                    codec: other.name(),
                 });
             }
         };

@@ -76,7 +76,6 @@
 //!   previously-carried one.
 
 use std::collections::VecDeque;
-use transmux::CodecConfig;
 use transmux::TrackId;
 
 use bytes::Bytes;
@@ -218,21 +217,6 @@ impl<T: PushTransport> PushTransportEgress<T> {
     }
 }
 
-/// Whether `config` is a video codec (the track whose sync samples gate the
-/// first send).
-pub(crate) fn is_video(config: &CodecConfig) -> bool {
-    matches!(
-        config,
-        CodecConfig::Avc { .. }
-            | CodecConfig::Hevc { .. }
-            | CodecConfig::Vvc { .. }
-            | CodecConfig::Av1 { .. }
-            | CodecConfig::Vp9 { .. }
-            | CodecConfig::Vp8 { .. }
-            | CodecConfig::Mpeg2Video { .. }
-    )
-}
-
 impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
     type Error = SendMediaError;
 
@@ -244,7 +228,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             ));
         }
         self.selection = TrackSelection::new(carriable.iter().map(|t| t.track_id).collect());
-        self.awaiting_sync = carriable.iter().any(|t| is_video(&t.config));
+        self.awaiting_sync = carriable.iter().any(|t| t.config.is_video());
         self.specs = carriable;
         self.committed = true;
         NegotiationOutcome::Accepted(self.selection.clone())
@@ -311,7 +295,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             .specs
             .iter()
             .find(|s| s.track_id == track_id)
-            .map(|s| is_video(&s.config))
+            .map(|s| s.config.is_video())
         else {
             return Ok(());
         };

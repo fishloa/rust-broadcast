@@ -90,13 +90,9 @@ pub struct Mp4Report {
 /// is a distinct report shape, not the PID map.
 fn track_kind(config: &CodecConfig) -> &'static str {
     match config {
-        CodecConfig::Avc { .. }
-        | CodecConfig::Hevc { .. }
-        | CodecConfig::Vvc { .. }
-        | CodecConfig::Av1 { .. }
-        | CodecConfig::Vp9 { .. }
-        | CodecConfig::Vp8 { .. }
-        | CodecConfig::Mpeg2Video { .. } => "video",
+        _ if config.is_video() => "video",
+        CodecConfig::Subtitle { .. } => "subtitle",
+        CodecConfig::Data { .. } => "data",
         CodecConfig::Aac { .. }
         | CodecConfig::Ac3 { .. }
         | CodecConfig::Eac3 { .. }
@@ -107,11 +103,6 @@ fn track_kind(config: &CodecConfig) -> &'static str {
         | CodecConfig::Dts { .. }
         | CodecConfig::MpegAudio { .. }
         | CodecConfig::Vorbis { .. } => "audio",
-        CodecConfig::Subtitle { .. } => "subtitle",
-        CodecConfig::Data { .. } => "data",
-        // `CodecConfig` is `#[non_exhaustive]`: a future variant this crate
-        // hasn't been updated for yet falls back to "data" rather than
-        // failing to compile against a newer transmux.
         _ => "data",
     }
 }
@@ -123,24 +114,9 @@ fn codec_label(config: &CodecConfig) -> &'static str {
         CodecConfig::Avc { .. } => "H.264/AVC",
         CodecConfig::Hevc { .. } => "H.265/HEVC",
         CodecConfig::Vvc { .. } => "H.266/VVC",
-        CodecConfig::Av1 { .. } => "AV1",
-        CodecConfig::Vp9 { .. } => "VP9",
-        CodecConfig::Vp8 { .. } => "VP8",
-        CodecConfig::Mpeg2Video { .. } => "MPEG-2 Video",
-        CodecConfig::Aac { .. } => "AAC",
-        CodecConfig::Ac3 { .. } => "AC-3",
-        CodecConfig::Eac3 { .. } => "E-AC-3",
-        CodecConfig::Opus { .. } => "Opus",
-        CodecConfig::Flac { .. } => "FLAC",
-        CodecConfig::Ac4 { .. } => "AC-4",
-        CodecConfig::MpegH { .. } => "MPEG-H 3D Audio",
-        CodecConfig::Dts { .. } => "DTS",
-        CodecConfig::MpegAudio { .. } => "MPEG-1/2 Audio",
-        CodecConfig::Vorbis { .. } => "Vorbis",
         CodecConfig::Subtitle { format, .. } => format.name(),
         CodecConfig::Data { .. } => "opaque (unrecognised stream_type)",
-        // See the matching wildcard arm in `track_kind` above.
-        _ => "unrecognised (unsupported by this analyzer build)",
+        other => other.name(),
     }
 }
 

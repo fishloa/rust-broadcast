@@ -23,9 +23,7 @@ pub(crate) fn apply(
         let audio: Vec<usize> = tracks
             .iter()
             .enumerate()
-            .filter(|(_, t)| {
-                !crate::push::egress::is_video(&t.config) && t.config.is_muxable_in_bmff()
-            })
+            .filter(|(_, t)| !t.config.is_video() && t.config.is_muxable_in_bmff())
             .map(|(i, _)| i)
             .collect();
         let found = match declared.track {

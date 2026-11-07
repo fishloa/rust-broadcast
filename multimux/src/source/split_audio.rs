@@ -25,14 +25,14 @@ use std::time::{Duration, Instant};
 
 use broadcast_common::Timestamp;
 use broadcast_common::timescale::cmp_ticks;
-use media_plane::ids::{PartIndex, SegmentSeq};
-use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk};
+use media_plane::ids::SegmentSeq;
+use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk};
 use transmux::SegmentMeta;
 use transmux::TrackId;
 use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo, SegmentInfo};
 use transmux::pipeline::{Sample, TrackSpec};
 
-use super::segment::{PendingPublish, drain_publish_queue};
+use super::segment::{PendingPublish, drain_publish_queue, part_entry};
 use crate::config::AudioTrackSelector;
 use crate::route::{AudioServing, RouteHandle};
 use hls_runtime::server::HlsOrigin;
@@ -70,7 +70,7 @@ pub(crate) fn resolve_sources(
     }
     let audio: Vec<&TrackSpec> = tracks
         .iter()
-        .filter(|t| !crate::push::egress::is_video(&t.config) && t.config.is_muxable_in_bmff())
+        .filter(|t| !t.config.is_video() && t.config.is_muxable_in_bmff())
         .collect();
     let mut mapped: Vec<(usize, TrackSpec)> = Vec::new();
     for (rendition, selector) in selectors.iter().enumerate() {
@@ -382,13 +382,8 @@ impl AudioFollower {
     }
 
     fn queue_part(&mut self, part: PartInfo) {
-        self.pending.push_back(PendingPublish::Part(PartEntry::new(
-            part.bytes,
-            SegmentSeq::new(part.segment_seq),
-            PartIndex::new(part.part_index),
-            Duration::from_secs_f64(part.duration),
-            part.independent,
-        )));
+        self.pending
+            .push_back(PendingPublish::Part(part_entry(part)));
     }
 
     fn queue_segment(&mut self, bytes: Vec<u8>, seq: u32, duration_secs: f64) {
