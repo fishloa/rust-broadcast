@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod live_fuzz_driver;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
