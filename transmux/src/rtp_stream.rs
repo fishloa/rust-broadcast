@@ -1728,14 +1728,6 @@ impl Stage for RtpStreamDepacketiser {
         Ok(())
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        // RTP packets only produce output in reaction to feed/finish; no
-        // rate-scheduled or timeout work needs a deadline.
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     /// Honest against the one real bound this type enforces:
     /// `MAX_AU_BUFFER_BYTES`, the in-progress access-unit buffer a runaway
     /// (never-terminated) AU would otherwise grow without limit.

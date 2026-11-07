@@ -6582,12 +6582,6 @@ impl Stage for StreamingTsDemux {
         Ok(())
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     /// Honest against the one bound this demuxer actually enforces
     /// end-to-end: `MAX_UNATTRIBUTED_BYTES` (the never-claimed-PID replay
     /// buffer). Both this buffer and the per-PID PES overflow

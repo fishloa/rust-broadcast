@@ -288,40 +288,16 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
         .flatten()
         .unwrap_or("0")
         .to_string();
-    let candidates: Vec<String> = media
-        .attributes
-        .iter()
-        .filter(|a| a.attribute == "candidate" && a.value.is_some())
-        .map(|a| a.value.clone().unwrap_or_default())
-        .collect();
+    let candidates = crate::webrtc_session::candidate_lines(media);
     let setup = media
         .get_first_attribute_value("setup")
         .flatten()
         .map(str::to_string);
 
-    let mut payload_type = None;
-    for tok in media.fmt.split_whitespace() {
-        let Ok(pt) = tok.parse::<u8>() else { continue };
-        let rtpmap = media.attributes.iter().find(|a| {
-            a.attribute == "rtpmap"
-                && a.value
-                    .as_deref()
-                    .and_then(|v| v.split_whitespace().next())
-                    .and_then(|pt| pt.parse::<u8>().ok())
-                    == Some(pt)
-        });
-        let Some(rtpmap) = rtpmap else { continue };
-        let Some(value) = rtpmap.value.as_deref() else {
-            continue;
-        };
-        if value.to_ascii_uppercase().contains("H264") {
-            payload_type = Some(pt);
-            break;
-        }
-    }
-    let payload_type = payload_type.ok_or_else(|| MultimuxError::Sdp {
-        reason: "whep: m=video has no H.264 (a=rtpmap naming H264) payload type".into(),
-    })?;
+    let (payload_type, _) =
+        crate::webrtc_session::h264_payload(media).ok_or_else(|| MultimuxError::Sdp {
+            reason: "whep: m=video has no H.264 (a=rtpmap naming H264) payload type".into(),
+        })?;
 
     Ok(ParsedWhepOffer {
         remote_ufrag,
@@ -809,91 +785,61 @@ async fn whep_post_inner(
     }
 }
 
-/// `PATCH /whep/session/<id>` (draft-ietf-wish-whep section 4, as RFC 9725
-/// section 4.3): a Trickle ICE SDP fragment adds remote candidates (`204`);
-/// `If-Match: *` asks for an ICE restart, which this transport cannot perform
-/// (`422`). Unknown resource `404`, a body that is not
-/// `application/trickle-ice-sdpfrag` `415`, an `If-Match` that does not match
-/// the resource's `ETag` `412`.
+/// `PATCH` of a session resource (see [`crate::webrtc_session::patch_resource`]).
 async fn whep_patch(
     axum::extract::State(state): axum::extract::State<Arc<WhepServeState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    use axum::http::StatusCode;
-    let Some(resource) = state.resources.get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if !crate::webrtc_session::content_type_is(&headers, content_type::TRICKLE_ICE) {
-        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
-    }
-    let event = resource.machine.lock().on_patch(body.to_vec(), &headers);
-    match event {
-        Ok(WhepEvent::TrickleIce { sdp_fragment, .. }) => {
-            let fragment =
-                match crate::webrtc_session::parse_ice_fragment(&sdp_fragment).and_then(|f| {
-                    crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag.lock())?;
-                    Ok(f)
-                }) {
-                    Ok(f) => f,
-                    Err(reason) => {
-                        tracing::debug!(%reason, "whep: trickle fragment rejected");
-                        return StatusCode::BAD_REQUEST.into_response();
-                    }
-                };
-            if !resource.control.push_candidates(fragment.candidates) {
-                return StatusCode::BAD_REQUEST.into_response();
-            }
-            crate::webrtc_session::to_axum(resource.machine.lock().ack_trickle())
-        }
-        // draft-ietf-wish-whep section 4 / RFC 9725 section 4.3.2: `If-Match:
-        // *` with new ICE credentials. The transport restarts ICE in place
-        // (DTLS/SRTP untouched, so playback continues); the `200` carries this
-        // side's new credentials and candidates and a new `ETag`.
-        Ok(WhepEvent::IceRestart { sdp_fragment }) => {
-            let plan = match crate::webrtc_session::plan_restart(
-                &sdp_fragment,
-                &resource.remote_ufrag.lock(),
-                &resource.local_candidates,
-                crate::secure_random::token,
-            ) {
-                Ok(plan) => plan,
-                Err(reason) => {
-                    tracing::debug!(%reason, "whep: ICE restart fragment rejected");
-                    return StatusCode::BAD_REQUEST.into_response();
-                }
-            };
-            let (answer, etag) = (plan.answer.clone(), plan.etag.clone());
-            if !crate::webrtc_session::commit_restart(&resource, plan) {
-                return StatusCode::BAD_REQUEST.into_response();
-            }
-            crate::webrtc_session::to_axum(resource.machine.lock().ack_restart(answer, etag))
-        }
-        Ok(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        Err(e) => crate::webrtc_session::patch_error_status(&e).into_response(),
-    }
+    crate::webrtc_session::patch_resource(&state.resources, &id, &headers, body)
 }
 
-/// `DELETE /whep/session/<id>` (draft-ietf-wish-whep section 5): ends the
-/// session. The resource is gone from this point (a second `DELETE` is `404`);
-/// the session task is woken to drop the transport and its `Trunk` cursor and
-/// free the capacity slot.
+/// `DELETE` of a session resource: ends the session (a second `DELETE` is
+/// `404`); the session task is woken to drop the transport and free the
+/// capacity slot.
 async fn whep_delete(
     axum::extract::State(state): axum::extract::State<Arc<WhepServeState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::response::Response {
-    let Some(resource) = state.resources.remove(&id) else {
-        return axum::http::StatusCode::NOT_FOUND.into_response();
-    };
-    let mut machine = resource.machine.lock();
-    let response = match machine.on_delete() {
-        Ok(_) => machine.ack_delete(),
-        Err(e) => return crate::webrtc_session::patch_error_status(&e).into_response(),
-    };
-    drop(machine);
-    resource.control.terminate();
-    crate::webrtc_session::to_axum(response)
+    crate::webrtc_session::delete_resource(&state.resources, &id)
+}
+
+impl crate::webrtc_session::SignallingMachine for WhepSession {
+    const LABEL: &'static str = "whep";
+    const TRICKLE_ICE: &'static str = webrtc_runtime::whep::content_type::TRICKLE_ICE;
+
+    fn patch(
+        &mut self,
+        body: Vec<u8>,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<crate::webrtc_session::PatchEvent, webrtc_runtime::Error> {
+        use crate::webrtc_session::PatchEvent;
+        Ok(match self.on_patch(body, headers)? {
+            WhepEvent::TrickleIce { sdp_fragment, .. } => PatchEvent::TrickleIce(sdp_fragment),
+            WhepEvent::IceRestart { sdp_fragment } => PatchEvent::IceRestart(sdp_fragment),
+            _ => PatchEvent::Other,
+        })
+    }
+
+    fn ack_trickle(&self) -> webrtc_runtime::whip::server::HttpResponse {
+        WhepSession::ack_trickle(self)
+    }
+
+    fn ack_restart(
+        &mut self,
+        answer: Vec<u8>,
+        etag: String,
+    ) -> webrtc_runtime::whip::server::HttpResponse {
+        WhepSession::ack_restart(self, answer, etag)
+    }
+
+    fn delete(
+        &mut self,
+    ) -> Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error> {
+        self.on_delete()?;
+        Ok(self.ack_delete())
+    }
 }
 
 /// The local IP to advertise as this session's ICE host candidate: the

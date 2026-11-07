@@ -2381,12 +2381,6 @@ mod tests {
             self.pending.pop_front()
         }
 
-        fn next_deadline(&self) -> Option<Timestamp> {
-            None
-        }
-
-        fn on_deadline(&mut self, _now: Timestamp) {}
-
         fn finish(&mut self) -> Result<(), Infallible> {
             Ok(())
         }
@@ -2860,12 +2854,6 @@ mod tests {
         fn poll(&mut self) -> Option<SessionEvent> {
             self.pending.borrow_mut().pop_front()
         }
-
-        fn next_deadline(&self) -> Option<Timestamp> {
-            None
-        }
-
-        fn on_deadline(&mut self, _now: Timestamp) {}
 
         fn finish(&mut self) -> Result<(), Infallible> {
             Ok(())

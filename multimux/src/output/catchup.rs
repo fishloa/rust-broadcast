@@ -67,7 +67,6 @@ use crate::origin::resource::cors_preflight;
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
 
-const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 
 /// The catch-up/VOD-from-live [`Output`] — see the module docs.
 #[derive(Debug, Default)]
@@ -224,7 +223,7 @@ async fn catchup_playlist(
         // this route's own generated URIs, but never silently mangled.
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
+    ([(header::CONTENT_TYPE, crate::http::PLAYLIST_CONTENT_TYPE)], body).into_response()
 }
 
 /// `GET /vod/p{N}.m3u8` — see the module docs.
@@ -295,7 +294,7 @@ async fn vod_playlist(
     ) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
+    ([(header::CONTENT_TYPE, crate::http::PLAYLIST_CONTENT_TYPE)], body).into_response()
 }
 
 /// Bounds how many archive *scans* run on the blocking pool at once — held

@@ -755,41 +755,13 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
         .flatten()
         .unwrap_or("0")
         .to_string();
-    let candidates: Vec<String> = media
-        .attributes
-        .iter()
-        .filter(|a| a.attribute == "candidate" && a.value.is_some())
-        .map(|a| a.value.clone().unwrap_or_default())
-        .collect();
+    let candidates = crate::webrtc_session::candidate_lines(media);
 
-    // Pick the first payload type in `m=video`'s `fmt` list whose
-    // `a=rtpmap` names H.264 — skips a paired `rtx` payload type (RFC 4588)
-    // offered alongside it, which this route neither requests nor handles.
-    let mut chosen: Option<(u8, u32)> = None;
-    for tok in media.fmt.split_whitespace() {
-        let Ok(pt) = tok.parse::<u8>() else { continue };
-        let rtpmap = media.attributes.iter().find(|a| {
-            a.attribute == "rtpmap"
-                && a.value
-                    .as_deref()
-                    .and_then(|v| v.split_whitespace().next())
-                    .and_then(|pt| pt.parse::<u8>().ok())
-                    == Some(pt)
-        });
-        let Some(rtpmap) = rtpmap else { continue };
-        let Some(value) = rtpmap.value.as_deref() else {
-            continue;
-        };
-        if !value.to_ascii_uppercase().contains("H264") {
-            continue;
-        }
-        let clock_rate = transmux::rtpmap_clock_rate(value).unwrap_or(90_000);
-        chosen = Some((pt, clock_rate));
-        break;
-    }
-    let (payload_type, clock_rate) = chosen.ok_or_else(|| MultimuxError::Sdp {
-        reason: "whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into(),
-    })?;
+    let (payload_type, rtpmap) =
+        crate::webrtc_session::h264_payload(media).ok_or_else(|| MultimuxError::Sdp {
+            reason: "whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into(),
+        })?;
+    let clock_rate = transmux::rtpmap_clock_rate(rtpmap).unwrap_or(90_000);
 
     Ok(ParsedOffer {
         remote_ufrag,
@@ -1190,93 +1162,61 @@ async fn whip_post_inner(
     }
 }
 
-/// `PATCH /whip/session/<id>` (RFC 9725 section 4.3): a Trickle ICE SDP
-/// fragment adds remote candidates (`204`); `If-Match: *` asks for an ICE
-/// restart, which this transport cannot perform (`422`, the RFC's
-/// "unsupported operation"). Unknown resource `404`, a body that is not
-/// `application/trickle-ice-sdpfrag` `415`, an `If-Match` that does not match
-/// the resource's `ETag` `412`.
+/// `PATCH` of a session resource (see [`crate::webrtc_session::patch_resource`]).
 async fn whip_patch(
     axum::extract::State(state): axum::extract::State<Arc<WhipServeState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    use axum::http::StatusCode;
-    let Some(resource) = state.resources.get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if !crate::webrtc_session::content_type_is(
-        &headers,
-        webrtc_runtime::whip::content_type::TRICKLE_ICE,
-    ) {
-        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
-    }
-    let event = resource.machine.lock().on_patch(body.to_vec(), &headers);
-    match event {
-        Ok(WhipEvent::TrickleIce { sdp_fragment, .. }) => {
-            let fragment =
-                match crate::webrtc_session::parse_ice_fragment(&sdp_fragment).and_then(|f| {
-                    crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag.lock())?;
-                    Ok(f)
-                }) {
-                    Ok(f) => f,
-                    Err(reason) => {
-                        tracing::debug!(%reason, "whip: trickle fragment rejected");
-                        return StatusCode::BAD_REQUEST.into_response();
-                    }
-                };
-            if !resource.control.push_candidates(fragment.candidates) {
-                return StatusCode::BAD_REQUEST.into_response();
-            }
-            crate::webrtc_session::to_axum(resource.machine.lock().ack_trickle())
-        }
-        // RFC 9725 section 4.3.2: `If-Match: *` with new ICE credentials. The
-        // transport restarts ICE in place (DTLS/SRTP untouched); the `200`
-        // carries this side's new credentials and candidates and a new `ETag`.
-        Ok(WhipEvent::IceRestart { sdp_fragment }) => {
-            let plan = match crate::webrtc_session::plan_restart(
-                &sdp_fragment,
-                &resource.remote_ufrag.lock(),
-                &resource.local_candidates,
-                crate::secure_random::token,
-            ) {
-                Ok(plan) => plan,
-                Err(reason) => {
-                    tracing::debug!(%reason, "whip: ICE restart fragment rejected");
-                    return StatusCode::BAD_REQUEST.into_response();
-                }
-            };
-            let (answer, etag) = (plan.answer.clone(), plan.etag.clone());
-            if !crate::webrtc_session::commit_restart(&resource, plan) {
-                return StatusCode::BAD_REQUEST.into_response();
-            }
-            crate::webrtc_session::to_axum(resource.machine.lock().ack_restart(answer, etag))
-        }
-        Ok(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        Err(e) => crate::webrtc_session::patch_error_status(&e).into_response(),
-    }
+    crate::webrtc_session::patch_resource(&state.resources, &id, &headers, body)
 }
 
-/// `DELETE /whip/session/<id>` (RFC 9725 section 4.2): ends the session. The
-/// resource is gone from this point (a second `DELETE` is `404`); the media
-/// task is woken to drop the transport, release the published program and free
-/// the capacity slot.
+/// `DELETE` of a session resource: ends the session (a second `DELETE` is
+/// `404`); the session task is woken to drop the transport and free the
+/// capacity slot.
 async fn whip_delete(
     axum::extract::State(state): axum::extract::State<Arc<WhipServeState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::response::Response {
-    let Some(resource) = state.resources.remove(&id) else {
-        return axum::http::StatusCode::NOT_FOUND.into_response();
-    };
-    let mut machine = resource.machine.lock();
-    let response = match machine.on_delete() {
-        Ok(_) => machine.ack_delete(),
-        Err(e) => return crate::webrtc_session::patch_error_status(&e).into_response(),
-    };
-    drop(machine);
-    resource.control.terminate();
-    crate::webrtc_session::to_axum(response)
+    crate::webrtc_session::delete_resource(&state.resources, &id)
+}
+
+impl crate::webrtc_session::SignallingMachine for WhipSession {
+    const LABEL: &'static str = "whip";
+    const TRICKLE_ICE: &'static str = webrtc_runtime::whip::content_type::TRICKLE_ICE;
+
+    fn patch(
+        &mut self,
+        body: Vec<u8>,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<crate::webrtc_session::PatchEvent, webrtc_runtime::Error> {
+        use crate::webrtc_session::PatchEvent;
+        Ok(match self.on_patch(body, headers)? {
+            WhipEvent::TrickleIce { sdp_fragment, .. } => PatchEvent::TrickleIce(sdp_fragment),
+            WhipEvent::IceRestart { sdp_fragment } => PatchEvent::IceRestart(sdp_fragment),
+            _ => PatchEvent::Other,
+        })
+    }
+
+    fn ack_trickle(&self) -> webrtc_runtime::whip::server::HttpResponse {
+        WhipSession::ack_trickle(self)
+    }
+
+    fn ack_restart(
+        &mut self,
+        answer: Vec<u8>,
+        etag: String,
+    ) -> webrtc_runtime::whip::server::HttpResponse {
+        WhipSession::ack_restart(self, answer, etag)
+    }
+
+    fn delete(
+        &mut self,
+    ) -> Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error> {
+        self.on_delete()?;
+        Ok(self.ack_delete())
+    }
 }
 
 /// The non-blocking [`Listener`] bridge over the accept-pump's channel — see
@@ -1571,12 +1511,6 @@ impl Stage for WhipIngestSession {
         }
         Ok(())
     }
-
-    fn next_deadline(&self) -> Option<Timestamp> {
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
 
     fn demand(&self) -> Demand {
         Demand::new(MAX_UDP_DATAGRAM)

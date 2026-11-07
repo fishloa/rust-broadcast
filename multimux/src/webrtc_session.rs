@@ -670,6 +670,138 @@ pub(crate) fn patch_error_status(err: &webrtc_runtime::Error) -> axum::http::Sta
     }
 }
 
+/// The first payload type in `m=video`'s `fmt` list whose `a=rtpmap` names
+/// H.264, with that rtpmap value; skips a paired `rtx` payload type (RFC 4588)
+/// offered alongside it, which neither route requests nor handles.
+pub(crate) fn h264_payload(media: &sdp_types::Media) -> Option<(u8, &str)> {
+    media.fmt.split_whitespace().find_map(|tok| {
+        let pt = tok.parse::<u8>().ok()?;
+        let value = media.attributes.iter().find_map(|a| {
+            let value = a.value.as_deref()?;
+            let named = value.split_whitespace().next()?.parse::<u8>().ok()?;
+            (a.attribute == "rtpmap" && named == pt).then_some(value)
+        })?;
+        value
+            .to_ascii_uppercase()
+            .contains("H264")
+            .then_some((pt, value))
+    })
+}
+
+/// Every `a=candidate` attribute body of `media`.
+pub(crate) fn candidate_lines(media: &sdp_types::Media) -> Vec<String> {
+    media
+        .attributes
+        .iter()
+        .filter(|a| a.attribute == "candidate")
+        .filter_map(|a| a.value.clone())
+        .collect()
+}
+
+/// What a `PATCH` asked for, as the two server state machines report it.
+pub(crate) enum PatchEvent {
+    TrickleIce(Vec<u8>),
+    IceRestart(Vec<u8>),
+    Other,
+}
+
+/// The slice of a `webrtc-runtime` WHIP/WHEP server state machine that the
+/// `PATCH`/`DELETE` handlers drive.
+pub(crate) trait SignallingMachine {
+    const LABEL: &'static str;
+    const TRICKLE_ICE: &'static str;
+    fn patch(
+        &mut self,
+        body: Vec<u8>,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<PatchEvent, webrtc_runtime::Error>;
+    fn ack_trickle(&self) -> webrtc_runtime::whip::server::HttpResponse;
+    fn ack_restart(
+        &mut self,
+        answer: Vec<u8>,
+        etag: String,
+    ) -> webrtc_runtime::whip::server::HttpResponse;
+    fn delete(&mut self) -> Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error>;
+}
+
+/// `PATCH <resource>`: a Trickle ICE SDP fragment adds remote candidates
+/// (`204`); `If-Match: *` asks for an ICE restart. Unknown resource `404`, a
+/// body that is not `application/trickle-ice-sdpfrag` `415`, an `If-Match`
+/// that does not match the resource's `ETag` `412`.
+pub(crate) fn patch_resource<M: SignallingMachine>(
+    resources: &ResourceTable<M>,
+    id: &str,
+    headers: &axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse as _;
+    let Some(resource) = resources.get(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !content_type_is(headers, M::TRICKLE_ICE) {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    }
+    let event = resource.machine.lock().patch(body.to_vec(), headers);
+    match event {
+        Ok(PatchEvent::TrickleIce(sdp_fragment)) => {
+            let fragment = match parse_ice_fragment(&sdp_fragment).and_then(|f| {
+                validate_trickle(&f, &resource.remote_ufrag.lock())?;
+                Ok(f)
+            }) {
+                Ok(f) => f,
+                Err(reason) => {
+                    tracing::debug!(%reason, "{}: trickle fragment rejected", M::LABEL);
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
+            };
+            if !resource.control.push_candidates(fragment.candidates) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            to_axum(resource.machine.lock().ack_trickle())
+        }
+        Ok(PatchEvent::IceRestart(sdp_fragment)) => {
+            let plan = match plan_restart(
+                &sdp_fragment,
+                &resource.remote_ufrag.lock(),
+                &resource.local_candidates,
+                crate::secure_random::token,
+            ) {
+                Ok(plan) => plan,
+                Err(reason) => {
+                    tracing::debug!(%reason, "{}: ICE restart fragment rejected", M::LABEL);
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
+            };
+            let (answer, etag) = (plan.answer.clone(), plan.etag.clone());
+            if !commit_restart(&resource, plan) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            to_axum(resource.machine.lock().ack_restart(answer, etag))
+        }
+        Ok(PatchEvent::Other) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(e) => patch_error_status(&e).into_response(),
+    }
+}
+
+/// `DELETE <resource>`: ends the session. The resource is gone from this point
+/// (a second `DELETE` is `404`) and the session task is woken to tear down.
+pub(crate) fn delete_resource<M: SignallingMachine>(
+    resources: &ResourceTable<M>,
+    id: &str,
+) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+    let Some(resource) = resources.remove(id) else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let response = match resource.machine.lock().delete() {
+        Ok(response) => response,
+        Err(e) => return patch_error_status(&e).into_response(),
+    };
+    resource.control.terminate();
+    to_axum(response)
+}
+
 /// An `HttpResponse` from `webrtc-runtime` as an axum response.
 pub(crate) fn to_axum(
     resp: webrtc_runtime::whip::server::HttpResponse,

@@ -540,12 +540,6 @@ mod custom_dispatch_driver_backed {
             self.pending.pop_front()
         }
 
-        fn next_deadline(&self) -> Option<Timestamp> {
-            None
-        }
-
-        fn on_deadline(&mut self, _now: Timestamp) {}
-
         fn finish(&mut self) -> Result<(), Infallible> {
             Ok(())
         }
@@ -784,12 +778,6 @@ mod custom_dispatch_driver_backed {
             fn poll(&mut self) -> Option<SessionEvent> {
                 self.pending.pop_front()
             }
-
-            fn next_deadline(&self) -> Option<Timestamp> {
-                None
-            }
-
-            fn on_deadline(&mut self, _now: Timestamp) {}
 
             fn finish(&mut self) -> Result<(), Infallible> {
                 Ok(())

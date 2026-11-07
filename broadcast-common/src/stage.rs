@@ -300,21 +300,27 @@ pub trait Stage {
     ///
     /// A driver should call [`on_deadline`](Stage::on_deadline) once `now` has
     /// reached this value, even if no new input has arrived. `None` means the
-    /// stage has nothing scheduled and only reacts to `feed`/`finish`.
-    fn next_deadline(&self) -> Option<Timestamp>;
+    /// stage has nothing scheduled and only reacts to `feed`/`finish`, which
+    /// is the default.
+    fn next_deadline(&self) -> Option<Timestamp> {
+        None
+    }
 
     /// Let the stage act purely on the passage of time (no new bytes), e.g. a
     /// rate-scheduled re-emission or a timeout.
     ///
     /// May unlock output retrievable via subsequent [`poll`](Stage::poll)
-    /// calls, exactly like [`feed`](Stage::feed).
-    fn on_deadline(&mut self, now: Timestamp);
+    /// calls, exactly like [`feed`](Stage::feed). The default does nothing, for
+    /// a stage whose [`next_deadline`](Stage::next_deadline) is always `None`.
+    fn on_deadline(&mut self, _now: Timestamp) {}
 
     /// A hint about how much more input this stage would like right now.
     ///
     /// Advisory only — see [`Demand`]'s docs for what a driver may and may not
-    /// assume from it.
-    fn demand(&self) -> Demand;
+    /// assume from it. The default is [`Demand::default`], no preference.
+    fn demand(&self) -> Demand {
+        Demand::default()
+    }
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- `pipeline::build_trak` takes its sample entry, media kind and `tkhd` size from one per-codec function (`pipeline/stsd.rs`, `MediaKind` owning the handler and media-header boxes) instead of a 700-line tuple-returning `match` (c3 t:S2); the seven `init_segment` container boxes (`dinf`, `minf`, `mdia`, `edts`, `trak`, `mvex`, `moov`) serialize through one `serialize_container` (c3 d:C1).
 - Timescale rescaling goes through `broadcast_common::timescale` with the rounding each site already used; a zero timescale counts as 1 instead of returning the input unchanged (RTP, repackage windows) or panicking (c2 H6).
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
 - One `ADTS_HEADER_SIZE` constant shared by `aac_asc`, `ts_demux` and `sample_aes` (dedupe C1; the 7/9-byte `sample_aes::adts_header_len` is left as the Apple SAMPLE-AES rule, distinct from the raw-data-block offset in `ts_demux`).
@@ -27,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `box_types::clamped_boxes` / `ClampedBox`: a tolerant top-level box walk that clamps a truncated tail to the buffer end; `frag_offsets::mdat_ranges` and the hls-runtime iframe helpers use it instead of three private copies (c3 d:B1).
+
 
 
 ## [0.29.1] - 2026-11-03

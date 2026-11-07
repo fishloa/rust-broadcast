@@ -37,7 +37,6 @@ use crate::origin::resource::{BlockingRequestGuard, cors_preflight};
 use crate::output::{Output, OutputKind};
 use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, subtitle_playlist_uri};
 
-const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 
 /// Default media-playlist filename (issue #663 "configurable `playlist_name`")
 /// — every pre-existing `LlHlsOutput::default()`/`OutputKind::build()` call
@@ -171,35 +170,7 @@ impl Output for LlHlsOutput {
 /// `GET /master.m3u8` — a minimal single-variant master playlist pointing at
 /// this route's configured media-playlist filename.
 pub(crate) async fn master_playlist(State(state): State<LlHlsState>) -> Response {
-    // Once the program is published, the origin's own master carries the
-    // measured peak `BANDWIDTH` and the `CODECS` of its init segment
-    // (RFC 8216 §4.3.4.2); before that there is nothing to measure.
-    let body = match http::resolve_route_program(&state.route) {
-        Ok(serving) => match serving
-            .ll_hls()
-            .master_playlist_with_iframes(&state.playlist_name, IFRAME_PLAYLIST_NAME)
-        {
-            Ok(master) => master,
-            Err(HlsMasterError::BandwidthUnknown) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    [(header::RETRY_AFTER, "1")],
-                    "bandwidth unknown\n",
-                )
-                    .into_response();
-            }
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        },
-        Err(_) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [(header::RETRY_AFTER, "1")],
-                "not serving yet\n",
-            )
-                .into_response();
-        }
-    };
-    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
+    http::master_playlist_response(&state.route, |origin| origin.master_playlist_with_iframes(&state.playlist_name, IFRAME_PLAYLIST_NAME))
 }
 
 /// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2), as
@@ -276,7 +247,7 @@ pub(crate) async fn media_playlist(
     http::into_playlist_response(resp, timed_out, |body| match body {
         HlsBody::Playlist(m) => {
             let mut resp =
-                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+                ([(header::CONTENT_TYPE, http::PLAYLIST_CONTENT_TYPE)], m).into_response();
             if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
                 resp.headers_mut().insert("priority", value);
             }
@@ -344,7 +315,7 @@ async fn sibling_playlist(
     http::into_playlist_response(resp, timed_out, |body| match body {
         HlsBody::Playlist(m) => {
             let mut resp =
-                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+                ([(header::CONTENT_TYPE, http::PLAYLIST_CONTENT_TYPE)], m).into_response();
             if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
                 resp.headers_mut().insert("priority", value);
             }
@@ -386,7 +357,7 @@ pub(crate) async fn iframe_playlist(
     http::into_playlist_response(resp, timed_out, |body| match body {
         HlsBody::Playlist(m) => {
             let mut resp =
-                ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response();
+                ([(header::CONTENT_TYPE, http::PLAYLIST_CONTENT_TYPE)], m).into_response();
             if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
                 resp.headers_mut().insert("priority", value);
             }

@@ -50,7 +50,6 @@ use crate::output::llhls::BlockingReloadQuery;
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
 
-const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 
 /// Default media-playlist filename — mirrors
 /// [`crate::output::llhls::DEFAULT_PLAYLIST_NAME`] (both `"media.m3u8"`);
@@ -121,32 +120,7 @@ impl Output for TsHlsOutput {
 /// `GET /master.m3u8` — a minimal single-variant master playlist pointing at
 /// this route's configured media-playlist filename.
 pub(crate) async fn master_playlist(State(state): State<TsHlsState>) -> Response {
-    // Once the program is published, the origin's own master carries the
-    // measured peak `BANDWIDTH` and the `CODECS` of its init segment
-    // (RFC 8216 §4.3.4.2); before that there is nothing to measure.
-    let body = match http::resolve_route_program(&state.route) {
-        Ok(serving) => match serving.ll_hls().master_playlist(&state.playlist_name) {
-            Ok(master) => master,
-            Err(HlsMasterError::BandwidthUnknown) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    [(header::RETRY_AFTER, "1")],
-                    "bandwidth unknown\n",
-                )
-                    .into_response();
-            }
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        },
-        Err(_) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [(header::RETRY_AFTER, "1")],
-                "not serving yet\n",
-            )
-                .into_response();
-        }
-    };
-    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
+    http::master_playlist_response(&state.route, |origin| origin.master_playlist(&state.playlist_name))
 }
 
 /// `GET /media.m3u8` — the classic media playlist for [`DEFAULT_TRACK_ID`].
@@ -177,7 +151,7 @@ pub(crate) async fn media_playlist(
     .await;
     http::into_playlist_response(resp, timed_out, |body| match body {
         HlsBody::Playlist(m) => {
-            ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], m).into_response()
+            ([(header::CONTENT_TYPE, http::PLAYLIST_CONTENT_TYPE)], m).into_response()
         }
         HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
         // `HlsBody` is `#[non_exhaustive]`; a future body variant this

@@ -86,6 +86,37 @@ pub(crate) fn resolve_route_program(
     }
 }
 
+pub(crate) const PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
+
+/// `GET /master.m3u8` for an HLS route: the origin's own master (measured peak
+/// `BANDWIDTH` and the `CODECS` of its init segment, RFC 8216 §4.3.4.2) once the
+/// program is published, 503 with `Retry-After` while there is nothing to measure.
+pub(crate) fn master_playlist_response(
+    route: &crate::route::RouteHandle,
+    render: impl FnOnce(&hls_runtime::server::HlsOrigin) -> Result<String, hls_runtime::server::HlsMasterError>,
+) -> Response {
+    let retry = |body: &'static str| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::RETRY_AFTER, "1")],
+            body,
+        )
+            .into_response()
+    };
+    let Ok(serving) = resolve_route_program(route) else {
+        return retry("not serving yet\n");
+    };
+    match render(&serving.ll_hls()) {
+        Ok(master) => (
+            [(axum::http::header::CONTENT_TYPE, PLAYLIST_CONTENT_TYPE)],
+            master,
+        )
+            .into_response(),
+        Err(hls_runtime::server::HlsMasterError::BandwidthUnknown) => retry("bandwidth unknown\n"),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 /// Fallback poll interval when [`Trunk::listen`] has no free waiter slot
 /// (`media_plane::trunk::TrunkConfig::part_capacity` already saturated by
 /// other parked requests) — bounded by the caller's own `timeout` regardless,

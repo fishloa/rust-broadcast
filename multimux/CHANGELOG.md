@@ -4,6 +4,7 @@
 ### Fixed
 - `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
 ### Changed
+- WHIP and WHEP share their `PATCH`/`DELETE` handlers, the H.264 payload-type choice and the ICE candidate extraction (`webrtc_session::{patch_resource, delete_resource, h264_payload, candidate_lines}`), and the LL-HLS/TS-HLS/catch-up outputs share one master-playlist response and one playlist content-type constant (c3 d:W1, d:H1).
 - URL userinfo decoding and stripping (RTSP source, HTTP pulls, RTSP push) use `broadcast_auth::{credentials_from_url, strip_userinfo}` instead of four private copies (dedupe D7).
 - WHIP source and WHEP output share `webrtc_session::{ensure_connect_info, ice_attr}` (dedupe D14).
 - hls-pull, smooth-pull and dash-pull share one `source::driver::terminal_result` (dedupe D13).
@@ -12,6 +13,7 @@
 - DASH-pull fetch retries use the shared `ReconnectSchedule` (500 ms to 4 s, equal-jittered) instead of a private jitter-free doubling (c2 L2).
 ### Removed
 - Unused `origin::limit::RETRY_AFTER_SECS` (c2 TH1).
+
 
 ## [0.15.0] - 2026-11-03
 ### Fixed

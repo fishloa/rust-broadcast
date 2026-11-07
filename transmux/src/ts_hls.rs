@@ -1535,14 +1535,6 @@ impl Stage for StreamingTsHlsSegmenter {
         self.finish_inner()
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        // Segments are only cut in reaction to `push`/`finish` — no
-        // rate-scheduled or timeout work.
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     /// `saturated` once any track holds [`MAX_PENDING_SAMPLES_PER_TRACK`]
     /// un-cut samples — the same bound (and reasoning) as
     /// [`Segmenter`](crate::segmenter::Segmenter)'s: past it

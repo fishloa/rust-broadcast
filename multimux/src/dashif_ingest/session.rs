@@ -509,12 +509,6 @@ impl Stage for DashifIngestSession {
         Ok(())
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     fn demand(&self) -> Demand {
         Demand::new(MAX_TS_READ)
     }

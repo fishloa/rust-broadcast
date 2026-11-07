@@ -62,12 +62,6 @@ impl Stage for TsIngestSession {
         Ok(())
     }
 
-    fn next_deadline(&self) -> Option<Timestamp> {
-        None
-    }
-
-    fn on_deadline(&mut self, _now: Timestamp) {}
-
     fn demand(&self) -> Demand {
         Demand::new(188 * 256)
     }
