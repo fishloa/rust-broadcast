@@ -270,13 +270,7 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
             // segment_length)` with no stuffing provision, so 1 leftover
             // byte means the segment is malformed, not that it should be
             // silently dropped (#1108/DS-W6: this used to just `break`).
-            if pos + 2 > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: body.len(),
-                    what: "disparity_signalling_segment region header",
-                });
-            }
+            need_in(body, pos + 2, "disparity_signalling_segment region header")?;
             let region_id = body[pos];
             pos += 1;
             let update_flag = (body[pos] & 0x80) != 0;
@@ -288,13 +282,7 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
             for _n in 0..=num_subregions_minus_1 {
                 let has_pos = num_subregions_minus_1 > 0;
                 let entry_len = if has_pos { 4 + 2 } else { 2 };
-                if pos + entry_len > body.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + entry_len,
-                        have: body.len(),
-                        what: "subregion entry",
-                    });
-                }
+                need_in(body, pos + entry_len, "subregion entry")?;
 
                 let (hpos, width) = if has_pos {
                     let h = u16::from_be_bytes([body[pos], body[pos + 1]]);
