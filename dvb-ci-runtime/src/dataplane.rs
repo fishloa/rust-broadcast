@@ -17,7 +17,7 @@ use std::io;
 use std::time::Duration;
 
 /// MPEG-2 TS packet length (ISO/IEC 13818-1): 188 bytes.
-pub const TS_PACKET_LEN: usize = 188;
+pub use mpeg_ts::ts::TS_PACKET_SIZE as TS_PACKET_LEN;
 
 /// The TS data-plane device of a separate-CI module (`/dev/dvb/adapterN/ciM`).
 ///

@@ -64,11 +64,7 @@ impl ListenerHandshakeState {
     }
 }
 
-impl core::fmt::Display for ListenerHandshakeState {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.name())
-    }
-}
+broadcast_common::impl_spec_display!(ListenerHandshakeState);
 
 /// A driveable Listener-side SRT handshake (`draft-sharabayko-srt-01`
 /// §4.3.1). `syn_cookie` is supplied by the caller/driver — this crate's core

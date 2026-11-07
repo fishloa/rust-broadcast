@@ -141,8 +141,12 @@ wrote 450 packets (84600 bytes) to keep.ts
 - The library has no `std` path: with `default-features = false` it is
   `no_std` + `alloc` (a CI no_std lane proves it).
 
-## Related crates and license
+## Related crates
 
 Depends on `broadcast-common`, `mpeg-ts`, `mpeg-pes`, `dvb-si`,
 `dvb-conformance`. Independently versioned. `dvb-tools pids` is a handy way to
-inspect the result. MSRV 1.95.0. Licensed under MIT OR Apache-2.0.
+inspect the result.
+
+## MSRV and licence
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

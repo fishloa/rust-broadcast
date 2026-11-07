@@ -279,6 +279,163 @@ fn every_error_kind_variant_has_a_stable_name() {
     }
 }
 
+/// Files whose `name()` legitimately borrows from `self` because the enum has
+/// an `Other(String)` / `Custom { type_tag }` arm carrying the token as
+/// written. Every entry must still contain such a method (a stale entry
+/// fails), and no other file may declare a non-`'static` `name()`.
+const NON_STATIC_NAME_ALLOWED: &[(&str, &str, &str)] = &[
+    (
+        "broadcast-auth",
+        "src/challenge.rs",
+        "Scheme/BearerError: Other(String) carries the scheme/code as written",
+    ),
+    (
+        "multimux",
+        "src/output/mod.rs",
+        "OutputKind::Custom labels itself by its own type_tag",
+    ),
+    (
+        "multimux",
+        "src/route.rs",
+        "Route::name is the route's configured name, not an enum label",
+    ),
+    (
+        "rtsp-runtime",
+        "src/transport.rs",
+        "TransportMode: Other(String) carries the Method token as written",
+    ),
+];
+
+fn non_static_name_lines(src: &str) -> Vec<usize> {
+    src.lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            let t = l.trim_start();
+            t.starts_with("pub fn name(&self) -> &")
+                && !t.starts_with("pub fn name(&self) -> &'static str")
+        })
+        .map(|(i, _)| i + 1)
+        .collect()
+}
+
+fn has_inherent_name(src: &str, name: &str) -> bool {
+    let mut rest = src;
+    while let Some(pos) = rest.find("\nimpl") {
+        let tail = &rest[pos + 1..];
+        let header_end = tail.find('{').unwrap_or(tail.len());
+        let header = &tail[..header_end];
+        let is_inherent = !header.contains(" for ")
+            && header
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|w| w == name);
+        let block_end = tail.find("\n}\n").unwrap_or(tail.len());
+        if is_inherent && tail[..block_end].contains("fn name(&self)") {
+            return true;
+        }
+        rest = &rest[pos + 1..];
+    }
+    false
+}
+
+fn hand_written_display(src: &str, name: &str) -> bool {
+    has_impl(src, "Display for ", name) && !has_impl(src, "impl_spec_display!(", name)
+}
+
+fn hand_display_without_name(c: &Crate, files: &[(String, String)]) -> Vec<String> {
+    let all = files
+        .iter()
+        .map(|(_, s)| s.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    pub_enums(&all)
+        .into_iter()
+        .filter(|e| !c.skip.contains(&e.as_str()))
+        .filter(|e| hand_written_display(&all, e) && !has_inherent_name(&all, e))
+        .map(|e| format!("{}: {e}", c.name))
+        .collect()
+}
+
+#[test]
+fn name_methods_return_static_str() {
+    let mut problems = Vec::new();
+    for member in workspace_guards::workspace_members() {
+        if member == "workspace-guards" {
+            continue;
+        }
+        for (path, src) in src_files(&member) {
+            let hits = non_static_name_lines(&src);
+            let allowed = NON_STATIC_NAME_ALLOWED
+                .iter()
+                .any(|(c, p, _)| *c == member && path.ends_with(p));
+            if !hits.is_empty() && !allowed {
+                problems.push(format!(
+                    "{member}: {path}:{hits:?} `name()` must return `&'static str`"
+                ));
+            }
+        }
+    }
+    for (c, p, _) in NON_STATIC_NAME_ALLOWED {
+        let found = src_files(c)
+            .iter()
+            .any(|(path, src)| path.ends_with(p) && !non_static_name_lines(src).is_empty());
+        if !found {
+            problems.push(format!("stale NON_STATIC_NAME_ALLOWED entry: {c} {p}"));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn hand_written_display_has_an_inherent_name() {
+    let mut problems = Vec::new();
+    for c in crate::label_data::TABLE {
+        problems.extend(hand_display_without_name(c, &src_files(c.name)));
+    }
+    assert!(
+        problems.is_empty(),
+        "hand-written Display without an inherent `name()` (add `name()` + `impl_spec_display!`):\n{}",
+        problems.join("\n")
+    );
+}
+
+#[test]
+fn name_guards_bite() {
+    assert_eq!(
+        non_static_name_lines("impl X {\n    pub fn name(&self) -> &str {\n"),
+        vec![2]
+    );
+    assert_eq!(
+        non_static_name_lines("    pub fn name(&self) -> &'_ str {\n"),
+        vec![1]
+    );
+    assert!(non_static_name_lines("    pub fn name(&self) -> &'static str {\n").is_empty());
+
+    let c = Crate {
+        name: "synthetic",
+        scope: Scope::Crate,
+        matcher: Matcher::Loose,
+        skip: &[],
+        expected: None,
+        min_enums: None,
+    };
+    let bad = vec![(
+        "src/a.rs".to_string(),
+        "pub enum X { A }\nimpl core::fmt::Display for X {\n}\n".to_string(),
+    )];
+    assert_eq!(hand_display_without_name(&c, &bad), vec!["synthetic: X"]);
+    let good = vec![(
+        "src/a.rs".to_string(),
+        "pub enum X { A }\nimpl X {\n    pub fn name(&self) -> &'static str { \"a\" }\n}\nimpl core::fmt::Display for X {\n}\n"
+            .to_string(),
+    )];
+    assert!(hand_display_without_name(&c, &good).is_empty());
+    let via_macro = vec![(
+        "src/a.rs".to_string(),
+        "pub enum X { A }\nimpl_spec_display!(X);\n".to_string(),
+    )];
+    assert!(hand_display_without_name(&c, &via_macro).is_empty());
+}
+
 #[test]
 fn table_covers_every_workspace_member() {
     let names: Vec<&str> = crate::label_data::TABLE.iter().map(|c| c.name).collect();

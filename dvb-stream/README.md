@@ -3,7 +3,7 @@
 [![CI](https://github.com/fishloa/rust-broadcast/actions/workflows/ci.yml/badge.svg)](https://github.com/fishloa/rust-broadcast/actions)
 [![crates.io](https://img.shields.io/crates/v/dvb-stream.svg)](https://crates.io/crates/dvb-stream)
 [![docs.rs](https://img.shields.io/docsrs/dvb-stream)](https://docs.rs/dvb-stream)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-licence)
 
 **Async/tokio `Stream` adapters over `dvb-si`'s `SiDemux` and `dvb-t2mi`'s `T2miPump`: feed a file, TCP socket or UDP/multicast source, receive owned SI section or T2-MI events.**
 
@@ -127,7 +127,7 @@ no error channel).
   `#[non_exhaustive]` drift guards do not apply (recorded in
   `broadcast-common`'s guard-coverage test).
 
-## Related crates and license
+## Related crates and licence
 
 Depends on `dvb-si`, `dvb-t2mi`, `mpeg-ts`, `rtp-packet`, `broadcast-common`.
 Pairs with `dvb-tools` (the synchronous file CLI). MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

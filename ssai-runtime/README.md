@@ -155,7 +155,7 @@ on `scte35-splice` and `mp4-emsg` for the real-fixture tests. Media splicing is
 - SCTE-35 `splice_insert()` / segmentation: ANSI/SCTE 35 2023r1, transcribed at
   the private repo (`private/specs-verified/scte/scte35-splice/`).
 
-## MSRV and license
+## MSRV and licence
 
 MSRV 1.95.0. Licensed under either of
 [Apache License, Version 2.0](../LICENSE-APACHE) or

@@ -4,7 +4,7 @@ use crate::PACKET_START_CODE_PREFIX;
 use crate::error::{Error, Result};
 use crate::stream_id::StreamId;
 use crate::timestamp::{self, Dts, Pts};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 const MIN_LEN: usize = 6; // start_code(3) + stream_id(1) + PES_packet_length(2)
 const HEADER_FIXED: usize = 3; // 2 flag bytes + PES_header_data_length
@@ -544,7 +544,7 @@ impl<'a> PesExtension<'a> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        need_in(buf, need, "PES_extension serialize output")?;
+        need_out(buf, need)?;
 
         let mut flags = broadcast_common::len::fit_mask(
             self.reserved_bits,
@@ -947,7 +947,7 @@ impl<'a> PesPacket<'a> {
     /// Serialize back to bytes (byte-identical to a spec-compliant input).
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        need_in(buf, len, "PES serialize output")?;
+        need_out(buf, len)?;
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX);
         buf[3] = self.stream_id.0;
         buf[4..6].copy_from_slice(&self.pes_packet_length.to_be_bytes());
@@ -1065,6 +1065,26 @@ impl<'a> PesPacket<'a> {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for PesPacket<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        PesPacket::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for PesPacket<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        PesPacket::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        PesPacket::serialize_into(self, buf)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1081,6 +1101,23 @@ mod tests {
         let mut re_out = vec![0u8; re.serialized_len()];
         re.serialize_into(&mut re_out).unwrap();
         assert_eq!(out, re_out, "re-parse mismatch");
+    }
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let b = [
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0A, 0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01,
+            0xAA, 0xBB,
+        ];
+        let pkt = PesPacket::parse(&b).unwrap();
+        let mut out = vec![0u8; b.len() - 1];
+        assert_eq!(
+            pkt.serialize_into(&mut out),
+            Err(Error::OutputBufferTooSmall {
+                need: b.len(),
+                have: b.len() - 1
+            })
+        );
     }
 
     #[test]

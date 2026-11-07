@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/broadcast-common.svg)](https://crates.io/crates/broadcast-common)
 [![docs.rs](https://img.shields.io/docsrs/broadcast-common)](https://docs.rs/broadcast-common)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-licence)
 
 **The foundation crate of the rust-broadcast workspace: the symmetric `Parse`/`Serialize` traits, CRC-32/MPEG-2, BCD and MJD time codecs, bit-field I/O, the 33-bit/PCR clock arithmetic, checked field-width helpers, and the container-mux and streaming-stage traits every sibling crate builds on.**
 
@@ -142,7 +142,7 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 - `#![forbid(unsafe_code)]`, `#![warn(missing_docs)]`, `no_std` + `alloc`
   without `std`.
 
-## Related crates and license
+## Related crates and licence
 
 Versioned independently of the DVB lockstep crates (it ships from its own
 `broadcast-common-v*` tag). Every protocol crate depends on it; it depends on

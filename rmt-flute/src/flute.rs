@@ -91,6 +91,28 @@ impl ExtFdt {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for ExtFdt {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        ExtFdt::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for ExtFdt {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        3
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        broadcast_common::len::need_out(buf, 3)?;
+        buf[..3].copy_from_slice(&self.to_content()?);
+        Ok(3)
+    }
+}
+
 /// Content-encoding algorithm of an FDT Instance payload (RFC 6726 §3.4.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -192,6 +214,28 @@ impl ExtCenc {
     pub fn to_extension<'a>(&self, scratch: &'a mut [u8; 3]) -> HeaderExtension<'a> {
         *scratch = self.to_content();
         HeaderExtension::new(HET_EXT_CENC, &scratch[..])
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for ExtCenc {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        ExtCenc::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for ExtCenc {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        3
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        broadcast_common::len::need_out(buf, 3)?;
+        buf[..3].copy_from_slice(&self.to_content());
+        Ok(3)
     }
 }
 

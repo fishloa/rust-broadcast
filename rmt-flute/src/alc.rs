@@ -95,6 +95,18 @@ impl<'a> AlcPacket<'a> {
     }
 }
 
+impl broadcast_common::Serialize for AlcPacket<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        AlcPacket::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        AlcPacket::serialize_into(self, buf)
+    }
+}
+
 /// FEC Payload ID for Small Block Systematic codes (`fec_id` = 128/129),
 /// reproduced from RFC 5445 as an *illustrative* layout (RFC 5775 itself
 /// defines no FEC Payload ID format). 8 bytes: a 32-bit `source_block_number`,
@@ -140,6 +152,26 @@ impl FecPayloadId128 {
         out[4..6].copy_from_slice(&self.source_block_length.to_be_bytes());
         out[6..8].copy_from_slice(&self.encoding_symbol_id.to_be_bytes());
         Ok(FEC_PAYLOAD_ID_128_LEN)
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for FecPayloadId128 {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        FecPayloadId128::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for FecPayloadId128 {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        FecPayloadId128::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        FecPayloadId128::serialize_into(self, buf)
     }
 }
 

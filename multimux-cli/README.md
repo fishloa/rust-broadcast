@@ -14,9 +14,18 @@ The `multimux` command: a multi-input, multi-output just-in-time repackaging HTT
 
 None of its own. The binary delegates to `multimux`, which serves LL-HLS (draft-pantos-hls-rfc8216bis), classic HLS (RFC 8216), MPEG-DASH, Smooth Streaming, and ingests RTSP (RFC 2326), RTMP, SRT, WHIP (RFC 9725) and more. The `multimux` crate README carries the per-standard table with editions and status.
 
-## Features
+## Feature flags
 
 None. The binary builds `multimux` with its default `tls` feature (`rtsps://` sources). WHIP and WHEP are library features (`whip`, `whep`) that this binary does not enable.
+
+## Quick start
+
+```bash
+cargo install multimux-cli
+multimux --rtsp rtsp://cam.local/stream --name cam1
+```
+
+This pulls the RTSP camera and serves it as LL-HLS at `http://localhost:8080/cam1/media.m3u8`; the worked examples below cover config files and file sources.
 
 ## Install and usage
 
@@ -93,6 +102,13 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:18080/slate/manifest.m
 The container is identified with `container-probe`, so the file may be TS, fMP4, progressive MP4, Matroska/WebM, MPEG-PS or FLV; the route loops by default.
 
 More ready-made configs live in `multimux/examples/` (a 40-camera fleet, a reverse-proxy `forwarded` setup, many outputs from one ingest, signed-URL egress with an admin API).
+
+## What is implemented
+
+- One ingest per route, from the single-route quick-start flags (`--rtsp`/`--name`) or from a JSON `--config` file with many routes.
+- Delivery over LL-HLS and DASH (`--outputs`, `--dash`), with the rolling window, segment and part sizes set by `--window`, `--target-duration` and `--part-ms`.
+- Push outputs to SRT, RTMP and RTSP servers (`--srt-push`, `--rtmp-push`, `--rtsp-push`).
+- Everything else the `multimux` library does is reachable through the config file.
 
 ## Design notes
 

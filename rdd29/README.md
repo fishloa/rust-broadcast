@@ -117,6 +117,6 @@ with `st337` (AES3 non-PCM bursts) and `st377-1` (MXF).
 
 1.95.0
 
-## License
+## Licence
 
 MIT OR Apache-2.0

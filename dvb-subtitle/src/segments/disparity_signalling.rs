@@ -4,7 +4,7 @@
 //! to be ascribed to regions or subregions.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// The disparity_signalling_segment segment_type.
@@ -355,7 +355,7 @@ impl Serialize for DisparitySignallingSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        need_in(buf, len, "disparity_signalling_segment serialize")?;
+        need_out(buf, len)?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

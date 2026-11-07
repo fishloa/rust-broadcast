@@ -94,7 +94,7 @@ impl AudioObjectType {
             Self::ErParametric => 27,
         }
     }
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::Null => "null",
             Self::AacMain => "AAC Main",
@@ -228,7 +228,7 @@ impl SamplingFrequencyIndex {
             Self::Escape => 0xF,
         }
     }
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::Fs96000 => "96000 Hz",
             Self::Fs88200 => "88200 Hz",
@@ -301,7 +301,7 @@ impl ChannelConfiguration {
             Self::Reserved(r) => r & 0x0F,
         }
     }
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::InBand => "in-band",
             Self::Mono => "mono",

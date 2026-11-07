@@ -5,7 +5,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -190,7 +190,7 @@ impl Serialize for RandomIndexPack {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        need_in(buf, total, "Random Index Pack")?;
+        need_out(buf, total)?;
         buf[0..16].copy_from_slice(&Self::key());
         let value_len = self.partitions.len() * 12 + 4;
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;

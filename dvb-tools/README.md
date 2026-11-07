@@ -1,7 +1,7 @@
 # dvb-tools
 
 [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-licence)
 
 **`dvb-tools`: a command-line DVB transport-stream analyzer (`dump`, `services`, `epg`, `pids`, `t2mi`) built on the rust-broadcast library crates.**
 
@@ -32,6 +32,16 @@ decode.
 | NorDig / EACEM logical channel number descriptors | NorDig Unified IRD v3.2.2 (2025-11) vendored (§12.2.9 `logical_channel_descriptor`, Table 12.12 v1 tag 0x83, v2 tag 0x87); EACEM / D-Book not vendored | LCN shown by `dump` and `services` | Partial | Whatever `dvb-si` decodes for these private descriptors. |
 | ITU-T H.222.0 / ISO/IEC 13818-1 | H.222.0 v9 (08/2023) | PAT/PMT/CAT/TSDT, PID table, PCR-based bitrate | Full for PSI | `pids` bitrate is `n/a` when at most one PCR is seen. |
 | ETSI TS 102 773 (T2-MI) | V1.4.1 via `dvb-t2mi` | `t2mi` packet dump; `--inner` recovers the inner TS through `dvb-bbframe` | Full (as `dvb-t2mi`) | HEM frames with NPD are skipped. |
+
+## Quick start
+
+```sh
+cargo run -p dvb-tools --locked -- dump fixtures/ts/m6-single.ts
+cargo run -p dvb-tools --locked -- services fixtures/ts/m6-single.ts
+cargo run -p dvb-tools --locked -- pids fixtures/ts/m6-single.ts
+```
+
+Add `--json` to `dump` and `epg` for machine-readable output. The sections below list every subcommand and flag.
 
 ## Command line
 
@@ -144,9 +154,15 @@ stop.
 - Regression tests: `tests/it/smoke.rs`, `pids_bitrate_oracle.rs`,
   `services_shared_service_id.rs`, `t2mi_typed_pid.rs`, `stdout_closed.rs`.
 
-## Related crates and license
+## Feature flags
+
+None. The crate is a std-only binary with no optional features.
+
+## Related crates
 
 Depends on `dvb-si`, `dvb-t2mi`, `mpeg-ts`, `broadcast-common`. Versioned in
 lockstep with `dvb-si`, `dvb-t2mi`, `dvb-bbframe` and `dvb-conformance`.
+
+## MSRV and licence
 
 MSRV 1.95.0. Licensed under MIT OR Apache-2.0, at your option.

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Documentation
+- README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 
 ### Changed
 - `TsHttpPolicy::on_error` delegates to `on_eof` (the two bodies were identical).

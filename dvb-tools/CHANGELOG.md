@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Documentation
+- README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 
 ## [12.1.0] - 2026-11-03
 

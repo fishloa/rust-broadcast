@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/dvb-ci.svg)](https://crates.io/crates/dvb-ci)
 [![docs.rs](https://img.shields.io/docsrs/dvb-ci)](https://docs.rs/dvb-ci)
 [![MSRV](https://img.shields.io/badge/MSRV-1.95.0-blue.svg)](https://blog.rust-lang.org/)
-[![license](https://img.shields.io/crates/l/dvb-ci.svg)](#license)
+[![license](https://img.shields.io/crates/l/dvb-ci.svg)](#licence)
 
 **DVB Common Interface (EN 50221)** — the host ↔ CICAM wire protocol, as typed Rust.
 Parses and builds the EN 50221 protocol objects across all three layers
@@ -121,6 +121,6 @@ Two runnable examples ship with the crate (`cargo run -p dvb-ci --example <name>
 and `mpeg-ts` (`Pid`). [`dvb-ci-runtime`](https://crates.io/crates/dvb-ci-runtime)
 builds the driver runtime on top of it.
 
-## MSRV and license
+## MSRV and licence
 
 MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

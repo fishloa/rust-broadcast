@@ -5,7 +5,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -349,7 +349,7 @@ impl Serialize for PartitionPack {
             });
         }
         let total = self.serialized_len();
-        need_in(buf, total, "Partition Pack")?;
+        need_out(buf, total)?;
         buf[0..16].copy_from_slice(&Self::key(self.kind, self.status));
         let batch = serialize_uid_batch(&self.essence_containers);
         let value_len = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16 + batch.len();

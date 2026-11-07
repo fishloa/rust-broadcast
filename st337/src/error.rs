@@ -12,7 +12,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// Input (on parse) or output buffer (on serialize) shorter than
+    /// Input buffer shorter than
     /// required.
     #[error("buffer too short: need {need}, have {have} ({what})")]
     BufferTooShort {
@@ -23,6 +23,16 @@ pub enum Error {
         /// What was being parsed/serialized.
         what: &'static str,
     },
+
+    /// Output buffer smaller than the serialized form requires.
+    #[error("output buffer too small: need {need}, have {have}")]
+    OutputBufferTooSmall {
+        /// Bytes required.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+
     /// `Pa` or `Pb` did not equal the fixed 16-bit-mode sync-word constant
     /// (SMPTE ST 337 Table 6, §7.2.1).
     #[error(
@@ -93,6 +103,15 @@ impl From<broadcast_common::len::BufferTooShort> for Error {
             need: e.need,
             have: e.have,
             what: e.what,
+        }
+    }
+}
+
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
         }
     }
 }

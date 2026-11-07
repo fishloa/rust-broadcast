@@ -374,6 +374,33 @@ impl HsExtMessage {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for HsExtMessage {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        HsExtMessage::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for HsExtMessage {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        HS_EXT_MESSAGE_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        if buf.len() < HS_EXT_MESSAGE_LEN {
+            return Err(crate::Error::OutputBufferTooSmall {
+                need: HS_EXT_MESSAGE_LEN,
+                have: buf.len(),
+            });
+        }
+        buf[..HS_EXT_MESSAGE_LEN].copy_from_slice(&self.to_bytes());
+        Ok(HS_EXT_MESSAGE_LEN)
+    }
+}
+
 /// `Type` (Group Type) wire values of the Group Membership Extension
 /// (§3.2.1.4).
 pub const GROUP_TYPE_UNDEFINED: u8 = 0;
@@ -511,6 +538,33 @@ impl GroupMembershipExtension {
         put_be32(&mut buf, 0, self.group_id);
         put_be32(&mut buf, 4, word1);
         buf
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for GroupMembershipExtension {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        GroupMembershipExtension::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for GroupMembershipExtension {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        GROUP_MEMBERSHIP_EXT_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        if buf.len() < GROUP_MEMBERSHIP_EXT_LEN {
+            return Err(crate::Error::OutputBufferTooSmall {
+                need: GROUP_MEMBERSHIP_EXT_LEN,
+                have: buf.len(),
+            });
+        }
+        buf[..GROUP_MEMBERSHIP_EXT_LEN].copy_from_slice(&self.to_bytes());
+        Ok(GROUP_MEMBERSHIP_EXT_LEN)
     }
 }
 

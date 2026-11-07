@@ -20,6 +20,16 @@ pub enum Error {
         /// What was being parsed.
         what: &'static str,
     },
+
+    /// Output buffer smaller than the serialized form requires.
+    #[error("output buffer too small: need {need}, have {have}")]
+    OutputBufferTooSmall {
+        /// Bytes required.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+
     /// `packet_start_code_prefix` was not `0x000001`.
     #[error("invalid packet_start_code_prefix: {0:#08X} (expected 0x000001)")]
     BadStartCode(u32),
@@ -137,5 +147,14 @@ impl From<broadcast_common::len::BufferTooShort> for Error {
 impl From<BitError> for Error {
     fn from(e: BitError) -> Self {
         Error::Bits(e)
+    }
+}
+
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
+        }
     }
 }

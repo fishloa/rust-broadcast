@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VVC reader/writer, AVS3-audio and HDR10+ serializers share `bitreader::{read_bits_checked, write_bits_checked}`; an AVS3-audio `dca3` write overrun is now `BufferTooShort` (was `InvalidInput`) (c2 M4).
 - The DASH MPD and Smooth manifest parsers share one quick-xml walker (`xml_walk`: tags, attribute decoding, subtree skipping, attribute helpers) over a small error trait (c2 H2).
 - The TS muxer uses `mpeg_pes::PACKET_START_CODE_PREFIX` instead of a private copy (c2 L3).
+- `name()` of the AAC/ESDS label types returns `&'static str` (was `&str`; compatible for callers) (c6 C6-11).
 
 ### Removed
 - `rtp::hex_decode`, `smooth_parse::hex_decode` and the `smooth_hex_decode` re-export are now crate-private; both only wrapped the `hex` crate with this crate's own error type. Use `hex::decode` (dedupe R6).

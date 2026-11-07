@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Documentation
+- README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed
 - The `live_fuzz_crash_regression` test and the `dash_client_live` fuzz target share one driver module (`tests/it/common/live_fuzz_driver.rs`) instead of a 322-line copy (c3 d:T1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).

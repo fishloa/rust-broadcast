@@ -1,7 +1,7 @@
 //! End of Display Set Segment — ETSI EN 300 743 §7.2.6, Table 28 (segment_type 0x80).
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// The end_of_display_set_segment segment_type.
@@ -46,7 +46,7 @@ impl Serialize for EndOfDisplaySetSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        need_in(buf, len, "end_of_display_set_segment serialize")?;
+        need_out(buf, len)?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
@@ -59,6 +59,17 @@ impl Serialize for EndOfDisplaySetSegment {
 mod tests {
     use super::*;
     use broadcast_common::{Parse, Serialize};
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let bytes = [0x0F, 0x80, 0x00, 0x01, 0x00, 0x00];
+        let seg = EndOfDisplaySetSegment::parse(&bytes).unwrap();
+        let mut out = [0u8; 5];
+        assert_eq!(
+            seg.serialize_into(&mut out),
+            Err(crate::Error::OutputBufferTooSmall { need: 6, have: 5 })
+        );
+    }
 
     #[test]
     fn round_trip() {

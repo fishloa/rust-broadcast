@@ -63,6 +63,6 @@ $ maturin develop          # build + install into the active virtualenv
 $ maturin build --release  # build a wheel
 ```
 
-## License
+## Licence
 
 MIT OR Apache-2.0.

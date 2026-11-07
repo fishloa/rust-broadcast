@@ -163,6 +163,26 @@ impl TeletextDataField {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for TeletextDataField {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        TeletextDataField::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for TeletextDataField {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        TeletextDataField::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        TeletextDataField::serialize_into(self, buf)
+    }
+}
+
 /// VPS data field — ETSI EN 301 775 §4.6.1, Table 6 (`data_unit_id` `0xC3`).
 ///
 /// The `vps_data_block` (13 bytes) is bytes 3..=15 of an EN 300 231 VPS line,
@@ -206,6 +226,26 @@ impl VpsDataField {
         out[0] = self.header.to_byte()?;
         out[1..1 + VPS_DATA_BLOCK_LEN].copy_from_slice(&self.vps_data_block);
         Ok(VPS_FIELD_LEN)
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for VpsDataField {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        VpsDataField::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for VpsDataField {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        VpsDataField::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        VpsDataField::serialize_into(self, buf)
     }
 }
 
@@ -288,6 +328,26 @@ impl WssDataField {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for WssDataField {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        WssDataField::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for WssDataField {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        WssDataField::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        WssDataField::serialize_into(self, buf)
+    }
+}
+
 /// Closed Captioning data field — ETSI EN 301 775 §4.8.1, Table 10
 /// (`data_unit_id` `0xC5`).
 ///
@@ -329,6 +389,26 @@ impl ClosedCaptioningDataField {
         out[0] = self.header.to_byte()?;
         out[1..3].copy_from_slice(&self.closed_captioning_data_block.to_be_bytes());
         Ok(CC_FIELD_LEN)
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for ClosedCaptioningDataField {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        ClosedCaptioningDataField::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for ClosedCaptioningDataField {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        ClosedCaptioningDataField::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        ClosedCaptioningDataField::serialize_into(self, buf)
     }
 }
 
@@ -433,6 +513,26 @@ impl<'a> MonochromeDataField<'a> {
         out[3] = self.samples.len() as u8;
         out[MONO_HEADER_LEN..total].copy_from_slice(self.samples);
         Ok(total)
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for MonochromeDataField<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        MonochromeDataField::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for MonochromeDataField<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        MonochromeDataField::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        MonochromeDataField::serialize_into(self, buf)
     }
 }
 
@@ -574,6 +674,18 @@ impl<'a> DataUnitPayload<'a> {
                 Ok(b.len())
             }
         }
+    }
+}
+
+impl broadcast_common::Serialize for DataUnitPayload<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        DataUnitPayload::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        DataUnitPayload::serialize_into(self, buf)
     }
 }
 
@@ -787,6 +899,18 @@ impl<'a> DataUnit<'a> {
     }
 }
 
+impl broadcast_common::Serialize for DataUnit<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        DataUnit::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        DataUnit::serialize_into(self, buf)
+    }
+}
+
 /// The PES data field — ETSI EN 301 775 §4.4.1, Table 1.
 ///
 /// A `data_identifier` (Table 2) followed by a sequence of [`DataUnit`]s that
@@ -849,6 +973,26 @@ impl<'a> DataField<'a> {
             off += unit.serialize_into(&mut out[off..])?;
         }
         Ok(off)
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for DataField<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        DataField::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for DataField<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        DataField::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        DataField::serialize_into(self, buf)
     }
 }
 

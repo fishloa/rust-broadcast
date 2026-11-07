@@ -1,7 +1,7 @@
 //! CLUT Definition Segment — ETSI EN 300 743 §7.2.4, Table 16 (segment_type 0x12).
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// The CLUT_definition_segment segment_type.
@@ -240,7 +240,7 @@ impl Serialize for ClutDefinitionSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        need_in(buf, len, "CLUT_definition_segment serialize")?;
+        need_out(buf, len)?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

@@ -6,7 +6,7 @@
 //! points to.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::need_out;
 
 /// Minimum bits one channel description occupies: `Plex(4)` ChannelID +
 /// `Plex(8)` AudioDataID + 3 reserved bits (SMPTE RDD 29:2019 §4.3).
@@ -278,7 +278,7 @@ impl Serialize for BedDefinition1 {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        need_in(buf, need, "BedDefinition1")?;
+        need_out(buf, need)?;
         let mut w = BitWriter::new(&mut buf[..need]);
         write_plex(&mut w, u64::from(self.meta_id), 8, "BedDefinition1.MetaID")?;
         write_reserved(

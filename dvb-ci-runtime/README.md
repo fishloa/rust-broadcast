@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/dvb-ci-runtime.svg)](https://crates.io/crates/dvb-ci-runtime)
 [![docs.rs](https://img.shields.io/docsrs/dvb-ci-runtime)](https://docs.rs/dvb-ci-runtime)
 [![MSRV](https://img.shields.io/badge/MSRV-1.95.0-blue.svg)](https://blog.rust-lang.org/)
-[![license](https://img.shields.io/crates/l/dvb-ci-runtime.svg)](#msrv-and-license)
+[![license](https://img.shields.io/crates/l/dvb-ci-runtime.svg)](#msrv-and-licence)
 
 Pure-Rust **EN 50221 DVB Common Interface driver runtime**: device I/O, the TPDU
 poll loop, SPDU session management and the per-resource state machines that drive
@@ -282,6 +282,6 @@ Depends on [`dvb-ci`](https://crates.io/crates/dvb-ci) (wire codecs, re-exported
 as `dvb_ci_runtime::dvb_ci`), `dvb-si` (PMT / CAT inputs), `mpeg-ts` and
 `broadcast-common`.
 
-## MSRV and license
+## MSRV and licence
 
 MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

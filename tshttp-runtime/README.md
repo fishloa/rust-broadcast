@@ -5,6 +5,19 @@ Sans-IO TS-over-HTTP pull session client.
 The host performs all I/O; this crate owns the session state machine, demuxing
 via `transmux::StreamingTsDemux`, backoff and stall detection.
 
+## What it does / what it does not
+
+Does: run the session state machine of a TS-over-HTTP pull (open, connect, play, stall detection, reconnect with backoff, 404/410 handling, finite-resource completion), and demux the body with `transmux::StreamingTsDemux`. The host supplies the clock (a monotonic millisecond count) and performs every HTTP request.
+
+Does not: open sockets, parse HTTP, read a clock, decrypt, or play HLS/DASH (see `hls-runtime` and `dash-runtime`). `broadcast-client` drives this crate for its TS-over-HTTP source.
+
+## Standards supported
+
+| Standard | Scope | Status |
+|---|---|---|
+| ISO/IEC 13818-1 (MPEG-2 Systems) | Transport stream demuxing, via `transmux` | Delegated |
+| RFC 9110 `Retry-After` | Server-requested reconnect delay (`set_retry_after`) | Implemented |
+
 ## Quick start
 
 ```no_run
@@ -25,6 +38,10 @@ if let Some(a) = client.poll() {
 client.on_eof(2);
 ```
 
+## What is implemented
+
+The `TsHttpClient` session and the demux-free `TsHttpPolicy` core, `Config` with its defaults, the 20-row transition table and the `Action`/`Event` stream.
+
 ## Policy core
 
 `TsHttpClient` is `TsHttpPolicy` plus a `StreamingTsDemux`. `TsHttpPolicy` is the
@@ -44,6 +61,13 @@ stall_reconnect_ms 30000, backoff_ms `[2000,4000,8000]`, backoff_cap_ms 10000, m
 
 `#![no_std]` + `alloc`; time is a caller-supplied monotonic millisecond count.
 
+## Feature flags
+
+| Feature | Default | Effect |
+|---|---|---|
+| `std` | yes | Links the standard library (`broadcast-common/std`, `transmux/std`). |
+| `serde` | no | `Serialize`/`Deserialize` on the public event and config types. |
+
 ## Transitions
 
 The full table is [`docs/tshttp-runtime/DESIGN.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/tshttp-runtime/DESIGN.md):
@@ -58,3 +82,15 @@ T20 start timeout while Opening (no response headers).
 
 `set_retry_after(ms)` raises the next reconnect wait after a failed response to at least the
 server's `Retry-After`; it is consumed by that failure and cleared by a successful response.
+
+## Design notes
+
+The full state table and the rules behind each transition are in [`docs/tshttp-runtime/DESIGN.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/tshttp-runtime/DESIGN.md).
+
+## Related crates
+
+`transmux` (the streaming TS demuxer this crate wraps), `broadcast-client` (the session that drives it), `hls-runtime` and `dash-runtime` (the other pull sources).
+
+## MSRV and licence
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

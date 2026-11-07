@@ -545,6 +545,26 @@ impl<'a> KeyMaterial<'a> {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for KeyMaterial<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        KeyMaterial::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for KeyMaterial<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        KeyMaterial::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        KeyMaterial::serialize_into(self, buf)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,7 +10,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// Input (on parse) or output buffer (on serialize) shorter than the
+    /// Input buffer shorter than the
     /// fixed 10-byte (80-bit) LTC codeword.
     #[error("buffer too short: need {need}, have {have} ({what})")]
     BufferTooShort {
@@ -21,6 +21,16 @@ pub enum Error {
         /// What was being parsed/serialized.
         what: &'static str,
     },
+
+    /// Output buffer smaller than the serialized form requires.
+    #[error("output buffer too small: need {need}, have {have}")]
+    OutputBufferTooSmall {
+        /// Bytes required.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+
     /// Bits 64–79 did not match the fixed synchronization word (§9.2.5,
     /// Table 5: bytes `0xFC 0xBF` under this crate's bit-to-byte packing —
     /// see `private/specs-verified/smpte/st12-1/st12-1.md`'s "Byte packing convention" section).
@@ -73,6 +83,15 @@ impl From<broadcast_common::len::BufferTooShort> for Error {
             need: e.need,
             have: e.have,
             what: e.what,
+        }
+    }
+}
+
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
         }
     }
 }

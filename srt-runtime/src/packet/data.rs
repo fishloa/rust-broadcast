@@ -274,6 +274,26 @@ impl<'a> DataPacket<'a> {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for DataPacket<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        DataPacket::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for DataPacket<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        DataPacket::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        DataPacket::serialize_into(self, buf)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

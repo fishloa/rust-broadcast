@@ -49,8 +49,7 @@ const PID_TDT_TOT: Pid = Pid::new(0x0014);
 /// PID 0x1FFF — Null/padding packets (ISO/IEC 13818-1 §2.4.3.3).
 const PID_NULL: Pid = Pid::new(0x1FFF);
 
-/// Sync byte value (ISO/IEC 13818-1 §2.4.3.3).
-const SYNC_BYTE: u8 = 0x47;
+use mpeg_ts::ts::TS_SYNC_BYTE as SYNC_BYTE;
 
 /// Well-known SI/PSI PIDs on which CRC-checked long-form sections appear.
 const SI_PIDS: [Pid; 7] = [

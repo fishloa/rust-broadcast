@@ -2548,7 +2548,7 @@ mod tests {
         use mpeg_ts::section::Section;
         use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
-        const TS_PACKET_SIZE: usize = 188;
+        use mpeg_ts::ts::TS_PACKET_SIZE;
         const PMT_TABLE_ID: u8 = 0x02;
 
         let mut reassemblers: HashMap<mpeg_ts::pid::Pid, SectionReassembler> = HashMap::new();

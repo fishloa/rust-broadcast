@@ -58,7 +58,7 @@ impl AccessUnit {
 /// [`Error::UnalignedInput`] if `ts` is not a multiple of 188 bytes (the
 /// caller must pre-chop to packet boundaries); nothing is parsed in that case.
 pub fn reconstruct_access_units(ts: &[u8], pids: &[Pid]) -> Result<Vec<AccessUnit>, Error> {
-    const TS_PACKET_SIZE: usize = 188;
+    use mpeg_ts::ts::TS_PACKET_SIZE;
 
     if !ts.len().is_multiple_of(TS_PACKET_SIZE) {
         return Err(Error::UnalignedInput { len: ts.len() });

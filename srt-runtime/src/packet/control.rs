@@ -532,3 +532,23 @@ impl<'a> ControlPacket<'a> {
         Ok(len)
     }
 }
+
+impl<'a> broadcast_common::Parse<'a> for ControlPacket<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        ControlPacket::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for ControlPacket<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        ControlPacket::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        ControlPacket::serialize_into(self, buf)
+    }
+}

@@ -69,11 +69,7 @@ impl CallerHandshakeState {
     }
 }
 
-impl core::fmt::Display for CallerHandshakeState {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.name())
-    }
-}
+broadcast_common::impl_spec_display!(CallerHandshakeState);
 
 /// A driveable Caller-side SRT handshake (`draft-sharabayko-srt-01` §4.3.1).
 #[derive(Debug)]

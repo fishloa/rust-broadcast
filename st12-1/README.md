@@ -106,6 +106,6 @@ top of `st291`.
 
 1.95.0
 
-## License
+## Licence
 
 MIT OR Apache-2.0

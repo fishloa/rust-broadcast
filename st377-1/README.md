@@ -131,6 +131,6 @@ Depends only on `broadcast-common`. Sibling file/bitstream crates with the same
 
 1.95.0
 
-## License
+## Licence
 
 MIT OR Apache-2.0

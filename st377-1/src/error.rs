@@ -10,7 +10,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// Input (on parse) or output buffer (on serialize) shorter than
+    /// Input buffer shorter than
     /// required.
     #[error("buffer too short: need {need}, have {have} ({what})")]
     BufferTooShort {
@@ -21,6 +21,16 @@ pub enum Error {
         /// What was being parsed/serialized.
         what: &'static str,
     },
+
+    /// Output buffer smaller than the serialized form requires.
+    #[error("output buffer too small: need {need}, have {have}")]
+    OutputBufferTooSmall {
+        /// Bytes required.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+
     /// A BER length token used the reserved "unspecified length" value
     /// (`0x80` with zero following bytes), forbidden in MXF files
     /// (`private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4).
@@ -141,6 +151,15 @@ impl From<broadcast_common::len::BufferTooShort> for Error {
             need: e.need,
             have: e.have,
             what: e.what,
+        }
+    }
+}
+
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
         }
     }
 }

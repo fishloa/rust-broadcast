@@ -2,7 +2,7 @@
 
 use broadcast_common::Parse;
 use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::audio_data_dlc::AudioDataDlc;
 use crate::bed_definition::BedDefinition1;
@@ -144,7 +144,7 @@ impl<'a> AnyElement<'a> {
         // the element's own `serialized_len`, so it is not free.
         let body_len = self.body_len();
         let need = element_header_len(self.element_id_wire(), body_len) + body_len;
-        need_in(buf, need, "AnyElement")?;
+        need_out(buf, need)?;
         write_element_header(&mut buf[..need], self.element_id_wire(), body_len)?;
         let header_len = need - body_len;
         match self {

@@ -169,7 +169,7 @@ Depends on `broadcast-common`, `ssai-runtime` (splice-point conditioning) and
   the private repo (`private/specs-verified/scte/scte35-splice/`).
 - Splice-point conditioning: [`ssai-runtime`](../ssai-runtime), issue #929.
 
-## MSRV and license
+## MSRV and licence
 
 MSRV 1.95.0. Licensed under either of
 [Apache License, Version 2.0](../LICENSE-APACHE) or

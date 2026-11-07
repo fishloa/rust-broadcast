@@ -344,6 +344,26 @@ impl<'a> EmsgBox<'a> {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for EmsgBox<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        EmsgBox::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for EmsgBox<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        EmsgBox::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        EmsgBox::serialize_into(self, buf)
+    }
+}
+
 /// The SCTE 35 scheme-URI prefix carried in `emsg.scheme_id_uri` (e.g.
 /// `urn:scte:scte35:2013:bin`), per **ANSI/SCTE 214-3 §8.3.3** for the
 /// inband form. This previously cited 214-1, which is the *MPD* carriage

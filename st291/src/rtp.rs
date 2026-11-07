@@ -13,7 +13,7 @@
 //! `parse_anc_rtp` examples).
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
@@ -408,7 +408,7 @@ impl Serialize for AncRtpPayload {
     /// any [`RtpAncPacket`].
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        need_in(buf, len, "ANC RTP payload serialize output")?;
+        need_out(buf, len)?;
         let anc_count = self.anc_count();
         if anc_count > MAX_ANC_COUNT {
             return Err(Error::FieldTooWide {
@@ -485,6 +485,20 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let p = sample_payload();
+        let need = p.serialized_len();
+        let mut out = vec![0u8; need - 1];
+        assert_eq!(
+            p.serialize_into(&mut out),
+            Err(crate::Error::OutputBufferTooSmall {
+                need,
+                have: need - 1
+            })
+        );
     }
 
     #[test]

@@ -259,9 +259,12 @@ validator that flags a conformant playlist is worse than none.
 - `no_std` + `alloc` library; the CLI, `net` and `metrics` features are std-only.
   Public enums carry `name()` and `Display`.
 
-## Related crates and license
+## Related crates
 
 Depends on `broadcast-common`, `mpeg-ts`, `transmux`, `broadcast-hls`,
 `dvb-conformance` (and `container-probe` for the CLI). Used by `compliance-probe`
-for its structural checks. Independently versioned. MSRV 1.95.0. Licensed under
-MIT OR Apache-2.0.
+for its structural checks. Independently versioned.
+
+## MSRV and licence
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

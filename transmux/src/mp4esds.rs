@@ -267,7 +267,7 @@ pub struct ObjectTypeIndication(pub u8);
 
 impl ObjectTypeIndication {
     /// Label for the object type.
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'static str {
         match self.0 {
             0x20 => "MPEG-4 Visual",
             0x21 => "AVC / H.264",
@@ -310,7 +310,7 @@ pub struct StreamType(pub u8);
 
 impl StreamType {
     /// Label for the stream type.
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'static str {
         match self.0 {
             0x01 => "ObjectDescriptorStream",
             0x02 => "ClockReferenceStream",

@@ -10,7 +10,7 @@
 //! descriptors", §4.1.2.1).
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 /// `stream_type` for the ANC data ES in the PMT — `0x06` (PES private data),
 /// ST 2038 §4.1.1.
@@ -83,7 +83,7 @@ impl<'a> AncDataDescriptor<'a> {
     /// if the body exceeds the 8-bit `descriptor_length`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        need_in(buf, len, "anc_data_descriptor serialize output")?;
+        need_out(buf, len)?;
         if self.inner_descriptors.len() > 0xFF {
             return Err(Error::FieldTooWide {
                 what: "descriptor_length",
@@ -108,6 +108,20 @@ mod tests {
     fn vanc_identifier_is_ascii() {
         assert_eq!(VANC_FORMAT_IDENTIFIER.to_be_bytes(), *b"VANC");
         assert_eq!(VANC_FORMAT_IDENTIFIER_BYTES, *b"VANC");
+    }
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let b = [ANC_DATA_DESCRIPTOR_TAG, 0x03, 0xAA, 0xBB, 0xCC];
+        let d = AncDataDescriptor::parse(&b).unwrap();
+        let mut out = vec![0u8; b.len() - 1];
+        assert_eq!(
+            d.serialize_into(&mut out),
+            Err(Error::OutputBufferTooSmall {
+                need: b.len(),
+                have: b.len() - 1
+            })
+        );
     }
 
     #[test]
