@@ -127,7 +127,7 @@ Examples: `cargo run -p dvb-t2mi --example parse_header` and `--example pump_cap
   `Serialize` and round-trip tests; `tests/it/chain.rs` runs a synthetic T2-MI ->
   BBFrame -> inner TS -> SI chain.
 - **RFU policy (stricter than the workspace default, documented):** payload
-  parsers reject non-zero reserved (RFU) bits with `ReservedBitsViolation` and
+  parsers reject non-zero reserved (RFU) bits with `Error::ReservedBits` (field, expected, found) and
   serialize them as 0. The one exception is individual addressing (0x21), which
   preserves its leading RFU byte verbatim so gateway streams round-trip
   byte-exactly.

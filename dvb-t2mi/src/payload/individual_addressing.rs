@@ -823,29 +823,8 @@ fn try_parse_typed_body(
 /// and written, so a value that does not fit is rejected instead of silently
 /// wrapped (see `private/specs-verified/dvb/dvb-t2mi/`).
 fn check_bits(value: u64, bits: u32, field: &'static str) -> Result<(), crate::error::Error> {
-    broadcast_common::len::fit_bits(value, bits, field)
-        .map(|_| ())
-        .map_err(|_| crate::Error::ReservedBitsViolation {
-            field,
-            reason: range_reason(bits),
-        })
-}
-
-/// Static "why" text for [`check_bits`], keyed by field width — every width
-/// this module's bit-packed bodies actually use.
-const fn range_reason(bits: u32) -> &'static str {
-    match bits {
-        3 => "Must be in range 0..=7 (3-bit field)",
-        4 => "Must be in range 0..=15 (4-bit field)",
-        5 => "Must be in range 0..=31 (5-bit field)",
-        7 => "Must be in range 0..=127 (7-bit field)",
-        10 => "Must be in range 0..=1023 (10-bit field)",
-        12 => "Must be in range 0..=4095 (12-bit field)",
-        14 => "Must be in range 0..=16383 (14-bit field)",
-        20 => "Must be in range 0..=1048575 (20-bit field)",
-        24 => "Must be in range 0..=16777215 (24-bit field)",
-        _ => "value exceeds field width",
-    }
+    broadcast_common::len::fit_bits(value, bits, field)?;
+    Ok(())
 }
 
 fn serialize_time_offset(body: &TimeOffsetBody, buf: &mut [u8]) {
@@ -857,10 +836,13 @@ fn serialize_frequency_offset(
     buf: &mut [u8],
 ) -> Result<(), crate::error::Error> {
     if !(FREQUENCY_OFFSET_MIN..=FREQUENCY_OFFSET_MAX).contains(&body.frequency_offset) {
-        return Err(crate::Error::ReservedBitsViolation {
-            field: "frequency_offset",
-            reason: "Must be in range -8388608..=8388607 (24-bit signed field)",
-        });
+        return Err(crate::Error::InvalidValue(
+            broadcast_common::error::InvalidValue {
+                field: "frequency_offset",
+                value: i64::from(body.frequency_offset).cast_unsigned(),
+                reason: "outside -8388608..=8388607 (24-bit signed field; value shown as two's-complement i64)",
+            },
+        ));
     }
     let be = body.frequency_offset.to_be_bytes();
     buf[..FREQUENCY_OFFSET_BODY_LEN].copy_from_slice(&be[1..]);
@@ -1272,10 +1254,13 @@ impl Serialize for IndividualAddressingPayload<'_> {
         need_out(buf, total)?;
 
         if data_len > u8::MAX as usize {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "individual_addressing_length",
-                reason: "transmitter loop exceeds 255 bytes (8-bit length field)",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "individual_addressing_length",
+                    value: data_len as u64,
+                    max: u64::from(u8::MAX),
+                },
+            ));
         }
 
         // Validate every entry before writing a byte: tag and body must agree,
@@ -1292,10 +1277,13 @@ impl Serialize for IndividualAddressingPayload<'_> {
         for tx in &self.transmitters {
             let func_loop_len: usize = tx.functions.iter().map(function_entry_serialized_len).sum();
             if func_loop_len > u8::MAX as usize {
-                return Err(crate::Error::ReservedBitsViolation {
-                    field: "function_loop_length",
-                    reason: "function loop exceeds 255 bytes (8-bit length field)",
-                });
+                return Err(crate::Error::FieldOverflow(
+                    broadcast_common::len::FieldOverflow {
+                        field: "function_loop_length",
+                        value: func_loop_len as u64,
+                        max: u64::from(u8::MAX),
+                    },
+                ));
             }
 
             buf[pos] = (tx.transmitter_id >> 8) as u8;
@@ -1307,11 +1295,7 @@ impl Serialize for IndividualAddressingPayload<'_> {
                 let body_len = body_serialized_len(&func.body);
                 // function_length counts the whole function() incl. its header.
                 let function_length =
-                    broadcast_common::len::fit_u8(FUNC_HEADER_LEN + body_len, "function_length")
-                        .map_err(|_| crate::Error::ReservedBitsViolation {
-                            field: "function_length",
-                            reason: "function exceeds 255 bytes (8-bit length field)",
-                        })?;
+                    broadcast_common::len::fit_u8(FUNC_HEADER_LEN + body_len, "function_length")?;
 
                 buf[pos] = func.tag;
                 buf[pos + 1] = function_length;
@@ -1785,12 +1769,13 @@ mod tests {
         };
         let mut buf = vec![0u8; payload.serialized_len()];
         let result = payload.serialize_into(&mut buf);
-        assert!(
-            matches!(
-                result.unwrap_err(),
-                crate::Error::ReservedBitsViolation { .. }
-            ),
-            "expected ReservedBitsViolation for overflowing length field"
+        assert_eq!(
+            result.unwrap_err(),
+            crate::Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "individual_addressing_length",
+                value: 303,
+                max: 255
+            })
         );
     }
 
@@ -1819,10 +1804,16 @@ mod tests {
             rfu: false,
         };
         let mut buf = [0u8; ACE_PAPR_BODY_LEN];
-        assert!(matches!(
+        assert_eq!(
             serialize_ace_papr(&body, &mut buf),
-            Err(crate::Error::ReservedBitsViolation { .. })
-        ));
+            Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "ace_gain",
+                    value: 32,
+                    max: 31
+                }
+            ))
+        );
     }
 
     #[test]
@@ -1849,10 +1840,16 @@ mod tests {
             number_of_iterations: 0,
         };
         let mut buf = [0u8; TR_PAPR_BODY_LEN];
-        assert!(matches!(
+        assert_eq!(
             serialize_tr_papr(&body, &mut buf),
-            Err(crate::Error::ReservedBitsViolation { .. })
-        ));
+            Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "tr_clipping_threshold",
+                    value: 4096,
+                    max: 4095
+                }
+            ))
+        );
     }
 
     #[test]
@@ -1865,10 +1862,16 @@ mod tests {
             rfu: 0,
         };
         let mut buf = [0u8; FREQUENCY_BODY_LEN];
-        assert!(matches!(
+        assert_eq!(
             serialize_frequency(&body, &mut buf),
-            Err(crate::Error::ReservedBitsViolation { .. })
-        ));
+            Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "rf_idx",
+                    value: 8,
+                    max: 7
+                }
+            ))
+        );
     }
 
     #[test]
@@ -1972,12 +1975,9 @@ mod tests {
         }
     }
 
-    fn assert_serialize_rejected(p: &IndividualAddressingPayload<'_>) {
+    fn assert_serialize_rejected(p: &IndividualAddressingPayload<'_>, expected: crate::Error) {
         let mut buf = vec![0u8; p.serialized_len()];
-        assert!(matches!(
-            p.serialize_into(&mut buf),
-            Err(crate::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(p.serialize_into(&mut buf), Err(expected));
     }
 
     #[test]
@@ -2020,7 +2020,14 @@ mod tests {
                 0x01,
                 FunctionBody::FrequencyOffset(FrequencyOffsetBody::new(bad)),
             );
-            assert_serialize_rejected(&p);
+            assert_serialize_rejected(
+                &p,
+                crate::Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "frequency_offset",
+                    value: i64::from(bad).cast_unsigned(),
+                    reason: "outside -8388608..=8388607 (24-bit signed field; value shown as two's-complement i64)",
+                }),
+            );
         }
     }
 
@@ -2081,7 +2088,14 @@ mod tests {
     fn cell_id_oversized_rfu_is_rejected() {
         let mut body = CellIdBody::new(1, false);
         body.rfu = 0x80;
-        assert_serialize_rejected(&single(0x04, FunctionBody::CellId(body)));
+        assert_serialize_rejected(
+            &single(0x04, FunctionBody::CellId(body)),
+            crate::Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "cell_id reserved_future_use",
+                value: 128,
+                max: 127,
+            }),
+        );
     }
 
     #[test]
@@ -2120,10 +2134,17 @@ mod tests {
 
     #[test]
     fn bandwidth_oversized_ch_bandwidth_is_rejected() {
-        assert_serialize_rejected(&single(
-            0x06,
-            FunctionBody::Bandwidth(BandwidthBody::new(128, false)),
-        ));
+        assert_serialize_rejected(
+            &single(
+                0x06,
+                FunctionBody::Bandwidth(BandwidthBody::new(128, false)),
+            ),
+            crate::Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "ch_bandwidth",
+                value: 128,
+                max: 127,
+            }),
+        );
     }
 
     #[test]

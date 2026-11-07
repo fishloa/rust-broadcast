@@ -136,10 +136,13 @@ impl<'a> broadcast_common::Parse<'a> for Header {
 
         // byte 2 [3] = rfu — spec says must be 0
         if hdr[2] & BYTE2_RFU_MASK != 0 {
-            return Err(Error::ReservedBitsViolation {
-                field: "byte 2 bit 3",
-                reason: "RFU must be zero (ETSI TS 102 773 §5.1)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 2 bit 3",
+                    expected: 0,
+                    found: u64::from(hdr[2] & BYTE2_RFU_MASK),
+                },
+            ));
         }
 
         // byte 2 [2:0] = t2mi_stream_id
@@ -147,10 +150,13 @@ impl<'a> broadcast_common::Parse<'a> for Header {
 
         // byte 3 = rfu — spec says must be 0
         if hdr[3] != 0 {
-            return Err(Error::ReservedBitsViolation {
-                field: "byte 3",
-                reason: "All 8 RFU bits must be zero (ETSI TS 102 773 §5.1)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 3",
+                    expected: 0,
+                    found: u64::from(hdr[3]),
+                },
+            ));
         }
 
         let payload_len_bits = u16::from_be_bytes([hdr[4], hdr[5]]);
@@ -242,21 +248,25 @@ impl broadcast_common::Serialize for Header {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        use super::error::Error;
-
         need_out(buf, HEADER_LEN)?;
 
         if self.t2mi_stream_id > T2MI_STREAM_ID_MASK {
-            return Err(Error::ReservedBitsViolation {
-                field: "t2mi_stream_id",
-                reason: "Must be in range 0..=7 (3-bit field)",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "t2mi_stream_id",
+                    value: u64::from(self.t2mi_stream_id),
+                    max: u64::from(T2MI_STREAM_ID_MASK),
+                },
+            ));
         }
         if self.superframe_idx > SUPERFRAME_IDX_MAX {
-            return Err(Error::ReservedBitsViolation {
-                field: "superframe_idx",
-                reason: "Must be in range 0..=15 (4-bit field)",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "superframe_idx",
+                    value: u64::from(self.superframe_idx),
+                    max: u64::from(SUPERFRAME_IDX_MAX),
+                },
+            ));
         }
 
         buf[0] = self.packet_type.into();
@@ -396,10 +406,14 @@ mod tests {
         // byte 2 bit 3 (0x08) is rfu — must be 0
         let buf = [0x00u8, 0x00, 0x08, 0x00, 0x00, 0x08];
         let result = Header::parse(&buf);
-        assert!(matches!(
+        assert_eq!(
             result.unwrap_err(),
-            crate::Error::ReservedBitsViolation { .. }
-        ));
+            crate::Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "byte 2 bit 3",
+                expected: 0,
+                found: 8
+            })
+        );
     }
 
     #[test]
@@ -408,10 +422,13 @@ mod tests {
         let result = Header::parse(&buf);
         assert_eq!(
             result.err(),
-            Some(crate::Error::ReservedBitsViolation {
-                field: "byte 3",
-                reason: "All 8 RFU bits must be zero (ETSI TS 102 773 §5.1)"
-            })
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 3",
+                    expected: 0,
+                    found: 1
+                }
+            ))
         );
     }
 
@@ -518,10 +535,13 @@ mod tests {
         let result = hdr.serialize_into(&mut buf);
         assert_eq!(
             result.err(),
-            Some(crate::Error::ReservedBitsViolation {
-                field: "t2mi_stream_id",
-                reason: "Must be in range 0..=7 (3-bit field)"
-            })
+            Some(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "t2mi_stream_id",
+                    value: 8,
+                    max: 7
+                }
+            ))
         );
     }
 
@@ -537,10 +557,16 @@ mod tests {
             payload_len_bits: 0,
         };
         let mut buf = [0u8; HEADER_LEN];
-        assert!(matches!(
-            hdr.serialize_into(&mut buf),
-            Err(crate::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            hdr.serialize_into(&mut buf).err(),
+            Some(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "superframe_idx",
+                    value: 16,
+                    max: 15
+                }
+            ))
+        );
     }
 
     #[test]

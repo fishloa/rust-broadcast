@@ -46,10 +46,15 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
 
         // RFU: bytes 3-4 (16 bits) + byte 5 top 2 bits = 18 bits total, must be 0
         if hdr[3] != 0 || hdr[4] != 0 || (hdr[5] & 0xC0 != 0) {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "18-bit RFU",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.3)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "18-bit RFU",
+                    expected: 0,
+                    found: (u64::from(hdr[3]) << 10)
+                        | (u64::from(hdr[4]) << 2)
+                        | u64::from(hdr[5] >> 6),
+                },
+            ));
         }
 
         // start_cell_address: byte 5 bottom 6 bits + bytes 6-7 = 22 bits
@@ -81,10 +86,13 @@ impl Serialize for ArbitraryCellsPayload<'_> {
         need_out(buf, self.serialized_len())?;
 
         if self.start_cell_address > CELL_ADDR_MASK {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "start_cell_address",
-                reason: "Must fit in 22 bits",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "start_cell_address",
+                    value: u64::from(self.start_cell_address),
+                    max: u64::from(CELL_ADDR_MASK),
+                },
+            ));
         }
 
         buf[0] = self.frame_idx;
@@ -135,20 +143,32 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu_byte_3() {
         let buf = [0x00u8, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00];
-        assert!(matches!(
-            &(ArbitraryCellsPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            ArbitraryCellsPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "18-bit RFU",
+                    expected: 0,
+                    found: 1024
+                }
+            ))
+        );
     }
 
     #[test]
     fn parse_rejects_nonzero_rfu_byte_5_high_bits() {
         let mut buf = [0x00u8; 8];
         buf[5] = 0xC0; // top 2 bits set = RFU violation
-        assert!(matches!(
-            &(ArbitraryCellsPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            ArbitraryCellsPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "18-bit RFU",
+                    expected: 0,
+                    found: 3
+                }
+            ))
+        );
     }
 
     #[test]

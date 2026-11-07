@@ -65,17 +65,23 @@ impl<'a> Parse<'a> for FefCompositePayload {
 
         // byte 1 [7]: rfu1 — must be 0
         if hdr[1] & 0x80 != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "byte 1 [7] rfu1",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.11)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 1 [7] rfu1",
+                    expected: 0,
+                    found: u64::from(hdr[1] >> 7),
+                },
+            ));
         }
         // bytes 2-5: 32-bit rfu2 — must be 0
         if hdr[2] != 0 || hdr[3] != 0 || hdr[4] != 0 || hdr[5] != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "32-bit RFU (rfu2)",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.11)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "32-bit RFU (rfu2)",
+                    expected: 0,
+                    found: u64::from(u32::from_be_bytes([hdr[2], hdr[3], hdr[4], hdr[5]])),
+                },
+            ));
         }
 
         Ok(FefCompositePayload {
@@ -103,10 +109,13 @@ impl Serialize for FefCompositePayload {
         need_out(buf, self.serialized_len())?;
 
         if self.s2_field > 0x0F {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "s2_field",
-                reason: "Must fit in 4 bits",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "s2_field",
+                    value: u64::from(self.s2_field),
+                    max: 0x0F,
+                },
+            ));
         }
 
         buf[0] = self.fef_idx;
@@ -151,10 +160,16 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu1() {
         let buf = [0x00u8, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-        assert!(matches!(
-            &(FefCompositePayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            FefCompositePayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 1 [7] rfu1",
+                    expected: 0,
+                    found: 1
+                }
+            ))
+        );
     }
 
     #[test]
@@ -162,10 +177,13 @@ mod tests {
         let buf = [0x00u8, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00];
         assert_eq!(
             FefCompositePayload::parse(&buf).err(),
-            Some(crate::Error::ReservedBitsViolation {
-                field: "32-bit RFU (rfu2)",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.11)"
-            })
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "32-bit RFU (rfu2)",
+                    expected: 0,
+                    found: 16_777_216
+                }
+            ))
         );
     }
 
