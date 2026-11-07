@@ -58,7 +58,6 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use transmux::TrackId;
 
-use broadcast_auth::Credentials;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use media_plane::ingress::{
     Dialer, HandshakePolicy, IngestSession, ProgramId, SessionEvent, run_dial,
@@ -81,8 +80,7 @@ use crate::source::http_auth::{
     ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
     scope_credentials, strip_userinfo,
 };
-use crate::source::pull_target::PullTarget;
-use crate::source::{IngestTimeouts, Source};
+use crate::source::pull_target::{PullKind, PullRoute};
 
 /// The synthesized per-stream init segment's `mvhd` timescale — arbitrary
 /// (ISO/IEC 14496-12 §8.2.2). Reuses [`transmux::VIDEO_CLOCK_RATE`] purely so
@@ -122,42 +120,15 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// A remote MS-SSTR client Manifest to pull: its URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
 /// `crate::config::InputSpec::validate`).
-#[derive(Clone)]
-pub struct SmoothPullRoute {
-    target: PullTarget,
-}
+pub type SmoothPullRoute = PullRoute<SmoothPullKind>;
 
-impl std::fmt::Debug for SmoothPullRoute {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.target.debug(f, "SmoothPullRoute", &[])
-    }
-}
+/// The [`PullKind`] of a [`SmoothPullRoute`].
+#[derive(Debug, Clone, Copy)]
+pub struct SmoothPullKind;
 
-impl SmoothPullRoute {
-    /// Build a route descriptor. `url` is the client Manifest URL to pull.
-    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
-        SmoothPullRoute {
-            target: PullTarget::new(name, url),
-        }
-    }
-
-    #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.target = self.target.with_timeouts(timeouts);
-        self
-    }
-
-    #[must_use]
-    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.target = self.target.with_auth(auth);
-        self
-    }
-}
-
-impl Source for SmoothPullRoute {
-    fn stream_name(&self) -> &str {
-        &self.target.name
-    }
+impl PullKind for SmoothPullKind {
+    const ROUTE: &'static str = "SmoothPullRoute";
+    type Extra = ();
 }
 
 /// Identifies one selected `StreamIndex` by its position in this session's
@@ -1114,6 +1085,7 @@ pub async fn run_smooth_pull(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::IngestTimeouts;
     use axum::Router;
     use axum::extract::{Path as AxumPath, State};
     use axum::http::StatusCode as AxumStatusCode;

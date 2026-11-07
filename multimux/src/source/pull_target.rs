@@ -53,3 +53,77 @@ impl PullTarget {
         d.finish()
     }
 }
+
+/// Names a kind of pull route and carries its route-specific option.
+pub trait PullKind {
+    /// The route's name in `Debug` output.
+    const ROUTE: &'static str;
+    /// A route-specific option set by a builder method on the concrete route.
+    type Extra: Clone + Default;
+    /// `Debug` fields contributed by [`PullKind::Extra`].
+    fn debug_extra(_extra: &Self::Extra) -> Vec<(&'static str, &dyn std::fmt::Debug)> {
+        Vec::new()
+    }
+}
+
+/// A pull route: a [`PullTarget`] of one [`PullKind`]. [`RtspRoute`],
+/// [`TsHttpRoute`], [`HlsPullRoute`], [`SmoothPullRoute`] and
+/// [`DashPullRoute`] are this type under their kind.
+///
+/// [`RtspRoute`]: crate::source::rtsp::RtspRoute
+/// [`TsHttpRoute`]: crate::source::ts_http::TsHttpRoute
+/// [`HlsPullRoute`]: crate::source::hls_pull::HlsPullRoute
+/// [`SmoothPullRoute`]: crate::source::smooth_pull::SmoothPullRoute
+/// [`DashPullRoute`]: crate::source::dash_pull::DashPullRoute
+pub struct PullRoute<K: PullKind> {
+    pub(crate) target: PullTarget,
+    pub(crate) extra: K::Extra,
+}
+
+impl<K: PullKind> Clone for PullRoute<K> {
+    fn clone(&self) -> Self {
+        Self {
+            target: self.target.clone(),
+            extra: self.extra.clone(),
+        }
+    }
+}
+
+/// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
+/// origin's `user:pass@` userinfo, so it must never render verbatim; `auth`
+/// (if present) carries a raw password/token, also never rendered verbatim.
+impl<K: PullKind> std::fmt::Debug for PullRoute<K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.target.debug(f, K::ROUTE, &K::debug_extra(&self.extra))
+    }
+}
+
+impl<K: PullKind> PullRoute<K> {
+    /// Build a route descriptor for the source at `url`.
+    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            target: PullTarget::new(name, url),
+            extra: K::Extra::default(),
+        }
+    }
+
+    /// Overrides the default [`IngestTimeouts`].
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+        self.target = self.target.with_timeouts(timeouts);
+        self
+    }
+
+    /// Attaches config-supplied credentials, overriding any URL userinfo.
+    #[must_use]
+    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
+        self.target = self.target.with_auth(auth);
+        self
+    }
+}
+
+impl<K: PullKind> crate::source::Source for PullRoute<K> {
+    fn stream_name(&self) -> &str {
+        &self.target.name
+    }
+}

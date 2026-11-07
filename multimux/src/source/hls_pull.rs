@@ -66,7 +66,6 @@ use std::time::Duration;
 #[cfg(test)]
 use transmux::TrackId;
 
-use broadcast_auth::Credentials;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use hls_runtime::client::{Action, HlsClient, KeyId, Output as HlsOutput, ResourceId};
 use media_plane::ingress::{
@@ -84,8 +83,7 @@ use crate::source::http_auth::{
     ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
     scope_credentials, strip_userinfo,
 };
-use crate::source::pull_target::PullTarget;
-use crate::source::{IngestTimeouts, Source};
+use crate::source::pull_target::{PullKind, PullRoute};
 
 /// How long a `run_*_pull` drive loop parks when its session has, momentarily,
 /// neither an outbound request queued nor a fetch in flight — and has not
@@ -219,48 +217,15 @@ fn playlist_fetch(
 /// A remote (LL-)HLS Media Playlist to pull: its URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
 /// `crate::config::InputSpec::validate`).
-#[derive(Clone)]
-pub struct HlsPullRoute {
-    target: PullTarget,
-}
+pub type HlsPullRoute = PullRoute<HlsPullKind>;
 
-/// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
-/// origin's `user:pass@` userinfo, so it must never render verbatim; `auth`
-/// (if present) carries a raw password/token, also never rendered verbatim.
-impl std::fmt::Debug for HlsPullRoute {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.target.debug(f, "HlsPullRoute", &[])
-    }
-}
+/// The [`PullKind`] of a [`HlsPullRoute`].
+#[derive(Debug, Clone, Copy)]
+pub struct HlsPullKind;
 
-impl HlsPullRoute {
-    /// Build a route descriptor. `url` is the target Media Playlist URL (not
-    /// a Multivariant Playlist — this pulls one rendition directly).
-    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
-        HlsPullRoute {
-            target: PullTarget::new(name, url),
-        }
-    }
-
-    /// Overrides the default [`IngestTimeouts`].
-    #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.target = self.target.with_timeouts(timeouts);
-        self
-    }
-
-    /// Attaches config-supplied credentials, overriding any URL userinfo.
-    #[must_use]
-    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.target = self.target.with_auth(auth);
-        self
-    }
-}
-
-impl Source for HlsPullRoute {
-    fn stream_name(&self) -> &str {
-        &self.target.name
-    }
+impl PullKind for HlsPullKind {
+    const ROUTE: &'static str = "HlsPullRoute";
+    type Extra = ();
 }
 
 /// This session's own request/response identity — see the module doc's
@@ -808,7 +773,9 @@ mod tests {
     }
 
     use super::*;
+    use crate::source::IngestTimeouts;
     use crate::testutil::MockAuthScheme;
+    use broadcast_auth::Credentials;
     use broadcast_hls::{MediaPlaylist, MediaSegment};
     use media_plane::ingress::HealthState;
     use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};

@@ -73,61 +73,27 @@ use reqwest::Client;
 use tshttp_runtime::{Action, Config as PolicyConfig, Event as PolicyEvent, TsHttpPolicy};
 use url::Url;
 
-use broadcast_auth::Credentials;
-
 use crate::error::{MultimuxError, Result};
+use crate::source::IngestTimeouts;
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
-use crate::source::pull_target::PullTarget;
+use crate::source::pull_target::{PullKind, PullRoute};
 use crate::source::ts_program::TsIngestSession;
-use crate::source::{IngestTimeouts, Source};
 
 /// An MPEG-2 TS-over-HTTP route: an `http(s)://` URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
 /// `crate::config::InputSpec::validate`). Replaces the old (pre-5a)
 /// `TsHttpSource`; [`run_ts_http`] is the new drive loop.
-#[derive(Clone)]
-pub struct TsHttpRoute {
-    target: PullTarget,
-}
+pub type TsHttpRoute = PullRoute<TsHttpKind>;
 
-/// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
-/// origin's `user:pass@` userinfo, so it must never render verbatim; `auth`
-/// (if present) carries a raw password/token, also never rendered verbatim.
-impl std::fmt::Debug for TsHttpRoute {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.target.debug(f, "TsHttpRoute", &[])
-    }
-}
+/// The [`PullKind`] of a [`TsHttpRoute`].
+#[derive(Debug, Clone, Copy)]
+pub struct TsHttpKind;
 
-impl TsHttpRoute {
-    /// Build a route descriptor.
-    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
-        TsHttpRoute {
-            target: PullTarget::new(name, url),
-        }
-    }
-
-    /// Overrides the default [`IngestTimeouts`].
-    #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.target = self.target.with_timeouts(timeouts);
-        self
-    }
-
-    /// Attaches config-supplied credentials, overriding any URL userinfo.
-    #[must_use]
-    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.target = self.target.with_auth(auth);
-        self
-    }
-}
-
-impl Source for TsHttpRoute {
-    fn stream_name(&self) -> &str {
-        &self.target.name
-    }
+impl PullKind for TsHttpKind {
+    const ROUTE: &'static str = "TsHttpRoute";
+    type Extra = ();
 }
 
 /// Constructs a [`TsIngestSession`] — performs **no I/O** (see the module
@@ -496,6 +462,7 @@ mod tests {
     use axum::body::Body;
     use axum::response::{IntoResponse, Response as AxumResponse};
     use axum::routing::get;
+    use broadcast_auth::Credentials;
     use media_plane::ingress::{HealthState, ProgramId};
 
     /// Starts a tiny axum server streaming `body` in fixed-size chunks (a
