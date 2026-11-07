@@ -24,6 +24,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s implemented for the Content Control resource
@@ -75,13 +76,7 @@ impl<'a> Parse<'a> for CcPinReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::CC_PIN_REPLY, "cc_PIN_reply")?;
-        if body.len() < CC_PIN_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: CC_PIN_REPLY_BODY,
-                have: body.len(),
-                what: "cc_PIN_reply",
-            });
-        }
+        need_in(body, CC_PIN_REPLY_BODY, "cc_PIN_reply")?;
         crate::objects::reject_trailing_body(body, CC_PIN_REPLY_BODY, "cc_PIN_reply")?;
         let lts_bound = body[0] & LTS_BOUND_FLAG_BIT != 0;
         let lts_id = if lts_bound { Some(body[1]) } else { None };
@@ -186,13 +181,7 @@ impl<'a> Parse<'a> for CcPinEvent {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::CC_PIN_EVENT, "cc_PIN_event")?;
-        if body.len() < CC_PIN_EVENT_BODY {
-            return Err(Error::BufferTooShort {
-                need: CC_PIN_EVENT_BODY,
-                have: body.len(),
-                what: "cc_PIN_event",
-            });
-        }
+        need_in(body, CC_PIN_EVENT_BODY, "cc_PIN_event")?;
         crate::objects::reject_trailing_body(body, CC_PIN_EVENT_BODY, "cc_PIN_event")?;
         // Layout (Table 8): LTS_id(1) program_number(2) PINcode_status(1)
         // rating(1) pin_event_time_utc(5) pin_event_time_centiseconds(1)
@@ -461,23 +450,11 @@ impl<'a> SacMessage<'a> {
     pub fn parse(mut body: &'a [u8]) -> Result<Self> {
         let mut datatypes = Vec::new();
         while !body.is_empty() {
-            if body.len() < SAC_DATATYPE_HEADER {
-                return Err(Error::BufferTooShort {
-                    need: SAC_DATATYPE_HEADER,
-                    have: body.len(),
-                    what: "SAC datatype header",
-                });
-            }
+            need_in(body, SAC_DATATYPE_HEADER, "SAC datatype header")?;
             let datatype_id = DatatypeId::from_u8(body[0]);
             let len = u16::from_be_bytes([body[1], body[2]]) as usize;
             let end = SAC_DATATYPE_HEADER + len;
-            if body.len() < end {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: body.len(),
-                    what: "SAC datatype value",
-                });
-            }
+            need_in(body, end, "SAC datatype value")?;
             datatypes.push(SacDatatype {
                 datatype_id,
                 value: &body[SAC_DATATYPE_HEADER..end],
@@ -496,12 +473,7 @@ impl<'a> SacMessage<'a> {
     /// Serialize the datatype loop into `buf`, returning the bytes written.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         let mut pos = 0;
         for dt in &self.datatypes {
             let value_len =

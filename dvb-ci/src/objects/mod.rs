@@ -9,6 +9,7 @@
 use crate::error::{Error, Result};
 use crate::length::{self, LengthForm};
 use crate::tag::ApduTag;
+use broadcast_common::len::need_out;
 
 pub mod application_info;
 pub mod ca_info;
@@ -107,12 +108,7 @@ pub(crate) fn write_apdu_header(
     buf: &mut [u8],
 ) -> Result<usize> {
     let total = apdu_len(body_len, form);
-    if buf.len() < total {
-        return Err(Error::OutputBufferTooSmall {
-            need: total,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, total)?;
     buf[..3].copy_from_slice(&tag.to_bytes());
     let n = length::encode_with(body_len, form, &mut buf[3..])?;
     Ok(3 + n)

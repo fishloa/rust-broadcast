@@ -13,6 +13,7 @@
 //! The indefinite-length ASN.1 form is NOT used.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 
 /// The `size_indicator` bit (the MSB of the first `length_field` byte): set when
 /// the field is the multi-byte form.
@@ -105,13 +106,7 @@ pub fn decode_form(bytes: &[u8]) -> Result<(usize, usize, LengthForm)> {
             "length_field_size exceeds 4 length octets",
         ));
     }
-    if bytes.len() < 1 + n {
-        return Err(Error::BufferTooShort {
-            need: 1 + n,
-            have: bytes.len(),
-            what: "length_field (long form)",
-        });
-    }
+    need_in(bytes, 1 + n, "length_field (long form)")?;
     let mut value = 0usize;
     for &b in &bytes[1..1 + n] {
         value = (value << 8) | b as usize;
@@ -202,12 +197,7 @@ pub fn encode_with(value: usize, form: LengthForm, buf: &mut [u8]) -> Result<usi
         ));
     }
     let need = 1 + n;
-    if buf.len() < need {
-        return Err(Error::OutputBufferTooSmall {
-            need,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, need)?;
     buf[0] = SIZE_INDICATOR_MASK | octets;
     for (i, slot) in buf[1..need].iter_mut().enumerate() {
         let shift = 8 * (n - 1 - i);
@@ -225,12 +215,7 @@ pub fn encode_into(value: usize, buf: &mut [u8]) -> Result<usize> {
     if value > 0xFFFF {
         return Err(Error::LengthTooLarge(value));
     }
-    if buf.len() < need {
-        return Err(Error::OutputBufferTooSmall {
-            need,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, need)?;
     if value < 0x80 {
         buf[0] = value as u8;
     } else if value <= 0xFF {

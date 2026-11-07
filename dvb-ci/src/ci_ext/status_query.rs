@@ -22,6 +22,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Status Query (Tables 37-41).
@@ -185,13 +186,7 @@ macro_rules! status_item_object {
             type Error = Error;
             fn parse(bytes: &'a [u8]) -> Result<Self> {
                 let (length_form, body) = objects::parse_apdu_header(bytes, $tag, $what)?;
-                if body.len() < STATUS_ITEM_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: STATUS_ITEM_LEN,
-                        have: body.len(),
-                        what: $what,
-                    });
-                }
+                need_in(body, STATUS_ITEM_LEN, $what)?;
                 objects::reject_trailing_body(body, STATUS_ITEM_LEN, $what)?;
                 let raw = read_u32(body);
                 Ok(Self {
@@ -252,13 +247,7 @@ impl<'a> Parse<'a> for StatusAck<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = objects::parse_apdu_header(bytes, tag::STATUS_ACK, "StatusAck")?;
-        if body.len() < STATUS_ITEM_LEN {
-            return Err(Error::BufferTooShort {
-                need: STATUS_ITEM_LEN,
-                have: body.len(),
-                what: "StatusAck",
-            });
-        }
+        need_in(body, STATUS_ITEM_LEN, "StatusAck")?;
         Ok(Self {
             length_form,
             status_item: StatusItem::from_u32(read_u32(body)),
@@ -334,69 +323,33 @@ pub struct SelectionInformation<'a> {
 impl<'a> Parse<'a> for SelectionInformation<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < SELECTION_TIME_LEN {
-            return Err(Error::BufferTooShort {
-                need: SELECTION_TIME_LEN,
-                have: body.len(),
-                what: "SelectionInformation.time",
-            });
-        }
+        need_in(body, SELECTION_TIME_LEN, "SelectionInformation.time")?;
         let time = &body[..SELECTION_TIME_LEN];
         let mut rest = &body[SELECTION_TIME_LEN..];
         let mut ports = Vec::new();
         while !rest.is_empty() {
             // in_port_id(1) + length_in_signal_desc(1).
-            if rest.len() < 2 {
-                return Err(Error::BufferTooShort {
-                    need: 2,
-                    have: rest.len(),
-                    what: "SelectionInformation.in_port",
-                });
-            }
+            need_in(rest, 2, "SelectionInformation.in_port")?;
             let in_port_id = rest[0];
             let in_len = rest[1] as usize;
             let after_in = 2 + in_len;
-            if rest.len() < after_in + 2 {
-                return Err(Error::BufferTooShort {
-                    need: after_in + 2,
-                    have: rest.len(),
-                    what: "SelectionInformation.in_signal_desc",
-                });
-            }
+            need_in(rest, after_in + 2, "SelectionInformation.in_signal_desc")?;
             let in_signal_desc = &rest[2..after_in];
             // reserved(4) + length_outputs(12) packed into 2 bytes.
             let length_outputs =
                 (((rest[after_in] & 0x0F) as usize) << 8) | rest[after_in + 1] as usize;
             let outputs_start = after_in + 2;
             let outputs_end = outputs_start + length_outputs;
-            if rest.len() < outputs_end {
-                return Err(Error::BufferTooShort {
-                    need: outputs_end,
-                    have: rest.len(),
-                    what: "SelectionInformation.outputs",
-                });
-            }
+            need_in(rest, outputs_end, "SelectionInformation.outputs")?;
             let mut out_rest = &rest[outputs_start..outputs_end];
             let mut outputs = Vec::new();
             while !out_rest.is_empty() {
                 // out_port_id(1) + length_out_signal_desc(1).
-                if out_rest.len() < 2 {
-                    return Err(Error::BufferTooShort {
-                        need: 2,
-                        have: out_rest.len(),
-                        what: "SelectionInformation.out_port",
-                    });
-                }
+                need_in(out_rest, 2, "SelectionInformation.out_port")?;
                 let out_port_id = out_rest[0];
                 let out_len = out_rest[1] as usize;
                 let out_end = 2 + out_len;
-                if out_rest.len() < out_end {
-                    return Err(Error::BufferTooShort {
-                        need: out_end,
-                        have: out_rest.len(),
-                        what: "SelectionInformation.out_signal_desc",
-                    });
-                }
+                need_in(out_rest, out_end, "SelectionInformation.out_signal_desc")?;
                 outputs.push(OutputSignal {
                     out_port_id,
                     out_signal_desc: &out_rest[2..out_end],
@@ -427,12 +380,7 @@ impl Serialize for SelectionInformation<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         if self.time.len() != SELECTION_TIME_LEN {
             return Err(Error::InvalidObject {
                 what: "SelectionInformation",
@@ -519,55 +467,25 @@ pub struct PortProfile<'a> {
 impl<'a> Parse<'a> for PortProfile<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "PortProfile.receiver_identification_length",
-            });
-        }
+        need_in(body, 1, "PortProfile.receiver_identification_length")?;
         let id_len = body[0] as usize;
-        if body.len() < 1 + id_len {
-            return Err(Error::BufferTooShort {
-                need: 1 + id_len,
-                have: body.len(),
-                what: "PortProfile.receiver_identification",
-            });
-        }
+        need_in(body, 1 + id_len, "PortProfile.receiver_identification")?;
         let receiver_identification = &body[1..1 + id_len];
         let mut rest = &body[1 + id_len..];
         let mut ports = Vec::new();
         while !rest.is_empty() {
             // in_port_id(1) + length_in_port_desc(1).
-            if rest.len() < 2 {
-                return Err(Error::BufferTooShort {
-                    need: 2,
-                    have: rest.len(),
-                    what: "PortProfile.in_port",
-                });
-            }
+            need_in(rest, 2, "PortProfile.in_port")?;
             let in_port_id = rest[0];
             let in_len = rest[1] as usize;
             let after_in = 2 + in_len;
             // + out_port_id(1) + length_out_port_desc(1).
-            if rest.len() < after_in + 2 {
-                return Err(Error::BufferTooShort {
-                    need: after_in + 2,
-                    have: rest.len(),
-                    what: "PortProfile.out_port",
-                });
-            }
+            need_in(rest, after_in + 2, "PortProfile.out_port")?;
             let in_port_desc = &rest[2..after_in];
             let out_port_id = rest[after_in];
             let out_len = rest[after_in + 1] as usize;
             let after_out = after_in + 2 + out_len;
-            if rest.len() < after_out {
-                return Err(Error::BufferTooShort {
-                    need: after_out,
-                    have: rest.len(),
-                    what: "PortProfile.out_port_desc",
-                });
-            }
+            need_in(rest, after_out, "PortProfile.out_port_desc")?;
             ports.push(PortDescription {
                 in_port_id,
                 in_port_desc,
@@ -593,12 +511,7 @@ impl Serialize for PortProfile<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         if self.receiver_identification.len() > u8::MAX as usize {
             return Err(Error::InvalidObject {
                 what: "PortProfile",
@@ -647,22 +560,10 @@ impl<'a> Parse<'a> for ViewedService {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         // service_id(2) + number_components(1).
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "ViewedService",
-            });
-        }
+        need_in(body, 3, "ViewedService")?;
         let service_id = u16::from_be_bytes([body[0], body[1]]);
         let n = body[2] as usize;
-        if body.len() < 3 + n {
-            return Err(Error::BufferTooShort {
-                need: 3 + n,
-                have: body.len(),
-                what: "ViewedService.component_tags",
-            });
-        }
+        need_in(body, 3 + n, "ViewedService.component_tags")?;
         Ok(Self {
             service_id,
             component_tags: body[3..3 + n].to_vec(),
@@ -676,12 +577,7 @@ impl Serialize for ViewedService {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         if self.component_tags.len() > u8::MAX as usize {
             return Err(Error::InvalidObject {
                 what: "ViewedService",
@@ -765,13 +661,7 @@ impl ActivationStatus {
 impl<'a> Parse<'a> for ActivationStatus {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "ActivationStatus",
-            });
-        }
+        need_in(body, 1, "ActivationStatus")?;
         Ok(Self {
             event_activated: body[0] & Self::EVENT_ACTIVATED_BIT != 0,
             activation_state: ActivationState::from_u8(body[0] & Self::ACTIVATION_STATE_MASK),

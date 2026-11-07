@@ -14,6 +14,7 @@
 
 use crate::error::{Error, Result};
 use crate::tag::ApduTag;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Declares [`AnyApdu`] + its dispatcher from one `apdu_tag` list.
@@ -93,9 +94,7 @@ macro_rules! declare_apdus {
             /// Parse a complete APDU (header + body) by routing on its 3-byte
             /// `apdu_tag`. Unrecognised tags yield [`AnyApdu::Unknown`].
             pub fn parse(bytes: &$lt [u8]) -> Result<Self> {
-                if bytes.len() < 3 {
-                    return Err(Error::BufferTooShort { need: 3, have: bytes.len(), what: "apdu_tag" });
-                }
+                need_in(bytes, 3, "apdu_tag")?;
                 let tag = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
                 match tag {
                     $( t if t == <$($path)::+ as crate::traits::ApduDef>::TAG

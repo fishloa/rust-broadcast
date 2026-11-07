@@ -14,6 +14,7 @@
 //! and the byte sequence are structural.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `descriptor_tag` of the `ciplus_initialization_vector_descriptor` (Table 46).
@@ -120,12 +121,7 @@ fn write_tlv(tag: u8, body: &[u8], buf: &mut [u8]) -> Result<usize> {
         return Err(Error::LengthTooLarge(body.len()));
     }
     let total = DESC_HEADER + body.len();
-    if buf.len() < total {
-        return Err(Error::OutputBufferTooSmall {
-            need: total,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, total)?;
     buf[0] = tag;
     buf[1] = body.len() as u8;
     buf[DESC_HEADER..total].copy_from_slice(body);

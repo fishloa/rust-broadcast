@@ -9,6 +9,7 @@
 //! `u32` and expose typed views over it — no information is lost on round-trip.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// A `resource_identifier()` — 4 octets, carried verbatim as a big-endian `u32`.
@@ -96,12 +97,7 @@ impl Serialize for ResourceId {
         Self::LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < Self::LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: Self::LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, Self::LEN)?;
         buf[..Self::LEN].copy_from_slice(&self.0.to_be_bytes());
         Ok(Self::LEN)
     }

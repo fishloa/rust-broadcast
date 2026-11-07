@@ -12,8 +12,10 @@ versioning.
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Changed
 - The seven fixed-length SPDUs parse through one `parse_spdu_fixed`; a wrong value length now reports `value length is fixed by the object definition` (c4 M2).
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-
+### Added
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 
 ## [0.10.0] - 2026-10-17
 ### Documentation

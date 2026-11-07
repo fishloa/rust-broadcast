@@ -40,6 +40,7 @@ use crate::objects;
 use crate::reserved::{ReservedOnes, ReservedZero};
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the CICAM Player resource (Table 71).
@@ -424,13 +425,7 @@ impl<'a> Parse<'a> for PlayerVerifyReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::VERIFY_REPLY, "CICAM_player_verify_reply")?;
-        if body.len() < VERIFY_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: VERIFY_REPLY_BODY,
-                have: body.len(),
-                what: "CICAM_player_verify_reply",
-            });
-        }
+        need_in(body, VERIFY_REPLY_BODY, "CICAM_player_verify_reply")?;
         crate::objects::reject_trailing_body(body, VERIFY_REPLY_BODY, "CICAM_player_verify_reply")?;
         Ok(Self {
             length_form,
@@ -538,13 +533,7 @@ impl<'a> Parse<'a> for PlayerCapabilitiesReply {
             tag::CAPABILITIES_REPLY,
             "CICAM_player_capabilities_reply",
         )?;
-        if body.len() < CAPABILITIES_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: CAPABILITIES_PREFIX,
-                have: body.len(),
-                what: "CICAM_player_capabilities_reply",
-            });
-        }
+        need_in(body, CAPABILITIES_PREFIX, "CICAM_player_capabilities_reply")?;
         let n = u16::from_be_bytes([body[0], body[1]]) as usize;
         let mut pos = CAPABILITIES_PREFIX;
         // `n` is an untrusted 16-bit wire count: size the allocation from the
@@ -552,13 +541,11 @@ impl<'a> Parse<'a> for PlayerCapabilitiesReply {
         let present = (body.len() - CAPABILITIES_PREFIX) / COMPONENT_TYPE_LEN;
         let mut component_types = Vec::with_capacity(n.min(present));
         for _ in 0..n {
-            if pos + COMPONENT_TYPE_LEN > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + COMPONENT_TYPE_LEN,
-                    have: body.len(),
-                    what: "CICAM_player_capabilities_reply entry",
-                });
-            }
+            need_in(
+                body,
+                pos + COMPONENT_TYPE_LEN,
+                "CICAM_player_capabilities_reply entry",
+            )?;
             component_types.push(ComponentType {
                 // stream_content(4) + reserved(4).
                 stream_content: (body[pos] >> 4) & STREAM_CONTENT_MASK,
@@ -640,13 +627,7 @@ impl<'a> Parse<'a> for PlayerStartReq<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::START_REQ, "CICAM_player_start_req")?;
-        if body.len() < START_REQ_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: START_REQ_PREFIX,
-                have: body.len(),
-                what: "CICAM_player_start_req",
-            });
-        }
+        need_in(body, START_REQ_PREFIX, "CICAM_player_start_req")?;
         let input_max_bitrate = u16::from_be_bytes([body[0], body[1]]);
         let output_max_bitrate = u16::from_be_bytes([body[2], body[3]]);
         let linear_channel = body[4] & LINEAR_CHANNEL_BIT != 0;
@@ -721,13 +702,7 @@ impl<'a> Parse<'a> for PlayerStartReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::START_REPLY, "CICAM_player_start_reply")?;
-        if body.len() < START_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: START_REPLY_BODY,
-                have: body.len(),
-                what: "CICAM_player_start_reply",
-            });
-        }
+        need_in(body, START_REPLY_BODY, "CICAM_player_start_reply")?;
         crate::objects::reject_trailing_body(body, START_REPLY_BODY, "CICAM_player_start_reply")?;
         Ok(Self {
             length_form,
@@ -833,13 +808,7 @@ impl<'a> Parse<'a> for PlayerStatusError {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::STATUS_ERROR, "CICAM_player_status_error")?;
-        if body.len() < STATUS_ERROR_BODY {
-            return Err(Error::BufferTooShort {
-                need: STATUS_ERROR_BODY,
-                have: body.len(),
-                what: "CICAM_player_status_error",
-            });
-        }
+        need_in(body, STATUS_ERROR_BODY, "CICAM_player_status_error")?;
         crate::objects::reject_trailing_body(body, STATUS_ERROR_BODY, "CICAM_player_status_error")?;
         Ok(Self {
             length_form,
@@ -946,23 +915,15 @@ impl<'a> Parse<'a> for PlayerControlReq {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::CONTROL_REQ, "CICAM_player_control_req")?;
-        if body.len() < CONTROL_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: CONTROL_PREFIX,
-                have: body.len(),
-                what: "CICAM_player_control_req",
-            });
-        }
+        need_in(body, CONTROL_PREFIX, "CICAM_player_control_req")?;
         let lts_id = body[0];
         let command = match body[1] {
             CONTROL_CMD_SET_POSITION => {
-                if body.len() < CONTROL_PREFIX + SET_POSITION_EXTRA {
-                    return Err(Error::BufferTooShort {
-                        need: CONTROL_PREFIX + SET_POSITION_EXTRA,
-                        have: body.len(),
-                        what: "CICAM_player_control_req set_position",
-                    });
-                }
+                need_in(
+                    body,
+                    CONTROL_PREFIX + SET_POSITION_EXTRA,
+                    "CICAM_player_control_req set_position",
+                )?;
                 objects::reject_trailing_body(
                     body,
                     CONTROL_PREFIX + SET_POSITION_EXTRA,
@@ -974,13 +935,11 @@ impl<'a> Parse<'a> for PlayerControlReq {
                 }
             }
             CONTROL_CMD_SET_SPEED => {
-                if body.len() < CONTROL_PREFIX + SET_SPEED_EXTRA {
-                    return Err(Error::BufferTooShort {
-                        need: CONTROL_PREFIX + SET_SPEED_EXTRA,
-                        have: body.len(),
-                        what: "CICAM_player_control_req set_speed",
-                    });
-                }
+                need_in(
+                    body,
+                    CONTROL_PREFIX + SET_SPEED_EXTRA,
+                    "CICAM_player_control_req set_speed",
+                )?;
                 objects::reject_trailing_body(
                     body,
                     CONTROL_PREFIX + SET_SPEED_EXTRA,
@@ -1148,13 +1107,7 @@ impl<'a> Parse<'a> for PlayerInfoReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::INFO_REPLY, "CICAM_player_info_reply")?;
-        if body.len() < INFO_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: INFO_REPLY_BODY,
-                have: body.len(),
-                what: "CICAM_player_info_reply",
-            });
-        }
+        need_in(body, INFO_REPLY_BODY, "CICAM_player_info_reply")?;
         crate::objects::reject_trailing_body(body, INFO_REPLY_BODY, "CICAM_player_info_reply")?;
         Ok(Self {
             length_form,
@@ -1286,13 +1239,7 @@ impl<'a> Parse<'a> for PlayerAssetEnd {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::ASSET_END, "CICAM_player_asset_end")?;
-        if body.len() < ASSET_END_BODY {
-            return Err(Error::BufferTooShort {
-                need: ASSET_END_BODY,
-                have: body.len(),
-                what: "CICAM_player_asset_end",
-            });
-        }
+        need_in(body, ASSET_END_BODY, "CICAM_player_asset_end")?;
         crate::objects::reject_trailing_body(body, ASSET_END_BODY, "CICAM_player_asset_end")?;
         Ok(Self {
             length_form,
@@ -1346,13 +1293,7 @@ impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::UPDATE_REQ, "CICAM_player_update_req")?;
-        if body.len() < UPDATE_REQ_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: UPDATE_REQ_PREFIX,
-                have: body.len(),
-                what: "CICAM_player_update_req",
-            });
-        }
+        need_in(body, UPDATE_REQ_PREFIX, "CICAM_player_update_req")?;
         let lts_id = body[0];
         let pmt_length = u16::from_be_bytes([body[1], body[2]]) as usize;
         let end = UPDATE_REQ_PREFIX + pmt_length;
@@ -1416,13 +1357,7 @@ impl<'a> Parse<'a> for PlayerUpdateReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::UPDATE_REPLY, "CICAM_player_update_reply")?;
-        if body.len() < UPDATE_REPLY_BODY {
-            return Err(Error::BufferTooShort {
-                need: UPDATE_REPLY_BODY,
-                have: body.len(),
-                what: "CICAM_player_update_reply",
-            });
-        }
+        need_in(body, UPDATE_REPLY_BODY, "CICAM_player_update_reply")?;
         crate::objects::reject_trailing_body(body, UPDATE_REPLY_BODY, "CICAM_player_update_reply")?;
         Ok(Self {
             length_form,

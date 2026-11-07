@@ -11,6 +11,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Power Manager (Tables 52, 54).
@@ -150,13 +151,7 @@ impl<'a> Parse<'a> for ActivationStateChangeRequest {
             tag::ACTIVATION_STATE_CHANGE_REQUEST,
             "activation_state_change_request",
         )?;
-        if body.len() < REQUEST_BODY {
-            return Err(Error::BufferTooShort {
-                need: REQUEST_BODY,
-                have: body.len(),
-                what: "activation_state_change_request",
-            });
-        }
+        need_in(body, REQUEST_BODY, "activation_state_change_request")?;
         crate::objects::reject_trailing_body(
             body,
             REQUEST_BODY,
@@ -195,13 +190,7 @@ impl<'a> Parse<'a> for ActivationStateChangeAck {
             tag::ACTIVATION_STATE_CHANGE_ACK,
             "activation_state_change_ack",
         )?;
-        if body.len() < ACK_BODY {
-            return Err(Error::BufferTooShort {
-                need: ACK_BODY,
-                have: body.len(),
-                what: "activation_state_change_ack",
-            });
-        }
+        need_in(body, ACK_BODY, "activation_state_change_ack")?;
         crate::objects::reject_trailing_body(body, ACK_BODY, "activation_state_change_ack")?;
         Ok(Self {
             length_form,
