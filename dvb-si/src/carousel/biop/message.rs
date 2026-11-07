@@ -300,22 +300,25 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
         ))?;
     let magic = u32::from_be_bytes([bhdr[0], bhdr[1], bhdr[2], bhdr[3]]);
     if magic != BIOP_MAGIC {
-        return Err(Error::ReservedBitsViolation {
-            field: "BIOP magic",
-            reason: "must be 0x42494F50 (\"BIOP\")",
-        });
+        return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            what: "BIOP magic",
+            expected: BIOP_MAGIC,
+            found: magic,
+        }));
     }
     if bhdr[4] != BIOP_VERSION_MAJOR || bhdr[5] != BIOP_VERSION_MINOR {
-        return Err(Error::ReservedBitsViolation {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "biop_version",
-            reason: "must be 1.0",
-        });
+            value: u64::from(u16::from_be_bytes([bhdr[4], bhdr[5]])),
+            reason: "must be 1.0 (0x0100)",
+        }));
     }
     if bhdr[6] != BYTE_ORDER_BIG_ENDIAN {
-        return Err(Error::ReservedBitsViolation {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "byte_order",
-            reason: "must be 0x00 (big-endian) per DVB mandatory constraint",
-        });
+            value: u64::from(bhdr[6]),
+            reason: "must be 0x00 (big-endian)",
+        }));
     }
     // bhdr[7] = message_type (must be 0x00 per DVB)
     let message_size_wire = u32::from_be_bytes([bhdr[8], bhdr[9], bhdr[10], bhdr[11]]);
@@ -1729,22 +1732,22 @@ pub fn decompress_zlib_bounded(data: &[u8], max_len: usize) -> Result<Vec<u8>> {
     let limit = (max_len as u64).saturating_add(1);
     let mut decoder = flate2::read::ZlibDecoder::new(data).take(limit);
     let mut out = Vec::new();
-    decoder
-        .read_to_end(&mut out)
-        .map_err(|e| Error::ReservedBitsViolation {
+    decoder.read_to_end(&mut out).map_err(|e| {
+        Error::InvalidField(broadcast_common::error::InvalidField {
             field: "compressed_module_descriptor body",
             reason: if e.kind() == std::io::ErrorKind::InvalidData {
                 "zlib decompression failed: invalid data"
             } else {
                 "zlib decompression failed"
             },
-        })?;
+        })
+    })?;
     if out.len() > max_len {
         // Reading stops at `max_len + 1`, so the true decompressed size is never known.
-        return Err(Error::ReservedBitsViolation {
+        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
             field: "compressed_module_descriptor body",
             reason: "zlib output exceeds the decompressed-size limit",
-        });
+        }));
     }
     Ok(out)
 }
@@ -2223,10 +2226,12 @@ mod tests {
         let err = decompress_zlib_bounded(&compressed, original.len() - 1);
         assert_eq!(
             err.err(),
-            Some(crate::error::Error::ReservedBitsViolation {
-                field: "compressed_module_descriptor body",
-                reason: "zlib output exceeds the decompressed-size limit"
-            }),
+            Some(crate::error::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "compressed_module_descriptor body",
+                    reason: "zlib output exceeds the decompressed-size limit"
+                }
+            )),
             "output exceeding max_len by exactly 1 byte must return Err"
         );
     }
@@ -2833,10 +2838,12 @@ mod tests {
         let result = decompress_zlib_bounded(&compressed, 1024);
         assert_eq!(
             result.err(),
-            Some(crate::error::Error::ReservedBitsViolation {
-                field: "compressed_module_descriptor body",
-                reason: "zlib output exceeds the decompressed-size limit"
-            }),
+            Some(crate::error::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "compressed_module_descriptor body",
+                    reason: "zlib output exceeds the decompressed-size limit"
+                }
+            )),
             "decompressed output exceeding max_len must return Err"
         );
     }

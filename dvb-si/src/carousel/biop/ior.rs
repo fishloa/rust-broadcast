@@ -390,10 +390,11 @@ impl<'a> BiopProfileBody<'a> {
         }
         let byte_order = bytes[0];
         if byte_order != BYTE_ORDER_BIG_ENDIAN {
-            return Err(Error::ReservedBitsViolation {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "profile_data_byte_order",
-                reason: "must be 0x00 (big-endian) per DVB mandatory constraint (TR 101 202 §4.7.3.2)",
-            });
+                value: u64::from(byte_order),
+                reason: "must be 0x00 (big-endian)",
+            }));
         }
         let lite_components_count = bytes[1] as usize;
         if lite_components_count < 2 {
@@ -415,10 +416,11 @@ impl<'a> BiopProfileBody<'a> {
             ))?;
         let comp0_tag = u32::from_be_bytes([ch0[0], ch0[1], ch0[2], ch0[3]]);
         if comp0_tag != TAG_OBJECT_LOCATION {
-            return Err(Error::ReservedBitsViolation {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "componentId_tag[0]",
+                value: u64::from(comp0_tag),
                 reason: "first liteComponent must be TAG_ObjectLocation (0x49534F50)",
-            });
+            }));
         }
         let comp0_len = ch0[4] as usize;
         pos += COMPONENT_HEADER_LEN;
@@ -457,10 +459,11 @@ impl<'a> BiopProfileBody<'a> {
             ))?;
         let comp1_tag = u32::from_be_bytes([ch1[0], ch1[1], ch1[2], ch1[3]]);
         if comp1_tag != TAG_CONN_BINDER {
-            return Err(Error::ReservedBitsViolation {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "componentId_tag[1]",
+                value: u64::from(comp1_tag),
                 reason: "second liteComponent must be TAG_ConnBinder (0x49534F40)",
-            });
+            }));
         }
         let comp1_len = ch1[4] as usize;
         pos += COMPONENT_HEADER_LEN;
@@ -980,10 +983,11 @@ impl<'a> LiteOptionsProfileBody<'a> {
         }
         let byte_order = bytes[0];
         if byte_order != BYTE_ORDER_BIG_ENDIAN {
-            return Err(Error::ReservedBitsViolation {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "profile_data_byte_order (LiteOptions)",
-                reason: "must be 0x00 (big-endian) per DVB mandatory constraint",
-            });
+                value: u64::from(byte_order),
+                reason: "must be 0x00 (big-endian)",
+            }));
         }
         let component_count = bytes[1] as usize;
         if component_count < 1 {
@@ -1006,10 +1010,11 @@ impl<'a> LiteOptionsProfileBody<'a> {
             ))?;
         let comp0_tag = u32::from_be_bytes([slch[0], slch[1], slch[2], slch[3]]);
         if comp0_tag != TAG_SERVICE_LOCATION {
-            return Err(Error::ReservedBitsViolation {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "componentId_tag[0] (LiteOptions)",
+                value: u64::from(comp0_tag),
                 reason: "first component must be TAG_ServiceLocation (0x49534F46)",
-            });
+            }));
         }
         let comp0_len_wire = u32::from_be_bytes([slch[4], slch[5], slch[6], slch[7]]);
         pos += SERVICE_LOCATION_COMP_HEADER_LEN;

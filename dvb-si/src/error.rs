@@ -60,16 +60,19 @@ pub enum Error {
         available: usize,
     },
 
-    /// A reserved bit was not in the expected state. Most parsers are permissive
-    /// about reserved bits; this variant is only emitted when a spec clause
-    /// specifically requires a value.
-    #[error("reserved bits violation in {field}: {reason}")]
-    ReservedBitsViolation {
-        /// Where.
-        field: &'static str,
-        /// Why.
-        reason: &'static str,
-    },
+    /// A reserved or fixed-value bit group was not in the state a spec clause
+    /// requires. Most parsers are permissive about reserved bits; this is only
+    /// emitted when a clause specifically requires a value.
+    #[error(transparent)]
+    ReservedBits(#[from] broadcast_common::error::ReservedBits),
+
+    /// A field held a value its spec clause forbids.
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+
+    /// A field is structurally invalid with no single offending number.
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error(transparent)]

@@ -82,11 +82,19 @@ impl<'a> Parse<'a> for GreenAccessUnitSection<'a> {
         let mut p = [0u8; PTS_FIELD_LEN];
         p.copy_from_slice(&bytes[MIN_HEADER_LEN..MIN_HEADER_LEN + PTS_FIELD_LEN]);
         let marked = unpack_marked(&p);
-        if marked.prefix != PTS_PREFIX || marked.markers != clock33::MARKERS_ALL_SET {
-            return Err(Error::ReservedBitsViolation {
-                field: "Display_in_PTS",
-                reason: "'0010' prefix or marker_bit missing",
-            });
+        if marked.prefix != PTS_PREFIX {
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "Display_in_PTS prefix",
+                expected: u64::from(PTS_PREFIX),
+                found: u64::from(marked.prefix),
+            }));
+        }
+        if marked.markers != clock33::MARKERS_ALL_SET {
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "Display_in_PTS marker_bits",
+                expected: u64::from(clock33::MARKERS_ALL_SET),
+                found: u64::from(marked.markers),
+            }));
         }
         Ok(Self {
             display_in_pts: marked.timestamp,
@@ -162,16 +170,24 @@ mod tests {
         s.serialize_into(&mut b).unwrap();
         let mut bad = b.clone();
         bad[5] &= 0xFE;
-        assert!(matches!(
+        assert_eq!(
             GreenAccessUnitSection::parse(&bad),
-            Err(Error::ReservedBitsViolation { .. })
-        ));
+            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "Display_in_PTS marker_bits",
+                expected: 0b111,
+                found: 0b101,
+            }))
+        );
         let mut bad = b.clone();
         bad[3] = 0x31;
-        assert!(matches!(
+        assert_eq!(
             GreenAccessUnitSection::parse(&bad),
-            Err(Error::ReservedBitsViolation { .. })
-        ));
+            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "Display_in_PTS prefix",
+                expected: 0b0010,
+                found: 3,
+            }))
+        );
         assert!(matches!(
             &(GreenAccessUnitSection::new(clock33::WRAP_33BIT, &[]).serialize_into(&mut [0u8; 32])),
             Err(crate::error::Error::FieldOverflow(_))
