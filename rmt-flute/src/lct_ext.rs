@@ -33,6 +33,16 @@ pub enum LctExtType {
 }
 
 impl LctExtType {
+    /// Decode a HET value.
+    pub fn from_het(het: u8) -> Self {
+        match het {
+            HET_EXT_NOP => LctExtType::Nop,
+            HET_EXT_AUTH => LctExtType::Auth,
+            HET_EXT_TIME => LctExtType::Time,
+            other => LctExtType::Other(other),
+        }
+    }
+
     /// The HET value for this type.
     pub fn het(self) -> u8 {
         match self {
@@ -246,6 +256,10 @@ mod tests {
 
     #[test]
     fn ext_type_round_trip() {
+        for het in [0u8, 1, 2, 64, 192, 255] {
+            assert_eq!(LctExtType::from_het(het).het(), het);
+        }
+        assert_eq!(LctExtType::from_het(64), LctExtType::Other(64));
         assert_eq!(LctExtType::Time.to_string(), "EXT_TIME");
         assert_eq!(LctExtType::Other(64).to_string(), "other(0x40)");
     }
