@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::pid::Pid;
+use broadcast_common::len::{need_in, need_out};
 
 /// Size of one MPEG-TS packet (ETSI EN 300 468 §3.2, ISO/IEC 13818-1 §2.4.3.2).
 pub const TS_PACKET_SIZE: usize = 188;
@@ -221,13 +222,7 @@ pub struct TsPacket<'a> {
 impl TsHeader {
     /// Parse a 4-byte TS transport header.
     pub fn parse(raw4: &[u8]) -> Result<Self> {
-        if raw4.len() < 4 {
-            return Err(Error::BufferTooShort {
-                need: 4,
-                have: raw4.len(),
-                what: "TsHeader",
-            });
-        }
+        need_in(raw4, 4, "TsHeader")?;
         let b1 = raw4[1];
         let b2 = raw4[2];
         let b3 = raw4[3];
@@ -258,12 +253,7 @@ impl TsHeader {
 
     /// Serialize this header into the first 4 bytes of `buf`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < 4 {
-            return Err(Error::OutputBufferTooSmall {
-                need: 4,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, 4)?;
         buf[0] = TS_SYNC_BYTE;
         buf[1] = 0;
         if self.tei {
@@ -348,13 +338,7 @@ impl<'a> TsPacket<'a> {
     /// `Err(Error::BufferTooShort)` if fewer than 188 bytes, or `Ok` with
     /// the parsed packet otherwise.
     pub fn parse(buf: &'a [u8]) -> Result<Self> {
-        if buf.len() < TS_PACKET_SIZE {
-            return Err(Error::BufferTooShort {
-                need: TS_PACKET_SIZE,
-                have: buf.len(),
-                what: "TsPacket",
-            });
-        }
+        need_in(buf, TS_PACKET_SIZE, "TsPacket")?;
         if buf[0] != TS_SYNC_BYTE {
             return Err(Error::InvalidSyncByte { found: buf[0] });
         }
@@ -680,13 +664,7 @@ impl<'a> AdaptationFieldExtension<'a> {
         let mut cursor = 1usize;
 
         let ltw = if flags & AFE_LTW_FLAG != 0 {
-            if ext.len() < cursor + 2 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 2,
-                    have: ext.len(),
-                    what: "ltw_offset",
-                });
-            }
+            need_in(ext, cursor + 2, "ltw_offset")?;
             let w0 = ext[cursor];
             let w1 = ext[cursor + 1];
             cursor += 2;
@@ -700,13 +678,7 @@ impl<'a> AdaptationFieldExtension<'a> {
 
         let mut piecewise_rate_reserved = PIECEWISE_RATE_RESERVED_VALUE;
         let piecewise_rate = if flags & AFE_PIECEWISE_RATE_FLAG != 0 {
-            if ext.len() < cursor + 3 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 3,
-                    have: ext.len(),
-                    what: "piecewise_rate",
-                });
-            }
+            need_in(ext, cursor + 3, "piecewise_rate")?;
             piecewise_rate_reserved = ext[cursor] >> PIECEWISE_RATE_RESERVED_SHIFT;
             let r = (((ext[cursor] & PIECEWISE_RATE_HI_MASK) as u32) << 16)
                 | ((ext[cursor + 1] as u32) << 8)
@@ -719,13 +691,7 @@ impl<'a> AdaptationFieldExtension<'a> {
 
         // seamless_splice: 5 bytes with splice_type(4) + DTS_next_AU in PTS-field encoding
         let seamless_splice = if flags & AFE_SEAMLESS_SPLICE_FLAG != 0 {
-            if ext.len() < cursor + 5 {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 5,
-                    have: ext.len(),
-                    what: "seamless_splice DTS_next_AU",
-                });
-            }
+            need_in(ext, cursor + 5, "seamless_splice DTS_next_AU")?;
             let b = &ext[cursor..cursor + 5];
             // DTS_next_AU uses the same 5-byte marker-bit encoding as PTS/DTS,
             // with `splice_type` in the prefix nibble.

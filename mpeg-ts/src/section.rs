@@ -34,6 +34,7 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::crc32_mpeg2 as crc;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 const MIN_HEADER_LEN: usize = 3;
@@ -126,13 +127,7 @@ impl<'a> Section<'a> {
         };
 
         // Guard: raw must be at least CRC_LEN bytes for a valid long-form section.
-        if raw.len() < CRC_LEN {
-            return Err(Error::BufferTooShort {
-                need: CRC_LEN,
-                have: raw.len(),
-                what: "CRC suffix in validate_crc",
-            });
-        }
+        need_in(raw, CRC_LEN, "CRC suffix in validate_crc")?;
 
         // The CRC covers everything up to (but not including) the 4 CRC bytes.
         let covered = &raw[..raw.len() - CRC_LEN];
@@ -156,13 +151,7 @@ impl<'a> Parse<'a> for Section<'a> {
     ///   more data than `bytes` contains.
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // ── 3-byte common header ────────────────────────────────────────────
-        if bytes.len() < MIN_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_HEADER_LEN,
-                have: bytes.len(),
-                what: "section header",
-            });
-        }
+        need_in(bytes, MIN_HEADER_LEN, "section header")?;
 
         let table_id = bytes[0];
         let section_syntax_indicator = (bytes[1] & SSI_MASK) != 0;
@@ -209,13 +198,11 @@ impl<'a> Parse<'a> for Section<'a> {
         // Minimum size for a valid long-form section:
         //   3 (common header) + 5 (extension header) + 4 (CRC) = 12 bytes.
         let min_long = MIN_HEADER_LEN + LONG_FORM_EXTRA + CRC_LEN;
-        if section_bytes.len() < min_long {
-            return Err(Error::BufferTooShort {
-                need: min_long,
-                have: section_bytes.len(),
-                what: "long-form section extension header + CRC",
-            });
-        }
+        need_in(
+            section_bytes,
+            min_long,
+            "long-form section extension header + CRC",
+        )?;
 
         let extension_id = ((bytes[3] as u16) << 8) | (bytes[4] as u16);
         let version_number = (bytes[5] >> 1) & VERSION_NUMBER_MASK;
