@@ -25,6 +25,9 @@ const DRAIN: Duration = Duration::from_millis(1_500);
 const RUN_DEADLINE: Duration = Duration::from_secs(40);
 const PASSPHRASE: &str = "0123456789abcdef";
 const PAYLOAD_PACKETS: usize = 7;
+const SYNC_MARKER: u8 = 0xA5;
+const SYNC_LEN: usize = 64;
+const SYNC_INTERVAL: Duration = Duration::from_millis(50);
 const LOCAL_SRT_LATENCY_MS: u16 = 120;
 
 fn libsrt_available(test: &str) -> bool {
@@ -123,14 +126,26 @@ fn libsrt_stream_is_intact(passphrase: Option<&str>, key_length: SrtKeyLength, t
     }
     let mut host = WireHost::open(&format!("srt://127.0.0.1:{srt_port}"), config);
     let datagrams = ts_datagrams(ts, PAYLOAD_PACKETS);
+    let connected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let feeder_connected = connected.clone();
     let feeder = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(400));
+        // libsrt drops what its UDP source sees until its SRT side has connected.
+        while !feeder_connected.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = src.send_to(&[SYNC_MARKER; SYNC_LEN], ("127.0.0.1", src_port));
+            std::thread::sleep(SYNC_INTERVAL);
+        }
         for d in &datagrams {
             let _ = src.send_to(d, ("127.0.0.1", src_port));
             std::thread::sleep(SEND_INTERVAL);
         }
     });
-    host.run_until(RUN_DEADLINE, |_| feeder.is_finished());
+    host.run_until(RUN_DEADLINE, |h| {
+        if h.session.datagram_stats().malformed > 0 {
+            connected.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        feeder.is_finished()
+    });
+    connected.store(true, std::sync::atomic::Ordering::Relaxed);
     host.run_until(DRAIN, |_| false);
     feeder.join().unwrap();
     let samples = host.replay().samples();
@@ -321,14 +336,25 @@ fn libsrt_retransmissions_repair_a_lossy_link() {
     config.srt.latency_ms = 400;
     let mut host = WireHost::open(&format!("srt://127.0.0.1:{}", proxy.port), config);
     let datagrams = ts_datagrams(ts, PAYLOAD_PACKETS);
+    let connected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let feeder_connected = connected.clone();
     let feeder = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(400));
+        // libsrt drops what its UDP source sees until its SRT side has connected.
+        while !feeder_connected.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = src.send_to(&[SYNC_MARKER; SYNC_LEN], ("127.0.0.1", src_port));
+            std::thread::sleep(SYNC_INTERVAL);
+        }
         for d in &datagrams {
             let _ = src.send_to(d, ("127.0.0.1", src_port));
             std::thread::sleep(SEND_INTERVAL);
         }
     });
-    host.run_until(RUN_DEADLINE, |_| feeder.is_finished());
+    host.run_until(RUN_DEADLINE, |h| {
+        if h.session.datagram_stats().malformed > 0 {
+            connected.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        feeder.is_finished()
+    });
     host.run_until(DRAIN, |_| false);
     feeder.join().unwrap();
     let dropped = proxy.dropped.load(std::sync::atomic::Ordering::Relaxed);
