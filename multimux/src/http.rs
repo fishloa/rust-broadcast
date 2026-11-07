@@ -93,7 +93,9 @@ pub(crate) const PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 /// program is published, 503 with `Retry-After` while there is nothing to measure.
 pub(crate) fn master_playlist_response(
     route: &crate::route::RouteHandle,
-    render: impl FnOnce(&hls_runtime::server::HlsOrigin) -> Result<String, hls_runtime::server::HlsMasterError>,
+    render: impl FnOnce(
+        &hls_runtime::server::HlsOrigin,
+    ) -> Result<String, hls_runtime::server::HlsMasterError>,
 ) -> Response {
     let retry = |body: &'static str| {
         (

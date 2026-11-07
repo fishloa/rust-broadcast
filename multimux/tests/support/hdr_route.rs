@@ -84,12 +84,20 @@ pub fn route_app(fixture: &str) -> Router {
 }
 
 pub fn route_app_from(sources: Vec<Source>) -> Router {
+    route_app_with_profiles(sources, Vec::new())
+}
+
+pub fn route_app_with_profiles(
+    sources: Vec<Source>,
+    profiles: Vec<multimux::config::AudioProfileOverride>,
+) -> Router {
     let trunk = new_trunk();
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
     let route = Arc::new(
         RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_declared_bandwidth_bps(Some(DECLARED_BPS)),
+            .with_declared_bandwidth_bps(Some(DECLARED_BPS))
+            .with_audio_profiles(profiles),
     );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());

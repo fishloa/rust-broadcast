@@ -27,16 +27,13 @@ use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use hls_runtime::server::{
-    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsRequest, SkipDirective,
-};
+use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsRequest, SkipDirective};
 use serde::Deserialize;
 
 use crate::http;
 use crate::origin::resource::{BlockingRequestGuard, cors_preflight};
 use crate::output::{Output, OutputKind};
 use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, subtitle_playlist_uri};
-
 
 /// Default media-playlist filename (issue #663 "configurable `playlist_name`")
 /// — every pre-existing `LlHlsOutput::default()`/`OutputKind::build()` call
@@ -170,7 +167,9 @@ impl Output for LlHlsOutput {
 /// `GET /master.m3u8` — a minimal single-variant master playlist pointing at
 /// this route's configured media-playlist filename.
 pub(crate) async fn master_playlist(State(state): State<LlHlsState>) -> Response {
-    http::master_playlist_response(&state.route, |origin| origin.master_playlist_with_iframes(&state.playlist_name, IFRAME_PLAYLIST_NAME))
+    http::master_playlist_response(&state.route, |origin| {
+        origin.master_playlist_with_iframes(&state.playlist_name, IFRAME_PLAYLIST_NAME)
+    })
 }
 
 /// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2), as

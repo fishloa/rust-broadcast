@@ -42,14 +42,13 @@ use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsRequest};
+use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
 
 use crate::http;
 use crate::origin::resource::{BlockingRequestGuard, cors_preflight};
 use crate::output::llhls::BlockingReloadQuery;
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
-
 
 /// Default media-playlist filename — mirrors
 /// [`crate::output::llhls::DEFAULT_PLAYLIST_NAME`] (both `"media.m3u8"`);
@@ -120,7 +119,9 @@ impl Output for TsHlsOutput {
 /// `GET /master.m3u8` — a minimal single-variant master playlist pointing at
 /// this route's configured media-playlist filename.
 pub(crate) async fn master_playlist(State(state): State<TsHlsState>) -> Response {
-    http::master_playlist_response(&state.route, |origin| origin.master_playlist(&state.playlist_name))
+    http::master_playlist_response(&state.route, |origin| {
+        origin.master_playlist(&state.playlist_name)
+    })
 }
 
 /// `GET /media.m3u8` — the classic media playlist for [`DEFAULT_TRACK_ID`].

@@ -1190,7 +1190,7 @@ impl crate::webrtc_session::SignallingMachine for WhipSession {
         &mut self,
         body: Vec<u8>,
         headers: &axum::http::HeaderMap,
-    ) -> Result<crate::webrtc_session::PatchEvent, webrtc_runtime::Error> {
+    ) -> std::result::Result<crate::webrtc_session::PatchEvent, webrtc_runtime::Error> {
         use crate::webrtc_session::PatchEvent;
         Ok(match self.on_patch(body, headers)? {
             WhipEvent::TrickleIce { sdp_fragment, .. } => PatchEvent::TrickleIce(sdp_fragment),
@@ -1213,7 +1213,8 @@ impl crate::webrtc_session::SignallingMachine for WhipSession {
 
     fn delete(
         &mut self,
-    ) -> Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error> {
+    ) -> std::result::Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error>
+    {
         self.on_delete()?;
         Ok(self.ack_delete())
     }

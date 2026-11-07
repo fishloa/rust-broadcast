@@ -38,53 +38,7 @@ const VIDEO_PID: u16 = 0x0100;
 // — this is a from-scratch re-implementation so Test 1's "is_sync count
 // matches the independent count" assertion is a real cross-check.
 
-/// Reassemble one PID's access units from raw TS packets (PUSI marks a new
-/// PES packet = one AU). Returns each AU as its full PES packet bytes
-/// (header not yet stripped).
-fn reassemble_pes_packets(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
-    const TS_PACKET: usize = 188;
-    let mut packets: Vec<Vec<u8>> = Vec::new();
-    let mut cur: Option<Vec<u8>> = None;
-    for pkt in ts.chunks_exact(TS_PACKET) {
-        if pkt[0] != 0x47 {
-            continue;
-        }
-        let pkt_pid = (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16;
-        if pkt_pid != pid {
-            continue;
-        }
-        let pusi = pkt[1] & 0x40 != 0;
-        let afc = (pkt[3] >> 4) & 0x3;
-        let mut off = 4usize;
-        if afc & 0x2 != 0 {
-            off += 1 + pkt[4] as usize; // adaptation_field_length + the field
-        }
-        if afc & 0x1 == 0 || off >= TS_PACKET {
-            continue;
-        }
-        let payload = &pkt[off..];
-        if pusi {
-            if let Some(prev) = cur.take() {
-                packets.push(prev);
-            }
-            cur = Some(payload.to_vec());
-        } else if let Some(c) = cur.as_mut() {
-            c.extend_from_slice(payload);
-        }
-    }
-    if let Some(c) = cur {
-        packets.push(c);
-    }
-    packets
-}
 
-/// Strip a PES packet header (ITU-T H.222.0 §2.4.3.6), returning the
-/// elementary-stream Annex B payload.
-fn pes_es_payload(pes: &[u8]) -> &[u8] {
-    assert_eq!(&pes[0..3], &[0x00, 0x00, 0x01], "PES start-code prefix");
-    let header_data_len = pes[8] as usize;
-    &pes[9 + header_data_len..]
-}
 
 /// Split an Annex B byte stream into its NAL units (start code `00 00 01`
 /// stripped, trailing `zero_byte` padding stripped).
@@ -197,9 +151,9 @@ fn independent_au_is_rap(annexb: &[u8]) -> bool {
 
 /// Reassemble Annex B access units for `pid` from a raw TS byte slice.
 fn access_units(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
-    reassemble_pes_packets(ts, pid)
+    crate::ts_psi::pes_packets(ts, pid)
         .iter()
-        .map(|pes| pes_es_payload(pes).to_vec())
+        .map(|pes| crate::ts_psi::pes_es_payload(pes).to_vec())
         .collect()
 }
 

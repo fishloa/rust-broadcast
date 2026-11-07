@@ -721,7 +721,9 @@ pub(crate) trait SignallingMachine {
         answer: Vec<u8>,
         etag: String,
     ) -> webrtc_runtime::whip::server::HttpResponse;
-    fn delete(&mut self) -> Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error>;
+    fn delete(
+        &mut self,
+    ) -> Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error>;
 }
 
 /// `PATCH <resource>`: a Trickle ICE SDP fragment adds remote candidates

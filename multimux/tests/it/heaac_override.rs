@@ -7,29 +7,15 @@
 //! production path: `RouteHandle::set_track_specs` + `ProgramSegmenter::pump`
 //! over a `Trunk`, read back through the axum router as a player would.
 
-use crate::support::hdr_route::{
-    DECLARED_BPS, PART_TARGET_MS, PUMP_EVERY, STREAM, Source, TARGET_DURATION_SECS,
-    WINDOW_SEGMENTS, contains, get, init_bytes, new_trunk, ok,
-};
-use std::collections::HashMap;
-use std::sync::Arc;
+use crate::support::hdr_route::{contains, get, init_bytes, load, ok, route_app_with_profiles};
 
 use axum::Router;
 use axum::http::StatusCode;
 use broadcast_common::Parse;
-use broadcast_common::mux::Unpackage;
 use broadcast_hls::{MasterPlaylist, MediaPlaylist};
-use media_plane::ProgramId;
-use media_plane::trunk::RetentionClass;
-use transmux::ts_demux::TsDemux;
 use transmux::{MovieBox, MovieFragmentBox};
 
 use multimux::config::{AudioProfile, AudioProfileOverride, AudioTrackSelector, Config};
-use multimux::origin::{AppState, router};
-use multimux::output::Output;
-use multimux::output::llhls::LlHlsOutput;
-use multimux::route::RouteHandle;
-use multimux::source::segment::ProgramSegmenter;
 
 const V1_FIXTURE: &str = "ts/heaac/heaac-v1-adts.ts";
 const V2_FIXTURE: &str = "ts/heaac/heaac-v2-adts.ts";
@@ -40,76 +26,8 @@ const BOX_HEADER_LEN: usize = 8;
 const HANDLER_SOUND: [u8; 4] = *b"soun";
 const V2_ASC: [u8; 4] = [0xEB, 0x8A, 0x08, 0x00];
 
-fn load(fixture: &str) -> Vec<Source> {
-    let bytes = test_fixtures::read(fixture);
-    let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
-    media
-        .tracks
-        .into_iter()
-        .map(|t| Source {
-            spec: t.spec,
-            samples: t
-                .samples
-                .into_iter()
-                .map(|mut s| {
-                    s.dts = s.dts.or(s.pts);
-                    s
-                })
-                .collect(),
-        })
-        .collect()
-}
-
 fn route_app(fixture: &str, profiles: Vec<AudioProfileOverride>) -> Router {
-    let sources = load(fixture);
-    let trunk = new_trunk();
-    let writer = trunk.writer().expect("trunk writer");
-    writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
-    let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_declared_bandwidth_bps(Some(DECLARED_BPS))
-            .with_audio_profiles(profiles),
-    );
-    route.publish_program(ProgramId(0), Arc::clone(&trunk));
-    route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
-    let mut segmenter =
-        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
-            .expect("segmenter");
-    if let Some(init) = segmenter.init_segment() {
-        route.set_init(ProgramId(0), init);
-    }
-    let mut order: Vec<(f64, usize, usize)> = Vec::new();
-    for (ti, src) in sources.iter().enumerate() {
-        if !src.spec.config.is_muxable_in_bmff() {
-            continue;
-        }
-        let scale = f64::from(src.spec.timescale);
-        for (si, s) in src.samples.iter().enumerate() {
-            order.push((s.dts.unwrap_or(0) as f64 / scale, ti, si));
-        }
-    }
-    order.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for (n, (_, ti, si)) in order.into_iter().enumerate() {
-        writer.publish(
-            sources[ti].spec.track_id,
-            RetentionClass::Timed,
-            sources[ti].samples[si].clone(),
-        );
-        if n % PUMP_EVERY == 0 {
-            segmenter.pump(ProgramId(0), &trunk, &route);
-        }
-    }
-    segmenter.pump(ProgramId(0), &trunk, &route);
-    segmenter.flush();
-    let mut streams = HashMap::new();
-    streams.insert(
-        STREAM.to_string(),
-        (
-            route,
-            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
-        ),
-    );
-    router(Arc::new(AppState::new(streams)))
+    route_app_with_profiles(load(fixture), profiles)
 }
 
 async fn master_codecs(app: &Router) -> String {

@@ -114,7 +114,6 @@ use webrtc_runtime::media::{
     Datagram, MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
     parse_remote_fingerprint,
 };
-use webrtc_runtime::whep::content_type;
 use webrtc_runtime::whep::server::{Event as WhepEvent, WhepSession};
 
 use crate::webrtc_session::{
@@ -813,7 +812,7 @@ impl crate::webrtc_session::SignallingMachine for WhepSession {
         &mut self,
         body: Vec<u8>,
         headers: &axum::http::HeaderMap,
-    ) -> Result<crate::webrtc_session::PatchEvent, webrtc_runtime::Error> {
+    ) -> std::result::Result<crate::webrtc_session::PatchEvent, webrtc_runtime::Error> {
         use crate::webrtc_session::PatchEvent;
         Ok(match self.on_patch(body, headers)? {
             WhepEvent::TrickleIce { sdp_fragment, .. } => PatchEvent::TrickleIce(sdp_fragment),
@@ -836,7 +835,8 @@ impl crate::webrtc_session::SignallingMachine for WhepSession {
 
     fn delete(
         &mut self,
-    ) -> Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error> {
+    ) -> std::result::Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error>
+    {
         self.on_delete()?;
         Ok(self.ack_delete())
     }
