@@ -32,7 +32,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         981,
         "spawn_blocking DVR persist; awaited inline",
     ),
-    ("dvr.rs", 597, "spawn_blocking DVR write; awaited inline"),
+    ("dvr.rs", 595, "spawn_blocking DVR write; awaited inline"),
     (
         "source/pull.rs",
         174,
@@ -40,7 +40,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "push/rtsp.rs",
-        292,
+        291,
         "RTSP push `close` best-effort TEARDOWN: spawned on the current runtime handle (`Handle::try_current`, skipped outside one), the JoinHandle is stored on the transport and an already-running one is aborted on a superseding close, bounded by TEARDOWN_TIMEOUT",
     ),
     ("source/rtmp.rs", 326, "RTMP accept pump TaskTracker"),
