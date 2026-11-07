@@ -27,8 +27,8 @@ use tokio::time::Instant;
 use tokio_util::codec::Framed;
 
 use crate::amf0::Amf0Value;
-use crate::client::{ClientConfig, ClientEvent};
-use crate::codec::{ClientCodec, ServerCodec, io_err};
+use crate::client::{ClientConfig, ClientEvent, ClientSession};
+use crate::codec::{ClientCodec, RtmpSession, ServerCodec, SessionCodec, io_err};
 use crate::server::{ServerConfig, ServerEvent, ServerSession};
 use crate::target::RtmpTarget;
 
@@ -139,21 +139,16 @@ impl AsyncRtmpServer {
     }
 }
 
-/// One accepted RTMP connection: a stream (a [`TcpStream`] by default) driving a
-/// [`ServerSession`].
-///
-/// [`next_events`](Self::next_events) is the whole surface: read a chunk,
-/// drive the session, write the reply, return the events.
 #[derive(Debug)]
-pub struct RtmpConnection<S = TcpStream> {
-    framed: Framed<S, ServerCodec>,
+struct Driver<S, T: RtmpSession> {
+    framed: Framed<S, SessionCodec<T>>,
     /// Events decoded but not yet handed to the caller. Set synchronously
     /// together with the reply bytes, so a cancelled flush leaves both in place
     /// for the next call.
-    ready: Option<Vec<ServerEvent>>,
-    /// Once set, the connection is done (clean EOF, `ServerEvent::Eof`, a prior
-    /// `RtmpError` or a timeout) and further calls to `next_events` return
-    /// `None` without touching the socket again.
+    ready: Option<Vec<<T as RtmpSession>::Event>>,
+    /// Once set, the connection is done (clean EOF, an end-of-stream event, a
+    /// prior `RtmpError` or a timeout) and further calls return `None` without
+    /// touching the socket again.
     closed: bool,
     handshake_deadline: Option<Instant>,
     /// Armed when a wait starts and cleared only when a batch with events is handed
@@ -163,10 +158,91 @@ pub struct RtmpConnection<S = TcpStream> {
     timeouts: RtmpTimeouts,
 }
 
+impl<S: AsyncRead + AsyncWrite + Unpin, T: RtmpSession> Driver<S, T> {
+    fn new(framed: Framed<S, SessionCodec<T>>, timeouts: RtmpTimeouts) -> Self {
+        Self {
+            framed,
+            ready: None,
+            closed: false,
+            handshake_deadline: Some(Instant::now() + timeouts.handshake),
+            idle_deadline: None,
+            timeouts,
+        }
+    }
+
+    async fn next_events(&mut self) -> io::Result<Option<Vec<T::Event>>> {
+        if self.closed {
+            return Ok(None);
+        }
+        loop {
+            match tokio::time::timeout(self.timeouts.write, self.framed.flush()).await {
+                Err(_) => {
+                    self.closed = true;
+                    return Err(timed_out("write"));
+                }
+                Ok(Err(e)) => {
+                    self.closed = true;
+                    return Err(e);
+                }
+                Ok(Ok(())) => {}
+            }
+            if let Some(events) = self.ready.take() {
+                if events.iter().any(T::opens_stream) {
+                    self.handshake_deadline = None;
+                }
+                if events.iter().any(T::is_eof) {
+                    self.closed = true;
+                }
+                if !events.is_empty() {
+                    self.idle_deadline = None;
+                }
+                return Ok(Some(events));
+            }
+            let read_idle = self.timeouts.read_idle;
+            let idle = *self
+                .idle_deadline
+                .get_or_insert_with(|| Instant::now() + read_idle);
+            let (deadline, what) = match self.handshake_deadline {
+                Some(h) if h < idle => (h, "handshake"),
+                _ => (idle, "read"),
+            };
+            match tokio::time::timeout_at(deadline, self.framed.next()).await {
+                Err(_) => {
+                    self.closed = true;
+                    return Err(timed_out(what));
+                }
+                Ok(None) => {
+                    self.closed = true;
+                    return Ok(None);
+                }
+                Ok(Some(Err(e))) => {
+                    self.closed = true;
+                    return Err(e);
+                }
+                Ok(Some(Ok(events))) => {
+                    let reply = self.framed.codec_mut().take_reply();
+                    self.framed.write_buffer_mut().extend_from_slice(&reply);
+                    self.ready = Some(events);
+                }
+            }
+        }
+    }
+}
+
+/// One accepted RTMP connection: a stream (a [`TcpStream`] by default) driving a
+/// [`ServerSession`].
+///
+/// [`next_events`](Self::next_events) is the whole surface: read a chunk,
+/// drive the session, write the reply, return the events.
+#[derive(Debug)]
+pub struct RtmpConnection<S = TcpStream> {
+    driver: Driver<S, ServerSession>,
+}
+
 impl RtmpConnection<TcpStream> {
     /// The remote address of the connected publisher.
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.framed.get_ref().peer_addr()
+        self.driver.framed.get_ref().peer_addr()
     }
 }
 
@@ -175,12 +251,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
     /// [`RtmpTimeouts`].
     pub fn from_stream(stream: S, session: ServerSession, timeouts: RtmpTimeouts) -> Self {
         Self {
-            framed: Framed::new(stream, ServerCodec::new(session)),
-            ready: None,
-            closed: false,
-            handshake_deadline: Some(Instant::now() + timeouts.handshake),
-            idle_deadline: None,
-            timeouts,
+            driver: Driver::new(Framed::new(stream, ServerCodec::new(session)), timeouts),
         }
     }
 
@@ -208,70 +279,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
     /// ([`RtmpTimeouts`]) is [`io::ErrorKind::TimedOut`] and closes the
     /// connection too.
     pub async fn next_events(&mut self) -> io::Result<Option<Vec<ServerEvent>>> {
-        if self.closed {
-            return Ok(None);
-        }
-        loop {
-            // 1. Drain whatever a cancelled earlier call left in the write buffer.
-            match tokio::time::timeout(self.timeouts.write, self.framed.flush()).await {
-                Err(_) => {
-                    self.closed = true;
-                    return Err(timed_out("write"));
-                }
-                Ok(Err(e)) => {
-                    self.closed = true;
-                    return Err(e);
-                }
-                Ok(Ok(())) => {}
-            }
-            // 2. Hand out events whose reply is now fully written.
-            if let Some(events) = self.ready.take() {
-                if events
-                    .iter()
-                    .any(|e| matches!(e, ServerEvent::Connected { .. }))
-                {
-                    self.handshake_deadline = None;
-                }
-                if events.iter().any(|e| matches!(e, ServerEvent::Eof)) {
-                    self.closed = true;
-                }
-                if !events.is_empty() {
-                    self.idle_deadline = None;
-                }
-                return Ok(Some(events));
-            }
-            // 3. Wait for the next batch under ONE deadline (handshake or
-            //    read-idle, whichever is nearer).
-            let read_idle = self.timeouts.read_idle;
-            let idle = *self
-                .idle_deadline
-                .get_or_insert_with(|| Instant::now() + read_idle);
-            let (deadline, what) = match self.handshake_deadline {
-                Some(h) if h < idle => (h, "handshake"),
-                _ => (idle, "read"),
-            };
-            match tokio::time::timeout_at(deadline, self.framed.next()).await {
-                Err(_) => {
-                    self.closed = true;
-                    return Err(timed_out(what));
-                }
-                Ok(None) => {
-                    self.closed = true;
-                    return Ok(None);
-                }
-                Ok(Some(Err(e))) => {
-                    self.closed = true;
-                    return Err(e);
-                }
-                Ok(Some(Ok(events))) => {
-                    // Synchronous from here to the next await: reply and events
-                    // move together.
-                    let reply = self.framed.codec_mut().take_reply();
-                    self.framed.write_buffer_mut().extend_from_slice(&reply);
-                    self.ready = Some(events);
-                }
-            }
-        }
+        self.driver.next_events().await
     }
 }
 
@@ -280,15 +288,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
 /// [`RtmpConnection`]. Every awaited IO is bounded by [`RtmpTimeouts`].
 #[derive(Debug)]
 pub struct AsyncRtmpClient<S = TcpStream> {
-    framed: Framed<S, ClientCodec>,
-    ready: Option<Vec<ClientEvent>>,
-    closed: bool,
-    handshake_deadline: Option<Instant>,
-    /// Armed when a wait starts and cleared only when a batch with events is handed
-    /// out, so `read_idle` bounds a whole frame/batch, not each (possibly empty) chunk
-    /// a peer drips.
-    idle_deadline: Option<Instant>,
-    timeouts: RtmpTimeouts,
+    driver: Driver<S, ClientSession>,
 }
 
 impl AsyncRtmpClient<TcpStream> {
@@ -314,17 +314,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
             tc_url: Some(target.tc_url.clone()),
             ..ClientConfig::default()
         };
-        let mut codec = ClientCodec::new(cfg);
+        let mut codec = ClientCodec::new(ClientSession::new(cfg));
         let c0c1 = codec.session_mut().start();
         let mut framed = Framed::new(stream, codec);
         framed.write_buffer_mut().extend_from_slice(&c0c1);
         Self {
-            framed,
-            ready: None,
-            closed: false,
-            handshake_deadline: Some(Instant::now() + timeouts.handshake),
-            idle_deadline: None,
-            timeouts,
+            driver: Driver::new(framed, timeouts),
         }
     }
 
@@ -359,8 +354,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     /// cancel during the flush leaves the message queued (sent by the next call),
     /// never half-framed.
     async fn queue(&mut self, bytes: Vec<u8>) -> io::Result<()> {
-        self.framed.write_buffer_mut().extend_from_slice(&bytes);
-        match tokio::time::timeout(self.timeouts.write, self.framed.flush()).await {
+        self.driver
+            .framed
+            .write_buffer_mut()
+            .extend_from_slice(&bytes);
+        match tokio::time::timeout(self.driver.timeouts.write, self.driver.framed.flush()).await {
             Err(_) => Err(timed_out("write")),
             Ok(r) => r,
         }
@@ -395,7 +393,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     /// message now and write it verbatim later via
     /// [`write_frame`](Self::write_frame).
     pub fn encode_audio(&mut self, timestamp: u32, data: &[u8]) -> io::Result<Vec<u8>> {
-        self.framed
+        self.driver
+            .framed
             .codec_mut()
             .session_mut()
             .send_audio(timestamp, data)
@@ -405,7 +404,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     /// Sans-IO half of [`send_video`](Self::send_video) — see
     /// [`encode_audio`](Self::encode_audio).
     pub fn encode_video(&mut self, timestamp: u32, data: &[u8]) -> io::Result<Vec<u8>> {
-        self.framed
+        self.driver
+            .framed
             .codec_mut()
             .session_mut()
             .send_video(timestamp, data)
@@ -415,7 +415,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     /// Sans-IO half of [`send_metadata`](Self::send_metadata) — see
     /// [`encode_audio`](Self::encode_audio).
     pub fn encode_metadata(&mut self, metadata: &[(String, Amf0Value)]) -> io::Result<Vec<u8>> {
-        self.framed
+        self.driver
+            .framed
             .codec_mut()
             .session_mut()
             .send_metadata(metadata)
@@ -431,61 +432,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     /// Next batch of server events (acks, errors, close); `Ok(None)` at EOF.
     /// Same deadline rules and cancel-safety as [`RtmpConnection::next_events`].
     pub async fn next_events(&mut self) -> io::Result<Option<Vec<ClientEvent>>> {
-        if self.closed {
-            return Ok(None);
-        }
-        loop {
-            match tokio::time::timeout(self.timeouts.write, self.framed.flush()).await {
-                Err(_) => {
-                    self.closed = true;
-                    return Err(timed_out("write"));
-                }
-                Ok(Err(e)) => {
-                    self.closed = true;
-                    return Err(e);
-                }
-                Ok(Ok(())) => {}
-            }
-            if let Some(events) = self.ready.take() {
-                if events.iter().any(|e| matches!(e, ClientEvent::Publishing)) {
-                    self.handshake_deadline = None;
-                }
-                if events.iter().any(|e| matches!(e, ClientEvent::Closed)) {
-                    self.closed = true;
-                }
-                if !events.is_empty() {
-                    self.idle_deadline = None;
-                }
-                return Ok(Some(events));
-            }
-            let read_idle = self.timeouts.read_idle;
-            let idle = *self
-                .idle_deadline
-                .get_or_insert_with(|| Instant::now() + read_idle);
-            let (deadline, what) = match self.handshake_deadline {
-                Some(h) if h < idle => (h, "handshake"),
-                _ => (idle, "read"),
-            };
-            match tokio::time::timeout_at(deadline, self.framed.next()).await {
-                Err(_) => {
-                    self.closed = true;
-                    return Err(timed_out(what));
-                }
-                Ok(None) => {
-                    self.closed = true;
-                    return Ok(None);
-                }
-                Ok(Some(Err(e))) => {
-                    self.closed = true;
-                    return Err(e);
-                }
-                Ok(Some(Ok(events))) => {
-                    let reply = self.framed.codec_mut().take_reply();
-                    self.framed.write_buffer_mut().extend_from_slice(&reply);
-                    self.ready = Some(events);
-                }
-            }
-        }
+        self.driver.next_events().await
     }
 }
 
