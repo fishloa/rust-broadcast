@@ -66,7 +66,7 @@ serde   = ["dep:serde", "dep:serde_json"]
 # endpoint) and `cli` (clap binary) all imply `std`.
 metrics = ["std", "dep:metrics", "dep:metrics-exporter-prometheus"]
 net     = ["metrics", "dep:tokio", "dep:tokio-util", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:socket2"]
-cli     = ["dep:clap", "dep:container-probe", "std", "net"]
+cli     = ["dep:clap", "dep:container-probe", "std", "net", "serde"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
