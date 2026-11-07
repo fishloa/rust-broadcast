@@ -31,10 +31,6 @@ impl Timeline {
             unroller: PtsUnroller::default(),
         }
     }
-    /// Set / replace the anchor.
-    pub fn set_anchor(&mut self, anchor: TimeAnchor) {
-        self.anchor = Some(anchor);
-    }
 
     /// Parse a SCTE-35 section; unroll its PTS into an absolute [`MediaTime`].
     pub fn push_scte35(&mut self, bytes: &[u8]) -> Result<TimedEvent> {

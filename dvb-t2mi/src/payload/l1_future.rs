@@ -4,7 +4,6 @@
 //! signalling data. Per §5.5, this is always the **last** T2-MI packet
 //! for a given `frame_idx` (if used in current frame).
 
-use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 use super::l1::L1PostDynamic;
@@ -69,139 +68,6 @@ impl L1FuturePayload<'_> {
             num_plp,
             num_aux,
         )?))
-    }
-
-    /// Parse the "dynamic, next-but-one frame" block from `l1_future_data`.
-    ///
-    /// `num_plp` and `num_aux` must be supplied by the caller (same reason as
-    /// [`l1_dynamic_next`](Self::l1_dynamic_next)).
-    ///
-    /// Returns `None` when `L1DYN_NEXT2_LEN == 0` (block absent, e.g. non-TFS).
-    ///
-    /// # Errors
-    /// [`crate::Error::BufferTooShort`] if the data is truncated.
-    /// [`crate::Error::L1Bits`] on bit-field errors.
-    pub fn l1_dynamic_next2(
-        &self,
-        num_plp: u8,
-        num_aux: u8,
-    ) -> crate::error::Result<Option<L1PostDynamic>> {
-        let data = self.l1_future_data;
-        // Skip over the first block; use .get(offset..) to avoid OOB
-        // panic when NEXT_LEN declares more bytes than available (#215).
-        let (b, _) = data
-            .split_first_chunk::<2>()
-            .ok_or(crate::Error::BufferTooShort {
-                need: 2,
-                have: data.len(),
-                what: "L1DYN_NEXT_LEN (scanning for NEXT2)",
-            })?;
-        let next_len_bits = u16::from_be_bytes(*b) as usize;
-        let next_len_bytes = next_len_bits.div_ceil(8);
-        let offset = 2 + next_len_bytes;
-        let (b2, _) = data
-            .get(offset..)
-            .and_then(|s| s.split_first_chunk::<2>())
-            .ok_or(crate::Error::BufferTooShort {
-                need: offset + 2,
-                have: data.len(),
-                what: "L1DYN_NEXT2_LEN",
-            })?;
-        let len_bits = u16::from_be_bytes(*b2) as usize;
-        if len_bits == 0 {
-            return Ok(None);
-        }
-        let len_bytes = len_bits.div_ceil(8);
-        if data.len() < offset + 2 + len_bytes {
-            return Err(crate::Error::BufferTooShort {
-                need: offset + 2 + len_bytes,
-                have: data.len(),
-                what: "L1DYN_NEXT2",
-            });
-        }
-        Ok(Some(L1PostDynamic::parse(
-            &data[offset + 2..offset + 2 + len_bytes],
-            num_plp,
-            num_aux,
-        )?))
-    }
-
-    /// Parse the in-band signalling loop from `l1_future_data` (Table 3).
-    ///
-    /// Returns a `Vec` of `(plp_id, inband_bytes)` pairs.
-    ///
-    /// # Errors
-    /// [`crate::Error::BufferTooShort`] if the data is truncated.
-    pub fn inband_loop(&self) -> crate::error::Result<Vec<(u8, Vec<u8>)>> {
-        let data = self.l1_future_data;
-        // Skip over DYN_NEXT and DYN_NEXT2
-        let (b, _) = data
-            .split_first_chunk::<2>()
-            .ok_or(crate::Error::BufferTooShort {
-                need: 2,
-                have: data.len(),
-                what: "L1DYN_NEXT_LEN (scanning for INBAND)",
-            })?;
-        let next_len_bits = u16::from_be_bytes(*b) as usize;
-        let next_len_bytes = next_len_bits.div_ceil(8);
-        // Use .get(pos..) to avoid OOB panic when NEXT_LEN declares
-        // more bytes than available (#215).
-        let mut pos = 2 + next_len_bytes;
-        let (b2, _) = data
-            .get(pos..)
-            .and_then(|s| s.split_first_chunk::<2>())
-            .ok_or(crate::Error::BufferTooShort {
-                need: pos + 2,
-                have: data.len(),
-                what: "L1DYN_NEXT2_LEN (scanning for INBAND)",
-            })?;
-        let next2_len_bits = u16::from_be_bytes(*b2) as usize;
-        let next2_len_bytes = next2_len_bits.div_ceil(8);
-        pos += 2 + next2_len_bytes;
-
-        // NUM_INBAND (8 bits)
-        if data.len() < pos + 1 {
-            return Err(crate::Error::BufferTooShort {
-                need: pos + 1,
-                have: data.len(),
-                what: "NUM_INBAND",
-            });
-        }
-        let num_inband = data[pos] as usize;
-        pos += 1;
-
-        let mut result = Vec::with_capacity(num_inband);
-        for _ in 0..num_inband {
-            if data.len() < pos + 3 {
-                return Err(crate::Error::BufferTooShort {
-                    need: pos + 3,
-                    have: data.len(),
-                    what: "INBAND entry header",
-                });
-            }
-            let plp_id = data[pos];
-            let (inband_b, _) = data
-                .get(pos + 1..)
-                .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(crate::Error::BufferTooShort {
-                    need: pos + 3,
-                    have: data.len(),
-                    what: "INBAND entry header",
-                })?;
-            let inband_len_bits = u16::from_be_bytes(*inband_b) as usize;
-            let inband_bytes = inband_len_bits.div_ceil(8);
-            pos += 3;
-            if data.len() < pos + inband_bytes {
-                return Err(crate::Error::BufferTooShort {
-                    need: pos + inband_bytes,
-                    have: data.len(),
-                    what: "INBAND data",
-                });
-            }
-            result.push((plp_id, data[pos..pos + inband_bytes].to_vec()));
-            pos += inband_bytes;
-        }
-        Ok(result)
     }
 }
 
@@ -303,31 +169,5 @@ mod tests {
         let buf = [0x05u8, 0x00];
         let result = L1FuturePayload::parse(&buf).unwrap();
         assert!(result.l1_future_data.is_empty());
-    }
-
-    #[test]
-    fn l1_dynamic_next2_oob_panic_regression() {
-        // #215: NEXT_LEN claims a large size exceeding the actual buffer.
-        // NEXT_LEN = 0xFFFF bits → 8192 bytes, but only 2 bytes of data.
-        let buf = [0xFFu8, 0xFF];
-        let pkt = L1FuturePayload {
-            frame_idx: 0,
-            l1_future_data: &buf,
-        };
-        let err = pkt.l1_dynamic_next2(0, 0).unwrap_err();
-        assert!(matches!(err, crate::Error::BufferTooShort { .. }));
-    }
-
-    #[test]
-    fn inband_loop_oob_panic_regression() {
-        // #215: NEXT_LEN claims a large size exceeding the actual buffer.
-        // NEXT_LEN = 0xFFFF bits → 8192 bytes, but only 2 bytes of data.
-        let buf = [0xFFu8, 0xFF];
-        let pkt = L1FuturePayload {
-            frame_idx: 0,
-            l1_future_data: &buf,
-        };
-        let err = pkt.inband_loop().unwrap_err();
-        assert!(matches!(err, crate::Error::BufferTooShort { .. }));
     }
 }

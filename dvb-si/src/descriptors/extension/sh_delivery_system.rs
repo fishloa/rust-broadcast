@@ -717,26 +717,7 @@ pub enum ShModulationMode {
     },
 }
 
-impl ShModulationMode {
-    /// Build a `Tdm` modulation with the spec-default reserved bit.
-    #[must_use]
-    pub const fn tdm(
-        polarization: ShPolarization,
-        roll_off: ShRollOff,
-        modulation_mode: ShModulationModeType,
-        code_rate: ShCodeRate,
-        symbol_rate: u8,
-    ) -> Self {
-        Self::Tdm {
-            polarization,
-            roll_off,
-            modulation_mode,
-            code_rate,
-            symbol_rate,
-            reserved_future_use: TDM_RESERVED_FUTURE_USE_DEFAULT,
-        }
-    }
-}
+impl ShModulationMode {}
 
 /// Interleaver block for an SH modulation entry (Table 122).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1454,29 +1435,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    /// Constructors serialize the spec values (all ones).
-    #[test]
-    fn default_reserved_is_spec_value() {
-        let d = ShDeliverySystem::new(
-            ShDiversityMode::FecAtLink,
-            vec![ShModulation::new(
-                ShModulationMode::tdm(
-                    ShPolarization::LinearHorizontal,
-                    ShRollOff::Alpha035,
-                    ShModulationModeType::Psk8,
-                    ShCodeRate::Rate1_3Complementary,
-                    10,
-                ),
-                Some(ShInterleaver::type1(21)),
-            )],
-        );
-        let mut buf = vec![0u8; d.serialized_len()];
-        d.serialize_into(&mut buf).unwrap();
-        assert_eq!(buf[0] & 0x0F, 0x0F);
-        assert_eq!(buf[1] & 0x1F, 0x1F);
-        assert_eq!(buf[3] & 0x01, 0x01);
-        assert_eq!(buf[4] & 0x03, 0x03);
     }
 }

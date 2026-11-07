@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Removed
+- Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `as_uuid_bytes`, `from_ul`, `from_uuid`.
 - `Error::InvalidKeyLength`: never constructed; a short buffer is reported as `BufferTooShort`.
 
 ## [0.5.0] - 2026-10-17

@@ -143,20 +143,6 @@ impl S2Field1 {
         }
     }
 
-    #[must_use]
-    /// Guard-interval set description.
-    pub fn guard_interval_set(self) -> &'static str {
-        match self {
-            Self::Fft1k => "1/128, 1/32, 1/16, 19/256, 1/8, 19/128, 1/4",
-            Self::Fft2k => "1/128, 1/32, 1/16, 19/256, 1/8, 19/128, 1/4",
-            Self::Fft4k => "1/128, 1/32, 1/16, 19/256, 1/8, 19/128, 1/4",
-            Self::Fft8k => "1/128, 1/32, 1/16, 19/256, 1/8, 19/128, 1/4",
-            Self::Fft16k => "1/128, 1/32, 1/16, 1/8, 19/128, 1/4",
-            Self::Fft32k => "1/128, 1/32, 1/16, 19/256",
-            Self::Reserved1 | Self::Reserved2 => "reserved",
-        }
-    }
-
     /// Human-readable spec label (EN 302 755 §7.2.3 Tables 19-20) — the FFT size.
     #[must_use]
     pub fn name(&self) -> &'static str {

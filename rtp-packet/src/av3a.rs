@@ -39,8 +39,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
 
-/// SDP `a=rtpmap` / MIME subtype of the payload (T/AI 109.7 10.1.3.2, 10.1.4.2).
-pub const ENCODING_NAME: &str = "AV3A-AATF";
 /// Default RTP timestamp clock rate (10.1.2.2; 10.1.4.2 `rate` default 90000).
 pub const DEFAULT_CLOCK_RATE: u32 = 90_000;
 /// `syncword` of an `aatf_frame()` (Table A.4): `'1111 1111 1111'`.
@@ -51,12 +49,6 @@ pub const DYNAMIC_PT_MIN: u8 = 96;
 pub const DYNAMIC_PT_MAX: u8 = 127;
 /// `sampling_frequency_index` value that adds an explicit 24-bit `sampling_frequency`.
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
-
-/// Whether `pt` is in the dynamic payload-type range AV3A-AATF uses.
-#[must_use]
-pub const fn is_dynamic_payload_type(pt: u8) -> bool {
-    pt >= DYNAMIC_PT_MIN && pt <= DYNAMIC_PT_MAX
-}
 
 fn short(what: &'static str) -> Error {
     Error::BufferTooShort {
@@ -1100,12 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_payload_type_range() {
-        assert!(!is_dynamic_payload_type(95));
-        assert!(is_dynamic_payload_type(96));
-        assert!(is_dynamic_payload_type(127));
-        assert!(!is_dynamic_payload_type(128));
-        assert_eq!(ENCODING_NAME, "AV3A-AATF");
+    fn default_fmtp_clock_rate_is_90khz() {
         assert_eq!(Av3aFmtp::default().clock_rate(), 90_000);
     }
 

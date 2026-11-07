@@ -107,16 +107,6 @@ impl Timestamp {
         Timestamp(self.0.saturating_add(nanos))
     }
 
-    /// Misnamed: this saturates, it does not check. Use
-    /// [`saturating_add_nanos`](Self::saturating_add_nanos).
-    #[deprecated(
-        since = "9.5.0",
-        note = "saturates, not checks; use `saturating_add_nanos`"
-    )]
-    pub const fn checked_add_nanos(self, nanos: u64) -> Self {
-        self.saturating_add_nanos(nanos)
-    }
-
     /// `self + duration`, saturating at `u64::MAX` instead of overflowing.
     ///
     /// A `Duration` in excess of `u64::MAX` nanoseconds saturates the same way.

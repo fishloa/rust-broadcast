@@ -57,15 +57,6 @@ impl CencScheme {
         }
     }
 
-    /// The scheme's `schm.scheme_type` four-CC bytes — the inverse of
-    /// [`CencScheme::from_four_cc`].
-    pub fn to_four_cc(&self) -> [u8; 4] {
-        match self {
-            CencScheme::Cenc => SCHEME_CENC,
-            CencScheme::Cbcs => SCHEME_CBCS,
-        }
-    }
-
     /// Map a `schm.scheme_type` four-CC to a known scheme, or `None` if it is
     /// one this workspace does not implement (e.g. `cens`/`cbc1`).
     pub fn from_four_cc(four_cc: &[u8; 4]) -> Option<Self> {
@@ -97,19 +88,23 @@ mod tests {
     }
 
     #[test]
-    fn four_cc_round_trips() {
-        for scheme in [CencScheme::Cenc, CencScheme::Cbcs] {
-            assert_eq!(CencScheme::from_four_cc(&scheme.to_four_cc()), Some(scheme));
-        }
+    fn four_cc_constants_map_to_their_schemes() {
+        assert_eq!(
+            CencScheme::from_four_cc(&SCHEME_CENC),
+            Some(CencScheme::Cenc)
+        );
+        assert_eq!(
+            CencScheme::from_four_cc(&SCHEME_CBCS),
+            Some(CencScheme::Cbcs)
+        );
     }
 
     #[test]
     fn four_cc_is_the_name_bytes() {
         // The `schm` four-CC and the spec token are the same four characters —
         // a mismatch would mean one of the two tables drifted.
-        for scheme in [CencScheme::Cenc, CencScheme::Cbcs] {
-            assert_eq!(scheme.to_four_cc().as_slice(), scheme.name().as_bytes());
-        }
+        assert_eq!(SCHEME_CENC.as_slice(), CencScheme::Cenc.name().as_bytes());
+        assert_eq!(SCHEME_CBCS.as_slice(), CencScheme::Cbcs.name().as_bytes());
     }
 
     #[test]

@@ -252,29 +252,6 @@ impl<'a> IdSelector<'a> {
             IdSelector::Raw(b) => b.len(),
         }
     }
-
-    /// Write the wire bytes into `buf` starting at offset `pos`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::OutputBufferTooSmall`] instead of panicking when
-    /// `buf` (from `pos` onward) is too short (r03-W17).
-    pub fn serialize_into_at(&self, buf: &mut [u8], pos: usize) -> Result<usize> {
-        let need = pos + self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        match self {
-            IdSelector::Ssu(s) => s.serialize_into(&mut buf[pos..]),
-            IdSelector::Raw(b) => {
-                buf[pos..pos + b.len()].copy_from_slice(b);
-                Ok(b.len())
-            }
-        }
-    }
 }
 
 impl<'a> Parse<'a> for SsuIdSelector<'a> {
@@ -573,17 +550,6 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         let re = DataBroadcastIdDescriptor::parse(&buf).unwrap();
         assert_eq!(d, re);
-    }
-
-    /// Regression for r03-W17: `IdSelector::serialize_into_at` used to
-    /// panic (out-of-bounds slice index) on a buffer too short for `pos +
-    /// serialized_len()`; it must return an error instead.
-    #[test]
-    fn id_selector_serialize_into_at_rejects_too_small_buffer() {
-        let sel = IdSelector::Raw(&[0xDE, 0xAD, 0xBE, 0xEF]);
-        let mut buf = [0u8; 5];
-        let err = sel.serialize_into_at(&mut buf, 3).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
     }
 
     #[test]

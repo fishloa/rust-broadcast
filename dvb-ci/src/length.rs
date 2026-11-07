@@ -56,12 +56,6 @@ pub enum LengthForm {
 }
 
 impl LengthForm {
-    /// `true` for [`LengthForm::Minimal`] (used to skip the field in serde).
-    #[must_use]
-    pub const fn is_minimal(&self) -> bool {
-        matches!(self, Self::Minimal)
-    }
-
     /// Short label (issue #204 convention).
     #[must_use]
     pub fn name(&self) -> &'static str {

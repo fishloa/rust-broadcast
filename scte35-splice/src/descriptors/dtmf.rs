@@ -35,14 +35,7 @@ impl Default for DtmfDescriptor {
     }
 }
 
-impl DtmfDescriptor {
-    /// `preroll` decoded to a [`Duration`](core::time::Duration) (tenths of a
-    /// second).
-    #[must_use]
-    pub fn preroll_duration(&self) -> core::time::Duration {
-        core::time::Duration::from_millis(u64::from(self.preroll) * 100)
-    }
-}
+impl DtmfDescriptor {}
 
 impl<'a> Parse<'a> for DtmfDescriptor {
     type Error = Error;
@@ -121,7 +114,6 @@ mod tests {
         let back = DtmfDescriptor::parse(&bytes).unwrap();
         assert_eq!(d, back);
         assert_eq!(back.try_to_bytes().unwrap(), bytes);
-        assert_eq!(back.preroll_duration(), core::time::Duration::from_secs(4));
     }
 
     #[test]

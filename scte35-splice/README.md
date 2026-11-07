@@ -98,7 +98,7 @@ assert!(matches!(parsed.clear.as_ref().unwrap().command, AnyCommand::TimeSignal(
 
 - **`splice_info_section`** (§9.6): `table_id`, `section_length`, `protocol_version`,
   `encrypted_packet` + `encryption_algorithm` (encrypted region kept raw), 33-bit
-  `pts_adjustment` (`pts_adjustment_duration()` accessor), `cw_index`, 12-bit `tier`,
+  `pts_adjustment`, `cw_index`, 12-bit `tier`,
   `splice_command_length` / type, descriptor loop, CRC-32 (verified on parse).
 - **Segmentation tables** (§10.3.3.1): typed `DeviceRestrictions` (Table 21),
   `SegmentationUpidType` (Table 22) and `SegmentationTypeId` (Table 23), each with a

@@ -28,13 +28,7 @@ pub struct XaitPid {
     pub xait_pid: u16,
 }
 
-impl XaitPid {
-    /// Whether [`Self::xait_pid`] is a valid 13-bit transport PID (`<= 0x1FFF`).
-    #[must_use]
-    pub const fn is_valid_pid(&self) -> bool {
-        self.xait_pid <= MAX_PID
-    }
-}
+impl XaitPid {}
 
 impl<'a> Parse<'a> for XaitPid {
     type Error = crate::error::Error;
@@ -87,7 +81,6 @@ mod tests {
         match &d.body {
             ExtensionBody::XaitPid(b) => {
                 assert_eq!(b.xait_pid, 0x1FFC);
-                assert!(b.is_valid_pid());
             }
             other => panic!("expected XaitPid, got {other:?}"),
         }
@@ -122,7 +115,6 @@ mod tests {
         match &d.body {
             ExtensionBody::XaitPid(b) => {
                 assert_eq!(b.xait_pid, 0xE100);
-                assert!(!b.is_valid_pid());
             }
             other => panic!("expected XaitPid, got {other:?}"),
         }

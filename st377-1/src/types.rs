@@ -141,40 +141,6 @@ impl Auid {
     pub fn is_ul(&self) -> bool {
         self.0[0] & 0x80 == 0
     }
-
-    /// This AUID's bytes, interpreted as a UL (no transform — only
-    /// meaningful when [`Self::is_ul`]).
-    #[must_use]
-    pub fn as_ul_bytes(&self) -> UlBytes {
-        self.0
-    }
-
-    /// This AUID's bytes, interpreted as a UUID: swaps the top/bottom 8
-    /// bytes back to natural UUID storage order (§4.2.1, Table 2) — only
-    /// meaningful when [`Self::is_ul`] is false.
-    #[must_use]
-    pub fn as_uuid_bytes(&self) -> UlBytes {
-        let mut out = [0u8; 16];
-        out[..8].copy_from_slice(&self.0[8..]);
-        out[8..].copy_from_slice(&self.0[..8]);
-        out
-    }
-
-    /// Build an AUID from a UL (stored as-is).
-    #[must_use]
-    pub fn from_ul(ul: UlBytes) -> Self {
-        Auid(ul)
-    }
-
-    /// Build an AUID from a natural-order UUID (top/bottom 8 bytes swapped
-    /// on storage per §4.2.1).
-    #[must_use]
-    pub fn from_uuid(uuid: UlBytes) -> Self {
-        let mut out = [0u8; 16];
-        out[..8].copy_from_slice(&uuid[8..]);
-        out[8..].copy_from_slice(&uuid[..8]);
-        Auid(out)
-    }
 }
 
 /// A Gregorian timestamp (§4.3): `year: Int16, month/day/hour/minute/second/
@@ -489,36 +455,6 @@ pub fn serialize_uid_batch(items: &[UlBytes]) -> Vec<u8> {
 mod tests {
     use super::*;
     use alloc::string::ToString;
-
-    #[test]
-    fn auid_ul_round_trip() {
-        let ul: UlBytes = [
-            0x06, 0x0E, 0x2B, 0x34, 0x01, 0x01, 0x01, 0x0E, 0x04, 0x04, 0x05, 0x03, 0, 0, 0, 0,
-        ];
-        let auid = Auid::from_ul(ul);
-        assert!(auid.is_ul());
-        assert_eq!(auid.as_ul_bytes(), ul);
-    }
-
-    #[test]
-    fn auid_uuid_round_trip() {
-        let uuid: UlBytes = [
-            0x07, 0x72, 0x26, 0x2E, 0x76, 0x55, 0x43, 0x6F, 0x8F, 0xF3, 0x8A, 0xC5, 0x1B, 0x77,
-            0x1E, 0x02,
-        ];
-        let auid = Auid::from_uuid(uuid);
-        assert!(!auid.is_ul());
-        // Spec Table 2 worked example: AUID storage order is
-        // 8F.F3.8A.C5.1B.77.1E.02.07.72.26.2E.76.55.43.6F
-        assert_eq!(
-            auid.0,
-            [
-                0x8F, 0xF3, 0x8A, 0xC5, 0x1B, 0x77, 0x1E, 0x02, 0x07, 0x72, 0x26, 0x2E, 0x76, 0x55,
-                0x43, 0x6F
-            ]
-        );
-        assert_eq!(auid.as_uuid_bytes(), uuid);
-    }
 
     #[test]
     fn timestamp_round_trip() {

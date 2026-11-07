@@ -42,7 +42,7 @@ the trait, register the type, and call the `*_with` seam instead of the default:
 
 | You want to add… | Implement | Register on | Drive with |
 |---|---|---|---|
-| A private/custom **table** (own `table_id`) | `dvb_si::traits::TableDef` | `TableRegistry::register::<T>()` | `AnyTableSection::parse_with(&reg, bytes)` or `SectionEvent::table_section_with(&reg)` |
+| A private/custom **table** (own `table_id`) | `dvb_si::traits::TableDef` | `TableRegistry::register::<T>()` | `AnyTableSection::parse_with(&reg, bytes)` |
 | A private **descriptor** (own tag, optionally PDS-scoped) | `dvb_si::traits::DescriptorDef` | `DescriptorRegistry::register::<T>()` / `register_for_pds::<T>(pds)` | `DescriptorLoop::iter_with(&reg)` |
 | A private **extended descriptor** (tag `0x7F`, own `descriptor_tag_extension`) | `dvb_si::descriptors::extension::ExtensionBodyDef` | `ExtensionRegistry::register::<T>()` | `DescriptorLoop::iter_with_extensions(&desc_reg, &ext_reg)` → `ExtIterItem::CustomExtension` |
 | A private **T2-MI payload** (own `packet_type`) | `dvb_t2mi::traits::PayloadDef` | `PayloadRegistry::register::<T>()` | `AnyPayload::dispatch_with(ptype, bytes, &reg)` or `T2miEvent::payload_with(&reg)` |
@@ -62,8 +62,7 @@ its module doc, no magic numbers outside `#[cfg(test)]`, and a clean
 Each registry's module doc carries a complete, compiling example — read those for
 the exact signatures rather than copying from here:
 
-- Tables — `dvb-si/src/tables/registry.rs` (and the `table_section_with` test in
-  `dvb-si/src/demux.rs`).
+- Tables — `dvb-si/src/tables/registry.rs`.
 - Descriptors (incl. PDS scoping) — `dvb-si/src/descriptors/registry.rs`.
 - Descriptor extensions (`0x7F`) — `dvb-si/src/descriptors/extension/registry.rs`.
 - T2-MI payloads — `dvb-t2mi/src/payload/registry.rs`.

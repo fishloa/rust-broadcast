@@ -42,16 +42,6 @@ pub const SUBCELL_LEN: usize = 8;
 /// Mask for a 12-bit extent value.
 pub const EXTENT_MASK: u16 = 0x0FFF;
 
-/// Scale factor: 90°/2^15 for latitude (§6.2.7).
-const LAT_SCALE: f64 = 90.0 / 32768.0;
-/// Scale factor: 180°/2^15 for longitude (§6.2.7).
-const LONG_SCALE: f64 = 180.0 / 32768.0;
-
-/// Interpret a 16-bit big-endian value as a signed i16 (two's-complement).
-fn u16_to_i16(raw: u16) -> i16 {
-    raw as i16
-}
-
 /// One sub-cell within a cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -68,31 +58,7 @@ pub struct CellListSubcell {
     pub subcell_extent_of_longitude: u16,
 }
 
-impl CellListSubcell {
-    /// Decode subcell_latitude to degrees (90°/2^15 scaling).
-    #[must_use]
-    pub fn subcell_latitude_deg(&self) -> f64 {
-        u16_to_i16(self.subcell_latitude) as f64 * LAT_SCALE
-    }
-
-    /// Decode subcell_longitude to degrees (180°/2^15 scaling).
-    #[must_use]
-    pub fn subcell_longitude_deg(&self) -> f64 {
-        u16_to_i16(self.subcell_longitude) as f64 * LONG_SCALE
-    }
-
-    /// Decode subcell_extent_of_latitude to degrees (90°/2^15 scaling).
-    #[must_use]
-    pub fn subcell_extent_of_latitude_deg(&self) -> f64 {
-        (self.subcell_extent_of_latitude & EXTENT_MASK) as f64 * LAT_SCALE
-    }
-
-    /// Decode subcell_extent_of_longitude to degrees (180°/2^15 scaling).
-    #[must_use]
-    pub fn subcell_extent_of_longitude_deg(&self) -> f64 {
-        (self.subcell_extent_of_longitude & EXTENT_MASK) as f64 * LONG_SCALE
-    }
-}
+impl CellListSubcell {}
 
 /// One cell with its sub-cell list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,31 +78,7 @@ pub struct CellListEntry {
     pub subcells: Vec<CellListSubcell>,
 }
 
-impl CellListEntry {
-    /// Decode cell_latitude to degrees (90°/2^15 scaling).
-    #[must_use]
-    pub fn cell_latitude_deg(&self) -> f64 {
-        u16_to_i16(self.cell_latitude) as f64 * LAT_SCALE
-    }
-
-    /// Decode cell_longitude to degrees (180°/2^15 scaling).
-    #[must_use]
-    pub fn cell_longitude_deg(&self) -> f64 {
-        u16_to_i16(self.cell_longitude) as f64 * LONG_SCALE
-    }
-
-    /// Decode cell_extent_of_latitude to degrees (90°/2^15 scaling).
-    #[must_use]
-    pub fn cell_extent_of_latitude_deg(&self) -> f64 {
-        (self.cell_extent_of_latitude & EXTENT_MASK) as f64 * LAT_SCALE
-    }
-
-    /// Decode cell_extent_of_longitude to degrees (180°/2^15 scaling).
-    #[must_use]
-    pub fn cell_extent_of_longitude_deg(&self) -> f64 {
-        (self.cell_extent_of_longitude & EXTENT_MASK) as f64 * LONG_SCALE
-    }
-}
+impl CellListEntry {}
 
 /// Cell List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,64 +263,6 @@ mod tests {
     }
 
     #[test]
-    fn cell_latitude_deg_zero() {
-        let e = CellListEntry {
-            cell_id: 0,
-            cell_latitude: 0,
-            cell_longitude: 0,
-            cell_extent_of_latitude: 0,
-            cell_extent_of_longitude: 0,
-            subcells: vec![],
-        };
-        assert_eq!(e.cell_latitude_deg(), 0.0);
-        assert_eq!(e.cell_longitude_deg(), 0.0);
-    }
-
-    #[test]
-    fn cell_latitude_deg_max() {
-        // Max positive = 32767/32768 * 90 ≈ 89.997
-        let e = CellListEntry {
-            cell_id: 0,
-            cell_latitude: 0x7FFF,
-            cell_longitude: 0,
-            cell_extent_of_latitude: 0,
-            cell_extent_of_longitude: 0,
-            subcells: vec![],
-        };
-        let deg = e.cell_latitude_deg();
-        assert!(deg > 89.9 && deg <= 90.0, "got {deg}");
-    }
-
-    #[test]
-    fn cell_longitude_deg_max() {
-        let e = CellListEntry {
-            cell_id: 0,
-            cell_latitude: 0,
-            cell_longitude: 0x7FFF,
-            cell_extent_of_latitude: 0,
-            cell_extent_of_longitude: 0,
-            subcells: vec![],
-        };
-        let deg = e.cell_longitude_deg();
-        assert!(deg > 179.9 && deg <= 180.0, "got {deg}");
-    }
-
-    #[test]
-    fn cell_extent_deg() {
-        // 4095/32768 * 90 ≈ 11.25 degrees
-        let e = CellListEntry {
-            cell_id: 0,
-            cell_latitude: 0,
-            cell_longitude: 0,
-            cell_extent_of_latitude: 4095,
-            cell_extent_of_longitude: 2048,
-            subcells: vec![],
-        };
-        assert!(e.cell_extent_of_latitude_deg() > 11.2);
-        assert!(e.cell_extent_of_longitude_deg() > 11.2);
-    }
-
-    #[test]
     fn parse_entry_with_subcell() {
         let bytes = [
             TAG, 18, // body length: outer(10) + 1 subcell(8)
@@ -404,14 +288,6 @@ mod tests {
         assert_eq!(sc.subcell_extent_of_longitude, 0x444);
 
         // Accessor tests
-        let lat_deg = e.cell_latitude_deg();
-        let long_deg = e.cell_longitude_deg();
-        assert!(lat_deg.abs() > 0.0);
-        assert!(long_deg.abs() > 0.0);
-        let sc_lat = sc.subcell_latitude_deg();
-        let sc_long = sc.subcell_longitude_deg();
-        assert!(sc_lat.abs() > 0.0);
-        assert!(sc_long.abs() > 0.0);
     }
 
     #[test]

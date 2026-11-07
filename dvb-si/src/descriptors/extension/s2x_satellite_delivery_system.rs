@@ -127,14 +127,8 @@ impl TsGsS2XMode {
 }
 broadcast_common::impl_spec_display!(TsGsS2XMode, Reserved);
 
-// Receiver profile bit flags (additive — field stays raw u8).
-const RP_BROADCAST: u8 = 0x01;
 /// `scrambling_sequence_index` is an 18-bit field.
 const SCRAMBLING_INDEX_MAX: u32 = 0x0003_FFFF;
-const RP_INTERACTIVE: u8 = 0x02;
-const RP_DSNG: u8 = 0x04;
-const RP_PROFESSIONAL: u8 = 0x08;
-const RP_VL_SNR: u8 = 0x10;
 /// `receiver_profiles(5)` raw field width (Table 141) — masked at the shift
 /// during serialize so a wider value cannot bleed into `s2x_mode` (r03-W2).
 const RECEIVER_PROFILES_MASK: u8 = 0x1F;
@@ -353,36 +347,6 @@ impl S2XSatelliteDeliverySystem<'_> {
     }
 
     // ---- Receiver profile flag accessors (additive, Table 141) ----
-
-    /// Broadcast services (receiver_profiles bit 0).
-    #[must_use]
-    pub fn receiver_broadcast(&self) -> bool {
-        (self.receiver_profiles & RP_BROADCAST) != 0
-    }
-
-    /// Interactive services (receiver_profiles bit 1).
-    #[must_use]
-    pub fn receiver_interactive(&self) -> bool {
-        (self.receiver_profiles & RP_INTERACTIVE) != 0
-    }
-
-    /// DSNG services (receiver_profiles bit 2).
-    #[must_use]
-    pub fn receiver_dsng(&self) -> bool {
-        (self.receiver_profiles & RP_DSNG) != 0
-    }
-
-    /// Professional services (receiver_profiles bit 3).
-    #[must_use]
-    pub fn receiver_professional(&self) -> bool {
-        (self.receiver_profiles & RP_PROFESSIONAL) != 0
-    }
-
-    /// VL-SNR services (receiver_profiles bit 4).
-    #[must_use]
-    pub fn receiver_vl_snr(&self) -> bool {
-        (self.receiver_profiles & RP_VL_SNR) != 0
-    }
 }
 
 const BOND_BASE_LEN: usize = S2X_PRIMARY_LEN;

@@ -456,12 +456,6 @@ impl<T> CompleteTable<T> {
     pub fn sections(&self) -> &[T] {
         &self.sections
     }
-
-    /// Consume the complete table and return the parsed sections.
-    #[must_use]
-    pub fn into_sections(self) -> Vec<T> {
-        self.sections
-    }
 }
 
 impl CompleteSectionSet {
@@ -520,38 +514,14 @@ impl CompleteSectionSet {
         CompleteBat::parse(self, None)
     }
 
-    /// Build a complete BAT view using a descriptor registry.
-    pub fn bat_with_registry<'a>(
-        &'a self,
-        registry: &'a DescriptorRegistry,
-    ) -> crate::Result<CompleteBat<'a>> {
-        CompleteBat::parse(self, Some(registry))
-    }
-
     /// Build a complete SDT view from this section set.
     pub fn sdt(&self) -> crate::Result<CompleteSdt<'_>> {
         CompleteSdt::parse(self, None)
     }
 
-    /// Build a complete SDT view using a descriptor registry.
-    pub fn sdt_with_registry<'a>(
-        &'a self,
-        registry: &'a DescriptorRegistry,
-    ) -> crate::Result<CompleteSdt<'a>> {
-        CompleteSdt::parse(self, Some(registry))
-    }
-
     /// Build a complete EIT view from this section set.
     pub fn eit(&self) -> crate::Result<CompleteEit<'_>> {
         CompleteEit::parse(self, None)
-    }
-
-    /// Build a complete EIT view using a descriptor registry.
-    pub fn eit_with_registry<'a>(
-        &'a self,
-        registry: &'a DescriptorRegistry,
-    ) -> crate::Result<CompleteEit<'a>> {
-        CompleteEit::parse(self, Some(registry))
     }
 }
 

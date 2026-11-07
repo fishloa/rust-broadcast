@@ -200,38 +200,6 @@ impl L1Pre {
         Ok(buf)
     }
 
-    /// Parse 21 bytes then validate the following 4-byte CRC.
-    ///
-    /// Returns `Error::CrcMismatch` if the CRC does not match.
-    ///
-    /// # Errors
-    /// [`crate::Error::BufferTooShort`] if `bytes` is shorter than 25 bytes.
-    /// [`crate::Error::CrcMismatch`] if the CRC does not match.
-    pub fn parse_with_crc(bytes: &[u8]) -> crate::error::Result<L1Pre> {
-        // Take exactly the 21-byte info block + 4-byte CRC; the CRC is at the
-        // fixed offset bytes[21..25], independent of any trailing data.
-        let (block, _) = bytes.split_first_chunk::<L1PRE_WITH_CRC_BYTES>().ok_or(
-            crate::Error::BufferTooShort {
-                need: L1PRE_WITH_CRC_BYTES,
-                have: bytes.len(),
-                what: "L1Pre with CRC",
-            },
-        )?;
-        // block is exactly 25 bytes → its last 4 are bytes[21..25].
-        let (_, crc_bytes) = block.split_last_chunk::<4>().expect("block is 25 bytes");
-        let pre = L1Pre::parse(&block[..L1PRE_BYTES])?;
-        let expected = u32::from_be_bytes(*crc_bytes);
-        // A just-parsed `L1Pre` always re-serialises: every field came from
-        // reading its own stated bit width, so this cannot hit the
-        // out-of-range case `crc32`/`to_bytes` guard against for a
-        // caller-constructed value (W-T2-3).
-        let computed = pre.crc32()?;
-        if computed != expected {
-            return Err(crate::Error::CrcMismatch { computed, expected });
-        }
-        Ok(pre)
-    }
-
     /// Serialise to a 25-byte buffer: 21-byte info block + 4-byte CRC.
     ///
     /// # Errors
@@ -446,35 +414,10 @@ mod tests {
     }
 
     #[test]
-    fn crc_with_crc_round_trip() {
+    fn serialize_with_crc_appends_the_crc_word() {
         let pre = synthetic_pre();
         let bytes = pre.serialize_with_crc().unwrap();
         assert_eq!(bytes.len(), L1PRE_WITH_CRC_BYTES);
-        let parsed = L1Pre::parse_with_crc(&bytes).unwrap();
-        assert_eq!(pre, parsed);
-    }
-
-    #[test]
-    fn crc_rejects_corrupted() {
-        let pre = synthetic_pre();
-        let mut bytes = pre.serialize_with_crc().unwrap();
-        // flip a CRC byte
-        bytes[L1PRE_BYTES] ^= 0xFF;
-        let err = L1Pre::parse_with_crc(&bytes).unwrap_err();
-        assert!(matches!(err, crate::Error::CrcMismatch { .. }));
-    }
-
-    #[test]
-    fn crc_read_from_fixed_offset_ignores_trailing_data() {
-        // The CRC is at the fixed offset bytes[21..25], not the last 4 bytes of
-        // the buffer: parse_with_crc must validate the same CRC regardless of
-        // any trailing data after the 25-byte block.
-        let pre = synthetic_pre();
-        let mut bytes = pre.serialize_with_crc().unwrap();
-        assert_eq!(bytes.len(), L1PRE_WITH_CRC_BYTES);
-        bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC]); // trailing junk after byte 25
-        let parsed = L1Pre::parse_with_crc(&bytes).expect("CRC at fixed [21..25] still valid");
-        assert_eq!(pre, parsed);
     }
 
     #[test]
