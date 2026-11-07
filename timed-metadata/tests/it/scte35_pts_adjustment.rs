@@ -73,7 +73,7 @@ fn time_signal_without_id_errors_on_daterange_conversion() {
     };
     let result = timed_metadata::convert::scte35_to_daterange(&ev, &anchor);
     assert!(
-        result.is_err(),
+        matches!(result, Err(timed_metadata::Error::MissingEventId)),
         "a time_signal with no id must error, not silently emit ID=\"\""
     );
 }
