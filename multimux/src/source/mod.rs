@@ -32,6 +32,7 @@ pub mod file_reader;
 pub mod hls_pull;
 pub mod http_auth;
 pub(crate) mod pull;
+pub(crate) mod pull_target;
 pub mod rtmp;
 pub mod rtp_udp;
 pub mod rtsp;

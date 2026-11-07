@@ -79,6 +79,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
+use crate::source::pull_target::PullTarget;
 use crate::source::ts_program::TsIngestSession;
 use crate::source::{IngestTimeouts, Source};
 
@@ -88,11 +89,7 @@ use crate::source::{IngestTimeouts, Source};
 /// `TsHttpSource`; [`run_ts_http`] is the new drive loop.
 #[derive(Clone)]
 pub struct TsHttpRoute {
-    name: String,
-    url: String,
-    timeouts: IngestTimeouts,
-    /// Config-supplied credentials, taking precedence over any URL userinfo.
-    auth: Option<Credentials>,
+    target: PullTarget,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
@@ -100,11 +97,7 @@ pub struct TsHttpRoute {
 /// (if present) carries a raw password/token, also never rendered verbatim.
 impl std::fmt::Debug for TsHttpRoute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TsHttpRoute")
-            .field("name", &self.name)
-            .field("url", &crate::redact::redact_url(&self.url))
-            .field("auth", &self.auth.as_ref().map(|_| "***"))
-            .finish()
+        self.target.debug(f, "TsHttpRoute", &[])
     }
 }
 
@@ -112,31 +105,28 @@ impl TsHttpRoute {
     /// Build a route descriptor.
     pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
         TsHttpRoute {
-            name: name.into(),
-            url: url.into(),
-            timeouts: IngestTimeouts::default(),
-            auth: None,
+            target: PullTarget::new(name, url),
         }
     }
 
     /// Overrides the default [`IngestTimeouts`].
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.timeouts = timeouts;
+        self.target = self.target.with_timeouts(timeouts);
         self
     }
 
     /// Attaches config-supplied credentials, overriding any URL userinfo.
     #[must_use]
     pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.auth = auth;
+        self.target = self.target.with_auth(auth);
         self
     }
 }
 
 impl Source for TsHttpRoute {
     fn stream_name(&self) -> &str {
-        &self.name
+        &self.target.name
     }
 }
 
@@ -179,13 +169,14 @@ pub(crate) struct ResponseHead {
 }
 
 pub(crate) async fn open_response(route: &TsHttpRoute) -> Result<(TsHttpStream, ResponseHead)> {
-    let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
+    let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad TS-over-HTTP URL {}: {e}",
-            crate::redact::redact_url(&route.url)
+            crate::redact::redact_url(&route.target.url)
         ),
     })?;
-    let credentials = resolve_credentials(route.auth.clone(), credentials_from_url(&parsed)?);
+    let credentials =
+        resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
     let credentials = scope_credentials(credentials, &clean_url);
 
@@ -472,7 +463,7 @@ pub async fn run_ts_http(
     let mut step = TsHttpStep::new(
         stream,
         &head,
-        route.timeouts,
+        route.target.timeouts,
         std::sync::Arc::clone(route_handle),
     );
     let mut progress = crate::source::DriverProgress::new();
@@ -482,7 +473,7 @@ pub async fn run_ts_http(
         route_handle,
         &mut progress,
         _cancel,
-        route.timeouts,
+        route.target.timeouts,
         crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut sink,
         &mut step,

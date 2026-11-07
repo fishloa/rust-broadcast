@@ -380,7 +380,7 @@ pub(super) async fn run<S: RouteSink>(
         http,
         credentials,
         clock: Arc::clone(&clock),
-        read_timeout: route.timeouts.read,
+        read_timeout: route.target.timeouts.read,
         utc_timeout: Duration::from_micros(dash.utc_timeout_us),
         mpd_cap: limits.limits.max_bytes,
         segment_cap: limits.max_segment_bytes,

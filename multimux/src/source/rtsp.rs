@@ -78,6 +78,7 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{credentials_from_url, resolve_credentials, strip_userinfo};
+use crate::source::pull_target::PullTarget;
 use crate::source::{IngestTimeouts, Source, TrackInit, sdp::parse_sdp_tracks};
 
 /// Interleaved channel offset from a media's RTP channel to its paired RTCP
@@ -106,19 +107,12 @@ pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<TrackId> {
 /// the old (pre-5a) `RtspSource`; [`run_rtsp`] is the new drive loop.
 #[derive(Clone)]
 pub struct RtspRoute {
-    name: String,
-    url: String,
-    timeouts: IngestTimeouts,
-    auth: Option<Credentials>,
+    target: PullTarget,
 }
 
 impl std::fmt::Debug for RtspRoute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RtspRoute")
-            .field("name", &self.name)
-            .field("url", &crate::redact::redact_url(&self.url))
-            .field("auth", &self.auth.as_ref().map(|_| "***"))
-            .finish()
+        self.target.debug(f, "RtspRoute", &[])
     }
 }
 
@@ -126,31 +120,28 @@ impl RtspRoute {
     /// Build a route descriptor.
     pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
         RtspRoute {
-            name: name.into(),
-            url: url.into(),
-            timeouts: IngestTimeouts::default(),
-            auth: None,
+            target: PullTarget::new(name, url),
         }
     }
 
     /// Overrides the default [`IngestTimeouts`].
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.timeouts = timeouts;
+        self.target = self.target.with_timeouts(timeouts);
         self
     }
 
     /// Attaches config-supplied credentials, overriding any URL userinfo.
     #[must_use]
     pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.auth = auth;
+        self.target = self.target.with_auth(auth);
         self
     }
 }
 
 impl Source for RtspRoute {
     fn stream_name(&self) -> &str {
-        &self.name
+        &self.target.name
     }
 }
 
@@ -578,7 +569,8 @@ impl Dialer for RtspDialer {
                 crate::redact::redact_url(&self.url)
             ),
         })?;
-        let credentials = resolve_credentials(self.auth.clone(), credentials_from_url(&base_url)?);
+        let credentials =
+            resolve_credentials(self.auth.clone(), credentials_from_url(&base_url)?);
         let request_url = strip_userinfo(&base_url)?;
         let request_uri = request_url.to_string();
 
@@ -845,7 +837,7 @@ pub async fn run_rtsp(
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> MultimuxError {
-    let mut dialer = RtspDialer::new(route.url.clone(), route.auth.clone());
+    let mut dialer = RtspDialer::new(route.target.url.clone(), route.target.auth.clone());
     let addr = match dialer.connect_addr() {
         Ok(a) => a,
         Err(e) => return e,
@@ -854,7 +846,7 @@ pub async fn run_rtsp(
         Ok(b) => b,
         Err(e) => return e,
     };
-    let connect_timeout = route.timeouts.connect;
+    let connect_timeout = route.target.timeouts.connect;
     let connected = if is_tls {
         let server_name = match dialer.sni_server_name() {
             Ok(s) => s,
@@ -900,7 +892,7 @@ pub async fn run_rtsp(
         route_handle,
         &mut progress,
         cancel,
-        route.timeouts,
+        route.target.timeouts,
         crate::source::driver::DEFAULT_WRITE_TIMEOUT,
         &mut wr,
         &mut step,

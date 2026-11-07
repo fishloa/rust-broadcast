@@ -55,6 +55,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     ScopedCredentials, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
+use crate::source::pull_target::PullTarget;
 use crate::source::{IngestTimeouts, Source};
 
 #[cfg(test)]
@@ -74,13 +75,7 @@ pub use session::{DashIngestSession, DashInput, FetchTarget, PROGRAM, dash_confi
 /// `crate::config::InputSpec::validate`).
 #[derive(Clone)]
 pub struct DashPullRoute {
-    name: String,
-    url: String,
-    timeouts: IngestTimeouts,
-    /// Config-supplied credentials, taking precedence over any URL userinfo
-    /// — see `crate::source::http_auth::resolve_credentials`.
-    auth: Option<Credentials>,
-    /// Whether MPD-derived URLs may leave the MPD's origin.
+    target: PullTarget,
     allow_cross_origin: bool,
 }
 
@@ -89,12 +84,11 @@ pub struct DashPullRoute {
 /// (if present) carries a raw password/token, also never rendered verbatim.
 impl std::fmt::Debug for DashPullRoute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DashPullRoute")
-            .field("name", &self.name)
-            .field("url", &crate::redact::redact_url(&self.url))
-            .field("auth", &self.auth.as_ref().map(|_| "***"))
-            .field("allow_cross_origin", &self.allow_cross_origin)
-            .finish()
+        self.target.debug(
+            f,
+            "DashPullRoute",
+            &[("allow_cross_origin", &self.allow_cross_origin)],
+        )
     }
 }
 
@@ -102,10 +96,7 @@ impl DashPullRoute {
     /// Build a route descriptor. `url` is the MPD URL to pull.
     pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
         DashPullRoute {
-            name: name.into(),
-            url: url.into(),
-            timeouts: IngestTimeouts::default(),
-            auth: None,
+            target: PullTarget::new(name, url),
             allow_cross_origin: false,
         }
     }
@@ -113,14 +104,14 @@ impl DashPullRoute {
     /// Overrides the default [`IngestTimeouts`].
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.timeouts = timeouts;
+        self.target = self.target.with_timeouts(timeouts);
         self
     }
 
     /// Attaches config-supplied credentials, overriding any URL userinfo.
     #[must_use]
     pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.auth = auth;
+        self.target = self.target.with_auth(auth);
         self
     }
 
@@ -135,7 +126,7 @@ impl DashPullRoute {
 
 impl Source for DashPullRoute {
     fn stream_name(&self) -> &str {
-        &self.name
+        &self.target.name
     }
 }
 
@@ -196,13 +187,14 @@ pub fn parse_iso8601_utc_for_test(s: &str) -> Option<u64> {
 }
 
 fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, Option<ScopedCredentials>)> {
-    let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
+    let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad DASH-pull URL {}: {e}",
-            crate::redact::redact_url(&route.url)
+            crate::redact::redact_url(&route.target.url)
         ),
     })?;
-    let credentials = resolve_credentials(route.auth.clone(), credentials_from_url(&parsed)?);
+    let credentials =
+        resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
     let credentials = scope_credentials(credentials, &clean_url);
     let http = HttpClient::builder()

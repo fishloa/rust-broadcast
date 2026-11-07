@@ -81,6 +81,7 @@ use crate::source::http_auth::{
     ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
     scope_credentials, strip_userinfo,
 };
+use crate::source::pull_target::PullTarget;
 use crate::source::{IngestTimeouts, Source};
 
 /// The synthesized per-stream init segment's `mvhd` timescale — arbitrary
@@ -123,19 +124,12 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// `crate::config::InputSpec::validate`).
 #[derive(Clone)]
 pub struct SmoothPullRoute {
-    name: String,
-    url: String,
-    timeouts: IngestTimeouts,
-    auth: Option<Credentials>,
+    target: PullTarget,
 }
 
 impl std::fmt::Debug for SmoothPullRoute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SmoothPullRoute")
-            .field("name", &self.name)
-            .field("url", &crate::redact::redact_url(&self.url))
-            .field("auth", &self.auth.as_ref().map(|_| "***"))
-            .finish()
+        self.target.debug(f, "SmoothPullRoute", &[])
     }
 }
 
@@ -143,29 +137,26 @@ impl SmoothPullRoute {
     /// Build a route descriptor. `url` is the client Manifest URL to pull.
     pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
         SmoothPullRoute {
-            name: name.into(),
-            url: url.into(),
-            timeouts: IngestTimeouts::default(),
-            auth: None,
+            target: PullTarget::new(name, url),
         }
     }
 
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.timeouts = timeouts;
+        self.target = self.target.with_timeouts(timeouts);
         self
     }
 
     #[must_use]
     pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.auth = auth;
+        self.target = self.target.with_auth(auth);
         self
     }
 }
 
 impl Source for SmoothPullRoute {
     fn stream_name(&self) -> &str {
-        &self.name
+        &self.target.name
     }
 }
 
@@ -845,13 +836,14 @@ async fn fetch_one_bytes(
 }
 
 fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<ScopedCredentials>)> {
-    let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
+    let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad Smooth-pull URL {}: {e}",
-            crate::redact::redact_url(&route.url)
+            crate::redact::redact_url(&route.target.url)
         ),
     })?;
-    let credentials = resolve_credentials(route.auth.clone(), credentials_from_url(&parsed)?);
+    let credentials =
+        resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
     let credentials = scope_credentials(credentials, &clean_url);
     let http = HttpClient::builder()
@@ -952,7 +944,7 @@ pub async fn run_smooth_pull(
         media_plane::DEFAULT_MAX_PROGRAMS,
     )?;
 
-    let read_timeout = route.timeouts.read;
+    let read_timeout = route.target.timeouts.read;
     // The fetch/retry/wait engine (SP6.2) owns the in-flight bound, the retry
     // queue and the idle park; this loop owns only the `Action` translation,
     // the tolerated-`404` retry policy and the `feed`.
