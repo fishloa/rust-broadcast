@@ -4,26 +4,46 @@
 //! its own error enum through [`XmlWalkError`] and instantiates the wrappers
 //! with [`xml_walk_fns!`].
 
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::str::FromStr;
 
-use broadcast_common::xml_chars::{char_data, is_xml_char};
-use quick_xml::Reader;
-use quick_xml::XmlVersion;
+use broadcast_common::xml_chars::{
+    LimitExceeded, XmlBudget, XmlLimit, XmlLimits, char_data, namespace_of, read_attributes_checked,
+};
+use quick_xml::NsReader;
 use quick_xml::errors::IllFormedError;
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::Event;
 use quick_xml::name::QName;
 
-/// A `quick-xml` reader over the manifest text.
-pub(crate) type XmlReader<'a> = Reader<&'a [u8]>;
+const UNKNOWN_PREFIX: &str = "unknown namespace prefix";
+
+/// A namespace-aware `quick-xml` reader over the manifest text. Element names
+/// are resolved against the namespace the parser accepts; hostile-input bounds
+/// ([`XmlLimits`]) are enforced as events are read.
+pub(crate) struct XmlReader<'a> {
+    inner: NsReader<&'a [u8]>,
+    accepted: Option<&'static str>,
+    budget: XmlBudget,
+    input_len: usize,
+    input_checked: bool,
+    root_seen: bool,
+    root_unbound: bool,
+}
 
 /// What a parse loop sees: the start of an element (with its decoded
 /// attributes) or the end of one. Text, comments, processing instructions, the
 /// XML declaration and DOCTYPE are consumed by [`next_tag`] and never surface.
+///
+/// An element in the namespace the parser accepts (or, when the document root
+/// is unprefixed and unbound, an unbound element) is reported by its local
+/// name. An element in any other namespace is reported in Clark notation
+/// (`{uri}local`), which no parser arm matches, so foreign content is skipped
+/// and never read as the parser's own. Attributes follow the same rule: an
+/// unprefixed attribute keeps its name, a namespaced one is `{uri}local`.
 pub(crate) enum Tag {
-    /// `<Name a="b">` or the self-closing `<Name a="b"/>`; `name` is the local
-    /// name (namespace prefix stripped), attribute names keep any prefix.
+    /// `<Name a="b">` or the self-closing `<Name a="b"/>`.
     Open {
         name: String,
         attrs: Vec<(String, String)>,
@@ -43,14 +63,32 @@ pub(crate) trait XmlWalkError: Sized {
     fn unexpected_eof() -> Self;
     fn missing_attribute(element: &'static str, attr: &'static str) -> Self;
     fn invalid_attribute_value(element: &'static str, attr: &'static str, value: String) -> Self;
+    fn too_large(limit: XmlLimit, max: usize) -> Self;
 }
 
-pub(crate) fn new_reader(xml: &str) -> XmlReader<'_> {
-    Reader::from_str(xml)
+/// `{uri}local`, the name of a namespaced element or attribute.
+pub(crate) fn clark(uri: &str, local: &str) -> String {
+    format!("{{{uri}}}{local}")
+}
+
+pub(crate) fn new_reader<'a>(
+    xml: &'a str,
+    accepted: Option<&'static str>,
+    limits: XmlLimits,
+) -> XmlReader<'a> {
+    XmlReader {
+        inner: NsReader::from_str(xml),
+        accepted,
+        budget: XmlBudget::new(limits),
+        input_len: xml.len(),
+        input_checked: false,
+        root_seen: false,
+        root_unbound: false,
+    }
 }
 
 fn position(reader: &XmlReader<'_>) -> usize {
-    usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX)
+    usize::try_from(reader.inner.buffer_position()).unwrap_or(usize::MAX)
 }
 
 fn xml_error<E: XmlWalkError>(reader: &XmlReader<'_>, err: &quick_xml::Error) -> E {
@@ -65,6 +103,10 @@ fn xml_error<E: XmlWalkError>(reader: &XmlReader<'_>, err: &quick_xml::Error) ->
     }
 }
 
+fn exceeded<E: XmlWalkError>(e: LimitExceeded) -> E {
+    E::too_large(e.limit, e.max)
+}
+
 /// A well-formedness error described by `message` at the reader's position.
 pub(crate) fn xml_message<E: XmlWalkError>(reader: &XmlReader<'_>, message: String) -> E {
     E::ill_formed(position(reader), message)
@@ -75,62 +117,146 @@ fn local_part(qname: &str) -> String {
     QName(qname).local_name().into_inner().to_string()
 }
 
-pub(crate) fn read_event<'a, E: XmlWalkError>(reader: &mut XmlReader<'a>) -> Result<Event<'a>, E> {
-    reader.read_event().map_err(|e| xml_error(reader, &e))
+fn element_name(reader: &XmlReader<'_>, ns: Option<&str>, local: &str) -> String {
+    match ns {
+        None if reader.accepted.is_none() || reader.root_unbound => local.to_string(),
+        None => clark("", local),
+        Some(uri) if Some(uri) == reader.accepted => local.to_string(),
+        Some(uri) => clark(uri, local),
+    }
 }
 
-/// Decode a start tag's attributes (values unescaped and normalized by
-/// quick-xml).
+/// The next raw event with its element namespace; counts elements and depth
+/// against the limits and rejects an undeclared element prefix.
+fn read_resolved<'a, E: XmlWalkError>(
+    reader: &mut XmlReader<'a>,
+) -> Result<(Option<String>, Event<'a>), E> {
+    if !reader.input_checked {
+        reader.input_checked = true;
+        reader
+            .budget
+            .check_input(reader.input_len)
+            .map_err(exceeded)?;
+    }
+    let read = reader.inner.read_resolved_event();
+    let (resolved, event) = match read {
+        Ok(pair) => pair,
+        Err(e) => return Err(xml_error(reader, &e)),
+    };
+    let ns = namespace_of(resolved);
+    let ns = ns.map_err(|m| xml_message::<E>(reader, m))?;
+    match &event {
+        Event::Start(_) => reader.budget.open_element().map_err(exceeded)?,
+        Event::Empty(_) => {
+            reader.budget.open_element().map_err(exceeded)?;
+            reader.budget.close_element();
+        }
+        Event::End(_) => reader.budget.close_element(),
+        _ => {}
+    }
+    Ok((ns, event))
+}
+
+pub(crate) fn read_event<'a, E: XmlWalkError>(reader: &mut XmlReader<'a>) -> Result<Event<'a>, E> {
+    read_resolved(reader).map(|(_, event)| event)
+}
+
 fn read_attrs<E: XmlWalkError>(
     reader: &XmlReader<'_>,
-    e: &BytesStart<'_>,
+    e: &quick_xml::events::BytesStart<'_>,
 ) -> Result<Vec<(String, String)>, E> {
     let pos = position(reader);
-    let mut attrs = Vec::new();
-    for attr in e.attributes() {
-        let attr = attr.map_err(|_| E::malformed_attribute(pos))?;
-        let value = attr
-            .normalized_value(XmlVersion::Implicit1_0)
-            .map_err(|_| E::malformed_attribute(pos))?;
-        if !value.chars().all(is_xml_char) {
-            return Err(E::malformed_attribute(pos));
-        }
-        attrs.push((attr.key.as_ref().to_string(), value.into_owned()));
-    }
-    Ok(attrs)
+    let attributes = read_attributes_checked(
+        &reader.inner,
+        e,
+        |m| {
+            if m.starts_with(UNKNOWN_PREFIX) {
+                E::ill_formed(pos, m.to_string())
+            } else {
+                E::malformed_attribute(pos)
+            }
+        },
+        |count, value| {
+            reader
+                .budget
+                .admit_attribute(count, value)
+                .map_err(exceeded)
+        },
+    )?;
+    Ok(attributes
+        .into_iter()
+        .map(|a| {
+            let key = match a.namespace {
+                Some(uri) => clark(&uri, &a.name),
+                None => a.name,
+            };
+            (key, a.value)
+        })
+        .collect())
 }
 
 /// The next element start/end, or `Ok(None)` at end of input.
 pub(crate) fn next_tag<E: XmlWalkError>(reader: &mut XmlReader<'_>) -> Result<Option<Tag>, E> {
     loop {
-        let event = read_event(reader)?;
-        if char_data(&event)
-            .map_err(|message| xml_message::<E>(reader, message))?
-            .is_some()
+        let (ns, event) = read_resolved(reader)?;
+        if let Some(text) =
+            char_data(&event).map_err(|message| xml_message::<E>(reader, message))?
         {
+            if !reader.root_seen && !text.trim().is_empty() {
+                return Err(xml_message(
+                    reader,
+                    "character data before the root element".to_string(),
+                ));
+            }
             continue;
         }
         match event {
-            Event::Start(e) => {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                if !reader.root_seen {
+                    reader.root_seen = true;
+                    reader.root_unbound = ns.is_none();
+                }
+                let name = element_name(reader, ns.as_deref(), e.local_name().into_inner());
                 return Ok(Some(Tag::Open {
-                    name: e.local_name().into_inner().to_string(),
-                    attrs: read_attrs(reader, &e)?,
-                    self_closing: false,
-                }));
-            }
-            Event::Empty(e) => {
-                return Ok(Some(Tag::Open {
-                    name: e.local_name().into_inner().to_string(),
-                    attrs: read_attrs(reader, &e)?,
-                    self_closing: true,
+                    name,
+                    attrs: read_attrs(reader, e)?,
+                    self_closing: matches!(event, Event::Empty(_)),
                 }));
             }
             Event::End(e) => {
-                return Ok(Some(Tag::Close {
-                    name: e.local_name().into_inner().to_string(),
-                }));
+                let name = element_name(reader, ns.as_deref(), e.local_name().into_inner());
+                return Ok(Some(Tag::Close { name }));
             }
             Event::Eof => return Ok(None),
+            _ => {}
+        }
+    }
+}
+
+/// Require that nothing but whitespace, comments and processing instructions
+/// follows the root element.
+pub(crate) fn finish<E: XmlWalkError>(reader: &mut XmlReader<'_>) -> Result<(), E> {
+    loop {
+        let event = read_event(reader)?;
+        if let Some(text) =
+            char_data(&event).map_err(|message| xml_message::<E>(reader, message))?
+        {
+            if !text.trim().is_empty() {
+                return Err(xml_message(
+                    reader,
+                    "character data after the root element".to_string(),
+                ));
+            }
+            continue;
+        }
+        match event {
+            Event::Start(_) | Event::Empty(_) => {
+                return Err(xml_message(
+                    reader,
+                    "content after the root element".to_string(),
+                ));
+            }
+            Event::Eof => return Ok(()),
             _ => {}
         }
     }
@@ -204,11 +330,19 @@ pub(crate) fn required_attr_parse<T: FromStr, E: XmlWalkError>(
 /// Instantiates the walker's generic helpers for one parser's error type, so
 /// call sites keep inferring the error through `?`.
 macro_rules! xml_walk_fns {
-    ($err:ty) => {
-        use $crate::xml_walk::{Tag, XmlReader, attr, attr_owned, new_reader};
+    ($err:ty, $accepted:expr, $limits:expr) => {
+        use $crate::xml_walk::{Tag, XmlReader, attr, attr_owned};
+
+        fn new_reader(xml: &str) -> XmlReader<'_> {
+            $crate::xml_walk::new_reader(xml, $accepted, $limits)
+        }
 
         fn next_tag(reader: &mut XmlReader<'_>) -> Result<Option<Tag>> {
             $crate::xml_walk::next_tag(reader)
+        }
+
+        fn finish(reader: &mut XmlReader<'_>) -> Result<()> {
+            $crate::xml_walk::finish(reader)
         }
 
         fn skip_element(reader: &mut XmlReader<'_>) -> Result<()> {

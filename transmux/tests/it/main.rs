@@ -195,3 +195,4 @@ mod webm_demux;
 mod webm_demux_unknown_cluster;
 mod webm_timestamp_scale;
 mod xml_escaping;
+mod xml_namespaces;
