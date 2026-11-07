@@ -7,6 +7,7 @@
 - URL userinfo decoding and stripping (RTSP source, HTTP pulls, RTSP push) use `broadcast_auth::{credentials_from_url, strip_userinfo}` instead of four private copies (dedupe D7).
 - WHIP source and WHEP output share `webrtc_session::{ensure_connect_info, ice_attr}` (dedupe D14).
 - hls-pull, smooth-pull and dash-pull share one `source::driver::terminal_result` (dedupe D13).
+- WHIP and WHEP offer parsing share `webrtc_session::single_video_media` (c2 M6).
 
 ## [0.15.0] - 2026-11-03
 ### Fixed

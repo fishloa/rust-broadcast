@@ -119,6 +119,7 @@ use webrtc_runtime::whep::server::{Event as WhepEvent, WhepSession};
 
 use crate::webrtc_session::{
     Resource, ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr,
+    single_video_media,
 };
 
 use crate::error::{MultimuxError, Result};
@@ -266,26 +267,8 @@ struct ParsedWhepOffer {
 /// `m=video` section naming at least one H.264 payload type — see the
 /// module doc's "Scope" section.
 fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
-    let session = sdp_types::Session::parse(offer.as_bytes()).map_err(|e| MultimuxError::Sdp {
-        reason: format!("whep: parse offer: {e}"),
-    })?;
-    let video_medias: Vec<_> = session
-        .medias
-        .iter()
-        .filter(|m| m.media == "video")
-        .collect();
-    if session.medias.len() != video_medias.len() || video_medias.len() != 1 {
-        return Err(MultimuxError::Sdp {
-            reason: format!(
-                "whep: this route accepts exactly one m=video section and nothing else \
-                 (Opus audio has no RTP packetiser in this workspace yet); offer had {} \
-                 total section(s), {} of them video",
-                session.medias.len(),
-                video_medias.len()
-            ),
-        });
-    }
-    let media = video_medias[0];
+    let (session, media_index) = single_video_media(offer, "whep", "packetiser")?;
+    let media = &session.medias[media_index];
 
     let remote_ufrag = ice_attr(&session, media, "ice-ufrag")
         .ok_or_else(|| MultimuxError::Sdp {

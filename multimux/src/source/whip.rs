@@ -111,6 +111,7 @@ use crate::source::handshake_policy;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
 use crate::webrtc_session::{
     Resource, ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr,
+    single_video_media,
 };
 use axum::response::IntoResponse as _;
 use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
@@ -728,26 +729,8 @@ struct ParsedOffer {
 /// assumed) — see the module doc's "Scope" section for why audio (Opus) and
 /// multi-track offers are rejected rather than silently dropped.
 fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
-    let session = sdp_types::Session::parse(offer.as_bytes()).map_err(|e| MultimuxError::Sdp {
-        reason: format!("whip: parse offer: {e}"),
-    })?;
-    let video_medias: Vec<_> = session
-        .medias
-        .iter()
-        .filter(|m| m.media == "video")
-        .collect();
-    if session.medias.len() != video_medias.len() || video_medias.len() != 1 {
-        return Err(MultimuxError::Sdp {
-            reason: format!(
-                "whip: this route accepts exactly one m=video section and nothing else \
-                 (Opus audio has no RTP depacketiser in this workspace yet); offer had {} \
-                 total section(s), {} of them video",
-                session.medias.len(),
-                video_medias.len()
-            ),
-        });
-    }
-    let media = video_medias[0];
+    let (session, media_index) = single_video_media(offer, "whip", "depacketiser")?;
+    let media = &session.medias[media_index];
 
     // ICE credentials are read at media level FIRST, falling back to session
     // level (RFC 8839 §5.4): a bundled offer may signal them only once, on

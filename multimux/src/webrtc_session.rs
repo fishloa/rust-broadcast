@@ -141,6 +141,42 @@ pub(crate) fn ice_attr<'a>(
         .or_else(|| session.get_first_attribute_value(name).flatten())
 }
 
+/// Parses `offer` and returns it with the index of its single `m=video`
+/// section: a WHIP/WHEP route accepts exactly one video section and nothing
+/// else. `who` prefixes the error (`"whip"`/`"whep"`); `rtp_stage` names the
+/// missing RTP stage for audio (`"depacketiser"`/`"packetiser"`).
+pub(crate) fn single_video_media(
+    offer: &str,
+    who: &str,
+    rtp_stage: &str,
+) -> crate::error::Result<(sdp_types::Session, usize)> {
+    let session = sdp_types::Session::parse(offer.as_bytes()).map_err(|e| {
+        crate::error::MultimuxError::Sdp {
+            reason: format!("{who}: parse offer: {e}"),
+        }
+    })?;
+    let videos: Vec<usize> = session
+        .medias
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.media == "video")
+        .map(|(i, _)| i)
+        .collect();
+    if session.medias.len() != videos.len() || videos.len() != 1 {
+        return Err(crate::error::MultimuxError::Sdp {
+            reason: format!(
+                "{who}: this route accepts exactly one m=video section and nothing else \
+                 (Opus audio has no RTP {rtp_stage} in this workspace yet); offer had {} \
+                 total section(s), {} of them video",
+                session.medias.len(),
+                videos.len()
+            ),
+        });
+    }
+    let index = videos[0];
+    Ok((session, index))
+}
+
 /// Inject a default `ConnectInfo`/`LocalAddr` when absent (a `oneshot`-driven
 /// test harness has no accepted stream), so the `ConnectInfo(peer)` extractor
 /// of the WHIP and WHEP POST handlers never rejects the request.
