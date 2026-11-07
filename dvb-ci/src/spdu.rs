@@ -126,6 +126,22 @@ fn parse_spdu_header<'a>(
     Ok((form, &bytes[start..end]))
 }
 
+fn parse_spdu_fixed<'a>(
+    bytes: &'a [u8],
+    expected: u8,
+    value_len: usize,
+    what: &'static str,
+) -> Result<(LengthForm, &'a [u8])> {
+    let (form, value) = parse_spdu_header(bytes, expected, what)?;
+    if value.len() != value_len {
+        return Err(Error::InvalidObject {
+            what,
+            reason: "value length is fixed by the object definition",
+        });
+    }
+    Ok((form, value))
+}
+
 fn spdu_len(value_len: usize, form: LengthForm) -> usize {
     1 + length::encoded_len_with(value_len, form) + value_len
 }
@@ -160,15 +176,12 @@ pub struct OpenSessionRequest {
 impl<'a> Parse<'a> for OpenSessionRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, v) =
-            parse_spdu_header(bytes, tags::OPEN_SESSION_REQUEST, "open_session_request")?;
-        // Table 5: `length_field` = 4 — exactly one resource_identifier().
-        if v.len() != ResourceId::LEN {
-            return Err(Error::InvalidObject {
-                what: "open_session_request",
-                reason: "value must be 4 bytes",
-            });
-        }
+        let (length_form, v) = parse_spdu_fixed(
+            bytes,
+            tags::OPEN_SESSION_REQUEST,
+            ResourceId::LEN,
+            "open_session_request",
+        )?;
         Ok(Self {
             length_form,
             resource: ResourceId::parse(v)?,
@@ -213,14 +226,12 @@ pub struct OpenSessionResponse {
 impl<'a> Parse<'a> for OpenSessionResponse {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, v) =
-            parse_spdu_header(bytes, tags::OPEN_SESSION_RESPONSE, "open_session_response")?;
-        if v.len() != 7 {
-            return Err(Error::InvalidObject {
-                what: "open_session_response",
-                reason: "value must be 7 bytes",
-            });
-        }
+        let (length_form, v) = parse_spdu_fixed(
+            bytes,
+            tags::OPEN_SESSION_RESPONSE,
+            7,
+            "open_session_response",
+        )?;
         Ok(Self {
             length_form,
             status: SessionStatus::from_u8(v[0]),
@@ -263,13 +274,7 @@ pub struct CreateSession {
 impl<'a> Parse<'a> for CreateSession {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, v) = parse_spdu_header(bytes, tags::CREATE_SESSION, "create_session")?;
-        if v.len() != 6 {
-            return Err(Error::InvalidObject {
-                what: "create_session",
-                reason: "value must be 6 bytes",
-            });
-        }
+        let (length_form, v) = parse_spdu_fixed(bytes, tags::CREATE_SESSION, 6, "create_session")?;
         Ok(Self {
             length_form,
             resource: ResourceId::parse(&v[0..4])?,
@@ -311,17 +316,12 @@ pub struct CreateSessionResponse {
 impl<'a> Parse<'a> for CreateSessionResponse {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, v) = parse_spdu_header(
+        let (length_form, v) = parse_spdu_fixed(
             bytes,
             tags::CREATE_SESSION_RESPONSE,
+            7,
             "create_session_response",
         )?;
-        if v.len() != 7 {
-            return Err(Error::InvalidObject {
-                what: "create_session_response",
-                reason: "value must be 7 bytes",
-            });
-        }
         Ok(Self {
             length_form,
             status: SessionStatus::from_u8(v[0]),
@@ -362,14 +362,12 @@ pub struct CloseSessionRequest {
 impl<'a> Parse<'a> for CloseSessionRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, v) =
-            parse_spdu_header(bytes, tags::CLOSE_SESSION_REQUEST, "close_session_request")?;
-        if v.len() != 2 {
-            return Err(Error::InvalidObject {
-                what: "close_session_request",
-                reason: "value must be 2 bytes",
-            });
-        }
+        let (length_form, v) = parse_spdu_fixed(
+            bytes,
+            tags::CLOSE_SESSION_REQUEST,
+            2,
+            "close_session_request",
+        )?;
         Ok(Self {
             length_form,
             session_nb: u16::from_be_bytes([v[0], v[1]]),
@@ -407,17 +405,12 @@ pub struct CloseSessionResponse {
 impl<'a> Parse<'a> for CloseSessionResponse {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (length_form, v) = parse_spdu_header(
+        let (length_form, v) = parse_spdu_fixed(
             bytes,
             tags::CLOSE_SESSION_RESPONSE,
+            3,
             "close_session_response",
         )?;
-        if v.len() != 3 {
-            return Err(Error::InvalidObject {
-                what: "close_session_response",
-                reason: "value must be 3 bytes",
-            });
-        }
         Ok(Self {
             length_form,
             status: SessionStatus::from_u8(v[0]),
@@ -477,13 +470,7 @@ impl<'a> Parse<'a> for SessionNumber {
         // session_number is followed by an APDU body; only the value (length=2)
         // belongs to the SPDU header, so we read exactly that and ignore any
         // trailing APDU bytes.
-        let (length_form, v) = parse_spdu_header(bytes, tags::SESSION_NUMBER, "session_number")?;
-        if v.len() != 2 {
-            return Err(Error::InvalidObject {
-                what: "session_number",
-                reason: "value must be 2 bytes",
-            });
-        }
+        let (length_form, v) = parse_spdu_fixed(bytes, tags::SESSION_NUMBER, 2, "session_number")?;
         Ok(Self {
             length_form,
             session_nb: u16::from_be_bytes([v[0], v[1]]),

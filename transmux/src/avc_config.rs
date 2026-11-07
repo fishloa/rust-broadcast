@@ -40,14 +40,11 @@
 //! chroma_format/bit_depth extension for profile_idc 244, not 144.
 
 use crate::error::{Error, Result};
-use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt};
+use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt, VALID_LENGTH_SIZES};
 use crate::wire_cursor::{read_nalu_16, read_u8};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
-
-/// `lengthSizeMinusOne` must be 0, 1, or 3 (value 2 is invalid).
-const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
 
 // ---------------------------------------------------------------------------
 // AVCDecoderConfigurationRecord

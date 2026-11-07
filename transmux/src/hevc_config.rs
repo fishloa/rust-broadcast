@@ -37,14 +37,11 @@
 
 use crate::error::{Error, Result};
 use crate::init_segment::bounded_entry_count;
-use crate::nalu_types::{HevcNalArray, HevcNalUnit};
+use crate::nalu_types::{HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES};
 use crate::wire_cursor::{read_u8, read_u16, read_u32, read_u48};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
-
-/// `lengthSizeMinusOne` must be 0, 1, or 3 (value 2 is invalid).
-const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
 
 // ---------------------------------------------------------------------------
 // HEVCDecoderConfigurationRecord

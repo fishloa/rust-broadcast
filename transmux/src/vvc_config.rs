@@ -68,15 +68,13 @@
 
 use crate::bitreader::{bit_error, read_bits_checked, write_bits_checked};
 use crate::error::{Error, Result};
+use crate::nalu_types::VALID_LENGTH_SIZES;
 use crate::sps::rfc6381_vvc1;
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::bits::BitWriter;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
-
-/// `LengthSizeMinusOne` must be 0, 1, or 3 (value 2 is invalid).
-const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
 
 // ---------------------------------------------------------------------------
 // VvcNalUnitType — ITU-T H.266 Table 5 (parameter-set / config NAL types)

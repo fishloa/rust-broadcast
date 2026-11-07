@@ -44,6 +44,24 @@ pub struct CompleteTransportStream<'a> {
     pub descriptors: ParsedDescriptorLoop<'a>,
 }
 
+impl<'a> CompleteTransportStream<'a> {
+    pub(crate) fn collect<I>(entries: I, registry: Option<&'a DescriptorRegistry>) -> Vec<Self>
+    where
+        I: IntoIterator<Item = (u16, u16, DescriptorLoop<'a>)>,
+    {
+        entries
+            .into_iter()
+            .map(
+                |(transport_stream_id, original_network_id, descriptors)| Self {
+                    transport_stream_id,
+                    original_network_id,
+                    descriptors: ParsedDescriptorLoop::parse(descriptors, registry),
+                },
+            )
+            .collect()
+    }
+}
+
 /// Default cap on the number of logical keys (in-progress AND completed)
 /// retained by [`SectionSetCollector`].
 ///
