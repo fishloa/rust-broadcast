@@ -45,7 +45,6 @@
 
 use std::sync::Arc;
 
-use broadcast_auth::Credentials;
 use media_plane::ingress::{Dialer, HandshakePolicy};
 use media_plane::trunk::TrunkConfig;
 use reqwest::Client as HttpClient;
@@ -55,8 +54,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     ScopedCredentials, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
-use crate::source::pull_target::PullTarget;
-use crate::source::{IngestTimeouts, Source};
+use crate::source::pull_target::{PullKind, PullRoute};
 
 #[cfg(test)]
 mod differential;
@@ -73,60 +71,32 @@ pub use session::{DashIngestSession, DashInput, FetchTarget, PROGRAM, dash_confi
 /// A remote MPEG-DASH presentation to pull: its MPD URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
 /// `crate::config::InputSpec::validate`).
-#[derive(Clone)]
-pub struct DashPullRoute {
-    target: PullTarget,
-    allow_cross_origin: bool,
-}
+pub type DashPullRoute = PullRoute<DashPullKind>;
 
-/// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
-/// origin's `user:pass@` userinfo, so it must never render verbatim; `auth`
-/// (if present) carries a raw password/token, also never rendered verbatim.
-impl std::fmt::Debug for DashPullRoute {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.target.debug(
-            f,
-            "DashPullRoute",
-            &[("allow_cross_origin", &self.allow_cross_origin)],
-        )
+/// The [`PullKind`] of a [`DashPullRoute`].
+#[derive(Debug, Clone, Copy)]
+pub struct DashPullKind;
+
+impl PullKind for DashPullKind {
+    const ROUTE: &'static str = "DashPullRoute";
+    type Extra = bool;
+
+    fn debug_extra(extra: &bool) -> Vec<(&'static str, &dyn std::fmt::Debug)> {
+        vec![("allow_cross_origin", extra)]
     }
 }
 
 impl DashPullRoute {
-    /// Build a route descriptor. `url` is the MPD URL to pull.
-    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
-        DashPullRoute {
-            target: PullTarget::new(name, url),
-            allow_cross_origin: false,
-        }
-    }
-
-    /// Overrides the default [`IngestTimeouts`].
-    #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.target = self.target.with_timeouts(timeouts);
-        self
-    }
-
-    /// Attaches config-supplied credentials, overriding any URL userinfo.
-    #[must_use]
-    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.target = self.target.with_auth(auth);
-        self
-    }
-
     /// Lets the MPD name `BaseURL`, segment and `UTCTiming` URLs on another
     /// origin than its own. Off by default; see the module documentation.
     #[must_use]
     pub fn with_cross_origin_urls(mut self, allow: bool) -> Self {
-        self.allow_cross_origin = allow;
+        self.extra = allow;
         self
     }
-}
 
-impl Source for DashPullRoute {
-    fn stream_name(&self) -> &str {
-        &self.target.name
+    pub(crate) fn allow_cross_origin(&self) -> bool {
+        self.extra
     }
 }
 
@@ -198,7 +168,7 @@ fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, Option<Scoped
     let clean_url = strip_userinfo(&parsed)?;
     let credentials = scope_credentials(credentials, &clean_url);
     let http = HttpClient::builder()
-        .redirect(crate::source::redirect_policy(route.allow_cross_origin))
+        .redirect(crate::source::redirect_policy(route.allow_cross_origin()))
         .build()
         .map_err(|e| MultimuxError::Connect {
             reason: format!("reqwest client: {e}"),

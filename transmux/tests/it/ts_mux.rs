@@ -14,6 +14,7 @@ use crate::ts_psi::{
     first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of, split_lp,
 };
 use broadcast_common::{Package, Serialize, Unpackage};
+use mpeg_ts::ts::TsPacket;
 use test_bounded::tool_available;
 use transmux::TrackId;
 use transmux::media::{CmafMux, Media};
@@ -450,18 +451,8 @@ fn pmt_pcr_pid(sec: &[u8]) -> u16 {
 
 /// A PCR reading (90 kHz base) from a packet whose adaptation field carries one.
 fn packet_pcr_90k(pkt: &[u8]) -> Option<u64> {
-    let afc = (pkt[3] >> 4) & 0x3;
-    if afc & 0b10 == 0 || pkt[4] < 7 || pkt[5] & 0x10 == 0 {
-        return None;
-    }
-    let b = &pkt[6..12];
-    Some(
-        ((b[0] as u64) << 25)
-            | ((b[1] as u64) << 17)
-            | ((b[2] as u64) << 9)
-            | ((b[3] as u64) << 1)
-            | ((b[4] as u64) >> 7),
-    )
+    let af = TsPacket::parse(pkt).ok()?.adaptation_field()?.ok()?;
+    Some(af.pcr?.base)
 }
 
 /// Demux the real AC-3 fixture into a single-track `Media`, with each sample's

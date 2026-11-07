@@ -174,31 +174,10 @@ pub(crate) const FIRST_SEGMENT_NUMBER: u64 = 1;
 pub(crate) fn select_representable_track(specs: &[TrackSpec]) -> Option<TrackSpec> {
     specs
         .iter()
-        .filter(|s| is_video_like(&s.config))
+        .filter(|s| s.config.is_video())
         .find(|s| track_is_representable(s))
         .or_else(|| specs.iter().find(|s| track_is_representable(s)))
         .cloned()
-}
-
-/// `true` for the video codecs this crate currently knows to prefer when
-/// describing a single-rendition DASH `Representation`. Deliberately a
-/// closed, local list (not a call into `transmux`, whose own equivalent
-/// classifier is private) — a future video codec `CodecConfig` gains
-/// (`transmux::CodecConfig` is `#[non_exhaustive]`) simply falls into "not
-/// preferred" here until this list is updated, which only affects which
-/// track is *preferred*, never which tracks are considered representable at
-/// all ([`track_is_representable`] is authoritative for that).
-fn is_video_like(config: &transmux::CodecConfig) -> bool {
-    matches!(
-        config,
-        transmux::CodecConfig::Avc { .. }
-            | transmux::CodecConfig::Hevc { .. }
-            | transmux::CodecConfig::Vvc { .. }
-            | transmux::CodecConfig::Av1 { .. }
-            | transmux::CodecConfig::Vp9 { .. }
-            | transmux::CodecConfig::Vp8 { .. }
-            | transmux::CodecConfig::Mpeg2Video { .. }
-    )
 }
 
 /// `true` if `spec`'s codec produces a derivable RFC 6381 codec string —

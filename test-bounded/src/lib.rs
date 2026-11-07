@@ -30,6 +30,8 @@ use std::time::Duration;
 
 use wait_timeout::ChildExt;
 
+pub mod msv;
+
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn capture_path(kind: &str) -> PathBuf {

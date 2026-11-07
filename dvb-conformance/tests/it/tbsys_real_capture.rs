@@ -18,6 +18,7 @@
 
 use core::time::Duration;
 use dvb_conformance::{ConformanceMonitor, Indicator};
+use mpeg_ts::ts::TsPacket;
 use std::io::Read;
 
 const TS_PACKET: usize = 188;
@@ -26,17 +27,9 @@ const READ_BYTES: usize = 60_000_000;
 
 /// 27 MHz PCR of a packet whose adaptation field carries one, with its PID.
 fn pcr_of(p: &[u8]) -> Option<(u16, u64)> {
-    if p[3] & 0x20 == 0 || p[4] < 7 || p[5] & 0x10 == 0 {
-        return None;
-    }
-    let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
-    let base = (u64::from(p[6]) << 25)
-        | (u64::from(p[7]) << 17)
-        | (u64::from(p[8]) << 9)
-        | (u64::from(p[9]) << 1)
-        | (u64::from(p[10]) >> 7);
-    let ext = (u64::from(p[10] & 1) << 8) | u64::from(p[11]);
-    Some((pid, base * 300 + ext))
+    let packet = TsPacket::parse(p).ok()?;
+    let pcr = packet.adaptation_field()?.ok()?.pcr?;
+    Some((packet.header.pid.value(), pcr.as_27mhz()))
 }
 
 #[test]

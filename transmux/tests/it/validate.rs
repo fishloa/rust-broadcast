@@ -6,6 +6,7 @@
 //! codec configs + real coded samples of `h264-aac-frag.mp4` via the crate's own
 //! `build_init_segment` / `build_media_segment`.
 
+use crate::box_walk::find_box_range;
 use broadcast_common::Parse;
 use transmux::TrackId;
 use transmux::{
@@ -169,37 +170,14 @@ const CONTAINERS: &[&[u8; 4]] = &[
 /// test stimuli.
 fn strip_box(data: &[u8], fourcc: &[u8; 4]) -> Vec<u8> {
     // Locate the box in the ORIGINAL coordinate space.
-    let (start, size) = find_box_range(data, 0, data.len(), fourcc).expect("box to strip present");
+    let (start, size) =
+        find_box_range(data, 0, data.len(), fourcc, CONTAINERS).expect("box to strip present");
     // Copy, then decrement the size of every ancestor whose original span
     // contained [start, start+size), before splicing the bytes out.
     let mut out = data.to_vec();
     shrink_ancestors(&mut out, 0, data.len(), start, size);
     out.drain(start..start + size);
     out
-}
-
-/// Recursively locate a box of `fourcc` within [lo, hi). Returns (abs_offset,
-/// box_size). Descends into known container boxes.
-fn find_box_range(data: &[u8], lo: usize, hi: usize, fourcc: &[u8; 4]) -> Option<(usize, usize)> {
-    let mut off = lo;
-    while off + 8 <= hi {
-        let size =
-            u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]) as usize;
-        if size < 8 || off + size > hi {
-            break;
-        }
-        let t = [data[off + 4], data[off + 5], data[off + 6], data[off + 7]];
-        if &t == fourcc {
-            return Some((off, size));
-        }
-        if CONTAINERS.contains(&&t)
-            && let Some(found) = find_box_range(data, off + 8, off + size, fourcc)
-        {
-            return Some(found);
-        }
-        off += size;
-    }
-    None
 }
 
 /// Decrement (in place, ORIGINAL coordinate space) the 32-bit size of every box
@@ -230,7 +208,8 @@ fn shrink_ancestors(data: &mut [u8], lo: usize, hi: usize, cut_start: usize, cut
 /// validator no longer sees it) without disturbing sibling offsets — e.g.
 /// turning `tfdt` into `free` so the trun `data_offset` arithmetic still holds.
 fn rename_box(data: &[u8], from: &[u8; 4], to: &[u8; 4]) -> Vec<u8> {
-    let (start, _) = find_box_range(data, 0, data.len(), from).expect("box to rename present");
+    let (start, _) =
+        find_box_range(data, 0, data.len(), from, CONTAINERS).expect("box to rename present");
     let mut out = data.to_vec();
     out[start + 4..start + 8].copy_from_slice(to);
     out
@@ -385,7 +364,8 @@ fn mdat_overrun_lower_bound_bites() {
     // The mdat is left completely untouched, so `end` (0 + total_size) still
     // sits well inside the real mdat payload — only the lower-bound check
     // added for #991 catches this.
-    let (trun_start, _) = find_box_range(&media, 0, media.len(), b"trun").expect("trun present");
+    let (trun_start, _) =
+        find_box_range(&media, 0, media.len(), b"trun", CONTAINERS).expect("trun present");
     let mut broken = media.clone();
     // trun layout: box header(8) + FullBox version/flags(4) + sample_count(4)
     // + data_offset(4) — see `TrackFragmentRunBox::parse_body`.
@@ -650,7 +630,8 @@ fn mdat_overrun_checks_every_trun_range() {
     // Corrupt *only* the trun's `data_offset`: point it well past the mdat.
     // The sample sizes are unchanged, so the only way to see this is to resolve
     // each trun's own range.
-    let (trun_start, _) = find_box_range(&media, 0, media.len(), b"trun").expect("trun present");
+    let (trun_start, _) =
+        find_box_range(&media, 0, media.len(), b"trun", CONTAINERS).expect("trun present");
     let mut broken = media.clone();
     // trun layout: box header(8) + version/flags(4) + sample_count(4) +
     // data_offset(4).

@@ -10,6 +10,7 @@
 //! The test BITES: an identity pass-through leaves the corrupted, non-monotonic
 //! PCRs (see `identity_leaves_corrupted_pcrs_nonmonotonic`).
 
+use crate::support::{pcr_27mhz, pcr_and_disc};
 use mpeg_ts::pid::Pid;
 use ts_fix::{PcrRestamp, TsFix};
 
@@ -24,28 +25,6 @@ fn pid(p: &[u8]) -> Pid {
     Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
 }
 
-/// `Some(pcr_27mhz)` if this packet carries a PCR in its adaptation field.
-fn pcr_27mhz(p: &[u8]) -> Option<u64> {
-    let afc = (p[3] >> 4) & 0x3;
-    if afc != 2 && afc != 3 {
-        return None;
-    }
-    if *p.get(4)? == 0 {
-        return None;
-    }
-    if *p.get(5)? & 0x10 == 0 {
-        return None;
-    }
-    let b = p.get(6..12)?;
-    let base = ((b[0] as u64) << 25)
-        | ((b[1] as u64) << 17)
-        | ((b[2] as u64) << 9)
-        | ((b[3] as u64) << 1)
-        | ((b[4] as u64) >> 7);
-    let ext = (((b[4] & 0x01) as u16) << 8) | (b[5] as u16);
-    Some(base * 300 + ext as u64)
-}
-
 fn set_pcr_27mhz(p: &mut [u8], v: u64) {
     let base = v / 300;
     let ext = (v % 300) as u16;
@@ -55,29 +34,6 @@ fn set_pcr_27mhz(p: &mut [u8], v: u64) {
     p[9] = (base >> 1) as u8;
     p[10] = (((base & 1) as u8) << 7) | 0x7e | (((ext >> 8) & 1) as u8);
     p[11] = (ext & 0xff) as u8;
-}
-
-/// `Some((pcr_27mhz, discontinuity))` if this packet carries a PCR in its adaptation field.
-fn pcr_and_disc(p: &[u8]) -> Option<(u64, bool)> {
-    let afc = (p[3] >> 4) & 0x3;
-    if afc != 2 && afc != 3 {
-        return None;
-    }
-    if *p.get(4)? == 0 {
-        return None;
-    }
-    let disc = (*p.get(5)? & 0x80) != 0;
-    if *p.get(5)? & 0x10 == 0 {
-        return None;
-    }
-    let b = p.get(6..12)?;
-    let base = ((b[0] as u64) << 25)
-        | ((b[1] as u64) << 17)
-        | ((b[2] as u64) << 9)
-        | ((b[3] as u64) << 1)
-        | ((b[4] as u64) >> 7);
-    let ext = (((b[4] & 0x01) as u16) << 8) | (b[5] as u16);
-    Some((base * 300 + ext as u64, disc))
 }
 
 fn load_disc() -> Vec<u8> {

@@ -110,8 +110,7 @@ use crate::source::SessionClocks;
 use crate::source::handshake_policy;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
 use crate::webrtc_session::{
-    Resource, ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr,
-    single_video_media,
+    ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr, single_video_media,
 };
 use axum::response::IntoResponse as _;
 use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
@@ -929,7 +928,7 @@ fn whip_router_with_cap(state: Arc<WhipServeState>, max_pending: usize) -> axum:
         // is `204 No Content`. CORS headers are therefore added by this
         // middleware, mirroring `origin::add_response_headers`, and the
         // handler stays reachable.
-        .layer(axum::middleware::from_fn(add_whip_cors))
+        .layer(axum::middleware::from_fn(crate::webrtc_session::add_cors))
         .with_state(state)
 }
 
@@ -951,37 +950,6 @@ pub fn whip_router_for_test(max_sessions: usize, max_pending: usize) -> axum::Ro
         resources: ResourceTable::new(),
     });
     whip_router_with_cap(state, max_pending)
-}
-
-/// Add the permissive CORS headers the WHIP signalling endpoint needs to
-/// every response (`CorsLayer` would intercept OPTIONS; see the router).
-async fn add_whip_cors(
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::http::{HeaderValue, header};
-    let mut resp = next.run(req).await;
-    let headers = resp.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("POST, PATCH, DELETE, OPTIONS"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Authorization, Content-Type, If-Match"),
-    );
-    // `Location` on the 201 lets a cross-origin browser DELETE by it; `ETag`
-    // (neither is CORS-safelisted) is what its conditional `PATCH`es need
-    // (RFC 9725 section 4.3.1).
-    headers.insert(
-        header::ACCESS_CONTROL_EXPOSE_HEADERS,
-        HeaderValue::from_static("Location, ETag"),
-    );
-    resp
 }
 
 /// Which IP [`whip_post_inner`] binds this session's media socket on: the
@@ -1116,18 +1084,12 @@ async fn whip_post_inner(
         return Ok(crate::webrtc_session::to_axum(response));
     }
 
-    let control = SessionControl::new();
-    // Registered before the 201 is written (a client may `DELETE` the instant
-    // it reads it); the guard rides in `AdmittedWhip`, so a failed hand-off
-    // below unregisters it again.
-    let resource = state.resources.insert(
+    let (control, resource) = crate::webrtc_session::register_session(
+        &state.resources,
         resource_id,
-        Resource {
-            machine: parking_lot::Mutex::new(session),
-            control: Arc::clone(&control),
-            remote_ufrag: parking_lot::Mutex::new(parsed.remote_ufrag.clone()),
-            local_candidates,
-        },
+        session,
+        parsed.remote_ufrag.clone(),
+        local_candidates,
     );
 
     let admitted = AdmittedWhip {
@@ -1182,43 +1144,12 @@ async fn whip_delete(
     crate::webrtc_session::delete_resource(&state.resources, &id)
 }
 
-impl crate::webrtc_session::SignallingMachine for WhipSession {
-    const LABEL: &'static str = "whip";
-    const TRICKLE_ICE: &'static str = webrtc_runtime::whip::content_type::TRICKLE_ICE;
-
-    fn patch(
-        &mut self,
-        body: Vec<u8>,
-        headers: &axum::http::HeaderMap,
-    ) -> std::result::Result<crate::webrtc_session::PatchEvent, webrtc_runtime::Error> {
-        use crate::webrtc_session::PatchEvent;
-        Ok(match self.on_patch(body, headers)? {
-            WhipEvent::TrickleIce { sdp_fragment, .. } => PatchEvent::TrickleIce(sdp_fragment),
-            WhipEvent::IceRestart { sdp_fragment } => PatchEvent::IceRestart(sdp_fragment),
-            _ => PatchEvent::Other,
-        })
-    }
-
-    fn ack_trickle(&self) -> webrtc_runtime::whip::server::HttpResponse {
-        WhipSession::ack_trickle(self)
-    }
-
-    fn ack_restart(
-        &mut self,
-        answer: Vec<u8>,
-        etag: String,
-    ) -> webrtc_runtime::whip::server::HttpResponse {
-        WhipSession::ack_restart(self, answer, etag)
-    }
-
-    fn delete(
-        &mut self,
-    ) -> std::result::Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error>
-    {
-        self.on_delete()?;
-        Ok(self.ack_delete())
-    }
-}
+crate::webrtc_session::impl_signalling_machine!(
+    WhipSession,
+    WhipEvent,
+    "whip",
+    webrtc_runtime::whip::content_type::TRICKLE_ICE
+);
 
 /// The non-blocking [`Listener`] bridge over the accept-pump's channel — see
 /// the module doc and `crate::source::rtmp::RtmpListener`'s identical shape.
@@ -2195,6 +2126,7 @@ pub(crate) async fn run_whip_with_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webrtc_session::Resource;
     use tokio::net::TcpStream;
 
     /// A well-formed SHA-256 SDP fingerprint (RFC 8122 §5) — the shape

@@ -376,7 +376,7 @@ pub(super) async fn run<S: RouteSink>(
     mut sink: S,
 ) -> Result<()> {
     let (http, clean_url, credentials) = build_client(route)?;
-    let dash = super::session::dash_config(route.allow_cross_origin);
+    let dash = super::session::dash_config(route.allow_cross_origin());
     let limits = super::session::pull_limits();
     let net = Net {
         http,

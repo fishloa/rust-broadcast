@@ -11,23 +11,20 @@ use hls_runtime::client::{
 use transmux::TrackId;
 use url::Url;
 
-use crate::auth::{AuthDecision, AuthState};
+use crate::auth::AuthState;
 use crate::error::Error;
-use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, ResumeMode, Status};
-use crate::redirect;
-use crate::source::fetch::body::BodyAcc;
+use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
-use crate::source::fetch::inflight::{self, InFlight, PurposeKind, TimeoutClass, Timeouts};
-use crate::source::fetch::resume::{HeadOutcome, Parked, Stash, accept_head};
+use crate::source::fetch::inflight::{
+    self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
+};
+use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
 use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after_us};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
 
 const MICROS_PER_MILLI: u64 = 1_000;
-const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-const STATUS_UNAUTHORIZED: u16 = 401;
-const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_GONE: u16 = 410;
@@ -59,6 +56,14 @@ enum Purpose {
 impl PurposeKind for Purpose {
     fn is_media(self) -> bool {
         !matches!(self, Self::Playlist)
+    }
+
+    fn oversize_field(self) -> Option<&'static str> {
+        match self {
+            Self::Playlist => Some(FIELD_MAX_MANIFEST_BYTES),
+            Self::Resource(_) => Some(FIELD_MAX_SEGMENT_BYTES),
+            Self::Key(_) => None,
+        }
     }
 
     fn timeout_class(self) -> TimeoutClass {
@@ -284,36 +289,50 @@ impl HlsSource {
         if self.fatal {
             return;
         }
-        let Some(mut req) = self.flight.reqs.remove(&conn) else {
+        let Some(req) = self.flight.reqs.remove(&conn) else {
             return;
         };
         auth.receive_cookies(&req.url, headers, now);
-        if REDIRECT_STATUSES.contains(&status) {
-            self.actions.push_back(Action::Close { conn });
-            match redirect::resolve(&req.url, headers, req.redirects, self.max_redirects) {
-                Some(target) => {
-                    req.redirects = req.redirects.saturating_add(1);
-                    req.url = target;
-                    self.send(req, auth, now);
-                }
-                None => self.fail(req, now),
-            }
-        } else if (status == STATUS_UNAUTHORIZED || status == STATUS_PROXY_AUTH_REQUIRED)
-            && req.url.origin() == auth.origin().origin()
-        {
-            self.actions.push_back(Action::Close { conn });
-            match auth.handle_unauthorized(status, headers, req.authed, req.stale_replayed) {
-                AuthDecision::Replay => self.send(req, auth, now),
-                AuthDecision::ReplayStale => {
-                    req.stale_replayed = true;
-                    self.send(req, auth, now);
-                }
-                AuthDecision::Wait(events) => {
-                    self.events.extend(events);
-                    self.parked.push(req);
-                }
-            }
-        } else if (200..300).contains(&status) {
+        let head = ResponseHead {
+            conn,
+            status,
+            headers,
+        };
+        match inflight::route_head(
+            req,
+            head,
+            self.max_redirects,
+            auth,
+            Outbox {
+                actions: &mut self.actions,
+                events: &mut self.events,
+            },
+            &mut self.parked,
+        ) {
+            HeadRoute::Send(req) => self.send(req, auth, now),
+            HeadRoute::RedirectsExhausted(req) => self.fail(req, now),
+            HeadRoute::Parked => {}
+            HeadRoute::Other(req) => self.on_head(req, head, now, wall, auth),
+        }
+        if !auth.is_waiting() {
+            self.advance(now, auth);
+        }
+    }
+
+    fn on_head(
+        &mut self,
+        mut req: Req,
+        head: ResponseHead<'_>,
+        now: u64,
+        wall: Option<&WallClock>,
+        auth: &mut AuthState,
+    ) {
+        let ResponseHead {
+            conn,
+            status,
+            headers,
+        } = head;
+        if (200..300).contains(&status) {
             match accept_head(
                 &mut req.body,
                 &mut req.basis,
@@ -325,10 +344,6 @@ impl HlsSource {
                 HeadOutcome::Refused => {
                     self.actions.push_back(Action::Close { conn });
                     self.fail_status(req, now, Some(status));
-                    if !auth.is_waiting() {
-                        self.advance(now, auth);
-                    }
-                    return;
                 }
                 HeadOutcome::Fallback => {
                     self.actions.push_back(Action::Close { conn });
@@ -349,7 +364,6 @@ impl HlsSource {
             req.resume_from = None;
             self.send(req, auth, now);
         } else {
-            let refused = status == 429 || status == 503;
             if status == STATUS_FORBIDDEN {
                 self.events.push_back(Event::Forbidden { status });
             }
@@ -361,22 +375,17 @@ impl HlsSource {
             }
             let ra = retry_after_us(status, headers, now, wall);
             self.retry_after_us = ra;
-            if refused {
-                let cap = RefusedCapture::new(status, ra, headers);
-                if cap.wants_body() {
-                    self.refused_captures.insert(conn, cap);
-                } else {
-                    self.events.push_back(cap.into_event());
-                    self.actions.push_back(Action::Close { conn });
-                }
-            } else {
-                self.actions.push_back(Action::Close { conn });
-            }
+            inflight::record_refusal(
+                head,
+                ra,
+                &mut self.refused_captures,
+                Outbox {
+                    actions: &mut self.actions,
+                    events: &mut self.events,
+                },
+            );
             self.fail_status(req, now, Some(status));
             self.retry_after_us = 0;
-        }
-        if !auth.is_waiting() {
-            self.advance(now, auth);
         }
     }
 
@@ -384,38 +393,21 @@ impl HlsSource {
         if self.fatal {
             return;
         }
-        if let Some(cap) = self.refused_captures.get_mut(&conn) {
-            if cap.push(bytes)
-                && let Some(cap) = self.refused_captures.remove(&conn)
-            {
-                self.events.push_back(cap.into_event());
-                self.actions.push_back(Action::Close { conn });
-            }
-            return;
-        }
-        let Some(req) = self.flight.reqs.get_mut(&conn) else {
-            return;
-        };
-        if !req.responded_ok || bytes.is_empty() {
-            return;
-        }
-        req.last_activity_us = now;
-        let field = oversize_field(req.purpose);
-        if req.body.push(bytes).is_err() {
-            if let Some(field) = field
-                && self.oversize_reported.insert(field)
-            {
-                self.events.push_back(Event::Error {
-                    kind: ErrorKind::BodyTooLarge { field },
-                    fatal: false,
-                });
-            }
-            if let Some(req) = self.flight.reqs.remove(&conn) {
-                self.actions.push_back(Action::Close { conn });
-                self.fail(req, now);
-                if !auth.is_waiting() {
-                    self.advance(now, auth);
-                }
+        let failed = self.flight.on_data(
+            conn,
+            bytes,
+            now,
+            &mut self.refused_captures,
+            &mut self.oversize_reported,
+            Outbox {
+                actions: &mut self.actions,
+                events: &mut self.events,
+            },
+        );
+        if let Some(req) = failed {
+            self.fail(req, now);
+            if !auth.is_waiting() {
+                self.advance(now, auth);
             }
         }
     }
@@ -758,43 +750,19 @@ impl HlsSource {
     }
 
     fn expire_inactive(&mut self, now: u64) {
-        let expired = self.flight.inactive(now);
-        for at in expired.wakes {
-            self.actions.push_back(Action::WakeAt(at));
-        }
-        for conn in expired.stalled {
-            if let Some(req) = self.flight.reqs.remove(&conn) {
-                self.stalled(req, conn, now);
-            }
-        }
-    }
-
-    fn stalled(&mut self, mut req: Req, conn: u32, now: u64) {
-        let received = u64::try_from(req.body.len()).unwrap_or(u64::MAX);
-        let kept = (req.responded_ok || req.resume_from.is_some())
-            .then(|| req.basis.take())
-            .flatten()
-            .filter(|basis| basis.request_headers(received).is_some());
-        let resume = if kept.is_some() {
-            ResumeMode::Range
-        } else {
-            ResumeMode::Full
-        };
-        if let Some(basis) = kept {
-            self.stash.put(
-                req.purpose,
-                Parked {
-                    url: req.original_url.clone(),
-                    byte_range: req.byte_range,
-                    body: core::mem::replace(&mut req.body, BodyAcc::new(0)),
-                    basis,
+        for conn in self.flight.stalled_conns(now, &mut self.actions) {
+            let stalled = self.flight.stall(
+                conn,
+                &mut self.stash,
+                Outbox {
+                    actions: &mut self.actions,
+                    events: &mut self.events,
                 },
             );
+            if let Some(req) = stalled {
+                self.fail(req, now);
+            }
         }
-        self.events
-            .push_back(Event::Status(Status::RequestStalled { resume }));
-        self.actions.push_back(Action::Close { conn });
-        self.fail(req, now);
     }
 
     fn next_action(&mut self) -> Option<HlsAction> {
@@ -1048,14 +1016,6 @@ impl HlsSource {
     }
 }
 
-fn oversize_field(purpose: Purpose) -> Option<&'static str> {
-    match purpose {
-        Purpose::Playlist => Some(FIELD_MAX_MANIFEST_BYTES),
-        Purpose::Resource(_) => Some(FIELD_MAX_SEGMENT_BYTES),
-        Purpose::Key(_) => None,
-    }
-}
-
 fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
     if ENCRYPTED_SAMPLE_ENTRIES.contains(&fourcc.as_str()) {
         ErrorKind::UnsupportedEncryption { method: fourcc }
@@ -1105,7 +1065,8 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::fetch::resume::Basis;
+    use crate::source::fetch::body::BodyAcc;
+    use crate::source::fetch::resume::{Basis, Parked};
 
     const MAX_TEST_BODY: usize = 1024;
     use crate::source::fetch::deadlines::{SLACK_FACTOR, SLACK_FLOOR};

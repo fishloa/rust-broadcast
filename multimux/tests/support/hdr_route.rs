@@ -11,6 +11,7 @@ use broadcast_common::mux::Unpackage;
 use broadcast_hls::MediaPlaylist;
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
+use test_bounded::msv;
 use tower::ServiceExt;
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::ts_demux::TsDemux;
@@ -259,35 +260,8 @@ pub async fn joined_mp4(app: &Router, dir: &std::path::Path) -> std::path::PathB
 pub async fn validator_comments(app: Router, name: &str) -> Vec<String> {
     let dir = scratch(name);
     dump_route(&app, &dir).await;
-    let report = dir.join("report.json");
-    let mut cmd = std::process::Command::new("mediastreamvalidator");
-    cmd.current_dir(&dir)
-        .arg("--quiet")
-        .arg("-t")
-        .arg("5")
-        .arg("-O")
-        .arg(&report)
-        .arg("master.m3u8");
-    test_bounded::output_bounded(&mut cmd, std::time::Duration::from_secs(35)).expect("run");
-    let text = std::fs::read_to_string(&report).expect("validator report");
-    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let mut comments = Vec::new();
-    fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
-        match v {
-            serde_json::Value::Object(m) => {
-                if let Some(c) = m.get("errorComment").and_then(|c| c.as_str()) {
-                    out.push(c.to_string());
-                }
-                m.values().for_each(|c| walk(c, out));
-            }
-            serde_json::Value::Array(a) => a.iter().for_each(|c| walk(c, out)),
-            _ => {}
-        }
-    }
-    walk(&json, &mut comments);
-    comments.sort();
-    comments.dedup();
-    comments
+    let report = msv::run_report(&dir, "master.m3u8", std::time::Duration::from_secs(35));
+    msv::error_comments(&report)
 }
 
 pub async fn init_bytes(app: &Router) -> Vec<u8> {

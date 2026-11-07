@@ -22,6 +22,7 @@
 //! indicator — the exact "defect" scenario ISO/IEC 13818-1 §2.4.3.5 /
 //! ETSI TR 101 290 §5.2.2 indicator 2.3b describes.
 
+use crate::support::pcr_27mhz;
 use dvb_conformance::{ConformanceMonitor, Indicator};
 use mpeg_ts::pid::Pid;
 use ts_fix::discontinuity::detect_pcr_discontinuities;
@@ -46,28 +47,6 @@ fn load(path: &str) -> Vec<u8> {
 
 fn pid(p: &[u8]) -> Pid {
     Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
-}
-
-/// `Some(pcr_27mhz)` if this packet carries a PCR in its adaptation field.
-fn pcr_27mhz(p: &[u8]) -> Option<u64> {
-    let afc = (p[3] >> 4) & 0x3;
-    if afc != 2 && afc != 3 {
-        return None;
-    }
-    if *p.get(4)? == 0 {
-        return None;
-    }
-    if *p.get(5)? & 0x10 == 0 {
-        return None;
-    }
-    let b = p.get(6..12)?;
-    let base = ((b[0] as u64) << 25)
-        | ((b[1] as u64) << 17)
-        | ((b[2] as u64) << 9)
-        | ((b[3] as u64) << 1)
-        | ((b[4] as u64) >> 7);
-    let ext = (((b[4] & 0x01) as u16) << 8) | (b[5] as u16);
-    Some(base * 300 + ext as u64)
 }
 
 /// Clear `discontinuity_indicator` at the given packet index — real-fixture

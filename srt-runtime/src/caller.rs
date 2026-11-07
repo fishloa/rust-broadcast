@@ -204,14 +204,11 @@ impl CallerHandshake {
         ) {
             return Vec::new();
         }
-        match self.retransmit.tick(&self.config) {
-            RetransmitStep::Idle => Vec::new(),
-            RetransmitStep::Resend(bytes) => vec![HandshakeOutput::Send(bytes)],
-            RetransmitStep::TimedOut => {
-                self.state = CallerHandshakeState::TimedOut;
-                vec![HandshakeOutput::TimedOut]
-            }
+        let step = self.retransmit.tick(&self.config);
+        if matches!(step, RetransmitStep::TimedOut) {
+            self.state = CallerHandshakeState::TimedOut;
         }
+        step.into_outputs()
     }
 
     fn on_induction_response(&mut self, hp: &HandshakePacket<'_>) -> Result<Vec<HandshakeOutput>> {

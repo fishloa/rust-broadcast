@@ -590,6 +590,17 @@ fn gate_opens_on(
     }
 }
 
+/// Converts a closed part to the `Trunk`'s [`PartEntry`] shape.
+pub(super) fn part_entry(part: PartInfo) -> PartEntry {
+    PartEntry::new(
+        part.bytes,
+        SegmentSeq::new(part.segment_seq),
+        PartIndex::new(part.part_index),
+        Duration::from_secs_f64(part.duration),
+        part.independent,
+    )
+}
+
 /// Drain `pending` into `segment_writer` from the front for as long as items keep
 /// going through, in order; see [`ProgramSegmenter::drain_pending`].
 pub(super) fn drain_publish_queue(
@@ -935,16 +946,13 @@ impl ProgramSegmenter {
                 // first sync sample of a video track has been seen. Runs
                 // BEFORE the media-anchor block so dropped samples never pin
                 // timeline 0.
-                let has_video_track = trunk
-                    .tracks()
-                    .iter()
-                    .any(|t| crate::push::egress::is_video(&t.config));
+                let has_video_track = trunk.tracks().iter().any(|t| t.config.is_video());
                 if has_video_track && !self.start_gate_open {
                     let is_video_sample = trunk
                         .tracks()
                         .iter()
                         .find(|t| t.track_id == track_id)
-                        .map(|t| crate::push::egress::is_video(&t.config))
+                        .map(|t| t.config.is_video())
                         .unwrap_or(false);
                     let opens_gate = is_video_sample
                         && gate_opens_on(
@@ -1563,13 +1571,7 @@ impl ProgramSegmenter {
 
     /// Queue one part, converting it to the `Trunk`'s [`PartEntry`] shape.
     fn queue_part(&mut self, part: PartInfo) {
-        self.publish_without_blocking(PendingPublish::Part(PartEntry::new(
-            part.bytes,
-            SegmentSeq::new(part.segment_seq),
-            PartIndex::new(part.part_index),
-            Duration::from_secs_f64(part.duration),
-            part.independent,
-        )));
+        self.publish_without_blocking(PendingPublish::Part(part_entry(part)));
     }
 
     /// Queue one closed segment, converting it to the `Trunk`'s

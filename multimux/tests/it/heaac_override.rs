@@ -134,57 +134,8 @@ fn audio_profiles_config_parses_and_rejects_duplicates() {
     assert_eq!(AudioProfile::HeAacV2.to_string(), "he-aac-v2");
 }
 
-type Finding = (String, i64, String);
-
-fn collect_findings(value: &serde_json::Value, path: &str, out: &mut Vec<Finding>) {
-    match value {
-        serde_json::Value::Object(map) => {
-            let parse_failed = map
-                .get("parseFailed")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if let Some(serde_json::Value::Array(messages)) = map.get("messages") {
-                for m in messages {
-                    let level = m
-                        .get("errorRequirementLevel")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-                    out.push((
-                        path.to_string(),
-                        if parse_failed { 1 } else { level },
-                        m.get("errorComment")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    ));
-                }
-            }
-            for (k, v) in map {
-                if k != "messages" {
-                    collect_findings(v, &format!("{path}/{k}"), out);
-                }
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for (i, v) in items.iter().enumerate() {
-                collect_findings(v, &format!("{path}[{i}]"), out);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn validator_available() -> bool {
-    std::process::Command::new("mediastreamvalidator")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-async fn validator_findings(app: &Router, tag: &str) -> Vec<Finding> {
+async fn validator_findings(app: &Router, tag: &str) -> Vec<test_bounded::msv::Finding> {
     use std::fs;
-    use std::process::Command;
     use std::time::Duration;
 
     let scratch = std::env::temp_dir().join(format!(
@@ -219,20 +170,8 @@ async fn validator_findings(app: &Router, tag: &str) -> Vec<Finding> {
             fs::write(scratch.join(uri), body).expect("write resource");
         }
     }
-    let report = scratch.join("report.json");
-    let mut cmd = Command::new("mediastreamvalidator");
-    cmd.current_dir(&scratch)
-        .arg("--quiet")
-        .arg("-t")
-        .arg("5")
-        .arg("-O")
-        .arg(&report)
-        .arg("master.m3u8");
-    let _ = test_bounded::output_bounded(&mut cmd, Duration::from_secs(60)).expect("run validator");
-    let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&report).expect("report")).expect("json");
-    let mut findings = Vec::new();
-    collect_findings(&json, "$", &mut findings);
+    let json = test_bounded::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(60));
+    let findings = test_bounded::msv::findings(&json);
     for f in &findings {
         eprintln!("VALIDATOR[{tag}]: {} level={} {}", f.0, f.1, f.2);
     }
@@ -247,7 +186,7 @@ fn names_codec_or_sbr(message: &str) -> bool {
 
 #[tokio::test]
 async fn heaac_override_validator_reports_no_sbr_or_codecs_finding() {
-    if !validator_available() {
+    if !test_bounded::msv::available() {
         eprintln!(
             "SKIP heaac_override_validator_reports_no_sbr_or_codecs_finding: \
              `mediastreamvalidator` not on PATH"

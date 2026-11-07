@@ -1,6 +1,8 @@
 //! Integration tests for `media-doctor`.
 
+use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::{Pcr, TsPacket};
 use std::fs;
 
 use media_doctor::Diagnostic;
@@ -932,6 +934,7 @@ fn pcr_check_discontinuity_not_flagged() {
 /// assert PcrCheck produces a PCR anomaly finding.
 #[test]
 fn pcr_check_corrupted_pcr_produces_finding() {
+    const PCR_BASE_MASK: u64 = 0x1_FFFF_FFFF;
     let mut ts = fixture_pcr("ts/france-tnt-pcr.ts");
 
     // Locate the first PCR-bearing packet on PID 0x0208.
@@ -942,37 +945,20 @@ fn pcr_check_corrupted_pcr_produces_finding() {
         if pid != 0x0208 {
             continue;
         }
-        let afc = (ts[i + 3] >> 4) & 0x03;
-        if afc < 2 {
+        let Some(pcr) = TsPacket::parse(&ts[i..i + 188])
+            .ok()
+            .and_then(|p| p.adaptation_field()?.ok()?.pcr)
+        else {
             continue;
-        }
-        let af_len = ts[i + 4] as usize;
-        if af_len == 0 {
-            continue;
-        }
-        let flags = ts[i + 5];
-        if flags & 0x10 == 0 {
-            continue;
-        }
-        // Found a PCR packet on PID 0x0208. Corrupt the PCR base by adding
-        // a large offset (~10s worth of 90 kHz base ticks) without setting
-        // discontinuity_indicator.
-        let pcr_start = i + 6;
-        // Decode current base value.
-        let base = ((ts[pcr_start] as u64) << 25)
-            | ((ts[pcr_start + 1] as u64) << 17)
-            | ((ts[pcr_start + 2] as u64) << 9)
-            | ((ts[pcr_start + 3] as u64) << 1)
-            | ((ts[pcr_start + 4] as u64) >> 7);
-        // Add ~12 seconds to the base (12 × 90_000 = 1_080_000).
-        let new_base = (base + 1_080_000) & 0x1_FFFF_FFFF;
-        ts[pcr_start] = ((new_base >> 25) & 0xFF) as u8;
-        ts[pcr_start + 1] = ((new_base >> 17) & 0xFF) as u8;
-        ts[pcr_start + 2] = ((new_base >> 9) & 0xFF) as u8;
-        ts[pcr_start + 3] = ((new_base >> 1) & 0xFF) as u8;
-        ts[pcr_start + 4] = (ts[pcr_start + 4] & 0x7E)
-            | (((new_base & 0x01) as u8) << 7)
-            | (ts[pcr_start + 4] & 0x01);
+        };
+        // Corrupt the PCR base by adding ~12 s (12 x 90_000 ticks) without
+        // setting discontinuity_indicator.
+        let corrupted = Pcr {
+            base: (pcr.base + 12 * 90_000) & PCR_BASE_MASK,
+            extension: pcr.extension,
+        };
+        let packet: &mut [u8; 188] = (&mut ts[i..i + 188]).try_into().unwrap();
+        OwnedTsPacket::set_pcr(packet, corrupted).unwrap();
         found = true;
         break;
     }

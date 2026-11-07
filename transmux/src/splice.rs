@@ -109,7 +109,7 @@ use broadcast_common::timescale::{Rounding, rescale_i64};
 
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
-use crate::pipeline::{CodecConfig, Sample};
+use crate::pipeline::Sample;
 
 /// A splice / concatenation join point in a resulting [`Media`] track.
 ///
@@ -142,41 +142,6 @@ pub struct SpliceResult {
     pub media: Media,
     /// The join points to signal downstream as `#EXT-X-DISCONTINUITY`.
     pub discontinuity_points: Vec<SplicePoint>,
-}
-
-/// A stable codec-kind token used only to check two tracks are the *same* codec
-/// before joining their samples (dimensions/bitrate may differ across the join,
-/// but the codec family and hence the sample entry must match).
-fn codec_kind(config: &CodecConfig) -> &'static str {
-    match config {
-        CodecConfig::Avc { .. } => "avc",
-        CodecConfig::Hevc { .. } => "hevc",
-        CodecConfig::Vvc { .. } => "vvc",
-        CodecConfig::Av1 { .. } => "av1",
-        CodecConfig::Vp9 { .. } => "vp9",
-        CodecConfig::Vp8 { .. } => "vp8",
-        CodecConfig::Mpeg2Video { .. } => "mpeg2video",
-        CodecConfig::Aac { .. } => "aac",
-        CodecConfig::Ac3 { .. } => "ac3",
-        CodecConfig::Eac3 { .. } => "eac3",
-        CodecConfig::Ac4 { .. } => "ac4",
-        CodecConfig::Opus { .. } => "opus",
-        CodecConfig::Flac { .. } => "flac",
-        CodecConfig::Dts { .. } => "dts",
-        CodecConfig::MpegH { .. } => "mpegh",
-        CodecConfig::MpegAudio { .. } => "mpegaudio",
-        CodecConfig::Vorbis { .. } => "vorbis",
-        CodecConfig::Data { .. } => "data",
-        CodecConfig::Subtitle { .. } => "subtitle",
-    }
-}
-
-/// Whether `config` is a video codec (used to pick the splice-alignment track).
-fn is_video(config: &CodecConfig) -> bool {
-    matches!(
-        codec_kind(config),
-        "avc" | "hevc" | "vvc" | "av1" | "vp9" | "vp8" | "mpeg2video"
-    )
 }
 
 /// The decode time of a track's first sample beyond its last (its **end decode
@@ -249,7 +214,7 @@ fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
             ))?;
         used[bj] = true;
         let bt = &b.tracks[bj];
-        if codec_kind(&at.spec.config) != codec_kind(&bt.spec.config) {
+        if core::mem::discriminant(&at.spec.config) != core::mem::discriminant(&bt.spec.config) {
             return Err(Error::InvalidInput(
                 "splice: matched tracks have incompatible codecs",
             ));
@@ -275,7 +240,7 @@ fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
 /// independently per track would silently re-align tracks relative to each
 /// other and destroy A/V sync (see the module-level doc).
 fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<usize> {
-    if let Some(i) = a.iter().position(|t| is_video(&t.spec.config)) {
+    if let Some(i) = a.iter().position(|t| t.spec.config.is_video()) {
         return Some(i);
     }
     a.iter().enumerate().position(|(i, at)| {
@@ -530,7 +495,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
     let video_idx = base
         .tracks
         .iter()
-        .position(|t| is_video(&t.spec.config))
+        .position(|t| t.spec.config.is_video())
         .ok_or(Error::InvalidInput(
             "splice_insert: base has no video track to align the splice on",
         ))?;

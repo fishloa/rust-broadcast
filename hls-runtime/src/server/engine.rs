@@ -729,8 +729,6 @@ impl InitStore {
     }
 }
 
-/// Whether a codec config is a video codec (mirrors
-/// `transmux::CodecConfig::is_video`, which is crate-private).
 /// `SUPPLEMENTAL-CODECS` compatibility brand of a Dolby Vision stream whose
 /// base layer is HDR10 (`dv_bl_signal_compatibility_id` 1)
 /// (`private/specs-verified/hls/apple/hls-authoring-spec.md`, "The
@@ -825,19 +823,6 @@ fn hdr10plus_supplemental_codecs(spec: &transmux::TrackSpec) -> Option<String> {
     Some(format!("{codec}/{HDR10PLUS_BRAND}"))
 }
 
-fn is_video_codec(config: &transmux::CodecConfig) -> bool {
-    matches!(
-        config,
-        transmux::CodecConfig::Avc { .. }
-            | transmux::CodecConfig::Hevc { .. }
-            | transmux::CodecConfig::Vvc { .. }
-            | transmux::CodecConfig::Av1 { .. }
-            | transmux::CodecConfig::Vp9 { .. }
-            | transmux::CodecConfig::Vp8 { .. }
-            | transmux::CodecConfig::Mpeg2Video { .. }
-    )
-}
-
 fn dedupe_rendition_names(mut media: Vec<MediaRendition>) -> Vec<MediaRendition> {
     let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
     for m in &mut media {
@@ -910,7 +895,7 @@ fn ts_video_rate(segment: &[u8]) -> Option<u32> {
     let track = media
         .tracks
         .iter()
-        .find(|track| is_video_codec(&track.spec.config))?;
+        .find(|track| track.spec.config.is_video())?;
     let ticks: u64 = track
         .samples
         .iter()
@@ -2017,7 +2002,7 @@ impl HlsOrigin {
             ordered.iter().map(|s| (*s).clone()).collect();
         *locked(&self.video_track_id) = ordered
             .iter()
-            .find(|spec| is_video_codec(&spec.config))
+            .find(|spec| spec.config.is_video())
             .map(|spec| spec.track_id);
         let mut codecs: Vec<String> = Vec::new();
         // Video-only codec string for the I-frame variant: the first video
@@ -2035,7 +2020,7 @@ impl HlsOrigin {
         let mut frame_rate: Option<FrameRate> = None;
         let mut supplemental_codecs: Option<String> = None;
         for spec in ordered {
-            let dolby_vision = if !video_codecs_decided && is_video_codec(&spec.config) {
+            let dolby_vision = if !video_codecs_decided && spec.config.is_video() {
                 dolby_vision_hls(spec)
             } else {
                 None
@@ -2047,7 +2032,7 @@ impl HlsOrigin {
                 Err(transmux::Error::UnsupportedCodec { .. }) => {}
                 Err(other) => return Err(other),
             }
-            if !video_codecs_decided && is_video_codec(&spec.config) {
+            if !video_codecs_decided && spec.config.is_video() {
                 match transmux::rfc6381_codec_string(&spec.config) {
                     Ok(codec) => {
                         video_codecs =
@@ -2259,7 +2244,7 @@ impl HlsOrigin {
                 let audio_spec = sibling.and_then(|s| {
                     locked(&s.track_specs)
                         .iter()
-                        .find(|t| !is_video_codec(&t.config))
+                        .find(|t| !t.config.is_video())
                         .cloned()
                 });
                 let meta = audio_spec.as_ref().map(|t| t.audio_metadata());
@@ -2892,7 +2877,7 @@ impl HlsOrigin {
         let signalled_rate = locked(&self.frame_rate).is_some();
         let video_timescale = locked(&self.track_specs)
             .iter()
-            .find(|spec| is_video_codec(&spec.config))
+            .find(|spec| spec.config.is_video())
             .map(|spec| spec.timescale);
         let mut prepared = Vec::with_capacity(polled.len());
         for item in polled {

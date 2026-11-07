@@ -17,6 +17,7 @@
 //! crate root docs.
 
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(feature = "crypto")]
 use subtle::ConstantTimeEq;
@@ -536,6 +537,16 @@ pub(crate) enum RetransmitStep {
     Idle,
     Resend(Vec<u8>),
     TimedOut,
+}
+
+impl RetransmitStep {
+    pub(crate) fn into_outputs(self) -> Vec<HandshakeOutput> {
+        match self {
+            Self::Idle => Vec::new(),
+            Self::Resend(bytes) => vec![HandshakeOutput::Send(bytes)],
+            Self::TimedOut => vec![HandshakeOutput::TimedOut],
+        }
+    }
 }
 
 /// The retransmit bookkeeping every handshake machine (caller, listener,

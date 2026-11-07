@@ -78,6 +78,7 @@ use multimux::registry::SchemeRegistry;
 use multimux::serve_with_registry_on;
 
 use crate::support::listener;
+use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
 use listener::{bind_tcp, bind_udp};
 
 fn fixture_path() -> PathBuf {
@@ -1020,39 +1021,21 @@ async fn poll_until_200_with(
 /// wiring (issue #831) now populates track specs from the driver.
 #[tokio::test]
 async fn dash_manifest_served_without_explicit_set_track_specs() {
-    let (bind_addr, bind_listener) = bind_tcp();
-    let (udp_addr, udp_socket) = bind_udp_addr().await;
-    let mut config = base_config(
+    let UdpTsOrigin {
         bind_addr,
-        InputSpec::TsUdp {
-            addr: udp_addr.to_string(),
-            multicast_group: None,
-            socket: Default::default(),
+        server,
+        stop,
+        sender: send_task,
+    } = spawn_udp_ts_origin(
+        |bind, input| {
+            let mut c = base_config(bind, input);
+            c.routes[0].outputs = vec![OutputKind::Dash];
+            c
         },
-    );
-    config.prebound.with_udp(udp_addr.to_string(), udp_socket);
-    config.routes[0].outputs = vec![OutputKind::Dash];
-
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
-
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
-    let stop = Arc::new(AtomicBool::new(false));
-    let sender_stop = Arc::clone(&stop);
-    let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("bind sender");
-    let send_task = tokio::spawn(async move {
-        while !sender_stop.load(Ordering::Relaxed) {
-            for chunk in ts_bytes.chunks(7 * 188) {
-                let _ = sender.send_to(chunk, udp_addr).await;
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        }
-    });
+        &fixture_path(),
+        Duration::from_millis(5),
+    )
+    .await;
 
     let client = reqwest::Client::new();
     let mpd_url = format!("http://{bind_addr}/cam/manifest.mpd");
@@ -1089,39 +1072,21 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
 /// calls to `set_track_specs` — the LL-DASH counterpart of the DASH test above.
 #[tokio::test]
 async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
-    let (bind_addr, bind_listener) = bind_tcp();
-    let (udp_addr, udp_socket) = bind_udp_addr().await;
-    let mut config = base_config(
+    let UdpTsOrigin {
         bind_addr,
-        InputSpec::TsUdp {
-            addr: udp_addr.to_string(),
-            multicast_group: None,
-            socket: Default::default(),
+        server,
+        stop,
+        sender: send_task,
+    } = spawn_udp_ts_origin(
+        |bind, input| {
+            let mut c = base_config(bind, input);
+            c.routes[0].outputs = vec![OutputKind::LlDash];
+            c
         },
-    );
-    config.prebound.with_udp(udp_addr.to_string(), udp_socket);
-    config.routes[0].outputs = vec![OutputKind::LlDash];
-
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
-
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
-    let stop = Arc::new(AtomicBool::new(false));
-    let sender_stop = Arc::clone(&stop);
-    let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("bind sender");
-    let send_task = tokio::spawn(async move {
-        while !sender_stop.load(Ordering::Relaxed) {
-            for chunk in ts_bytes.chunks(7 * 188) {
-                let _ = sender.send_to(chunk, udp_addr).await;
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        }
-    });
+        &fixture_path(),
+        Duration::from_millis(5),
+    )
+    .await;
 
     let client = reqwest::Client::new();
     let mpd_url = format!("http://{bind_addr}/cam/manifest-ll.mpd");

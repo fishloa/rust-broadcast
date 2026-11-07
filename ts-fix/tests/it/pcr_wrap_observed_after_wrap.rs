@@ -13,6 +13,7 @@
 //! does. The fixture's first packet is the template; PCRs are rewritten with
 //! `mpeg_ts`'s own setter.
 
+use crate::support::pcr_27mhz;
 use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::Pcr;
@@ -21,17 +22,6 @@ use ts_fix::{PcrRestamp, TsFix};
 const PKT: usize = 188;
 const FIXTURE: &str = "ts/pcr-wrap.ts";
 const WRAP_BASE: u64 = 1 << 33;
-
-fn pcr_27mhz(p: &[u8]) -> u64 {
-    let b = &p[6..12];
-    let base = ((b[0] as u64) << 25)
-        | ((b[1] as u64) << 17)
-        | ((b[2] as u64) << 9)
-        | ((b[3] as u64) << 1)
-        | ((b[4] as u64) >> 7);
-    let ext = (((b[4] & 0x01) as u64) << 8) | b[5] as u64;
-    base * 300 + ext
-}
 
 #[test]
 fn interpolate_adopts_observations_after_the_wrap() {
@@ -71,9 +61,12 @@ fn interpolate_adopts_observations_after_the_wrap() {
     let out_pcrs: Vec<u64> = out
         .chunks_exact(PKT)
         .filter(|p| pid(p) == want)
-        .map(pcr_27mhz)
+        .map(|p| pcr_27mhz(p).expect("packet carries a PCR"))
         .collect();
-    let in_pcrs: Vec<u64> = input.chunks_exact(PKT).map(pcr_27mhz).collect();
+    let in_pcrs: Vec<u64> = input
+        .chunks_exact(PKT)
+        .map(|p| pcr_27mhz(p).expect("packet carries a PCR"))
+        .collect();
     assert_eq!(out_pcrs.len(), in_pcrs.len());
     // Every post-wrap packet is a sane forward observation (+3100 base) and
     // must be preserved, not replaced by the pre-wrap rate extrapolation.

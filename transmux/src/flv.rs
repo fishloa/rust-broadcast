@@ -962,7 +962,7 @@ fn locate_av_tracks(
             CodecConfig::Avc { .. } | CodecConfig::Aac { .. } => {}
             other => {
                 return Err(FlvError::UnsupportedCodec {
-                    codec: codec_name(other),
+                    codec: other.name(),
                 });
             }
         }
@@ -1395,31 +1395,6 @@ fn esds_asc_bytes(esds: &EsdsBox) -> core::result::Result<Vec<u8>, FlvError> {
         .ok_or(FlvError::Codec(Error::InvalidInput(
             "AAC esds has no AudioSpecificConfig (DecoderSpecificInfo)",
         )))
-}
-
-/// Codec name for the [`FlvError::UnsupportedCodec`] message.
-fn codec_name(c: &CodecConfig) -> &'static str {
-    match c {
-        CodecConfig::Avc { .. } => "AVC",
-        CodecConfig::Hevc { .. } => "HEVC",
-        CodecConfig::Vvc { .. } => "VVC",
-        CodecConfig::Aac { .. } => "AAC",
-        CodecConfig::Ac3 { .. } => "AC-3",
-        CodecConfig::Eac3 { .. } => "E-AC-3",
-        CodecConfig::Av1 { .. } => "AV1",
-        CodecConfig::Vp9 { .. } => "VP9",
-        CodecConfig::Opus { .. } => "Opus",
-        CodecConfig::Flac { .. } => "FLAC",
-        CodecConfig::Ac4 { .. } => "AC-4",
-        CodecConfig::MpegH { .. } => "MPEG-H",
-        CodecConfig::Mpeg2Video { .. } => "MPEG-2 video",
-        CodecConfig::MpegAudio { .. } => "MPEG audio",
-        CodecConfig::Dts { .. } => "DTS",
-        CodecConfig::Vp8 { .. } => "VP8",
-        CodecConfig::Vorbis { .. } => "Vorbis",
-        CodecConfig::Data { .. } => "Data",
-        CodecConfig::Subtitle { .. } => "Subtitle",
-    }
 }
 
 /// Longest track duration in whole seconds (integer, for the `onMetaData` field).

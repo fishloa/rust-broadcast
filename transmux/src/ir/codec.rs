@@ -583,6 +583,33 @@ impl CodecConfig {
         !(self.is_opaque_data() || self.is_subtitle_without_entry())
     }
 
+    /// A short human-readable label for this codec family, e.g. `"AVC"`,
+    /// `"E-AC-3"`, `"MPEG-1/2 Audio"`; a [`CodecConfig::Subtitle`] is
+    /// `"Subtitle"` whatever its format.
+    pub fn name(&self) -> &'static str {
+        match self {
+            CodecConfig::Avc { .. } => "AVC",
+            CodecConfig::Hevc { .. } => "HEVC",
+            CodecConfig::Vvc { .. } => "VVC",
+            CodecConfig::Aac { .. } => "AAC",
+            CodecConfig::Ac3 { .. } => "AC-3",
+            CodecConfig::Eac3 { .. } => "E-AC-3",
+            CodecConfig::Av1 { .. } => "AV1",
+            CodecConfig::Vp9 { .. } => "VP9",
+            CodecConfig::Vp8 { .. } => "VP8",
+            CodecConfig::Opus { .. } => "Opus",
+            CodecConfig::Flac { .. } => "FLAC",
+            CodecConfig::Ac4 { .. } => "AC-4",
+            CodecConfig::MpegH { .. } => "MPEG-H 3D Audio",
+            CodecConfig::Mpeg2Video { .. } => "MPEG-2 Video",
+            CodecConfig::MpegAudio { .. } => "MPEG-1/2 Audio",
+            CodecConfig::Dts { .. } => "DTS",
+            CodecConfig::Vorbis { .. } => "Vorbis",
+            CodecConfig::Subtitle { .. } => "Subtitle",
+            CodecConfig::Data { .. } => "Data",
+        }
+    }
+
     /// True if `self` is a video codec (issue #628) — codec-family-complete
     /// regardless of which output container actually carries it (e.g. the TS
     /// mux path does not carry every variant matched here; see

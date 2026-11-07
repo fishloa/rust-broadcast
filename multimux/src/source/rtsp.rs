@@ -78,8 +78,8 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{credentials_from_url, resolve_credentials, strip_userinfo};
-use crate::source::pull_target::PullTarget;
-use crate::source::{IngestTimeouts, Source, TrackInit, sdp::parse_sdp_tracks};
+use crate::source::pull_target::{PullKind, PullRoute};
+use crate::source::{TrackInit, sdp::parse_sdp_tracks};
 
 /// Interleaved channel offset from a media's RTP channel to its paired RTCP
 /// channel (RFC 2326 §10.12: `interleaved=lo-hi` with `hi = lo + 1`).
@@ -105,44 +105,15 @@ pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<TrackId> {
 
 /// An RTSP route: a name (for logging/metrics) plus its source URL. Replaces
 /// the old (pre-5a) `RtspSource`; [`run_rtsp`] is the new drive loop.
-#[derive(Clone)]
-pub struct RtspRoute {
-    target: PullTarget,
-}
+pub type RtspRoute = PullRoute<RtspKind>;
 
-impl std::fmt::Debug for RtspRoute {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.target.debug(f, "RtspRoute", &[])
-    }
-}
+/// The [`PullKind`] of a [`RtspRoute`].
+#[derive(Debug, Clone, Copy)]
+pub struct RtspKind;
 
-impl RtspRoute {
-    /// Build a route descriptor.
-    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
-        RtspRoute {
-            target: PullTarget::new(name, url),
-        }
-    }
-
-    /// Overrides the default [`IngestTimeouts`].
-    #[must_use]
-    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
-        self.target = self.target.with_timeouts(timeouts);
-        self
-    }
-
-    /// Attaches config-supplied credentials, overriding any URL userinfo.
-    #[must_use]
-    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
-        self.target = self.target.with_auth(auth);
-        self
-    }
-}
-
-impl Source for RtspRoute {
-    fn stream_name(&self) -> &str {
-        &self.target.name
-    }
+impl PullKind for RtspKind {
+    const ROUTE: &'static str = "RtspRoute";
+    type Extra = ();
 }
 
 /// Which handshake request [`RtspIngestSession`] is currently waiting a

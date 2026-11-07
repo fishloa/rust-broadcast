@@ -17,33 +17,12 @@
 //! observed wrapped value. The unrolled output sequence is monotonically
 //! increasing by a constant per-packet step (900_000 27 MHz ticks = 3000 × 300).
 
+use crate::support::pcr_27mhz;
 use mpeg_ts::pid::Pid;
 use ts_fix::{PcrRestamp, TsFix};
 
 const PKT: usize = 188;
 const FIXTURE: &str = "ts/pcr-wrap.ts";
-
-/// Read the 27 MHz PCR value from a TS packet's adaptation field.
-fn pcr_27mhz(p: &[u8]) -> Option<u64> {
-    let afc = (p[3] >> 4) & 0x3;
-    if afc != 2 && afc != 3 {
-        return None;
-    }
-    if *p.get(4)? == 0 {
-        return None;
-    }
-    if *p.get(5)? & 0x10 == 0 {
-        return None;
-    }
-    let b = p.get(6..12)?;
-    let base = ((b[0] as u64) << 25)
-        | ((b[1] as u64) << 17)
-        | ((b[2] as u64) << 9)
-        | ((b[3] as u64) << 1)
-        | ((b[4] as u64) >> 7);
-    let ext = (((b[4] & 0x01) as u16) << 8) | (b[5] as u16);
-    Some(base * 300 + ext as u64)
-}
 
 /// PCR 27 MHz modulus: 33-bit base × 300.
 const PCR_27MHZ_MODULUS: u64 = (1u64 << 33) * 300;

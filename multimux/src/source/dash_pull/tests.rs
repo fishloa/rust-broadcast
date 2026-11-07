@@ -853,8 +853,8 @@ async fn a_base_url_on_another_origin_plays_when_the_route_allows_it() {
 #[test]
 fn a_route_refuses_cross_origin_urls_until_told_otherwise() {
     let route = DashPullRoute::new("r", "http://example.test/a.mpd");
-    assert!(!route.allow_cross_origin);
-    assert!(route.with_cross_origin_urls(true).allow_cross_origin);
+    assert!(!route.allow_cross_origin());
+    assert!(route.with_cross_origin_urls(true).allow_cross_origin());
     assert!(!super::session::dash_config(false).cross_origin_urls);
     assert!(super::session::dash_config(true).cross_origin_urls);
 }

@@ -42,11 +42,8 @@ const VALIDATOR_MARGIN: Duration = Duration::from_secs(30);
 use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
-use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 
-use crate::support::listener;
-use listener::bind_tcp;
+use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
 
 fn fixture_path() -> PathBuf {
     test_fixtures::path("ts/h264-aac.ts")
@@ -67,17 +64,6 @@ fn have_oracle(bin: &str) -> bool {
         })
     };
     probe("-version").or_else(|_| probe("-h")).is_ok()
-}
-
-/// Bind `127.0.0.1:0` for UDP and return the live address + the still-bound
-/// socket, handed to the route via `Config::prebound` so it never races a
-/// reserve-then-rebind (SP7.1).
-async fn bind_udp_addr() -> (std::net::SocketAddr, tokio::net::UdpSocket) {
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("bind 127.0.0.1:0 udp");
-    let addr = socket.local_addr().expect("local addr");
-    (addr, socket)
 }
 
 fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
@@ -165,39 +151,12 @@ impl Drop for Served {
 /// whole-attempt retry loop is needed.
 async fn serve_ts_hls_until_extinf() -> Served {
     let client = reqwest::Client::new();
-    let (bind_addr, bind_listener) = bind_tcp();
-    let (udp_addr, udp_socket) = bind_udp_addr().await;
-    let mut config = base_config(
+    let UdpTsOrigin {
         bind_addr,
-        InputSpec::TsUdp {
-            addr: udp_addr.to_string(),
-            multicast_group: None,
-            socket: Default::default(),
-        },
-    );
-    config.prebound.with_udp(udp_addr.to_string(), udp_socket);
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
-
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
-    let stop = Arc::new(AtomicBool::new(false));
-    let sender_stop = Arc::clone(&stop);
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("bind sender");
-    let sender = tokio::spawn(async move {
-        while !sender_stop.load(Ordering::Relaxed) {
-            for chunk in ts_bytes.chunks(7 * 188) {
-                let _ = socket.send_to(chunk, udp_addr).await;
-                // Pacing (not synchronisation): space the datagrams so the
-                // ingest task is not starved by the flood.
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        }
-    });
+        server,
+        stop,
+        sender,
+    } = spawn_udp_ts_origin(base_config, &fixture_path(), Duration::from_millis(5)).await;
 
     let url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = tokio::time::timeout(Duration::from_secs(20), poll_until_extinf(&client, &url))

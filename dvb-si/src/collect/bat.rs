@@ -34,16 +34,18 @@ impl<'a> CompleteBat<'a> {
             have: 0,
             what: "CompleteBat sections",
         })?;
-        let mut transport_streams = Vec::new();
-        for section in &sections {
-            transport_streams.extend(section.transport_streams.iter().map(|ts| {
-                CompleteTransportStream {
-                    transport_stream_id: ts.transport_stream_id,
-                    original_network_id: ts.original_network_id,
-                    descriptors: ParsedDescriptorLoop::parse(ts.descriptors, registry),
-                }
-            }));
-        }
+        let transport_streams = CompleteTransportStream::collect(
+            sections.iter().flat_map(|section| {
+                section.transport_streams.iter().map(|ts| {
+                    (
+                        ts.transport_stream_id,
+                        ts.original_network_id,
+                        ts.descriptors,
+                    )
+                })
+            }),
+            registry,
+        );
         Ok(Self {
             bouquet_id: first.bouquet_id,
             version_number: first.version_number,

@@ -1,18 +1,21 @@
 //! The in-flight request table shared by the HLS and DASH adapters: request records, per-class
 //! timeouts, deadline and inactivity bookkeeping, and the connection-lease dance of sending one.
 
-use alloc::collections::VecDeque;
-use alloc::string::ToString;
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use std::collections::HashMap;
 use url::Url;
 
-use crate::events::Action;
+use crate::auth::{AuthDecision, AuthState};
+use crate::events::{Action, ErrorKind, Event, ResumeMode, Status};
+use crate::redirect;
 use crate::source::fetch::body::BodyAcc;
 use crate::source::fetch::conn::{ConnAlloc, ConnLease};
 use crate::source::fetch::deadlines::Deadlines;
 use crate::source::fetch::inactivity::{Expired, Inactivity};
-use crate::source::fetch::resume::Basis;
+use crate::source::fetch::resume::{Basis, Parked, Stash};
+use crate::source::fetch::retry::RefusedCapture;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TimeoutClass {
@@ -24,6 +27,7 @@ pub(crate) enum TimeoutClass {
 pub(crate) trait PurposeKind: Copy {
     fn is_media(self) -> bool;
     fn timeout_class(self) -> TimeoutClass;
+    fn oversize_field(self) -> Option<&'static str>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -102,7 +106,7 @@ pub(crate) struct InFlight<P, X> {
     pub(crate) timeouts: Timeouts,
 }
 
-impl<P: PurposeKind, X> InFlight<P, X> {
+impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
     pub(crate) fn new(timeouts: Timeouts, inactivity_us: u64, conn_alloc: ConnAlloc) -> Self {
         Self {
             reqs: HashMap::new(),
@@ -194,4 +198,181 @@ impl<P: PurposeKind, X> InFlight<P, X> {
         self.deadlines.clear();
         self.inactivity.clear();
     }
+
+    pub(crate) fn on_data(
+        &mut self,
+        conn: u32,
+        bytes: &[u8],
+        now: u64,
+        refused_captures: &mut BTreeMap<u32, RefusedCapture>,
+        oversize_reported: &mut BTreeSet<&'static str>,
+        out: Outbox<'_>,
+    ) -> Option<Req<P, X>> {
+        let Outbox { actions, events } = out;
+        if let Some(cap) = refused_captures.get_mut(&conn) {
+            if cap.push(bytes)
+                && let Some(cap) = refused_captures.remove(&conn)
+            {
+                events.push_back(cap.into_event());
+                actions.push_back(Action::Close { conn });
+            }
+            return None;
+        }
+        let req = self.reqs.get_mut(&conn)?;
+        if !req.responded_ok || bytes.is_empty() {
+            return None;
+        }
+        req.last_activity_us = now;
+        let field = req.purpose.oversize_field();
+        if req.body.push(bytes).is_ok() {
+            return None;
+        }
+        if let Some(field) = field
+            && oversize_reported.insert(field)
+        {
+            events.push_back(Event::Error {
+                kind: ErrorKind::BodyTooLarge { field },
+                fatal: false,
+            });
+        }
+        let req = self.reqs.remove(&conn)?;
+        actions.push_back(Action::Close { conn });
+        Some(req)
+    }
+
+    pub(crate) fn stalled_conns(&mut self, now: u64, actions: &mut VecDeque<Action>) -> Vec<u32> {
+        let expired = self.inactive(now);
+        for at in expired.wakes {
+            actions.push_back(Action::WakeAt(at));
+        }
+        expired.stalled
+    }
+
+    pub(crate) fn stall(
+        &mut self,
+        conn: u32,
+        stash: &mut Stash<P>,
+        out: Outbox<'_>,
+    ) -> Option<Req<P, X>> {
+        let Outbox { actions, events } = out;
+        let mut req = self.reqs.remove(&conn)?;
+        let received = u64::try_from(req.body.len()).unwrap_or(u64::MAX);
+        let kept = (req.responded_ok || req.resume_from.is_some())
+            .then(|| req.basis.take())
+            .flatten()
+            .filter(|basis| basis.request_headers(received).is_some());
+        let resume = if kept.is_some() {
+            ResumeMode::Range
+        } else {
+            ResumeMode::Full
+        };
+        if let Some(basis) = kept {
+            stash.put(
+                req.purpose,
+                Parked {
+                    url: req.original_url.clone(),
+                    byte_range: req.byte_range,
+                    body: core::mem::replace(&mut req.body, BodyAcc::new(0)),
+                    basis,
+                },
+            );
+        }
+        events.push_back(Event::Status(Status::RequestStalled { resume }));
+        actions.push_back(Action::Close { conn });
+        Some(req)
+    }
+}
+
+pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+pub(crate) const STATUS_UNAUTHORIZED: u16 = 401;
+pub(crate) const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
+const STATUS_TOO_MANY_REQUESTS: u16 = 429;
+const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
+
+pub(crate) enum HeadRoute<P, X> {
+    Send(Req<P, X>),
+    RedirectsExhausted(Req<P, X>),
+    Parked,
+    Other(Req<P, X>),
+}
+
+pub(crate) struct Outbox<'a> {
+    pub(crate) actions: &'a mut VecDeque<Action>,
+    pub(crate) events: &'a mut VecDeque<Event>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ResponseHead<'a> {
+    pub(crate) conn: u32,
+    pub(crate) status: u16,
+    pub(crate) headers: &'a [(String, String)],
+}
+
+pub(crate) fn route_head<P: PurposeKind, X>(
+    mut req: Req<P, X>,
+    head: ResponseHead<'_>,
+    max_redirects: u32,
+    auth: &mut AuthState,
+    out: Outbox<'_>,
+    parked: &mut Vec<Req<P, X>>,
+) -> HeadRoute<P, X> {
+    let ResponseHead {
+        conn,
+        status,
+        headers,
+    } = head;
+    let Outbox { actions, events } = out;
+    if REDIRECT_STATUSES.contains(&status) {
+        actions.push_back(Action::Close { conn });
+        return match redirect::resolve(&req.url, headers, req.redirects, max_redirects) {
+            Some(target) => {
+                req.redirects = req.redirects.saturating_add(1);
+                req.url = target;
+                HeadRoute::Send(req)
+            }
+            None => HeadRoute::RedirectsExhausted(req),
+        };
+    }
+    if (status == STATUS_UNAUTHORIZED || status == STATUS_PROXY_AUTH_REQUIRED)
+        && req.url.origin() == auth.origin().origin()
+    {
+        actions.push_back(Action::Close { conn });
+        return match auth.handle_unauthorized(status, headers, req.authed, req.stale_replayed) {
+            AuthDecision::Replay => HeadRoute::Send(req),
+            AuthDecision::ReplayStale => {
+                req.stale_replayed = true;
+                HeadRoute::Send(req)
+            }
+            AuthDecision::Wait(wait) => {
+                events.extend(wait);
+                parked.push(req);
+                HeadRoute::Parked
+            }
+        };
+    }
+    HeadRoute::Other(req)
+}
+
+pub(crate) fn record_refusal(
+    head: ResponseHead<'_>,
+    retry_after_us: u64,
+    refused_captures: &mut BTreeMap<u32, RefusedCapture>,
+    out: Outbox<'_>,
+) {
+    let ResponseHead {
+        conn,
+        status,
+        headers,
+    } = head;
+    let Outbox { actions, events } = out;
+    let refused = status == STATUS_TOO_MANY_REQUESTS || status == STATUS_SERVICE_UNAVAILABLE;
+    if refused {
+        let cap = RefusedCapture::new(status, retry_after_us, headers);
+        if cap.wants_body() {
+            refused_captures.insert(conn, cap);
+            return;
+        }
+        events.push_back(cap.into_event());
+    }
+    actions.push_back(Action::Close { conn });
 }
