@@ -31,6 +31,10 @@ impl Timeline {
             unroller: PtsUnroller::default(),
         }
     }
+    /// Set / replace the anchor.
+    pub fn set_anchor(&mut self, anchor: TimeAnchor) {
+        self.anchor = Some(anchor);
+    }
 
     /// Parse a SCTE-35 section; unroll its PTS into an absolute [`MediaTime`].
     pub fn push_scte35(&mut self, bytes: &[u8]) -> Result<TimedEvent> {
@@ -163,5 +167,17 @@ mod tests {
             second < 1000,
             "expected a small value from a 5-tick backward reorder, got {second}"
         );
+    }
+
+    #[test]
+    fn set_anchor_enables_to_daterange() {
+        let mut tl = Timeline::new();
+        let ev = tl.push_scte35(&splice_2002()).unwrap();
+        assert!(tl.to_daterange(&ev).is_err());
+        tl.set_anchor(TimeAnchor {
+            pts_90k: 0,
+            utc_epoch_ms: 1_700_000_000_000,
+        });
+        assert!(tl.to_daterange(&ev).is_ok());
     }
 }
