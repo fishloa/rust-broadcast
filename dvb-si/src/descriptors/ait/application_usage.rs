@@ -24,17 +24,7 @@ pub struct ApplicationUsageDescriptor {
     pub usage_type: u8,
 }
 
-impl ApplicationUsageDescriptor {
-    /// Returns the well-known name for `usage_type`, or `None` if the value
-    /// is not recognised.
-    #[must_use]
-    pub fn usage_type_name(&self) -> Option<&'static str> {
-        match self.usage_type {
-            USAGE_TYPE_DIGITAL_TEXT => Some("Digital Text"),
-            _ => None,
-        }
-    }
-}
+impl ApplicationUsageDescriptor {}
 
 impl<'a> Parse<'a> for ApplicationUsageDescriptor {
     type Error = crate::error::Error;
@@ -101,7 +91,6 @@ mod tests {
         let bytes = [TAG, 1, USAGE_TYPE_DIGITAL_TEXT];
         let d = ApplicationUsageDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.usage_type, USAGE_TYPE_DIGITAL_TEXT);
-        assert_eq!(d.usage_type_name(), Some("Digital Text"));
     }
 
     #[test]
@@ -109,7 +98,6 @@ mod tests {
         let bytes = [TAG, 1, 0x80];
         let d = ApplicationUsageDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.usage_type, 0x80);
-        assert_eq!(d.usage_type_name(), None);
     }
 
     #[test]

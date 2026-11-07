@@ -61,7 +61,6 @@ below); for SRT/TTML conversion use `caption-convert`, which wraps these extract
 |---|---|---|
 | `std` | on | Enable `std` in all dependencies. Without it: `no_std` + `alloc`, all conversions still available. |
 | `serde` | on | Serialize/Deserialize on public types where supported. |
-| `chrono` | on | `chrono` dependency (wall-clock helpers). |
 | `cc-data` | off | CEA-608/708 to WebVTT cue extraction (`webvtt::Cea608CueExtractor`, `Cea708CueExtractor`). |
 | `teletext` | off | EBU Teletext (EN 300 706) to WebVTT cue extraction (`webvtt::TeletextCueExtractor`, `webvtt::teletext`). |
 

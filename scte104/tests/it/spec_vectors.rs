@@ -419,7 +419,10 @@ fn fixed_size_operation_with_extra_data_length_is_rejected() {
     bytes[15] = 0x10; // data_length 15 -> 16
     bytes[3] = 0x20; // messageSize 31 -> 32
     bytes.push(0xAA);
-    assert!(MultipleOperationMessage::parse(&bytes).is_err());
+    assert!(matches!(
+        &(MultipleOperationMessage::parse(&bytes)),
+        Err(scte104::error::Error::LengthOverflow { .. })
+    ));
     // The pristine vector still parses.
     assert!(MultipleOperationMessage::parse(&MULTIPLE_OPERATION_MESSAGE_VECTOR).is_ok());
 }
@@ -443,5 +446,8 @@ fn message_size_is_compared_in_usize_not_truncated() {
     assert!(true_size > 0x1_0000);
     let wrapped = (true_size & 0xFFFF) as u16;
     bytes[2..4].copy_from_slice(&wrapped.to_be_bytes());
-    assert!(MultipleOperationMessage::parse(&bytes).is_err());
+    assert!(matches!(
+        &(MultipleOperationMessage::parse(&bytes)),
+        Err(scte104::error::Error::LengthOverflow { .. })
+    ));
 }

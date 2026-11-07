@@ -308,7 +308,13 @@ mod tests {
         assert_eq!(out, full);
         let mut bad = d.clone();
         bad.profile_idc = 0x80;
-        assert!(bad.serialize_into(&mut [0u8; 32]).is_err());
-        assert!(VvcVideoDescriptor::parse(&full[..full.len() - 1]).is_err());
+        assert!(matches!(
+            &(bad.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
+        assert!(matches!(
+            &(VvcVideoDescriptor::parse(&full[..full.len() - 1])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 }

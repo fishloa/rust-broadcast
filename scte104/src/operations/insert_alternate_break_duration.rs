@@ -78,6 +78,9 @@ mod tests {
 
     #[test]
     fn short_body_is_rejected() {
-        assert!(InsertAlternateBreakDuration::parse(&[0, 0, 0]).is_err());
+        assert!(matches!(
+            &(InsertAlternateBreakDuration::parse(&[0, 0, 0])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 }

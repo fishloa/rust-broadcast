@@ -293,9 +293,18 @@ mod tests {
 
     #[test]
     fn truncated_locator_is_error() {
-        assert!(ApplicationIconsDescriptor::parse(&[TAG, 2, 5, b'a']).is_err());
-        assert!(ApplicationIconsDescriptor::parse(&[TAG, 0]).is_err());
-        assert!(ApplicationIconsDescriptor::parse(&[TAG, 3, 1, b'a', 0x00]).is_err());
+        assert!(matches!(
+            &(ApplicationIconsDescriptor::parse(&[TAG, 2, 5, b'a'])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(ApplicationIconsDescriptor::parse(&[TAG, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(ApplicationIconsDescriptor::parse(&[TAG, 3, 1, b'a', 0x00])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]
@@ -307,7 +316,10 @@ mod tests {
             reserved_future_use: &[],
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

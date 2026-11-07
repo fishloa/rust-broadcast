@@ -232,6 +232,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 use mpeg_ts::pid::Pid;
 
+use broadcast_common::timescale::{Rounding, rescale};
 use broadcast_common::{Demand, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
@@ -680,15 +681,12 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
 /// (RTP packetisation, segmentation, `tfdt`) reads. For a 90 kHz track (video,
 /// opaque `Data`) this is the identity.
 fn rescale_to_track(anchor_90k: i128, timescale: u32) -> i64 {
-    let ts = timescale.max(1) as i128;
-    let scaled = if ts == VIDEO_TIMESCALE as i128 {
-        anchor_90k
-    } else {
-        // `div_euclid` (not `/`, which truncates toward zero) keeps the
-        // documented floor semantics on both sides of zero.
-        (anchor_90k * ts).div_euclid(VIDEO_TIMESCALE as i128)
-    };
-    to_ticks(scaled)
+    to_ticks(rescale(
+        anchor_90k,
+        VIDEO_TIMESCALE,
+        timescale,
+        Rounding::Floor,
+    ))
 }
 
 /// Whether an MPEG-2 video access unit is a random-access point: it carries a

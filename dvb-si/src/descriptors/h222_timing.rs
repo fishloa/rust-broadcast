@@ -370,7 +370,10 @@ mod tests {
 
     #[test]
     fn hevc_truncated_and_overflow() {
-        assert!(HevcTimingAndHrd::parse_body(&[0xFF, 0x7F]).is_err());
+        assert!(matches!(
+            &(HevcTimingAndHrd::parse_body(&[0xFF, 0x7F])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let mut d = HevcTimingAndHrd::new(true, Some(0x20), None);
         assert!(d.write_body().is_err());
         d.target_schedule_idx = Some(0x1F);

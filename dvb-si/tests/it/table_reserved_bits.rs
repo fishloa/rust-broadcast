@@ -30,10 +30,6 @@ use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 use std::collections::BTreeSet;
 
-fn crc(bytes: &[u8]) -> [u8; 4] {
-    broadcast_common::crc32_mpeg2::compute(bytes).to_be_bytes()
-}
-
 fn ser<T: Serialize>(t: &T) -> Vec<u8>
 where
     <T as Serialize>::Error: std::fmt::Debug,
@@ -111,7 +107,7 @@ fn lost_bits(section: &[u8], has_crc: bool) -> Vec<(usize, u8)> {
             let mut f = section.to_vec();
             f[byte] ^= mask;
             if has_crc {
-                let c = crc(&f[..body_end]);
+                let c = broadcast_common::crc32_mpeg2::compute(&f[..body_end]).to_be_bytes();
                 f[body_end..].copy_from_slice(&c);
             }
             let Ok(t) = AnyTableSection::parse(&f) else {

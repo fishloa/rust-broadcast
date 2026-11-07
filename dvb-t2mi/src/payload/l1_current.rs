@@ -221,7 +221,10 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu() {
         let buf = [0x00u8, 0x01, 0x00]; // freq_source=00, bottom 6 RFU bits nonzero
-        assert!(L1CurrentPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(L1CurrentPayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]

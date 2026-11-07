@@ -478,7 +478,10 @@ mod tests {
         let mut f = sample_frame();
         f.frames = 29;
         assert!(f.validate_for_rate(FrameRate::Fps30).is_ok());
-        assert!(f.validate_for_rate(FrameRate::Fps25).is_err());
+        assert!(matches!(
+            &(f.validate_for_rate(FrameRate::Fps25)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         f.frames = 24;
         assert!(f.validate_for_rate(FrameRate::Fps25).is_ok());
         assert!(f.validate_for_rate(FrameRate::Fps24).is_err());

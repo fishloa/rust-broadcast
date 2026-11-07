@@ -109,14 +109,20 @@ mod tests {
     fn parse_rejects_nonzero_rfu() {
         // top bit of bytes[3] is part of the RFU
         let buf = [0x00u8, 0x00, 0x00, 0x80, 0x00];
-        assert!(P2BiasPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(P2BiasPayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
         // a byte in the middle of the RFU span
         assert!(P2BiasPayload::parse(&[0x00u8, 0x01, 0x00, 0x00, 0x00]).is_err());
     }
 
     #[test]
     fn parse_rejects_short_buffer() {
-        assert!(P2BiasPayload::parse(&[0x00, 0x00, 0x00, 0x00]).is_err());
+        assert!(matches!(
+            &(P2BiasPayload::parse(&[0x00, 0x00, 0x00, 0x00])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

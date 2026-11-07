@@ -41,6 +41,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::{Rounding, rescale_i64, rescale_u64};
 use broadcast_common::{Parse, Serialize};
 
 use crate::aac_asc::AudioSpecificConfig;
@@ -300,10 +301,7 @@ impl SmoothPackager {
     /// Convert a tick count in the track's media timescale to
     /// [`SMOOTH_TIMESCALE`] ticks with integer round-to-nearest (`no_std`-safe).
     fn to_smooth_ticks(ticks: u64, media_timescale: u32) -> u64 {
-        let ts = media_timescale.max(1) as u64;
-        // round(ticks * SMOOTH_TIMESCALE / ts)
-        let num = ticks.saturating_mul(SMOOTH_TIMESCALE);
-        (num + ts / 2) / ts
+        rescale_u64(ticks, media_timescale, SMOOTH_TIMESCALE, Rounding::Nearest)
     }
 
     /// The `CodecPrivateData` bytes for a video track: start-code-prefixed
@@ -788,7 +786,12 @@ fn smooth_timeline(
                 value: end - start,
                 reason: "exceeds 32 bits in the 10 MHz Smooth timescale",
             })?;
-            let cto = to_smooth_signed(i64::from(s.composition_offset()), media_timescale);
+            let cto = rescale_i64(
+                i64::from(s.composition_offset()),
+                media_timescale,
+                SMOOTH_TIMESCALE,
+                Rounding::Nearest,
+            );
             let composition_offset = i32::try_from(cto).map_err(|_| Error::InvalidValue {
                 field: "trun sample_composition_time_offset",
                 value: cto.unsigned_abs(),
@@ -801,13 +804,6 @@ fn smooth_timeline(
             })
         })
         .collect()
-}
-
-/// Signed round-to-nearest rescale of `ticks` to [`SMOOTH_TIMESCALE`].
-fn to_smooth_signed(ticks: i64, media_timescale: u32) -> i64 {
-    let magnitude = SmoothPackager::to_smooth_ticks(ticks.unsigned_abs(), media_timescale);
-    let v = i64::try_from(magnitude).unwrap_or(i64::MAX);
-    if ticks < 0 { -v } else { v }
 }
 
 /// Build one self-contained Smooth fragment: `styp` + `moof`(`mfhd` `traf`(

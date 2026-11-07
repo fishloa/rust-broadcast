@@ -37,6 +37,7 @@ use axum::extract::{OriginalUri, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use broadcast_common::timescale::{Rounding, rescale_u64};
 use broadcast_common::{Timestamp, Unpackage};
 use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -302,11 +303,7 @@ impl TrackChunks {
 /// round-to-nearest, using `u128` so the multiply cannot overflow for any
 /// realistic timeline.
 fn to_smooth_ticks(ticks: u64, timescale: u32) -> u64 {
-    let ts = u128::from(timescale.max(1));
-    let num = u128::from(ticks) * u128::from(SMOOTH_TIMESCALE);
-    // round-to-nearest
-    let rounded = (num + ts / 2) / ts;
-    u64::try_from(rounded).unwrap_or(u64::MAX)
+    rescale_u64(ticks, timescale, SMOOTH_TIMESCALE, Rounding::Nearest)
 }
 
 /// Build one track's chunk timeline over `window` by demuxing each segment's

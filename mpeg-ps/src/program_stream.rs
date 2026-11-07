@@ -63,7 +63,6 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
         return Ok((None, 4));
     }
 
-    // Parse pack header
     let pack_header = PackHeader::parse(b)?;
     let hdr_len = pack_header.header_len();
     let rest = &b[hdr_len..];

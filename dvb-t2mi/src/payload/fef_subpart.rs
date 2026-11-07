@@ -279,14 +279,20 @@ mod tests {
         let mut buf = [0u8; 15];
         buf[9] = 0x00;
         buf[10] = 0x04; // variety = 0x0004 (reserved)
-        assert!(FefSubPartPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(FefSubPartPayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]
     fn parse_rejects_nonzero_rfu1() {
         let mut buf = [0u8; 15];
         buf[3] = 0x01;
-        assert!(FefSubPartPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(FefSubPartPayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]
@@ -300,13 +306,19 @@ mod tests {
     fn parse_rejects_nonzero_rfu2_byte12_top() {
         let mut buf = [0u8; 15];
         buf[12] = 0xC0;
-        assert!(FefSubPartPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(FefSubPartPayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]
     fn parse_rejects_short_buffer() {
         let buf = [0u8; 14];
-        assert!(FefSubPartPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(FefSubPartPayload::parse(&buf)),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

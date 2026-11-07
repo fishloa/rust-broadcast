@@ -470,7 +470,6 @@ impl CarryOverExtractor {
             }
         }
 
-        // Extract complete UPs at stride.
         let mut i = syncd_bytes;
         while i + stride <= data.len() {
             // HEM: 187 bytes of UP, prepend sync byte.
@@ -581,7 +580,6 @@ impl CarryOverExtractor {
             }
         }
 
-        // Extract complete UPs at stride.
         let mut i = syncd_bytes;
         while i + stride <= data.len() {
             self.buf[..stride].copy_from_slice(&data[i..i + stride]);

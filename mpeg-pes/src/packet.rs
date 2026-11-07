@@ -1577,7 +1577,10 @@ mod tests {
             ..PesExtension::new()
         };
         let mut buf = vec![0u8; ext.serialized_len()];
-        assert!(ext.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(ext.serialize_into(&mut buf)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     /// AVS3-P3 audio (T/AI 109.7 8.1.2 / TS 101 154 V2.10.1 4.1.8.35) is a

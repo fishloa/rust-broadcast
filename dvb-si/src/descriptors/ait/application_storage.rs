@@ -225,13 +225,19 @@ mod tests {
 
     #[test]
     fn wrong_length_and_overflow_rejected() {
-        assert!(ApplicationStorageDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            &(ApplicationStorageDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let d = ApplicationStorageDescriptor {
             version: 0x8000_0000,
             ..Default::default()
         };
         let mut out = [0u8; 9];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         let d = ApplicationStorageDescriptor {
             reserved_flags: 0x20,
             ..Default::default()

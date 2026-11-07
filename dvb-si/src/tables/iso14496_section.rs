@@ -214,11 +214,20 @@ mod tests {
             Iso14496Section::parse(&b),
             Err(Error::UnexpectedTableId { table_id: 0x06, .. })
         ));
-        assert!(Iso14496Section::parse(&[0x04, 0xB0, 0x20]).is_err());
+        assert!(matches!(
+            &(Iso14496Section::parse(&[0x04, 0xB0, 0x20])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let s = Iso14496Section::new(0x07, 0, 0, true, 0, 0, &[]);
-        assert!(s.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            &(s.serialize_into(&mut [0u8; 16])),
+            Err(crate::error::Error::UnexpectedTableId { .. })
+        ));
         let mut s = Iso14496Section::new(0x08, 0, 32, true, 0, 0, &[]);
-        assert!(s.serialize_into(&mut [0u8; 16]).is_err()); // 6-bit-wide version
+        assert!(matches!(
+            &(s.serialize_into(&mut [0u8; 16])),
+            Err(crate::error::Error::FieldOverflow(_))
+        )); // 6-bit-wide version
         s.version_number = 31;
         assert!(s.serialize_into(&mut [0u8; 16]).is_ok());
     }

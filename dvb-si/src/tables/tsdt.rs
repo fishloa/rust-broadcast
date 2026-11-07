@@ -4,18 +4,13 @@
 //! means of describing the transport stream using descriptors.
 
 use crate::descriptors::DescriptorLoop;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for Transport Stream Description Table.
 pub const TABLE_ID: u8 = 0x03;
 /// Well-known PID on which TSDT is carried.
 pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0002);
-
-const MIN_HEADER_LEN: usize = 3;
-const EXTENSION_HEADER_LEN: usize = 5;
-use super::CRC_LEN;
-const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
 /// Transport Stream Description Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,50 +64,15 @@ impl<'a> Parse<'a> for TsdtSection<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let min_len = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "TsdtSection",
-            });
-        }
-
-        if bytes[0] != TABLE_ID {
-            return Err(Error::UnexpectedTableId {
-                table_id: bytes[0],
-                what: "TsdtSection",
-                expected: &[TABLE_ID],
-            });
-        }
-
-        let section_length = super::section_length_of(bytes);
-        let total = super::check_section_length(
-            bytes.len(),
-            MIN_HEADER_LEN,
-            section_length,
-            MIN_SECTION_LEN,
-        )?;
-
-        let table_id_extension = crate::wire::be_u16(bytes, 3, "tsdt")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
-
-        // §2.4.4.12: descriptors run directly from byte 8 to the CRC; there is
-        // no descriptor_loop_length field. The section_length bounds the loop.
-        let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        let desc_end = total - CRC_LEN;
-
+        let p = super::descriptor_section::parse(bytes, &[TABLE_ID], "TsdtSection", "tsdt")?;
         Ok(TsdtSection {
-            table_id_extension,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
-            descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            table_id_extension: p.table_id_extension,
+            version_number: p.version_number,
+            current_next_indicator: p.current_next_indicator,
+            section_number: p.section_number,
+            last_section_number: p.last_section_number,
+            descriptors: p.descriptors,
+            bits: p.bits,
         })
     }
 }
@@ -121,37 +81,23 @@ impl Serialize for TsdtSection<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        MIN_HEADER_LEN + EXTENSION_HEADER_LEN + self.descriptors.len() + CRC_LEN
+        super::descriptor_section::serialized_len(&self.descriptors)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
-
-        let section_length = len - MIN_HEADER_LEN;
-        buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1()?;
-        super::write_section_length(buf, section_length)?;
-        buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
-        buf[5] = self
-            .bits
-            .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
-
-        let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[desc_start..desc_start + self.descriptors.len()]
-            .copy_from_slice(self.descriptors.raw());
-
-        let crc_pos = len - CRC_LEN;
-        super::write_crc(buf, crc_pos);
-
-        Ok(len)
+        super::descriptor_section::serialize_into(
+            TABLE_ID,
+            &super::descriptor_section::View {
+                table_id_extension: self.table_id_extension,
+                version_number: self.version_number,
+                current_next_indicator: self.current_next_indicator,
+                section_number: self.section_number,
+                last_section_number: self.last_section_number,
+                descriptors: &self.descriptors,
+                bits: &self.bits,
+            },
+            buf,
+        )
     }
 }
 impl<'a> crate::traits::TableDef<'a> for TsdtSection<'a> {
@@ -162,6 +108,10 @@ impl<'a> crate::traits::TableDef<'a> for TsdtSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
+    use crate::tables::CRC_LEN;
+
+    const EXTENSION_HEADER_LEN: usize = 5;
 
     fn build_tsdt(table_id_extension: u16, version: u8, descriptors: &[u8]) -> Vec<u8> {
         let section_length: u16 = (EXTENSION_HEADER_LEN + descriptors.len() + CRC_LEN) as u16;

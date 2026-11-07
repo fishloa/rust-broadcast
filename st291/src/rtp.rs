@@ -572,7 +572,10 @@ mod tests {
         let good_length = u16::from_be_bytes([out[2], out[3]]);
         let bad_length = good_length - 4;
         out[2..4].copy_from_slice(&bad_length.to_be_bytes());
-        assert!(AncRtpPayload::parse(&out).is_err());
+        assert!(matches!(
+            &(AncRtpPayload::parse(&out)),
+            Err(crate::error::Error::Bits(_))
+        ));
     }
 
     #[test]
@@ -599,7 +602,10 @@ mod tests {
         let mut out = vec![0u8; p.serialized_len()];
         p.serialize_into(&mut out).unwrap();
         out[4] = 3; // claims a 3rd packet that isn't there
-        assert!(AncRtpPayload::parse(&out).is_err());
+        assert!(matches!(
+            &(AncRtpPayload::parse(&out)),
+            Err(crate::error::Error::Bits(_))
+        ));
     }
 
     #[test]

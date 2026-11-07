@@ -1590,7 +1590,10 @@ mod tests {
                 ..
             }
         ));
-        assert!(HeaderExtension::new(&[]).is_err());
+        assert!(matches!(
+            &(HeaderExtension::new(&[])),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]

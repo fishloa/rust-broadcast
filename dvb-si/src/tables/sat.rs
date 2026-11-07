@@ -2825,7 +2825,10 @@ mod tests {
         let crc_end = corrupt_buf.len();
         let crc2 = broadcast_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
         corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc2.to_be_bytes());
-        assert!(SatSection::parse(&corrupt_buf).is_err());
+        assert!(matches!(
+            &(SatSection::parse(&corrupt_buf)),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
@@ -2876,7 +2879,10 @@ mod tests {
             let crc_end = corrupt_buf.len();
             let crc = broadcast_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
             corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
-            assert!(SatSection::parse(&corrupt_buf).is_err());
+            assert!(matches!(
+                &(SatSection::parse(&corrupt_buf)),
+                Err(crate::error::Error::BufferTooShort { .. })
+            ));
         }
     }
 
@@ -2941,7 +2947,10 @@ mod tests {
             let crc_end = corrupt_buf.len();
             let crc = broadcast_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
             corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
-            assert!(SatSection::parse(&corrupt_buf).is_err());
+            assert!(matches!(
+                &(SatSection::parse(&corrupt_buf)),
+                Err(crate::error::Error::BufferTooShort { .. })
+            ));
         }
     }
 
@@ -3316,7 +3325,10 @@ mod tests {
         let crc_end = buf.len();
         let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_end - CRC_LEN]);
         buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
-        assert!(SatSection::parse(&buf).is_err());
+        assert!(matches!(
+            &(SatSection::parse(&buf)),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

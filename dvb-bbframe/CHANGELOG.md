@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- Unused public items, with no use in the workspace beyond their own unit tests: `bufstat_bytes`.
 
 ## [12.1.0] - 2026-11-03
 

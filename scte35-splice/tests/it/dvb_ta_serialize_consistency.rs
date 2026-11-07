@@ -35,11 +35,10 @@ fn reserved_dvb_data_after_temi_round_trips() {
 #[test]
 fn reserved_timeline_aliasing_temi_needs_temi_fields() {
     // Reserved(2) writes the TEMI wire value, so the temi bytes are required.
-    assert!(
-        payload(TimelineType::Reserved(2), None, &[])
-            .try_to_bytes()
-            .is_err()
-    );
+    assert!(matches!(
+        &(payload(TimelineType::Reserved(2), None, &[]).try_to_bytes()),
+        Err(scte35_splice::error::Error::InvalidValue { .. })
+    ));
     let ok = payload(TimelineType::Reserved(2), Some((1, 2)), &[]);
     let bytes = ok.try_to_bytes().unwrap();
     assert_eq!(
@@ -76,7 +75,10 @@ fn compact_splice_insert_e_crc_must_match_encrypted_flag() {
     })
     .unwrap();
     si.e_crc_32 = Some(0xDEAD_BEEF); // not encrypted: a surplus CRC
-    assert!(si.try_to_bytes().is_err());
+    assert!(matches!(
+        &(si.try_to_bytes()),
+        Err(scte35_splice::error::Error::InvalidValue { .. })
+    ));
     si.encrypted_packet = true;
     let bytes = si.try_to_bytes().unwrap();
     assert_eq!(CompactSpliceInsert::parse(&bytes).unwrap(), si);

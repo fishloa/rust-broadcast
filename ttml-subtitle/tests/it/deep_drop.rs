@@ -100,13 +100,22 @@ fn hostile_deep_xml_is_err_not_overflow() {
             wrap("<metadata><ttm:agent>", "</ttm:agent></metadata>"),
         ];
         for xml in cases {
-            assert!(Document::parse_str(&xml).is_err(), "deep XML accepted");
+            assert!(
+                matches!(
+                    &(Document::parse_str(&xml)),
+                    Err(ttml_subtitle::error::Error::XmlParse(_))
+                ),
+                "deep XML accepted"
+            );
         }
         let spans = format!(
             "<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div><p>{}{}</p></div></body></tt>",
             "<span>".repeat(depth),
             "</span>".repeat(depth)
         );
-        assert!(Document::parse_str(&spans).is_err());
+        assert!(matches!(
+            &(Document::parse_str(&spans)),
+            Err(ttml_subtitle::error::Error::XmlParse(_))
+        ));
     });
 }

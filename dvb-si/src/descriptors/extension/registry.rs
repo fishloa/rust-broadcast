@@ -20,110 +20,19 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use core::any::Any;
 
 use super::{ExtensionBodyDef, ExtensionDescriptor, validate_and_split};
 use crate::error::Result;
 
-// ---------------------------------------------------------------------------
-// ExtensionObject trait
-// ---------------------------------------------------------------------------
-
-/// Object-safe face of a runtime-registered extension body value.
-///
-/// Registered types must be owned (`'static`) because the `dyn Any` downcast
-/// path requires it.  See the [module docs][self] for details.
-///
-/// Implemented automatically via the blanket impl for any `T` satisfying the
-/// supertraits; you do not need to write this by hand.
-#[cfg(not(feature = "serde"))]
-pub trait ExtensionObject: core::fmt::Debug + Any + Send + Sync {
-    /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
-    fn as_any(&self) -> &dyn Any;
-}
-
-/// Object-safe face of a runtime-registered extension body value.
-///
-/// Registered types must be owned (`'static`) because the `dyn Any` downcast
-/// path requires it.  See the [module docs][self] for details.
-///
-/// Implemented automatically via the blanket impl for any `T` satisfying the
-/// supertraits; you do not need to write this by hand.
-#[cfg(feature = "serde")]
-pub trait ExtensionObject: core::fmt::Debug + Any + Send + Sync + erased_serde::Serialize {
-    /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
-    fn as_any(&self) -> &dyn Any;
-}
-
-// Blanket impl — no-serde arm.
-#[cfg(not(feature = "serde"))]
-impl<T> ExtensionObject for T
-where
-    T: core::fmt::Debug + Any + Send + Sync,
-{
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-// Blanket impl — serde arm.
-#[cfg(feature = "serde")]
-impl<T> ExtensionObject for T
-where
-    T: core::fmt::Debug + Any + Send + Sync + serde::Serialize,
-{
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-// Downcast helpers ON THE TRAIT OBJECT (not the blanket).
-//
-// The blanket `impl<T> ExtensionObject for T` also covers `Box<dyn
-// ExtensionObject>` itself whenever the box satisfies the bounds — it does
-// under `--no-default-features`, where the bound is just `Debug + Any + Send +
-// Sync`. So `the_box.as_any()` resolves to the *box's* impl and reports the
-// box's `TypeId`, not the inner value's — a silent downcast failure. (Under
-// `serde` the extra `serde::Serialize` bound excludes the box, which is why the
-// footgun only bites without default features.) Calling through `dyn
-// ExtensionObject` (which `Box` derefs to) always hits the inner value, so
-// always downcast via these methods rather than `the_box.as_any()`.
-impl dyn ExtensionObject {
-    /// Downcast a registered extension body to its concrete type `T`.
+broadcast_common::declare_object_trait! {
+    /// Object-safe face of a runtime-registered extension descriptor value.
     ///
-    /// Works for `Box<dyn ExtensionObject>` (it derefs to the trait object)
-    /// under every feature configuration.
-    #[must_use]
-    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
-        self.as_any().downcast_ref::<T>()
-    }
-
-    /// `true` if the registered extension body's concrete type is `T`.
-    #[must_use]
-    pub fn is<T: Any>(&self) -> bool {
-        self.as_any().is::<T>()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Erased serialisation helper (serde-gated)
-// ---------------------------------------------------------------------------
-
-/// `serialize_with` helper used on [`RegisteredExtension::Custom`]'s `value`
-/// field.
-///
-/// Delegates to [`erased_serde::serialize`] so the concrete type's
-/// `serde::Serialize` impl is invoked through the trait object.
-///
-/// The `&Box<T>` is required by serde's `serialize_with` codegen — the field
-/// type is `Box<dyn ExtensionObject>` so serde passes `&Box<dyn ExtensionObject>`.
-#[cfg(feature = "serde")]
-#[allow(clippy::borrowed_box)]
-pub(crate) fn serialize_erased<S: serde::Serializer>(
-    v: &Box<dyn ExtensionObject>,
-    s: S,
-) -> core::result::Result<S::Ok, S::Error> {
-    erased_serde::serialize(&**v, s)
+    /// Registered types must be owned (`'static`) because the `dyn Any` downcast
+    /// path requires it.  See the [module docs][self] for details.
+    ///
+    /// Implemented automatically via the blanket impl for any `T` satisfying the
+    /// supertraits; you do not need to write this by hand.
+    pub trait ExtensionObject, "extension descriptor"
 }
 
 // ---------------------------------------------------------------------------

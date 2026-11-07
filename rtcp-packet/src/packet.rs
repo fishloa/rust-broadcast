@@ -1892,14 +1892,20 @@ mod tests {
             sources: vec![1],
             reason: None,
         })]);
-        assert!(err.is_err());
+        assert!(matches!(
+            &(err),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         // And on parse: hand-build a BYE packet and try to parse as compound.
         let bye = Bye {
             sources: vec![1],
             reason: None,
         };
         let bytes = bye.try_to_bytes().unwrap();
-        assert!(CompoundPacket::parse(&bytes).is_err());
+        assert!(matches!(
+            &(CompoundPacket::parse(&bytes)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]
@@ -1945,7 +1951,10 @@ mod tests {
     fn rejects_bad_version() {
         let mut bytes = sample_sr().try_to_bytes().unwrap();
         bytes[0] = 0x40; // V=1
-        assert!(SenderReport::parse(&bytes).is_err());
+        assert!(matches!(
+            &(SenderReport::parse(&bytes)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     /// Release audit: an `Unknown` packet with `P=1` and trailing padding octets

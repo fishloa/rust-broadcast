@@ -30,7 +30,7 @@ fn pat_version_number_32_is_rejected_not_wrapped_to_0() {
     assert!(ser(&PatSection::new(1, 31, true, 0, 0, vec![])).is_ok());
     let r = ser(&PatSection::new(1, 32, true, 0, 0, vec![]));
     assert!(
-        r.is_err(),
+        matches!(&r, Err(dvb_si::error::Error::FieldOverflow(_))),
         "version_number 32 serialized as version {} instead of FieldOverflow",
         r.map(|b| (b[5] >> 1) & 0x1F).unwrap_or(0)
     );
@@ -41,12 +41,18 @@ fn pat_entry_reserved_wider_than_3_bits_is_rejected() {
     let mut e = PatEntry::new(1, Pid::new(0x100));
     e.reserved = 0x0F; // 4 bits into a reserved(3)
     let r = ser(&PatSection::new(1, 0, true, 0, 0, vec![e]));
-    assert!(r.is_err(), "reserved(3) = 0x0F silently truncated to 0x07");
+    assert!(
+        matches!(&r, Err(dvb_si::error::Error::FieldOverflow(_))),
+        "reserved(3) = 0x0F silently truncated to 0x07"
+    );
 }
 
 #[test]
 fn section_bits_reserved_wider_than_2_bits_is_rejected() {
     let mut p = PatSection::new(1, 0, true, 0, 0, vec![]);
     p.bits.reserved_b1 = 0x07; // 3 bits into a reserved(2)
-    assert!(ser(&p).is_err(), "reserved_b1 = 7 silently truncated to 3");
+    assert!(
+        matches!(&ser(&p), Err(dvb_si::error::Error::FieldOverflow(_))),
+        "reserved_b1 = 7 silently truncated to 3"
+    );
 }

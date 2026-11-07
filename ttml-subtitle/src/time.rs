@@ -422,7 +422,6 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
                 if ctx.time_base == TimeBase::Clock {
                     return Err(err("sub-frames term is an error when timeBase is clock"));
                 }
-                // Validate sub-frames range
                 if ctx.sub_frame_rate > 0 && sf_val >= ctx.sub_frame_rate {
                     return Err(err(&format!(
                         "sub-frames value {} must be < subFrameRate {}",
@@ -441,7 +440,6 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
             return Err(err("frames must be at least 2 digits"));
         }
         let frames: u32 = parse_digits(frames_str, "frames", &err)?;
-        // Validate frames range
         let effective_frame_rate = if ctx.frame_rate > 0 {
             ctx.frame_rate
         } else {
@@ -483,7 +481,6 @@ fn parse_offset_time(
         reason: reason.into(),
     };
 
-    // Find the metric suffix
     let metric = if let Some(stripped) = input.strip_suffix("ms") {
         (TimeMetric::Ms, stripped)
     } else if let Some(stripped) = input.strip_suffix('h') {
@@ -574,7 +571,6 @@ fn parse_wallclock_time(
         return Err(err("wallclock-time has no content"));
     }
 
-    // Check which form: date-time, wall-time, or date
     if rest.contains('T') {
         // date-time: YYYY-MM-DDThh:mm:ss[.fraction]
         parse_wallclock_datetime(rest, &err)
@@ -599,7 +595,6 @@ fn parse_wallclock_datetime(
     let date_part = parts[0];
     let time_part = parts[1];
 
-    // Parse date: YYYY-MM-DD
     let date_components: Vec<&str> = date_part.split('-').collect();
     if date_components.len() != 3 {
         return Err(err("date must have exactly 3 components: YYYY-MM-DD"));
@@ -615,7 +610,6 @@ fn parse_wallclock_datetime(
         return Err(err("days must be in [1, 31]"));
     }
 
-    // Parse time: hh:mm[:ss[.fraction]]
     let (hours, minutes, seconds, fraction) = parse_wallclock_time_components(time_part, err)?;
 
     Ok(TimeExpression::WallclockTime {
@@ -1003,7 +997,10 @@ mod tests {
         // 24f (offset-time f metric) — the value itself is not range-checked against frameRate;
         // the context determines how the value is interpreted at presentation time.
         // But the clock-time frames component 01:02:03:24 should fail
-        assert!(parse_time_expression("01:02:03:24", &ctx).is_err());
+        assert!(matches!(
+            &(parse_time_expression("01:02:03:24", &ctx)),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
     }
 
     #[test]
@@ -1016,7 +1013,10 @@ mod tests {
         // sub-frame 9 should be valid (must be < subFrameRate=10)
         parse_time_expression("01:02:03:20.9", &ctx).unwrap();
         // sub-frame 10 should fail
-        assert!(parse_time_expression("01:02:03:20.10", &ctx).is_err());
+        assert!(matches!(
+            &(parse_time_expression("01:02:03:20.10", &ctx)),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
     }
 
     #[test]
@@ -1026,7 +1026,10 @@ mod tests {
             ..default_ctx()
         };
         // frames term is error when timeBase=clock
-        assert!(parse_time_expression("01:02:03:20", &ctx).is_err());
+        assert!(matches!(
+            &(parse_time_expression("01:02:03:20", &ctx)),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
     }
 
     // TT-W5 (#1108): the clock-time/wallclock-time grammar was too lenient.
@@ -1035,13 +1038,19 @@ mod tests {
     fn clock_time_rejects_fraction_and_frames_together() {
         // Grammar: `seconds ( fraction | ":" frames (...)? )?` — mutually
         // exclusive.
-        assert!(parse_time_expression("00:00:01.5:10", &default_ctx()).is_err());
+        assert!(matches!(
+            &(parse_time_expression("00:00:01.5:10", &default_ctx())),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
     }
 
     #[test]
     fn clock_time_rejects_single_digit_frames() {
         // Grammar: `frames : <digit><digit> | <digit><digit><digit>+`.
-        assert!(parse_time_expression("00:00:01:5", &default_ctx()).is_err());
+        assert!(matches!(
+            &(parse_time_expression("00:00:01:5", &default_ctx())),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
         parse_time_expression("00:00:01:05", &default_ctx()).unwrap();
     }
 
@@ -1051,7 +1060,10 @@ mod tests {
             time_base: TimeBase::Clock,
             ..default_ctx()
         };
-        assert!(parse_time_expression("wallclock(10:00)junk", &ctx).is_err());
+        assert!(matches!(
+            &(parse_time_expression("wallclock(10:00)junk", &ctx)),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
         // A valid expression with no junk still parses.
         parse_time_expression("wallclock(10:00)", &ctx).unwrap();
     }
@@ -1064,7 +1076,10 @@ mod tests {
         };
         // "+1" is 2 characters, so pre-fix this passed the length check and
         // `u8::from_str` (which accepts a leading '+') parsed it as 1.
-        assert!(parse_time_expression("wallclock(+1:00)", &ctx).is_err());
+        assert!(matches!(
+            &(parse_time_expression("wallclock(+1:00)", &ctx)),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
     }
 
     #[test]
@@ -1090,15 +1105,30 @@ mod tests {
     #[test]
     fn test_negative_cases() {
         // Empty
-        assert!(parse_time_expression("", &default_ctx()).is_err());
+        assert!(matches!(
+            &(parse_time_expression("", &default_ctx())),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
         // No metric
-        assert!(parse_time_expression("123", &default_ctx()).is_err());
+        assert!(matches!(
+            &(parse_time_expression("123", &default_ctx())),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
         // Minutes out of range
-        assert!(parse_time_expression("00:60:00", &default_ctx()).is_err());
+        assert!(matches!(
+            &(parse_time_expression("00:60:00", &default_ctx())),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
         // Seconds = 61 is out of range (max is 60 for leap second)
-        assert!(parse_time_expression("00:00:61", &default_ctx()).is_err());
+        assert!(matches!(
+            &(parse_time_expression("00:00:61", &default_ctx())),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
         // Missing leading zero
-        assert!(parse_time_expression("0:00:00", &default_ctx()).is_err());
+        assert!(matches!(
+            &(parse_time_expression("0:00:00", &default_ctx())),
+            Err(crate::error::Error::InvalidTimeExpression { .. })
+        ));
         // No digits before metric
         assert!(parse_time_expression("s", &default_ctx()).is_err());
     }

@@ -727,7 +727,10 @@ mod tests {
             Avs3AudioBody::Codec1(Avs3AudioCodec1::new(None, false, 0, 2)),
             0,
         );
-        assert!(d.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::ValueOutOfRange { .. })
+        ));
         // coding_profile wider than 3 bits
         let d = Avs3AudioDescriptor::new(
             0,

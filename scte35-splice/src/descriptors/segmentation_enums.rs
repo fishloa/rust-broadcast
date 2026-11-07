@@ -344,17 +344,6 @@ impl SegmentationTypeId {
         }
     }
 
-    /// True for the eight types (Table 23) that carry the optional
-    /// `sub_segment_num` / `sub_segments_expected` appendix: the Placement
-    /// Opportunity / Overlay PO / Ad Block "Start" types and the Distributor
-    /// Advertisement Start type.
-    #[must_use]
-    pub fn has_sub_segments(self) -> bool {
-        matches!(
-            self.to_u8(),
-            0x30 | 0x32 | 0x34 | 0x36 | 0x38 | 0x3A | 0x44 | 0x46
-        )
-    }
 }
 
 impl SegmentationTypeId {
@@ -456,11 +445,5 @@ mod tests {
             0x34
         );
         assert_eq!(SegmentationUpidType::Mpu.to_u8(), 0x0C);
-        assert!(SegmentationTypeId::ProviderPlacementOpportunityStart.has_sub_segments());
-        assert!(!SegmentationTypeId::ProgramStart.has_sub_segments());
-        // The eight sub-segment types from Table 23.
-        for v in [0x30, 0x32, 0x34, 0x36, 0x38, 0x3A, 0x44, 0x46] {
-            assert!(SegmentationTypeId::from_u8(v).has_sub_segments());
-        }
     }
 }

@@ -131,7 +131,10 @@ mod tests {
 
     #[test]
     fn malformed_rejected() {
-        assert!(DvbHtmlApplicationLocationDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            &(DvbHtmlApplicationLocationDescriptor::parse(&[TAG, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         assert!(DvbHtmlApplicationLocationDescriptor::parse(&[TAG, 2, 5, b'a']).is_err());
         let big = vec![b'x'; 256];
         let d = DvbHtmlApplicationLocationDescriptor {
@@ -139,6 +142,9 @@ mod tests {
             initial_path: DvbText::new(b""),
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

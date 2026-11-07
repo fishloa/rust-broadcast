@@ -291,6 +291,9 @@ mod tests {
         assert!(s.serialize_into(&mut [0u8; 16]).is_err());
         let big = vec![0u8; 4090];
         let s = MetadataSection::new(1, SectionFragmentIndication::Complete, 0, 0, 0, &big);
-        assert!(s.serialize_into(&mut vec![0u8; 5000]).is_err());
+        assert!(matches!(
+            &(s.serialize_into(&mut vec![0u8; 5000])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

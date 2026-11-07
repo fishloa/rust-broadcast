@@ -73,7 +73,7 @@ Runnable programs: `build_packet`, `parse_packet`, and `rfc8285_extensions` (wit
 - `RtpPacket` and `HeaderExtension` (16-bit profile id plus opaque data, with the 32-bit-word length derived).
 - Limits as named constants: `RTP_VERSION`, `FIXED_HEADER_LEN`, `MAX_CSRC_COUNT` (15), `MAX_PADDING_COUNT`, `MAX_PAYLOAD_TYPE`.
 - `rfc8285`: `parse_extensions` returning `ExtensionElements::{OneByte, TwoByte}`, with validated `OneByteId` / `TwoByteId`.
-- `av3a`: `AatfFrame`, `AatfFrameHeader`, `packetize`, `Av3aDepacketizer` (capped at 1 MiB by default, `with_max_frame_bytes` to change), `Av3aFmtp`, `CodecNnId`, `is_dynamic_payload_type`.
+- `av3a`: `AatfFrame`, `AatfFrameHeader`, `packetize`, `Av3aDepacketizer` (capped at 1 MiB by default, `with_max_frame_bytes` to change), `Av3aFmtp`, `CodecNnId`.
 
 ## Design notes
 

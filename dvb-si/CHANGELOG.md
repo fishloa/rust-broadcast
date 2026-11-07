@@ -1,7 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- Unused public items, with no use in the workspace beyond their own unit tests: `COMPRESSED_MODULE_DESCRIPTOR_TAG`, `USE_DVB_RESERVED_DEFAULT`, `application_type_name`, `bat_with_registry`, `bit_rate_kbits`, `bit_rate_name`, `cell_extent_of_latitude_deg`, `cell_extent_of_longitude_deg`, `cell_latitude_deg`, `cell_longitude_deg`, `change_duration_secs`, `eit_with_registry`, `extended_surround_name`, `from_datetime`, `into_sections`, `is_valid_pid`, `nit_pid`, `peid`, `phy_stream`, `prepend_string`, `receiver_broadcast`, `receiver_dsng`, `receiver_interactive`, `receiver_professional`, `receiver_vl_snr`, `sample_rate_name`, `sdt_with_registry`, `serialize_into_at`, `set_start_time_decoded`, `start_time_of_change_utc`, `subcell_extent_of_latitude_deg`, `subcell_extent_of_longitude_deg`, `subcell_latitude_deg`, `subcell_longitude_deg`, `surround_mode_name`, `table_section_with`, `tdm`, `usage_type_name`.
+- `tables::nit::NitTransportStream` and `tables::bat::BatTransportStream`: use `tables::TransportStreamEntry` (same fields and `new`).
+- `collect::CompleteNitTransportStream` and `collect::CompleteBatTransportStream`: use `collect::CompleteTransportStream`.
 ### Changed
+- NIT and BAT share one section parse/serialize core, CAT and TSDT another, and the three descriptor registries use `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H4, H1).
 - The H.222.0 descriptor bit reader and the SAT bit reader are error-mapping adapters over `broadcast_common::bits::BitReader`; the SAT reader no longer rebuilds and re-skips a reader on every read (dedupe D6). The two writers stay local: one grows a `Vec`, the other emits into a slice with this crate's own overflow errors.
 
 ## [12.1.0] - 2026-11-03

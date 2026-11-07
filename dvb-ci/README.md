@@ -93,7 +93,7 @@ Two runnable examples ship with the crate (`cargo run -p dvb-ci --example <name>
 | Low-Speed Communications | `objects::low_speed_comms` (`comms_cmd`, `connection_descriptor`, `comms_reply`, `comms_send`, `comms_rcv`) |
 | Session (SPDU) | open / create / close session request + response, `session_number`, status values |
 | Transport (TPDU) | C_TPDU / R_TPDU (+ status byte), Create / Delete / Request / New_T_C, T_C_Error, SB_value |
-| CA_PMT builder | `build_ca_pmt(&PmtSection, list_management, cmd_id)` keeps only `CA_descriptor`s at programme and ES level; `build_ca_pmt_for_caids(..., allowed)` / `CaPmtBuilt::retain_caids(&[u16])` filter to the CAM's CAIDs |
+| CA_PMT builder | `build_ca_pmt(&PmtSection, list_management, cmd_id)` keeps only `CA_descriptor`s at programme and ES level; `build_ca_pmt_for_caids(..., allowed)` filters to the CAM's CAIDs |
 | TS 101 699 (`ci_ext`) | `CiExtApdu`, keyed on `resource_identifier()`; one module per resource (see the standards table) |
 | TS 103 205 (`ci_plus`) | `CiPlusApdu`, keyed on `resource_identifier()`: Multi-stream, Content Control, Multi-stream Host Control, Sample Decryption, CICAM Player, Auxiliary File System; extended CA Support `ca_pmt`, LSC v4, URI v3 and Sample-Mode descriptors are standalone typed structs outside `CiPlusApdu` dispatch because TS 103 205 prints no resource_id for them |
 

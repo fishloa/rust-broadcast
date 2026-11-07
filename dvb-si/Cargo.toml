@@ -23,7 +23,6 @@ num_enum = { workspace = true }
 libm = "0.2"
 chrono      = { workspace = true, optional = true, features = ["alloc"] }
 serde         = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
-erased-serde  = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
 bytes         = { version = "1", optional = true, default-features = false }
 yoke          = { workspace = true, optional = true, features = ["derive"] }
 flate2        = { version = "1", optional = true }
@@ -47,7 +46,7 @@ default = ["std", "chrono", "ts", "serde"]
 
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only.
-std      = ["broadcast-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "dep:encoding_rs", "bytes?/std", "mpeg-ts/std", "serde?/std", "erased-serde?/std"]
+std      = ["broadcast-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "dep:encoding_rs", "bytes?/std", "mpeg-ts/std", "serde?/std"]
 
 # Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
 chrono   = ["dep:chrono", "broadcast-common/chrono"]
@@ -56,7 +55,7 @@ chrono   = ["dep:chrono", "broadcast-common/chrono"]
 ts       = ["dep:bytes"]
 
 # JSON / generic serialization on parsed + owned variants. Propagates to chrono.
-serde    = ["dep:serde", "dep:erased-serde", "chrono?/serde", "mpeg-ts/serde"]
+serde    = ["dep:serde", "broadcast-common/serde", "chrono?/serde", "mpeg-ts/serde"]
 
 # Yokeable impls on the zero-copy view types + the `Owned<T>` wrapper, so a
 # parsed table/descriptor can be retained past the input buffer's borrow

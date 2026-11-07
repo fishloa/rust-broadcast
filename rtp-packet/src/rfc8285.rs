@@ -471,7 +471,10 @@ mod tests {
             },
         ]);
         let mut buf = vec![0xAAu8; 64];
-        assert!(one.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(one.serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         assert!(
             buf.iter().all(|&b| b == 0xAA),
             "one-byte wrote before failing"

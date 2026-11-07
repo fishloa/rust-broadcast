@@ -410,7 +410,6 @@ impl<'a> BiopProfileBody<'a> {
         }
         let mut pos = BIOP_BODY_FIXED_LEN;
 
-        // First component: ObjectLocation
         let (ch0, _) = bytes[pos..end]
             .split_first_chunk::<COMPONENT_HEADER_LEN>()
             .ok_or(Error::BufferTooShort {

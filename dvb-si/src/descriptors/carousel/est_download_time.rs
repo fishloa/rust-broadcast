@@ -82,7 +82,13 @@ mod tests {
 
     #[test]
     fn wrong_length_rejected() {
-        assert!(EstDownloadTimeDescriptor::parse(&[TAG, 3, 0, 0, 0]).is_err());
-        assert!(EstDownloadTimeDescriptor::parse(&[TAG, 5, 0, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            &(EstDownloadTimeDescriptor::parse(&[TAG, 3, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(EstDownloadTimeDescriptor::parse(&[TAG, 5, 0, 0, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

@@ -610,7 +610,6 @@ impl Cea608Decoder {
             let base = st.cursor_row.min(SCREEN_ROWS - 1);
             let rows = rows as usize;
             let top = base.saturating_sub(rows - 1);
-            // Move each row up by one within [top..=base].
             for r in top..base {
                 st.displayed.rows[r] = st.displayed.rows[r + 1].clone();
             }

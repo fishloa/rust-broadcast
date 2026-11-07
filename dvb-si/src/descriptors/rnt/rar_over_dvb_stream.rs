@@ -246,8 +246,14 @@ mod tests {
         trunc.truncate(trunc.len() - 3);
         trunc[1] -= 3;
         assert!(RarOverDvbStreamDescriptor::parse(&trunc).is_err());
-        assert!(RarOverDvbStreamDescriptor::parse(&[TAG, 3, 0, 0, 0]).is_err());
-        assert!(RarOverDvbStreamDescriptor::parse(&[0x41, 0]).is_err());
+        assert!(matches!(
+            &(RarOverDvbStreamDescriptor::parse(&[TAG, 3, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(RarOverDvbStreamDescriptor::parse(&[0x41, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]

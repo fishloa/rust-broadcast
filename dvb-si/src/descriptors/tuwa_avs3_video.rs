@@ -68,15 +68,6 @@ pub enum TuwaLibraryRef {
 }
 
 impl TuwaLibraryRef {
-    /// A PEID reference with the all-ones reserved default.
-    #[must_use]
-    pub const fn peid(pid: Pid) -> Self {
-        Self::Peid {
-            pid,
-            reserved: RESERVED3_ONES,
-        }
-    }
-
     /// A stream_id reference with the all-ones reserved defaults.
     #[must_use]
     pub const fn stream_id(stream_id: u8) -> Self {
@@ -387,7 +378,13 @@ mod tests {
                 reserved: 7
             }
         );
-        assert_eq!(refs.refs[1], TuwaLibraryRef::peid(Pid::new(0x1FFF)));
+        assert_eq!(
+            refs.refs[1],
+            TuwaLibraryRef::Peid {
+                pid: Pid::new(0x1FFF),
+                reserved: 7
+            }
+        );
     }
 
     /// Main stream, `id_type_flag` = 0: one stream_id reference (0xFD ext not
@@ -436,7 +433,10 @@ mod tests {
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         // mixed reference forms
         d.library_refs.as_mut().unwrap().refs[1] = TuwaLibraryRef::stream_id(1);
-        assert!(d.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::ValueOutOfRange { .. })
+        ));
         // flag/refs disagreement
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.library_stream_flag = true;
@@ -444,10 +444,22 @@ mod tests {
         // over-wide reserved
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.reserved = 8;
-        assert!(d.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         // too many references
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
-        d.library_refs.as_mut().unwrap().refs = vec![TuwaLibraryRef::peid(Pid::new(1)); 128];
-        assert!(d.serialize_into(&mut [0u8; 300]).is_err());
+        d.library_refs.as_mut().unwrap().refs = vec![
+            TuwaLibraryRef::Peid {
+                pid: Pid::new(1),
+                reserved: 7
+            };
+            128
+        ];
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 300])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

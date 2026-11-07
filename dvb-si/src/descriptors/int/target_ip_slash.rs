@@ -124,6 +124,9 @@ mod tests {
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
         }
-        assert!(TargetIpSlashDescriptor::parse(&[0x10, 0]).is_err());
+        assert!(matches!(
+            &(TargetIpSlashDescriptor::parse(&[0x10, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 }

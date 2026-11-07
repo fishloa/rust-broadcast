@@ -32,6 +32,18 @@ pub use eit::*;
 pub use nit::*;
 pub use sdt::*;
 
+/// Transport-stream entry in a complete NIT or BAT.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct CompleteTransportStream<'a> {
+    /// transport_stream_id of the described TS.
+    pub transport_stream_id: u16,
+    /// original_network_id of the described TS.
+    pub original_network_id: u16,
+    /// Typed descriptor loop for this transport stream.
+    pub descriptors: ParsedDescriptorLoop<'a>,
+}
+
 /// Default cap on the number of logical keys (in-progress AND completed)
 /// retained by [`SectionSetCollector`].
 ///
@@ -444,12 +456,6 @@ impl<T> CompleteTable<T> {
     pub fn sections(&self) -> &[T] {
         &self.sections
     }
-
-    /// Consume the complete table and return the parsed sections.
-    #[must_use]
-    pub fn into_sections(self) -> Vec<T> {
-        self.sections
-    }
 }
 
 impl CompleteSectionSet {
@@ -508,38 +514,14 @@ impl CompleteSectionSet {
         CompleteBat::parse(self, None)
     }
 
-    /// Build a complete BAT view using a descriptor registry.
-    pub fn bat_with_registry<'a>(
-        &'a self,
-        registry: &'a DescriptorRegistry,
-    ) -> crate::Result<CompleteBat<'a>> {
-        CompleteBat::parse(self, Some(registry))
-    }
-
     /// Build a complete SDT view from this section set.
     pub fn sdt(&self) -> crate::Result<CompleteSdt<'_>> {
         CompleteSdt::parse(self, None)
     }
 
-    /// Build a complete SDT view using a descriptor registry.
-    pub fn sdt_with_registry<'a>(
-        &'a self,
-        registry: &'a DescriptorRegistry,
-    ) -> crate::Result<CompleteSdt<'a>> {
-        CompleteSdt::parse(self, Some(registry))
-    }
-
     /// Build a complete EIT view from this section set.
     pub fn eit(&self) -> crate::Result<CompleteEit<'_>> {
         CompleteEit::parse(self, None)
-    }
-
-    /// Build a complete EIT view using a descriptor registry.
-    pub fn eit_with_registry<'a>(
-        &'a self,
-        registry: &'a DescriptorRegistry,
-    ) -> crate::Result<CompleteEit<'a>> {
-        CompleteEit::parse(self, Some(registry))
     }
 }
 

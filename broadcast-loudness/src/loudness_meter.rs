@@ -638,16 +638,6 @@ impl LoudnessMeter {
         self.integrated
     }
 
-    /// Integrated loudness relative to —23 LUFS target level, in LU.
-    #[must_use]
-    pub fn integrated_lu(&self) -> f64 {
-        if self.integrated.is_finite() {
-            self.integrated + 23.0
-        } else {
-            f64::NEG_INFINITY
-        }
-    }
-
     /// Maximum momentary loudness (400 ms window) in LUFS.
     #[must_use]
     pub fn max_momentary_lufs(&self) -> f64 {

@@ -93,7 +93,7 @@ and `--example measure_true_peak`. For interleaved or multichannel input use
 
 - **`LoudnessMeter`**: `new(sample_rate, ChannelLayout)`, `push_f32` / `push_f64`
   (one slice per channel), `push_stereo_planar_f32`, `finish`, `reset`, then
-  `integrated_lufs`, `integrated_lu`, `max_momentary_lufs`, `max_short_term_lufs`,
+  `integrated_lufs`, `max_momentary_lufs`, `max_short_term_lufs`,
   `loudness_range`, `frame_count`, `duration_seconds`.
 - **`TruePeakMeter`**: per-channel; `push_f32` / `push_f64` and slice forms,
   `finish` (includes a zero-tail flush on a copy, so it is idempotent),

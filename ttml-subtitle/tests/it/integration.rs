@@ -521,7 +521,10 @@ fn frame_rate_constraint_enforcement() {
 
     // Frames term is error when timeBase=clock
     assert!(
-        time::parse_time_expression("01:02:03:20", &ctx).is_err(),
+        matches!(
+            &(time::parse_time_expression("01:02:03:20", &ctx)),
+            Err(ttml_subtitle::error::Error::InvalidTimeExpression { .. })
+        ),
         "frames term should be rejected when timeBase=clock"
     );
 }
@@ -718,7 +721,10 @@ fn rejects_deeply_nested_spans_exceeding_limit() {
     );
     let result = Document::parse_str(&xml);
     assert!(
-        result.is_err(),
+        matches!(
+            &(result),
+            Err(ttml_subtitle::error::Error::ConstraintViolation { .. })
+        ),
         "Parse should reject 65 nested spans (exceeds limit of 64)"
     );
 }

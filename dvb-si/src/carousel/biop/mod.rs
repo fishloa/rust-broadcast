@@ -54,10 +54,6 @@ pub const BIOP_VERSION_MINOR: u8 = 0x00;
 /// CDR byte-order flag for big-endian (DVB mandatory). TR 101 202 §4.7.3.
 pub const BYTE_ORDER_BIG_ENDIAN: u8 = 0x00;
 
-/// `compressed_module_descriptor` tag in the ModuleInfo `userInfo` loop.
-/// TR 101 202 §4.6.6.10.
-pub const COMPRESSED_MODULE_DESCRIPTOR_TAG: u8 = 0x09;
-
 /// Computes the wire-derived byte range `[pos, pos+len)`, bounded by `end`.
 ///
 /// Every length field this guards (`messageBody_length`, `objectInfo_length`,
@@ -107,7 +103,10 @@ mod tests {
 
     #[test]
     fn span_rejects_len_past_end() {
-        assert!(span(10, 11, 20).is_err());
+        assert!(matches!(
+            &(span(10, 11, 20)),
+            Err(crate::error::Error::SectionLengthOverflow { .. })
+        ));
     }
 
     /// `pos` alone (not just `pos + len`) can sit near `usize::MAX` — this is
@@ -116,6 +115,9 @@ mod tests {
     /// cursor and only `len` is large): `checked_add` must still catch it.
     #[test]
     fn span_rejects_pos_plus_len_overflowing_usize() {
-        assert!(span(usize::MAX - 1, 4, usize::MAX).is_err());
+        assert!(matches!(
+            &(span(usize::MAX - 1, 4, usize::MAX)),
+            Err(crate::error::Error::SectionLengthOverflow { .. })
+        ));
     }
 }

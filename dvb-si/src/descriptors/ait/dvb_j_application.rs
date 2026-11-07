@@ -56,7 +56,6 @@ impl Serialize for DvbJApplicationDescriptor<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        // Check each parameter fits in one length byte.
         for p in &self.parameters {
             if p.len() > u8::MAX as usize {
                 return Err(Error::InvalidDescriptor {

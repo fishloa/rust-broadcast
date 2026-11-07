@@ -145,7 +145,6 @@ impl PacketReassembler {
                 break;
             }
 
-            // Extract complete packet
             let packet_bytes = self.buf.split_to(total_packet_len);
             self.pending.push_back(packet_bytes.freeze());
         }
@@ -154,11 +153,6 @@ impl PacketReassembler {
     /// Drain the next completed T2-MI packet.
     pub fn pop_packet(&mut self) -> Option<bytes::Bytes> {
         self.pending.pop_front()
-    }
-
-    /// Drain all pending packets.
-    pub fn drain_packets(&mut self) -> impl Iterator<Item = bytes::Bytes> + '_ {
-        self.pending.drain(..)
     }
 
     /// Take (clear) whatever bytes are currently buffered for the
@@ -340,25 +334,5 @@ mod tests {
         ts.extend_from_slice(&good);
         reasm.feed(&ts, true);
         assert_eq!(&reasm.pop_packet().unwrap()[..], &good[..]);
-    }
-
-    #[test]
-    fn drains_multiple_pending_packets() {
-        let t1 = make_t2mi_packet(0x00, 0, &[0xAA]);
-        let t2 = make_t2mi_packet(0x00, 1, &[0xBB]);
-        let t3 = make_t2mi_packet(0x00, 2, &[0xCC]);
-        let mut reasm = PacketReassembler::new();
-
-        let mut ts_payload = vec![0x00];
-        ts_payload.extend_from_slice(&t1);
-        ts_payload.extend_from_slice(&t2);
-        ts_payload.extend_from_slice(&t3);
-        reasm.feed(&ts_payload, true);
-
-        let packets: Vec<_> = reasm.drain_packets().collect();
-        assert_eq!(packets.len(), 3);
-        assert_eq!(&packets[0][..], &t1[..]);
-        assert_eq!(&packets[1][..], &t2[..]);
-        assert_eq!(&packets[2][..], &t3[..]);
     }
 }

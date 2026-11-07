@@ -87,23 +87,6 @@ impl SpliceTime {
             pts_time: Some(pts_time & PTS_MAX),
         }
     }
-
-    /// The `pts_time` decoded to a [`Duration`](core::time::Duration), if present.
-    #[must_use]
-    pub fn pts_time_duration(&self) -> Option<core::time::Duration> {
-        self.pts_time.map(ticks_to_duration)
-    }
-
-    /// Set `pts_time` from a [`Duration`](core::time::Duration) (truncating to
-    /// 90 kHz ticks). Errors if the duration exceeds the 33-bit range.
-    pub fn set_pts_time_duration(&mut self, d: core::time::Duration) -> Result<()> {
-        let ticks = duration_to_ticks(d, PTS_MAX).ok_or(Error::InvalidValue {
-            field: "splice_time.pts_time",
-            reason: "duration exceeds 33-bit 90 kHz range",
-        })?;
-        self.pts_time = Some(ticks);
-        Ok(())
-    }
 }
 
 impl<'a> Parse<'a> for SpliceTime {
@@ -196,22 +179,6 @@ impl BreakDuration {
     /// Fixed wire length: 1 byte (auto_return + 6 reserved + top duration bit)
     /// plus 4 bytes for the remaining 32 duration bits.
     pub const LEN: usize = 5;
-
-    /// The break `duration` decoded to a [`Duration`](core::time::Duration).
-    #[must_use]
-    pub fn duration_value(&self) -> core::time::Duration {
-        ticks_to_duration(self.duration)
-    }
-
-    /// Set `duration` from a [`Duration`](core::time::Duration) (truncating to
-    /// 90 kHz ticks). Errors if it exceeds the 33-bit range.
-    pub fn set_duration_value(&mut self, d: core::time::Duration) -> Result<()> {
-        self.duration = duration_to_ticks(d, PTS_MAX).ok_or(Error::InvalidValue {
-            field: "break_duration.duration",
-            reason: "duration exceeds 33-bit 90 kHz range",
-        })?;
-        Ok(())
-    }
 }
 
 impl<'a> Parse<'a> for BreakDuration {
@@ -357,7 +324,10 @@ mod tests {
             auto_return: false,
             duration: 1u64 << 33,
         };
-        assert!(bd.try_to_bytes().is_err());
+        assert!(matches!(
+            &(bd.try_to_bytes()),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]
@@ -370,14 +340,5 @@ mod tests {
         let back = BreakDuration::parse(&bytes).unwrap();
         assert_eq!(bd, back);
         assert_eq!(back.try_to_bytes().unwrap(), bytes);
-    }
-
-    #[test]
-    fn break_duration_decoded_accessor() {
-        let mut bd = BreakDuration::default();
-        bd.set_duration_value(core::time::Duration::from_secs(60))
-            .unwrap();
-        assert_eq!(bd.duration, 60 * 90_000);
-        assert_eq!(bd.duration_value(), core::time::Duration::from_secs(60));
     }
 }

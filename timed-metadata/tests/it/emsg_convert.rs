@@ -95,8 +95,14 @@ fn timescale_mismatch_errors() {
         presentation_time_offset: 0,
         timescale: 48_000,
     };
-    assert!(emsg_to_v1(&v1, &timing).is_err());
-    assert!(emsg_to_v0(&v1, &timing).is_err());
+    assert!(matches!(
+        &(emsg_to_v1(&v1, &timing)),
+        Err(timed_metadata::error::Error::EmsgTimescaleMismatch { .. })
+    ));
+    assert!(matches!(
+        &(emsg_to_v0(&v1, &timing)),
+        Err(timed_metadata::error::Error::EmsgTimescaleMismatch { .. })
+    ));
 }
 
 #[test]

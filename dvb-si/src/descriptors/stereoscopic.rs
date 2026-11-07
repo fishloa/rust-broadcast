@@ -416,7 +416,10 @@ mod tests {
         // non-default reserved bits round-trip
         let d: Mpeg2StereoscopicVideoFormatDescriptor = rt(&[TAG_VIDEO_FORMAT, 1, 0x00]);
         assert_eq!(d.reserved, 0);
-        assert!(Mpeg2StereoscopicVideoFormatDescriptor::parse(&[TAG_VIDEO_FORMAT, 0]).is_err());
+        assert!(matches!(
+            &(Mpeg2StereoscopicVideoFormatDescriptor::parse(&[TAG_VIDEO_FORMAT, 0])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let mut bad = Mpeg2StereoscopicVideoFormatDescriptor::new(Some(0x80));
         assert!(bad.serialize_into(&mut [0u8; 8]).is_err());
         bad.arrangement_type = Some(0x7F);
@@ -477,7 +480,13 @@ mod tests {
             }
         ));
         // base view needs its second byte; additional view its third
-        assert!(StereoscopicVideoInfoDescriptor::parse(&[TAG_VIDEO_INFO, 1, 0xFF]).is_err());
-        assert!(StereoscopicVideoInfoDescriptor::parse(&[TAG_VIDEO_INFO, 2, 0xFE, 0xFF]).is_err());
+        assert!(matches!(
+            &(StereoscopicVideoInfoDescriptor::parse(&[TAG_VIDEO_INFO, 1, 0xFF])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            &(StereoscopicVideoInfoDescriptor::parse(&[TAG_VIDEO_INFO, 2, 0xFE, 0xFF])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 }

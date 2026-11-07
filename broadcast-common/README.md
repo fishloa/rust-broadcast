@@ -117,7 +117,7 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 | `parity` | `has_odd_parity`, `set_odd_parity`, `strip_parity` |
 | `hex` | `hex_encode` (decoders stay with callers, whose validation policies differ) |
 | `seq` | `SeqSpace` (`add`, `diff`, `lt`/`leq`/`gt`/`geq`, `in_closed_range`), `MAX_SEQ_BITS` |
-| `cenc` | `CencScheme` (`to_four_cc`, `from_four_cc`, `name`), `SCHEME_CENC`, `SCHEME_CBCS` |
+| `cenc` | `CencScheme` (`from_four_cc`, `name`), `SCHEME_CENC`, `SCHEME_CBCS` |
 | `mux` | `Unpackage`, `Package` (batch container demux/mux), `Decrypt`, `Encrypt` (in-place sample protection); inverse pairs, generic over `Input`/`Output`/`Media`/`Config`/`Keys`/`Error` |
 | `stage` | `Stage` (`feed`/`poll`/`finish`, `next_deadline`/`on_deadline`, `demand`), `Timestamp` (monotonic nanoseconds, saturating arithmetic), `Demand` |
 | root | `impl_spec_display!` macro (generates `Display` from an inherent `name()`) |

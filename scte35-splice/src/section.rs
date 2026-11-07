@@ -139,23 +139,6 @@ impl<'a> SpliceInfoSection<'a> {
         }
     }
 
-    /// The `pts_adjustment` decoded to a [`Duration`](core::time::Duration).
-    #[must_use]
-    pub fn pts_adjustment_duration(&self) -> core::time::Duration {
-        crate::time::ticks_to_duration(self.pts_adjustment)
-    }
-
-    /// Set `pts_adjustment` from a [`Duration`](core::time::Duration)
-    /// (truncating to 90 kHz ticks). Errors if it exceeds the 33-bit range.
-    pub fn set_pts_adjustment_duration(&mut self, d: core::time::Duration) -> Result<()> {
-        self.pts_adjustment =
-            crate::time::duration_to_ticks(d, PTS_MAX).ok_or(Error::InvalidValue {
-                field: "splice_info_section.pts_adjustment",
-                reason: "duration exceeds 33-bit 90 kHz range",
-            })?;
-        Ok(())
-    }
-
     /// True if `tier == 0xFFF`, which downstream equipment shall ignore.
     #[must_use]
     pub fn tier_is_ignored(&self) -> bool {
@@ -558,7 +541,10 @@ mod tests {
             &[],
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        assert!(section.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(section.serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     /// SC-C1: `descriptor_loop_length` is a 16-bit field; a loop of 64 KiB or
@@ -574,7 +560,10 @@ mod tests {
             &descriptor_loop,
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        assert!(section.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(section.serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     /// W2 (#1102): `alignment_stuffing()` (Table 5) between the descriptor

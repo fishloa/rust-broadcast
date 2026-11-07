@@ -849,7 +849,10 @@ mod tests {
             vec![],
         );
         let mut buf = vec![0u8; sec.serialized_len()];
-        assert!(sec.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(sec.serialize_into(&mut buf)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

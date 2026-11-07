@@ -1,6 +1,6 @@
 use broadcast_common::Parse;
-use mpeg_ps::SystemHeader;
 use mpeg_ps::program_stream;
+use mpeg_ps::{Error, SystemHeader};
 
 // Fixture: ffmpeg -f lavfi -i testsrc2=duration=1:size=352x288:rate=25 -f lavfi -i sine=frequency=440:duration=1 -c:v mpeg2video -c:a mp2 -f vob -y fixtures/ps/ffmpeg-mpeg2-ps.mpg
 
@@ -191,7 +191,10 @@ fn scan_packs_resyncs_after_a_corrupt_pack_and_reports_it() {
     //    preceding pack's PES loop also stops there).
     let mut bad = clean.clone();
     bad[offsets[2]] = 0xFF;
-    assert!(program_stream::parse_all_packs(&bad).is_err());
+    assert!(matches!(
+        program_stream::parse_all_packs(&bad),
+        Err(Error::BadPackStartCode(_))
+    ));
     let scan = program_stream::scan_packs(&bad);
     assert_eq!(scan.packs.len(), clean_packs.len() - 1);
     assert_eq!(scan.skipped.len(), 1);

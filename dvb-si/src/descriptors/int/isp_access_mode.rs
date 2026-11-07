@@ -146,7 +146,10 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
-        assert!(IspAccessModeDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            &(IspAccessModeDescriptor::parse(&[TAG, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]

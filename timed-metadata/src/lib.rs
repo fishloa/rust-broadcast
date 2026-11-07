@@ -52,7 +52,6 @@
 //! |---|---|---|
 //! | `std` | on | `std` in all dependencies; off = `no_std` + `alloc` |
 //! | `serde` | on | serde support on public types |
-//! | `chrono` | on | `chrono` dependency |
 //! | `cc-data` | off | CEA-608/708 to WebVTT extractors |
 //! | `teletext` | off | EBU Teletext to WebVTT extractor |
 //!

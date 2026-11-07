@@ -47,15 +47,6 @@ pub enum Error {
         /// The requested fixed total token width, in bytes.
         width: u8,
     },
-    /// A KLV Key was not the expected 16 bytes ( §6.3.8 — MXF Keys and
-    /// Universal Labels are always exactly 16 bytes; this only fires when
-    /// a caller-supplied buffer is short, since [`crate::klv::KlvItem`]
-    /// itself always reads exactly 16).
-    #[error("KLV key must be 16 bytes, found {found}")]
-    InvalidKeyLength {
-        /// Bytes actually available for the key.
-        found: usize,
-    },
     /// A Partition Pack's Key byte 14 (Partition Kind) was not one of the
     /// three defined values (`private/specs-verified/smpte/st377-1/st377-1.md` §7.1 Table 4).
     #[error("unknown Partition Kind byte: {byte:#04X}")]

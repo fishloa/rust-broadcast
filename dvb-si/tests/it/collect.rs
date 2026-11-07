@@ -2,10 +2,11 @@ use broadcast_common::Serialize;
 use dvb_si::collect::{CollectError, CompletedEit, EitCollector, SectionSetCollector};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::DescriptorLoop;
+use dvb_si::tables::TransportStreamEntry;
 use dvb_si::tables::eit::{
     EitKind, EitSection, TABLE_ID_PF_ACTUAL, TABLE_ID_SCHEDULE_ACTUAL_FIRST as EIT_50,
 };
-use dvb_si::tables::nit::{NitKind, NitSection, NitTransportStream};
+use dvb_si::tables::nit::{NitKind, NitSection};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use mpeg_ts::pid::Pid;
 
@@ -13,7 +14,7 @@ fn nit_section(
     section_number: u8,
     last_section_number: u8,
     network_descriptors: &[u8],
-    transport_streams: Vec<NitTransportStream<'_>>,
+    transport_streams: Vec<TransportStreamEntry<'_>>,
 ) -> Vec<u8> {
     let nit = NitSection::new(
         NitKind::Actual,
@@ -140,7 +141,7 @@ fn nit_collector_emits_only_when_all_sections_are_present() {
         0,
         1,
         &network_name,
-        vec![NitTransportStream::new(
+        vec![TransportStreamEntry::new(
             0x1000,
             0x0001,
             DescriptorLoop::new(&[]),
@@ -150,7 +151,7 @@ fn nit_collector_emits_only_when_all_sections_are_present() {
         1,
         1,
         &network_name,
-        vec![NitTransportStream::new(
+        vec![TransportStreamEntry::new(
             0x1001,
             0x0001,
             DescriptorLoop::new(&[]),

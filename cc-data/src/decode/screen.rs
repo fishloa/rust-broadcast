@@ -31,23 +31,6 @@ impl Color {
             b: b & 0x03,
         }
     }
-
-    /// Map this colour onto the minimum 8-colour palette (§8.8, p.92): component
-    /// `1 → 0`, `2 → 2`, `3 → 2` (and `0 → 0`).
-    #[must_use]
-    pub const fn to_8_color(self) -> Color {
-        const fn q(c: u8) -> u8 {
-            match c {
-                0 | 1 => 0,
-                _ => 2,
-            }
-        }
-        Color {
-            r: q(self.r),
-            g: q(self.g),
-            b: q(self.b),
-        }
-    }
 }
 
 /// Opacity of a foreground / background / fill (§8.8; SPC/SWA opacity field,
@@ -393,14 +376,6 @@ broadcast_common::impl_spec_display!(ScrollDirection);
 mod tests {
     use super::*;
     use alloc::string::ToString;
-
-    #[test]
-    fn color_8_color_mapping() {
-        // (1,2,3) → (0,2,2); (3,3,3) → (2,2,2); (1,1,1) → (0,0,0)
-        assert_eq!(Color::new(1, 2, 3).to_8_color(), Color::new(0, 2, 2));
-        assert_eq!(Color::new(3, 3, 3).to_8_color(), Color::WHITE);
-        assert_eq!(Color::new(1, 1, 1).to_8_color(), Color::BLACK);
-    }
 
     #[test]
     fn opacity_bits() {

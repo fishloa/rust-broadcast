@@ -152,8 +152,14 @@ mod tests {
     #[test]
     fn truncated_entries_are_rejected() {
         let bytes = sample().try_to_bytes().unwrap();
-        assert!(InsertAudioDescriptor::parse(&bytes[..bytes.len() - 1]).is_err());
-        assert!(InsertAudioDescriptor::parse(&[]).is_err());
+        assert!(matches!(
+            &(InsertAudioDescriptor::parse(&bytes[..bytes.len() - 1])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            &(InsertAudioDescriptor::parse(&[])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

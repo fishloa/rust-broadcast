@@ -390,7 +390,10 @@ mod tests {
             false,
             false,
         )]);
-        assert!(d.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 16])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         let many = AtscCaptionServiceDescriptor::new(vec![
             AtscCaptionService::cea608(
                 LangCode(*b"eng"),
@@ -400,7 +403,10 @@ mod tests {
             );
             17
         ]);
-        assert!(many.serialize_into(&mut [0u8; 256]).is_err());
+        assert!(matches!(
+            &(many.serialize_into(&mut [0u8; 256])),
+            Err(crate::error::Error::ValueOutOfRange { .. })
+        ));
     }
 
     #[test]

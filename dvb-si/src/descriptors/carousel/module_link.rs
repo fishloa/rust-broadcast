@@ -149,8 +149,14 @@ mod tests {
 
     #[test]
     fn wrong_length_rejected() {
-        assert!(ModuleLinkDescriptor::parse(&[TAG, 2, 0, 0]).is_err());
+        assert!(matches!(
+            &(ModuleLinkDescriptor::parse(&[TAG, 2, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         assert!(ModuleLinkDescriptor::parse(&[TAG, 4, 0, 0, 0, 0]).is_err());
-        assert!(ModuleLinkDescriptor::parse(&[TAG, 3, 0, 0]).is_err());
+        assert!(matches!(
+            &(ModuleLinkDescriptor::parse(&[TAG, 3, 0, 0])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 }

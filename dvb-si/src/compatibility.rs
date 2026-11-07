@@ -571,7 +571,10 @@ mod tests {
             0x00, 0x0D, 0x00, 0x01, 0x01, 0x09, 0x01, 0x00, 0x15, 0x0A, 0x12, 0x34, 0x00, 0x01,
             0x01,
         ];
-        assert!(CompatibilityDescriptor::parse(bytes).is_err());
+        assert!(matches!(
+            &(CompatibilityDescriptor::parse(bytes)),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

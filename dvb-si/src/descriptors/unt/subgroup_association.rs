@@ -90,11 +90,20 @@ mod tests {
     #[test]
     fn wrong_length_and_over_range_oui_rejected() {
         // descriptor_length is fixed at 5 (Table 30).
-        assert!(SsuSubgroupAssociationDescriptor::parse(&[TAG, 4, 1, 2, 3, 4]).is_err());
-        assert!(SsuSubgroupAssociationDescriptor::parse(&[TAG, 6, 1, 2, 3, 4, 5, 6]).is_err());
+        assert!(matches!(
+            &(SsuSubgroupAssociationDescriptor::parse(&[TAG, 4, 1, 2, 3, 4])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(SsuSubgroupAssociationDescriptor::parse(&[TAG, 6, 1, 2, 3, 4, 5, 6])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let wide = SsuSubgroupAssociationDescriptor {
             subgroup_tag: SubgroupTag::new(0x0100_0000, 0),
         };
-        assert!(wide.serialize_into(&mut [0u8; 8]).is_err());
+        assert!(matches!(
+            &(wide.serialize_into(&mut [0u8; 8])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

@@ -28,13 +28,9 @@ use dvb_si::tables::pat::PatSection;
 use dvb_si::tables::sat::SatSection;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
-fn crc(b: &[u8]) -> [u8; 4] {
-    broadcast_common::crc32_mpeg2::compute(b).to_be_bytes()
-}
-
 fn reseal(s: &mut [u8]) {
     let e = s.len() - 4;
-    let c = crc(&s[..e]);
+    let c = broadcast_common::crc32_mpeg2::compute(&s[..e]).to_be_bytes();
     s[e..].copy_from_slice(&c);
 }
 

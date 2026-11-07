@@ -276,25 +276,37 @@ mod tests {
     #[test]
     fn malformed_is_rejected() {
         // odd association_tags_loop_length
-        assert!(
-            DeferredAssociationTagsDescriptor::parse(&[0x15, 0x08, 0x03, 0, 1, 2, 0, 1, 0, 2])
-                .is_err()
-        );
+        assert!(matches!(
+            &(DeferredAssociationTagsDescriptor::parse(&[0x15, 0x08, 0x03, 0, 1, 2, 0, 1, 0, 2])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         // loop longer than body
-        assert!(DeferredAssociationTagsDescriptor::parse(&[0x15, 0x05, 0x04, 0, 1, 0, 2]).is_err());
+        assert!(matches!(
+            &(DeferredAssociationTagsDescriptor::parse(&[0x15, 0x05, 0x04, 0, 1, 0, 2])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         // one private byte cannot hold org_network_id
         assert!(
             DeferredAssociationTagsDescriptor::parse(&[0x15, 0x06, 0x00, 0, 1, 0, 2, 0xFF])
                 .is_err()
         );
-        assert!(DeferredAssociationTagsDescriptor::parse(&[0x14, 0x00]).is_err());
-        assert!(DeferredAssociationTagsDescriptor::parse(&[0x15, 0x00]).is_err());
+        assert!(matches!(
+            &(DeferredAssociationTagsDescriptor::parse(&[0x14, 0x00])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(DeferredAssociationTagsDescriptor::parse(&[0x15, 0x00])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]
     fn over_range_loop_is_an_error_not_a_wrap() {
         let d = DeferredAssociationTagsDescriptor::new(vec![0; 128], 0, 0, None);
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

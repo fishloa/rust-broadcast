@@ -42,7 +42,7 @@ fn compact_das_reserved_equivalent_type_over_4_bits_is_rejected() {
     let si = compact_with_type(EquivalentSegmentationType::Reserved(0x12));
     let r = si.try_to_bytes();
     assert!(
-        r.is_err(),
+        matches!(&r, Err(scte35_splice::error::Error::FieldOverflow(_))),
         "Reserved(0x12) serialized as {:?} (re-parses as {:?})",
         r.as_ref().ok(),
         r.as_ref()
@@ -57,7 +57,10 @@ fn compact_das_reserved_equivalent_type_over_4_bits_is_rejected() {
 fn das_descriptor_reserved_equivalent_type_over_4_bits_is_rejected() {
     let d = DvbDasDescriptor::new(0, 0, EquivalentSegmentationType::Reserved(0x11), b"u");
     assert!(
-        d.try_to_bytes().is_err(),
+        matches!(
+            &(d.try_to_bytes()),
+            Err(scte35_splice::error::Error::FieldOverflow(_))
+        ),
         "Reserved(0x11) was silently masked to 0x1 (DPO)"
     );
 }

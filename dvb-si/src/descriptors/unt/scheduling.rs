@@ -257,7 +257,10 @@ mod tests {
         assert!(
             SchedulingDescriptor::parse(&[TAG, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_err()
         );
-        assert!(SchedulingDescriptor::parse(&[0x02, 0]).is_err());
+        assert!(matches!(
+            &(SchedulingDescriptor::parse(&[0x02, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         assert_eq!(TimeUnit::Day.to_string(), "day");
     }
 }

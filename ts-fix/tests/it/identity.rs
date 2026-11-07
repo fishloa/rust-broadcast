@@ -84,7 +84,10 @@ fn identity_rejects_short_packet() {
     let mut engine = ts_fix::TsFix::builder().build().unwrap();
     let short = [0x47u8; 100]; // 100 bytes, not 188
     let result = engine.push(&short, |_| {});
-    assert!(result.is_err(), "engine should reject a short packet");
+    assert!(
+        matches!(&result, Err(ts_fix::error::Error::ShortPacket { .. })),
+        "engine should reject a short packet"
+    );
     match result.unwrap_err() {
         ts_fix::Error::ShortPacket { len } => assert_eq!(len, 100),
         other => panic!("unexpected error: {other:?}"),
@@ -98,7 +101,7 @@ fn identity_rejects_bad_sync_byte() {
     pkt[0] = 0x00; // wrong sync byte
     let result = engine.push(&pkt, |_| {});
     assert!(
-        result.is_err(),
+        matches!(&result, Err(ts_fix::error::Error::NoSyncByte { .. })),
         "engine should reject a packet with bad sync byte"
     );
     match result.unwrap_err() {

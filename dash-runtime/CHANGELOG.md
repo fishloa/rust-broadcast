@@ -4,6 +4,8 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 ### Changed
+- The MPD reader's attribute loop is `broadcast_common::xml_chars::read_attributes_checked` with the attribute count and size limits as its hook; an over-limit attribute count is now reported after (not before) a malformed value on the same start tag (c2 H8).
+- `timing::ticks_to_us` rescales through `broadcast_common::timescale` (same floor rounding) (c2 H6).
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
 
 ## [0.2.0] - 2026-11-03

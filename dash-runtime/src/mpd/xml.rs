@@ -7,7 +7,6 @@
 //! is not in the MPD namespace (the schema's `any`) before it costs memory.
 
 use quick_xml::NsReader;
-use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 
@@ -125,46 +124,34 @@ impl<'a> Reader<'a> {
     }
 
     fn attrs(&self, e: &BytesStart<'_>, limits: &Limits) -> Result<Vec<Attr>, MpdError> {
-        let resolver = self.inner.resolver();
-        let mut out = Vec::new();
-        let mut seen = 0usize;
-        for attr in e.attributes() {
-            let attr = attr.map_err(|err| self.fail(err.to_string()))?;
-            let key = attr.key;
-            let is_declaration = match key.prefix() {
-                None => key.as_ref() == "xmlns",
-                Some(p) => p.is_xmlns(),
-            };
-            if is_declaration {
-                continue;
-            }
-            seen += 1;
-            if seen > limits.max_attributes {
-                return Err(MpdError::TooLarge {
-                    limit: Limit::Attributes,
-                    max: limits.max_attributes,
-                });
-            }
-            let value = attr
-                .normalized_value(XmlVersion::Implicit1_0)
-                .map_err(|err| self.fail(err.to_string()))?;
-            if value.len() > limits.max_attribute_bytes {
-                return Err(MpdError::TooLarge {
-                    limit: Limit::AttributeBytes,
-                    max: limits.max_attribute_bytes,
-                });
-            }
-            if !value.chars().all(broadcast_common::xml_chars::is_xml_char) {
-                return Err(self.fail(broadcast_common::xml_chars::BAD_CHAR));
-            }
-            let (ns, local) = resolver.resolve_attribute(key);
-            out.push(Attr {
-                ns: ns_of(ns).map_err(|m| self.fail(m))?,
-                name: local.into_inner().to_string(),
-                value: value.into_owned(),
-            });
-        }
-        Ok(out)
+        let attributes = broadcast_common::xml_chars::read_attributes_checked(
+            &self.inner,
+            e,
+            |m| self.fail(m),
+            |count, value| {
+                if count > limits.max_attributes {
+                    return Err(MpdError::TooLarge {
+                        limit: Limit::Attributes,
+                        max: limits.max_attributes,
+                    });
+                }
+                if value.len() > limits.max_attribute_bytes {
+                    return Err(MpdError::TooLarge {
+                        limit: Limit::AttributeBytes,
+                        max: limits.max_attribute_bytes,
+                    });
+                }
+                Ok(())
+            },
+        )?;
+        Ok(attributes
+            .into_iter()
+            .map(|a| Attr {
+                ns: a.namespace.as_deref().map_or(Ns::None, Ns::classify),
+                name: a.name,
+                value: a.value,
+            })
+            .collect())
     }
 
     fn char_data(&self, event: &Event<'_>) -> Result<Option<String>, MpdError> {

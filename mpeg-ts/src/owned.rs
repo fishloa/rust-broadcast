@@ -86,11 +86,6 @@ impl OwnedTsPacket {
         &self.raw
     }
 
-    /// Consume the packet, returning its raw 188 bytes.
-    pub fn into_raw(self) -> [u8; TS_PACKET_SIZE] {
-        self.raw
-    }
-
     /// 13-bit PID (bytes 1–2).
     pub fn pid(&self) -> Pid {
         self.pid
@@ -423,7 +418,6 @@ mod tests {
         assert!(pkt.has_payload());
         assert_eq!(pkt.continuity_counter(), 0xC);
         assert_eq!(pkt.raw(), &raw);
-        assert_eq!(pkt.into_raw(), raw);
     }
 
     #[test]

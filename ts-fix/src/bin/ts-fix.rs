@@ -142,11 +142,9 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    // Read input.
     let input =
         fs::read(&cli.input).map_err(|e| format!("cannot read {}: {e}", cli.input.display()))?;
 
-    // Build the engine.
     let mut builder = TsFix::builder();
 
     if cli.repair_continuity {

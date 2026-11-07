@@ -724,7 +724,6 @@ fn parse_pixel_sub_blocks<'a>(
         });
         pos = block_end;
     }
-    // Validate field length was exactly consumed
     if pos != end {
         return Err(Error::BufferTooShort {
             need: end,

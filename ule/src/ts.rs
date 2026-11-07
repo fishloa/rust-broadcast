@@ -109,7 +109,6 @@ impl UleReceiver {
                 self.expected = 0;
             }
             self.started = true;
-            // Walk packed SNDUs starting at the pointer.
             self.walk_new_sndus(&pp_region[pp..], &mut out);
         } else {
             // PUSI=0: pure continuation of the SNDU in progress. RFC 4326

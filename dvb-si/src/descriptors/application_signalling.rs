@@ -23,26 +23,6 @@ const APPLICATION_TYPE_MAX: u16 = 0x7FFF;
 /// Largest representable 5-bit AIT_version_number.
 const AIT_VERSION_MAX: u8 = 0x1F;
 
-/// Returns the well-known name for an `application_type`, or `None` if the
-/// type is not recognised.
-///
-/// Delegates to [`crate::tables::ait::ApplicationType`] as the single source
-/// of truth for application-type naming.  Verified entries from the
-/// DVB Services registry.
-#[must_use]
-pub fn application_type_name(val: u16) -> Option<&'static str> {
-    use crate::tables::ait::ApplicationType;
-    let ty = ApplicationType::from_u16(val);
-    matches!(
-        ty,
-        ApplicationType::DvbJ
-            | ApplicationType::DvbHtml
-            | ApplicationType::HbbTv
-            | ApplicationType::OipfDae
-    )
-    .then(|| ty.name())
-}
-
 /// Default of the 1-bit `reserved_future_use` before `application_type`:
 /// TS 102 809 V1.1.1-V1.3.1 §5.3.3.2 ("all reserved_future_use bits shall be
 /// set to 1"). Older MHP editions (TS 101 812 V1.1.1-V1.3.2) have no such bit
@@ -273,30 +253,6 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TAG, 3, 0x80, 0x10, 0xE3]);
-    }
-
-    #[test]
-    fn application_type_name_verified() {
-        assert_eq!(application_type_name(0x0001), Some("DVB-J"));
-        assert_eq!(application_type_name(0x0002), Some("DVB-HTML"));
-        assert_eq!(application_type_name(0x0010), Some("HbbTV"));
-        assert_eq!(application_type_name(0x0011), Some("OIPF DAE"));
-    }
-
-    #[test]
-    fn application_type_name_removed_entries_return_none() {
-        assert_eq!(application_type_name(0x0003), None);
-        assert_eq!(application_type_name(0x0004), None);
-        assert_eq!(application_type_name(0x0005), None);
-        assert_eq!(application_type_name(0x0012), None);
-        assert_eq!(application_type_name(0x0013), None);
-        assert_eq!(application_type_name(0x0020), None);
-    }
-
-    #[test]
-    fn application_type_name_unknown() {
-        assert_eq!(application_type_name(0x0000), None);
-        assert_eq!(application_type_name(0xFFFF), None);
     }
 
     #[test]

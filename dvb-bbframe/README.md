@@ -88,7 +88,7 @@ you. Examples: `cargo run -p dvb-bbframe --example parse_bbheader` and
 |---|---|
 | BBHEADER | `header::{Bbheader, Matype, TsGs, Mode, RollOff, BBHEADER_LEN, DFL_MAX_BITS}`; `Bbheader::{parse, serialize, issy}`. Fields: `matype` (`ts_gs`, `sis`, `ccm`, `issyi`, `npd`, `ext`, `isi`), `upl`, `sync`, `dfl`, `syncd`, `mode` (recovered via `crc8(hdr[0..9]) ^ hdr[9]`), `issy_in_header` (HEM) |
 | CRC-8 | `crc::{crc8, CRC8_POLY, CRC8_INIT}` |
-| ISSY | `issy::{Issy, SignallingKind, BufsUnit, decode_issy_short, decode_issy_long}`: ISCR short (15 bit), ISCR long (22 bit), signalling (`Bufs`, `Tto`, `BufStat`, `Reserved`); `bufs_bits()`/`bufs_bytes()`, `bufstat_bits()`/`bufstat_bytes()`, `tto_t_over_256()` |
+| ISSY | `issy::{Issy, SignallingKind, BufsUnit, decode_issy_short, decode_issy_long}`: ISCR short (15 bit), ISCR long (22 bit), signalling (`Bufs`, `Tto`, `BufStat`, `Reserved`); `bufs_bits()`/`bufs_bytes()`, `bufstat_bits()`, `tto_t_over_256()` |
 | User packets | `packet::{nm_stride_bytes, NmTsIter, HemTsIter, UpIter, up_iter, CarryOverExtractor, CarryOverStats, NM_UP_SIZE, HEM_UP_SIZE, TS_SYNC_BYTE}`; `CarryOverExtractor::{feed_nm, feed_hem, feed_nm_into, feed_hem_into}`; `SYNCD = 0xFFFF` handled |
 | Multi-PLP | `pump::{BbframePump, BbframePumpStats}`: independent per-PLP carry-over state, heap-allocated (256 slots) |
 | Errors | `Error` (including `InvalidStride`), `Result` |

@@ -476,7 +476,10 @@ mod tests {
 
     #[test]
     fn parse_rejects_buffer_shorter_than_10() {
-        assert!(Bbheader::parse(&[0u8; 9]).is_err());
+        assert!(matches!(
+            &(Bbheader::parse(&[0u8; 9])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
@@ -865,7 +868,10 @@ mod tests {
         hdr[7] = 0x00;
         hdr[8] = 0x00;
         hdr[9] = crc8(&hdr[..9]) ^ 0x02; // XOR with reserved value 2
-        assert!(Bbheader::parse(&hdr).is_err());
+        assert!(matches!(
+            &(Bbheader::parse(&hdr)),
+            Err(crate::error::Error::InvalidMode { .. })
+        ));
     }
 
     #[test]

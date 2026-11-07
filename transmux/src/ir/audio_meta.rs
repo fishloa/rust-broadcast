@@ -21,6 +21,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::timescale::{Rounding, rescale_i64};
 
 use dvb_si::descriptors::aac::AacComponentType;
 use dvb_si::descriptors::any::{AnyDescriptor, parse_loop};
@@ -391,10 +392,11 @@ impl Track {
                 .into_iter()
                 .map(|s| s.rescale_timescale(from, to))
                 .collect();
-            self.start_decode_time = u64::try_from(super::sample::rescale_ticks(
+            self.start_decode_time = u64::try_from(rescale_i64(
                 i64::try_from(self.start_decode_time).unwrap_or(i64::MAX),
                 from,
                 to,
+                Rounding::Floor,
             ))
             .unwrap_or(u64::MAX);
         }

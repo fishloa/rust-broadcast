@@ -179,11 +179,10 @@ mod tests {
         let mut bad = b.clone();
         bad[3] = 0x31;
         assert!(GreenAccessUnitSection::parse(&bad).is_err());
-        assert!(
-            GreenAccessUnitSection::new(clock33::WRAP_33BIT, &[])
-                .serialize_into(&mut [0u8; 32])
-                .is_err()
-        );
+        assert!(matches!(
+            &(GreenAccessUnitSection::new(clock33::WRAP_33BIT, &[]).serialize_into(&mut [0u8; 32])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         // a received ssi=1 is preserved on re-serialize
         let mut with_ssi = s.clone();
         with_ssi.bits.section_syntax_indicator = true;

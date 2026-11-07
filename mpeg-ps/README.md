@@ -78,7 +78,7 @@ Examples: `cargo run -p mpeg-ps --example parse_pack_header` and
 |---|---|
 | Pack header | `PackHeader<'a>` (`Parse`/`Serialize`; `header_len`), `Scr` (42-bit @ 27 MHz; `ticks`, `seconds`), `PACK_START_CODE` |
 | System header | `SystemHeader` (`rate_bound`, `audio_bound`, `video_bound`, lock/CSPS/fixed flags, `reserved_bits`; `Parse`/`Serialize`), `StdBufferBound`, `SYSTEM_HEADER_START_CODE` |
-| Program stream map | `ProgramStreamMap<'a>` (`version`, `current_next_indicator`, `program_stream_info`, `elementary_stream_map: Vec<EsMapEntry>`, `crc`), `EsMapEntry<'a>`, `MAP_STREAM_ID`, `PSM_START_CODE` |
+| Program stream map | `ProgramStreamMap<'a>` (`version`, `current_next_indicator`, `program_stream_info`, `elementary_stream_map: Vec<EsMapEntry>`, `crc`), `EsMapEntry<'a>`, `MAP_STREAM_ID` |
 | Stream walking | `program_stream::{Pack, parse_pack, parse_all_packs, scan_packs, PackScan, SkippedRegion}`; `Pack` holds the pack header, optional system header, optional PSM and `pes_packets: Vec<mpeg_pes::PesPacket>` |
 | Constants / errors | `PROGRAM_END_CODE`, `PACKET_START_CODE_PREFIX` (re-exported from `mpeg-pes`), `Error`, `Result` |
 

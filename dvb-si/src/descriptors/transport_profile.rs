@@ -144,6 +144,9 @@ mod tests {
         assert!(TransportProfileDescriptor::parse(&[TAG, 0]).is_err());
         let mut d = TransportProfileDescriptor::new(TransportProfile::Complete);
         d.private_data = vec![0; 255];
-        assert!(d.serialize_into(&mut [0u8; 300]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 300])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

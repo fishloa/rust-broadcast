@@ -105,6 +105,7 @@
 
 use crate::TrackId;
 use alloc::vec::Vec;
+use broadcast_common::timescale::{Rounding, rescale_i64};
 
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
@@ -299,10 +300,10 @@ fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<u
 /// splice — which is what keeps sub-tick rounding from compounding across a
 /// chain of splices (see the module-level doc).
 fn rescale_ticks(ticks: i64, from_timescale: u32, to_timescale: u32) -> i64 {
-    if from_timescale == 0 || to_timescale == 0 || from_timescale == to_timescale {
+    if from_timescale == 0 || to_timescale == 0 {
         return ticks;
     }
-    ((ticks as i128 * to_timescale as i128) / from_timescale as i128) as i64
+    rescale_i64(ticks, from_timescale, to_timescale, Rounding::TowardZero)
 }
 
 /// Shift every sample's absolute `dts`/`pts` — when present — by `offset`

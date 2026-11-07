@@ -9,10 +9,13 @@
 
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
+use quick_xml::NsReader;
+use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_predefined_entity;
-use quick_xml::events::Event;
-use quick_xml::name::ResolveResult;
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::name::{QName, ResolveResult};
 
 /// Message for a character outside the XML 1.0 §2.2 `Char` production.
 pub const BAD_CHAR: &str = "character not allowed in XML 1.0 (Char production, §2.2)";
@@ -65,10 +68,91 @@ pub fn namespace_of(result: ResolveResult<'_>) -> Result<Option<String>, String>
     }
 }
 
+/// One attribute of a start tag, namespace declarations excluded.
+#[derive(Debug)]
+pub struct TagAttribute {
+    /// Resolved namespace URI; `None` for an unprefixed attribute (which is
+    /// never in the default namespace).
+    pub namespace: Option<String>,
+    /// Local name.
+    pub name: String,
+    /// Normalized, unescaped value, every character inside the `Char`
+    /// production.
+    pub value: String,
+}
+
+/// `message` followed by the reader's byte position, the text every XML error
+/// of the pull parsers carries.
+pub fn message_at(reader: &NsReader<&[u8]>, message: &str) -> String {
+    format!("{message} at byte {}", reader.buffer_position())
+}
+
+/// The next event with its owned element-namespace resolution: the
+/// namespace outcome is the [`namespace_of`] result, a reader failure is its
+/// description.
+pub fn read_event<'a>(
+    reader: &mut NsReader<&'a [u8]>,
+) -> Result<(Result<Option<String>, String>, Event<'a>), String> {
+    match reader.read_resolved_event() {
+        Ok((ns, event)) => Ok((namespace_of(ns), event)),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The attributes of a start tag with namespace declarations skipped, values
+/// normalized and validated against the `Char` production, and each name
+/// resolved against `reader`'s current namespace scope. `fail` turns a
+/// description into the caller's error.
+pub fn read_attributes<E>(
+    reader: &NsReader<&[u8]>,
+    start: &BytesStart<'_>,
+    fail: impl Fn(&str) -> E,
+) -> Result<Vec<TagAttribute>, E> {
+    read_attributes_checked(reader, start, fail, |_, _| Ok(()))
+}
+
+/// [`read_attributes`] with `admit(count, value)` run on every attribute after
+/// it is normalized and before its characters are validated, so a caller can
+/// enforce a count or size limit with its own error; `count` is the 1-based
+/// position among the non-declaration attributes.
+pub fn read_attributes_checked<E>(
+    reader: &NsReader<&[u8]>,
+    start: &BytesStart<'_>,
+    fail: impl Fn(&str) -> E,
+    mut admit: impl FnMut(usize, &str) -> Result<(), E>,
+) -> Result<Vec<TagAttribute>, E> {
+    let resolver = reader.resolver();
+    let mut out = Vec::new();
+    for attr in start.attributes() {
+        let attr = attr.map_err(|e| fail(&e.to_string()))?;
+        let key: QName<'_> = attr.key;
+        let is_declaration = match key.prefix() {
+            None => key.as_ref() == "xmlns",
+            Some(p) => p.is_xmlns(),
+        };
+        if is_declaration {
+            continue;
+        }
+        let value = attr
+            .normalized_value(XmlVersion::Implicit1_0)
+            .map_err(|e| fail(&e.to_string()))?;
+        admit(out.len() + 1, &value)?;
+        if !value.chars().all(is_xml_char) {
+            return Err(fail(BAD_CHAR));
+        }
+        let (ns, local) = resolver.resolve_attribute(key);
+        out.push(TagAttribute {
+            namespace: namespace_of(ns).map_err(|m| fail(&m))?,
+            name: local.into_inner().to_string(),
+            value: value.into_owned(),
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quick_xml::NsReader;
 
     fn first_char_data(xml: &str) -> Result<Option<String>, String> {
         let mut reader = NsReader::from_str(xml);
@@ -130,5 +214,83 @@ mod tests {
                 .unwrap_err()
                 .contains("unknown namespace prefix")
         );
+    }
+
+    fn start_attributes(
+        xml: &str,
+        admit: impl FnMut(usize, &str) -> Result<(), String>,
+    ) -> Result<Vec<TagAttribute>, String> {
+        let mut reader = NsReader::from_str(xml);
+        loop {
+            let (_, event) = read_event(&mut reader)?;
+            if let Event::Start(e) | Event::Empty(e) = event {
+                return read_attributes_checked(&reader, &e, |m| message_at(&reader, m), admit);
+            }
+        }
+    }
+
+    #[test]
+    fn attributes_skip_declarations_and_resolve_namespaces() {
+        let attrs = start_attributes(
+            r#"<a xmlns="urn:d" xmlns:p="urn:p" plain="1" p:q="2"/>"#,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(attrs.len(), 2);
+        assert_eq!(
+            (
+                attrs[0].namespace.as_deref(),
+                attrs[0].name.as_str(),
+                attrs[0].value.as_str()
+            ),
+            (None, "plain", "1")
+        );
+        assert_eq!(
+            (
+                attrs[1].namespace.as_deref(),
+                attrs[1].name.as_str(),
+                attrs[1].value.as_str()
+            ),
+            (Some("urn:p"), "q", "2")
+        );
+    }
+
+    #[test]
+    fn attribute_values_are_normalized_and_char_checked() {
+        let attrs = start_attributes("<a v=\"x&#10;y&amp;z\"/>", |_, _| Ok(())).unwrap();
+        assert_eq!(attrs[0].value, "x\ny&z");
+        let literal = start_attributes("<a v=\"a\nb\"/>", |_, _| Ok(())).unwrap();
+        assert_eq!(literal[0].value, "a b");
+        let err = start_attributes("<a v=\"&#1;\"/>", |_, _| Ok(())).unwrap_err();
+        assert!(
+            err.starts_with(BAD_CHAR) && err.contains("at byte"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn admit_sees_the_one_based_count_and_can_veto() {
+        let mut seen = Vec::new();
+        start_attributes("<a xmlns:p=\"urn:p\" x=\"1\" y=\"22\"/>", |n, v| {
+            seen.push((n, v.to_string()));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(seen, [(1, "1".to_string()), (2, "22".to_string())]);
+        let err = start_attributes("<a x=\"1\" y=\"22\"/>", |n, _| {
+            if n > 1 {
+                Err("too many".to_string())
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert_eq!(err, "too many");
+    }
+
+    #[test]
+    fn unknown_attribute_prefix_is_an_error() {
+        let err = start_attributes("<a q:x=\"1\"/>", |_, _| Ok(())).unwrap_err();
+        assert!(err.contains("unknown namespace prefix"), "{err}");
     }
 }

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `PesDataField::parse` returns `Error::BadEndOfPesMarker` when exactly one byte follows the last whole segment and it is not the fixed `0xFF` `end_of_PES_data_field_marker` (EN 300 743 §7.2, Table 3); a field with misframed or truncated segments keeps its remainder verbatim as before (c2 TH3).
+### Removed
+- `Error::UnknownDataType` and `Error::UnknownObjectCodingMethod`: never constructed. Reserved `data_type` and `object_coding_method` values are carried losslessly as `DataType::Reserved` / `ObjectCodingMethod::Reserved`, and EN 300 743 requires no rejection of them.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 

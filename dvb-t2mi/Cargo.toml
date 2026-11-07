@@ -20,7 +20,6 @@ broadcast-common   = { path = "../broadcast-common", version = "10.0", default-f
 dvb-bbframe  = { path = "../dvb-bbframe", version = "12.1", optional = true, default-features = false }
 mpeg-ts      = { path = "../mpeg-ts", version = "0.6", optional = true, default-features = false }
 chrono       = { workspace = true, optional = true, features = ["alloc"] }
-erased-serde = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
 thiserror = { version = "2", default-features = false }
 num_enum = { workspace = true }
 bytes        = { version = "1", default-features = false, optional = true }
@@ -48,11 +47,11 @@ default = ["std", "ts"]
 # needs only `alloc`.
 # Every optional feature except `std` itself (`ts`, `serde`, `chrono`, `yoke`) is
 # no_std+alloc-clean and is built on thumbv7em in CI.
-std     = ["broadcast-common/std", "dvb-bbframe?/std", "mpeg-ts?/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "serde?/std", "erased-serde?/std", "bytes?/std"]
+std     = ["broadcast-common/std", "dvb-bbframe?/std", "mpeg-ts?/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "serde?/std", "bytes?/std"]
 # `ts`: the feed-and-iterate pump (feed_ts) and the InnerTsRecovery driver,
 # which pulls in `bytes` and the `dvb-bbframe` BBFrame extractor.
 ts      = ["dep:bytes", "dep:dvb-bbframe", "dep:mpeg-ts"]
-serde   = ["dep:serde", "dep:erased-serde", "mpeg-ts?/serde"]
+serde   = ["dep:serde", "broadcast-common/serde", "mpeg-ts?/serde"]
 
 # `chrono`: decoded UTC emission-time accessor on T2TimestampPayload.
 # Mirrors dvb-si's chrono feature; OFF by default.

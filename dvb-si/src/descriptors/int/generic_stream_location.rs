@@ -190,13 +190,6 @@ pub struct IpMacGenericStreamLocationDescriptor<'a> {
 }
 
 impl<'a> IpMacGenericStreamLocationDescriptor<'a> {
-    /// `PHY_stream_id` split into its Table 35 sub-fields according to
-    /// [`modulation_system_type`](Self::modulation_system_type).
-    #[must_use]
-    pub fn phy_stream(&self) -> PhyStreamId {
-        PhyStreamId::decode(self.modulation_system_type, self.phy_stream_id)
-    }
-
     fn selector_len(&self) -> usize {
         match self.selector {
             GenericStreamSelector::Flags(_) => 1,
@@ -347,13 +340,14 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
         // selector_length (3) runs past the end.
-        assert!(
-            IpMacGenericStreamLocationDescriptor::parse(&[TAG, 9, 0, 1, 4, 0, 2, 0, 3, 0x83, 1])
-                .is_err()
-        );
-        assert!(
-            IpMacGenericStreamLocationDescriptor::parse(&[TAG, 7, 0, 0, 0, 0, 0, 0, 0]).is_err()
-        );
+        assert!(matches!(
+            &(IpMacGenericStreamLocationDescriptor::parse(&[TAG, 9, 0, 1, 4, 0, 2, 0, 3, 0x83, 1])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(IpMacGenericStreamLocationDescriptor::parse(&[TAG, 7, 0, 0, 0, 0, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]
@@ -367,64 +361,20 @@ mod tests {
             trailing: &[],
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         let big = [0u8; 128];
         let d = IpMacGenericStreamLocationDescriptor {
             selector: GenericStreamSelector::Bytes(&big),
             ..d
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
-    }
-
-    #[test]
-    fn phy_stream_id_sub_fields_per_table_35() {
-        let mk = |t, id| IpMacGenericStreamLocationDescriptor {
-            interactive_network_id: 0,
-            modulation_system_type: t,
-            modulation_system_id: 0,
-            phy_stream_id: id,
-            selector: GenericStreamSelector::Flags(0),
-            trailing: &[],
-        };
-        assert_eq!(
-            mk(ModulationSystemType::Dvbs2, 0x1234).phy_stream(),
-            PhyStreamId::Isi(0x1234)
-        );
-        assert_eq!(
-            mk(ModulationSystemType::DvbNgh, 0x1234).phy_stream(),
-            PhyStreamId::Plp(0x1234)
-        );
-        assert_eq!(
-            mk(ModulationSystemType::Dvbc2, 0x1234).phy_stream(),
-            PhyStreamId::DataSlicePlp {
-                data_slice_id: 0x12,
-                plp_id: 0x34
-            }
-        );
-        assert_eq!(
-            mk(ModulationSystemType::Dvbs2x, 0x1234).phy_stream(),
-            PhyStreamId::TimeSliceIsi {
-                time_slice: 0x12,
-                isi: 0x34
-            }
-        );
-        assert_eq!(
-            mk(ModulationSystemType::Reserved(9), 0x1234).phy_stream(),
-            PhyStreamId::Unspecified(0x1234)
-        );
-        for t in [
-            ModulationSystemType::Dvbs2,
-            ModulationSystemType::Dvbt2,
-            ModulationSystemType::Dvbc2,
-            ModulationSystemType::DvbNgh,
-            ModulationSystemType::Dvbs2x,
-            ModulationSystemType::Reserved(7),
-        ] {
-            for raw in [0u16, 0x00FF, 0xFF00, 0xABCD, 0xFFFF] {
-                assert_eq!(PhyStreamId::decode(t, raw).to_u16(), raw);
-            }
-        }
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

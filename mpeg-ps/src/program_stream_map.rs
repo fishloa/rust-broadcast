@@ -13,8 +13,6 @@ use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 pub const PACKET_START_CODE_PREFIX: u32 = 0x00_0001;
 /// `map_stream_id` — `0xBC`, combined with the prefix forms the PSM start code.
 pub const MAP_STREAM_ID: u8 = 0xBC;
-/// Combined PSM start code: `0x000001BC`.
-pub const PSM_START_CODE: u32 = (PACKET_START_CODE_PREFIX << 8) | MAP_STREAM_ID as u32;
 
 /// Bytes before the map body: prefix(3) + map_stream_id(1) + psm_length(2) = 6.
 const PREFIX_LEN: usize = 6;
@@ -110,7 +108,6 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
             });
         }
 
-        // Validate CRC before trusting the parsed content
         let crc_data_end = crc_end - 4;
         let crc_data = &b[0..crc_data_end];
         let stored_crc = u32::from_be_bytes([
@@ -167,7 +164,6 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
 
         let program_stream_info = &b[info_start..info_end];
 
-        // Parse elementary stream loop
         let es_data = &b[es_start..es_end];
         let elementary_stream_map = parse_es_loop(es_data, single_extension_stream_flag)?;
 
@@ -528,7 +524,10 @@ mod tests {
             crc: 0,
         };
         let mut buf = vec![0u8; psm.serialized_len()];
-        assert!(psm.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            psm.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
     }
 
     /// MPS-W6 (#1129): `program_stream_map_length` (spec max 1018, Table
@@ -544,7 +543,10 @@ mod tests {
             crc: 0,
         };
         let mut buf = vec![0u8; psm.serialized_len()];
-        assert!(psm.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            psm.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
     }
 
     /// The boundary: exactly the spec max still serializes and round-trips.

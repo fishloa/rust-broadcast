@@ -151,7 +151,10 @@ mod tests {
     #[test]
     fn parse_rejects_buffer_shorter_than_3() {
         assert!(AuxIqPayload::parse(&[0x00]).is_err());
-        assert!(AuxIqPayload::parse(&[]).is_err());
+        assert!(matches!(
+            &(AuxIqPayload::parse(&[])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

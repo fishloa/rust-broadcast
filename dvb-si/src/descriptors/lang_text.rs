@@ -121,9 +121,15 @@ mod tests {
         let mut r = EntryReader::new(&[], 0, 0x5C);
         assert!(r.text("overrun", 0).is_err());
         let mut r = EntryReader::new(&[5, b'a'], 0, 0x5C);
-        assert!(r.text("overrun", 0).is_err());
+        assert!(matches!(
+            &(r.text("overrun", 0)),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let mut r = EntryReader::new(&[1, b'a'], 0, 0x5C);
-        assert!(r.text("overrun", 1).is_err());
+        assert!(matches!(
+            &(r.text("overrun", 1)),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let mut r = EntryReader::new(&[1, b'a'], 0, 0x5C);
         assert_eq!(r.text("overrun", 0).unwrap().raw(), b"a");
     }

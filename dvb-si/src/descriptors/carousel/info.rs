@@ -94,13 +94,19 @@ mod tests {
         let bytes = [TAG, 3, b'f', b'r', b'a'];
         let d = InfoDescriptor::parse(&bytes).unwrap();
         assert!(d.text.is_empty());
-        assert!(InfoDescriptor::parse(&[TAG, 2, b'e', b'n']).is_err());
+        assert!(matches!(
+            &(InfoDescriptor::parse(&[TAG, 2, b'e', b'n'])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let big = vec![b'x'; 253];
         let d = InfoDescriptor {
             language_code: LangCode(*b"eng"),
             text: DvbText::new(&big),
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut out)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

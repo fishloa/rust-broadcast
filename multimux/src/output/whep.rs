@@ -100,6 +100,7 @@ use transmux::TrackId;
 
 use broadcast_auth::Verifier;
 use broadcast_common::Parse;
+use broadcast_common::timescale::{Rounding, rescale_u64};
 use media_plane::trunk::{SampleCursorItem, Trunk};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
@@ -1143,11 +1144,7 @@ fn trunk_with_avc_track() -> Arc<Trunk> {
 /// avoid overflow for a `from_timescale` far below 90 kHz on a
 /// long-running session's large absolute tick count.
 fn rescale_to_90k(ticks: u64, from_timescale: u32) -> u32 {
-    if from_timescale == 0 || from_timescale == VIDEO_CLOCK_RATE {
-        return ticks as u32;
-    }
-    (((ticks as u128) * VIDEO_CLOCK_RATE as u128 + (from_timescale as u128) / 2)
-        / from_timescale as u128) as u32
+    rescale_u64(ticks, from_timescale, VIDEO_CLOCK_RATE, Rounding::Nearest) as u32
 }
 
 /// Byte offset of the `sequence number` field within the RTP fixed header

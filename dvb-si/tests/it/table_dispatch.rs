@@ -7,13 +7,9 @@ use dvb_si::tables::AnyTableSection;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-fn crc32_mpeg2(data: &[u8]) -> u32 {
-    broadcast_common::crc32_mpeg2::compute(data)
-}
-
 /// Append a correct CRC_32 over all bytes already in `v`.
 fn push_crc(v: &mut Vec<u8>) {
-    let crc = crc32_mpeg2(v);
+    let crc = broadcast_common::crc32_mpeg2::compute(v);
     v.extend_from_slice(&crc.to_be_bytes());
 }
 

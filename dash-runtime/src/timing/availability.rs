@@ -8,7 +8,10 @@
 //!   time-shift buffer; Annex A.3.4 prints the same quantity)
 //! * Initialization Segment: available from `AST + PeriodStart` (5.3.9.5.2).
 
-const MICROS_PER_SECOND: i128 = 1_000_000;
+use broadcast_common::timescale::{Rounding, rescale};
+
+const MICROS_PER_SECOND_U32: u32 = 1_000_000;
+const MICROS_PER_SECOND: i128 = MICROS_PER_SECOND_U32 as i128;
 const MICROS_PER_SECOND_F64: f64 = 1_000_000.0;
 const ATO_CLAMP_US: i128 = 1 << 80;
 
@@ -23,9 +26,7 @@ pub fn ato_seconds_to_us(seconds: f64) -> i128 {
 /// Ticks to microseconds, rounded toward negative infinity.
 #[must_use]
 pub fn ticks_to_us(ticks: i128, timescale: u64) -> i128 {
-    ticks
-        .saturating_mul(MICROS_PER_SECOND)
-        .div_euclid(i128::from(timescale.max(1)))
+    rescale(ticks, timescale, MICROS_PER_SECOND_U32, Rounding::Floor)
 }
 
 /// [`segment_available_from`] for a segment given in ticks: the end of the

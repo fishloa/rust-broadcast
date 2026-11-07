@@ -18,9 +18,10 @@ use dvb_si::carousel::{Dii, DiiModule, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::RunningStatus;
+use dvb_si::tables::TransportStreamEntry;
 use dvb_si::tables::{
     ait::{AitApplication, AitSection, ApplicationIdentifier, ApplicationType, ControlCode},
-    bat::{BatSection, BatTransportStream},
+    bat::BatSection,
     cat::CatSection,
     cit::CitSection,
     container::ContainerSection,
@@ -32,7 +33,7 @@ use dvb_si::tables::{
     mpe::{Checksum, MacAddress, MpeDatagramSection},
     mpe_fec::{MpeFecSection, RealTimeParameters as MpeFecRtp},
     mpe_ifec::{MpeIfecSection, RealTimeParameters as MpeIfecRtp},
-    nit::{NitKind, NitSection, NitTransportStream},
+    nit::{NitKind, NitSection},
     pat::{PatEntry, PatSection},
     pmt::{PmtSection, PmtStream, StreamType},
     protection_message::{ProtectionMessageBody, ProtectionMessageSection},
@@ -234,7 +235,7 @@ fn nit_serializes_to_valid_json() {
         0,
         0,
         DescriptorLoop::new(&[]),
-        vec![NitTransportStream::new(
+        vec![TransportStreamEntry::new(
             0x1234,
             0x0020,
             DescriptorLoop::new(&[]),
@@ -315,7 +316,7 @@ fn bat_serializes_to_valid_json() {
         0,
         0,
         DescriptorLoop::new(&[]),
-        vec![BatTransportStream::new(
+        vec![TransportStreamEntry::new(
             0x1234,
             0x0020,
             DescriptorLoop::new(&[]),

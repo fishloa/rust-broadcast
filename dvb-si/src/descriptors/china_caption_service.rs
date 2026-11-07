@@ -348,7 +348,10 @@ mod tests {
         let svc =
             ChinaCaptionService::new(LangCode(*b"chi"), 64, false, ChinaCaptionCharSet::Gb2312);
         let d = ChinaCaptionServiceDescriptor::new(vec![svc], Pid::new(0x100));
-        assert!(d.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 16])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         let svc = ChinaCaptionService::new(
             LangCode(*b"chi"),
             1,
@@ -358,9 +361,15 @@ mod tests {
         let d = ChinaCaptionServiceDescriptor::new(vec![svc; 1], Pid::new(0x100));
         let mut bad = d.clone();
         bad.reserved_pid = 8;
-        assert!(bad.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            &(bad.serialize_into(&mut [0u8; 16])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         let many = ChinaCaptionServiceDescriptor::new(vec![svc; 32], Pid::new(0x100));
-        assert!(many.serialize_into(&mut [0u8; 256]).is_err());
+        assert!(matches!(
+            &(many.serialize_into(&mut [0u8; 256])),
+            Err(crate::error::Error::ValueOutOfRange { .. })
+        ));
     }
 
     #[test]

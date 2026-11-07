@@ -212,7 +212,13 @@ mod tests {
 
     #[test]
     fn truncated_entries_are_rejected() {
-        assert!(InsertAudioProvisioning::parse(&[2, 1, 1, 2]).is_err());
-        assert!(InsertAudioProvisioning::parse(&[]).is_err());
+        assert!(matches!(
+            &(InsertAudioProvisioning::parse(&[2, 1, 1, 2])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            &(InsertAudioProvisioning::parse(&[])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 }

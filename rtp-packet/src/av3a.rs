@@ -39,8 +39,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
 
-/// SDP `a=rtpmap` / MIME subtype of the payload (T/AI 109.7 10.1.3.2, 10.1.4.2).
-pub const ENCODING_NAME: &str = "AV3A-AATF";
 /// Default RTP timestamp clock rate (10.1.2.2; 10.1.4.2 `rate` default 90000).
 pub const DEFAULT_CLOCK_RATE: u32 = 90_000;
 /// `syncword` of an `aatf_frame()` (Table A.4): `'1111 1111 1111'`.
@@ -51,12 +49,6 @@ pub const DYNAMIC_PT_MIN: u8 = 96;
 pub const DYNAMIC_PT_MAX: u8 = 127;
 /// `sampling_frequency_index` value that adds an explicit 24-bit `sampling_frequency`.
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
-
-/// Whether `pt` is in the dynamic payload-type range AV3A-AATF uses.
-#[must_use]
-pub const fn is_dynamic_payload_type(pt: u8) -> bool {
-    pt >= DYNAMIC_PT_MIN && pt <= DYNAMIC_PT_MAX
-}
 
 fn short(what: &'static str) -> Error {
     Error::BufferTooShort {
@@ -988,8 +980,14 @@ mod tests {
             "wrong syncword"
         );
         // syncword ok, audio_codec_id 3: no header defined
-        assert!(AatfFrame::parse(&[0xFF, 0xF3, 0, 0]).is_err());
-        assert!(AatfFrame::parse(&[0xFF, 0xF0]).is_err());
+        assert!(matches!(
+            &(AatfFrame::parse(&[0xFF, 0xF3, 0, 0])),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            &(AatfFrame::parse(&[0xFF, 0xF0])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
@@ -1011,35 +1009,34 @@ mod tests {
         };
         let mut buf = [0u8; 32];
         // profile/content mismatch
-        assert!(
-            ga(
+        assert!(matches!(
+            &(ga(
                 1,
                 GaContent::Channel {
                     channel_number_index: 1
                 },
                 Some(0)
             )
-            .serialize_into(&mut buf)
-            .is_err()
-        );
+            .serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         // bitrate_index present for profile 1
-        assert!(
-            ga(1, GaContent::ReservedSoundBed(2), Some(0))
-                .serialize_into(&mut buf)
-                .is_err()
-        );
+        assert!(matches!(
+            &(ga(1, GaContent::ReservedSoundBed(2), Some(0)).serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         // over-wide field
-        assert!(
-            ga(
+        assert!(matches!(
+            &(ga(
                 0,
                 GaContent::Channel {
                     channel_number_index: 200
                 },
                 Some(0)
             )
-            .serialize_into(&mut buf)
-            .is_err()
-        );
+            .serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         // lossless frequency/index disagreement
         let ll = AatfFrame {
             anc_data_index: false,
@@ -1053,19 +1050,22 @@ mod tests {
             alignment: 0,
             body: &[],
         };
-        assert!(ll.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(ll.serialize_into(&mut buf)),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         // output too small
-        assert!(
-            ga(
+        assert!(matches!(
+            &(ga(
                 0,
                 GaContent::Channel {
                     channel_number_index: 1
                 },
                 Some(0)
             )
-            .serialize_into(&mut [0u8; 2])
-            .is_err()
-        );
+            .serialize_into(&mut [0u8; 2])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     /// 10.1.1.2 (b) / 10.1.2.2: an `aatf_frame()` larger than the MTU is split;
@@ -1100,12 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_payload_type_range() {
-        assert!(!is_dynamic_payload_type(95));
-        assert!(is_dynamic_payload_type(96));
-        assert!(is_dynamic_payload_type(127));
-        assert!(!is_dynamic_payload_type(128));
-        assert_eq!(ENCODING_NAME, "AV3A-AATF");
+    fn default_fmtp_clock_rate_is_90khz() {
         assert_eq!(Av3aFmtp::default().clock_rate(), 90_000);
     }
 
@@ -1123,7 +1118,10 @@ mod tests {
     #[test]
     fn fmtp_parse_and_render() {
         assert!(
-            Av3aFmtp::parse("codec-nn-id=0x0201; config=2220040140 80; bitrate=320").is_err(),
+            matches!(
+                &(Av3aFmtp::parse("codec-nn-id=0x0201; config=2220040140 80; bitrate=320")),
+                Err(crate::error::Error::InvalidValue { .. })
+            ),
             "space inside hex is rejected"
         );
         let f = Av3aFmtp::parse("rate=48000; codec-nn-id=0x0201; config=222004014080; bitrate=320")
@@ -1146,20 +1144,50 @@ mod tests {
             "rate=48000; codec-nn-id=0x0201; config=222004014080; bitrate=320"
         );
         assert_eq!(Av3aFmtp::parse(&f.to_param_string()).unwrap(), f);
-        assert!(Av3aFmtp::parse("config=abc").is_err());
+        assert!(matches!(
+            &(Av3aFmtp::parse("config=abc")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         assert!(Av3aFmtp::parse("codec-nn-id=zz").is_err());
-        assert!(Av3aFmtp::parse("rate=x").is_err());
+        assert!(matches!(
+            &(Av3aFmtp::parse("rate=x")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         // no leading '+', no zero clock rate, no duplicated parameter
-        assert!(Av3aFmtp::parse("codec-nn-id=+201").is_err());
-        assert!(Av3aFmtp::parse("codec-nn-id=0x+201").is_err());
-        assert!(Av3aFmtp::parse("rate=+48000").is_err());
+        assert!(matches!(
+            &(Av3aFmtp::parse("codec-nn-id=+201")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            &(Av3aFmtp::parse("codec-nn-id=0x+201")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            &(Av3aFmtp::parse("rate=+48000")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         assert!(Av3aFmtp::parse("bitrate=+320").is_err());
         assert!(Av3aFmtp::parse("rate=0").is_err());
-        assert!(Av3aFmtp::parse("rate=48000; rate=44100").is_err());
-        assert!(Av3aFmtp::parse("RATE=48000; rate=48000").is_err());
-        assert!(Av3aFmtp::parse("codec-nn-id=0x0201; codec-nn-id=0x0201").is_err());
-        assert!(Av3aFmtp::parse("config=00; config=00").is_err());
-        assert!(Av3aFmtp::parse("bitrate=1; bitrate=1").is_err());
+        assert!(matches!(
+            &(Av3aFmtp::parse("rate=48000; rate=44100")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            &(Av3aFmtp::parse("RATE=48000; rate=48000")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            &(Av3aFmtp::parse("codec-nn-id=0x0201; codec-nn-id=0x0201")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            &(Av3aFmtp::parse("config=00; config=00")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            &(Av3aFmtp::parse("bitrate=1; bitrate=1")),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         assert_eq!(Av3aFmtp::parse("rate=48000").unwrap().rate, Some(48000));
     }
 
@@ -1169,7 +1197,13 @@ mod tests {
         let mut d = Av3aDepacketizer::with_max_frame_bytes(10);
         assert!(d.push(false, &[0; 6]).unwrap().is_none());
         assert!(d.push(false, &[0; 4]).unwrap().is_none());
-        assert!(d.push(false, &[0; 1]).is_err(), "11 bytes > cap of 10");
+        assert!(
+            matches!(
+                &(d.push(false, &[0; 1])),
+                Err(crate::error::Error::InvalidValue { .. })
+            ),
+            "11 bytes > cap of 10"
+        );
         assert_eq!(d.buffered(), 0, "partial frame dropped on overflow");
         // a frame exactly at the cap still completes, and the next one works
         assert_eq!(d.push(true, &[7; 10]).unwrap().unwrap().len(), 10);
@@ -1177,7 +1211,10 @@ mod tests {
         // the default cap applies to `new()`
         let mut d = Av3aDepacketizer::new();
         assert!(d.push(false, &vec![0u8; DEFAULT_MAX_FRAME_BYTES]).is_ok());
-        assert!(d.push(false, &[0]).is_err());
+        assert!(matches!(
+            &(d.push(false, &[0])),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         assert_eq!(Av3aFmtp::parse("").unwrap(), Av3aFmtp::default());
     }
 }

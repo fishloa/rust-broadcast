@@ -146,17 +146,6 @@ impl AdaptationFieldControl {
         }
     }
 
-    /// Decode into the `(has_adaptation, has_payload)` flag pair stored on
-    /// [`TsHeader`]. Exact inverse of [`from_flags`](Self::from_flags).
-    pub fn to_flags(self) -> (bool, bool) {
-        match self {
-            Self::Reserved => (false, false),
-            Self::PayloadOnly => (false, true),
-            Self::AdaptationOnly => (true, false),
-            Self::AdaptationAndPayload => (true, true),
-        }
-    }
-
     /// Short label for this value, per the #204 convention.
     pub fn name(&self) -> &'static str {
         match self {
@@ -2148,7 +2137,6 @@ mod tests {
         for (has_af, has_pl, expected_bits) in cases {
             let afc = AdaptationFieldControl::from_flags(has_af, has_pl);
             assert_eq!(afc.to_bits(), expected_bits);
-            assert_eq!(afc.to_flags(), (has_af, has_pl));
         }
     }
 
@@ -2202,7 +2190,10 @@ mod tests {
             opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut buf = vec![0u8; af.serialized_len()];
-        assert!(af.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(af.serialize_into(&mut buf)),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     /// Known-bytes test: flags=0x30 (discontinuity + PCR), known PCR vector.

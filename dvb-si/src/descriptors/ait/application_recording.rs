@@ -368,16 +368,28 @@ mod tests {
 
     #[test]
     fn malformed_bodies_rejected() {
-        assert!(ApplicationRecordingDescriptor::parse(&[TAG, 0]).is_err());
-        assert!(ApplicationRecordingDescriptor::parse(&[TAG, 2, 0x00, 0x01]).is_err());
+        assert!(matches!(
+            &(ApplicationRecordingDescriptor::parse(&[TAG, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            &(ApplicationRecordingDescriptor::parse(&[TAG, 2, 0x00, 0x01])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         // label overruns
         assert!(ApplicationRecordingDescriptor::parse(&[TAG, 4, 0, 1, 5, b'a']).is_err());
         // private_length overruns
-        assert!(ApplicationRecordingDescriptor::parse(&[TAG, 4, 0, 0, 0, 0xFF]).is_err());
+        assert!(matches!(
+            &(ApplicationRecordingDescriptor::parse(&[TAG, 4, 0, 0, 0, 0xFF])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         // a single trailing reserved_future_use byte is accepted
         assert!(ApplicationRecordingDescriptor::parse(&[TAG, 5, 0, 0, 0, 0, 0xFF]).is_ok());
         // missing private_length
-        assert!(ApplicationRecordingDescriptor::parse(&[TAG, 3, 0, 0, 0]).is_err());
+        assert!(matches!(
+            &(ApplicationRecordingDescriptor::parse(&[TAG, 3, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]

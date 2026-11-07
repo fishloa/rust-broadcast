@@ -122,6 +122,9 @@ mod tests {
             tai_ns: 0,
             utc_offset: 0,
         };
-        assert!(op.try_to_bytes().is_err());
+        assert!(matches!(
+            &(op.try_to_bytes()),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 }

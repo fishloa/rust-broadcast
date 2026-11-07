@@ -206,29 +206,6 @@ impl ExtensionHeader {
         }
     }
 
-    /// `true` if this is a mandatory (`H-LEN = 0`) extension header.
-    pub fn is_mandatory(&self) -> bool {
-        matches!(self, ExtensionHeader::Mandatory { .. })
-    }
-
-    /// The typed [`MandatoryHType`] for a Mandatory header, or `None` if this
-    /// is an Optional header.
-    pub fn mandatory_h_type(&self) -> Option<MandatoryHType> {
-        match self {
-            ExtensionHeader::Mandatory { h_type, .. } => Some(MandatoryHType::from_u8(*h_type)),
-            ExtensionHeader::Optional { .. } => None,
-        }
-    }
-
-    /// The typed [`OptionalHType`] for an Optional header, or `None` if this
-    /// is a Mandatory header.
-    pub fn optional_h_type(&self) -> Option<OptionalHType> {
-        match self {
-            ExtensionHeader::Optional { h_type, .. } => Some(OptionalHType::from_u8(*h_type)),
-            ExtensionHeader::Mandatory { .. } => None,
-        }
-    }
-
     /// Spec label for this header kind.
     pub fn name(&self) -> &'static str {
         match self {
@@ -560,37 +537,6 @@ mod tests {
     }
 
     // typed H-Type accessors return the expected variants.
-    #[test]
-    fn typed_h_type_accessors() {
-        let ts = ExtensionHeader::Optional {
-            h_len: 3,
-            h_type: H_TYPE_TIMESTAMP,
-            body: alloc::vec![0, 0, 0, 0],
-        };
-        assert_eq!(ts.optional_h_type(), Some(OptionalHType::TimeStamp));
-        assert_eq!(ts.mandatory_h_type(), None);
-
-        let mand = ExtensionHeader::Mandatory {
-            h_type: H_TYPE_BRIDGED_FRAME,
-            body: alloc::vec![],
-        };
-        assert_eq!(mand.mandatory_h_type(), Some(MandatoryHType::BridgedFrame));
-        assert_eq!(mand.optional_h_type(), None);
-
-        // Other arms
-        let unk_m = ExtensionHeader::Mandatory {
-            h_type: 0xF0,
-            body: alloc::vec![],
-        };
-        assert_eq!(unk_m.mandatory_h_type(), Some(MandatoryHType::Other(0xF0)));
-
-        let unk_o = ExtensionHeader::Optional {
-            h_len: 2,
-            h_type: 0xF0,
-            body: alloc::vec![0, 0],
-        };
-        assert_eq!(unk_o.optional_h_type(), Some(OptionalHType::Other(0xF0)));
-    }
 
     // Every H_TYPE_* constant must map to a non-default name() — so a new
     // registered H-Type without a label arm fails CI.

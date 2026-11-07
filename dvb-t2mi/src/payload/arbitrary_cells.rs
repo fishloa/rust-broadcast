@@ -130,20 +130,29 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let buf = [0x00u8; 7];
-        assert!(ArbitraryCellsPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(ArbitraryCellsPayload::parse(&buf)),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]
     fn parse_rejects_nonzero_rfu_byte_3() {
         let buf = [0x00u8, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00];
-        assert!(ArbitraryCellsPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(ArbitraryCellsPayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]
     fn parse_rejects_nonzero_rfu_byte_5_high_bits() {
         let mut buf = [0x00u8; 8];
         buf[5] = 0xC0; // top 2 bits set = RFU violation
-        assert!(ArbitraryCellsPayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(ArbitraryCellsPayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]
@@ -184,6 +193,9 @@ mod tests {
             arbitrary_cell_data: &[],
         };
         let mut buf = [0u8; 7];
-        assert!(payload.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            &(payload.serialize_into(&mut buf)),
+            Err(crate::error::Error::OutputBufferTooSmall { .. })
+        ));
     }
 }

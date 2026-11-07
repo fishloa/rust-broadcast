@@ -263,7 +263,6 @@ impl Op for PcrRestampOp {
             return;
         }
 
-        // First PCR on this PID → anchor, preserve as-is.
         let Some(anchor) = self.anchors.get_mut(&pid) else {
             let a = Anchor {
                 anchor_27mhz: current.as_27mhz(),

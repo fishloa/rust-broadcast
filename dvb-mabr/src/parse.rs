@@ -20,10 +20,9 @@ extern crate alloc;
 
 use alloc::string::{String, ToString};
 
+use broadcast_common::xml_chars::TagAttribute;
 use quick_xml::NsReader;
-use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::name::QName;
 
 use crate::error::{Error, Result};
 
@@ -56,15 +55,6 @@ pub(crate) fn is_baseline_namespace(ns: Option<&str>) -> bool {
         Some(NS_MULTICAST_SESSION_CONFIGURATION_2024)
             | Some(NS_MULTICAST_SESSION_CONFIGURATION_2019)
     )
-}
-
-/// One attribute of a start tag: namespace URI (`None` when unprefixed — an
-/// unprefixed attribute is never in the default namespace), local name, value.
-#[derive(Debug)]
-struct TagAttribute {
-    namespace: Option<String>,
-    name: String,
-    value: String,
 }
 
 /// The start tag of the element currently being parsed: its resolved name and
@@ -127,13 +117,6 @@ pub(crate) struct Events<'a> {
     reader: NsReader<&'a [u8]>,
 }
 
-fn xml_error(reader: &NsReader<&[u8]>, message: &str) -> Error {
-    Error::XmlParse(alloc::format!(
-        "{message} at byte {}",
-        reader.buffer_position()
-    ))
-}
-
 impl<'a> Events<'a> {
     pub(crate) fn new(xml: &'a str) -> Self {
         Self {
@@ -142,7 +125,10 @@ impl<'a> Events<'a> {
     }
 
     fn fail(&self, message: &str) -> Error {
-        xml_error(&self.reader, message)
+        Error::XmlParse(broadcast_common::xml_chars::message_at(
+            &self.reader,
+            message,
+        ))
     }
 
     /// Build the [`StartTag`] for a start/empty event, resolving the element
@@ -154,33 +140,8 @@ impl<'a> Events<'a> {
         empty: bool,
     ) -> Result<StartTag> {
         let namespace = ns.map_err(|m| self.fail(&m))?;
-        let resolver = self.reader.resolver();
-        let mut attributes = alloc::vec::Vec::new();
-        for attr in e.attributes() {
-            let attr = attr.map_err(|e| self.fail(&e.to_string()))?;
-            let key: QName<'_> = attr.key;
-            let is_declaration = match key.prefix() {
-                None => key.as_ref() == "xmlns",
-                Some(p) => p.is_xmlns(),
-            };
-            if is_declaration {
-                continue;
-            }
-            let value = attr
-                .normalized_value(XmlVersion::Implicit1_0)
-                .map_err(|e| self.fail(&e.to_string()))?
-                .into_owned();
-            if !value.chars().all(broadcast_common::xml_chars::is_xml_char) {
-                return Err(self.fail(broadcast_common::xml_chars::BAD_CHAR));
-            }
-            let (attr_ns, attr_local) = resolver.resolve_attribute(key);
-            attributes.push(TagAttribute {
-                namespace: broadcast_common::xml_chars::namespace_of(attr_ns)
-                    .map_err(|m| self.fail(&m))?,
-                name: attr_local.into_inner().to_string(),
-                value,
-            });
-        }
+        let attributes =
+            broadcast_common::xml_chars::read_attributes(&self.reader, e, |m| self.fail(m))?;
         Ok(StartTag {
             namespace,
             local: e.local_name().into_inner().to_string(),
@@ -191,10 +152,7 @@ impl<'a> Events<'a> {
 
     /// The next event with its (owned) element-namespace resolution.
     fn read(&mut self) -> Result<(core::result::Result<Option<String>, String>, Event<'a>)> {
-        match self.reader.read_resolved_event() {
-            Ok((ns, event)) => Ok((broadcast_common::xml_chars::namespace_of(ns), event)),
-            Err(e) => Err(self.fail(&e.to_string())),
-        }
+        broadcast_common::xml_chars::read_event(&mut self.reader).map_err(|m| self.fail(&m))
     }
 
     /// The one place character data is decoded and validated: `Some(text)` for
@@ -288,7 +246,7 @@ impl<'a> Events<'a> {
             let event = self
                 .reader
                 .read_event()
-                .map_err(|e| xml_error(&self.reader, &e.to_string()))?;
+                .map_err(|e| self.fail(&e.to_string()))?;
             match event {
                 Event::Eof => return Ok(()),
                 Event::Text(t) if t.trim_ascii().is_empty() => {}
@@ -309,7 +267,7 @@ impl<'a> Events<'a> {
             let event = self
                 .reader
                 .read_event()
-                .map_err(|e| xml_error(&self.reader, &e.to_string()))?;
+                .map_err(|e| self.fail(&e.to_string()))?;
             match event {
                 Event::Eof => return Ok(()),
                 Event::DocType(_) => {

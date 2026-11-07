@@ -68,6 +68,7 @@
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
+use broadcast_common::timescale::{Rounding, rescale_u64};
 use broadcast_common::{Package, crc32_mpeg2};
 use mpeg_pes::{Pts as PesPts, StreamId};
 use mpeg_ts::mux::SectionPacketiser;
@@ -1387,8 +1388,7 @@ fn write_pcr_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: Pid, cc: u8, pcr: 
 /// Rescale `ticks` from a track's `timescale` to the 90 kHz TS clock, rounding to
 /// nearest, and reduce modulo the 33-bit timestamp field.
 fn rescale(ticks: u64, timescale: u64) -> u64 {
-    let scaled = (ticks * TS_CLOCK_HZ + timescale / 2) / timescale;
-    scaled % TS_TIMESTAMP_MOD
+    rescale_for_ordering(ticks, timescale) % TS_TIMESTAMP_MOD
 }
 
 /// Rescale a possibly-negative tick count (used for `pts = dts + composition`),
@@ -1412,8 +1412,7 @@ fn rescale_signed(ticks: i64, timescale: u64) -> u64 {
 /// opaque `CodecConfig::Data` track's recovered durations are untrusted
 /// input that can otherwise do exactly that).
 fn rescale_for_ordering(ticks: u64, timescale: u64) -> u64 {
-    let scaled = (ticks as u128 * TS_CLOCK_HZ as u128 + timescale as u128 / 2) / timescale as u128;
-    scaled.min(u64::MAX as u128) as u64
+    rescale_u64(ticks, timescale, TS_CLOCK_HZ, Rounding::Nearest)
 }
 
 /// Build the elementary-stream PES payload for one sample:

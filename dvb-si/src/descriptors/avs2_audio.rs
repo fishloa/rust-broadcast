@@ -411,11 +411,17 @@ mod tests {
     #[test]
     fn serialize_rejects_inconsistent_and_overwide_fields() {
         let mut d = Avs2AudioDescriptor::new(2, 16);
-        assert!(d.serialize_into(&mut [0u8; 8]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 8])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         d.sample_rate_index = 1;
         d.version = Some(Avs2AudioVersion::new(0, false, 1, None, 1));
         assert!(
-            d.serialize_into(&mut [0u8; 16]).is_err(),
+            matches!(
+                &(d.serialize_into(&mut [0u8; 16])),
+                Err(crate::error::Error::ValueOutOfRange { .. })
+            ),
             "codec id 0 needs codec0"
         );
         d.version = Some(Avs2AudioVersion::new(
@@ -426,10 +432,16 @@ mod tests {
             1,
         ));
         assert!(
-            d.serialize_into(&mut [0u8; 16]).is_err(),
+            matches!(
+                &(d.serialize_into(&mut [0u8; 16])),
+                Err(crate::error::Error::ValueOutOfRange { .. })
+            ),
             "codec0 only for id 0"
         );
         d.version = Some(Avs2AudioVersion::new(1, false, 8, None, 1));
-        assert!(d.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 16])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

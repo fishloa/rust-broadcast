@@ -423,10 +423,16 @@ mod tests {
         assert!(d.serialize_into(&mut [0u8; 16]).is_err());
         d.sample_precision = 1;
         d.chroma_format = 4;
-        assert!(d.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 16])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
         d.chroma_format = 1;
         d.frame_rate_code = Avs3FrameRateCode::Reserved(0x1F);
-        assert!(d.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 16])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

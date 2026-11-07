@@ -442,7 +442,6 @@ impl Op for PidFilterOp {
             return;
         }
 
-        // Extract PID before potential state mutation.
         let Some(pid) = pid_of(packet) else {
             out(packet);
             return;
@@ -453,7 +452,6 @@ impl Op for PidFilterOp {
             return;
         }
 
-        // Advance the service-extract state machine by observing this packet.
         self.observe(packet);
 
         if self.should_keep(pid) {

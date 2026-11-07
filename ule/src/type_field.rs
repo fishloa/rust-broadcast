@@ -60,11 +60,6 @@ impl TypeField {
         }
     }
 
-    /// `true` if this Type field starts an extension header (Next-Header).
-    pub fn is_next_header(self) -> bool {
-        matches!(self, TypeField::NextHeader { .. })
-    }
-
     /// Spec label for this kind of Type field.
     pub fn name(&self) -> &'static str {
         match self {
@@ -82,8 +77,6 @@ mod tests {
 
     #[test]
     fn boundary_split() {
-        assert!(TypeField::from_u16(0x05FF).is_next_header());
-        assert!(!TypeField::from_u16(0x0600).is_next_header());
         assert_eq!(TypeField::from_u16(0x0800), TypeField::EtherType(0x0800));
         assert_eq!(TypeField::from_u16(0x86DD), TypeField::EtherType(0x86DD));
     }

@@ -97,7 +97,10 @@ fn every_descriptor_in_the_tsduck_pmt_is_typed_and_round_trips() {
             // than Table 2-131 prints; our parser follows the spec and rejects those
             // bytes (pinned in `hevc_subregion_follows_the_spec_and_diverges_from_tsduck`).
             0x3F if d[2] == 0x13 => {
-                assert!(Mpeg2ExtensionDescriptor::parse(d).is_err());
+                assert!(matches!(
+                    &(Mpeg2ExtensionDescriptor::parse(d)),
+                    Err(dvb_si::error::Error::BufferTooShort { .. })
+                ));
             }
             0x3F => {
                 let e = rt::<Mpeg2ExtensionDescriptor>(d);

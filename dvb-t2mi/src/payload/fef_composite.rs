@@ -153,7 +153,10 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu1() {
         let buf = [0x00u8, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-        assert!(FefCompositePayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(FefCompositePayload::parse(&buf)),
+            Err(crate::error::Error::ReservedBitsViolation { .. })
+        ));
     }
 
     #[test]
@@ -165,7 +168,10 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let buf = [0x00u8; 7];
-        assert!(FefCompositePayload::parse(&buf).is_err());
+        assert!(matches!(
+            &(FefCompositePayload::parse(&buf)),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

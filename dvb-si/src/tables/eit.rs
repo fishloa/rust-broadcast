@@ -355,23 +355,6 @@ impl<'a> EitEvent<'a> {
         broadcast_common::time::decode_mjd_bcd(self.start_time_raw)
     }
 
-    /// Set the event start time, encoding it into the 40-bit `start_time` field.
-    ///
-    /// # Errors
-    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
-    /// outside the representable 16-bit MJD range.
-    pub fn set_start_time_decoded(
-        &mut self,
-        dt: broadcast_common::time::MjdBcdDateTime,
-    ) -> crate::Result<()> {
-        self.start_time_raw =
-            broadcast_common::time::encode_mjd_bcd(dt).ok_or(crate::Error::ValueOutOfRange {
-                field: "EitEvent::start_time",
-                reason: "date not representable in 16-bit MJD",
-            })?;
-        Ok(())
-    }
-
     /// Decode the 24-bit BCD `duration` (HHMMSS) to a [`core::time::Duration`].
     ///
     /// Returns `None` if the BCD nibbles are out of range. Available without the

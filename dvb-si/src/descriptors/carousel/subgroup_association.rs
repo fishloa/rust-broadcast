@@ -136,7 +136,10 @@ mod tests {
 
     #[test]
     fn wrong_length_and_over_range_oui_rejected() {
-        assert!(SubgroupAssociationDescriptor::parse(&[TAG, 4, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            &(SubgroupAssociationDescriptor::parse(&[TAG, 4, 0, 0, 0, 0])),
+            Err(crate::error::Error::InvalidDescriptor { .. })
+        ));
         let d = SubgroupAssociationDescriptor {
             subgroup_tag: SubgroupTag::new(0x0100_0000, 0),
         };

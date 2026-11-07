@@ -51,7 +51,10 @@ fn foreign_element_inside_metadata_survives_to_xml() {
 fn declaration_not_at_document_start_is_rejected() {
     let xml = format!(r#"<!-- c --><?xml version="1.0"?>{TT}"#);
     assert!(
-        Document::parse_str(&xml).is_err(),
+        matches!(
+            &(Document::parse_str(&xml)),
+            Err(ttml_subtitle::error::Error::XmlParse(_))
+        ),
         "a misplaced XML declaration was accepted"
     );
 }

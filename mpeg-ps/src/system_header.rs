@@ -593,7 +593,10 @@ mod tests {
         // writing into it; the real total exceeds u16::MAX so this is a
         // controlled Err, not a silently wrapped Ok.
         let mut buf = vec![0u8; h.serialized_len()];
-        assert!(h.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            h.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
     }
 
     /// A bound count whose real `header_length` exceeds the 16-bit wire
@@ -622,7 +625,10 @@ mod tests {
             trailing_reserved: Vec::new(),
         };
         let mut buf = vec![0u8; h.serialized_len()];
-        assert!(h.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            h.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
     }
 
     /// The boundary: a bound count whose `header_length` still fits u16

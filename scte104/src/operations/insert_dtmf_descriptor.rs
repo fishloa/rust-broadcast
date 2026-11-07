@@ -113,7 +113,10 @@ mod tests {
             pre_roll: 0,
             dtmf_chars: &chars,
         };
-        assert!(op.try_to_bytes().is_err());
+        assert!(matches!(
+            &(op.try_to_bytes()),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

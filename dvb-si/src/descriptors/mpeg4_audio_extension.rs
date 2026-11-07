@@ -129,10 +129,16 @@ mod tests {
 
     #[test]
     fn rejects_truncation_and_overflow() {
-        assert!(Mpeg4AudioExtensionDescriptor::parse(&[TAG, 3, 0b1_111_0001, 0x2F, 5]).is_err());
+        assert!(matches!(
+            &(Mpeg4AudioExtensionDescriptor::parse(&[TAG, 3, 0b1_111_0001, 0x2F, 5])),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let d = Mpeg4AudioExtensionDescriptor::new(vec![0; 16], None);
         assert!(d.serialize_into(&mut [0u8; 64]).is_err());
         let d = Mpeg4AudioExtensionDescriptor::new(vec![], Some(vec![0; 256]));
-        assert!(d.serialize_into(&mut [0u8; 300]).is_err());
+        assert!(matches!(
+            &(d.serialize_into(&mut [0u8; 300])),
+            Err(crate::error::Error::FieldOverflow(_))
+        ));
     }
 }

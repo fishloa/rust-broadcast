@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
 ### Changed
 - URL userinfo decoding and stripping (RTSP source, HTTP pulls, RTSP push) use `broadcast_auth::{credentials_from_url, strip_userinfo}` instead of four private copies (dedupe D7).
 - WHIP source and WHEP output share `webrtc_session::{ensure_connect_info, ice_attr}` (dedupe D14).

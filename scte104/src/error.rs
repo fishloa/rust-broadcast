@@ -36,18 +36,6 @@ pub enum Error {
         what: &'static str,
     },
 
-    /// A `op_id` byte did not match the value the invoked operation parser
-    /// expected (Table 8-3, Table 8-4).
-    #[error("unexpected op_id {got:#06x} for {what} (expected {expected:#06x})")]
-    UnexpectedOpId {
-        /// op_id actually read.
-        got: u16,
-        /// Operation parser invoked.
-        what: &'static str,
-        /// op_id the parser expected.
-        expected: u16,
-    },
-
     /// A reserved field carried a non-reserved value.
     #[error("reserved field {field} must be {expected:#x}, got {got:#x}")]
     ReservedSet {
