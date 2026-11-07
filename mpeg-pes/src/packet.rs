@@ -550,13 +550,7 @@ impl<'a> PesExtension<'a> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: buf.len(),
-                what: "PES_extension serialize output",
-            });
-        }
+        need_in(buf, need, "PES_extension serialize output")?;
 
         let mut flags = broadcast_common::len::fit_mask(
             self.reserved_bits,
