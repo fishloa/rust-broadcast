@@ -112,6 +112,13 @@ mod tests {
         let op = InsertAvailDescriptor {
             provider_avail_ids: alloc::vec![0xAAAA_BBBB; 256],
         };
-        assert!(op.try_to_bytes().is_err());
+        assert_eq!(
+            op.try_to_bytes().err(),
+            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "insert_avail_descriptor.num_provider_avails",
+                value: 256,
+                max: 255
+            }))
+        );
     }
 }

@@ -975,8 +975,13 @@ mod tests {
 
     #[test]
     fn rejects_bad_sync_codec_id_and_truncation() {
-        assert!(
-            AatfFrame::parse(&[0xFF, 0xE0, 0, 0]).is_err(),
+        assert_eq!(
+            AatfFrame::parse(&[0xFF, 0xE0, 0, 0]).err(),
+            Some(crate::error::Error::InvalidValue {
+                field: "syncword",
+                value: 0xFFE,
+                reason: "must be 0xFFF"
+            }),
             "wrong syncword"
         );
         // syncword ok, audio_codec_id 3: no header defined
