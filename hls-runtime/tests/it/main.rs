@@ -31,3 +31,4 @@ mod tokio_client_restart;
 mod tracks_display;
 mod ts_hls_ingest;
 mod video_range;
+mod rendition_validators;
