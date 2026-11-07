@@ -14,6 +14,7 @@
 - WHIP and WHEP offer parsing share `webrtc_session::single_video_media` (c2 M6).
 - The five pull routes (`RtspRoute`, `HlsPullRoute`, `SmoothPullRoute`, `TsHttpRoute`, `DashPullRoute`) share a crate-private `PullTarget` (name, URL, timeouts, credentials, redacting `Debug`); public constructors unchanged (c2 M1).
 - DASH-pull fetch retries use the shared `ReconnectSchedule` (500 ms to 4 s, equal-jittered) instead of a private jitter-free doubling (c2 L2).
+- TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
 ### Removed
 - Unused `origin::limit::RETRY_AFTER_SECS` (c2 TH1).
 

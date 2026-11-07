@@ -3,6 +3,7 @@
 ## [Unreleased]
 ### Changed
 - Dropped the unused `thiserror` dependency (c2 TH4).
+- TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
 
 ## [0.13.0] - 2026-11-03
 

@@ -14,8 +14,7 @@ pub struct SyncByteCheck;
 
 impl Diagnostic for SyncByteCheck {
     fn run(&self, ts: &[u8], report: &mut Report) {
-        const SYNC: u8 = 0x47;
-        const PACKET_SIZE: usize = 188;
+        use mpeg_ts::ts::{TS_PACKET_SIZE as PACKET_SIZE, TS_SYNC_BYTE as SYNC};
 
         let n_packets = ts.len() / PACKET_SIZE;
         for i in 0..n_packets {

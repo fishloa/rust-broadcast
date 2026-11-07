@@ -197,9 +197,7 @@ use media_plane::trunk::{ArchiveOverrun, SegmentCursor, SegmentCursorItem, Trunk
 use serde::{Deserialize, Serialize};
 use tracing;
 
-/// Length of one MPEG-2 TS packet — ISO/IEC 13818-1 §2.4.3.2. Used to chunk
-/// raw bytes fed to [`DvrRecorder::feed_si`].
-const TS_PACKET_LEN: usize = 188;
+use mpeg_ts::ts::TS_PACKET_SIZE as TS_PACKET_LEN;
 
 // --- Config ---
 

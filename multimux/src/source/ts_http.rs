@@ -699,7 +699,7 @@ mod tests {
         );
     }
 
-    const TS_PACKET_LEN: usize = 188;
+    use mpeg_ts::ts::TS_PACKET_SIZE as TS_PACKET_LEN;
     const HANDSHAKE_BUDGET: Duration = Duration::from_secs(1);
     const HANDSHAKE_MARGIN: Duration = Duration::from_secs(4);
     const LONG_READ: Duration = Duration::from_secs(30);

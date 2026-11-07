@@ -36,8 +36,7 @@ use transmux::ir::TrackSpec;
 
 /// RFC 3551 §6 static payload type for MPEG2 Transport Stream (RFC 2250 §2).
 const PT_MP2T: u8 = 33;
-/// MPEG-2 TS packet length (ISO/IEC 13818-1 §2.4.3.2).
-const TS_PACKET_LEN: usize = 188;
+use mpeg_ts::ts::TS_PACKET_SIZE as TS_PACKET_LEN;
 /// RFC 2250 §2: "no more than seven ... TS packets" per RTP packet.
 const MAX_TS_PACKETS_PER_RTP: usize = 7;
 /// The resulting cap on one RTP packet's MP2T payload (1316 bytes).
