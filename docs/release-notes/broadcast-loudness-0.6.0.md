@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # broadcast-loudness 0.6.0
 

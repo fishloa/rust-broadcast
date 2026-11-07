@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # rtsp-runtime 0.9.0
 

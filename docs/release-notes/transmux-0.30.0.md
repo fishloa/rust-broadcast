@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # transmux 0.30.0
 

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `integrated_lu`.
 ### Added

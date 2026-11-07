@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # timed-metadata 0.9.0
 

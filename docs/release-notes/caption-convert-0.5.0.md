@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # caption-convert 0.5.0
 

@@ -4,6 +4,7 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-07
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Dependencies

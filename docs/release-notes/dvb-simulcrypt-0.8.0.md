@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dvb-simulcrypt 0.8.0
 

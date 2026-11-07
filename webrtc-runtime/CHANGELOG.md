@@ -4,6 +4,7 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
 ### Changed
 - The `media` feature builds on `rtp-packet`'s `rtcp` module instead of the absorbed `rtcp-packet` crate; the types are unchanged.
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).

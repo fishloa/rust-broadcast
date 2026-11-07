@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dvb-subtitle 0.7.0
 

@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dvb-csa 0.5.0
 

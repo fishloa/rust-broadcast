@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [11.0.0] - 2026-11-07
 ### Removed
 - BREAKING: `Timestamp::checked_add_nanos` (deprecated since 9.5.0): use `saturating_add_nanos`.
 ### Added

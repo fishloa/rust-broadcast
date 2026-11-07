@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-07
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - BREAKING: error variant `RtmpError::BufferTooShort` now wraps `broadcast_common::error::BufferTooShort` (same `need`/`have`/`what`; the message text is the shared one).

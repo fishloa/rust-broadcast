@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dvb-stream 0.8.0
 

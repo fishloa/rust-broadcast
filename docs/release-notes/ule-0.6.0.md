@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # ule 0.6.0
 

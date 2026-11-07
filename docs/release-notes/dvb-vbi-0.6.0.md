@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dvb-vbi 0.6.0
 

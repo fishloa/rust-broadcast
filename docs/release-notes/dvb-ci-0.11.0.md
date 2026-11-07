@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # dvb-ci 0.11.0
 

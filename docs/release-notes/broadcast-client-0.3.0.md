@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # broadcast-client 0.3.0
 

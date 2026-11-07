@@ -175,7 +175,7 @@ workspace dependencies:
 
 ```toml
 [dependencies]
-dvb-si = "12"
+dvb-si = "13"
 ```
 
 Read SDT service names from a transport stream:

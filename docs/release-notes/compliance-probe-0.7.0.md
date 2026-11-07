@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # compliance-probe 0.7.0
 

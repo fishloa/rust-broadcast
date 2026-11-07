@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # ts-fix 0.8.0
 

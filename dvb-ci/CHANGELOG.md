@@ -6,6 +6,7 @@ versioning.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `is_minimal`, `retain_caids`.
 - BREAKING: `ci_plus::ca_support::MsCaPmtStream` and `MsCaPmtReplyStream`: the multi-stream `MsCaPmt` and `MsCaPmtReply` now hold `objects::ca_pmt::CaPmtStream` and `objects::ca_pmt_reply::CaPmtReplyStream` (identical fields).

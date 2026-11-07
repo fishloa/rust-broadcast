@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-07
 ### Removed
 - BREAKING: The `chrono` feature (on by default) and the `chrono` dependency: nothing in the crate used them.
 - BREAKING: `webvtt::teletext::decode_odd_parity` and `encode_odd_parity` (one-line forwards). Use `broadcast_common::parity::strip_parity` and `broadcast_common::parity::set_odd_parity` (dedupe R3).

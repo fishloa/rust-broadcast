@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
 ### Changed
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).

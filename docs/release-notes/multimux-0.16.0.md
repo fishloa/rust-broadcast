@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # multimux 0.16.0
 

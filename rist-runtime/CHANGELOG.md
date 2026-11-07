@@ -4,6 +4,7 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
 ### Removed
 - BREAKING: `Error::TrailingData`, never constructed: TR-06-1 §5.2 does not fix a closed sub-packet list, and unmatched sub-packets are kept in `unknown` (c2 TH3).
 ### Changed

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `duration_value`, `pts_adjustment_duration`, `pts_time_duration`, `set_duration_value`, `set_pts_adjustment_duration`, `set_pts_time_duration`.
 ### Documentation

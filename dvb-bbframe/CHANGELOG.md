@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [13.0.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `bufstat_bytes`.
 ### Added

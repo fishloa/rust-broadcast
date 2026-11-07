@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [13.0.0] - 2026-11-07
 ### Changed
 - Lockstep release 13.0.0: no functional change; the CLI builds against `dvb-si` 13, `dvb-t2mi` 13 and `mpeg-ts` 0.7.
 

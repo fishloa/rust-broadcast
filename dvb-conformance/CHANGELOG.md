@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [13.0.0] - 2026-11-07
 ### Changed
 - BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - `Monitor::feed` delegates sync hysteresis, scrambling checks and PAT, PMT and SI section reassembly to private methods (internal, c3 t:S7).

@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # media-plane 0.10.0
 

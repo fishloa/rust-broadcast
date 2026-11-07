@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # atsc3-route 0.4.0
 

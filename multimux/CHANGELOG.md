@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-07
 ### Fixed
 - The DASH and LL-DASH `type="dynamic"` MPDs now carry `MPD@publishTime` (ISO/IEC 23009-1 section 5.3.1.2 Table 3: shall be present for dynamic MPDs, and a later value marks an update). It is the instant the newest listed segment became available, so it is unchanged while the window is unchanged and later after every new segment.
 - `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).

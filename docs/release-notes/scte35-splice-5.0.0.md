@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 
 # scte35-splice 5.0.0
 
