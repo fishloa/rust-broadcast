@@ -643,13 +643,7 @@ impl<'a> AdaptationFieldExtension<'a> {
     /// Parse the adaptation-field extension starting at `data[0]`
     /// (the `adaptation_field_extension_length` byte).
     fn parse(data: &'a [u8]) -> Result<Self> {
-        if data.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "adaptation_field_extension_length",
-            });
-        }
+        need_in(data, 1, "adaptation_field_extension_length")?;
         let ext_len = data[0] as usize;
         // At least 1 byte (the flags byte) must be present inside the extension.
         if data.len() < 1 + ext_len || ext_len < 1 {
