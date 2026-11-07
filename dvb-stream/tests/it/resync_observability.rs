@@ -233,3 +233,16 @@ async fn section_stream_slow_reader_corruption_recovers() {
         stats.bytes_discarded
     );
 }
+
+#[tokio::test]
+async fn section_stream_with_builder_uses_the_custom_demux() {
+    let mut data = Vec::new();
+    for i in 0..3 {
+        data.extend_from_slice(&make_si_ts_packet(Pid::new(0x0000), i));
+    }
+    let builder = dvb_si::demux::SiDemux::builder();
+    let mut stream = SectionStream::with_builder(std::io::Cursor::new(data), builder);
+    drain_section_stream(&mut stream).await;
+    assert_eq!(stream.resync_stats().resyncs, 1);
+    assert!(stream.stats().packets > 0);
+}

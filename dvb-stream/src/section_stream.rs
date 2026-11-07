@@ -28,7 +28,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
-use dvb_si::demux::{SectionEvent, SiDemux};
+use dvb_si::demux::{SectionEvent, SiDemux, SiDemuxBuilder};
 use futures_core::Stream;
 use tokio::io::AsyncRead;
 use tokio_util::codec::FramedRead;
@@ -120,6 +120,12 @@ impl<R: AsyncRead + Unpin> SectionStream<R> {
     #[must_use]
     pub fn new(reader: R) -> Self {
         Self::with_demux(reader, SiDemux::builder().build())
+    }
+
+    /// Create a `SectionStream` with a custom [`SiDemuxBuilder`].
+    #[must_use]
+    pub fn with_builder(reader: R, builder: SiDemuxBuilder) -> Self {
+        Self::with_demux(reader, builder.build())
     }
 
     /// Create a `SectionStream` with an already-constructed [`SiDemux`].

@@ -42,3 +42,30 @@ pub fn resync(buf: &[u8]) -> Option<usize> {
     }
     None
 }
+
+/// Return an iterator over aligned 188-byte TS packet slices in `buf`.
+///
+/// Requires that `buf` is already aligned (i.e. `buf[0] == 0x47`).  Each
+/// yielded slice is exactly [`TS_PACKET_SIZE`] bytes.  Trailing bytes that do
+/// not form a complete packet are ignored.
+pub fn aligned_packets(buf: &[u8]) -> impl Iterator<Item = &[u8]> {
+    buf.chunks_exact(TS_PACKET_SIZE)
+        .filter(|pkt| pkt[0] == TS_SYNC_BYTE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aligned_packets_yields_whole_sync_prefixed_packets_only() {
+        let mut buf = vec![0u8; TS_PACKET_SIZE * 2 + 10];
+        buf[0] = TS_SYNC_BYTE;
+        buf[TS_PACKET_SIZE] = TS_SYNC_BYTE;
+        let pkts: Vec<&[u8]> = aligned_packets(&buf).collect();
+        assert_eq!(pkts.len(), 2);
+        assert!(pkts.iter().all(|p| p.len() == TS_PACKET_SIZE));
+        buf[TS_PACKET_SIZE] = 0x00;
+        assert_eq!(aligned_packets(&buf).count(), 1);
+    }
+}
