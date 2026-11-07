@@ -373,7 +373,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             MpeIfecSection::parse(&[0x7A, 0x80]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -404,7 +404,7 @@ mod tests {
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

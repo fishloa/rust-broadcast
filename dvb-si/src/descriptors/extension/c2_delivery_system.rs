@@ -207,11 +207,13 @@ impl<'a> Parse<'a> for C2DeliverySystem {
         let packed = sel[6];
         let (freq_bytes, _) = sel[2..]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: C2_LEN,
-                have: sel.len(),
-                what: "C2_delivery_system body",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: C2_LEN,
+                    have: sel.len(),
+                    what: "C2_delivery_system body",
+                },
+            ))?;
         Ok(C2DeliverySystem {
             plp_id: sel[0],
             data_slice_id: sel[1],

@@ -130,13 +130,13 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (b, _) = bytes
-            .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
+        let (b, _) = bytes.split_first_chunk::<2>().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
                 need: GII_NUMBER_OF_GROUPS_LEN,
                 have: bytes.len(),
                 what: "GroupInfoIndication NumberOfGroups",
-            })?;
+            },
+        ))?;
         let number_of_groups = u16::from_be_bytes(*b) as usize;
         let mut pos = GII_NUMBER_OF_GROUPS_LEN;
         let end = bytes.len();
@@ -148,11 +148,13 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             let (hdr, _) =
                 bytes[pos..end]
                     .split_first_chunk::<8>()
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + fixed,
-                        have: end,
-                        what: "GroupInfo GroupId/GroupSize",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + fixed,
+                            have: end,
+                            what: "GroupInfo GroupId/GroupSize",
+                        },
+                    ))?;
             let group_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
             let group_size = u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]);
             pos += fixed;
@@ -161,14 +163,15 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             // CompatibilityDescriptor::parse consumes exactly the declared
             // compatibilityDescriptorLength + 2-byte length prefix.
             use crate::compatibility::COMPAT_DESC_LEN_FIELD;
-            let (bc, _) =
-                bytes[pos..end]
-                    .split_first_chunk::<2>()
-                    .ok_or(Error::BufferTooShort {
+            let (bc, _) = bytes[pos..end]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
                         need: pos + COMPAT_DESC_LEN_FIELD,
                         have: end,
                         what: "GroupCompatibility length field",
-                    })?;
+                    },
+                ))?;
             let compat_len = u16::from_be_bytes(*bc) as usize;
             let compat_total = COMPAT_DESC_LEN_FIELD + compat_len;
             if pos + compat_total > end {
@@ -185,11 +188,13 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             let (bgi, _) =
                 bytes[pos..end]
                     .split_first_chunk::<2>()
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + GII_GROUP_INFO_LEN_FIELD,
-                        have: end,
-                        what: "GroupInfo GroupInfoLength",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + GII_GROUP_INFO_LEN_FIELD,
+                            have: end,
+                            what: "GroupInfo GroupInfoLength",
+                        },
+                    ))?;
             let group_info_len = u16::from_be_bytes(*bgi) as usize;
             pos += GII_GROUP_INFO_LEN_FIELD;
             if pos + group_info_len > end {
@@ -205,11 +210,13 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             let (bpd, _) =
                 bytes[pos..end]
                     .split_first_chunk::<2>()
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + GII_PRIVATE_DATA_LEN_FIELD,
-                        have: end,
-                        what: "GroupInfo PrivateDataLength",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + GII_PRIVATE_DATA_LEN_FIELD,
+                            have: end,
+                            what: "GroupInfo PrivateDataLength",
+                        },
+                    ))?;
             let private_data_len = u16::from_be_bytes(*bpd) as usize;
             pos += GII_PRIVATE_DATA_LEN_FIELD;
             if pos + private_data_len > end {
@@ -418,14 +425,15 @@ pub struct DownloadDataBlock<'a> {
 /// shape. Returns (messageId, transaction_or_download_id, adaptation,
 /// payload) where `payload` is bounded by `messageLength`.
 fn parse_header<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, u32, &'a [u8], &'a [u8])> {
-    let (hdr, _) =
-        bytes
-            .split_first_chunk::<MESSAGE_HEADER_LEN>()
-            .ok_or(Error::BufferTooShort {
+    let (hdr, _) = bytes
+        .split_first_chunk::<MESSAGE_HEADER_LEN>()
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
                 need: MESSAGE_HEADER_LEN,
                 have: bytes.len(),
                 what,
-            })?;
+            },
+        ))?;
     if hdr[0] != PROTOCOL_DISCRIMINATOR {
         return Err(Error::ReservedBitsViolation {
             field: "protocolDiscriminator",
@@ -497,11 +505,13 @@ fn serialize_header(
 fn length_prefixed(bytes: &[u8], pos: usize, end: usize) -> Result<(&[u8], usize)> {
     let (b, _) = bytes[pos..end]
         .split_first_chunk::<2>()
-        .ok_or(Error::BufferTooShort {
-            need: pos + 2,
-            have: end,
-            what: "DSM-CC 16-bit length field",
-        })?;
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: pos + 2,
+                have: end,
+                what: "DSM-CC 16-bit length field",
+            },
+        ))?;
     let len = u16::from_be_bytes(*b) as usize;
     let start = pos + 2;
     if start + len > end {
@@ -523,11 +533,13 @@ fn parse_compat_block(
     use crate::compatibility::COMPAT_DESC_LEN_FIELD;
     let (b, _) = payload[offset..]
         .split_first_chunk::<2>()
-        .ok_or(Error::BufferTooShort {
-            need: offset + COMPAT_DESC_LEN_FIELD,
-            have: end,
-            what: "compatibilityDescriptor in DSM-CC message",
-        })?;
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: offset + COMPAT_DESC_LEN_FIELD,
+                have: end,
+                what: "compatibilityDescriptor in DSM-CC message",
+            },
+        ))?;
     let compat_desc_len = u16::from_be_bytes(*b) as usize;
     let compat_end = offset + COMPAT_DESC_LEN_FIELD + compat_desc_len;
     if compat_end > end {
@@ -550,11 +562,13 @@ impl<'a> Parse<'a> for UnMessage<'a> {
         match message_id {
             MESSAGE_ID_DSI => {
                 if end < SERVER_ID_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: SERVER_ID_LEN,
-                        have: end,
-                        what: "Dsi body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: SERVER_ID_LEN,
+                            have: end,
+                            what: "Dsi body",
+                        },
+                    ));
                 }
                 let mut server_id = [0u8; SERVER_ID_LEN];
                 server_id.copy_from_slice(&payload[..SERVER_ID_LEN]);
@@ -573,11 +587,13 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                 let (dii_hdr, _) =
                     payload
                         .split_first_chunk::<DII_FIXED_LEN>()
-                        .ok_or(Error::BufferTooShort {
-                            need: DII_FIXED_LEN,
-                            have: end,
-                            what: "Dii body",
-                        })?;
+                        .ok_or(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: DII_FIXED_LEN,
+                                have: end,
+                                what: "Dii body",
+                            },
+                        ))?;
                 let download_id =
                     u32::from_be_bytes([dii_hdr[0], dii_hdr[1], dii_hdr[2], dii_hdr[3]]);
                 let block_size = u16::from_be_bytes([dii_hdr[4], dii_hdr[5]]);
@@ -592,11 +608,13 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                 let (bnm, _) = payload
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<2>())
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + 2,
-                        have: end,
-                        what: "Dii numberOfModules",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 2,
+                            have: end,
+                            what: "Dii numberOfModules",
+                        },
+                    ))?;
                 let number_of_modules = u16::from_be_bytes(*bnm) as usize;
                 pos += 2;
                 let mut modules = Vec::with_capacity(number_of_modules.min(256));
@@ -604,11 +622,13 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                     let (mhdr, _) = payload
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<MODULE_HEADER_LEN>())
-                        .ok_or(Error::BufferTooShort {
-                            need: pos + MODULE_HEADER_LEN,
-                            have: end,
-                            what: "Dii module entry",
-                        })?;
+                        .ok_or(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + MODULE_HEADER_LEN,
+                                have: end,
+                                what: "Dii module entry",
+                            },
+                        ))?;
                     let module_id = u16::from_be_bytes([mhdr[0], mhdr[1]]);
                     let module_size = u32::from_be_bytes([mhdr[2], mhdr[3], mhdr[4], mhdr[5]]);
                     let module_version = mhdr[6];
@@ -786,11 +806,13 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
         let (ddb_hdr, _) =
             payload
                 .split_first_chunk::<DDB_FIXED_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: DDB_FIXED_LEN,
-                    have: payload.len(),
-                    what: "DownloadDataBlock body",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: DDB_FIXED_LEN,
+                        have: payload.len(),
+                        what: "DownloadDataBlock body",
+                    },
+                ))?;
         Ok(DownloadDataBlock {
             download_id,
             adaptation,
@@ -1026,7 +1048,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             UnMessage::parse(&[0x11, 0x03]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -1203,7 +1225,7 @@ mod tests {
     fn gii_parse_rejects_short_buffer() {
         assert!(matches!(
             GroupInfoIndication::parse(&[0x00]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -1213,7 +1235,7 @@ mod tests {
         let bytes = &[0x00, 0x01, 0x00, 0x00, 0x00];
         assert!(matches!(
             GroupInfoIndication::parse(bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

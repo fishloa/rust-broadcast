@@ -26,11 +26,13 @@ impl<'a> Parse<'a> for ServiceRelocated {
         // dropped on re-serialize (r03-W9).
         let (hdr, rest) =
             sel.split_first_chunk::<SERVICE_RELOCATED_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: SERVICE_RELOCATED_LEN,
-                    have: sel.len(),
-                    what: "service_relocated body",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: SERVICE_RELOCATED_LEN,
+                        have: sel.len(),
+                        what: "service_relocated body",
+                    },
+                ))?;
         if !rest.is_empty() {
             return Err(Error::InvalidDescriptor {
                 tag: crate::descriptors::extension::TAG,

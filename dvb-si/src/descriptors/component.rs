@@ -180,7 +180,7 @@ mod tests {
         let bytes = [TAG, 6, 0x01];
         assert!(matches!(
             ComponentDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

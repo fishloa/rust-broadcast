@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_header() {
         let err = Iso639LanguageDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

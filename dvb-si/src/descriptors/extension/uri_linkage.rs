@@ -104,11 +104,13 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
             let (b, _) = sel
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: sel.len(),
-                    what: "URI_linkage body",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 2,
+                        have: sel.len(),
+                        what: "URI_linkage body",
+                    },
+                ))?;
             let v = u16::from_be_bytes(*b);
             pos += 2;
             Some(v)
@@ -214,7 +216,7 @@ mod tests {
         let bytes = wrap(0x13, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 

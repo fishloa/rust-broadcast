@@ -157,11 +157,13 @@ struct Cursor<'a> {
 impl Cursor<'_> {
     fn take(&mut self, n: usize) -> Result<&[u8]> {
         let end = self.pos + n;
-        let s = self.body.get(self.pos..end).ok_or(Error::BufferTooShort {
-            need: end,
-            have: self.body.len(),
-            what: "Avs2AudioDescriptor",
-        })?;
+        let s = self.body.get(self.pos..end).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: end,
+                have: self.body.len(),
+                what: "Avs2AudioDescriptor",
+            },
+        ))?;
         self.pos = end;
         Ok(s)
     }
@@ -384,22 +386,22 @@ mod tests {
         ));
         assert!(matches!(
             Avs2AudioDescriptor::parse(&[TAG, 1, 6]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         // text_present but text_length claims more than present
         assert!(matches!(
             Avs2AudioDescriptor::parse(&[TAG, 4, 2, 0x04, 5, 0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         // language_present but no language bytes
         assert!(matches!(
             Avs2AudioDescriptor::parse(&[TAG, 2, 2, 0x02]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         // version flag but no version block
         assert!(matches!(
             Avs2AudioDescriptor::parse(&[TAG, 2, 2, 0x08]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

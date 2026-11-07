@@ -265,7 +265,7 @@ mod tests {
         let d = MetadataStdDescriptor::new(0, 0, 0);
         let mut tiny = vec![0u8; 8];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     /// H.222.0 Table 2-91. All three reserved(2) regions are preserved

@@ -452,7 +452,7 @@ mod tests {
         let raw = [TAG, 1, 0x9C]; // scrambling flag set, but no scrambling bytes
         assert!(matches!(
             S2SatelliteDeliverySystemDescriptor::parse(&raw).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

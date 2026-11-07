@@ -9,11 +9,13 @@ use crate::error::{Error, Result};
 pub(crate) fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16> {
     match bytes.get(off..).and_then(|s| s.first_chunk::<2>()) {
         Some(b) => Ok(u16::from_be_bytes(*b)),
-        None => Err(Error::BufferTooShort {
-            need: off.saturating_add(2),
-            have: bytes.len(),
-            what,
-        }),
+        None => Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: off.saturating_add(2),
+                have: bytes.len(),
+                what,
+            },
+        )),
     }
 }
 
@@ -21,11 +23,13 @@ pub(crate) fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16
 pub(crate) fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32> {
     match bytes.get(off..).and_then(|s| s.first_chunk::<4>()) {
         Some(b) => Ok(u32::from_be_bytes(*b)),
-        None => Err(Error::BufferTooShort {
-            need: off.saturating_add(4),
-            have: bytes.len(),
-            what,
-        }),
+        None => Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: off.saturating_add(4),
+                have: bytes.len(),
+                what,
+            },
+        )),
     }
 }
 
@@ -44,27 +48,29 @@ mod tests {
     fn short_is_err_not_panic() {
         assert!(matches!(
             be_u16(&[1], 0, "t"),
-            Err(Error::BufferTooShort {
-                need: 2,
-                have: 1,
-                what: "t"
-            })
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 2,
+                    have: 1,
+                    what: "t"
+                }
+            ))
         ));
         assert!(matches!(
             &(be_u16(&[1, 2], 1, "t")),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             &(be_u16(&[1, 2], 9, "t")),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             &(be_u16(&[], usize::MAX, "t")),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             &(be_u32(&[1, 2, 3], 0, "t")),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 }

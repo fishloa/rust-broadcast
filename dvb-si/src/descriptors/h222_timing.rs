@@ -372,7 +372,7 @@ mod tests {
     fn hevc_truncated_and_overflow() {
         assert!(matches!(
             &(HevcTimingAndHrd::parse_body(&[0xFF, 0x7F])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let mut d = HevcTimingAndHrd::new(true, Some(0x20), None);
         assert!(matches!(

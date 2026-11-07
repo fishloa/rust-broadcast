@@ -79,7 +79,7 @@ mod tests {
         ));
         assert!(matches!(
             &(TargetSerialNumberDescriptor::parse(&[TAG, 5, 1])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 }

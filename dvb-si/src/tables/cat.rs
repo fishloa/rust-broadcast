@@ -105,11 +105,13 @@ impl CatSection<'_> {
             let length = self.descriptors[pos + 1] as usize;
             let end = pos + 2 + length;
             if end > self.descriptors.len() {
-                return Err(Error::BufferTooShort {
-                    need: end - pos,
-                    have: self.descriptors.len() - pos,
-                    what: "CatSection ca_descriptors truncated descriptor",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: end - pos,
+                        have: self.descriptors.len() - pos,
+                        what: "CatSection ca_descriptors truncated descriptor",
+                    },
+                ));
             }
             if tag == crate::descriptors::ca::TAG
                 && let Ok(ca) = CaDescriptor::parse(&self.descriptors[pos..end])
@@ -263,7 +265,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = CatSection::parse(&[0x01, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     /// §2.4.4.7 permits non-CA descriptors in the CAT loop: the typed view
@@ -373,10 +375,10 @@ mod tests {
         let cat = CatSection::parse(&bytes).unwrap();
         assert!(matches!(
             cat.ca_descriptors().unwrap_err(),
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "CatSection ca_descriptors truncated descriptor",
                 ..
-            }
+            })
         ));
     }
 }

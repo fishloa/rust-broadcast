@@ -92,7 +92,7 @@ mod tests {
     fn parse_rejects_short_header() {
         assert!(matches!(
             ServiceIdentifierDescriptor::parse(&[TAG]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -101,7 +101,7 @@ mod tests {
         let bytes = [TAG, 5, 1, 2, 3];
         assert!(matches!(
             ServiceIdentifierDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -130,7 +130,7 @@ mod tests {
         let mut buf = vec![0u8; 1];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 }

@@ -348,7 +348,10 @@ mod tests {
     fn parse_rejects_truncated_buffer() {
         let raw: &[u8] = &[TAG];
         let err = FrequencyListDescriptor::parse(raw).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { need: 2, .. }));
+        assert!(matches!(
+            err,
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 2, .. })
+        ));
     }
 
     /// Serialize a descriptor with zero entries, re-parse, compare.

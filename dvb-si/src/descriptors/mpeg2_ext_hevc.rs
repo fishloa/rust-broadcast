@@ -1020,7 +1020,7 @@ mod tests {
         // truncated layout
         assert!(matches!(
             &(HevcSubregion::parse_body(&[0x04, 0x10, 0x5A, 0x01, 0x3C])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         // pattern length != SubstreamCountMinus1
         let mut d = HevcSubregion::parse_body(&[
@@ -1108,7 +1108,7 @@ mod tests {
         );
         assert!(matches!(
             &(HevcOperationPoint::parse_body(&[0xC1, 0x00])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -1267,7 +1267,7 @@ mod tests {
         ));
         assert!(matches!(
             parse_ptl(&PTL_VECTOR[..11]),
-            Err(crate::Error::BufferTooShort { .. })
+            Err(crate::Error::BufferTooShort(..))
         ));
     }
 }

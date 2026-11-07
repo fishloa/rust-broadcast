@@ -86,7 +86,7 @@ mod tests {
         ));
         assert!(matches!(
             Mpeg4TextDescriptor::parse(&[TAG, 4, 1]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         let big = vec![0u8; 256];
         let d = Mpeg4TextDescriptor::new(&big);
@@ -97,7 +97,7 @@ mod tests {
         ));
         assert!(matches!(
             d.serialize_into(&mut out[..10]),
-            Err(Error::OutputBufferTooSmall { .. })
+            Err(Error::OutputBufferTooSmall(..))
         ));
     }
 }

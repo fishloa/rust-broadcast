@@ -424,7 +424,7 @@ mod tests {
     fn parse_rejects_short_header() {
         assert!(matches!(
             ContentDescriptor::parse(&[TAG]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -432,7 +432,7 @@ mod tests {
     fn parse_rejects_body_truncation() {
         assert!(matches!(
             ContentDescriptor::parse(&[TAG, 4, 0x01]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

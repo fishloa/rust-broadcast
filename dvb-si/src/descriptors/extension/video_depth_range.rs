@@ -119,11 +119,13 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
             }
             // Need at least range_type + range_length (Table 160).
             if sel.len() - pos < VD_RANGE_HDR_LEN {
-                return Err(Error::BufferTooShort {
-                    need: pos + VD_RANGE_HDR_LEN,
-                    have: sel.len(),
-                    what: "video_depth_range body",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + VD_RANGE_HDR_LEN,
+                        have: sel.len(),
+                        what: "video_depth_range body",
+                    },
+                ));
             }
             let range_type = RangeType::from_u8(sel[pos]);
             let range_length = sel[pos + 1] as usize;
@@ -385,7 +387,7 @@ mod tests {
         let bytes = wrap(0x10, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 
@@ -396,7 +398,7 @@ mod tests {
         let bytes = wrap(0x10, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 

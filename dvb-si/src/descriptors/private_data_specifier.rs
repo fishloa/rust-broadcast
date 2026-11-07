@@ -137,14 +137,14 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = PrivateDataSpecifierDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
     fn parse_rejects_truncated_body() {
         // length=4 but only 2 payload bytes present.
         let err = PrivateDataSpecifierDescriptor::parse(&[TAG, 4, 0, 0]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -171,7 +171,7 @@ mod tests {
         };
         let mut tiny = [0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

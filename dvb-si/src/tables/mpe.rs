@@ -517,11 +517,11 @@ mod tests {
         let err = MpeDatagramSection::parse(&[TABLE_ID, 0x00]).unwrap_err();
         assert_eq!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: MIN_SECTION_LEN,
                 have: 2,
                 what: "MpeDatagramSection"
-            }
+            })
         );
     }
 
@@ -623,7 +623,7 @@ mod tests {
         let mut buf = [0u8; 2];
         assert!(matches!(
             sec.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

@@ -206,7 +206,7 @@ mod tests {
         ));
         assert!(matches!(
             &(Iso14496Section::parse(&[0x04, 0xB0, 0x20])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let s = Iso14496Section::new(0x07, 0, 0, true, 0, 0, &[]);
         assert!(matches!(

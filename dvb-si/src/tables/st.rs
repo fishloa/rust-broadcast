@@ -202,7 +202,7 @@ mod tests {
         let st = StSection::new(vec![0x00]);
         let mut too_small = vec![0u8; st.serialized_len() - 1];
         let err = st.serialize_into(&mut too_small).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]
@@ -237,7 +237,7 @@ mod tests {
         let bytes = [0x72, 0x70]; // only 2 bytes
         assert!(matches!(
             StSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { need: 3, .. }
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 3, .. })
         ));
     }
 

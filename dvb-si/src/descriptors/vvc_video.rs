@@ -314,7 +314,7 @@ mod tests {
         ));
         assert!(matches!(
             &(VvcVideoDescriptor::parse(&full[..full.len() - 1])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 }

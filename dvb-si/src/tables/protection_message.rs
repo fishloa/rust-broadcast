@@ -331,11 +331,13 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
 
     // extension_bytes_length(8) + extension bytes (§9.4.3 Table 42 tail).
     if loop_end >= body.len() {
-        return Err(Error::BufferTooShort {
-            need: loop_end + 1,
-            have: body.len(),
-            what: "ProtectionMessageSection::extension_bytes_length",
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: loop_end + 1,
+                have: body.len(),
+                what: "ProtectionMessageSection::extension_bytes_length",
+            },
+        ));
     }
     let extension_bytes_length = body[loop_end] as usize;
     let ext_start = loop_end + 1;
@@ -349,11 +351,13 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
 
     // signature_key_identifier_length(8) + key id bytes (Table 43 spillover, PDF p. 71).
     if ext_end >= body.len() {
-        return Err(Error::BufferTooShort {
-            need: ext_end + 1,
-            have: body.len(),
-            what: "ProtectionMessageSection::signature_key_identifier_length",
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: ext_end + 1,
+                have: body.len(),
+                what: "ProtectionMessageSection::signature_key_identifier_length",
+            },
+        ));
     }
     let key_id_length = body[ext_end] as usize;
     let key_start = ext_end + 1;
@@ -412,11 +416,13 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     // dropping them would break the parse -> serialize byte-identity
     // invariant.
     if pos != body.len() {
-        return Err(Error::BufferTooShort {
-            need: body.len() - pos,
-            have: 0,
-            what: "ProtectionMessageSection::CertificateCollection trailing bytes",
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: body.len() - pos,
+                have: 0,
+                what: "ProtectionMessageSection::CertificateCollection trailing bytes",
+            },
+        ));
     }
     Ok(ProtectionMessageBody::CertificateCollection {
         certificates,
@@ -762,10 +768,10 @@ mod tests {
     fn rejects_short_buffer() {
         assert!(matches!(
             ProtectionMessageSection::parse(&[0x7B, 0xB0]).unwrap_err(),
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "ProtectionMessageSection",
                 ..
-            }
+            })
         ));
     }
 
@@ -840,7 +846,7 @@ mod tests {
         let bytes = build_section(CERTIFICATE_COLLECTION_EXTENSION, 0, &body);
         assert!(matches!(
             ProtectionMessageSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

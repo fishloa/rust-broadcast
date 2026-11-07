@@ -47,11 +47,13 @@ impl<'a> CompleteSdt<'a> {
         registry: Option<&'a DescriptorRegistry>,
     ) -> crate::Result<Self> {
         let sections: Vec<sdt::SdtSection<'a>> = set.parse_sections()?;
-        let first = sections.first().ok_or(crate::Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "CompleteSdt sections",
-        })?;
+        let first = sections.first().ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "CompleteSdt sections",
+            },
+        ))?;
         let mut services = Vec::new();
         for section in &sections {
             services.extend(section.services.iter().map(|svc| CompleteSdtService {

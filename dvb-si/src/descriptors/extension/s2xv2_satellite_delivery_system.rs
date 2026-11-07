@@ -299,11 +299,13 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         need_in(sel, S2XV2_CORE_LEN, "S2Xv2 body")?;
         // Bytes 0–3: delivery_system_id.
-        let (dsid_bytes, _) = sel.split_first_chunk::<4>().ok_or(Error::BufferTooShort {
-            need: S2XV2_CORE_LEN,
-            have: sel.len(),
-            what: "S2Xv2 body",
-        })?;
+        let (dsid_bytes, _) = sel.split_first_chunk::<4>().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: S2XV2_CORE_LEN,
+                have: sel.len(),
+                what: "S2Xv2 body",
+            },
+        ))?;
         let delivery_system_id = u32::from_be_bytes(*dsid_bytes);
         // Byte 4: S2Xv2_mode(4) | multiple_input_stream_flag(1) | roll_off(3).
         let b4 = sel[4];
@@ -339,20 +341,24 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         // Bytes 10–13: frequency (32 bits).
         let (freq_bytes, _) = sel[10..]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: S2XV2_CORE_LEN,
-                have: sel.len(),
-                what: "S2Xv2 body",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: S2XV2_CORE_LEN,
+                    have: sel.len(),
+                    what: "S2Xv2 body",
+                },
+            ))?;
         let frequency = u32::from_be_bytes(*freq_bytes);
         // Bytes 14–17: symbol_rate (32 bits).
         let (sr_bytes, _) = sel[14..]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: S2XV2_CORE_LEN,
-                have: sel.len(),
-                what: "S2Xv2 body",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: S2XV2_CORE_LEN,
+                    have: sel.len(),
+                    what: "S2Xv2 body",
+                },
+            ))?;
         let symbol_rate = u32::from_be_bytes(*sr_bytes);
         let mut pos = S2XV2_CORE_LEN;
 
@@ -410,11 +416,13 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                 let (id_bytes, _) = sel
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<4>())
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + 4,
-                        have: sel.len(),
-                        what: "S2Xv2 body (secondary_delivery_system_id)",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "S2Xv2 body (secondary_delivery_system_id)",
+                        },
+                    ))?;
                 let id = u32::from_be_bytes(*id_bytes);
                 ids.push(id);
                 pos += 4;
@@ -458,11 +466,13 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                 let (bh_bytes, _) = sel
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<4>())
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + 4,
-                        have: sel.len(),
-                        what: "S2Xv2 body (beamhopping_time_plan_id)",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "S2Xv2 body (beamhopping_time_plan_id)",
+                        },
+                    ))?;
                 let id = u32::from_be_bytes(*bh_bytes);
                 pos += 4;
                 Some(id)
@@ -1023,7 +1033,7 @@ mod tests {
         let bytes = wrap(0x24, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 

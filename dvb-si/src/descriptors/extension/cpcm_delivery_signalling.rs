@@ -43,11 +43,13 @@ impl CpcmDeliverySignalling<'_> {
 impl<'a> Parse<'a> for CpcmDeliverySignalling<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        let (cpcm_version, selector_bytes) = sel.split_first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "cpcm_delivery_signalling body",
-        })?;
+        let (cpcm_version, selector_bytes) = sel.split_first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "cpcm_delivery_signalling body",
+            },
+        ))?;
         Ok(CpcmDeliverySignalling {
             cpcm_version: *cpcm_version,
             selector_bytes,

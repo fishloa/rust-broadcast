@@ -128,7 +128,7 @@ mod tests {
     fn parse_rejects_truncated_body() {
         let bytes = [TAG, 6, 0x00, 0x01];
         let err = ServiceListDescriptor::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

@@ -92,11 +92,13 @@ impl TransportProfileDescriptor {
     }
 
     fn parse_body(body: &[u8]) -> Result<Self> {
-        let (&profile, rest) = body.split_first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "TransportProfileDescriptor",
-        })?;
+        let (&profile, rest) = body.split_first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "TransportProfileDescriptor",
+            },
+        ))?;
         Ok(Self {
             transport_profile: TransportProfile::from_u8(profile),
             private_data: rest.to_vec(),
@@ -143,7 +145,7 @@ mod tests {
         }
         assert!(matches!(
             TransportProfileDescriptor::parse(&[TAG, 0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         let mut d = TransportProfileDescriptor::new(TransportProfile::Complete);
         d.private_data = vec![0; 255];

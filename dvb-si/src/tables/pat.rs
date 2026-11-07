@@ -138,11 +138,13 @@ impl<'a> Parse<'a> for PatSection {
         let mut pos = 8;
         while pos < end {
             if pos + ENTRY_LEN > end {
-                return Err(Error::BufferTooShort {
-                    need: ENTRY_LEN,
-                    have: end - pos,
-                    what: "PatSection trailing entry bytes",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: ENTRY_LEN,
+                        have: end - pos,
+                        what: "PatSection trailing entry bytes",
+                    },
+                ));
             }
             let chunk = &bytes[pos..pos + ENTRY_LEN];
             let program_number = crate::wire::be_u16(chunk, 0, "pat")?;
@@ -291,7 +293,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = PatSection::parse(&[0x00, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -378,10 +380,10 @@ mod tests {
         bytes[crc_pos - CRC_LEN..crc_pos].copy_from_slice(&crc.to_be_bytes());
         assert!(matches!(
             PatSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "PatSection trailing entry bytes",
                 ..
-            }
+            })
         ));
     }
 }

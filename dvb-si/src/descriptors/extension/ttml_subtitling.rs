@@ -126,11 +126,13 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
             let (b, _) = sel
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<4>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + 4,
-                    have: sel.len(),
-                    what: "TTML_subtitling body",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 4,
+                        have: sel.len(),
+                        what: "TTML_subtitling body",
+                    },
+                ))?;
             let q = u32::from_be_bytes(*b);
             pos += 4;
             Some(q)
@@ -141,11 +143,13 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         // conditional font-id loop
         let font_ids = if essential_font_usage_flag != 0 {
             if sel.len() <= pos {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "TTML_subtitling body",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 1,
+                        have: sel.len(),
+                        what: "TTML_subtitling body",
+                    },
+                ));
             }
             let font_count = sel[pos] as usize;
             pos += 1;
@@ -165,11 +169,13 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
 
         // text run
         if sel.len() <= pos {
-            return Err(Error::BufferTooShort {
-                need: pos + 1,
-                have: sel.len(),
-                what: "TTML_subtitling body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "TTML_subtitling body",
+                },
+            ));
         }
         let text_length = sel[pos] as usize;
         pos += 1;
@@ -413,7 +419,7 @@ mod tests {
         let bytes = wrap(0x20, &sel);
         let result = ExtensionDescriptor::parse(&bytes);
         assert!(
-            matches!(result, Err(crate::error::Error::BufferTooShort { .. })),
+            matches!(result, Err(crate::error::Error::BufferTooShort(..))),
             "expected BufferTooShort, got {result:?}"
         );
     }
@@ -426,7 +432,7 @@ mod tests {
         let bytes = wrap(0x20, &sel);
         let result = ExtensionDescriptor::parse(&bytes);
         assert!(
-            matches!(result, Err(crate::error::Error::BufferTooShort { .. })),
+            matches!(result, Err(crate::error::Error::BufferTooShort(..))),
             "expected BufferTooShort, got {result:?}"
         );
     }
@@ -438,7 +444,7 @@ mod tests {
         let bytes = wrap(0x20, &sel);
         let result = ExtensionDescriptor::parse(&bytes);
         assert!(
-            matches!(result, Err(crate::error::Error::BufferTooShort { .. })),
+            matches!(result, Err(crate::error::Error::BufferTooShort(..))),
             "expected BufferTooShort, got {result:?}"
         );
     }

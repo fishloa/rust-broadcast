@@ -246,11 +246,13 @@ struct Cursor<'a> {
 
 impl Cursor<'_> {
     fn u8(&mut self) -> Result<u8> {
-        let b = *self.body.get(self.pos).ok_or(Error::BufferTooShort {
-            need: self.pos + 1,
-            have: self.body.len(),
-            what: "Avs3AudioDescriptor",
-        })?;
+        let b = *self.body.get(self.pos).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: self.pos + 1,
+                have: self.body.len(),
+                what: "Avs3AudioDescriptor",
+            },
+        ))?;
         self.pos += 1;
         Ok(b)
     }
@@ -706,11 +708,11 @@ mod tests {
         // codec 0 needs 5 body bytes + resolution byte
         assert!(matches!(
             Avs3AudioDescriptor::parse(&[TAG, 3, 0x03, 0x00, 0x00]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         assert!(matches!(
             Avs3AudioDescriptor::parse(&[TAG, 0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

@@ -231,7 +231,7 @@ mod tests {
         // body that stops inside the temporal-id block is rejected
         assert!(matches!(
             EvcVideoDescriptor::parse(&b[..b.len() - 1]),
-            Err(crate::Error::BufferTooShort { .. })
+            Err(crate::Error::BufferTooShort(..))
         ));
         let mut bad = d.clone();
         bad.video_properties_tag = 16;

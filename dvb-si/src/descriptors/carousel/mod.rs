@@ -361,11 +361,13 @@ mod tests {
         assert!(items[0].is_ok());
         assert_eq!(
             items[1].as_ref().err(),
-            Some(&crate::error::Error::BufferTooShort {
-                need: 6,
-                have: 3,
-                what: "descriptor body in loop"
-            })
+            Some(&crate::error::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 6,
+                    have: 3,
+                    what: "descriptor body in loop"
+                }
+            ))
         );
         assert!(CarouselDescriptorLoop::default().is_empty());
     }

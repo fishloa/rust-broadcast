@@ -369,19 +369,23 @@ fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
     need_in(sel, *pos + BOND_BASE_LEN, "S2X body")?;
     let (freq_bytes, _) = sel[*pos..]
         .split_first_chunk::<4>()
-        .ok_or(Error::BufferTooShort {
-            need: *pos + BOND_BASE_LEN,
-            have: sel.len(),
-            what: "S2X body",
-        })?;
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: *pos + BOND_BASE_LEN,
+                have: sel.len(),
+                what: "S2X body",
+            },
+        ))?;
     let frequency = u32::from_be_bytes(*freq_bytes);
     let (orb_bytes, _) = sel[*pos + 4..]
         .split_first_chunk::<2>()
-        .ok_or(Error::BufferTooShort {
-            need: *pos + BOND_BASE_LEN,
-            have: sel.len(),
-            what: "S2X body",
-        })?;
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: *pos + BOND_BASE_LEN,
+                have: sel.len(),
+                what: "S2X body",
+            },
+        ))?;
     let orbital_position = u16::from_be_bytes(*orb_bytes);
     let pb = sel[*pos + 6];
     let west_east_flag = (pb & 0x80) != 0;

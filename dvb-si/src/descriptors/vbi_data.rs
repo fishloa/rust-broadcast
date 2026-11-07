@@ -310,7 +310,7 @@ mod tests {
         let bytes = [TAG, 4, 0x01, 0x02];
         assert!(matches!(
             VbiDataDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -426,7 +426,7 @@ mod tests {
         let mut tiny = [0u8; 3];
         assert!(matches!(
             d.serialize_into(&mut tiny).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

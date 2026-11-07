@@ -170,11 +170,11 @@ macro_rules! declare_tables {
             /// - [`crate::Error::BufferTooShort`] — `bytes` is empty.
             /// - Any parse error from the dispatched type.
             pub fn parse(bytes: &$lt [u8]) -> crate::Result<Self> {
-                let table_id = *bytes.first().ok_or(crate::Error::BufferTooShort {
+                let table_id = *bytes.first().ok_or(crate::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                     need: 1,
                     have: 0,
                     what: "section table_id",
-                })?;
+                }))?;
                 match table_id {
                     $(
                         $( $lo..=$hi )|+ => {
@@ -198,7 +198,7 @@ macro_rules! declare_tables {
             /// let err = AnyTableSection::parse_as::<MpeDatagramSection>(&[0x3E, 0x00]);
             /// assert_eq!(
             ///     err.unwrap_err(),
-            ///     dvb_si::Error::BufferTooShort { need: 16, have: 2, what: "MpeDatagramSection" }
+            ///     dvb_si::Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 16, have: 2, what: "MpeDatagramSection" })
             /// );
             /// ```
             ///
@@ -316,11 +316,13 @@ impl<'a> AnyTableSection<'a> {
         registry: &crate::tables::registry::TableRegistry,
         bytes: &'a [u8],
     ) -> crate::Result<Self> {
-        let table_id = *bytes.first().ok_or(crate::Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "section table_id",
-        })?;
+        let table_id = *bytes.first().ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "section table_id",
+            },
+        ))?;
         if let Some(parse_fn) = registry.lookup(table_id) {
             let value = parse_fn(bytes)?;
             return Ok(Self::Other { table_id, value });

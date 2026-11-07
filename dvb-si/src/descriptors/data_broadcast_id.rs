@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = DataBroadcastIdDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -528,7 +528,7 @@ mod tests {
     fn parse_rejects_length_overrun() {
         // length=5 but only 3 payload bytes available.
         let err = DataBroadcastIdDescriptor::parse(&[TAG, 0x05, 0x00, 0x0B, 0xAA]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -551,7 +551,7 @@ mod tests {
         };
         let mut tiny = [0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

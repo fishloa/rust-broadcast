@@ -210,11 +210,13 @@ impl<'a> Parse<'a> for EitSection<'a> {
             let (b2, _) = bytes
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: events_end,
-                    what: "EitSection event_id",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 2,
+                        have: events_end,
+                        what: "EitSection event_id",
+                    },
+                ))?;
             let event_id = u16::from_be_bytes(*b2);
             let start_time_raw = [
                 bytes[pos + 2],
@@ -250,11 +252,13 @@ impl<'a> Parse<'a> for EitSection<'a> {
         }
 
         if pos != events_end {
-            return Err(Error::BufferTooShort {
-                need: events_end - pos,
-                have: 0,
-                what: "EitSection trailing event bytes",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: events_end - pos,
+                    have: 0,
+                    what: "EitSection trailing event bytes",
+                },
+            ));
         }
 
         Ok(EitSection {
@@ -677,11 +681,11 @@ mod tests {
         let err = EitSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: 18,
                 have: 3,
                 ..
-            }
+            })
         ));
     }
 
@@ -866,10 +870,10 @@ mod tests {
         let err = EitSection::parse(&v).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "EitSection trailing event bytes",
                 ..
-            }
+            })
         ));
     }
 }

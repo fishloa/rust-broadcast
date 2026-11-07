@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = NitSection::parse(&[0x40, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
         );
         let mut buf = vec![0u8; 2];
         let err = nit.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

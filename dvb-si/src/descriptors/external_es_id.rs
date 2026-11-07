@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = ExternalEsIdDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

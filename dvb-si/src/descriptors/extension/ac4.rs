@@ -132,11 +132,13 @@ impl<'a> Parse<'a> for Ac4<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: sel.len(),
-                what: "AC-4 body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: sel.len(),
+                    what: "AC-4 body",
+                },
+            ));
         }
         let flags = sel[0];
         let ac4_config_flag = (flags & 0x80) != 0;

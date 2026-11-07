@@ -39,11 +39,13 @@ pub(super) fn parse<'a>(
     ext_what: &'static str,
 ) -> Result<Parsed<'a>> {
     if bytes.len() < MIN_SECTION_LEN {
-        return Err(Error::BufferTooShort {
-            need: MIN_SECTION_LEN,
-            have: bytes.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: MIN_SECTION_LEN,
+                have: bytes.len(),
+                what,
+            },
+        ));
     }
     if !expected.contains(&bytes[0]) {
         return Err(Error::UnexpectedTableId {

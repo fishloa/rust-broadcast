@@ -131,7 +131,7 @@ mod tests {
     fn rejects_truncation_and_overflow() {
         assert!(matches!(
             &(Mpeg4AudioExtensionDescriptor::parse(&[TAG, 3, 0b1_111_0001, 0x2F, 5])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let d = Mpeg4AudioExtensionDescriptor::new(vec![0; 16], None);
         assert!(matches!(

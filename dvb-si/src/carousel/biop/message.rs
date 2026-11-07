@@ -157,11 +157,13 @@ impl<'a> Binding<'a> {
     fn parse_from(bytes: &'a [u8], pos: usize, end: usize) -> Result<(Self, usize)> {
         // nameComponents_count (1 byte)
         if pos + BINDING_NAME_COUNT_FIELD > end {
-            return Err(Error::BufferTooShort {
-                need: pos + BINDING_NAME_COUNT_FIELD,
-                have: end,
-                what: "Binding nameComponents_count",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + BINDING_NAME_COUNT_FIELD,
+                    have: end,
+                    what: "Binding nameComponents_count",
+                },
+            ));
         }
         let name_count = bytes[pos] as usize;
         let mut cur = pos + BINDING_NAME_COUNT_FIELD;
@@ -174,11 +176,13 @@ impl<'a> Binding<'a> {
 
         // bindingType (1 byte)
         if cur + BINDING_TYPE_FIELD > end {
-            return Err(Error::BufferTooShort {
-                need: cur + BINDING_TYPE_FIELD,
-                have: end,
-                what: "Binding bindingType",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + BINDING_TYPE_FIELD,
+                    have: end,
+                    what: "Binding bindingType",
+                },
+            ));
         }
         let binding_type = BindingType::from_u8(bytes[cur]);
         cur += BINDING_TYPE_FIELD;
@@ -195,11 +199,13 @@ impl<'a> Binding<'a> {
         // objectInfo_length (2 bytes)
         let (boi, _) = bytes[cur..end]
             .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + BINDING_OBJ_INFO_LEN_FIELD,
-                have: end,
-                what: "Binding objectInfo_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + BINDING_OBJ_INFO_LEN_FIELD,
+                    have: end,
+                    what: "Binding objectInfo_length",
+                },
+            ))?;
         let obj_info_len = u16::from_be_bytes(*boi) as usize;
         cur += BINDING_OBJ_INFO_LEN_FIELD;
         if cur + obj_info_len > end {
@@ -285,11 +291,13 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
     let total = bytes.len();
     let (bhdr, _) = bytes
         .split_first_chunk::<BIOP_HEADER_LEN>()
-        .ok_or(Error::BufferTooShort {
-            need: BIOP_HEADER_LEN,
-            have: total,
-            what: "BIOP message header",
-        })?;
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: BIOP_HEADER_LEN,
+                have: total,
+                what: "BIOP message header",
+            },
+        ))?;
     let magic = u32::from_be_bytes([bhdr[0], bhdr[1], bhdr[2], bhdr[3]]);
     if magic != BIOP_MAGIC {
         return Err(Error::ReservedBitsViolation {
@@ -317,11 +325,13 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
 
     // objectKey_length (1 byte) + objectKey_data
     if pos + OBJECT_KEY_LEN_FIELD > end {
-        return Err(Error::BufferTooShort {
-            need: pos + OBJECT_KEY_LEN_FIELD,
-            have: end,
-            what: "BIOP objectKey_length",
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: pos + OBJECT_KEY_LEN_FIELD,
+                have: end,
+                what: "BIOP objectKey_length",
+            },
+        ));
     }
     let obj_key_len = bytes[pos] as usize;
     pos += OBJECT_KEY_LEN_FIELD;
@@ -337,11 +347,13 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
     // objectKind_length (4 bytes) + objectKind_data (4 bytes)
     let (bkl, _) = bytes[pos..end]
         .split_first_chunk::<4>()
-        .ok_or(Error::BufferTooShort {
-            need: pos + OBJECT_KIND_LEN_FIELD,
-            have: end,
-            what: "BIOP objectKind_length",
-        })?;
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: pos + OBJECT_KIND_LEN_FIELD,
+                have: end,
+                what: "BIOP objectKind_length",
+            },
+        ))?;
     let kind_len = u32::from_be_bytes(*bkl) as usize;
     pos += OBJECT_KIND_LEN_FIELD;
     if kind_len != OBJECT_KIND_DATA_LEN {
@@ -371,11 +383,13 @@ fn parse_service_context_list(
     end: usize,
 ) -> Result<(Vec<ServiceContext<'_>>, usize)> {
     if pos + SERVICE_CONTEXT_COUNT_FIELD > end {
-        return Err(Error::BufferTooShort {
-            need: pos + SERVICE_CONTEXT_COUNT_FIELD,
-            have: end,
-            what: "serviceContextList_count",
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: pos + SERVICE_CONTEXT_COUNT_FIELD,
+                have: end,
+                what: "serviceContextList_count",
+            },
+        ));
     }
     let count = bytes[pos] as usize;
     let mut cur = pos + SERVICE_CONTEXT_COUNT_FIELD;
@@ -383,11 +397,13 @@ fn parse_service_context_list(
     for _ in 0..count {
         let (sch, _) = bytes[cur..end]
             .split_first_chunk::<SERVICE_CONTEXT_FIXED>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + SERVICE_CONTEXT_FIXED,
-                have: end,
-                what: "serviceContext entry",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + SERVICE_CONTEXT_FIXED,
+                    have: end,
+                    what: "serviceContext entry",
+                },
+            ))?;
         let context_id = u32::from_be_bytes([sch[0], sch[1], sch[2], sch[3]]);
         let ctx_data_len = u16::from_be_bytes([sch[4], sch[5]]) as usize;
         cur += SERVICE_CONTEXT_FIXED;
@@ -491,11 +507,13 @@ impl<'a> DirectoryMessage<'a> {
         // objectInfo_length (2 bytes) + objectInfo_data
         let (bdoi, _) = bytes[cur..end]
             .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + OBJECT_INFO_LEN_FIELD,
-                have: end,
-                what: "DirectoryMessage objectInfo_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + OBJECT_INFO_LEN_FIELD,
+                    have: end,
+                    what: "DirectoryMessage objectInfo_length",
+                },
+            ))?;
         let obj_info_len = u16::from_be_bytes(*bdoi) as usize;
         cur += OBJECT_INFO_LEN_FIELD;
         if cur + obj_info_len > end {
@@ -514,11 +532,13 @@ impl<'a> DirectoryMessage<'a> {
         // messageBody_length (4 bytes)
         let (bbl, _) = bytes[cur..end]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + MESSAGE_BODY_LEN_FIELD,
-                have: end,
-                what: "DirectoryMessage messageBody_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + MESSAGE_BODY_LEN_FIELD,
+                    have: end,
+                    what: "DirectoryMessage messageBody_length",
+                },
+            ))?;
         let body_len_wire = u32::from_be_bytes(*bbl);
         cur += MESSAGE_BODY_LEN_FIELD;
         let body_end = super::span(cur, body_len_wire, end)?.end;
@@ -527,11 +547,13 @@ impl<'a> DirectoryMessage<'a> {
         let (bbc, _) =
             bytes[cur..body_end]
                 .split_first_chunk::<2>()
-                .ok_or(Error::BufferTooShort {
-                    need: cur + BINDINGS_COUNT_FIELD,
-                    have: body_end,
-                    what: "DirectoryMessage bindings_count",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: cur + BINDINGS_COUNT_FIELD,
+                        have: body_end,
+                        what: "DirectoryMessage bindings_count",
+                    },
+                ))?;
         let bindings_count = u16::from_be_bytes(*bbc) as usize;
         cur += BINDINGS_COUNT_FIELD;
 
@@ -666,11 +688,13 @@ impl<'a> FileMessage<'a> {
         // objectInfo_length (2 bytes)
         let (bfoi, _) = bytes[cur..end]
             .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + OBJECT_INFO_LEN_FIELD,
-                have: end,
-                what: "FileMessage objectInfo_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + OBJECT_INFO_LEN_FIELD,
+                    have: end,
+                    what: "FileMessage objectInfo_length",
+                },
+            ))?;
         let obj_info_len = u16::from_be_bytes(*bfoi) as usize;
         cur += OBJECT_INFO_LEN_FIELD;
         if obj_info_len < FILE_CONTENT_SIZE_LEN {
@@ -703,11 +727,13 @@ impl<'a> FileMessage<'a> {
         // messageBody_length (4 bytes)
         let (bfbl, _) = bytes[cur..end]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + MESSAGE_BODY_LEN_FIELD,
-                have: end,
-                what: "FileMessage messageBody_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + MESSAGE_BODY_LEN_FIELD,
+                    have: end,
+                    what: "FileMessage messageBody_length",
+                },
+            ))?;
         let body_len_wire = u32::from_be_bytes(*bfbl);
         cur += MESSAGE_BODY_LEN_FIELD;
         let body_end = super::span(cur, body_len_wire, end)?.end;
@@ -716,11 +742,13 @@ impl<'a> FileMessage<'a> {
         let (bfcl, _) =
             bytes[cur..body_end]
                 .split_first_chunk::<4>()
-                .ok_or(Error::BufferTooShort {
-                    need: cur + FILE_CONTENT_LEN_FIELD,
-                    have: body_end,
-                    what: "FileMessage content_length",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: cur + FILE_CONTENT_LEN_FIELD,
+                        have: body_end,
+                        what: "FileMessage content_length",
+                    },
+                ))?;
         let content_len_wire = u32::from_be_bytes(*bfcl);
         cur += FILE_CONTENT_LEN_FIELD;
         let content_range = super::span(cur, content_len_wire, body_end)?;
@@ -836,11 +864,13 @@ impl<'a> DsmStreamInfo<'a> {
     fn parse_from(bytes: &'a [u8], pos: usize, end: usize) -> Result<(Self, usize)> {
         // aDescription_length (1 byte)
         if pos + STREAM_ADESC_LEN_FIELD > end {
-            return Err(Error::BufferTooShort {
-                need: pos + STREAM_ADESC_LEN_FIELD,
-                have: end,
-                what: "DsmStreamInfo aDescription_length",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + STREAM_ADESC_LEN_FIELD,
+                    have: end,
+                    what: "DsmStreamInfo aDescription_length",
+                },
+            ));
         }
         let desc_len = bytes[pos] as usize;
         let mut cur = pos + STREAM_ADESC_LEN_FIELD;
@@ -858,11 +888,13 @@ impl<'a> DsmStreamInfo<'a> {
         // duration.aSeconds(4 signed) + aMicroSeconds(2) + audio(1) + video(1) + data(1)
         let (sif, _) = bytes[cur..end]
             .split_first_chunk::<STREAM_INFO_FIXED>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + STREAM_INFO_FIXED,
-                have: end,
-                what: "DsmStreamInfo fixed fields",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + STREAM_INFO_FIXED,
+                    have: end,
+                    what: "DsmStreamInfo fixed fields",
+                },
+            ))?;
         let duration_seconds = i32::from_be_bytes([sif[0], sif[1], sif[2], sif[3]]);
         let duration_microseconds = u16::from_be_bytes([sif[4], sif[5]]);
         let audio = sif[6];
@@ -939,11 +971,13 @@ impl<'a> StreamMessage<'a> {
         // objectInfo_length (2 bytes)
         let (bsmoi, _) = bytes[cur..end]
             .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + OBJECT_INFO_LEN_FIELD,
-                have: end,
-                what: "StreamMessage objectInfo_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + OBJECT_INFO_LEN_FIELD,
+                    have: end,
+                    what: "StreamMessage objectInfo_length",
+                },
+            ))?;
         let obj_info_len = u16::from_be_bytes(*bsmoi) as usize;
         cur += OBJECT_INFO_LEN_FIELD;
         if cur + obj_info_len > end {
@@ -974,22 +1008,26 @@ impl<'a> StreamMessage<'a> {
         // messageBody_length (4 bytes)
         let (bsmbl, _) = bytes[cur..end]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + MESSAGE_BODY_LEN_FIELD,
-                have: end,
-                what: "StreamMessage messageBody_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + MESSAGE_BODY_LEN_FIELD,
+                    have: end,
+                    what: "StreamMessage messageBody_length",
+                },
+            ))?;
         let body_len_wire = u32::from_be_bytes(*bsmbl);
         cur += MESSAGE_BODY_LEN_FIELD;
         let body_end = super::span(cur, body_len_wire, end)?.end;
 
         // taps_count (1 byte)
         if cur + STREAM_TAPS_COUNT_FIELD > body_end {
-            return Err(Error::BufferTooShort {
-                need: cur + STREAM_TAPS_COUNT_FIELD,
-                have: body_end,
-                what: "StreamMessage taps_count",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + STREAM_TAPS_COUNT_FIELD,
+                    have: body_end,
+                    what: "StreamMessage taps_count",
+                },
+            ));
         }
         let taps_count = bytes[cur] as usize;
         cur += STREAM_TAPS_COUNT_FIELD;
@@ -1131,11 +1169,13 @@ impl<'a> StreamEventMessage<'a> {
         // objectInfo_length (2 bytes)
         let (bseoi, _) = bytes[cur..end]
             .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + OBJECT_INFO_LEN_FIELD,
-                have: end,
-                what: "StreamEventMessage objectInfo_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + OBJECT_INFO_LEN_FIELD,
+                    have: end,
+                    what: "StreamEventMessage objectInfo_length",
+                },
+            ))?;
         let obj_info_len = u16::from_be_bytes(*bseoi) as usize;
         cur += OBJECT_INFO_LEN_FIELD;
         if cur + obj_info_len > end {
@@ -1154,22 +1194,26 @@ impl<'a> StreamEventMessage<'a> {
         let (benc, _) =
             bytes[cur..obj_info_end]
                 .split_first_chunk::<2>()
-                .ok_or(Error::BufferTooShort {
-                    need: cur + STREAM_EVENT_NAMES_COUNT_FIELD,
-                    have: obj_info_end,
-                    what: "StreamEventMessage eventNames_count",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: cur + STREAM_EVENT_NAMES_COUNT_FIELD,
+                        have: obj_info_end,
+                        what: "StreamEventMessage eventNames_count",
+                    },
+                ))?;
         let event_names_count = u16::from_be_bytes(*benc) as usize;
         cur += STREAM_EVENT_NAMES_COUNT_FIELD;
 
         let mut event_names = Vec::with_capacity(event_names_count.min(64));
         for _ in 0..event_names_count {
             if cur + STREAM_EVENT_NAME_LEN_FIELD > obj_info_end {
-                return Err(Error::BufferTooShort {
-                    need: cur + STREAM_EVENT_NAME_LEN_FIELD,
-                    have: obj_info_end,
-                    what: "StreamEventMessage eventName_length",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: cur + STREAM_EVENT_NAME_LEN_FIELD,
+                        have: obj_info_end,
+                        what: "StreamEventMessage eventName_length",
+                    },
+                ));
             }
             let name_len = bytes[cur] as usize;
             cur += STREAM_EVENT_NAME_LEN_FIELD;
@@ -1194,22 +1238,26 @@ impl<'a> StreamEventMessage<'a> {
         // messageBody_length (4 bytes)
         let (bsebl, _) = bytes[cur..end]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + MESSAGE_BODY_LEN_FIELD,
-                have: end,
-                what: "StreamEventMessage messageBody_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + MESSAGE_BODY_LEN_FIELD,
+                    have: end,
+                    what: "StreamEventMessage messageBody_length",
+                },
+            ))?;
         let body_len_wire = u32::from_be_bytes(*bsebl);
         cur += MESSAGE_BODY_LEN_FIELD;
         let body_end = super::span(cur, body_len_wire, end)?.end;
 
         // taps_count (1 byte)
         if cur + STREAM_TAPS_COUNT_FIELD > body_end {
-            return Err(Error::BufferTooShort {
-                need: cur + STREAM_TAPS_COUNT_FIELD,
-                have: body_end,
-                what: "StreamEventMessage taps_count",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + STREAM_TAPS_COUNT_FIELD,
+                    have: body_end,
+                    what: "StreamEventMessage taps_count",
+                },
+            ));
         }
         let taps_count = bytes[cur] as usize;
         cur += STREAM_TAPS_COUNT_FIELD;
@@ -1223,11 +1271,13 @@ impl<'a> StreamEventMessage<'a> {
 
         // eventIds_count (1 byte) — must equal eventNames_count
         if cur + STREAM_EVENT_IDS_COUNT_FIELD > body_end {
-            return Err(Error::BufferTooShort {
-                need: cur + STREAM_EVENT_IDS_COUNT_FIELD,
-                have: body_end,
-                what: "StreamEventMessage eventIds_count",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + STREAM_EVENT_IDS_COUNT_FIELD,
+                    have: body_end,
+                    what: "StreamEventMessage eventIds_count",
+                },
+            ));
         }
         let event_ids_count = bytes[cur] as usize;
         cur += STREAM_EVENT_IDS_COUNT_FIELD;
@@ -1243,11 +1293,13 @@ impl<'a> StreamEventMessage<'a> {
             let (bei, _) =
                 bytes[cur..body_end]
                     .split_first_chunk::<2>()
-                    .ok_or(Error::BufferTooShort {
-                        need: cur + STREAM_EVENT_ID_LEN,
-                        have: body_end,
-                        what: "StreamEventMessage eventId",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: cur + STREAM_EVENT_ID_LEN,
+                            have: body_end,
+                            what: "StreamEventMessage eventId",
+                        },
+                    ))?;
             event_ids.push(u16::from_be_bytes(*bei));
             cur += STREAM_EVENT_ID_LEN;
         }
@@ -1562,11 +1614,13 @@ impl<'a> Parse<'a> for ModuleInfo<'a> {
         let mi_fixed_len = MODULE_INFO_FIXED + MODULE_TAPS_COUNT_FIELD;
         let (mi_hdr, _) = bytes
             .split_first_chunk::<13>()
-            .ok_or(Error::BufferTooShort {
-                need: mi_fixed_len,
-                have: end,
-                what: "ModuleInfo fixed fields",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: mi_fixed_len,
+                    have: end,
+                    what: "ModuleInfo fixed fields",
+                },
+            ))?;
         let module_timeout = u32::from_be_bytes([mi_hdr[0], mi_hdr[1], mi_hdr[2], mi_hdr[3]]);
         let block_timeout = u32::from_be_bytes([mi_hdr[4], mi_hdr[5], mi_hdr[6], mi_hdr[7]]);
         let min_block_time = u32::from_be_bytes([mi_hdr[8], mi_hdr[9], mi_hdr[10], mi_hdr[11]]);
@@ -1581,11 +1635,13 @@ impl<'a> Parse<'a> for ModuleInfo<'a> {
         }
 
         if pos + MODULE_USER_INFO_LEN_FIELD > end {
-            return Err(Error::BufferTooShort {
-                need: pos + MODULE_USER_INFO_LEN_FIELD,
-                have: end,
-                what: "ModuleInfo UserInfoLength",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + MODULE_USER_INFO_LEN_FIELD,
+                    have: end,
+                    what: "ModuleInfo UserInfoLength",
+                },
+            ));
         }
         let user_info_len = bytes[pos] as usize;
         pos += MODULE_USER_INFO_LEN_FIELD;
@@ -1743,11 +1799,13 @@ impl<'a> ServiceGatewayInfo<'a> {
         // downloadTaps: count(1) + taps (raw, count × variable)
         // We preserve the entire block raw: start at pos (count byte), walk past taps.
         if pos + SGI_DOWNLOAD_TAPS_COUNT_FIELD > end {
-            return Err(Error::BufferTooShort {
-                need: pos + SGI_DOWNLOAD_TAPS_COUNT_FIELD,
-                have: end,
-                what: "ServiceGatewayInfo downloadTaps_count",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + SGI_DOWNLOAD_TAPS_COUNT_FIELD,
+                    have: end,
+                    what: "ServiceGatewayInfo downloadTaps_count",
+                },
+            ));
         }
         let tap_count = bytes[pos] as usize;
         pos += SGI_DOWNLOAD_TAPS_COUNT_FIELD;
@@ -1765,11 +1823,13 @@ impl<'a> ServiceGatewayInfo<'a> {
         // userInfoLength (2 bytes, 16-bit) + userInfo_data
         let (buil, _) = bytes[pos..end]
             .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
-                need: pos + SGI_USER_INFO_LEN_FIELD,
-                have: end,
-                what: "ServiceGatewayInfo userInfoLength",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + SGI_USER_INFO_LEN_FIELD,
+                    have: end,
+                    what: "ServiceGatewayInfo userInfoLength",
+                },
+            ))?;
         let ui_len = u16::from_be_bytes(*buil) as usize;
         pos += SGI_USER_INFO_LEN_FIELD;
         if pos + ui_len > end {

@@ -13,24 +13,12 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
-    #[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]
-    BufferTooShort {
-        /// Bytes required to proceed.
-        need: usize,
-        /// Bytes actually available.
-        have: usize,
-        /// Human-readable name of the type or field being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// CRC-32 validation failed for a table section.
-    #[error("CRC-32 mismatch: computed {computed:#010x}, expected {expected:#010x}")]
-    CrcMismatch {
-        /// CRC we calculated over the section bytes.
-        computed: u32,
-        /// CRC carried at the end of the section.
-        expected: u32,
-    },
+    #[error(transparent)]
+    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
 
     /// `table_id` byte doesn't match any expected value for the parser invoked.
     #[error("unexpected table_id {table_id:#04x} for {what} (expected one of {expected:?})")]
@@ -84,20 +72,12 @@ pub enum Error {
     },
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
-    #[error("serialize: output buffer too small — need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Required size.
-        need: usize,
-        /// Actual size.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
-    /// TS sync byte was not the expected `0x47`.
-    #[error("invalid TS sync byte: expected 0x47, got {found:#04x}")]
-    InvalidSyncByte {
-        /// The byte actually read at position 0.
-        found: u8,
-    },
+    /// A fixed marker did not match (TS sync byte, expected `0x47`).
+    #[error(transparent)]
+    InvalidSync(#[from] broadcast_common::error::InvalidSync),
 
     /// A serializer's length or count value did not fit its wire field.
     /// Returned instead of silently narrowing (`as u8`/`as u16`/masking),
@@ -106,38 +86,13 @@ pub enum Error {
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }
 
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
-}
-
 impl From<mpeg_ts::Error> for Error {
     fn from(e: mpeg_ts::Error) -> Self {
         match e {
-            mpeg_ts::Error::BufferTooShort { need, have, what } => {
-                Error::BufferTooShort { need, have, what }
-            }
-            mpeg_ts::Error::CrcMismatch { computed, expected } => {
-                Error::CrcMismatch { computed, expected }
-            }
-            mpeg_ts::Error::InvalidSyncByte { found } => Error::InvalidSyncByte { found },
-            mpeg_ts::Error::OutputBufferTooSmall { need, have } => {
-                Error::OutputBufferTooSmall { need, have }
-            }
+            mpeg_ts::Error::BufferTooShort(e) => Error::BufferTooShort(e),
+            mpeg_ts::Error::CrcMismatch(e) => Error::CrcMismatch(e),
+            mpeg_ts::Error::InvalidSync(e) => Error::InvalidSync(e),
+            mpeg_ts::Error::OutputBufferTooSmall(e) => Error::OutputBufferTooSmall(e),
             mpeg_ts::Error::SectionLengthOverflow {
                 declared,
                 available,
@@ -146,11 +101,11 @@ impl From<mpeg_ts::Error> for Error {
                 available,
             },
             // mpeg_ts::Error is #[non_exhaustive]; catch future variants generically.
-            _ => Error::BufferTooShort {
+            _ => Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "mpeg_ts (unknown error)",
-            },
+            }),
         }
     }
 }

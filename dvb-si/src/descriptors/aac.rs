@@ -481,7 +481,7 @@ mod tests {
         let bytes = [TAG, 4, 0x50];
         assert!(matches!(
             AacDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

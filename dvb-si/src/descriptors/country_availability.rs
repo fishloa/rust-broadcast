@@ -180,7 +180,7 @@ mod tests {
         let bytes = [TAG, 7, 0x80, b'G', b'B'];
         assert!(matches!(
             CountryAvailabilityDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

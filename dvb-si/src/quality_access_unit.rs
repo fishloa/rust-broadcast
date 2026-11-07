@@ -147,11 +147,11 @@ impl<'a> QualityAccessUnit<'a> {
 }
 
 fn short(need: usize, have: usize) -> Error {
-    Error::BufferTooShort {
+    Error::BufferTooShort(broadcast_common::error::BufferTooShort {
         need,
         have,
         what: WHAT,
-    }
+    })
 }
 
 impl<'a> Parse<'a> for QualityAccessUnit<'a> {
@@ -317,17 +317,17 @@ mod tests {
     fn malformed_is_rejected() {
         assert!(matches!(
             QualityAccessUnit::parse(&[]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         // metric_count=1 but no metric header
         assert!(matches!(
             &(QualityAccessUnit::parse(&[0x01, 0x01])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         // truncated sample
         assert!(matches!(
             &(QualityAccessUnit::parse(&[0x01, 0x01, 0, 0, 0, 1, 1, 0x21, 0, 1])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         // bad DTS prefix ('0011' instead of '0010')
         let bad = [

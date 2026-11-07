@@ -79,11 +79,13 @@ fn truncated_tail_yields_ok_then_err_then_fuses() {
     assert!(matches!(it.next(), Some(Ok(AnyDescriptor::ShortEvent(_)))));
     assert_eq!(
         it.next().and_then(Result::err),
-        Some(dvb_si::Error::BufferTooShort {
-            need: 257,
-            have: 3,
-            what: "descriptor body in loop"
-        })
+        Some(dvb_si::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 257,
+                have: 3,
+                what: "descriptor body in loop"
+            }
+        ))
     );
     assert!(it.next().is_none());
     assert!(it.next().is_none(), "iterator must stay fused");

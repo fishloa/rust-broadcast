@@ -13,6 +13,7 @@
 - `build.rs` generates the CA-system and private-data-specifier name functions from one writer (c3 d:D1).
 - NIT and BAT share one section parse/serialize core, CAT and TSDT another, and the three descriptor registries use `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H4, H1).
 - The H.222.0 descriptor bit reader and the SAT bit reader are error-mapping adapters over `broadcast_common::bits::BitReader`; the SAT reader no longer rebuilds and re-skips a reader on every read (dedupe D6). The two writers stay local: one grows a `Vec`, the other emits into a slice with this crate's own overflow errors.
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what`, message "<what> CRC-32 mismatch: ..."); `InvalidSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`. `From<mpeg_ts::Error>` forwards the shared kinds unchanged. `ReservedBitsViolation` stays crate-specific (free-text reason, not always a reserved field).
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 

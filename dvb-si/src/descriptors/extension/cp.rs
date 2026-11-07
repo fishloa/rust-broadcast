@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn parse_cp_rejects_short() {
         let err = Cp::parse(&[0x00, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

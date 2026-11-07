@@ -95,7 +95,10 @@ mod tests {
         let raw: &[u8] = &[0x40];
         let err = NetworkNameDescriptor::parse(raw).unwrap_err();
         assert!(
-            matches!(err, Error::BufferTooShort { need: 2, .. }),
+            matches!(
+                err,
+                Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 2, .. })
+            ),
             "expected BufferTooShort(need=2), got {err:?}"
         );
     }
@@ -108,7 +111,7 @@ mod tests {
             0xAA, 0xBB, // only 2 bytes available
         ];
         let err = NetworkNameDescriptor::parse(&raw).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     /// Parse → serialize → re-parse should yield an equal struct and
@@ -134,7 +137,7 @@ mod tests {
         let mut tiny = vec![0u8; 1];
         let err = parsed.serialize_into(&mut tiny).unwrap_err();
         assert!(
-            matches!(err, Error::OutputBufferTooSmall { need, .. } if need == parsed.serialized_len()),
+            matches!(err, Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall { need, .. }) if need == parsed.serialized_len()),
             "expected OutputBufferTooSmall(need={}), got {err:?}",
             parsed.serialized_len()
         );

@@ -41,9 +41,9 @@
 //!     type Error = dvb_si::Error;
 //!     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
 //!         if bytes.len() < 3 {
-//!             return Err(dvb_si::Error::BufferTooShort {
+//!             return Err(dvb_si::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
 //!                 need: 3, have: bytes.len(), what: "MyPrivate",
-//!             });
+//!             }));
 //!         }
 //!         Ok(Self { x: bytes[2] })
 //!     }
@@ -614,11 +614,13 @@ mod tests {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
-                return Err(crate::error::Error::BufferTooShort {
-                    need: 3,
-                    have: bytes.len(),
-                    what: "PdsEacem",
-                });
+                return Err(crate::error::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 3,
+                        have: bytes.len(),
+                        what: "PdsEacem",
+                    },
+                ));
             }
             Ok(Self { v: bytes[2] })
         }
@@ -639,11 +641,13 @@ mod tests {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
-                return Err(crate::error::Error::BufferTooShort {
-                    need: 3,
-                    have: bytes.len(),
-                    what: "PdsNordig",
-                });
+                return Err(crate::error::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 3,
+                        have: bytes.len(),
+                        what: "PdsNordig",
+                    },
+                ));
             }
             Ok(Self { w: bytes[2] })
         }
@@ -664,11 +668,13 @@ mod tests {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
-                return Err(crate::error::Error::BufferTooShort {
-                    need: 3,
-                    have: bytes.len(),
-                    what: "PdsAgnostic",
-                });
+                return Err(crate::error::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 3,
+                        have: bytes.len(),
+                        what: "PdsAgnostic",
+                    },
+                ));
             }
             Ok(Self { z: bytes[2] })
         }
@@ -1013,11 +1019,13 @@ mod tests {
             type Error = crate::error::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.len() < 3 {
-                    return Err(crate::error::Error::BufferTooShort {
-                        need: 3,
-                        have: bytes.len(),
-                        what: "Agnostic83",
-                    });
+                    return Err(crate::error::Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: 3,
+                            have: bytes.len(),
+                            what: "Agnostic83",
+                        },
+                    ));
                 }
                 Ok(Self { a: bytes[2] })
             }

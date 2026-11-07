@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = AssociationTagDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -426,7 +426,7 @@ mod tests {
         // Declared length=10 but only 4 body bytes present.
         let err =
             AssociationTagDescriptor::parse(&[TAG, 0x0A, 0x00, 0x01, 0x00, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
         let d = AssociationTagDescriptor::parse(HOTBIRD_A).unwrap();
         let mut tiny = [0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     // ── serde ──────────────────────────────────────────────────────────────────

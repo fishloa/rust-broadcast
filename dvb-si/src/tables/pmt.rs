@@ -751,11 +751,13 @@ impl<'a> Parse<'a> for PmtSection<'a> {
         }
 
         if pos != stream_loop_end {
-            return Err(Error::BufferTooShort {
-                need: stream_loop_end - pos,
-                have: 0,
-                what: "PmtSection trailing stream bytes",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: stream_loop_end - pos,
+                    have: 0,
+                    what: "PmtSection trailing stream bytes",
+                },
+            ));
         }
 
         Ok(PmtSection {
@@ -943,7 +945,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = PmtSection::parse(&[0x02, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -1109,10 +1111,10 @@ mod tests {
         let err = PmtSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "PmtSection trailing stream bytes",
                 ..
-            }
+            })
         ));
     }
 

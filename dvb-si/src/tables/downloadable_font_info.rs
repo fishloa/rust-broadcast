@@ -594,10 +594,10 @@ mod tests {
     fn rejects_short_buffer() {
         assert!(matches!(
             DownloadableFontInfoSection::parse(&[0x7C, 0xB0]).unwrap_err(),
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "DownloadableFontInfoSection",
                 ..
-            }
+            })
         ));
     }
 

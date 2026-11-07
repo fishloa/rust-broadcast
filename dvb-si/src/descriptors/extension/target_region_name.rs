@@ -54,21 +54,25 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             let region_name = DvbText::new(&sel[pos..pos + name_length]);
             pos += name_length;
             if pos >= sel.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "target_region_name body",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 1,
+                        have: sel.len(),
+                        what: "target_region_name body",
+                    },
+                ));
             }
             let primary_region_code = sel[pos];
             pos += 1;
             let secondary_region_code = if region_depth >= 2 {
                 if pos >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: sel.len(),
-                        what: "target_region_name body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "target_region_name body",
+                        },
+                    ));
                 }
                 let val = sel[pos];
                 pos += 1;
@@ -78,20 +82,24 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             };
             let tertiary_region_code = if region_depth == 3 {
                 if pos + 1 >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 2,
-                        have: sel.len(),
-                        what: "target_region_name body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 2,
+                            have: sel.len(),
+                            what: "target_region_name body",
+                        },
+                    ));
                 }
                 let (b, _) = sel
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<2>())
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + 2,
-                        have: sel.len(),
-                        what: "target_region_name body",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 2,
+                            have: sel.len(),
+                            what: "target_region_name body",
+                        },
+                    ))?;
                 let val = u16::from_be_bytes(*b);
                 pos += 2;
                 Some(val)

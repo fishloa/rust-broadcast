@@ -181,11 +181,13 @@ impl<'a> Parse<'a> for AtscCaptionServiceDescriptor {
             "unexpected tag for caption_service_descriptor",
         )?;
         let Some(&head) = body.first() else {
-            return Err(Error::BufferTooShort {
-                need: COUNT_BYTE_LEN,
-                have: 0,
-                what: "AtscCaptionServiceDescriptor",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: COUNT_BYTE_LEN,
+                    have: 0,
+                    what: "AtscCaptionServiceDescriptor",
+                },
+            ));
         };
         let n = usize::from(head & COUNT_MASK);
         if body.len() != COUNT_BYTE_LEN + n * SERVICE_LEN {
@@ -369,11 +371,11 @@ mod tests {
         ));
         assert!(matches!(
             AtscCaptionServiceDescriptor::parse(&[TAG, 0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         assert!(matches!(
             AtscCaptionServiceDescriptor::parse(&[TAG, 7, 0xE1]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

@@ -179,20 +179,24 @@ impl<'a> Parse<'a> for SitSection<'a> {
         let mut pos = ti_end;
         while pos < crc_start {
             if pos + SERVICE_HEADER_LEN > crc_start {
-                return Err(Error::BufferTooShort {
-                    need: pos + SERVICE_HEADER_LEN,
-                    have: crc_start,
-                    what: "SitService header",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + SERVICE_HEADER_LEN,
+                        have: crc_start,
+                        what: "SitService header",
+                    },
+                ));
             }
             let (b2, _) = bytes
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: crc_start,
-                    what: "SitService header",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 2,
+                        have: crc_start,
+                        what: "SitService header",
+                    },
+                ))?;
             let service_id = u16::from_be_bytes(*b2);
             // byte[pos+2]: reserved_future_use(1) | running_status(3) | len_hi(4)
             let running_status = RunningStatus::from_u8((bytes[pos + 2] >> 4) & 0x07);
@@ -356,7 +360,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             SitSection::parse(&[0x7F, 0xB0]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -413,7 +417,7 @@ mod tests {
         let bytes = build_sit(0x1234, 0, &ti, &[0x00, 0x01, 0xC0]);
         assert!(matches!(
             SitSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

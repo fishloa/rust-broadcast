@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = ShortSmoothingBufferDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -128,7 +128,7 @@ mod tests {
     fn parse_rejects_length_overrun() {
         // length=3 but only the packed byte present.
         let err = ShortSmoothingBufferDescriptor::parse(&[TAG, 3, 0x52]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod tests {
         };
         let mut tiny = [0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

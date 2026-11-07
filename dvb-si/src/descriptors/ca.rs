@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_header() {
         let err = CaDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -195,7 +195,7 @@ mod tests {
     fn parse_rejects_length_overflow() {
         let bytes = [TAG, 10, 0x05, 0x00, 0xE1, 0x01];
         let err = CaDescriptor::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -221,7 +221,7 @@ mod tests {
         let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[]);
         let mut tiny = vec![0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

@@ -165,7 +165,7 @@ mod tests {
         let d = SmoothingBufferDescriptor::new(0, 0);
         let mut tiny = vec![0u8; 4];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     /// H.222.0 Table 2-69. Parsed reserved bits are preserved (zero-reserved

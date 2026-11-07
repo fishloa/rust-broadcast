@@ -339,11 +339,13 @@ impl<'a> Parse<'a> for RntSection<'a> {
 
         while pos < payload_end {
             if pos + RP_INFO_LEN_FIELD > payload_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + RP_INFO_LEN_FIELD,
-                    have: payload_end,
-                    what: "RntSection resolution_provider_info_length",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + RP_INFO_LEN_FIELD,
+                        have: payload_end,
+                        what: "RntSection resolution_provider_info_length",
+                    },
+                ));
             }
             let rp_info_length = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             let reserved_info_length = super::len_reserved_of(bytes[pos]);
@@ -357,30 +359,36 @@ impl<'a> Parse<'a> for RntSection<'a> {
             }
 
             if pos + RP_NAME_LEN_FIELD > rp_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + RP_NAME_LEN_FIELD,
-                    have: rp_end,
-                    what: "RntSection resolution_provider_name_length",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + RP_NAME_LEN_FIELD,
+                        have: rp_end,
+                        what: "RntSection resolution_provider_name_length",
+                    },
+                ));
             }
             let name_len = bytes[pos] as usize;
             pos += RP_NAME_LEN_FIELD;
             if pos + name_len > rp_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + name_len,
-                    have: rp_end,
-                    what: "RntSection resolution_provider_name",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + name_len,
+                        have: rp_end,
+                        what: "RntSection resolution_provider_name",
+                    },
+                ));
             }
             let name = DvbText::new(&bytes[pos..pos + name_len]);
             pos += name_len;
 
             if pos + RP_DESC_LEN_FIELD > rp_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + RP_DESC_LEN_FIELD,
-                    have: rp_end,
-                    what: "RntSection resolution_provider_descriptors_length",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + RP_DESC_LEN_FIELD,
+                        have: rp_end,
+                        what: "RntSection resolution_provider_descriptors_length",
+                    },
+                ));
             }
             let rp_desc_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             let reserved_descriptors_length = super::len_reserved_of(bytes[pos]);
@@ -399,30 +407,36 @@ impl<'a> Parse<'a> for RntSection<'a> {
             let mut crid_authorities = Vec::new();
             while pos < rp_end {
                 if pos + CA_NAME_LEN_FIELD > rp_end {
-                    return Err(Error::BufferTooShort {
-                        need: pos + CA_NAME_LEN_FIELD,
-                        have: rp_end,
-                        what: "RntSection CRID_authority_name_length",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + CA_NAME_LEN_FIELD,
+                            have: rp_end,
+                            what: "RntSection CRID_authority_name_length",
+                        },
+                    ));
                 }
                 let ca_name_len = bytes[pos] as usize;
                 pos += CA_NAME_LEN_FIELD;
                 if pos + ca_name_len > rp_end {
-                    return Err(Error::BufferTooShort {
-                        need: pos + ca_name_len,
-                        have: rp_end,
-                        what: "RntSection CRID_authority_name",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + ca_name_len,
+                            have: rp_end,
+                            what: "RntSection CRID_authority_name",
+                        },
+                    ));
                 }
                 let ca_name = DvbText::new(&bytes[pos..pos + ca_name_len]);
                 pos += ca_name_len;
 
                 if pos + CA_HEADER_LEN > rp_end {
-                    return Err(Error::BufferTooShort {
-                        need: pos + CA_HEADER_LEN,
-                        have: rp_end,
-                        what: "RntSection CRID_authority header",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + CA_HEADER_LEN,
+                            have: rp_end,
+                            what: "RntSection CRID_authority header",
+                        },
+                    ));
                 }
                 let ca_packed = bytes[pos];
                 let crid_authority_policy =
@@ -729,7 +743,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             RntSection::parse(&[0x79, 0x00]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -748,7 +762,7 @@ mod tests {
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             rnt.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

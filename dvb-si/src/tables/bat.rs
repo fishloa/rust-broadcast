@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = BatSection::parse(&[0x4A, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -353,7 +353,7 @@ mod tests {
         let bat = BatSection::new(0x0001, 0, true, 0, 0, DescriptorLoop::new(&[]), vec![]);
         let mut buf = vec![0u8; 2];
         let err = bat.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

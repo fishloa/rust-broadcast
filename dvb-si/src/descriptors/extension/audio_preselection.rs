@@ -167,11 +167,13 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: sel.len(),
-                what: "audio_preselection body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: sel.len(),
+                    what: "audio_preselection body",
+                },
+            ));
         }
         let num_preselections = sel[0] >> 3;
         let header_reserved = sel[0] & RESERVED_ZERO_3_MASK;
@@ -204,11 +206,13 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
 
             let message_id = if text_label_present {
                 if pos >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: sel.len(),
-                        what: "audio_preselection body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "audio_preselection body",
+                        },
+                    ));
                 }
                 let id = sel[pos];
                 pos += 1;
@@ -221,11 +225,13 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
             let mut reserved_zero_future_use_3 = None;
             let aux_component_tags = if multi_stream_info_present {
                 if pos >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: sel.len(),
-                        what: "audio_preselection body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "audio_preselection body",
+                        },
+                    ));
                 }
                 let num_aux = sel[pos] >> 5;
                 reserved_zero_future_use_5 = Some(sel[pos] & RESERVED_ZERO_5_MASK);
@@ -240,11 +246,13 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
 
             let future_ext = if future_extension {
                 if pos >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: sel.len(),
-                        what: "audio_preselection body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "audio_preselection body",
+                        },
+                    ));
                 }
                 let ext_len = (sel[pos] & 0x1F) as usize;
                 reserved_zero_future_use_3 = Some(sel[pos] >> 5);

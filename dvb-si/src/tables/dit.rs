@@ -154,7 +154,7 @@ mod tests {
         let bytes = [TABLE_ID, 0x70];
         assert!(matches!(
             DitSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -182,7 +182,7 @@ mod tests {
         let mut buf = [0u8; 3];
         assert!(matches!(
             dit.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

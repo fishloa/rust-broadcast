@@ -328,13 +328,13 @@ mod tests {
     #[test]
     fn parse_rejects_short_header() {
         let err = ServiceDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
     fn parse_rejects_truncated_body() {
         let err = ServiceDescriptor::parse(&[TAG, 5, 0x01, 0xFF]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

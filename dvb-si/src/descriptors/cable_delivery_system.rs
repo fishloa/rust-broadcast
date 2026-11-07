@@ -505,7 +505,7 @@ mod tests {
             TAG, 12, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         let err = CableDeliverySystemDescriptor::parse(&raw).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
 
         // Declared length fits the buffer but is not 11 → the body-length check bites.
         let raw: [u8; 12] = [TAG, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];

@@ -125,7 +125,7 @@ mod tests {
         let bytes = [TAG, 6, 0, 0, 0, 0];
         assert!(matches!(
             EcmRepetitionRateDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -151,7 +151,7 @@ mod tests {
         let mut buf = vec![0u8; 3];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 }

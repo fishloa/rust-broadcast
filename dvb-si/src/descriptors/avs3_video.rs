@@ -407,7 +407,7 @@ mod tests {
         ));
         assert!(matches!(
             Avs3VideoDescriptor::parse(&[TAG, 8, 0, 0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

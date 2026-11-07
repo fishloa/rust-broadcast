@@ -82,7 +82,7 @@ mod tests {
         ));
         assert!(matches!(
             NameDescriptor::parse(&[TAG, 3, b'a']),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         let big = vec![b'x'; 256];
         let d = NameDescriptor {

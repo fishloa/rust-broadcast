@@ -206,11 +206,13 @@ pub(crate) fn descriptor_body<'a>(
 ) -> crate::Result<&'a [u8]> {
     const HEADER_LEN: usize = 2;
     if bytes.len() < HEADER_LEN {
-        return Err(crate::Error::BufferTooShort {
-            need: HEADER_LEN,
-            have: bytes.len(),
-            what,
-        });
+        return Err(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: HEADER_LEN,
+                have: bytes.len(),
+                what,
+            },
+        ));
     }
     if bytes[0] != tag {
         return Err(crate::Error::InvalidDescriptor {
@@ -221,11 +223,13 @@ pub(crate) fn descriptor_body<'a>(
     let length = bytes[1] as usize;
     let end = HEADER_LEN + length;
     if bytes.len() < end {
-        return Err(crate::Error::BufferTooShort {
-            need: end,
-            have: bytes.len(),
-            what,
-        });
+        return Err(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: end,
+                have: bytes.len(),
+                what,
+            },
+        ));
     }
     Ok(&bytes[HEADER_LEN..end])
 }

@@ -320,11 +320,11 @@ mod tests {
         ));
         assert!(matches!(
             ChinaCaptionServiceDescriptor::parse(&[TAG, 2, 0xE0, 0xE0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         assert!(matches!(
             ChinaCaptionServiceDescriptor::parse(&[TAG, 9, 0xE1]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

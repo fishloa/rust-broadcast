@@ -1254,7 +1254,7 @@ mod tests {
     #[test]
     fn parse_rejects_truncated_buffer() {
         let err = LinkageDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

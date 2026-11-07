@@ -134,7 +134,7 @@ mod tests {
     fn parse_rejects_truncated_body() {
         let bytes = [TAG, 4, b'F', b'R'];
         let err = ParentalRatingDescriptor::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

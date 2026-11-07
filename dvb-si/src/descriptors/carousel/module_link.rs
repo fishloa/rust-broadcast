@@ -155,7 +155,7 @@ mod tests {
         ));
         assert!(matches!(
             &(ModuleLinkDescriptor::parse(&[TAG, 3, 0, 0])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 }

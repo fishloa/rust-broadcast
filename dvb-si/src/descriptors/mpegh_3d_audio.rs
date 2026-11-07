@@ -78,21 +78,25 @@ impl<'a> Reader<'a> {
         Self { body, pos: 0, what }
     }
     fn u8(&mut self) -> Result<u8> {
-        let b = *self.body.get(self.pos).ok_or(Error::BufferTooShort {
-            need: self.pos + 1,
-            have: self.body.len(),
-            what: self.what,
-        })?;
+        let b = *self.body.get(self.pos).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: self.pos + 1,
+                have: self.body.len(),
+                what: self.what,
+            },
+        ))?;
         self.pos += 1;
         Ok(b)
     }
     fn take(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self.pos + len;
-        let s = self.body.get(self.pos..end).ok_or(Error::BufferTooShort {
-            need: end,
-            have: self.body.len(),
-            what: self.what,
-        })?;
+        let s = self.body.get(self.pos..end).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: end,
+                have: self.body.len(),
+                what: self.what,
+            },
+        ))?;
         self.pos = end;
         Ok(s)
     }

@@ -336,7 +336,7 @@ mod tests {
         let bytes = [TAG, 5, 0, 0, 0];
         assert!(matches!(
             DtsDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

@@ -92,7 +92,7 @@ mod tests {
         let d = LocationDescriptor { location_tag: 1 };
         assert!(matches!(
             &(d.serialize_into(&mut [0u8; 2])),
-            Err(crate::error::Error::OutputBufferTooSmall { .. })
+            Err(crate::error::Error::OutputBufferTooSmall(..))
         ));
     }
 }

@@ -175,7 +175,7 @@ mod tests {
     fn parse_rejects_short_body() {
         assert!(matches!(
             AdaptationFieldDataDescriptor::parse(&[TAG, 1]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -198,7 +198,7 @@ mod tests {
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 }

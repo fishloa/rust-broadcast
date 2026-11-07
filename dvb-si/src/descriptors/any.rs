@@ -398,22 +398,26 @@ pub(crate) fn next_loop_entry<'a>(
     let rem = &bytes[*pos..];
     if rem.len() < 2 {
         *fused = true;
-        return Some(Err(crate::Error::BufferTooShort {
-            need: 2,
-            have: rem.len(),
-            what: "descriptor header in loop",
-        }));
+        return Some(Err(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 2,
+                have: rem.len(),
+                what: "descriptor header in loop",
+            },
+        )));
     }
     let tag = rem[0];
     let len = rem[1] as usize;
     let total = 2 + len;
     if rem.len() < total {
         *fused = true;
-        return Some(Err(crate::Error::BufferTooShort {
-            need: total,
-            have: rem.len(),
-            what: "descriptor body in loop",
-        }));
+        return Some(Err(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: total,
+                have: rem.len(),
+                what: "descriptor body in loop",
+            },
+        )));
     }
     let full = &rem[..total];
     *pos += total;
@@ -773,11 +777,13 @@ mod tests {
             type Error = crate::error::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.len() < 3 {
-                    return Err(crate::error::Error::BufferTooShort {
-                        need: 3,
-                        have: bytes.len(),
-                        what: "MyTag0xA7",
-                    });
+                    return Err(crate::error::Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: 3,
+                            have: bytes.len(),
+                            what: "MyTag0xA7",
+                        },
+                    ));
                 }
                 Ok(Self { x: bytes[2] })
             }

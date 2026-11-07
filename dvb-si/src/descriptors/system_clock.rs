@@ -169,7 +169,7 @@ mod tests {
         let d = SystemClockDescriptor::new(false, 0, 0);
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     /// H.222.0 Table 2-64 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the

@@ -174,30 +174,36 @@ impl<'a> Parse<'a> for CitSection<'a> {
         let mut crid_entries = Vec::new();
         while pos < payload_end {
             if pos + CRID_ENTRY_FIXED_LEN > payload_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + CRID_ENTRY_FIXED_LEN,
-                    have: payload_end,
-                    what: "CitSection crid_entry",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + CRID_ENTRY_FIXED_LEN,
+                        have: payload_end,
+                        what: "CitSection crid_entry",
+                    },
+                ));
             }
             let (b2, _) = bytes
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + CRID_ENTRY_FIXED_LEN,
-                    have: payload_end,
-                    what: "CitSection crid_entry",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + CRID_ENTRY_FIXED_LEN,
+                        have: payload_end,
+                        what: "CitSection crid_entry",
+                    },
+                ))?;
             let crid_ref = u16::from_be_bytes(*b2);
             let prepend_string_index = bytes[pos + 2];
             let unique_string_length = bytes[pos + 3] as usize;
             pos += CRID_ENTRY_FIXED_LEN;
             if pos + unique_string_length > payload_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + unique_string_length,
-                    have: payload_end,
-                    what: "CitSection unique_string",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + unique_string_length,
+                        have: payload_end,
+                        what: "CitSection unique_string",
+                    },
+                ));
             }
             let unique_string = DvbText::new(&bytes[pos..pos + unique_string_length]);
             pos += unique_string_length;
@@ -407,7 +413,7 @@ mod tests {
     fn parse_rejects_buffer_too_short() {
         assert!(matches!(
             CitSection::parse(&[TABLE_ID, 0x00]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -435,7 +441,7 @@ mod tests {
         truncated[2] = (sl & 0xFF) as u8;
         assert!(matches!(
             CitSection::parse(&truncated),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 
@@ -456,7 +462,7 @@ mod tests {
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             cit.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 
