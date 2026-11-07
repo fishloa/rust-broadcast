@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Removed
+- `Error::UnexpectedElement`, `Error::ProhibitedElement`, `Error::ProhibitedAttribute` and `Error::Serialize`: never constructed. Foreign elements are preserved and profile violations are reported as validation findings, not errors.
 - The `serde` feature and the `serde` dependency: nothing in the crate used them.
 ### Changed
 - The pull parser reads attributes and events through `broadcast_common::xml_chars` instead of a private copy (c2 H8).

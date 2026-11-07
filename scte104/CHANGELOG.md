@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Removed
+- `Error::UnexpectedOpId`: never constructed; the operation data parsers take the body after `opID` dispatch and cannot see the `opID`.
 - `SingleOpDef` and `MultiOpDef` marker traits (no impls or bounds anywhere).
 
 ## [0.6.0] - 2026-10-17

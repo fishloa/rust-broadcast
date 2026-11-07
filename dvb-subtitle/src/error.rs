@@ -29,12 +29,6 @@ pub enum Error {
     /// An unrecognised or invalid segment_type was encountered.
     #[error("unknown segment_type: {0:#04X}")]
     UnknownSegmentType(u8),
-    /// An unrecognised or invalid data_type in a pixel-data sub-block.
-    #[error("unknown data_type: {0:#04X}")]
-    UnknownDataType(u8),
-    /// An unrecognised or invalid object_coding_method.
-    #[error("unknown object_coding_method: {0:#02X}")]
-    UnknownObjectCodingMethod(u8),
     /// Stuffing byte was not 0x00.
     #[error("non-zero stuffing byte: {0:#04X} (expected 0x00)")]
     BadStuffingByte(u8),

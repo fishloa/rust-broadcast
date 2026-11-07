@@ -57,29 +57,6 @@ pub enum Error {
     #[error("IMSC validation error: {0}")]
     Validation(String),
 
-    /// An unexpected element was found in a location where it is not valid.
-    #[error("unexpected element '{name}' in namespace '{ns}'")]
-    UnexpectedElement {
-        /// The element local name.
-        name: String,
-        /// The element namespace, if any.
-        ns: String,
-    },
-
-    /// An element was found that is prohibited by the content profile.
-    #[error("prohibited element '{name}' for the claimed profile")]
-    ProhibitedElement {
-        /// The element name.
-        name: String,
-    },
-
-    /// An attribute was found that is prohibited by the content profile.
-    #[error("prohibited attribute '{attr}' for the claimed profile")]
-    ProhibitedAttribute {
-        /// The attribute name.
-        attr: String,
-    },
-
     /// A generic constraint violation.
     #[error("{constraint}: {detail}")]
     ConstraintViolation {
@@ -88,8 +65,4 @@ pub enum Error {
         /// Additional detail.
         detail: String,
     },
-
-    /// Serialization error.
-    #[error("serialization error: {0}")]
-    Serialize(String),
 }
