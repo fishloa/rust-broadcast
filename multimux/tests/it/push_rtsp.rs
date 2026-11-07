@@ -269,7 +269,6 @@ fn ffprobe_read(url: &str) -> (bool, String, String) {
 /// (effectively instantaneous, no real-time pacing) fixture bytes.
 async fn push_and_read_back(
     server: &MediaMtx,
-    path: &str,
     cfg: RtspTransportConfig,
     push_url: String,
     read_url: String,
@@ -344,7 +343,7 @@ async fn rtsp_push_survives_digest_auth_against_mediamtx() {
         credentials: Some(("pushuser".to_string(), "pushpass123".to_string())),
         ..Default::default()
     };
-    push_and_read_back(&server, PATH, cfg, push_url, read_url).await;
+    push_and_read_back(&server, cfg, push_url, read_url).await;
 }
 
 /// Same oracle, Basic auth (RFC 2326 §14 / RFC 7617) — the other scheme
@@ -360,5 +359,5 @@ async fn rtsp_push_survives_basic_auth_against_mediamtx() {
         credentials: Some(("pushuser".to_string(), "pushpass123".to_string())),
         ..Default::default()
     };
-    push_and_read_back(&server, PATH, cfg, push_url, read_url).await;
+    push_and_read_back(&server, cfg, push_url, read_url).await;
 }
