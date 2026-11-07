@@ -3,6 +3,7 @@
 //! Supports both Normal Mode (NM) and High Efficiency Mode (HEM)
 //! per EN 302 755 v1.4.1 §5.1.7.
 
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 use num_enum::TryFromPrimitive;
 
@@ -337,12 +338,7 @@ impl Serialize for Bbheader {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        if buf.len() < BBHEADER_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: BBHEADER_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, BBHEADER_LEN)?;
 
         // `parse` rejects `dfl > DFL_MAX_BITS`; enforce the same bound on the
         // way out so a mutated/constructed header never serializes into
