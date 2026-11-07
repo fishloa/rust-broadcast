@@ -13,6 +13,7 @@
 //! interpretation is opt-in and profile-scoped).
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -194,13 +195,7 @@ impl<'a> Parse<'a> for OneByteElements<'a> {
             let len = usize::from(b & 0x0F) + 1; // len nibble = data.len() - 1
             let data_start = pos + 1;
             let data_end = data_start + len;
-            if bytes.len() < data_end {
-                return Err(Error::BufferTooShort {
-                    need: data_end,
-                    have: bytes.len(),
-                    what: "RFC 8285 one-byte extension element data",
-                });
-            }
+            need_in(bytes, data_end, "RFC 8285 one-byte extension element data")?;
             // id_nibble is 1..=14 here: 0 and 15 were handled above, so
             // constructing directly (bypassing the fallible `new`) cannot
             // violate OneByteId's invariant.
@@ -225,13 +220,11 @@ impl Serialize for OneByteElements<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "RFC 8285 one-byte extension elements serialize output",
-            });
-        }
+        need_in(
+            buf,
+            len,
+            "RFC 8285 one-byte extension elements serialize output",
+        )?;
         // Validate every element before writing a byte, so an error leaves
         // `buf` untouched rather than half-serialized (r14-RTP-O1).
         for e in &self.0 {
@@ -325,13 +318,7 @@ impl<'a> Parse<'a> for TwoByteElements<'a> {
             let len = usize::from(bytes[len_pos]);
             let data_start = len_pos + 1;
             let data_end = data_start + len;
-            if bytes.len() < data_end {
-                return Err(Error::BufferTooShort {
-                    need: data_end,
-                    have: bytes.len(),
-                    what: "RFC 8285 two-byte extension element data",
-                });
-            }
+            need_in(bytes, data_end, "RFC 8285 two-byte extension element data")?;
             // id_byte != 0 here: the padding case was handled above, so
             // constructing directly (bypassing the fallible `new`) cannot
             // violate TwoByteId's invariant.
@@ -356,13 +343,11 @@ impl Serialize for TwoByteElements<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "RFC 8285 two-byte extension elements serialize output",
-            });
-        }
+        need_in(
+            buf,
+            len,
+            "RFC 8285 two-byte extension elements serialize output",
+        )?;
         // Validate first (see `OneByteElements::serialize_into`).
         for e in &self.0 {
             if e.data.len() > TWO_BYTE_DATA_MAX {
