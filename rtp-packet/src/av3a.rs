@@ -52,19 +52,19 @@ pub const DYNAMIC_PT_MAX: u8 = 127;
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 
 fn short(what: &'static str) -> Error {
-    Error::BufferTooShort {
+    Error::BufferTooShort(broadcast_common::error::BufferTooShort {
         need: 0,
         have: 0,
         what,
-    }
+    })
 }
 
 fn bad(field: &'static str, value: u64, reason: &'static str) -> Error {
-    Error::InvalidValue {
+    Error::InvalidValue(broadcast_common::error::InvalidValue {
         field,
         value,
         reason,
-    }
+    })
 }
 
 /// `audio_codec_id == 0` header (general high-rate): Table A.6 fields in wire order.
@@ -972,21 +972,23 @@ mod tests {
     fn rejects_bad_sync_codec_id_and_truncation() {
         assert_eq!(
             AatfFrame::parse(&[0xFF, 0xE0, 0, 0]).err(),
-            Some(crate::error::Error::InvalidValue {
-                field: "syncword",
-                value: 0xFFE,
-                reason: "must be 0xFFF"
-            }),
+            Some(crate::error::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "syncword",
+                    value: 0xFFE,
+                    reason: "must be 0xFFF"
+                }
+            )),
             "wrong syncword"
         );
         // syncword ok, audio_codec_id 3: no header defined
         assert!(matches!(
             &(AatfFrame::parse(&[0xFF, 0xF3, 0, 0])),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(AatfFrame::parse(&[0xFF, 0xF0])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -1018,12 +1020,12 @@ mod tests {
                 Some(0)
             )
             .serialize_into(&mut buf)),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         // bitrate_index present for profile 1
         assert!(matches!(
             &(ga(1, GaContent::ReservedSoundBed(2), Some(0)).serialize_into(&mut buf)),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         // over-wide field
         assert!(matches!(
@@ -1035,7 +1037,7 @@ mod tests {
                 Some(0)
             )
             .serialize_into(&mut buf)),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         // lossless frequency/index disagreement
         let ll = AatfFrame {
@@ -1052,7 +1054,7 @@ mod tests {
         };
         assert!(matches!(
             &(ll.serialize_into(&mut buf)),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         // output too small
         assert!(matches!(
@@ -1064,7 +1066,9 @@ mod tests {
                 Some(0)
             )
             .serialize_into(&mut [0u8; 2])),
-            Err(crate::error::Error::OutputBufferTooSmall { have: 2, .. })
+            Err(crate::error::Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall { have: 2, .. }
+            ))
         ));
     }
 
@@ -1120,7 +1124,7 @@ mod tests {
         assert!(
             matches!(
                 &(Av3aFmtp::parse("codec-nn-id=0x0201; config=2220040140 80; bitrate=320")),
-                Err(crate::error::Error::InvalidValue { .. })
+                Err(crate::error::Error::InvalidValue(..))
             ),
             "space inside hex is rejected"
         );
@@ -1146,56 +1150,56 @@ mod tests {
         assert_eq!(Av3aFmtp::parse(&f.to_param_string()).unwrap(), f);
         assert!(matches!(
             &(Av3aFmtp::parse("config=abc")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             Av3aFmtp::parse("codec-nn-id=zz"),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(Av3aFmtp::parse("rate=x")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         // no leading '+', no zero clock rate, no duplicated parameter
         assert!(matches!(
             &(Av3aFmtp::parse("codec-nn-id=+201")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(Av3aFmtp::parse("codec-nn-id=0x+201")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(Av3aFmtp::parse("rate=+48000")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             Av3aFmtp::parse("bitrate=+320"),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
         assert!(matches!(
             Av3aFmtp::parse("rate=0"),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(Av3aFmtp::parse("rate=48000; rate=44100")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(Av3aFmtp::parse("RATE=48000; rate=48000")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(Av3aFmtp::parse("codec-nn-id=0x0201; codec-nn-id=0x0201")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(Av3aFmtp::parse("config=00; config=00")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(matches!(
             &(Av3aFmtp::parse("bitrate=1; bitrate=1")),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert_eq!(Av3aFmtp::parse("rate=48000").unwrap().rate, Some(48000));
     }
@@ -1209,7 +1213,7 @@ mod tests {
         assert!(
             matches!(
                 &(d.push(false, &[0; 1])),
-                Err(crate::error::Error::InvalidValue { .. })
+                Err(crate::error::Error::InvalidValue(..))
             ),
             "11 bytes > cap of 10"
         );
@@ -1222,7 +1226,7 @@ mod tests {
         assert!(d.push(false, &vec![0u8; DEFAULT_MAX_FRAME_BYTES]).is_ok());
         assert!(matches!(
             &(d.push(false, &[0])),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert_eq!(Av3aFmtp::parse("").unwrap(), Av3aFmtp::default());
     }

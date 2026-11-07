@@ -11,41 +11,22 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed/serialized.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// The 2-bit `version` field was not `2` (RFC 3550 §5.1: "The version
     /// defined by this specification is two (2)").
-    #[error("invalid RTP version: {0} (RFC 3550 §5.1 requires version 2)")]
-    InvalidVersion(u8),
+    #[error(transparent)]
+    UnsupportedVersion(#[from] broadcast_common::error::UnsupportedVersion),
     /// A field value did not fit its wire bit-width, or a derived count (CSRC
     /// list length, extension word count, padding octet count) overflowed its
     /// field.
-    #[error("field {field} value {value} invalid: {reason}")]
-    InvalidValue {
-        /// The offending field/derived-count name.
-        field: &'static str,
-        /// The offending value.
-        value: u64,
-        /// Why it is invalid.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
     /// The padding region (RFC 3550 §5.1) was malformed: either the trailing
     /// count byte was zero, exceeded the bytes actually available, or (on
     /// serialize) a supplied padding slice's last byte did not equal its own
@@ -100,23 +81,4 @@ pub enum Error {
          in both forms, per RFC 8285 §4.1.2/§5)"
     )]
     InvalidTwoByteExtensionId,
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }
