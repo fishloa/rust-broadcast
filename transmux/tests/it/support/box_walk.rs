@@ -1,3 +1,4 @@
+#[cfg(feature = "cenc")]
 pub const SAMPLE_TABLE_CONTAINERS: &[&[u8; 4]] = &[b"moov", b"trak", b"mdia", b"minf", b"stbl"];
 
 pub fn find_box_range(

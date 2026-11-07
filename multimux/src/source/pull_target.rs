@@ -66,7 +66,7 @@ pub trait PullKind {
     }
 }
 
-/// A pull route: a [`PullTarget`] of one [`PullKind`]. [`RtspRoute`],
+/// A pull route: a name, source URL, timeouts and credentials for one [`PullKind`]. [`RtspRoute`],
 /// [`TsHttpRoute`], [`HlsPullRoute`], [`SmoothPullRoute`] and
 /// [`DashPullRoute`] are this type under their kind.
 ///

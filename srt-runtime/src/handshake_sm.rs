@@ -17,6 +17,7 @@
 //! crate root docs.
 
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(feature = "crypto")]
 use subtle::ConstantTimeEq;

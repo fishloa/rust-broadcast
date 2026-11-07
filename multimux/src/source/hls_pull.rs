@@ -476,7 +476,7 @@ fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<ScopedC
 /// Bounded fan-out: never more than
 /// [`crate::source::MAX_INFLIGHT_FETCHES`] concurrent
 /// requests (see the module doc); each individual fetch is itself bounded by
-/// [`IngestTimeouts::read`], and the handshake (until the first init segment
+/// [`IngestTimeouts::read`](crate::source::IngestTimeouts::read), and the handshake (until the first init segment
 /// resolves) by `handshake`.
 ///
 /// `route_handle` is the driver-backed registry side of issue #805 task 2 —
