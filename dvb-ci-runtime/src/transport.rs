@@ -188,6 +188,14 @@ impl Transport {
         }
     }
 
+    /// Override the poll interval / reply timeout.
+    #[must_use]
+    pub fn with_timing(mut self, poll: Duration, reply: Duration) -> Self {
+        self.poll_interval = poll;
+        self.reply_timeout = reply;
+        self
+    }
+
     /// Current connection state.
     #[must_use]
     pub fn state(&self) -> TcState {
@@ -847,5 +855,15 @@ mod tests {
         ]);
         assert_eq!(t.state(), TcState::Active);
         assert_eq!(out.writes, vec![vec![tags::RCV, 0x01, 0x01]]);
+    }
+
+    #[test]
+    fn with_timing_overrides_reply_timeout_and_poll_interval() {
+        let reply = Duration::from_millis(7);
+        let poll = Duration::from_millis(3);
+        let mut t = Transport::new(1).with_timing(poll, reply);
+        assert_eq!(t.init().timer, Some(reply));
+        let out = t.tick(reply);
+        assert_eq!(out.error, Some(TransportError::SetupTimeout));
     }
 }

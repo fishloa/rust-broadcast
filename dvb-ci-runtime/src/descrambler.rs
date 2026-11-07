@@ -299,6 +299,11 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
     pub fn ci(&self) -> &C {
         &self.ci
     }
+
+    /// Mutably borrow the data-plane [`CiDataDevice`].
+    pub fn ci_mut(&mut self) -> &mut C {
+        &mut self.ci
+    }
 }
 
 #[cfg(test)]
@@ -783,5 +788,11 @@ mod tests {
             ),
             "expected CaError::NoCaDescriptor via delegation, got {err:?}"
         );
+    }
+
+    #[test]
+    fn ci_mut_reaches_the_data_plane_device() {
+        let mut d = descrambler_with(driver_with_sessions(), std::iter::empty());
+        assert!(d.ci_mut().written_ts().is_empty());
     }
 }
