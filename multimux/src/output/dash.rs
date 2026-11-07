@@ -325,20 +325,25 @@ pub(crate) fn publish_time(
     origin: SystemTime,
     window: &[crate::route::DashWindowSegment],
 ) -> String {
-    let end_ns = window.last().map_or(0, |s| {
-        let dur_ns = Duration::try_from_secs_f64(s.duration_secs).unwrap_or(Duration::ZERO);
-        u128::from(s.timeline_position_ns).saturating_add(dur_ns.as_nanos())
+    let end_ms = window.last().map_or(0, |s| {
+        let dur = Duration::try_from_secs_f64(s.duration_secs).unwrap_or(Duration::ZERO);
+        u128::from(s.timeline_position_ns / NANOS_PER_MILLI).saturating_add(dur.as_millis())
     });
-    let origin_ns = origin
+    let ast_secs = origin
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
-        .as_nanos();
-    let total = origin_ns.saturating_add(end_ns);
-    i128::try_from(total)
+        .as_secs();
+    let total_ms = u128::from(ast_secs)
+        .saturating_mul(MILLIS_PER_SEC)
+        .saturating_add(end_ms);
+    i64::try_from(total_ms)
         .ok()
-        .and_then(|n| jiff::Timestamp::from_nanosecond(n).ok())
+        .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
         .map_or_else(|| format_iso8601(origin), |ts| ts.to_string())
 }
+
+const NANOS_PER_MILLI: u64 = 1_000_000;
+const MILLIS_PER_SEC: u128 = 1_000;
 
 fn format_iso8601_secs(secs: i64) -> String {
     jiff::Timestamp::from_second(secs)
