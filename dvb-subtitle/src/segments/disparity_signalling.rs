@@ -74,11 +74,13 @@ impl DisparityShiftUpdateSequence {
         let mut ipos = 5;
         for _ in 0..count {
             if ipos + 2 > total {
-                return Err(Error::BufferTooShort {
-                    need: ipos + 2,
-                    have: total,
-                    what: "disparity_shift_update_sequence interval",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: ipos + 2,
+                        have: total,
+                        what: "disparity_shift_update_sequence interval",
+                    },
+                ));
             }
             intervals.push(DisparityShiftInterval {
                 interval_count: bytes[ipos],
@@ -239,7 +241,11 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
             "disparity_signalling_segment",
         )?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::BadSyncByte(bytes[0]));
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "sync_byte",
+                expected: u32::from(crate::pes_data_field::SYNC_BYTE),
+                found: u32::from(bytes[0]),
+            }));
         }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
@@ -435,7 +441,10 @@ mod tests {
         ];
         assert!(matches!(
             DisparitySignallingSegment::parse(&bytes),
-            Err(Error::BadSyncByte(0x00))
+            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                found: 0x00,
+                ..
+            }))
         ));
     }
 
@@ -449,7 +458,7 @@ mod tests {
         ];
         assert!(matches!(
             DisparitySignallingSegment::parse(&bytes),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

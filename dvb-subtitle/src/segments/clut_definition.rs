@@ -66,24 +66,29 @@ impl ClutEntry {
         // The flags byte's reserved bits are `[4:1]` only; a stray bit there
         // would corrupt a flag (#1108/DS-O2 class).
         if self.reserved_flags & !RESERVED_FLAGS_MASK != 0 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "CLUT_entry.reserved",
+                value: u64::from(self.reserved_flags),
                 reason: "reserved bits must lie in bits [4:1] of the flags byte",
-            });
+            }));
         }
         // Reduced-range entries pack Y(6) Cr(4) Cb(4) T(2) into two bytes
         // (Table 16); a wider value would shift into its neighbour's bits
         // and silently corrupt it (#1108/DS-O2).
-        if !self.full_range_flag
-            && (self.y_value > REDUCED_Y_MAX
-                || self.cr_value > REDUCED_CR_CB_MAX
-                || self.cb_value > REDUCED_CR_CB_MAX
-                || self.t_value > REDUCED_T_MAX)
-        {
-            return Err(Error::InvalidValue {
-                field: "CLUT_entry colour value",
-                reason: "reduced-range entry needs Y<=63, Cr<=15, Cb<=15, T<=3",
-            });
+        if !self.full_range_flag {
+            let components = [
+                ("CLUT_entry Y_value", self.y_value, REDUCED_Y_MAX),
+                ("CLUT_entry Cr_value", self.cr_value, REDUCED_CR_CB_MAX),
+                ("CLUT_entry Cb_value", self.cb_value, REDUCED_CR_CB_MAX),
+                ("CLUT_entry T_value", self.t_value, REDUCED_T_MAX),
+            ];
+            if let Some((field, value, _)) = components.into_iter().find(|&(_, v, max)| v > max) {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field,
+                    value: u64::from(value),
+                    reason: "reduced-range entry needs Y<=63, Cr<=15, Cb<=15, T<=3",
+                }));
+            }
         }
         buf[0] = self.clut_entry_id;
         let mut flags: u8 = self.reserved_flags;
@@ -180,7 +185,11 @@ impl<'a> Parse<'a> for ClutDefinitionSegment {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN + FIXED_LEN, "CLUT_definition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::BadSyncByte(bytes[0]));
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "sync_byte",
+                expected: u32::from(crate::pes_data_field::SYNC_BYTE),
+                found: u32::from(bytes[0]),
+            }));
         }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
@@ -306,7 +315,7 @@ mod tests {
         ] {
             assert!(matches!(
                 seg(bad).try_to_bytes(),
-                Err(Error::InvalidValue { .. })
+                Err(Error::InvalidValue(..))
             ));
         }
         // Full-range entries keep the full 8 bits.
@@ -351,7 +360,10 @@ mod tests {
         ];
         assert!(matches!(
             ClutDefinitionSegment::parse(&bytes),
-            Err(Error::BadSyncByte(0x00))
+            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                found: 0x00,
+                ..
+            }))
         ));
     }
 

@@ -726,11 +726,13 @@ fn parse_pixel_sub_blocks<'a>(
         pos = block_end;
     }
     if pos != end {
-        return Err(Error::BufferTooShort {
-            need: end,
-            have: pos,
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: end,
+                have: pos,
+                what,
+            },
+        ));
     }
     Ok(blocks)
 }
@@ -741,7 +743,11 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN + FIXED_LEN, "object_data_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::BadSyncByte(bytes[0]));
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "sync_byte",
+                expected: u32::from(crate::pes_data_field::SYNC_BYTE),
+                found: u32::from(bytes[0]),
+            }));
         }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
@@ -1060,7 +1066,10 @@ mod tests {
         ];
         assert!(matches!(
             ObjectDataSegment::parse(&bytes),
-            Err(Error::BadSyncByte(0x00))
+            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                found: 0x00,
+                ..
+            }))
         ));
     }
 

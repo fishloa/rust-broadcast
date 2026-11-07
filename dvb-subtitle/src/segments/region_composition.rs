@@ -342,7 +342,11 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN + FIXED_LEN, "region_composition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::BadSyncByte(bytes[0]));
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "sync_byte",
+                expected: u32::from(crate::pes_data_field::SYNC_BYTE),
+                found: u32::from(bytes[0]),
+            }));
         }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
@@ -521,7 +525,10 @@ mod tests {
         ];
         assert!(matches!(
             RegionCompositionSegment::parse(&bytes),
-            Err(Error::BadSyncByte(0x00))
+            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                found: 0x00,
+                ..
+            }))
         ));
     }
 

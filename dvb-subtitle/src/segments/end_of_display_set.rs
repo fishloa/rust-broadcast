@@ -23,7 +23,11 @@ impl<'a> Parse<'a> for EndOfDisplaySetSegment {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN, "end_of_display_set_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::BadSyncByte(bytes[0]));
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "sync_byte",
+                expected: u32::from(crate::pes_data_field::SYNC_BYTE),
+                found: u32::from(bytes[0]),
+            }));
         }
         if bytes[1] != SEGMENT_TYPE {
             return Err(Error::UnknownSegmentType(bytes[1]));
@@ -67,7 +71,9 @@ mod tests {
         let mut out = [0u8; 5];
         assert_eq!(
             seg.serialize_into(&mut out),
-            Err(crate::Error::OutputBufferTooSmall { need: 6, have: 5 })
+            Err(crate::Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall { need: 6, have: 5 }
+            ))
         );
     }
 
@@ -98,7 +104,10 @@ mod tests {
         let bytes = [0x00, 0x80, 0x00, 0x01, 0x00, 0x00];
         assert!(matches!(
             EndOfDisplaySetSegment::parse(&bytes),
-            Err(Error::BadSyncByte(0x00))
+            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                found: 0x00,
+                ..
+            }))
         ));
     }
 }
