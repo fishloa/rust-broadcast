@@ -818,15 +818,11 @@ fn cookies_and_extra_headers_apply_to_rendition_requests() {
     }
 }
 
-fn hex(b: &[u8; 16]) -> String {
-    b.iter().map(|x| format!("{x:02X}")).collect()
-}
-
 fn encrypted_audio_playlist(f: &Fixture) -> Vec<u8> {
     let mut s = format!(
         "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n\
          #EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-KEY:METHOD=AES-128,URI=\"{KEY_URL}\",IV=0x{}\n",
-        hex(&AUDIO_IV)
+        test_fixtures::hex_upper(&AUDIO_IV)
     );
     for (uri, _) in &f.audio.segments {
         s.push_str(&format!("#EXTINF:2.0,\n{uri}\n"));

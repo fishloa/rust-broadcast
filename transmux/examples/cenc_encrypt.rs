@@ -117,7 +117,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "encrypted: scheme={} kid={}",
         encryption.scheme.name(),
-        hex(&encryption.tenc.default_kid)
+        hex::encode(&encryption.tenc.default_kid)
     );
 
     // 4. Mux the encrypted IR (unchanged CmafMux — encryption is orthogonal
@@ -165,9 +165,4 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-#[cfg(feature = "cenc")]
-fn hex(bytes: &[u8; 16]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

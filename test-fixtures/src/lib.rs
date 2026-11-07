@@ -541,3 +541,15 @@ pub fn hex_bytes(s: &str) -> Vec<u8> {
     let digits: String = s.split_ascii_whitespace().collect();
     hex::decode(&digits).unwrap_or_else(|e| panic!("bad hex literal {s:?}: {e}"))
 }
+
+/// Lowercase hex of `bytes`, two digits per byte, no separators.
+#[must_use]
+pub fn hex_lower(bytes: &[u8]) -> String {
+    hex::encode(bytes)
+}
+
+/// Uppercase hex of `bytes`, two digits per byte, no separators.
+#[must_use]
+pub fn hex_upper(bytes: &[u8]) -> String {
+    hex::encode_upper(bytes)
+}

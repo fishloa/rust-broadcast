@@ -70,7 +70,7 @@ fn av1c_round_trip_and_fields() {
     let data = fixture("mp4/av1.mp4");
     let body = find_box_body(&data, b"av1C");
     assert_eq!(
-        hex(body),
+        test_fixtures::hex_lower(body),
         "81000c000a0b000000043cffbc02f80040",
         "av1C oracle body"
     );
@@ -117,7 +117,11 @@ fn av1c_mutation_changes_bytes() {
 fn dops_round_trip_and_fields() {
     let data = fixture("mp4/opus.mp4");
     let body = find_box_body(&data, b"dOps");
-    assert_eq!(hex(body), "000101380000bb80000000", "dOps oracle body");
+    assert_eq!(
+        test_fixtures::hex_lower(body),
+        "000101380000bb80000000",
+        "dOps oracle body"
+    );
 
     let cfg = OpusSpecificBox::parse(body).expect("parse dOps");
     assert_eq!(cfg.version, 0);
@@ -230,7 +234,11 @@ fn dfla_mutation_changes_bytes() {
 fn vpcc_round_trip_and_fields() {
     let data = fixture("mp4/vp9.mp4");
     let body = find_box_body(&data, b"vpcC");
-    assert_eq!(hex(body), "010000000014820202020000", "vpcC oracle body");
+    assert_eq!(
+        test_fixtures::hex_lower(body),
+        "010000000014820202020000",
+        "vpcC oracle body"
+    );
 
     let cfg = Vp9ConfigurationBox::parse(body).expect("parse vpcC");
     assert_eq!(cfg.version, 1, "FullBox v1");
@@ -346,7 +354,11 @@ fn heaac_v1_sbr_signaling_and_esds_round_trip() {
 
     // ASC oracle + SBR detection.
     let asc_bytes = asc_from_esds(esds_box);
-    assert_eq!(hex(&asc_bytes), "139056e5a0", "ASC v1 oracle");
+    assert_eq!(
+        test_fixtures::hex_lower(&asc_bytes),
+        "139056e5a0",
+        "ASC v1 oracle"
+    );
     let asc = AudioSpecificConfig::parse(&asc_bytes).expect("parse ASC v1");
     let sig = asc.heaac_signaling();
     assert!(sig.sbr_present, "SBR must be signaled (HE-AAC v1)");
@@ -387,7 +399,7 @@ fn heaac_v2_ps_signaling_and_esds_round_trip() {
     // Real esds DSI carries an explicit psPresentFlag byte (`80`) beyond the
     // 6-byte oracle in the doc; round-trip against the real 7 bytes.
     assert_eq!(
-        hex(&asc_bytes),
+        test_fixtures::hex_lower(&asc_bytes),
         "138856e5a54880",
         "ASC v2 oracle (real DSI)"
     );
@@ -502,14 +514,4 @@ fn plain_aac_lc_stays_mp4a_40_2() {
     assert!(!sig.sbr_present);
     assert!(!sig.ps_present);
     assert_eq!(asc.rfc6381(), "mp4a.40.2");
-}
-
-/// Lowercase hex of a byte slice.
-fn hex(b: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut s = String::with_capacity(b.len() * 2);
-    for &x in b {
-        write!(s, "{x:02x}").unwrap();
-    }
-    s
 }

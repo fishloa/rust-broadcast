@@ -120,10 +120,6 @@ fn round_trip(b: &[u8]) {
     assert_eq!(&out[..n], b, "PES packet did not round-trip byte-exactly");
 }
 
-fn hex(b: &[u8]) -> String {
-    b.iter().take(48).map(|x| format!("{x:02x}")).collect()
-}
-
 #[derive(Default)]
 struct Report {
     checked: usize,
@@ -155,8 +151,8 @@ fn scan(include_archive: bool) -> Report {
                 r.mismatches.push(format!(
                     "{}: PES #{i} want={} got={}",
                     path.display(),
-                    hex(&raw[..want_len]),
-                    hex(&out[..n])
+                    test_fixtures::hex_lower(&raw[..want_len]),
+                    test_fixtures::hex_lower(&out[..n])
                 ));
                 continue;
             }

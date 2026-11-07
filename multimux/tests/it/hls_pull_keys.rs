@@ -56,16 +56,15 @@ fn seg(index: u8) -> Vec<u8> {
     test_fixtures::read(&name)[TS_PACKET_LEN * LEADING_PACKETS_DROPPED..].to_vec()
 }
 
-fn hex(b: &[u8; 16]) -> String {
-    b.iter().map(|x| format!("{x:02X}")).collect()
-}
-
 fn iv_seq(base: u8) -> [u8; 16] {
     core::array::from_fn(|i| base.wrapping_add(i as u8))
 }
 
 fn key_tag(uri: &str, iv: &[u8; 16]) -> String {
-    format!("#EXT-X-KEY:METHOD=AES-128,URI=\"{uri}\",IV=0x{}", hex(iv))
+    format!(
+        "#EXT-X-KEY:METHOD=AES-128,URI=\"{uri}\",IV=0x{}",
+        test_fixtures::hex_upper(iv)
+    )
 }
 
 fn playlist(entries: &[(String, &str)]) -> String {

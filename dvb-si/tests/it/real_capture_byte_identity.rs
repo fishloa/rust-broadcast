@@ -165,10 +165,6 @@ fn check_pmt_pids(s: &mut Survey, file: &str, orig: &[u8], pmt: &dvb_si::tables:
     }
 }
 
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02X}")).collect()
-}
-
 /// `byte_index:orig^re` pairs for the first few differing bytes.
 fn diff(orig: &[u8], re: &[u8]) -> String {
     if orig.len() != re.len() {
@@ -204,8 +200,8 @@ fn record(
                     format!(
                         "{} | orig={} re={}",
                         diff(orig, &v),
-                        hex(&orig[..orig.len().min(40)]),
-                        hex(&v[..v.len().min(40)])
+                        test_fixtures::hex_upper(&orig[..orig.len().min(40)]),
+                        test_fixtures::hex_upper(&v[..v.len().min(40)])
                     ),
                 )
             });
@@ -224,8 +220,11 @@ fn survey_loop(s: &mut Survey, file: &str, seen: &mut BTreeSet<Vec<u8>>, l: &Des
         let first = parse_loop(&raw).next();
         let Some(Ok(d)) = first else {
             if let Some(Err(e)) = first {
-                s.parse_fail
-                    .push((file.to_string(), hex(&raw), format!("{e}")));
+                s.parse_fail.push((
+                    file.to_string(),
+                    test_fixtures::hex_upper(&raw),
+                    format!("{e}"),
+                ));
             }
             // typed parse failed: count under the tag
             let st = s

@@ -260,8 +260,8 @@ fn scan_files(files: Vec<PathBuf>) -> Report {
                     "{}: pkt {i} sc={} want={} got={}",
                     path.display(),
                     pkt.header.scrambling,
-                    hex(want),
-                    hex(&body_of(&af))
+                    test_fixtures::hex_lower(want),
+                    test_fixtures::hex_lower(&body_of(&af))
                 ));
                 continue;
             }
@@ -364,10 +364,6 @@ fn full_archive_adaptation_fields_round_trip() {
             .any(|e| e.contains("test-143.ts") || e.contains("test-147.ts")),
         "expected real AF-extension packets in the archive"
     );
-}
-
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// Primary real-data evidence for the adaptation-field extension: three
