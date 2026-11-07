@@ -71,11 +71,11 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
         need_in(bytes, HEADER_LEN, "multiple_operation_message header")?;
         let reserved = u16::from_be_bytes([bytes[0], bytes[1]]);
         if reserved != RESERVED {
-            return Err(Error::ReservedSet {
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
                 field: "reserved",
-                expected: RESERVED,
-                got: reserved,
-            });
+                expected: u64::from(RESERVED),
+                found: u64::from(reserved),
+            }));
         }
         let message_size = u16::from_be_bytes([bytes[2], bytes[3]]);
         let protocol_version = bytes[4];

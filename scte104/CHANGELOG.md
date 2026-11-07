@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - `insert_avail_descriptor` and `start_schedule_download` share one `provider_avail_id` loop parser/writer (internal).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_common::error` types (tuple variants); `ReservedSet { field, expected: u16, got: u16 }` is replaced by `ReservedBits(broadcast_common::error::ReservedBits)` (`found` replaces `got`, widened to u64). Hand-written `From` impls removed. `InvalidValue` stays crate-specific (carries no offending value).
 
 ### Removed
 - `Error::UnexpectedOpId`: never constructed; the operation data parsers take the body after `opID` dispatch and cannot see the `opID`.

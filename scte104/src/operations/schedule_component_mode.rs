@@ -41,11 +41,13 @@ impl<'a> Parse<'a> for ScheduleComponentMode {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let count = bytes.len() / ENTRY_LEN;
         if !bytes.len().is_multiple_of(ENTRY_LEN) {
-            return Err(Error::BufferTooShort {
-                need: (count + 1) * ENTRY_LEN,
-                have: bytes.len(),
-                what: "schedule_component_mode data",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: (count + 1) * ENTRY_LEN,
+                    have: bytes.len(),
+                    what: "schedule_component_mode data",
+                },
+            ));
         }
         let mut components = Vec::with_capacity(count);
         for i in 0..count {

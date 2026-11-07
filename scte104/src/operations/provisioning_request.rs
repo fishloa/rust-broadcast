@@ -506,7 +506,7 @@ mod tests {
         let bytes = op.try_to_bytes().unwrap();
         assert!(matches!(
             ProvisioningRequest::parse(&bytes[..bytes.len() - 1]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

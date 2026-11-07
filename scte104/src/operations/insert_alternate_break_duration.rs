@@ -30,11 +30,13 @@ impl<'a> Parse<'a> for InsertAlternateBreakDuration {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (head, _) = bytes
             .split_first_chunk::<LEN>()
-            .ok_or(Error::BufferTooShort {
-                need: LEN,
-                have: bytes.len(),
-                what: "insert_alternate_break_duration",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: LEN,
+                    have: bytes.len(),
+                    what: "insert_alternate_break_duration",
+                },
+            ))?;
         Ok(Self {
             alternate_break_duration: u32::from_be_bytes(*head),
         })
@@ -76,7 +78,7 @@ mod tests {
     fn short_body_is_rejected() {
         assert!(matches!(
             &(InsertAlternateBreakDuration::parse(&[0, 0, 0])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 }
