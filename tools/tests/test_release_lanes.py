@@ -51,24 +51,72 @@ def test_lane_set_is_not_vacuous():
     assert len(LANES) == 54, [p.name for p in LANES]
 
 
+REUSABLE = WF / "publish-crate.yml"
+REUSABLE_USES = "./.github/workflows/publish-crate.yml"
+
+
+def _reusable():
+    doc = yaml.safe_load(REUSABLE.read_text())
+    on = doc.get("on", doc.get(True))
+    return doc, on["workflow_call"]["inputs"]
+
+
 @pytest.mark.parametrize("path", LANES, ids=lambda p: p.name)
-def test_lane_glob_publish_package_and_note_path_name_the_same_crate(path):
-    """tag glob `<crate>-v*`, `cargo publish -p <crate>`, the ref-name strip prefix
-    and the release-note path must all agree: a lane copy-pasted from a sibling and
-    only half-renamed publishes the WRONG crate (or gates the wrong note)."""
+def test_lane_glob_and_caller_inputs_name_the_same_crate(path):
+    """The tag glob `<crate>-v*` and `with.crate` must agree and name a real crate:
+    a lane copy-pasted from a sibling and only half-renamed publishes the WRONG
+    crate (or gates the wrong note)."""
     glob = _glob(path)
     assert glob.endswith("-v*"), f"{path.name}: tag glob {glob!r} is not <crate>-v*"
     crate = glob[: -len("-v*")]
-    text = path.read_text()
     assert (REPO / crate / "Cargo.toml").is_file(), f"{path.name}: no crate dir {crate}/"
     assert re.search(rf'^name\s*=\s*"{re.escape(crate)}"', (REPO / crate / "Cargo.toml").read_text(), re.M)
-    published = set(re.findall(r"cargo publish -p ([\w-]+)", text))
-    assert published == {crate}, f"{path.name}: publishes {published}, glob says {crate}"
-    assert f"GITHUB_REF_NAME#{crate}-v" in text, f"{path.name}: version is not derived from the {crate}-v prefix"
-    assert f"docs/release-notes/{crate}-" in text, f"{path.name}: release-note path does not name {crate}"
-    assert "environment: crates-io" in text, f"{path.name}: publish is not behind the crates-io approval gate"
-    for pkg in set(re.findall(r"cargo (?:test|clippy|build) -p ([\w-]+)", text)):
-        assert pkg == crate, f"{path.name}: gate runs against {pkg}, not {crate}"
+    doc = yaml.safe_load(path.read_text())
+    assert list(doc["jobs"]) == ["publish"], f"{path.name}: a caller has exactly one job"
+    job = doc["jobs"]["publish"]
+    assert set(job) == {"permissions", "uses", "secrets", "with"}, f"{path.name}: unexpected job keys {sorted(job)}"
+    assert job["uses"] == REUSABLE_USES, f"{path.name}: does not call the reusable lane"
+    assert job["secrets"] == "inherit"
+    assert job["permissions"] == {"contents": "write"}
+    assert job["with"]["crate"] == crate, f"{path.name}: with.crate {job['with']['crate']!r}, glob says {crate}"
+    _, inputs = _reusable()
+    assert set(job["with"]) <= set(inputs), f"{path.name}: unknown inputs {sorted(set(job['with']) - set(inputs))}"
+    assert "cargo " not in path.read_text().replace("`cargo publish`", ""), f"{path.name}: a caller must not carry its own cargo steps"
+
+
+def test_reusable_lane_publishes_only_its_input_crate_behind_the_gate():
+    doc, inputs = _reusable()
+    assert inputs["crate"]["required"] is True
+    assert inputs["build-gate"]["default"] == "bare-metal"
+    job = doc["jobs"]["publish"]
+    assert job["environment"] == "crates-io", "publish is not behind the crates-io environment"
+    assert job["permissions"] == {"contents": "write"}
+    text = REUSABLE.read_text()
+    published = re.findall(r"cargo publish -p (\S+)", text)
+    assert published == ['"$CRATE"'], published
+    for pkg in re.findall(r"cargo (?:\+nightly )?(?:test|clippy|build) -p (\S+)", text):
+        assert pkg == '"$CRATE"', f"gate runs against {pkg}, not $CRATE"
+    for step in job["steps"]:
+        if "cargo " in str(step.get("run", "")) and "fuzz" not in step["name"]:
+            assert step["env"]["CRATE"] == "${{ inputs.crate }}", step["name"]
+    assert 'GITHUB_REF_NAME#"$CRATE"-v' in text, "version is not derived from the <crate>-v prefix"
+    assert "docs/release-notes/$CRATE-" in text, "release-note path does not name the crate"
+    assert "tags" not in doc.get("on", doc.get(True)), "the reusable lane must not trigger on tags itself"
+    names = [s["name"] for s in job["steps"] if "name" in s]
+    assert names.index("Gate — tag matches crate version") < names.index("Publish")
+    assert names.index("Gate — release note exists for this version") < names.index("Publish")
+    assert names.index("Gate — tests") < names.index("Publish")
+
+
+@pytest.mark.parametrize("gate,expected", [
+    ("bare-metal", "--no-default-features --target thumbv7em-none-eabi"),
+    ("no-default", "--no-default-features --locked"),
+    ("default", 'cargo build -p "$CRATE" --locked'),
+])
+def test_reusable_build_gate_values_each_select_one_step(gate, expected):
+    doc, _ = _reusable()
+    selected = [s for s in doc["jobs"]["publish"]["steps"] if f"inputs.build-gate == '{gate}'" in str(s.get("if", ""))]
+    assert len(selected) == 1 and expected in selected[0]["run"]
 
 
 def test_every_plan_crate_has_exactly_one_lane_and_the_lockstep_has_none_of_its_own():

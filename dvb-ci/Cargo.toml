@@ -27,7 +27,6 @@ serde      = { version = "1", default-features = false, optional = true, feature
 test-fixtures = { path = "../test-fixtures" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc = { path = "../test-alloc" }
-serde_json = { workspace = true }
 
 [features]
 default = ["std"]

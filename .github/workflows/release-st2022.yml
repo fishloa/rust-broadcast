@@ -18,93 +18,11 @@ on:
   push:
     tags: ["st2022-v*"]
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   publish:
-    name: publish st2022 to crates.io
-    runs-on: ubuntu-24.04
-    # crates.io publish is gated: pauses for manual approval by a
-    # required reviewer before any cargo publish can run. See the
-    # 'crates-io' environment (repo Settings -> Environments).
-    environment: crates-io
-    # `contents: write` is needed to create the GitHub Release below, and is
-    # the only elevated permission this job holds — `cargo publish`
-    # authenticates with CARGO_REGISTRY_TOKEN, not the GitHub token.
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v5
-      - name: Private fixtures (real-capture tests)
-        uses: ./.github/actions/private-fixtures
-        with:
-          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
-          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Gate — st2022 tests (all features)
-        run: cargo test -p st2022 --all-features --locked
-
-      - name: Gate — st2022 clippy
-        run: cargo clippy -p st2022 --all-features --all-targets --locked -- -D warnings
-
-      - name: Gate — st2022 no_std build
-        run: cargo build -p st2022 --no-default-features --target thumbv7em-none-eabi --locked
-
-      - name: Gate — st2022 examples build
-        run: cargo build -p st2022 --all-features --examples --locked
-
-      - name: Gate — tag matches st2022 version
-        run: |
-          TAG="${GITHUB_REF_NAME#st2022-v}"
-          V=$(cargo metadata --no-deps --format-version 1 --locked \
-              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['st2022'])")
-          if [ "$V" != "$TAG" ]; then
-            echo "::error::st2022 is $V but tag is $TAG"; exit 1
-          fi
-
-      # Idempotent: an "already uploaded" error is treated as success.
-      # docs/RELEASE-DOCS.md requires a release note per tag, and this workflow
-      # uses it as the GitHub Release body — so a missing one is caught HERE,
-      # before anything reaches crates.io, rather than after the version is
-      # already immutable.
-      - name: Gate — release note exists for this version
-        run: |
-          NOTE="docs/release-notes/st2022-${GITHUB_REF_NAME#st2022-v}.md"
-          if [ ! -s "$NOTE" ]; then
-            echo "::error::$NOTE is missing or empty — see docs/RELEASE-DOCS.md"
-            exit 1
-          fi
-          echo "::notice::release note $NOTE present"
-
-      - name: Publish st2022
-        run: |
-          if out=$(cargo publish -p st2022 --locked 2>&1); then
-            echo "$out"; echo "::notice::published st2022"
-          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
-            echo "$out"; echo "::notice::st2022 already on crates.io at this version — skipping"
-          else
-            echo "$out"; echo "::error::failed to publish st2022"; exit 1
-          fi
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      # docs/RELEASE-DOCS.md section 3: a GitHub Release per tag, body = the
-      # release note. This was a manual step for the first 191 releases and was
-      # missed for 102 tags, so it is automated. Idempotent: an existing
-      # release is left untouched, so re-running after a partial failure is
-      # safe.
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          V="${GITHUB_REF_NAME#st2022-v}"
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "::notice::GitHub Release $GITHUB_REF_NAME already exists — leaving it alone"
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "st2022 $V" \
-              --notes-file "docs/release-notes/st2022-$V.md"
-            echo "::notice::created GitHub Release $GITHUB_REF_NAME"
-          fi
+    uses: ./.github/workflows/publish-crate.yml
+    secrets: inherit
+    with:
+      crate: st2022

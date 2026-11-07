@@ -256,7 +256,6 @@ dependencies = [
  "broadcast-common",
  "rmt-flute",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -417,6 +416,7 @@ version = "0.5.1"
 dependencies = [
  "base64 0.23.1",
  "form_urlencoded",
+ "getrandom 0.4.3",
  "headers",
  "hex",
  "hmac 0.13.0",
@@ -424,7 +424,6 @@ dependencies = [
  "lru",
  "md-5 0.11.0",
  "percent-encoding",
- "rand 0.10.3",
  "sha2 0.11.1",
  "subtle",
  "test-fixtures",
@@ -492,7 +491,6 @@ dependencies = [
  "broadcast-common",
  "jiff",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -579,7 +577,6 @@ dependencies = [
  "mpeg-pes",
  "mpeg-ts",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
@@ -619,7 +616,6 @@ version = "0.7.1"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -1217,7 +1213,6 @@ dependencies = [
  "dvb-si",
  "mpeg-ts",
  "serde",
- "serde_json",
  "test-alloc",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -1282,8 +1277,6 @@ dependencies = [
  "criterion",
  "encoding_rs",
  "flate2",
- "hex",
- "libm",
  "mpeg-ts",
  "num_enum",
  "quick-xml",
@@ -1331,7 +1324,6 @@ dependencies = [
  "broadcast-common",
  "mpeg-pes",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -2518,7 +2510,6 @@ version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -2529,7 +2520,6 @@ version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -2541,7 +2531,6 @@ dependencies = [
  "broadcast-common",
  "mpeg-pes",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -2586,7 +2575,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jiff",
- "md-5 0.11.0",
  "media-doctor",
  "media-plane",
  "metrics",
@@ -3444,7 +3432,6 @@ version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -3606,7 +3593,6 @@ version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-alloc",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3637,7 +3623,6 @@ version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -3651,7 +3636,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "http-auth",
- "log",
  "memchr",
  "rtsp-types",
  "rustls",
@@ -3846,7 +3830,6 @@ version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -3858,7 +3841,6 @@ dependencies = [
  "base64 0.23.1",
  "broadcast-common",
  "dvb-t2mi",
- "hex",
  "mpeg-ts",
  "serde",
  "serde_json",
@@ -4136,7 +4118,6 @@ version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -4157,7 +4138,6 @@ dependencies = [
  "broadcast-common",
  "rtp-packet",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -4168,7 +4148,6 @@ version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -4179,7 +4158,6 @@ version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -4695,7 +4673,6 @@ version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "quick-xml",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -4718,7 +4695,6 @@ version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",
 ]

@@ -10,93 +10,11 @@ on:
   push:
     tags: ["broadcast-hls-v*"]
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   publish:
-    name: publish broadcast-hls to crates.io
-    runs-on: ubuntu-24.04
-    # crates.io publish is gated: pauses for manual approval by a
-    # required reviewer before any cargo publish can run. See the
-    # 'crates-io' environment (repo Settings -> Environments).
-    environment: crates-io
-    # `contents: write` is needed to create the GitHub Release below, and is
-    # the only elevated permission this job holds — `cargo publish`
-    # authenticates with CARGO_REGISTRY_TOKEN, not the GitHub token.
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v5
-      - name: Private fixtures (real-capture tests)
-        uses: ./.github/actions/private-fixtures
-        with:
-          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
-          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Gate — broadcast-hls tests
-        run: cargo test -p broadcast-hls --all-features --locked
-
-      - name: Gate — broadcast-hls clippy
-        run: cargo clippy -p broadcast-hls --all-features --all-targets --locked -- -D warnings
-
-      - name: Gate — broadcast-hls no_std build
-        run: cargo build -p broadcast-hls --no-default-features --target thumbv7em-none-eabi --locked
-
-      - name: Gate — broadcast-hls examples build
-        run: cargo build -p broadcast-hls --all-features --examples --locked
-
-      - name: Gate — tag matches broadcast-hls version
-        run: |
-          TAG="${GITHUB_REF_NAME#broadcast-hls-v}"
-          V=$(cargo metadata --no-deps --format-version 1 --locked \
-              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['broadcast-hls'])")
-          if [ "$V" != "$TAG" ]; then
-            echo "::error::broadcast-hls is $V but tag is $TAG"; exit 1
-          fi
-
-      # Idempotent: an "already uploaded" error is treated as success.
-      # docs/RELEASE-DOCS.md requires a release note per tag, and this workflow
-      # uses it as the GitHub Release body — so a missing one is caught HERE,
-      # before anything reaches crates.io, rather than after the version is
-      # already immutable.
-      - name: Gate — release note exists for this version
-        run: |
-          NOTE="docs/release-notes/broadcast-hls-${GITHUB_REF_NAME#broadcast-hls-v}.md"
-          if [ ! -s "$NOTE" ]; then
-            echo "::error::$NOTE is missing or empty — see docs/RELEASE-DOCS.md"
-            exit 1
-          fi
-          echo "::notice::release note $NOTE present"
-
-      - name: Publish broadcast-hls
-        run: |
-          if out=$(cargo publish -p broadcast-hls --locked 2>&1); then
-            echo "$out"; echo "::notice::published broadcast-hls"
-          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
-            echo "$out"; echo "::notice::broadcast-hls already on crates.io at this version — skipping"
-          else
-            echo "$out"; echo "::error::failed to publish broadcast-hls"; exit 1
-          fi
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      # docs/RELEASE-DOCS.md section 3: a GitHub Release per tag, body = the
-      # release note. This was a manual step for the first 191 releases and was
-      # missed for 102 tags, so it is automated. Idempotent: an existing
-      # release is left untouched, so re-running after a partial failure is
-      # safe.
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          V="${GITHUB_REF_NAME#broadcast-hls-v}"
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "::notice::GitHub Release $GITHUB_REF_NAME already exists — leaving it alone"
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "broadcast-hls $V" \
-              --notes-file "docs/release-notes/broadcast-hls-$V.md"
-            echo "::notice::created GitHub Release $GITHUB_REF_NAME"
-          fi
+    uses: ./.github/workflows/publish-crate.yml
+    secrets: inherit
+    with:
+      crate: broadcast-hls

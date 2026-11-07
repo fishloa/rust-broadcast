@@ -493,7 +493,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: clippy on pinned stable ${{ env.CANARY_RUST }}
-        run: cargo +$CANARY_RUST clippy --workspace --all-features --all-targets --locked -- -D warnings
+        run: cargo "+$CANARY_RUST" clippy --workspace --all-features --all-targets --locked -- -D warnings
 
   # Player-validated golden gate (issue #569): every other transmux test
   # proves round-trip symmetry against our own parsers only. This job packages

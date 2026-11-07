@@ -284,7 +284,6 @@ impl ClientSession {
 
     /// Warnings about `Session` response headers (a malformed or zero `timeout`
     /// that fell back to the 60 s default, or an unusable header), oldest first.
-    /// Each is also emitted with `log::warn!`.
     pub fn session_warnings(&self) -> &[String] {
         &self.session_warnings
     }
@@ -653,13 +652,12 @@ impl ClientSession {
                 };
 
                 // Capture Session id + timeout (typically from SETUP). Recoverable
-                // problems (a malformed or zero timeout) are logged and kept in
-                // `session_warnings()`; an unusable header is logged and ignored.
+                // problems (a malformed or zero timeout) are kept in
+                // `session_warnings()`; an unusable header is recorded there and ignored.
                 if let Some(session_hdr) = header_value(response.header(&headers::SESSION)) {
                     match crate::session_header::SessionHeader::parse_with_warnings(session_hdr) {
                         Ok((parsed, warnings)) => {
                             for w in warnings {
-                                log::warn!("RTSP Session header {session_hdr:?}: {w}");
                                 self.record_session_warning(w);
                             }
                             self.session_id = Some(parsed.id);
@@ -669,7 +667,6 @@ impl ClientSession {
                         }
                         Err(e) => {
                             let w = format!("unusable Session header {session_hdr:?}: {e}");
-                            log::warn!("RTSP {w}");
                             self.record_session_warning(w);
                         }
                     }

@@ -20,7 +20,6 @@ broadcast-common  = { path = "../broadcast-common", version = "10.0", default-fe
 mpeg-ts     = { path = "../mpeg-ts",    version = "0.6", default-features = false }
 thiserror = { version = "2", default-features = false }
 num_enum = { workspace = true }
-libm = "0.2"
 chrono      = { workspace = true, optional = true, features = ["alloc"] }
 serde         = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 bytes         = { version = "1", optional = true, default-features = false }
@@ -32,7 +31,6 @@ encoding_rs = { version = "0.8", optional = true }
 test-fixtures = { path = "../test-fixtures" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc = { path = "../test-alloc" }
-hex       = "0.4"
 quick-xml = { workspace = true }
 serde_json = { workspace = true }
 criterion  = { workspace = true, features = ["html_reports"] }
