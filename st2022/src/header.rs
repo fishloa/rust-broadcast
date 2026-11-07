@@ -99,19 +99,19 @@ impl<'a> HeaderExtension<'a> {
     /// [`EXTENSION_UNIT_LEN`], or longer than [`MAX_EXTENSION_UNITS`] units.
     pub fn new(bytes: &'a [u8]) -> Result<Self> {
         if bytes.is_empty() || !bytes.len().is_multiple_of(EXTENSION_UNIT_LEN) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "extension",
                 value: bytes.len() as u64,
                 reason: "must be a non-zero multiple of 4 octets",
-            });
+            }));
         }
         let units = bytes.len() / EXTENSION_UNIT_LEN;
         if units > MAX_EXTENSION_UNITS as usize {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "extension",
                 value: units as u64,
                 reason: "Ext is a 4-bit field: extension may be at most 15 * 4 = 60 octets",
-            });
+            }));
         }
         Ok(Self { bytes })
     }
@@ -159,21 +159,25 @@ impl<'a> Iterator for ExtensionItems<'a> {
         }
         let Some((&len, after_len)) = after_tag.split_first() else {
             self.rest = &[];
-            return Some(Err(Error::BufferTooShort {
-                need: 2,
-                have: 1,
-                what: "header extension TLV length",
-            }));
+            return Some(Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 2,
+                    have: 1,
+                    what: "header extension TLV length",
+                },
+            )));
         };
         let len = usize::from(len);
         if after_len.len() < len {
             let have = after_len.len();
             self.rest = &[];
-            return Some(Err(Error::BufferTooShort {
-                need: len,
-                have,
-                what: "header extension TLV value",
-            }));
+            return Some(Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: len,
+                    have,
+                    what: "header extension TLV value",
+                },
+            )));
         }
         let (value, rest) = after_len.split_at(len);
         self.rest = rest;
@@ -969,64 +973,64 @@ impl<'a> PayloadHeader<'a> {
         if let VideoSourceId::Reserved(v) = self.vsid
             && v > VSID_MASK
         {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "vsid",
                 value: u64::from(v),
                 reason: "must be a 3-bit value (0..=7)",
-            });
+            }));
         }
         if let TimestampRef::Reserved(v) = self.timestamp_ref
             && u16::from(v) > R_MASK
         {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "timestamp_ref",
                 value: u64::from(v),
                 reason: "must be a 2-bit value (0..=3)",
-            });
+            }));
         }
         if let Scrambling::Reserved(v) = self.scrambling
             && u16::from(v) > S_MASK
         {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "scrambling",
                 value: u64::from(v),
                 reason: "must be a 2-bit value (0..=3)",
-            });
+            }));
         }
         if let FecUsage::Reserved(v) = self.fec_usage
             && u16::from(v) > FEC_MASK
         {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "fec_usage",
                 value: u64::from(v),
                 reason: "must be a 3-bit value (0..=7)",
-            });
+            }));
         }
         if let ClockFrequency::Reserved(v) = self.clock_frequency
             && u16::from(v) > CF_MASK
         {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "clock_frequency",
                 value: u64::from(v),
                 reason: "must be a 4-bit value (0..=15)",
-            });
+            }));
         }
         if self.reserve > MAX_RESERVE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "reserve",
                 value: u64::from(self.reserve),
                 reason: "must be a 5-bit value (0..=31)",
-            });
+            }));
         }
         if let Some(ref vsf) = self.video_source_format {
             if let MapStructure::Reserved(v) = vsf.map
                 && u32::from(v) > MAP_MASK
             {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "video_source_format.map",
                     value: u64::from(v),
                     reason: "must be a 4-bit value (0..=15)",
-                });
+                }));
             }
             // No range check for `FrameStructure::Reserved`/`FrameRate::Reserved` here:
             // both fields are 8 bits wide (`FRAME_MASK`/`FRATE_MASK` == 0xFF) and the
@@ -1035,11 +1039,11 @@ impl<'a> PayloadHeader<'a> {
             if let SampleStructure::Reserved(v) = vsf.sample
                 && u32::from(v) > SAMPLE_MASK
             {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "video_source_format.sample",
                     value: u64::from(v),
                     reason: "must be a 4-bit value (0..=15)",
-                });
+                }));
             }
         }
         // r13-S22-W2 (#1115): `Reserved(code)` must carry a genuinely
@@ -1049,11 +1053,11 @@ impl<'a> PayloadHeader<'a> {
         macro_rules! canonical {
             ($field:expr, $ty:ty, $name:literal) => {
                 if <$ty>::from_bits($field.to_bits()) != $field {
-                    return Err(Error::InvalidValue {
+                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                         field: $name,
                         value: u64::from($field.to_bits()),
                         reason: "Reserved(..) carries a defined code; use the named variant",
-                    });
+                    }));
                 }
             };
         }
@@ -1233,10 +1237,12 @@ mod tests {
         let mut out = [0u8; FIXED_HEADER_LEN - 1];
         assert_eq!(
             header.serialize_into(&mut out),
-            Err(Error::OutputBufferTooSmall {
-                need: FIXED_HEADER_LEN,
-                have: FIXED_HEADER_LEN - 1
-            })
+            Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need: FIXED_HEADER_LEN,
+                    have: FIXED_HEADER_LEN - 1
+                }
+            ))
         );
     }
 
@@ -1507,10 +1513,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "reserve",
                 ..
-            }
+            })
         ));
     }
 
@@ -1569,14 +1575,14 @@ mod tests {
         let err = HeaderExtension::new(&[0u8; 5]).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "extension",
                 ..
-            }
+            })
         ));
         assert!(matches!(
             &(HeaderExtension::new(&[])),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
     }
 
@@ -1585,10 +1591,10 @@ mod tests {
         let err = HeaderExtension::new(&[0u8; 64]).unwrap_err(); // 16 units > 15
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "extension",
                 ..
-            }
+            })
         ));
     }
 
@@ -1602,7 +1608,7 @@ mod tests {
         assert_eq!(header.try_to_bytes().unwrap()[..], wire[..]);
         let items: alloc::vec::Vec<_> = header.extension_items().collect();
         assert_eq!(items.len(), 1);
-        assert!(matches!(items[0], Err(Error::BufferTooShort { .. })));
+        assert!(matches!(items[0], Err(Error::BufferTooShort(..))));
     }
 
     #[test]
@@ -1610,11 +1616,11 @@ mod tests {
         let err = PayloadHeader::parse(&[0u8; 3]).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: FIXED_HEADER_LEN,
                 have: 3,
                 ..
-            }
+            })
         ));
     }
 
@@ -1625,10 +1631,10 @@ mod tests {
         let err = PayloadHeader::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "video source format row",
                 ..
-            }
+            })
         ));
     }
 
@@ -1639,10 +1645,10 @@ mod tests {
         let err = PayloadHeader::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "video timestamp",
                 ..
-            }
+            })
         ));
     }
 
@@ -1653,10 +1659,10 @@ mod tests {
         let err = PayloadHeader::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "header extension",
                 ..
-            }
+            })
         ));
     }
 
@@ -1764,7 +1770,10 @@ mod tests {
             None,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { field: "vsid", .. }));
+        assert!(matches!(
+            err,
+            Error::InvalidValue(broadcast_common::error::InvalidValue { field: "vsid", .. })
+        ));
     }
 
     /// r13-S22-W2 (#1115): `Reserved(code)` holding a DEFINED code would
@@ -1785,7 +1794,10 @@ mod tests {
             None,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { field: "vsid", .. }));
+        assert!(matches!(
+            err,
+            Error::InvalidValue(broadcast_common::error::InvalidValue { field: "vsid", .. })
+        ));
         let err = PayloadHeader::new(
             VideoSourceId::Primary,
             0,
@@ -1801,10 +1813,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "fec_usage",
                 ..
-            }
+            })
         ));
     }
 
@@ -1825,10 +1837,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "timestamp_ref",
                 ..
-            }
+            })
         ));
     }
 
@@ -1849,10 +1861,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "scrambling",
                 ..
-            }
+            })
         ));
     }
 
@@ -1873,10 +1885,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "fec_usage",
                 ..
-            }
+            })
         ));
     }
 
@@ -1897,10 +1909,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "clock_frequency",
                 ..
-            }
+            })
         ));
     }
 }
