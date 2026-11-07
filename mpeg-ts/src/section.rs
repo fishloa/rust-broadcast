@@ -34,7 +34,7 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::crc32_mpeg2 as crc;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 const MIN_HEADER_LEN: usize = 3;
@@ -249,12 +249,7 @@ impl Serialize for Section<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         // W5 (#1074): `section_length` and `payload.len()` are two
         // independently-settable public fields. If a caller edits one

@@ -734,12 +734,7 @@ impl<'a> AdaptationFieldExtension<'a> {
     /// Serialize into `buf` (includes the `adaptation_field_extension_length` byte).
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = broadcast_common::len::fit_u8(need - 1, "adaptation_field_extension_length")?;
 
         let mut flags = broadcast_common::len::fit_mask(
@@ -1021,12 +1016,7 @@ impl<'a> AdaptationField<'a> {
     /// `serialized_len()`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         // Byte 0: flags (ISO/IEC 13818-1:2007 §2.4.3.4).
         let mut flags = 0u8;
