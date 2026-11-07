@@ -538,6 +538,16 @@ pub(crate) enum RetransmitStep {
     TimedOut,
 }
 
+impl RetransmitStep {
+    pub(crate) fn into_outputs(self) -> Vec<HandshakeOutput> {
+        match self {
+            Self::Idle => Vec::new(),
+            Self::Resend(bytes) => vec![HandshakeOutput::Send(bytes)],
+            Self::TimedOut => vec![HandshakeOutput::TimedOut],
+        }
+    }
+}
+
 /// The retransmit bookkeeping every handshake machine (caller, listener,
 /// rendezvous) shares: the last packet sent, ticks since it was sent, and the
 /// retransmissions spent on it.

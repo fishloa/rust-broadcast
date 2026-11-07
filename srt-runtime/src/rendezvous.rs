@@ -495,14 +495,11 @@ impl RendezvousHandshake {
         ) {
             return Vec::new();
         }
-        match self.retransmit.tick(&self.config) {
-            RetransmitStep::Idle => Vec::new(),
-            RetransmitStep::Resend(bytes) => vec![HandshakeOutput::Send(bytes)],
-            RetransmitStep::TimedOut => {
-                self.state = RendezvousHandshakeState::TimedOut;
-                vec![HandshakeOutput::TimedOut]
-            }
+        let step = self.retransmit.tick(&self.config);
+        if matches!(step, RetransmitStep::TimedOut) {
+            self.state = RendezvousHandshakeState::TimedOut;
         }
+        step.into_outputs()
     }
 
     /// [`RendezvousHandshakeState::Waving`]: the first message ever received
@@ -617,29 +614,8 @@ impl RendezvousHandshake {
                 self.peer_hs_msg = Some(msg);
                 self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
                 #[cfg(feature = "crypto")]
-                {
-                    let parsed = match handshake_sm::parse_peer_extensions(hp) {
-                        Ok(p) => p,
-                        Err(_) => return Ok(self.reject(RejectionReason::Rogue)),
-                    };
-                    match (&self.config.crypto, parsed.km) {
-                        (Some(crypto), Some(km)) => {
-                            match handshake_sm::recover_sek(&crypto.passphrase, &km) {
-                                Ok((sek, salt)) => {
-                                    self.crypto_recovered = Some((sek, salt));
-                                    match handshake_sm::echo_key_material_as_response(&km) {
-                                        Ok(e) => self.km_echo_ext = Some(e),
-                                        Err(_) => return Ok(self.reject(RejectionReason::Rogue)),
-                                    }
-                                }
-                                Err(_) => return Ok(self.reject(RejectionReason::BadSecret)),
-                            }
-                        }
-                        (Some(_), None) | (None, Some(_)) => {
-                            return Ok(self.reject(RejectionReason::Unsecure));
-                        }
-                        (None, None) => {}
-                    }
+                if let Some(rejected) = self.accept_peer_crypto(hp) {
+                    return Ok(rejected);
                 }
                 self.state = RendezvousHandshakeState::Initiated;
                 self.send_conclusion(Some(ExtensionType::HsRsp))
@@ -720,33 +696,8 @@ impl RendezvousHandshake {
                         self.peer_hs_msg = Some(msg);
                         self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
                         #[cfg(feature = "crypto")]
-                        {
-                            let parsed = match handshake_sm::parse_peer_extensions(hp) {
-                                Ok(p) => p,
-                                Err(_) => return Ok(self.reject(RejectionReason::Rogue)),
-                            };
-                            match (&self.config.crypto, parsed.km) {
-                                (Some(crypto), Some(km)) => {
-                                    match handshake_sm::recover_sek(&crypto.passphrase, &km) {
-                                        Ok((sek, salt)) => {
-                                            self.crypto_recovered = Some((sek, salt));
-                                            match handshake_sm::echo_key_material_as_response(&km) {
-                                                Ok(e) => self.km_echo_ext = Some(e),
-                                                Err(_) => {
-                                                    return Ok(self.reject(RejectionReason::Rogue));
-                                                }
-                                            }
-                                        }
-                                        Err(_) => {
-                                            return Ok(self.reject(RejectionReason::BadSecret));
-                                        }
-                                    }
-                                }
-                                (Some(_), None) | (None, Some(_)) => {
-                                    return Ok(self.reject(RejectionReason::Unsecure));
-                                }
-                                (None, None) => {}
-                            }
+                        if let Some(rejected) = self.accept_peer_crypto(hp) {
+                            return Ok(rejected);
                         }
                         self.send_conclusion(Some(ExtensionType::HsRsp))
                     }
@@ -792,6 +743,31 @@ impl RendezvousHandshake {
             });
         }
         Ok(cookie_contest(self.own_cookie, peer_cookie))
+    }
+
+    #[cfg(feature = "crypto")]
+    fn accept_peer_crypto(&mut self, hp: &HandshakePacket<'_>) -> Option<Vec<HandshakeOutput>> {
+        let parsed = match handshake_sm::parse_peer_extensions(hp) {
+            Ok(p) => p,
+            Err(_) => return Some(self.reject(RejectionReason::Rogue)),
+        };
+        match (&self.config.crypto, parsed.km) {
+            (Some(crypto), Some(km)) => match handshake_sm::recover_sek(&crypto.passphrase, &km) {
+                Ok((sek, salt)) => {
+                    self.crypto_recovered = Some((sek, salt));
+                    match handshake_sm::echo_key_material_as_response(&km) {
+                        Ok(e) => self.km_echo_ext = Some(e),
+                        Err(_) => return Some(self.reject(RejectionReason::Rogue)),
+                    }
+                }
+                Err(_) => return Some(self.reject(RejectionReason::BadSecret)),
+            },
+            (Some(_), None) | (None, Some(_)) => {
+                return Some(self.reject(RejectionReason::Unsecure));
+            }
+            (None, None) => {}
+        }
+        None
     }
 
     fn reject(&mut self, reason: RejectionReason) -> Vec<HandshakeOutput> {

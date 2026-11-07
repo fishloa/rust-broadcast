@@ -184,14 +184,11 @@ impl ListenerHandshake {
         if self.state != ListenerHandshakeState::AwaitingConclusion {
             return Vec::new();
         }
-        match self.retransmit.tick(&self.config) {
-            RetransmitStep::Idle => Vec::new(),
-            RetransmitStep::Resend(bytes) => vec![HandshakeOutput::Send(bytes)],
-            RetransmitStep::TimedOut => {
-                self.state = ListenerHandshakeState::TimedOut;
-                vec![HandshakeOutput::TimedOut]
-            }
+        let step = self.retransmit.tick(&self.config);
+        if matches!(step, RetransmitStep::TimedOut) {
+            self.state = ListenerHandshakeState::TimedOut;
         }
+        step.into_outputs()
     }
 
     fn on_induction(&mut self, hp: &HandshakePacket<'_>) -> Result<Vec<HandshakeOutput>> {
