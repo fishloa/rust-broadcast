@@ -1234,7 +1234,10 @@ mod tests {
             ..ClientConfig::default()
         };
         let mut client = ClientSession::new(config);
-        assert!(client.send_audio(0, &[0x00]).is_err());
+        assert!(matches!(
+            client.send_audio(0, &[0x00]),
+            Err(crate::error::RtmpError::Malformed { .. })
+        ));
     }
 
     #[test]
