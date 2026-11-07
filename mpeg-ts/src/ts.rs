@@ -1375,20 +1375,6 @@ mod tests {
         v
     }
 
-    /// Build a long-form section with the given table_id and body bytes.
-    /// Returns the full section including its 3-byte + 5-byte header and a
-    /// placeholder CRC — for reassembler testing we don't validate the CRC.
-    fn build_section(table_id: u8, body_after_length: &[u8]) -> Vec<u8> {
-        let section_length = body_after_length.len() as u16;
-        let mut v = Vec::with_capacity(3 + section_length as usize);
-        v.push(table_id);
-        // ssi=1, pi=0, reserved=11, length hi 4 bits
-        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
-        v.extend_from_slice(body_after_length);
-        v
-    }
-
     // The reassembler tests below feed raw payload slices directly to
     // `feed()` rather than wrapping them in 188-byte TS packets. This avoids
     // the TS stuffing-byte tail (0xFF padding) bleeding into the reassembled
@@ -1398,7 +1384,7 @@ mod tests {
     fn reassembler_accumulates_multi_packet_section() {
         // 200-byte section that spans two payload slices.
         let body = vec![0xAAu8; 197];
-        let section = build_section(0x02, &body);
+        let section = test_fixtures::psi::short_section(0x02, &body);
         assert_eq!(section.len(), 200);
 
         let first_chunk = 100;
@@ -1417,7 +1403,7 @@ mod tests {
     #[test]
     fn reassembler_yields_complete_section_once_length_satisfied() {
         // 1-byte-body section: table_id=0x42, section_length=1, total=4 bytes.
-        let section = build_section(0x42, &[0xAA]);
+        let section = test_fixtures::psi::short_section(0x42, &[0xAA]);
         assert_eq!(section.len(), 4);
         let payload = build_pusi_payload(0, &[], &section);
 
@@ -1436,9 +1422,9 @@ mod tests {
         // sections after the pointer_field. All three must be queued — the
         // old `feed` stopped after the first and the rest were silently lost
         // (the CAS/EMM data-loss bug: SHARED EMMs landing as the 2nd+ section).
-        let s1 = build_section(0x42, &[0x11, 0x22]); // 5 bytes
-        let s2 = build_section(0x46, &[0x33]); // 4 bytes
-        let s3 = build_section(0x4A, &[0x44, 0x55, 0x66]); // 6 bytes
+        let s1 = test_fixtures::psi::short_section(0x42, &[0x11, 0x22]); // 5 bytes
+        let s2 = test_fixtures::psi::short_section(0x46, &[0x33]); // 4 bytes
+        let s3 = test_fixtures::psi::short_section(0x4A, &[0x44, 0x55, 0x66]); // 6 bytes
 
         let mut concat = Vec::new();
         concat.extend_from_slice(&s1);
@@ -1462,8 +1448,8 @@ mod tests {
         // Two sections then 0xFF stuffing fill — the stuffing must not be
         // mistaken for a section header (0xFF table_id) nor leak into a
         // section; both real sections still pop.
-        let s1 = build_section(0x42, &[0xAA]); // 4 bytes
-        let s2 = build_section(0x46, &[0xBB, 0xCC]); // 5 bytes
+        let s1 = test_fixtures::psi::short_section(0x42, &[0xAA]); // 4 bytes
+        let s2 = test_fixtures::psi::short_section(0x46, &[0xBB, 0xCC]); // 5 bytes
         let mut concat = Vec::new();
         concat.extend_from_slice(&s1);
         concat.extend_from_slice(&s2);
@@ -1488,8 +1474,8 @@ mod tests {
         // One complete section followed by the head of a second that spans
         // into a continuation packet: first pops immediately, second pops
         // once the continuation arrives.
-        let s1 = build_section(0x42, &[0x01, 0x02]); // 5 bytes
-        let s2 = build_section(0x46, &[0x09u8; 60]); // 63 bytes
+        let s1 = test_fixtures::psi::short_section(0x42, &[0x01, 0x02]); // 5 bytes
+        let s2 = test_fixtures::psi::short_section(0x46, &[0x09u8; 60]); // 63 bytes
         let split = 30;
 
         let mut head = Vec::new();
@@ -1517,13 +1503,13 @@ mod tests {
         // section from A. Those bytes MUST complete A's section before new
         // sections start. 3.1.1 cleared buf + skipped them → the spanning
         // section was lost (the SHARED EMM the smartcard needed).
-        let spanning = build_section(0x42, &[0x5Au8; 62]); // 65 bytes
+        let spanning = test_fixtures::psi::short_section(0x42, &[0x5Au8; 62]); // 65 bytes
         let head = 41;
         let tail = &spanning[head..]; // 24 bytes — lands in packet B
         assert_eq!(tail.len(), 24);
 
         // New section that begins in packet B after the spanning tail.
-        let next = build_section(0x46, &[0x77, 0x88]); // 5 bytes
+        let next = test_fixtures::psi::short_section(0x46, &[0x77, 0x88]); // 5 bytes
 
         // Packet A (PUSI): pointer 0, then the 41-byte head (incomplete).
         let payload_a = build_pusi_payload(0, &[], &spanning[..head]);
@@ -1550,7 +1536,7 @@ mod tests {
         // A section spans into a PUSI packet whose pointer covers the ENTIRE
         // remaining payload (no new section starts here) — the tail must be
         // appended and the section completed once the count is satisfied.
-        let spanning = build_section(0x42, &[0x33u8; 40]); // 43 bytes
+        let spanning = test_fixtures::psi::short_section(0x42, &[0x33u8; 40]); // 43 bytes
         let head = 20;
         let payload_a = build_pusi_payload(0, &[], &spanning[..head]);
         let tail = &spanning[head..]; // 23 bytes — exactly the rest of payload B
@@ -1614,7 +1600,7 @@ mod tests {
         assert!(reasm.pop_section().is_none());
 
         // State must be resettable — a fresh valid PUSI section works.
-        let valid_section = build_section(0x00, &[0xAA]);
+        let valid_section = test_fixtures::psi::short_section(0x00, &[0xAA]);
         let payload2 = build_pusi_payload(0, &[], &valid_section);
         reasm.feed(&payload2, true);
         let out = reasm
@@ -1627,7 +1613,7 @@ mod tests {
     fn reassembler_handles_pusi_with_nonzero_pointer_field() {
         // payload = pointer_field=3, 3 bytes of prior-section tail, then new section.
         let prior_tail = vec![0x11, 0x22, 0x33];
-        let new_section = build_section(0x02, &[0xBB]);
+        let new_section = test_fixtures::psi::short_section(0x02, &[0xBB]);
         assert_eq!(new_section.len(), 4);
         let payload = build_pusi_payload(3, &prior_tail, &new_section);
 
@@ -1700,7 +1686,7 @@ mod tests {
     #[test]
     fn reassembler_completes_large_section_with_trailing_stuffing() {
         let body = vec![0x5Au8; 4096 - 3];
-        let section = build_section(0x50, &body); // 4096 bytes total
+        let section = test_fixtures::psi::short_section(0x50, &body); // 4096 bytes total
         assert_eq!(section.len(), 4096);
 
         let mut reasm = SectionReassembler::default();

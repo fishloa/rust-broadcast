@@ -9,6 +9,7 @@ use std::time::Duration;
 use dvb_stream::UdpSectionStream;
 use dvb_stream::udp::MulticastConfig;
 use futures_core::Stream;
+use test_fixtures::psi::pat_packet;
 
 fn pkt(cc: u8) -> [u8; 188] {
     let mut p = [0xFFu8; 188];
@@ -17,26 +18,6 @@ fn pkt(cc: u8) -> [u8; 188] {
     p[2] = 0xFF;
     p[3] = 0x10 | (cc & 0x0F);
     p
-}
-
-/// A valid PAT section (real CRC-32/MPEG-2) in one TS packet on PID 0: the demux emits one
-/// `SectionEvent` for it, which is what a test can `await` without any sleep.
-fn pat_packet() -> [u8; 188] {
-    let mut section = vec![
-        0x00, // table_id = PAT
-        0xB0, 0x0D, // section_syntax=1, section_length=13
-        0x00, 0x01, // transport_stream_id
-        0xC1, // version=0, current_next=1
-        0x00, 0x00, // section_number, last_section_number
-        0x00, 0x01, // program_number=1
-        0xE0, 0x20, // program_map_PID=0x0020
-    ];
-    let crc = broadcast_common::crc32_mpeg2::compute(&section);
-    section.extend_from_slice(&crc.to_be_bytes());
-    let mut pkt = [0xFFu8; 188];
-    pkt[..5].copy_from_slice(&[0x47, 0x40, 0x00, 0x10, 0x00]); // sync, PUSI/PID 0, payload, pointer_field
-    pkt[5..5 + section.len()].copy_from_slice(&section);
-    pkt
 }
 
 /// Hang guard (issue #807 pattern): waits for the next `SectionEvent`, which the PAT packet

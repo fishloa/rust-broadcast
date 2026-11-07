@@ -24,6 +24,7 @@
 //! `test-bounded` / `test-alloc`).
 
 pub mod fuzz;
+pub mod psi;
 
 use std::path::{Path, PathBuf};
 

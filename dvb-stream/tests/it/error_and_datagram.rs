@@ -19,6 +19,7 @@ use dvb_stream::UdpSectionStream;
 use dvb_stream::udp::MulticastConfig;
 use dvb_stream::{SectionStream, T2miEventStream};
 use futures_core::Stream;
+use test_fixtures::psi::pat_packet;
 use tokio::io::{AsyncRead, ReadBuf};
 
 /// A reader that yields one `ErrorKind::ConnectionReset` error and nothing
@@ -82,20 +83,6 @@ fn make_ts_packet(cc: u8) -> [u8; 188] {
     pkt[3] = 0x10 | (cc & 0x0F); // payload only, continuity_counter
     pkt[4] = 0x00; // pointer_field = 0
     pkt[5] = 0xFF; // table_id 0xFF: stuffing, completes no section
-    pkt
-}
-
-/// A valid PAT section (real CRC-32/MPEG-2) in one TS packet on PID 0 (the demux emits one event).
-#[cfg(feature = "udp")]
-fn pat_packet() -> [u8; 188] {
-    let mut section = vec![
-        0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE0, 0x20,
-    ];
-    let crc = broadcast_common::crc32_mpeg2::compute(&section);
-    section.extend_from_slice(&crc.to_be_bytes());
-    let mut pkt = [0xFFu8; 188];
-    pkt[..5].copy_from_slice(&[0x47, 0x40, 0x00, 0x10, 0x00]);
-    pkt[5..5 + section.len()].copy_from_slice(&section);
     pkt
 }
 

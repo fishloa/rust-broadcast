@@ -544,82 +544,8 @@ impl SiDemux {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
-
-    /// Wrap section bytes in a single PUSI TS packet on `pid`, with a
-    /// pointer_field of 0 and 0xFF stuffing tail. Section must fit one packet.
-    fn ts_packet(pid: u16, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
-        let mut pkt = [0xFFu8; TS_PACKET_SIZE];
-        let header = TsHeader {
-            tei: false,
-            pusi: true,
-            pid: Pid::new(pid),
-            scrambling: 0,
-            has_adaptation: false,
-            has_payload: true,
-            continuity_counter: 0,
-        };
-        header.serialize_into(&mut pkt).unwrap();
-        pkt[4] = 0x00; // pointer_field
-        let start = 5;
-        assert!(start + section.len() <= TS_PACKET_SIZE, "section too big");
-        pkt[start..start + section.len()].copy_from_slice(section);
-        pkt
-    }
-
-    /// Build a long-form section with a correct trailing CRC-32.
-    fn long_section(
-        table_id: u8,
-        ext: u16,
-        version: u8,
-        section_number: u8,
-        payload: &[u8],
-    ) -> Vec<u8> {
-        let section_length = (LONG_FORM_EXTRA + payload.len() + CRC_LEN) as u16;
-        let mut v = vec![
-            table_id,
-            0x80 | 0x30 | ((section_length >> 8) as u8 & 0x0F),
-            (section_length & 0xFF) as u8,
-            (ext >> 8) as u8,
-            (ext & 0xFF) as u8,
-            0xC0 | ((version & 0x1F) << 1) | 0x01,
-            section_number,
-            section_number, // last_section_number
-        ];
-        v.extend_from_slice(payload);
-        let crc = broadcast_common::crc32_mpeg2::compute(&v);
-        v.extend_from_slice(&crc.to_be_bytes());
-        v
-    }
-
-    /// Build a PAT section (real CRC) mapping (program_number, pmt_pid) pairs.
-    fn pat_section(tsid: u16, version: u8, entries: &[(u16, u16)]) -> Vec<u8> {
-        let mut body = Vec::new();
-        for &(pn, pid) in entries {
-            body.extend_from_slice(&pn.to_be_bytes());
-            body.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
-            body.push((pid & 0xFF) as u8);
-        }
-        long_section(0x00, tsid, version, 0, &body)
-    }
-
-    /// Build a PMT section (real CRC). One stream entry.
-    fn pmt_section(program_number: u16, version: u8, pcr_pid: u16) -> Vec<u8> {
-        // pcr_pid(2) + program_info_length(2)=0 + one stream(5):
-        // stream type 0x02 (video), elementary_pid = pcr_pid+1, es_info_len 0.
-        let body = [
-            0xE0 | ((pcr_pid >> 8) as u8 & 0x1F),
-            (pcr_pid & 0xFF) as u8,
-            0xF0,
-            0x00,
-            0x02,
-            0xE0 | (((pcr_pid + 1) >> 8) as u8 & 0x1F),
-            ((pcr_pid + 1) & 0xFF) as u8,
-            0xF0,
-            0x00,
-        ];
-        long_section(0x02, program_number, version, 0, &body)
-    }
+    use mpeg_ts::ts::TS_PACKET_SIZE;
+    use test_fixtures::psi::{long_section, pat_section, pmt_section, ts_packet};
 
     #[test]
     fn pat_emits_once_suppresses_repeat_reemits_on_version_change() {
