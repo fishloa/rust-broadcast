@@ -5,7 +5,7 @@
 //! A registry holds an owned, `'static` value of a caller-registered type
 //! behind `Box<dyn XObject>`. Each registry names its own trait so the
 //! `AnyX::Other(Box<dyn XObject>)` variants stay distinct types;
-//! [`declare_object_trait!`] generates that trait, its blanket impl, the
+//! [`declare_object_trait!`](crate::declare_object_trait) generates that trait, its blanket impl, the
 //! `downcast_ref` / `is` helpers on the trait object and the
 //! `serialize_erased` helper, so the four registries cannot drift apart.
 //!
