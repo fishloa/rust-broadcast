@@ -1176,7 +1176,7 @@ def render_coverage(m: Model) -> str:
         "",
         "Everything `dvb-si` parses **and** serializes, generated from the crate's own dispatch lists",
         "(`declare_tables!`, `declare_descriptors!`, `declare_extension_bodies!`,",
-        "`declare_ait_descriptors!`, `Mpeg2ExtensionBody`) and each module's `//!` spec citation,",
+        "`declare_tag_namespace!`, `Mpeg2ExtensionBody`) and each module's `//!` spec citation,",
         "joined with the allocation lists the vendored standards define",
         "([`coverage/allocations.tsv`](coverage/allocations.tsv)). Rows the standards allocate but the",
         "crate does not type are listed as **Not implemented** — nothing is hidden.",
