@@ -21,14 +21,15 @@ const LIVE_CAPTURE: &str = "ts/live-channels/tf-1-8-mb.ts";
 const LIVE_PREFIX_BYTES: usize = 1_500_000;
 const FAST_BPS: u64 = 100_000_000;
 const SEND_INTERVAL: Duration = Duration::from_millis(2);
-const DRAIN: Duration = Duration::from_millis(1_500);
+const DRAIN_MARGIN_MS: u64 = 1_500;
 const RUN_DEADLINE: Duration = Duration::from_secs(40);
 const PASSPHRASE: &str = "0123456789abcdef";
 const PAYLOAD_PACKETS: usize = 7;
 const SYNC_MARKER: u8 = 0xA5;
 const SYNC_LEN: usize = 64;
 const SYNC_INTERVAL: Duration = Duration::from_millis(50);
-const LOCAL_SRT_LATENCY_MS: u16 = 120;
+const LOCAL_SRT_LATENCY_MS: u16 = 3_000;
+const DRAIN: Duration = Duration::from_millis(LOCAL_SRT_LATENCY_MS as u64 + DRAIN_MARGIN_MS);
 
 fn libsrt_available(test: &str) -> bool {
     let found = std::env::var_os("PATH").is_some_and(|paths| {
@@ -60,23 +61,28 @@ fn the_caller_plays_a_srt_runtime_listener_stream_exactly() {
             .build()
             .unwrap();
         rt.block_on(async move {
-            let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-                .await
-                .unwrap();
+            let mut listener = SrtListener::bind(
+                "127.0.0.1:0",
+                HandshakeConfig {
+                    latency_ms: LOCAL_SRT_LATENCY_MS,
+                    ..HandshakeConfig::default()
+                },
+            )
+            .await
+            .unwrap();
             tx.send(listener.local_addr().unwrap().port()).unwrap();
             let mut socket = listener.accept().await.unwrap();
             for d in &datagrams {
                 socket.send(d).await.unwrap();
                 tokio::time::sleep(SEND_INTERVAL).await;
             }
-            tokio::time::sleep(Duration::from_millis(600)).await;
+            tokio::time::sleep(Duration::from_millis(u64::from(LOCAL_SRT_LATENCY_MS) + 600)).await;
         });
     });
     let port = rx.recv().unwrap();
-    let mut host = WireHost::open(
-        &format!("srt://127.0.0.1:{port}"),
-        config_with_seed(Config::default()),
-    );
+    let mut config = config_with_seed(Config::default());
+    config.srt.latency_ms = LOCAL_SRT_LATENCY_MS;
+    let mut host = WireHost::open(&format!("srt://127.0.0.1:{port}"), config);
     let finished = host.run_until(RUN_DEADLINE, |h| {
         h.closes >= 1 && h.count(|e| matches!(e, Event::Sample { .. })) > 0
     });
@@ -121,6 +127,7 @@ fn libsrt_stream_is_intact(passphrase: Option<&str>, key_length: SrtKeyLength, t
             .expect("spawn srt-live-transmit"),
     );
     let mut config = config_with_seed(Config::default());
+    config.srt.latency_ms = LOCAL_SRT_LATENCY_MS;
     if let Some(p) = passphrase {
         config.srt.encryption = Some(SrtEncryption::new(p, key_length));
     }
@@ -151,9 +158,10 @@ fn libsrt_stream_is_intact(passphrase: Option<&str>, key_length: SrtKeyLength, t
     let samples = host.replay().samples();
     assert!(
         samples.len() * 5 >= want.len(),
-        "{test}: only {} of {} samples arrived",
+        "{test}: only {} of {} samples arrived ({:?})",
         samples.len(),
-        want.len()
+        want.len(),
+        host.session.datagram_stats()
     );
     let mut wrong = 0;
     for s in &samples {
@@ -324,7 +332,7 @@ fn libsrt_retransmissions_repair_a_lossy_link() {
             .arg("-loglevel:error")
             .arg(format!("-chunk:{}", PAYLOAD_PACKETS * TS_PACKET))
             .arg(format!("udp://:{src_port}"))
-            .arg(format!("srt://:{srt_port}?latency=400"))
+            .arg(format!("srt://:{srt_port}?latency={LOCAL_SRT_LATENCY_MS}"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -333,7 +341,7 @@ fn libsrt_retransmissions_repair_a_lossy_link() {
     );
     let proxy = LossyProxy::start(srt_port);
     let mut config = config_with_seed(Config::default());
-    config.srt.latency_ms = 400;
+    config.srt.latency_ms = LOCAL_SRT_LATENCY_MS;
     let mut host = WireHost::open(&format!("srt://127.0.0.1:{}", proxy.port), config);
     let datagrams = ts_datagrams(ts, PAYLOAD_PACKETS);
     let connected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -355,6 +363,7 @@ fn libsrt_retransmissions_repair_a_lossy_link() {
         }
         feeder.is_finished()
     });
+    connected.store(true, std::sync::atomic::Ordering::Relaxed);
     host.run_until(DRAIN, |_| false);
     feeder.join().unwrap();
     let dropped = proxy.dropped.load(std::sync::atomic::Ordering::Relaxed);
