@@ -12,6 +12,10 @@
 //! Test 5: Config round-trip — `"smooth"` deserialises and validates.
 
 use crate::support::origin::{body_bytes, body_string, get};
+use crate::support::segmenter_feed::{
+    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, VIDEO_TIMESCALE,
+    feed_via_segmenter as feed_segments, video_track_spec_sized,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use transmux::TrackId;
@@ -26,73 +30,21 @@ use multimux::output::Output;
 use multimux::output::llhls::LlHlsOutput;
 use multimux::output::smooth::SmoothOutput;
 use multimux::route::RouteHandle;
-use transmux::avc_config_from_sprop;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::smooth_parse::SmoothManifest;
 
-/// A real-ish sprop-parameter-sets pair (SPS+PPS) — same one used by
-/// `multimux::source::rtsp`'s own tests.
-const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-/// 90 kHz video timescale.
-const VIDEO_TIMESCALE: u32 = 90_000;
-const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
-const TARGET_DURATION_SECS: f64 = 1.0;
-const PART_TARGET_MS: u32 = 500;
-
 fn video_track_spec() -> TrackSpec {
-    let config = avc_config_from_sprop(SPROP).expect("valid sprop");
-    TrackSpec::new(
-        TrackId::new(1),
-        VIDEO_TIMESCALE,
-        CodecConfig::Avc {
-            config,
-            width: 1280,
-            height: 720,
-        },
-    )
+    video_track_spec_sized(1280, 720)
 }
 
-/// Feed video frames through a real `LlHlsSegmenter` into `store`,
-/// publishing the SPTS program.
 fn feed_via_segmenter(
     store: &RouteHandle,
     specs: Vec<TrackSpec>,
     batches: Vec<Vec<(u32, Sample)>>,
 ) {
-    let program = media_plane::ProgramId(0);
-    store.publish_new_program(program);
-
-    let mut seg = LlHlsSegmenter::with_part_target(
-        specs.clone(),
-        transmux::VIDEO_CLOCK_RATE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
-    )
-    .expect("segmenter builds");
-    store.set_init(program, seg.init_segment().expect("init segment builds"));
-    store.set_track_specs(program, specs);
-
-    for batch in batches {
-        for (track_id, sample) in batch {
-            seg.push(TrackId::new(track_id), sample)
-                .expect("push succeeds");
-        }
-        for part in seg.take_ready_parts() {
-            store.add_part(program, part);
-        }
-        for segment in seg.take_ready_segments() {
-            store.add_segment(program, segment).expect("add_segment");
-        }
-    }
-
-    seg.flush().expect("flush succeeds");
-    for part in seg.take_ready_parts() {
-        store.add_part(program, part);
-    }
-    for segment in seg.take_ready_segments() {
-        store.add_segment(program, segment).expect("add_segment");
-    }
+    feed_segments(store, specs.clone(), batches);
+    store.set_track_specs(media_plane::ProgramId(0), specs);
 }
 
 /// A route driven one segment at a time through a kept-alive

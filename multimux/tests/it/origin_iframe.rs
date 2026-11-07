@@ -3,6 +3,9 @@
 //! `origin_llhls.rs`.
 
 use crate::support::origin::{body_bytes, body_string, get};
+use crate::support::segmenter_feed::{
+    PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_batches_n, video_track_spec,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,85 +20,8 @@ use multimux::output::Output;
 use multimux::output::llhls::LlHlsOutput;
 use multimux::output::ts_hls::TsHlsOutput;
 use multimux::route::RouteHandle;
-use transmux::avc_config_from_sprop;
 use transmux::ll_hls::LlHlsSegmenter;
-use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-
-const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-
-const VIDEO_TIMESCALE: u32 = 90_000;
-const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
-const TARGET_DURATION_SECS: f64 = 1.0;
-const PART_TARGET_MS: u32 = 500;
-
-fn video_track_spec() -> TrackSpec {
-    let config = avc_config_from_sprop(SPROP).expect("valid sprop");
-    TrackSpec::new(
-        TrackId::new(1),
-        VIDEO_TIMESCALE,
-        CodecConfig::Avc {
-            config,
-            width: 0,
-            height: 0,
-        },
-    )
-}
-
-fn feed_via_segmenter(
-    store: &RouteHandle,
-    specs: Vec<TrackSpec>,
-    batches: Vec<Vec<(u32, Sample)>>,
-) {
-    let program = media_plane::ProgramId(0);
-    store.publish_new_program(program);
-
-    let mut seg = LlHlsSegmenter::with_part_target(
-        specs,
-        transmux::VIDEO_CLOCK_RATE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
-    )
-    .expect("segmenter builds");
-    store.set_init(program, seg.init_segment().expect("init segment builds"));
-
-    for batch in batches {
-        for (track_id, sample) in batch {
-            seg.push(TrackId::new(track_id), sample)
-                .expect("push succeeds");
-        }
-        for part in seg.take_ready_parts() {
-            store.add_part(program, part);
-        }
-        for segment in seg.take_ready_segments() {
-            store.add_segment(program, segment).expect("add_segment");
-        }
-    }
-
-    seg.flush().expect("flush succeeds");
-    for part in seg.take_ready_parts() {
-        store.add_part(program, part);
-    }
-    for segment in seg.take_ready_segments() {
-        store.add_segment(program, segment).expect("add_segment");
-    }
-}
-
-fn video_batches_n(n: u32) -> Vec<Vec<(u32, Sample)>> {
-    let mut batches = Vec::new();
-    for i in 0..n {
-        let is_sync = i % 30 == 0;
-        let data = vec![0xAAu8.wrapping_add((i % 251) as u8); 64];
-        let sample = Sample::new(
-            data,
-            Some(i64::from(i) * i64::from(FRAME_DUR)),
-            Some(i64::from(i) * i64::from(FRAME_DUR)),
-            Some(FRAME_DUR),
-            is_sync,
-        );
-        batches.push(vec![(1u32, sample)]);
-    }
-    batches
-}
+use transmux::pipeline::{Sample, TrackSpec};
 
 fn video_batches() -> Vec<Vec<(u32, Sample)>> {
     video_batches_n(120)
