@@ -46,12 +46,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("source/rtmp.rs", 326, "RTMP accept pump TaskTracker"),
     (
         "source/rtmp.rs",
-        739,
+        737,
         "RTMP run task; owned by the route supervisor handle",
     ),
     (
         "source/rtmp.rs",
-        748,
+        746,
         "RTMP accept pump; owned by the route supervisor handle",
     ),
     (
