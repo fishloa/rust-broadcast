@@ -37,8 +37,15 @@ fn splice_info_section_sap_type_and_encryption_algorithm_widths() {
     assert!(max.try_to_bytes().is_ok());
     let mut over = ok;
     over.encryption_algorithm = 0x40;
-    assert!(
-        over.try_to_bytes().is_err(),
+    assert_eq!(
+        over.try_to_bytes().err(),
+        Some(scte35_splice::error::Error::FieldOverflow(
+            broadcast_common::len::FieldOverflow {
+                field: "splice_info_section.encryption_algorithm",
+                value: 64,
+                max: 63
+            }
+        )),
         "encryption_algorithm 64 must not wrap to 0"
     );
 }
