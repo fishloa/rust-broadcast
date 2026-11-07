@@ -4,6 +4,7 @@
 ### Fixed
 - `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
 ### Changed
+- The DASH period stitcher's `ticks_to_us` uses `broadcast_common::timescale::to_micros` (c6 F7).
 - The WHIP and WHEP outputs share one CORS middleware (`webrtc_session::add_cors`), one session registration (`register_session`) and one `SignallingMachine` implementation macro; the push egress, DASH output and segmenters call `CodecConfig::is_video` instead of private copies (c4 D2, M4).
 - The five pull routes are one generic `PullRoute<K: PullKind>`; `RtspRoute`, `HlsPullRoute`, `SmoothPullRoute`, `TsHttpRoute` and `DashPullRoute` are type aliases over it with unchanged constructors and builders (c4 D4). The marker types `RtspKind`, `HlsPullKind`, `SmoothPullKind`, `TsHttpKind` and `DashPullKind` are public.
 - WHIP and WHEP share their `PATCH`/`DELETE` handlers, the H.264 payload-type choice and the ICE candidate extraction (`webrtc_session::{patch_resource, delete_resource, h264_payload, candidate_lines}`), and the LL-HLS/TS-HLS/catch-up outputs share one master-playlist response and one playlist content-type constant (c3 d:W1, d:H1).

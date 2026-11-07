@@ -9,8 +9,8 @@ use broadcast_client::{
     Action, ClockSource, Config, DashClockPolicy, DashConfig, Error, ErrorKind, Event, Session,
 };
 use support::hls_host::{
-    Host, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config, is_ended, ts_playlist,
-    ts_segment,
+    BASE_DATE, Host, PLUS_1H, PLUS_30S, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL,
+    hls_config, is_ended, ts_playlist, ts_segment,
 };
 
 const URL: &str = "http://h/live.m3u8";
@@ -18,10 +18,7 @@ const STEPS: usize = 40_000;
 const FIRST_BACKOFF_SECS: u64 = 2;
 const MAX_RETRY_AFTER_SECS: u64 = 60;
 const BASE_UNIX_US: u64 = 1_793_003_944 * SEC;
-const BASE_DATE: &str = "Mon, 26 Oct 2026 08:39:04 GMT";
-const PLUS_30S: &str = "Mon, 26 Oct 2026 08:39:34 GMT";
 const MINUS_1S: &str = "Mon, 26 Oct 2026 08:39:03 GMT";
-const PLUS_1H: &str = "Mon, 26 Oct 2026 09:39:04 GMT";
 
 fn header(name: &str, value: &str) -> (String, String) {
     (name.to_string(), value.to_string())

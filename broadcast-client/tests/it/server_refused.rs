@@ -7,17 +7,14 @@ use crate::support::dash_sim;
 use broadcast_client::{Action, Config, Event, MAX_SERVER_REFUSED_REASON_BYTES, Session, Status};
 use dash_sim::{Answer, DashSim, Logged};
 use support::hls_host::{
-    Host, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config, ts_playlist,
-    ts_segment,
+    BASE_DATE, Host, PLUS_1H, PLUS_30S, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL,
+    hls_config, ts_playlist, ts_segment,
 };
 
 const TS_URL: &str = "http://h/live.ts";
 const STEPS: usize = 2_000;
 const REASON: &str = "descrambler busy: all 4 CAM slots in use";
 const MAX_RETRY_AFTER_SECS: u64 = 60;
-const BASE_DATE: &str = "Mon, 26 Oct 2026 08:39:04 GMT";
-const PLUS_30S: &str = "Mon, 26 Oct 2026 08:39:34 GMT";
-const PLUS_1H: &str = "Mon, 26 Oct 2026 09:39:04 GMT";
 const DASH_MANIFEST: &str = "http://dash.test/manifest.mpd";
 
 fn header(name: &str, value: &str) -> (String, String) {

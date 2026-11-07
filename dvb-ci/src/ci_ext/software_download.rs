@@ -234,9 +234,12 @@ pub const MSG_ID_DOWNLOAD_DATA_REQUEST: u16 = 0x1004;
 pub const MSG_ID_DOWNLOAD_CANCEL: u16 = 0x1005;
 
 /// The DSM-CC message header common to the "info" / cancel messages (Tables
-/// 79/80/81): protocolDiscriminator + dsmccType + messageId + transactionId +
-/// reserved + adaptationLength + messageLength, plus the optional adaptation
-/// bytes (`adaptationType` + data, carried opaque).
+/// 79/80/81) and the data messages (Tables 82/83, whose `dsmccDownloadDataHeader`
+/// carries a `DownloadId` in the same four bytes): protocolDiscriminator +
+/// dsmccType + messageId + transactionId/DownloadId + reserved +
+/// adaptationLength + messageLength, plus the optional adaptation bytes
+/// (`adaptationType` + data, carried opaque). Returns
+/// `(transaction_or_download_id, adaptation, rest_after_adaptation)`.
 ///
 /// Each of these message types (`DownloadInfoRequest`/`Response`/`Cancel`) is
 /// directly `Parse`-able on its own, with no outer `apdu_tag`/framing to
@@ -250,7 +253,7 @@ fn parse_dsmcc_header<'a>(
     body: &'a [u8],
     expected_message_id: u16,
     what: &'static str,
-) -> Result<(u32, u8, &'a [u8], &'a [u8])> {
+) -> Result<(u32, &'a [u8], &'a [u8])> {
     // protocolDiscriminator(1) dsmccType(1) messageId(2) transactionId(4)
     // reserved(1) adaptationLength(1) messageLength(2) = 12.
     const HDR: usize = 12;
@@ -280,7 +283,7 @@ fn parse_dsmcc_header<'a>(
             reason: "messageId does not match this message type",
         });
     }
-    let transaction_id = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
+    let id = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
     let adaptation_length = body[9] as usize;
     if body.len() < HDR + adaptation_length {
         return Err(Error::BufferTooShort {
@@ -302,13 +305,13 @@ fn parse_dsmcc_header<'a>(
     }
     let adaptation = &body[HDR..HDR + adaptation_length];
     let rest = &body[HDR + adaptation_length..];
-    Ok((transaction_id, adaptation_length as u8, adaptation, rest))
+    Ok((id, adaptation, rest))
 }
 
 fn write_dsmcc_header(
     buf: &mut [u8],
     message_id: u16,
-    transaction_id: u32,
+    id: u32,
     adaptation: &[u8],
     message_length: usize,
 ) -> Result<usize> {
@@ -317,7 +320,7 @@ fn write_dsmcc_header(
     buf[0] = DSMCC_PROTOCOL_DISCRIMINATOR;
     buf[1] = DSMCC_TYPE_DOWNLOAD;
     buf[2..4].copy_from_slice(&message_id.to_be_bytes());
-    buf[4..8].copy_from_slice(&transaction_id.to_be_bytes());
+    buf[4..8].copy_from_slice(&id.to_be_bytes());
     buf[8] = 0xFF; // reserved
     buf[9] = adaptation.len() as u8;
     buf[10..12].copy_from_slice(&(message_length as u16).to_be_bytes());
@@ -353,7 +356,7 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadInfoRequest";
-        let (transaction_id, _adapt_len, adaptation, rest) =
+        let (transaction_id, adaptation, rest) =
             parse_dsmcc_header(body, MSG_ID_DOWNLOAD_INFO_REQUEST, what)?;
         // bufferSize(4) maximumBlockSize(2) compatibilityDescriptorLength(2).
         if rest.len() < 8 {
@@ -478,7 +481,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadInfoResponse";
-        let (transaction_id, _adapt_len, adaptation, rest) =
+        let (transaction_id, adaptation, rest) =
             parse_dsmcc_header(body, MSG_ID_DOWNLOAD_INFO_RESPONSE, what)?;
         // downloadId(4) blockSize(2) windowSize(1) ackPeriod(1)
         // tCDownloadWindow(4) tCDownloadScenario(4) compatibilityDescriptorLength(2).
@@ -639,7 +642,7 @@ impl<'a> Parse<'a> for DownloadCancel<'a> {
     type Error = Error;
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadCancel";
-        let (transaction_id, _adapt_len, adaptation, rest) =
+        let (transaction_id, adaptation, rest) =
             parse_dsmcc_header(body, MSG_ID_DOWNLOAD_CANCEL, what)?;
         // downloadId(4) moduleId(2) blockNumber(2) downloadCancelReason(1) privateDataLength(2).
         const FIXED: usize = 4 + 2 + 2 + 1 + 2;
@@ -711,85 +714,6 @@ impl Serialize for DownloadCancel<'_> {
     }
 }
 
-/// The DSM-CC `dsmccDownloadDataHeader` (Tables 82/83) differs from the message
-/// header: the `DownloadId` (4) precedes `reserved`/`adaptationLength`/
-/// `messageLength`. Returns `(download_id, adaptation, rest_after_adaptation)`.
-fn parse_dsmcc_data_header<'a>(
-    body: &'a [u8],
-    expected_message_id: u16,
-    what: &'static str,
-) -> Result<(u32, &'a [u8], &'a [u8])> {
-    // protocolDiscriminator(1) dsmccType(1) messageId(2) DownloadId(4)
-    // reserved(1) adaptationLength(1) messageLength(2) = 12.
-    const HDR: usize = 12;
-    if body.len() < HDR {
-        return Err(Error::BufferTooShort {
-            need: HDR,
-            have: body.len(),
-            what,
-        });
-    }
-    if body[0] != DSMCC_PROTOCOL_DISCRIMINATOR {
-        return Err(Error::InvalidObject {
-            what,
-            reason: "protocolDiscriminator is not MPEG-2 DSM-CC (0x11)",
-        });
-    }
-    if body[1] != DSMCC_TYPE_DOWNLOAD {
-        return Err(Error::InvalidObject {
-            what,
-            reason: "dsmccType is not U-N Download (0x03)",
-        });
-    }
-    let message_id = u16::from_be_bytes([body[2], body[3]]);
-    if message_id != expected_message_id {
-        return Err(Error::InvalidObject {
-            what,
-            reason: "messageId does not match this message type",
-        });
-    }
-    let download_id = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
-    let adaptation_length = body[9] as usize;
-    if body.len() < HDR + adaptation_length {
-        return Err(Error::BufferTooShort {
-            need: HDR + adaptation_length,
-            have: body.len(),
-            what,
-        });
-    }
-    let declared_message_length = u16::from_be_bytes([body[10], body[11]]) as usize;
-    let actual_message_length = body.len() - HDR;
-    if declared_message_length != actual_message_length {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: declared_message_length,
-            actual: actual_message_length,
-        });
-    }
-    let adaptation = &body[HDR..HDR + adaptation_length];
-    Ok((download_id, adaptation, &body[HDR + adaptation_length..]))
-}
-
-fn write_dsmcc_data_header(
-    buf: &mut [u8],
-    message_id: u16,
-    download_id: u32,
-    adaptation: &[u8],
-    message_length: usize,
-) -> Result<usize> {
-    objects::fit_bits(adaptation.len() as u64, 8, "DSM-CC adaptationLength")?;
-    objects::fit_bits(message_length as u64, 16, "DSM-CC messageLength")?;
-    buf[0] = DSMCC_PROTOCOL_DISCRIMINATOR;
-    buf[1] = DSMCC_TYPE_DOWNLOAD;
-    buf[2..4].copy_from_slice(&message_id.to_be_bytes());
-    buf[4..8].copy_from_slice(&download_id.to_be_bytes());
-    buf[8] = 0xFF; // reserved
-    buf[9] = adaptation.len() as u8;
-    buf[10..12].copy_from_slice(&(message_length as u16).to_be_bytes());
-    buf[12..12 + adaptation.len()].copy_from_slice(adaptation);
-    Ok(12 + adaptation.len())
-}
-
 /// `DownloadDataRequest()` (Table 82) — client (host) → server.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -812,7 +736,7 @@ impl<'a> Parse<'a> for DownloadDataRequest<'a> {
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadDataRequest";
         let (download_id, adaptation, rest) =
-            parse_dsmcc_data_header(body, MSG_ID_DOWNLOAD_DATA_REQUEST, what)?;
+            parse_dsmcc_header(body, MSG_ID_DOWNLOAD_DATA_REQUEST, what)?;
         // moduleId(2) blockNumber(2) downloadReason(1).
         const FIXED: usize = 5;
         if rest.len() < FIXED {
@@ -840,7 +764,7 @@ impl Serialize for DownloadDataRequest<'_> {
         let total = self.serialized_len();
         need_out(buf, total)?;
         let message_length = total - 12;
-        let mut pos = write_dsmcc_data_header(
+        let mut pos = write_dsmcc_header(
             buf,
             MSG_ID_DOWNLOAD_DATA_REQUEST,
             self.download_id,
@@ -882,7 +806,7 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
     fn parse(body: &'a [u8]) -> Result<Self> {
         let what = "DownloadDataBlock";
         let (download_id, adaptation, rest) =
-            parse_dsmcc_data_header(body, MSG_ID_DOWNLOAD_DATA_BLOCK, what)?;
+            parse_dsmcc_header(body, MSG_ID_DOWNLOAD_DATA_BLOCK, what)?;
         // moduleId(2) moduleVersion(1) reserved(1) blockNumber(2).
         const FIXED: usize = 6;
         if rest.len() < FIXED {
@@ -912,7 +836,7 @@ impl Serialize for DownloadDataBlock<'_> {
         let total = self.serialized_len();
         need_out(buf, total)?;
         let message_length = total - 12;
-        let mut pos = write_dsmcc_data_header(
+        let mut pos = write_dsmcc_header(
             buf,
             MSG_ID_DOWNLOAD_DATA_BLOCK,
             self.download_id,

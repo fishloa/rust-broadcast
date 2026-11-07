@@ -25,6 +25,7 @@
 
 pub mod fuzz;
 pub mod psi;
+pub mod vectors;
 
 use std::path::{Path, PathBuf};
 

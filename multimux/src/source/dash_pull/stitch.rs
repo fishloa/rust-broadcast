@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use broadcast_common::timescale::{Rounding, rescale};
+use broadcast_common::timescale::{Rounding, to_micros};
 
 use transmux::{Sample, TrackId, TrackSpec};
 
@@ -39,12 +39,7 @@ pub(super) struct Stitcher {
 }
 
 fn ticks_to_us(ticks: i64, timescale: u32) -> i128 {
-    rescale(
-        i128::from(ticks),
-        timescale,
-        MICROS_PER_SECOND_U32,
-        Rounding::TowardZero,
-    )
+    to_micros(i128::from(ticks), timescale, Rounding::TowardZero)
 }
 
 fn us_to_ticks(us: i128, timescale: u32) -> i64 {

@@ -66,6 +66,21 @@ pub fn rescale(ticks: i128, from: impl Into<u64>, to: impl Into<u64>, rounding: 
     }
 }
 
+/// Ticks per second of the microsecond timescale.
+pub const MICROS_PER_SECOND: u32 = 1_000_000;
+
+/// `ticks` at `timescale` as microseconds.
+#[must_use]
+pub fn to_micros(ticks: i128, timescale: impl Into<u64>, rounding: Rounding) -> i128 {
+    rescale(ticks, timescale, MICROS_PER_SECOND, rounding)
+}
+
+/// `us` microseconds as ticks at `timescale`.
+#[must_use]
+pub fn from_micros(us: i128, timescale: impl Into<u64>, rounding: Rounding) -> i128 {
+    rescale(us, MICROS_PER_SECOND, timescale, rounding)
+}
+
 /// Exact comparison of `a / a_ts` with `b / b_ts` seconds, without rounding.
 /// A timescale of `0` counts as `1`, as in [`rescale`].
 #[must_use]
@@ -116,6 +131,16 @@ mod tests {
         assert_eq!(rescale(-3, 2u32, 1u32, Rounding::Floor), -2);
         assert_eq!(rescale(-3, 2u32, 1u32, Rounding::Nearest), -2);
         assert_eq!(rescale(-3, 2u32, 1u32, Rounding::TowardZero), -1);
+    }
+
+    #[test]
+    fn micros_helpers_are_rescale_against_one_million() {
+        assert_eq!(to_micros(90_000, 90_000u32, Rounding::Floor), 1_000_000);
+        assert_eq!(to_micros(1, 3u32, Rounding::TowardZero), 333_333);
+        assert_eq!(to_micros(-1, 3u32, Rounding::Floor), -333_334);
+        assert_eq!(from_micros(1_000_001, 90_000u32, Rounding::Ceil), 90_001);
+        assert_eq!(from_micros(1_000_001, 90_000u32, Rounding::Floor), 90_000);
+        assert_eq!(to_micros(5, 0u32, Rounding::Floor), 5_000_000);
     }
 
     #[test]

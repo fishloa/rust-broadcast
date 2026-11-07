@@ -11,6 +11,7 @@
 //! Oracle refs: `fixtures/mp4/PROVENANCE.md`, `fixtures/ts/ac4/dac4-oracle.md`.
 
 use broadcast_common::{Parse, Serialize};
+use test_fixtures::vectors::DAC4_ORACLE;
 use transmux::TrackId;
 use transmux::{
     Ac4SpecificBox, AudioSpecificConfig, Av1ConfigurationBox, EsdsBox, FlacSpecificBox,
@@ -275,22 +276,15 @@ fn vpcc_mutation_changes_bytes() {
 // AC-4 dac4 — recorded oracle bytes (#431; source mp4 non-redistributable)
 // ---------------------------------------------------------------------------
 
-/// The `dac4` (AC4SpecificBox = ac4_dsi_v1) oracle body from
-/// `fixtures/ts/ac4/dac4-oracle.md` (29 bytes, real Dolby AC-4 init segment).
-const DAC4_ORACLE: &[u8] = &[
-    0x20, 0xa4, 0x01, 0x40, 0x00, 0x00, 0x00, 0x1f, 0xff, 0xff, 0xff, 0xe0, 0x01, 0x0f, 0xf8, 0x80,
-    0x00, 0x00, 0x42, 0x00, 0x00, 0x25, 0x01, 0x00, 0x00, 0x00, 0x30, 0x08, 0x00,
-];
-
 #[test]
 fn dac4_round_trip_and_fields() {
     assert_eq!(DAC4_ORACLE.len(), 29, "dac4 oracle is 29 bytes");
 
-    let cfg = Ac4SpecificBox::parse(DAC4_ORACLE).expect("parse dac4");
+    let cfg = Ac4SpecificBox::parse(&DAC4_ORACLE).expect("parse dac4");
     assert_eq!(cfg.ac4_dsi.len(), 29, "opaque ac4_dsi preserved");
     assert_eq!(cfg.rfc6381(), "ac-4");
 
-    roundtrip(&cfg, DAC4_ORACLE);
+    roundtrip(&cfg, &DAC4_ORACLE);
 
     // Wrapping in the ac-4 sample entry and re-parsing must preserve the dac4 body.
     let track = transmux::TrackSpec::new(
@@ -314,7 +308,7 @@ fn dac4_round_trip_and_fields() {
 
 #[test]
 fn dac4_mutation_changes_bytes() {
-    let mut cfg = Ac4SpecificBox::parse(DAC4_ORACLE).unwrap();
+    let mut cfg = Ac4SpecificBox::parse(&DAC4_ORACLE).unwrap();
     cfg.ac4_dsi[0] ^= 0xFF;
     let mut buf = vec![0u8; cfg.serialized_len()];
     cfg.serialize_into(&mut buf).unwrap();

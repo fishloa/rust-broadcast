@@ -93,9 +93,7 @@ fn rfc3394_unwrap_wrong_kek_fails_integrity_check() {
 // NIST SP 800-38A Appendix F.5.1 — CTR-AES128 (Encrypt).
 // ---------------------------------------------------------------------------
 
-const NIST_KEY: [u8; 16] = [
-    0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C,
-];
+use test_fixtures::vectors::NIST_AES128_KEY as NIST_KEY;
 /// F.5.1's "Initial Counter" — a raw 128-bit CTR seed (not this crate's
 /// Salt+PktSeqNo `packet_counter` construction, which is SRT-specific,
 /// §6.2.2 — NIST's own vector has no such framing).
