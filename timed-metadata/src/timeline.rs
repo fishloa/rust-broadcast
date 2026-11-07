@@ -32,6 +32,12 @@ impl Timeline {
         }
     }
 
+    /// Set or replace the wall-clock anchor, keeping the PTS unroll state of the
+    /// events already pushed.
+    pub fn set_anchor(&mut self, anchor: TimeAnchor) {
+        self.anchor = Some(anchor);
+    }
+
     /// Parse a SCTE-35 section; unroll its PTS into an absolute [`MediaTime`].
     pub fn push_scte35(&mut self, bytes: &[u8]) -> Result<TimedEvent> {
         let section = SpliceInfoSection::parse(bytes)?;
@@ -119,6 +125,40 @@ mod tests {
             tl.to_daterange(&ev),
             Err(crate::Error::MissingAnchor)
         ));
+    }
+
+    #[test]
+    fn set_anchor_adds_and_replaces_the_anchor_like_with_anchor() {
+        let first = TimeAnchor {
+            pts_90k: 0,
+            utc_epoch_ms: 1_700_000_000_000,
+        };
+        let second = TimeAnchor {
+            pts_90k: 0,
+            utc_epoch_ms: 1_800_000_000_000,
+        };
+        let mut tl = Timeline::new();
+        let ev = tl.push_scte35(&splice_2002()).unwrap();
+        assert!(matches!(
+            tl.to_daterange(&ev),
+            Err(crate::Error::MissingAnchor)
+        ));
+
+        tl.set_anchor(first);
+        let anchored = tl.to_daterange(&ev).unwrap();
+        let expected = Timeline::with_anchor(first).to_daterange(&ev).unwrap();
+        assert_eq!(anchored.start_date, expected.start_date);
+
+        tl.set_anchor(second);
+        let replaced = tl.to_daterange(&ev).unwrap();
+        assert_eq!(
+            replaced.start_date,
+            Timeline::with_anchor(second)
+                .to_daterange(&ev)
+                .unwrap()
+                .start_date
+        );
+        assert_ne!(replaced.start_date, anchored.start_date);
     }
 
     #[test]

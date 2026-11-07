@@ -35,6 +35,14 @@ pub const LAVC_FOURCC: [u8; 4] = *b"lavc";
 pub const AVS3_FOURCC: [u8; 4] = *b"avs3";
 /// FourCC of the LAVS3 sample entry.
 pub const LAV3_FOURCC: [u8; 4] = *b"lav3";
+/// `grouping_type` of the temporal-layer sample group (T/AI 109.6, `TemporalLayerEntry`).
+pub const TELG_FOURCC: [u8; 4] = *b"telg";
+/// `grouping_type` of the library random access point sample group (T/AI 109.6,
+/// `VisualLRAPEntry`).
+pub const LRAP_FOURCC: [u8; 4] = *b"lrap";
+/// `grouping_type` of the library-picture sample group (T/AI 109.6,
+/// `LibrarySampleGroupEntry`).
+pub const A3LG_FOURCC: [u8; 4] = *b"a3lg";
 const BOX_HDR: usize = 8;
 const CONFIGURATION_VERSION: u8 = 1;
 const RESERVED6_ONES: u8 = 0x3F;
@@ -1047,5 +1055,12 @@ mod tests {
             AvsVideoSampleEntry::parse_entry(&[0, 0, 0, 8, b'a', b'v', b'c', b'1']),
             Err(crate::error::Error::UnexpectedBox { .. })
         ));
+    }
+
+    #[test]
+    fn sample_group_grouping_types_are_the_t_ai_109_6_four_ccs() {
+        assert_eq!(&TELG_FOURCC, b"telg");
+        assert_eq!(&LRAP_FOURCC, b"lrap");
+        assert_eq!(&A3LG_FOURCC, b"a3lg");
     }
 }

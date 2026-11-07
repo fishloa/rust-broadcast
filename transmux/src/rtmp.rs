@@ -55,6 +55,9 @@ pub const HANDSHAKE_RANDOM_LEN: usize = HANDSHAKE_PACKET_LEN - 2 * HANDSHAKE_TIM
 /// Default maximum chunk size before any Set Chunk Size (§5.4 / §5.4.1).
 pub const DEFAULT_CHUNK_SIZE: usize = 128;
 
+/// Chunk stream id reserved for protocol control messages and commands (§5.4:
+/// control messages are sent on chunk stream 2 with message stream id 0).
+pub const CSID_CONTROL: u32 = 2;
 /// Chunk stream id this crate uses for outbound audio messages.
 const CSID_AUDIO: u32 = 4;
 /// Chunk stream id this crate uses for outbound video messages.
@@ -116,6 +119,9 @@ pub mod msg_type {
 pub mod bandwidth_limit {
     /// Hard: limit output bandwidth to the indicated window size.
     pub const HARD: u8 = 0;
+    /// Soft: limit output bandwidth to the smaller of the indicated window size
+    /// and the current limit.
+    pub const SOFT: u8 = 1;
     /// Dynamic: treat as Hard if the previous limit was Hard, else ignore.
     pub const DYNAMIC: u8 = 2;
 }
@@ -1681,7 +1687,7 @@ mod tests {
         let big_chunk_size = body.len();
         let messages = alloc::vec![
             Message {
-                csid: 2,
+                csid: CSID_CONTROL,
                 message_type_id: msg_type::SET_CHUNK_SIZE,
                 message_stream_id: 0,
                 timestamp: 0,
@@ -1809,7 +1815,11 @@ mod tests {
 
         // "Abort csid 3" (§5.4.2), on its own csid 2 with the minimal body.
         let abort_body = ProtocolControl::Abort(3).to_body();
-        BasicHeader { fmt: 0, csid: 2 }.write_into(&mut input);
+        BasicHeader {
+            fmt: 0,
+            csid: CSID_CONTROL,
+        }
+        .write_into(&mut input);
         MessageHeader {
             timestamp: 0,
             message_length: abort_body.len() as u32,
@@ -2035,7 +2045,11 @@ mod tests {
         input.extend_from_slice(&[0x22u8; FRAME]);
         // Abort csid 3 (§5.4.2).
         let abort_body = ProtocolControl::Abort(3).to_body();
-        BasicHeader { fmt: 0, csid: 2 }.write_into(&mut input);
+        BasicHeader {
+            fmt: 0,
+            csid: CSID_CONTROL,
+        }
+        .write_into(&mut input);
         MessageHeader {
             timestamp: 0,
             message_length: abort_body.len() as u32,
@@ -2056,5 +2070,29 @@ mod tests {
             .collect();
         // Bites: without the delta reset the re-send is stamped 1040+40=1080.
         assert_eq!(audio, vec![1000, 1040, 1040]);
+    }
+
+    #[test]
+    fn soft_limit_type_round_trips_through_set_peer_bandwidth() {
+        let message = ProtocolControl::SetPeerBandwidth {
+            window_size: 2_500_000,
+            limit_type: bandwidth_limit::SOFT,
+        };
+        let body = message.to_body();
+        assert_eq!(body, [0x00, 0x26, 0x25, 0xA0, 1]);
+        assert_eq!(
+            ProtocolControl::parse(msg_type::SET_PEER_BANDWIDTH, &body).unwrap(),
+            message
+        );
+        assert_ne!(bandwidth_limit::SOFT, bandwidth_limit::HARD);
+        assert_ne!(bandwidth_limit::SOFT, bandwidth_limit::DYNAMIC);
+    }
+
+    #[test]
+    fn control_chunk_stream_id_is_the_reserved_one_and_distinct_from_media() {
+        assert_eq!(CSID_CONTROL, 2);
+        for media in [CSID_AUDIO, CSID_VIDEO, CSID_DATA] {
+            assert_ne!(CSID_CONTROL, media);
+        }
     }
 }

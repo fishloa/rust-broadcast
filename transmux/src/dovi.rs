@@ -512,6 +512,22 @@ pub fn find_video_stream_descriptor(es_info: &[u8]) -> Option<DoviVideoStreamDes
         .and_then(|(_, body)| DoviVideoStreamDescriptor::parse(body).ok())
 }
 
+/// Frame a `DOVI_video_stream_descriptor` for a PMT ES_info loop
+/// (`tag | length | body`); the inverse of [`find_video_stream_descriptor`].
+///
+/// # Errors
+/// An error if the descriptor does not serialise or its body exceeds the 8-bit
+/// `descriptor_length`.
+pub fn video_stream_descriptor_bytes(d: &DoviVideoStreamDescriptor) -> Result<Vec<u8>> {
+    let body = d.try_to_bytes()?;
+    let length = broadcast_common::len::fit_u8(body.len(), "descriptor_length")?;
+    let mut out = Vec::with_capacity(2 + body.len());
+    out.push(DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
+    out.push(length);
+    out.extend_from_slice(&body);
+    Ok(out)
+}
+
 /// Whether an ES_info loop carries the DOVI registration descriptor.
 pub fn has_registration_descriptor(es_info: &[u8]) -> bool {
     descriptor_bodies(es_info).any(|(tag, body)| {
@@ -688,5 +704,23 @@ mod tests {
         let mut es_info = alloc::vec![DOVI_VIDEO_STREAM_DESCRIPTOR_TAG, body.len() as u8];
         es_info.extend_from_slice(&body);
         assert!(find_video_stream_descriptor(&es_info).is_some());
+    }
+
+    #[test]
+    fn video_stream_descriptor_bytes_frames_the_body_and_find_recovers_it() {
+        let with_pid = [0x01, 0x00, 0x0E, 0x1A, 0x12, 0x37, 0x4B];
+        let d = DoviVideoStreamDescriptor::parse(&with_pid).unwrap();
+        let es_info = video_stream_descriptor_bytes(&d).unwrap();
+        assert_eq!(es_info[0], DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
+        assert_eq!(usize::from(es_info[1]), with_pid.len());
+        assert_eq!(&es_info[2..], &with_pid);
+        assert_eq!(find_video_stream_descriptor(&es_info), Some(d));
+
+        let mut after_other = alloc::vec![0x05, 0x01, 0xAA];
+        after_other.extend_from_slice(&es_info);
+        assert_eq!(
+            find_video_stream_descriptor(&after_other),
+            find_video_stream_descriptor(&es_info)
+        );
     }
 }

@@ -136,6 +136,29 @@ impl Auid {
     pub fn is_ul(&self) -> bool {
         self.0[0] & 0x80 == 0
     }
+
+    /// The UUID held in this AUID, in natural UUID storage order: the top and
+    /// bottom 8 bytes are swapped back (§4.2.1). Only meaningful when
+    /// [`is_ul`](Self::is_ul) is false.
+    #[must_use]
+    pub fn as_uuid_bytes(&self) -> UlBytes {
+        swap_halves(self.0)
+    }
+
+    /// Build an AUID from a UUID in natural storage order, swapping its top and
+    /// bottom 8 bytes as §4.2.1 requires; the inverse of
+    /// [`as_uuid_bytes`](Self::as_uuid_bytes).
+    #[must_use]
+    pub fn from_uuid(uuid: UlBytes) -> Self {
+        Auid(swap_halves(uuid))
+    }
+}
+
+fn swap_halves(bytes: UlBytes) -> UlBytes {
+    let mut out = [0u8; 16];
+    out[..8].copy_from_slice(&bytes[8..]);
+    out[8..].copy_from_slice(&bytes[..8]);
+    out
 }
 
 /// A Gregorian timestamp (§4.3): `year: Int16, month/day/hour/minute/second/
@@ -438,6 +461,25 @@ pub fn serialize_uid_batch(items: &[UlBytes]) -> Vec<u8> {
 mod tests {
     use super::*;
     use alloc::string::ToString;
+
+    #[test]
+    fn auid_uuid_swaps_the_top_and_bottom_eight_bytes() {
+        let uuid: UlBytes = [
+            0x07, 0x72, 0x26, 0x2E, 0x76, 0x55, 0x43, 0x6F, 0x8F, 0xF3, 0x8A, 0xC5, 0x1B, 0x77,
+            0x1E, 0x02,
+        ];
+        let auid = Auid::from_uuid(uuid);
+        assert_eq!(
+            auid.0,
+            [
+                0x8F, 0xF3, 0x8A, 0xC5, 0x1B, 0x77, 0x1E, 0x02, 0x07, 0x72, 0x26, 0x2E, 0x76, 0x55,
+                0x43, 0x6F
+            ]
+        );
+        assert!(!auid.is_ul(), "a UUID's stored top bit is always 1");
+        assert_eq!(auid.as_uuid_bytes(), uuid);
+        assert_eq!(Auid::from_uuid(auid.as_uuid_bytes()), auid);
+    }
 
     #[test]
     fn timestamp_round_trip() {

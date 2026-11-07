@@ -691,3 +691,35 @@ fn every_ll_dash_chunk_carries_both_tracks() {
         );
     }
 }
+
+/// Every registered `urn:mpeg:dash:utc:*:2014` scheme constant is emitted
+/// verbatim as `UTCTiming@schemeIdUri` with its `@value`.
+#[test]
+fn ll_mpd_emits_each_registered_utc_timing_scheme() {
+    use transmux::ll_dash::{
+        UTCTIMING_DIRECT_2014, UTCTIMING_HTTP_ISO_2014, UTCTIMING_HTTP_NTP_2014,
+        UTCTIMING_HTTP_XSDATE_2014, UTCTIMING_NTP_2014,
+    };
+    let media = demux_media();
+    let schemes = [
+        (
+            UTCTIMING_HTTP_XSDATE_2014,
+            "urn:mpeg:dash:utc:http-xsdate:2014",
+        ),
+        (UTCTIMING_HTTP_ISO_2014, "urn:mpeg:dash:utc:http-iso:2014"),
+        (UTCTIMING_NTP_2014, "urn:mpeg:dash:utc:ntp:2014"),
+        (UTCTIMING_HTTP_NTP_2014, "urn:mpeg:dash:utc:http-ntp:2014"),
+        (UTCTIMING_DIRECT_2014, "urn:mpeg:dash:utc:direct:2014"),
+    ];
+    for (constant, uri) in schemes {
+        assert_eq!(constant, uri);
+        let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_utc_timing(constant, "time.example");
+        let xml = pkg.package(&media).expect("LL MPD");
+        let root = xml::parse(&xml);
+        let utc = root.find("UTCTiming").expect("UTCTiming element");
+        assert_eq!(utc.attr("schemeIdUri"), Some(uri));
+        assert_eq!(utc.attr("value"), Some("time.example"));
+    }
+}
