@@ -59,11 +59,13 @@ impl Scr {
 /// `marker_bit`                            | 1  [0]
 pub(crate) fn read_scr_field(b: &[u8], what: &'static str) -> Result<Scr> {
     if b.len() < SCR_FIELD_LEN {
-        return Err(Error::BufferTooShort {
-            need: SCR_FIELD_LEN,
-            have: b.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: SCR_FIELD_LEN,
+                have: b.len(),
+                what,
+            },
+        ));
     }
 
     let b0 = b[0];

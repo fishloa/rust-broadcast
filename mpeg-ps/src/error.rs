@@ -8,24 +8,12 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
     /// Output buffer passed to `serialize_into` was smaller than
     /// `serialized_len()`.
-    #[error("serialize: output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
     /// `pack_start_code` was not `0x000001BA`.
     #[error("invalid pack_start_code: {0:#010X} (expected 0x000001BA)")]
     BadPackStartCode(u32),
@@ -36,13 +24,8 @@ pub enum Error {
     #[error("invalid map_stream_id: {0:#04X} (expected 0xBC)")]
     BadMapStreamId(u8),
     /// Invalid PSM CRC_32.
-    #[error("PSM CRC_32 mismatch: computed {computed:#010X}, stored {stored:#010X}")]
-    BadCrc {
-        /// CRC computed over the PSM bytes.
-        computed: u32,
-        /// CRC stored in the PSM trailer.
-        stored: u32,
-    },
+    #[error(transparent)]
+    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
     /// A required `marker_bit` was not `1`.
     #[error("bad marker bit in {0}")]
     BadMarker(&'static str),
@@ -78,13 +61,8 @@ pub enum Error {
     /// A caller-set field holds a value that would not read back as the same
     /// header (serialize -> parse must be the identity, ISO/IEC 13818-1
     /// Table 2-40 `nextbits() == '1'` stream-loop condition).
-    #[error("invalid {field}: {reason}")]
-    InvalidField {
-        /// The offending field.
-        field: &'static str,
-        /// Why the value cannot be serialized.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
     /// `header_length` overflows the available buffer.
     #[error("header_length {header_length} exceeds available bytes ({available})")]
     HeaderLengthOverflow {
@@ -109,23 +87,4 @@ pub enum Error {
     /// (see `broadcast_common::len`, #1129).
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }
