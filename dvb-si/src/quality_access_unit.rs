@@ -42,6 +42,7 @@
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::clock33::{self, pack_marked, unpack_marked};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `field_size_bytes` + `metric_count`.
@@ -225,12 +226,7 @@ impl Serialize for QualityAccessUnit<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.field_size_bytes;
         buf[1] = broadcast_common::len::fit_u8(self.metrics.len(), "metric_count")?;
         let mut pos = HEADER_LEN;

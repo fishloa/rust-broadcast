@@ -16,6 +16,7 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::clock33::{self, pack_marked, unpack_marked};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` of the green access unit section.
@@ -64,13 +65,7 @@ impl<'a> Parse<'a> for GreenAccessUnitSection<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_SECTION_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_SECTION_LEN,
-                have: bytes.len(),
-                what: "GreenAccessUnitSection",
-            });
-        }
+        need_in(bytes, MIN_SECTION_LEN, "GreenAccessUnitSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -111,12 +106,7 @@ impl Serialize for GreenAccessUnitSection<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let pts = broadcast_common::len::fit_bits(self.display_in_pts, PTS_BITS, "Display_in_PTS")?;
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;

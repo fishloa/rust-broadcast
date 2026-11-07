@@ -6,9 +6,10 @@
 
 use super::descriptor_body;
 use super::lang_text::{EntryReader, LANG_LEN, text_field_len, write_lang, write_text};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for multilingual_service_name_descriptor.
@@ -82,12 +83,7 @@ impl Serialize for MultilingualServiceNameDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         let body = len - HEADER_LEN;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
@@ -111,6 +107,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for MultilingualServiceNameDescriptor<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
 
     fn build(entries: &[([u8; 3], &[u8], &[u8])]) -> Vec<u8> {
         let body: usize = entries

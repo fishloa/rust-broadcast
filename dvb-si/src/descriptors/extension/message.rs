@@ -1,5 +1,6 @@
 //! Message Descriptor — ETSI EN 300 468 V1.20.1 §6.4.8 (tag_extension 0x08).
 use super::*;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for Message<'a> {
     const TAG_EXTENSION: u8 = 0x08;
@@ -21,13 +22,7 @@ pub struct Message<'a> {
 impl<'a> Parse<'a> for Message<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < 1 + ISO_639_LEN {
-            return Err(Error::BufferTooShort {
-                need: 1 + ISO_639_LEN,
-                have: sel.len(),
-                what: "message body",
-            });
-        }
+        need_in(sel, 1 + ISO_639_LEN, "message body")?;
         Ok(Message {
             message_id: sel[0],
             iso_639_language_code: LangCode([sel[1], sel[2], sel[3]]),
@@ -43,12 +38,7 @@ impl Serialize for Message<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.message_id;
         buf[1..1 + ISO_639_LEN].copy_from_slice(&self.iso_639_language_code.0);
         buf[1 + ISO_639_LEN..len].copy_from_slice(self.text.raw());

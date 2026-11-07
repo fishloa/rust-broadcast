@@ -8,6 +8,7 @@
 //! rather than masking — the spec defines no reserved-bit split here, so this
 //! is byte-exact against any real stream.
 use super::*;
+use broadcast_common::len::need_out;
 
 /// Selector length: the 2-byte `xait_PID` field.
 const XAIT_PID_LEN: usize = 2;
@@ -54,12 +55,7 @@ impl Serialize for XaitPid {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0..2].copy_from_slice(&self.xait_pid.to_be_bytes());
         Ok(len)
     }

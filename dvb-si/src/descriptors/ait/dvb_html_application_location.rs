@@ -12,6 +12,7 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for dvb_html_application_location_descriptor (AIT namespace).
@@ -69,12 +70,7 @@ impl Serialize for DvbHtmlApplicationLocationDescriptor<'_> {
         let len = self.serialized_len();
         let root_len =
             broadcast_common::len::fit_u8(self.physical_root.len(), "physical_root_length")?;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN] = root_len;
         let root_end = HEADER_LEN + ROOT_LEN_FIELD + self.physical_root.len();

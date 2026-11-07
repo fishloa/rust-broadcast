@@ -11,6 +11,7 @@
 //! for SSI=0 the serializer re-emits the preserved checksum bytes.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// First table_id in the DSM-CC section range (inclusive).
@@ -116,13 +117,7 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "DsmccSection",
-            });
-        }
+        need_in(bytes, min_len, "DsmccSection")?;
 
         let table_id = bytes[0];
         if !(TABLE_ID_FIRST..=TABLE_ID_LAST).contains(&table_id) {
@@ -186,12 +181,7 @@ impl Serialize for DsmccSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         let section_length = len - MIN_HEADER_LEN;
         buf[0] = self.table_id;

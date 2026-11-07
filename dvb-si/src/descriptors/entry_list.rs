@@ -14,6 +14,7 @@
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 /// Wire width of a descriptor's `descriptor_tag` + `descriptor_length`.
@@ -127,12 +128,7 @@ pub(crate) fn write_masked<const N: usize, A: Octets<N>>(
 ) -> Result<usize> {
     check_trailing(tag, trailing, N)?;
     let len = HEADER_LEN + N + addrs.len() * N + trailing.len();
-    if buf.len() < len {
-        return Err(Error::OutputBufferTooSmall {
-            need: len,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, len)?;
     write_descriptor_header(buf, tag, len - HEADER_LEN)?;
     buf[HEADER_LEN..HEADER_LEN + N].copy_from_slice(&mask.to_octets());
     let mut off = HEADER_LEN + N;
@@ -163,12 +159,7 @@ pub(crate) fn write_list<const E: usize, T: Entry<E>>(
 ) -> Result<usize> {
     check_trailing(tag, trailing, E)?;
     let len = HEADER_LEN + entries.len() * E + trailing.len();
-    if buf.len() < len {
-        return Err(Error::OutputBufferTooSmall {
-            need: len,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, len)?;
     write_descriptor_header(buf, tag, len - HEADER_LEN)?;
     write_entries(buf, HEADER_LEN, entries, trailing);
     Ok(len)

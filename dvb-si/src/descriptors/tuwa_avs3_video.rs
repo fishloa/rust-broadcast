@@ -31,7 +31,7 @@ use super::avs3_video::Avs3FrameRateCode;
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::fit_bits;
+use broadcast_common::len::{fit_bits, need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -151,13 +151,7 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
             "TuwaAvs3VideoDescriptor",
             "unexpected tag for T/UWA 012.2 AVS3 video descriptor",
         )?;
-        if body.len() < FIXED_BODY_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_BODY_LEN,
-                have: body.len(),
-                what: "TuwaAvs3VideoDescriptor",
-            });
-        }
+        need_in(body, FIXED_BODY_LEN, "TuwaAvs3VideoDescriptor")?;
         let (b2, b3) = (body[2], body[3]);
         let library_stream_flag = bit(b3, 3);
         let library_refs = if library_stream_flag {
@@ -241,12 +235,7 @@ impl Serialize for TuwaAvs3VideoDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.library_stream_flag != self.library_refs.is_none() {
             return Err(Error::ValueOutOfRange {
                 field: "library_refs",

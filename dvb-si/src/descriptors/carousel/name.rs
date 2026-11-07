@@ -6,8 +6,9 @@
 //! `text_char` string, coded with the EN 300 468 Annex A character sets.
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for name_descriptor (data-carousel namespace).
@@ -45,12 +46,7 @@ impl Serialize for NameDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, self.name.len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.name.raw());
         Ok(len)
@@ -65,6 +61,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for NameDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
 
     #[test]
     fn parse_and_round_trip_spec_example_index() {

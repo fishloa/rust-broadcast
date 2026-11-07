@@ -1,5 +1,6 @@
 //! AC-4 Descriptor — ETSI EN 300 468 V1.20.1 Annex D §D.7 (tag_extension 0x15).
 use super::*;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for Ac4<'a> {
     const TAG_EXTENSION: u8 = 0x15;
@@ -143,13 +144,7 @@ impl<'a> Parse<'a> for Ac4<'a> {
         let mut pos = 1;
         let (ac4_dialog_enhancement_enabled, ac4_channel_mode, reserved_zero_future_use_5) =
             if ac4_config_flag {
-                if sel.len() < pos + 1 {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: sel.len(),
-                        what: "AC-4 body",
-                    });
-                }
+                need_in(sel, pos + 1, "AC-4 body")?;
                 let c = sel[pos];
                 pos += 1;
                 (
@@ -161,22 +156,10 @@ impl<'a> Parse<'a> for Ac4<'a> {
                 (None, None, None)
             };
         let toc = if ac4_toc_flag {
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "AC-4 body",
-                });
-            }
+            need_in(sel, pos + 1, "AC-4 body")?;
             let toc_len = sel[pos] as usize;
             pos += 1;
-            if sel.len() < pos + toc_len {
-                return Err(Error::BufferTooShort {
-                    need: pos + toc_len,
-                    have: sel.len(),
-                    what: "AC-4 body",
-                });
-            }
+            need_in(sel, pos + toc_len, "AC-4 body")?;
             let t = &sel[pos..pos + toc_len];
             pos += toc_len;
             Some(t)
@@ -205,12 +188,7 @@ impl Serialize for Ac4<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = (u8::from(self.ac4_config_flag) << 7)
             | (u8::from(self.ac4_toc_flag) << 6)
             | broadcast_common::len::fit_mask(

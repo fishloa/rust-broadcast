@@ -1,6 +1,7 @@
 //! C2 Bundle Delivery System Descriptor — ETSI EN 300 468 §6.4.6.4 (tag_extension 0x16).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use super::c2_delivery_system::{ActiveOfdmSymbolDuration, C2GuardInterval, C2TuningFrequencyType};
 
@@ -111,12 +112,7 @@ impl Serialize for C2BundleDeliverySystem {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let mut p = 0;
         for e in &self.entries {
             buf[p] = e.plp_id;

@@ -9,6 +9,7 @@ use super::ts_loop_section::{self, Labels, MIN_SECTION_LEN, TransportStreamEntry
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id value for NIT actual (current TS).
@@ -106,13 +107,7 @@ const LABELS: Labels = Labels {
 impl<'a> Parse<'a> for NitSection<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_SECTION_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_SECTION_LEN,
-                have: bytes.len(),
-                what: LABELS.section,
-            });
-        }
+        need_in(bytes, MIN_SECTION_LEN, LABELS.section)?;
         let kind = match bytes[0] {
             TABLE_ID_ACTUAL => NitKind::Actual,
             TABLE_ID_OTHER => NitKind::Other,

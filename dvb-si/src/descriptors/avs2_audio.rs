@@ -32,7 +32,7 @@ use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, fit_u8};
+use broadcast_common::len::{fit_bits, fit_u8, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AVS2_audio_descriptor (T/AI 109.7 Table 9: 211).
@@ -302,12 +302,7 @@ impl Serialize for Avs2AudioDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body = self.body_bytes()?;
         let len = HEADER_LEN + body.len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, body.len())?;
         buf[HEADER_LEN..len].copy_from_slice(&body);
         Ok(len)

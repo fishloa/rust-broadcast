@@ -7,6 +7,7 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for SSU_location_descriptor.
@@ -82,12 +83,7 @@ impl Serialize for SsuLocationDescriptor<'_> {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2..4].copy_from_slice(&self.data_broadcast_id.to_be_bytes());
         let mut off = 4;

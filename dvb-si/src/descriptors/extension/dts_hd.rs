@@ -1,6 +1,7 @@
 //! DTS-HD Descriptor — ETSI EN 300 468 V1.20.1 Annex G §G.3.1, Tables G.6–G.10 (tag_extension 0x0E).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for DtsHd<'a> {
     const TAG_EXTENSION: u8 = 0x0E;
@@ -202,12 +203,7 @@ impl Serialize for SubstreamInfo {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // `substream_length` covers every byte after the length byte itself,
         // i.e. one byte less than the whole substream (r03-W9). Reading it
         // straight off `SUBSTREAM_HEADER_LEN` under-counted by one, so a
@@ -347,23 +343,11 @@ impl<'a> Parse<'a> for DtsHd<'a> {
 
 fn parse_substream_info(sel: &[u8], pos: &mut usize) -> Result<SubstreamInfo> {
     let need = *pos + SUBSTREAM_HEADER_LEN;
-    if sel.len() < need {
-        return Err(Error::BufferTooShort {
-            need,
-            have: sel.len(),
-            what: "substream_info header",
-        });
-    }
+    need_in(sel, need, "substream_info header")?;
     let substream_length = sel[*pos] as usize;
     *pos += 1;
     let end = *pos + substream_length;
-    if sel.len() < end {
-        return Err(Error::BufferTooShort {
-            need: end,
-            have: sel.len(),
-            what: "substream_info body",
-        });
-    }
+    need_in(sel, end, "substream_info body")?;
     let num_assets = ((sel[*pos] >> 5) & 0x07) as usize + 1;
     let channel_count = sel[*pos] & 0x1F;
     *pos += 1;
@@ -401,13 +385,7 @@ fn parse_substream_info(sel: &[u8], pos: &mut usize) -> Result<SubstreamInfo> {
 
 fn parse_asset_info(sel: &[u8], pos: &mut usize) -> Result<AssetInfo> {
     let need = *pos + ASSET_FIXED_LEN;
-    if sel.len() < need {
-        return Err(Error::BufferTooShort {
-            need,
-            have: sel.len(),
-            what: "asset_info",
-        });
-    }
+    need_in(sel, need, "asset_info")?;
     let asset_construction = (sel[*pos] >> 3) & 0x1F;
     let vbr_flag = (sel[*pos] & 0x04) != 0;
     let post_encode_br_scaling_flag = (sel[*pos] & 0x02) != 0;
@@ -469,12 +447,7 @@ impl Serialize for DtsHd<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = ((u8::from(self.substream_core_flag)) << 7)
             | ((u8::from(self.substream_0_flag)) << 6)
             | ((u8::from(self.substream_1_flag)) << 5)

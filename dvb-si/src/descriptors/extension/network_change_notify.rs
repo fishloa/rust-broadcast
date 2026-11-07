@@ -1,6 +1,7 @@
 //! Network Change Notify Descriptor — ETSI EN 300 468 §6.4.9 (tag_extension 0x07).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 /// Change type — ETSI EN 300 468 §6.4.10 Table 151
 /// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/151-change-type-coding.md`).
@@ -163,13 +164,11 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
         let mut cells = Vec::new();
         let mut pos = 0;
         while pos < sel.len() {
-            if pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN > sel.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
-                    have: sel.len(),
-                    what: "network_change_notify body",
-                });
-            }
+            need_in(
+                sel,
+                pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
+                "network_change_notify body",
+            )?;
             let (cell_id_bytes, _) = sel
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
@@ -182,13 +181,7 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
             let loop_length = sel[pos + CELL_HEADER_LEN] as usize;
             pos += CELL_HEADER_LEN + LOOP_LENGTH_LEN;
 
-            if pos + loop_length > sel.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + loop_length,
-                    have: sel.len(),
-                    what: "network_change_notify body",
-                });
-            }
+            need_in(sel, pos + loop_length, "network_change_notify body")?;
 
             let inner_end = pos + loop_length;
             let mut changes = Vec::new();
@@ -285,12 +278,7 @@ impl Serialize for NetworkChangeNotify {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let mut pos = 0;
         for cell in &self.cells {
             buf[pos..pos + 2].copy_from_slice(&cell.cell_id.to_be_bytes());

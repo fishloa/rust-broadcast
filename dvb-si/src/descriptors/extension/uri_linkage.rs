@@ -1,5 +1,6 @@
 //! URI Linkage Descriptor — ETSI EN 300 468 V1.20.1 §6.4.15 (tag_extension 0x13).
 use super::*;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for UriLinkage<'a> {
     const TAG_EXTENSION: u8 = 0x13;
@@ -92,23 +93,11 @@ pub struct UriLinkage<'a> {
 impl<'a> Parse<'a> for UriLinkage<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: sel.len(),
-                what: "URI_linkage body",
-            });
-        }
+        need_in(sel, 2, "URI_linkage body")?;
         let uri_linkage_type = UriLinkageType::from_u8(sel[0]);
         let uri_length = sel[1] as usize;
         let mut pos = 2;
-        if sel.len() < pos + uri_length {
-            return Err(Error::BufferTooShort {
-                need: pos + uri_length,
-                have: sel.len(),
-                what: "URI_linkage body",
-            });
-        }
+        need_in(sel, pos + uri_length, "URI_linkage body")?;
         let uri = crate::text::DvbText::new(&sel[pos..pos + uri_length]);
         pos += uri_length;
         let min_polling_interval = if uri_linkage_type.has_polling_interval() {
@@ -148,12 +137,7 @@ impl Serialize for UriLinkage<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.uri_linkage_type.to_u8();
         buf[1] = broadcast_common::len::fit_u8(self.uri.len(), "uri_length")?;
         let mut p = 2;

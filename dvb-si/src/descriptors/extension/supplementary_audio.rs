@@ -1,5 +1,6 @@
 //! Supplementary Audio Descriptor — ETSI EN 300 468 §6.4.11 (tag_extension 0x06).
 use super::*;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for SupplementaryAudio<'a> {
     const TAG_EXTENSION: u8 = 0x06;
@@ -70,13 +71,7 @@ impl<'a> Parse<'a> for SupplementaryAudio<'a> {
         let language_code_present = (flags & 0x01) != 0;
         let mut pos = 1;
         let iso_639_language_code = if language_code_present {
-            if sel.len() < pos + ISO_639_LEN {
-                return Err(Error::BufferTooShort {
-                    need: pos + ISO_639_LEN,
-                    have: sel.len(),
-                    what: "supplementary_audio body",
-                });
-            }
+            need_in(sel, pos + ISO_639_LEN, "supplementary_audio body")?;
             let lc = &sel[pos..pos + ISO_639_LEN];
             pos += ISO_639_LEN;
             Some(LangCode([lc[0], lc[1], lc[2]]))
@@ -101,12 +96,7 @@ impl Serialize for SupplementaryAudio<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // Table 153 bit 1 reserved_future_use: preserved, default 1.
         buf[0] = (u8::from(self.mix_type) << 7)
             | (broadcast_common::len::fit_mask(

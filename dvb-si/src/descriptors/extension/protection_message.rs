@@ -1,5 +1,6 @@
 //! Protection Message Descriptor — ETSI TS 102 809 §9.3.3, Table 40 (tag_extension 0x18).
 use super::*;
+use broadcast_common::len::need_out;
 
 impl<'a> ExtensionBodyDef<'a> for ProtectionMessage<'a> {
     const TAG_EXTENSION: u8 = 0x18;
@@ -83,12 +84,7 @@ impl Serialize for ProtectionMessage<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let component_count = broadcast_common::len::fit_bits(
             self.component_tags.len() as u64,
             4,

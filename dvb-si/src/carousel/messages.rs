@@ -20,6 +20,7 @@ use crate::compatibility::CompatibilityDescriptor;
 use crate::descriptors::carousel::CarouselDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `protocolDiscriminator` — always 0x11 for MPEG-2 DSM-CC.
@@ -255,12 +256,7 @@ impl Serialize for GroupInfoIndication<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.groups.len() > u16::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: self.groups.len(),
@@ -688,12 +684,7 @@ impl Serialize for UnMessage<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         match self {
             UnMessage::Dsi(dsi) => {
                 let payload_len = len - MESSAGE_HEADER_LEN - dsi.adaptation.len();
@@ -820,12 +811,7 @@ impl Serialize for DownloadDataBlock<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let payload_len = DDB_FIXED_LEN + self.block_data.len();
         let pos = serialize_header(
             buf,

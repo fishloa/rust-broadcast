@@ -4,6 +4,7 @@
 //! 5 bytes of UTC time (16-bit MJD + 24-bit BCD HHMMSS). No CRC.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for Time and Date Table.
@@ -103,13 +104,7 @@ impl<'a> Parse<'a> for TdtSection {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = HEADER_LEN + UTC_TIME_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "TdtSection",
-            });
-        }
+        need_in(bytes, min_len, "TdtSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -139,12 +134,7 @@ impl Serialize for TdtSection {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, UTC_TIME_LEN)?;

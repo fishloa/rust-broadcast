@@ -1,6 +1,7 @@
 //! VVC Subpictures Descriptor — ETSI EN 300 468 §6.4.17 (tag_extension 0x23).
 use super::*;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for VvcSubpictures<'a> {
     const TAG_EXTENSION: u8 = 0x23;
@@ -82,13 +83,7 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
         // Table 162a: 1 fixed byte + n*2 subpicture bytes + 1 processing_mode byte.
         let subpicture_bytes = n * 2;
         let min_len = 1 + subpicture_bytes + 1;
-        if sel.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: sel.len(),
-                what: "vvc_subpictures body",
-            });
-        }
+        need_in(sel, min_len, "vvc_subpictures body")?;
 
         let mut pos = 1;
         let mut subpictures = Vec::with_capacity(n);
@@ -107,22 +102,10 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
         pos += 1;
 
         let service_description = if service_description_present {
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "vvc_subpictures body",
-                });
-            }
+            need_in(sel, pos + 1, "vvc_subpictures body")?;
             let len = sel[pos] as usize;
             pos += 1;
-            if sel.len() < pos + len {
-                return Err(Error::BufferTooShort {
-                    need: pos + len,
-                    have: sel.len(),
-                    what: "vvc_subpictures body",
-                });
-            }
+            need_in(sel, pos + len, "vvc_subpictures body")?;
             let text = DvbText::new(&sel[pos..pos + len]);
             pos += len;
             Some(text)
@@ -157,12 +140,7 @@ impl Serialize for VvcSubpictures<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // byte 0: default_service_mode(1) | service_description_present(1) | number_of_vvc_subpictures(6)
         let service_description_present = self.service_description.is_some();
         let number_of_vvc_subpictures = broadcast_common::len::fit_bits(

@@ -7,6 +7,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for frequency_list_descriptor.
@@ -228,12 +229,7 @@ impl Serialize for FrequencyListDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         let coding_type_bits = match self.coding_type {
             CodingType::Undefined => 0b00,

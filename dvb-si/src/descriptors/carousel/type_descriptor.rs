@@ -6,8 +6,9 @@
 //! or group: the whole body is the `text_char` string.
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for type_descriptor (data-carousel namespace).
@@ -45,12 +46,7 @@ impl Serialize for TypeDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, self.media_type.len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.media_type.raw());
         Ok(len)
@@ -65,6 +61,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for TypeDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
 
     #[test]
     fn parse_and_round_trip_spec_example_text_plain() {

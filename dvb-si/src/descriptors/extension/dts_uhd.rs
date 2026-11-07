@@ -1,5 +1,6 @@
 //! DTS-UHD Descriptor — ETSI EN 300 468 V1.20.1 Annex G §G.5.1, Table G.15 (tag_extension 0x21).
 use super::*;
+use broadcast_common::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for DtsUhd<'a> {
     const TAG_EXTENSION: u8 = 0x21;
@@ -171,13 +172,7 @@ const DTS_UHD_FIXED_LEN: usize = 2;
 impl<'a> Parse<'a> for DtsUhd<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < DTS_UHD_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: DTS_UHD_FIXED_LEN,
-                have: sel.len(),
-                what: "DTS-UHD descriptor body",
-            });
-        }
+        need_in(sel, DTS_UHD_FIXED_LEN, "DTS-UHD descriptor body")?;
         let decoder_profile_code = (sel[0] >> 2) & 0x3F;
         let frame_duration_code = FrameDurationCode::from_u8(sel[0] & 0x03);
         let max_payload_code = MaxPayloadCode::from_u8((sel[1] >> 5) & 0x07);
@@ -201,12 +196,7 @@ impl Serialize for DtsUhd<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = (broadcast_common::len::fit_mask(
             self.decoder_profile_code,
             DTS_UHD_PROFILE_CODE_MASK,

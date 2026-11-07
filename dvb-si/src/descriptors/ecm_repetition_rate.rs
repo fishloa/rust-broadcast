@@ -8,6 +8,7 @@
 pub use super::ca::ca_system_name;
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for ECM_repetition_rate_descriptor.
@@ -67,12 +68,7 @@ impl Serialize for EcmRepetitionRateDescriptor<'_> {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.private_data.len())?;
         buf[2..4].copy_from_slice(&self.ca_system_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.ecm_repetition_rate.to_be_bytes());

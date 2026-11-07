@@ -4,7 +4,8 @@
 //! as opaque bytes.
 
 use super::descriptor_body;
-use crate::error::{Error, Result};
+use crate::error::Result;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for Muxcode_descriptor.
@@ -46,12 +47,7 @@ impl Serialize for MuxcodeDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, self.mux_code_table_entries.len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.mux_code_table_entries);
         Ok(len)
@@ -65,6 +61,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for MuxcodeDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
 
     #[test]
     fn parse_empty() {

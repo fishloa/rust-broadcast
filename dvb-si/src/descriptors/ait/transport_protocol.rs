@@ -12,6 +12,7 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for transport_protocol_descriptor (AIT namespace).
@@ -249,12 +250,7 @@ impl Serialize for TransportProtocolDescriptor<'_> {
                 reason: "transport_protocol_descriptor body exceeds 255 bytes",
             });
         }
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[2..4].copy_from_slice(&self.protocol_id.to_be_bytes());
         buf[4] = self.transport_protocol_label;

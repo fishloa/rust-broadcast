@@ -1,5 +1,6 @@
 //! Image Icon Descriptor — ETSI EN 300 468 §6.4.7 (tag_extension 0x00).
 use super::*;
+use broadcast_common::len::{need_in, need_out};
 
 /// `descriptor_number(4)`/`last_descriptor_number(4)` raw field mask —
 /// masked at the shift so a wide value cannot bleed across the nibble
@@ -242,26 +243,14 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         // Need at least byte0 (descriptor_number / last_descriptor_number)
         // and byte1 (reserved + icon_id).
-        if sel.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: sel.len(),
-                what: "image_icon body",
-            });
-        }
+        need_in(sel, 2, "image_icon body")?;
         let descriptor_number = sel[0] >> 4;
         let last_descriptor_number = sel[0] & 0x0F;
         let icon_id = sel[1] & ICON_ID_MASK;
         let reserved_future_use = (sel[1] >> 3) & RESERVED_5_MASK;
 
         let body = if descriptor_number == 0x00 {
-            if sel.len() < 3 {
-                return Err(Error::BufferTooShort {
-                    need: 3,
-                    have: sel.len(),
-                    what: "image_icon body",
-                });
-            }
+            need_in(sel, 3, "image_icon body")?;
             let packed = sel[2];
             let icon_transport_mode = IconTransportMode::from_u8(packed >> 6);
             let position_flag = (packed >> 5) & 0x01;
@@ -271,13 +260,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             let position = if position_flag == 1 {
                 let coordinate_system = (packed >> 2) & 0x07;
                 let position_reserved = packed & RESERVED_2_MASK;
-                if sel.len() < pos + 3 {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 3,
-                        have: sel.len(),
-                        what: "image_icon body",
-                    });
-                }
+                need_in(sel, pos + 3, "image_icon body")?;
                 let b0 = sel[pos];
                 let b1 = sel[pos + 1];
                 let b2 = sel[pos + 2];
@@ -296,65 +279,29 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             };
 
             // icon_type_length + run
-            if sel.len() < pos + 1 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: sel.len(),
-                    what: "image_icon body",
-                });
-            }
+            need_in(sel, pos + 1, "image_icon body")?;
             let icon_type_length = sel[pos] as usize;
             pos += 1;
-            if sel.len() < pos + icon_type_length {
-                return Err(Error::BufferTooShort {
-                    need: pos + icon_type_length,
-                    have: sel.len(),
-                    what: "image_icon body",
-                });
-            }
+            need_in(sel, pos + icon_type_length, "image_icon body")?;
             let icon_type = crate::text::DvbText::new(&sel[pos..pos + icon_type_length]);
             pos += icon_type_length;
 
             // Transport-mode-dependent payload
             let payload = match icon_transport_mode {
                 IconTransportMode::InlineData => {
-                    if sel.len() < pos + 1 {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 1,
-                            have: sel.len(),
-                            what: "image_icon body",
-                        });
-                    }
+                    need_in(sel, pos + 1, "image_icon body")?;
                     let payload_len = sel[pos] as usize;
                     pos += 1;
-                    if sel.len() < pos + payload_len {
-                        return Err(Error::BufferTooShort {
-                            need: pos + payload_len,
-                            have: sel.len(),
-                            what: "image_icon body",
-                        });
-                    }
+                    need_in(sel, pos + payload_len, "image_icon body")?;
                     let p = &sel[pos..pos + payload_len];
                     pos += payload_len;
                     IconLocation::Data(p)
                 }
                 IconTransportMode::Url => {
-                    if sel.len() < pos + 1 {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 1,
-                            have: sel.len(),
-                            what: "image_icon body",
-                        });
-                    }
+                    need_in(sel, pos + 1, "image_icon body")?;
                     let payload_len = sel[pos] as usize;
                     pos += 1;
-                    if sel.len() < pos + payload_len {
-                        return Err(Error::BufferTooShort {
-                            need: pos + payload_len,
-                            have: sel.len(),
-                            what: "image_icon body",
-                        });
-                    }
+                    need_in(sel, pos + payload_len, "image_icon body")?;
                     let t = crate::text::DvbText::new(&sel[pos..pos + payload_len]);
                     pos += payload_len;
                     IconLocation::Url(t)
@@ -375,21 +322,9 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             })
         } else {
             // Continuation segment.
-            if sel.len() < 3 {
-                return Err(Error::BufferTooShort {
-                    need: 3,
-                    have: sel.len(),
-                    what: "image_icon body",
-                });
-            }
+            need_in(sel, 3, "image_icon body")?;
             let icon_data_length = sel[2] as usize;
-            if sel.len() < 3 + icon_data_length {
-                return Err(Error::BufferTooShort {
-                    need: 3 + icon_data_length,
-                    have: sel.len(),
-                    what: "image_icon body",
-                });
-            }
+            need_in(sel, 3 + icon_data_length, "image_icon body")?;
             let icon_data = &sel[3..3 + icon_data_length];
             if 3 + icon_data_length != sel.len() {
                 return Err(invalid("image_icon: trailing bytes"));
@@ -427,12 +362,7 @@ impl Serialize for ImageIcon<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // byte0: descriptor_number(4) | last_descriptor_number(4)
         buf[0] = (broadcast_common::len::fit_mask(
             self.descriptor_number,

@@ -10,6 +10,7 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for graphics_constraints_descriptor (AIT namespace).
@@ -156,12 +157,7 @@ impl Serialize for GraphicsConstraintsDescriptor {
             RESERVED_MASK,
             "reserved_future_use",
         )?;
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = (reserved << RESERVED_SHIFT)
             | (u8::from(self.can_run_without_visible_ui) * CAN_RUN_WITHOUT_VISIBLE_UI)

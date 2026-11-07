@@ -8,6 +8,7 @@ use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use crate::tables::ait::ApplicationIdentifier;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for external_application_authorisation_descriptor (AIT namespace).
@@ -81,12 +82,7 @@ impl Serialize for ExternalApplicationAuthorisationDescriptor {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {

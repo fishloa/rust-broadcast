@@ -10,6 +10,7 @@
 //! by design.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` of the scene description stream section.
@@ -85,13 +86,7 @@ impl<'a> Parse<'a> for Iso14496Section<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_SECTION_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_SECTION_LEN,
-                have: bytes.len(),
-                what: "Iso14496Section",
-            });
-        }
+        need_in(bytes, MIN_SECTION_LEN, "Iso14496Section")?;
         if !ALLOWED.contains(&bytes[0]) {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -134,12 +129,7 @@ impl Serialize for Iso14496Section<'_> {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.table_id;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;

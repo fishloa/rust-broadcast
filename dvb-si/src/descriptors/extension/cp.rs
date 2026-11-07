@@ -3,6 +3,7 @@
 //! Content protection signalling: a CP_system_id, the PID carrying the CP
 //! stream, and a private_data byte run.
 use super::*;
+use broadcast_common::len::{need_in, need_out};
 use mpeg_ts::pid::Pid;
 
 impl<'a> ExtensionBodyDef<'a> for Cp<'a> {
@@ -54,13 +55,7 @@ impl<'a> Cp<'a> {
 impl<'a> Parse<'a> for Cp<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < CP_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: CP_HEADER_LEN,
-                have: sel.len(),
-                what: "CP body",
-            });
-        }
+        need_in(sel, CP_HEADER_LEN, "CP body")?;
         Ok(Cp {
             cp_system_id: u16::from_be_bytes([sel[0], sel[1]]),
             reserved_future_use: sel[2] >> 5,
@@ -77,12 +72,7 @@ impl Serialize for Cp<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0..2].copy_from_slice(&self.cp_system_id.to_be_bytes());
         // reserved_future_use(3), then CP_PID(13).
         let cp_pid = self.cp_pid.value();

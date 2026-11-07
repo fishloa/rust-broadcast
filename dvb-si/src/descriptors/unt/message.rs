@@ -9,6 +9,7 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for message_descriptor (UNT namespace).
@@ -65,12 +66,7 @@ impl Serialize for MessageDescriptor<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let number = broadcast_common::len::fit_mask(
             self.descriptor_number,
             NIBBLE_MASK,

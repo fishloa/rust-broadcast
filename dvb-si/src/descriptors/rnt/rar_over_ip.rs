@@ -12,6 +12,7 @@ use crate::descriptors::mjd_time::{MJD_BCD_LEN, MjdBcdTime};
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for RAR_over_IP_descriptor (RNT namespace).
@@ -116,12 +117,7 @@ impl Serialize for RarOverIpDescriptor<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let weighting =
             broadcast_common::len::fit_mask(self.weighting, WEIGHTING_MASK, "weighting")?;
         let reserved = broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;

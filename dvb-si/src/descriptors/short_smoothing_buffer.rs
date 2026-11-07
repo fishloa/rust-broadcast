@@ -6,6 +6,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for short_smoothing_buffer_descriptor.
@@ -69,12 +70,7 @@ impl Serialize for ShortSmoothingBufferDescriptor<'_> {
                 reason: "short_smoothing_buffer_descriptor body exceeds 255 bytes",
             });
         }
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         buf[HEADER_LEN] = (broadcast_common::len::fit_mask(self.sb_size, 0x03, "sb_size")? << 6)
             | broadcast_common::len::fit_mask(self.sb_leak_rate, 0x3F, "sb_leak_rate")?;

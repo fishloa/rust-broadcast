@@ -8,6 +8,7 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for IP/MAC_platform_provider_name_descriptor.
@@ -55,12 +56,7 @@ impl Serialize for IpMacPlatformProviderNameDescriptor<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2..5].copy_from_slice(&self.language_code.0);
         buf[5..len].copy_from_slice(self.text.raw());

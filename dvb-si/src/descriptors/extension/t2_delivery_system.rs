@@ -2,6 +2,7 @@
 use super::*;
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 impl ExtensionBodyDef<'_> for T2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x04;
@@ -385,13 +386,7 @@ impl Default for T2DeliverySystem {
 impl<'a> Parse<'a> for T2DeliverySystem {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        if sel.len() < T2_FIXED_PREFIX_LEN {
-            return Err(Error::BufferTooShort {
-                need: T2_FIXED_PREFIX_LEN,
-                have: sel.len(),
-                what: "T2_delivery_system body",
-            });
-        }
+        need_in(sel, T2_FIXED_PREFIX_LEN, "T2_delivery_system body")?;
         let plp_id = sel[0];
         let (t2_id_bytes, _) = sel[1..]
             .split_first_chunk::<2>()
@@ -411,13 +406,11 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             other_frequency_flag,
             tfs_flag,
         ) = if sel.len() > T2_FIXED_PREFIX_LEN {
-            if sel.len() < T2_FIXED_PREFIX_LEN + T2_FLAGS_BLOCK_LEN {
-                return Err(Error::BufferTooShort {
-                    need: T2_FIXED_PREFIX_LEN + T2_FLAGS_BLOCK_LEN,
-                    have: sel.len(),
-                    what: "T2_delivery_system body",
-                });
-            }
+            need_in(
+                sel,
+                T2_FIXED_PREFIX_LEN + T2_FLAGS_BLOCK_LEN,
+                "T2_delivery_system body",
+            )?;
             let b0 = sel[pos];
             let b1 = sel[pos + 1];
             pos += T2_FLAGS_BLOCK_LEN;
@@ -437,13 +430,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             let tfs = tfs_flag.unwrap();
             let mut cells = Vec::new();
             while pos < sel.len() {
-                if pos + 2 > sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 2,
-                        have: sel.len(),
-                        what: "T2_delivery_system body",
-                    });
-                }
+                need_in(sel, pos + 2, "T2_delivery_system body")?;
                 let (cell_id_bytes, _) = sel
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<2>())
@@ -469,13 +456,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                             "T2_delivery_system: frequency_loop_length not a multiple of 4",
                         ));
                     }
-                    if pos + freq_loop_len > sel.len() {
-                        return Err(Error::BufferTooShort {
-                            need: pos + freq_loop_len,
-                            have: sel.len(),
-                            what: "T2_delivery_system body",
-                        });
-                    }
+                    need_in(sel, pos + freq_loop_len, "T2_delivery_system body")?;
                     let end = pos + freq_loop_len;
                     let mut freqs = Vec::with_capacity(freq_loop_len / 4);
                     while pos < end {
@@ -492,13 +473,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     }
                     freqs
                 } else {
-                    if pos + 4 > sel.len() {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 4,
-                            have: sel.len(),
-                            what: "T2_delivery_system body",
-                        });
-                    }
+                    need_in(sel, pos + 4, "T2_delivery_system body")?;
                     let (freq_bytes, _) = sel
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<4>())
@@ -525,13 +500,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                         "T2_delivery_system: subcell_info_loop_length not a multiple of 5",
                     ));
                 }
-                if pos + subcell_loop_len > sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + subcell_loop_len,
-                        have: sel.len(),
-                        what: "T2_delivery_system body",
-                    });
-                }
+                need_in(sel, pos + subcell_loop_len, "T2_delivery_system body")?;
                 let end = pos + subcell_loop_len;
                 let mut subcells = Vec::with_capacity(subcell_loop_len / 5);
                 while pos < end {
@@ -598,12 +567,7 @@ impl Serialize for T2DeliverySystem {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = self.plp_id;
         buf[1..3].copy_from_slice(&self.t2_system_id.to_be_bytes());
         let mut p = T2_FIXED_PREFIX_LEN;

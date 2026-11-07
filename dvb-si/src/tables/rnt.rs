@@ -10,6 +10,7 @@ use crate::descriptors::rnt::RntDescriptorLoop;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for the Resolution provider Notification Table.
@@ -300,13 +301,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_LEN,
-                have: bytes.len(),
-                what: "RntSection",
-            });
-        }
+        need_in(bytes, MIN_LEN, "RntSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -491,12 +486,7 @@ impl Serialize for RntSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;

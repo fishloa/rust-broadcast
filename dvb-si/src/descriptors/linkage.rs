@@ -16,6 +16,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for linkage_descriptor.
@@ -386,12 +387,7 @@ impl MobileHandOverInfo {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let flags_byte = (broadcast_common::len::fit_mask(
             self.hand_over_type.to_u8(),
             HANDOVER_TYPE_VALUE_MASK,
@@ -452,12 +448,7 @@ impl EventLinkageInfo {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < Self::SERIALIZED_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: Self::SERIALIZED_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, Self::SERIALIZED_LEN)?;
         buf[0..2].copy_from_slice(&self.target_event_id.to_be_bytes());
         let mut byte2: u8 = broadcast_common::len::fit_mask(
             self.reserved_future_use,
@@ -570,12 +561,7 @@ impl TargetId {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         match self {
             TargetId::UserDefined {
                 user_defined_id, ..
@@ -632,12 +618,7 @@ impl ExtendedEventLinkageEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let flags_byte_len = 3;
-        if buf.len() < flags_byte_len {
-            return Err(Error::OutputBufferTooSmall {
-                need: flags_byte_len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, flags_byte_len)?;
         buf[0..2].copy_from_slice(&self.target_event_id.to_be_bytes());
         let mut byte2: u8 = 0;
         if self.target_listed {
@@ -698,12 +679,7 @@ impl ExtendedEventLinkageInfo {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let loop_len: usize = self.entries.iter().map(|e| e.serialized_len()).sum();
         let total = 1 + loop_len;
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         buf[0] = broadcast_common::len::fit_u8(loop_len, "linkage_extended_event_loop_length")?;
         let mut pos = 1;
         for entry in &self.entries {
@@ -762,12 +738,7 @@ impl LinkageData<'_> {
             LinkageData::ExtendedEventLinkage(x) => x.serialize_into(buf),
             LinkageData::None => Ok(0),
             LinkageData::Other(b) => {
-                if buf.len() < b.len() {
-                    return Err(Error::OutputBufferTooSmall {
-                        need: b.len(),
-                        have: buf.len(),
-                    });
-                }
+                need_out(buf, b.len())?;
                 buf[..b.len()].copy_from_slice(b);
                 Ok(b.len())
             }
@@ -860,13 +831,7 @@ fn parse_extended_event_linkage(bytes: &[u8]) -> Result<ExtendedEventLinkageInfo
     }
     let loop_length = bytes[0] as usize;
     let loop_end = 1 + loop_length;
-    if bytes.len() < loop_end {
-        return Err(Error::BufferTooShort {
-            need: loop_end,
-            have: bytes.len(),
-            what: "extended event linkage info loop",
-        });
-    }
+    need_in(bytes, loop_end, "extended event linkage info loop")?;
     let mut entries = Vec::new();
     let mut pos = 1;
     let read_u16 = |p: &mut usize| -> Result<u16> {
@@ -1030,12 +995,7 @@ impl Serialize for LinkageDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let bs = HEADER_LEN;
         buf[bs..bs + 2].copy_from_slice(&self.transport_stream_id.to_be_bytes());

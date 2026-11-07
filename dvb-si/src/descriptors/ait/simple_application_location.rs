@@ -7,6 +7,7 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for simple_application_location_descriptor (AIT namespace).
@@ -52,12 +53,7 @@ impl Serialize for SimpleApplicationLocationDescriptor<'_> {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[HEADER_LEN..len].copy_from_slice(self.initial_path_bytes.raw());
         Ok(len)

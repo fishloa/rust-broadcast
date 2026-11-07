@@ -7,6 +7,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for service_descriptor.
@@ -282,12 +283,7 @@ impl Serialize for ServiceDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = self.service_type.to_u8();
         buf[3] = broadcast_common::len::fit_u8(self.provider_name.len(), "provider_name_length")?;

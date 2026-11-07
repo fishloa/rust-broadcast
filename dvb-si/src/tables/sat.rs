@@ -14,6 +14,7 @@
 use crate::error::{Error, Result};
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Satellite Access Table.
@@ -1953,13 +1954,7 @@ impl<'a> Parse<'a> for SatSection {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = HEADER_LEN + CRC_LEN;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "SatSection",
-            });
-        }
+        need_in(bytes, min_len, "SatSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -2007,12 +2002,7 @@ impl Serialize for SatSection {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let section_length_usize = len - SECTION_LENGTH_PREFIX;
         if section_length_usize > MAX_SECTION_LENGTH {
             return Err(Error::SectionLengthOverflow {

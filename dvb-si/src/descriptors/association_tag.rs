@@ -36,6 +36,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for association_tag_descriptor.
@@ -177,12 +178,7 @@ impl Serialize for AssociationTagDescriptor<'_> {
                 reason: "association_tag_descriptor body exceeds 255 bytes",
             });
         }
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         buf[pos..pos + ASSOCIATION_TAG_LEN].copy_from_slice(&self.association_tag.to_be_bytes());

@@ -5,6 +5,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for ibp_descriptor.
@@ -64,12 +65,7 @@ impl Serialize for IbpDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // `max_gop_length` is a 14-bit field; a wider hand-built value used to
         // be masked down silently into a different, valid-looking length
         // (audit r03-W3 class). Zero is still accepted (parse is tolerant:

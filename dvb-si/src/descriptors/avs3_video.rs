@@ -34,7 +34,7 @@
 
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::fit_bits;
+use broadcast_common::len::{fit_bits, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AVS3_video_descriptor (T/AI 109.6 Table 8: 209).
@@ -303,12 +303,7 @@ impl Serialize for Avs3VideoDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let frc = fit_bits(
             u64::from(self.frame_rate_code.to_u8()),
             4,

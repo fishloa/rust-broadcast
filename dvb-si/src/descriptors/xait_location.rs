@@ -14,6 +14,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for xait_location_descriptor.
@@ -97,12 +98,7 @@ impl Serialize for XaitLocationDescriptor {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2..4].copy_from_slice(&self.xait_original_network_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.xait_service_id.to_be_bytes());

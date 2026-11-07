@@ -26,6 +26,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for s2_satellite_delivery_system_descriptor.
@@ -176,13 +177,11 @@ impl Default for S2SatelliteDeliverySystemDescriptor {
 impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + FLAGS_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + FLAGS_LEN,
-                have: bytes.len(),
-                what: "S2SatelliteDeliverySystemDescriptor header",
-            });
-        }
+        need_in(
+            bytes,
+            HEADER_LEN + FLAGS_LEN,
+            "S2SatelliteDeliverySystemDescriptor header",
+        )?;
         let body = descriptor_body(
             bytes,
             TAG,
@@ -209,13 +208,11 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
 
         let mut reserved_6 = RESERVED_6_DEFAULT;
         let scrambling_sequence_index = if scrambling_sequence_selector {
-            if pos + SCRAMBLING_FIELD_LEN > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + SCRAMBLING_FIELD_LEN,
-                    have: body.len(),
-                    what: "S2SatelliteDeliverySystemDescriptor scrambling_sequence_index",
-                });
-            }
+            need_in(
+                body,
+                pos + SCRAMBLING_FIELD_LEN,
+                "S2SatelliteDeliverySystemDescriptor scrambling_sequence_index",
+            )?;
             let b0 = body[pos];
             reserved_6 = b0 >> SCRAMBLING_RESERVED_SHIFT;
             let index = (u32::from(b0 & SCRAMBLING_INDEX_HI_MASK) << 16)
@@ -228,13 +225,11 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
         };
 
         let input_stream_identifier = if multiple_input_stream_flag {
-            if pos + ISI_FIELD_LEN > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + ISI_FIELD_LEN,
-                    have: body.len(),
-                    what: "S2SatelliteDeliverySystemDescriptor input_stream_identifier",
-                });
-            }
+            need_in(
+                body,
+                pos + ISI_FIELD_LEN,
+                "S2SatelliteDeliverySystemDescriptor input_stream_identifier",
+            )?;
             let isi = body[pos];
             pos += ISI_FIELD_LEN;
             Some(isi)
@@ -244,13 +239,11 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
 
         // timeslice_number is present when timeslicing IS used (not_timeslice_flag == 0).
         let timeslice_number = if !not_timeslice_flag {
-            if pos + TIMESLICE_FIELD_LEN > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + TIMESLICE_FIELD_LEN,
-                    have: body.len(),
-                    what: "S2SatelliteDeliverySystemDescriptor timeslice_number",
-                });
-            }
+            need_in(
+                body,
+                pos + TIMESLICE_FIELD_LEN,
+                "S2SatelliteDeliverySystemDescriptor timeslice_number",
+            )?;
             pos += TIMESLICE_FIELD_LEN;
             Some(body[pos - TIMESLICE_FIELD_LEN])
         } else {
@@ -298,12 +291,7 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         let mut flags = (broadcast_common::len::fit_mask(

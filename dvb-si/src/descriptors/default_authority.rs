@@ -4,8 +4,9 @@
 //! authority prefix used when resolving relative CRIDs.
 
 use super::descriptor_body;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::text::DvbText;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for default_authority_descriptor.
@@ -44,12 +45,7 @@ impl Serialize for DefaultAuthorityDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, self.default_authority.raw().len())?;
         buf[HEADER_LEN..len].copy_from_slice(self.default_authority.raw());
         Ok(len)
@@ -63,6 +59,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for DefaultAuthorityDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
 
     #[test]
     fn parse_extracts_authority_text() {

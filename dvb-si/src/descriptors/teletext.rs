@@ -7,6 +7,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for teletext_descriptor.
@@ -140,12 +141,7 @@ pub(super) fn serialize_entries(
 ) -> Result<usize> {
     let body_len = ENTRY_LEN * entries.len();
     let len = HEADER_LEN + body_len;
-    if buf.len() < len {
-        return Err(Error::OutputBufferTooSmall {
-            need: len,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, len)?;
     crate::descriptors::write_descriptor_header(buf, tag, body_len)?;
     let mut pos = HEADER_LEN;
     for e in entries {

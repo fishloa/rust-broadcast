@@ -28,7 +28,7 @@ use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, fit_u8};
+use broadcast_common::len::{fit_bits, fit_u8, need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -174,13 +174,11 @@ impl<'a> Parse<'a> for ChinaCaptionServiceDescriptor {
             "ChinaCaptionServiceDescriptor",
             "unexpected tag for caption_service_descriptor",
         )?;
-        if body.len() < COUNT_BYTE_LEN + PID_LEN {
-            return Err(Error::BufferTooShort {
-                need: COUNT_BYTE_LEN + PID_LEN,
-                have: body.len(),
-                what: "ChinaCaptionServiceDescriptor",
-            });
-        }
+        need_in(
+            body,
+            COUNT_BYTE_LEN + PID_LEN,
+            "ChinaCaptionServiceDescriptor",
+        )?;
         let n = usize::from(body[0] & 0x1F);
         let need = COUNT_BYTE_LEN + n * SERVICE_LEN + PID_LEN;
         if body.len() != need {
@@ -221,12 +219,7 @@ impl Serialize for ChinaCaptionServiceDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.services.len() > MAX_SERVICES {
             return Err(Error::ValueOutOfRange {
                 field: "number_of_services",

@@ -9,6 +9,7 @@
 use super::ac3::Ac3ComponentType;
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for Enhanced AC-3 (E-AC-3, Dolby Digital Plus).
@@ -132,12 +133,7 @@ impl Serialize for EnhancedAc3Descriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut flags: u8 = 0;
         if self.component_type.is_some() {

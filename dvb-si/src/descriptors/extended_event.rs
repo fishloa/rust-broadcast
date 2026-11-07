@@ -8,6 +8,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for extended_event_descriptor.
@@ -51,26 +52,14 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_len = HEADER_LEN + NUMBERS_LEN + LANG_LEN + ITEMS_LEN_FIELD + TEXT_LEN_FIELD;
-        if bytes.len() < min_len {
-            return Err(Error::BufferTooShort {
-                need: min_len,
-                have: bytes.len(),
-                what: "ExtendedEventDescriptor header",
-            });
-        }
+        need_in(bytes, min_len, "ExtendedEventDescriptor header")?;
         let body = descriptor_body(
             bytes,
             TAG,
             "ExtendedEventDescriptor",
             "unexpected tag for extended_event_descriptor",
         )?;
-        if body.len() < FIXED_PREFIX_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_PREFIX_LEN,
-                have: body.len(),
-                what: "ExtendedEventDescriptor body",
-            });
-        }
+        need_in(body, FIXED_PREFIX_LEN, "ExtendedEventDescriptor body")?;
         let numbers_byte = body[0];
         let descriptor_number = numbers_byte >> 4;
         let last_descriptor_number = numbers_byte & 0x0F;
@@ -163,12 +152,7 @@ impl Serialize for ExtendedEventDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] =
             (broadcast_common::len::fit_mask(self.descriptor_number, 0x0F, "descriptor_number")?

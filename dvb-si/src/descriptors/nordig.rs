@@ -19,6 +19,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -125,12 +126,7 @@ impl Serialize for NordigLogicalChannelV1 {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG_V1, len - V1_HEADER_LEN)?;
         let mut offset = V1_HEADER_LEN;
         for entry in &self.entries {
@@ -254,37 +250,23 @@ impl<'a> Parse<'a> for NordigLogicalChannelV2 {
         )?;
         let mut channel_lists = Vec::new();
         while !body.is_empty() {
-            if body.len() < 2 {
-                return Err(Error::BufferTooShort {
-                    need: 2,
-                    have: body.len(),
-                    what: "NordigLogicalChannelV2 channel_list header",
-                });
-            }
+            need_in(body, 2, "NordigLogicalChannelV2 channel_list header")?;
             let channel_list_id = body[0];
             let name_len = body[1] as usize;
             let name_start = 2;
             let name_end = name_start + name_len;
-            if body.len() < name_end + 3 + 1 {
-                return Err(Error::BufferTooShort {
-                    need: name_end + 3 + 1,
-                    have: body.len(),
-                    what: "NordigLogicalChannelV2 channel_list country_code + descriptor_length",
-                });
-            }
+            need_in(
+                body,
+                name_end + 3 + 1,
+                "NordigLogicalChannelV2 channel_list country_code + descriptor_length",
+            )?;
             let channel_list_name = body[name_start..name_end].to_vec();
             let cc_start = name_end;
             let country_code = LangCode([body[cc_start], body[cc_start + 1], body[cc_start + 2]]);
             let desc_len = body[cc_start + 3] as usize;
             let svc_start = cc_start + 4;
             let svc_end = svc_start + desc_len;
-            if body.len() < svc_end {
-                return Err(Error::BufferTooShort {
-                    need: svc_end,
-                    have: body.len(),
-                    what: "NordigLogicalChannelV2 service loop",
-                });
-            }
+            need_in(body, svc_end, "NordigLogicalChannelV2 service loop")?;
             if !desc_len.is_multiple_of(V2_SERVICE_ENTRY_LEN) {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG_V2,
@@ -334,12 +316,7 @@ impl Serialize for NordigLogicalChannelV2 {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG_V2, len - V2_HEADER_LEN)?;
         let mut offset = V2_HEADER_LEN;
         for cl in &self.channel_lists {

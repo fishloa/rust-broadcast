@@ -8,6 +8,7 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for info_descriptor (data-carousel namespace).
@@ -55,12 +56,7 @@ impl Serialize for InfoDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN..HEADER_LEN + LANG_LEN].copy_from_slice(&self.language_code.0);
         buf[HEADER_LEN + LANG_LEN..len].copy_from_slice(self.text.raw());

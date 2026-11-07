@@ -14,6 +14,7 @@
 //! whose format is out of scope here: carried as one opaque byte run.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` of `Metadata_section()`.
@@ -148,13 +149,7 @@ impl<'a> Parse<'a> for MetadataSection<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_SECTION_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_SECTION_LEN,
-                have: bytes.len(),
-                what: "MetadataSection",
-            });
-        }
+        need_in(bytes, MIN_SECTION_LEN, "MetadataSection")?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -197,12 +192,7 @@ impl Serialize for MetadataSection<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         buf[0] = TABLE_ID;
         buf[1] = (u8::from(self.section_syntax_indicator) * B1_SSI)
             | (u8::from(self.private_indicator) * B1_PRIVATE)

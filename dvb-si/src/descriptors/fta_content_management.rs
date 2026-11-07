@@ -8,6 +8,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for FTA_content_management_descriptor.
@@ -174,12 +175,7 @@ impl Serialize for FtaContentManagementDescriptor {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // reserved_future_use(3) preserved from parse (default 111).
         let mut flags = broadcast_common::len::fit_mask(
             self.reserved_future_use,

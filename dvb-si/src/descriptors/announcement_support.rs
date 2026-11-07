@@ -26,6 +26,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for announcement_support_descriptor.
@@ -374,12 +375,7 @@ impl Serialize for AnnouncementSupportDescriptor {
             });
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         buf[HEADER_LEN..HEADER_LEN + INDICATOR_LEN]
             .copy_from_slice(&self.announcement_support_indicator.to_be_bytes());

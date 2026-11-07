@@ -8,8 +8,9 @@
 //! it" (i.e. zero). At most one related_content descriptor per PMT sub_table.
 
 use super::descriptor_body;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for related_content_descriptor.
@@ -55,12 +56,7 @@ impl Serialize for RelatedContentDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, self.trailing.len())?;
         buf[HEADER_LEN..len].copy_from_slice(&self.trailing);
         Ok(len)
@@ -74,6 +70,7 @@ impl crate::traits::DescriptorDef<'_> for RelatedContentDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
 
     #[test]
     fn parse_empty_marker() {

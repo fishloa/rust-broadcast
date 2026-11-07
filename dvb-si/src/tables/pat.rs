@@ -6,6 +6,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -104,13 +105,11 @@ impl PatSection {
 impl<'a> Parse<'a> for PatSection {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN,
-                have: bytes.len(),
-                what: "PatSection",
-            });
-        }
+        need_in(
+            bytes,
+            MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN,
+            "PatSection",
+        )?;
 
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
@@ -176,12 +175,7 @@ impl Serialize for PatSection {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         let section_length = EXTENSION_HEADER_LEN + self.entries.len() * ENTRY_LEN + CRC_LEN;
 
