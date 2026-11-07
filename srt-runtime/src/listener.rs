@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use crate::error::{Error, Result};
 use crate::handshake_sm::{
     self, HANDSHAKE_VERSION_5, HandshakeConfig, HandshakeOutput, NegotiatedParams, RejectionReason,
-    SRT_MAGIC_CODE,
+    Retransmit, RetransmitStep, SRT_MAGIC_CODE,
 };
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags, HandshakeExtensions,
@@ -82,9 +82,7 @@ pub struct ListenerHandshake {
     config: HandshakeConfig,
     state: ListenerHandshakeState,
     peer_socket_id: u32,
-    last_sent: Option<Vec<u8>>,
-    ticks_since_send: u32,
-    retries: u32,
+    retransmit: Retransmit,
     negotiated: Option<NegotiatedParams>,
 }
 
@@ -99,9 +97,7 @@ impl ListenerHandshake {
             config,
             state: ListenerHandshakeState::Idle,
             peer_socket_id: 0,
-            last_sent: None,
-            ticks_since_send: 0,
-            retries: 0,
+            retransmit: Retransmit::default(),
             negotiated: None,
         }
     }
@@ -162,9 +158,9 @@ impl ListenerHandshake {
                     && hp.syn_cookie == self.syn_cookie =>
             {
                 Ok(self
-                    .last_sent
-                    .clone()
-                    .map(HandshakeOutput::Send)
+                    .retransmit
+                    .last_sent()
+                    .map(|bytes| HandshakeOutput::Send(bytes.to_vec()))
                     .into_iter()
                     .collect())
             }
@@ -188,19 +184,13 @@ impl ListenerHandshake {
         if self.state != ListenerHandshakeState::AwaitingConclusion {
             return Vec::new();
         }
-        self.ticks_since_send += 1;
-        if self.ticks_since_send < self.config.retransmit_after_ticks {
-            return Vec::new();
-        }
-        self.ticks_since_send = 0;
-        self.retries += 1;
-        if self.retries > self.config.max_retries {
-            self.state = ListenerHandshakeState::TimedOut;
-            return vec![HandshakeOutput::TimedOut];
-        }
-        match self.last_sent.clone() {
-            Some(bytes) => vec![HandshakeOutput::Send(bytes)],
-            None => Vec::new(),
+        match self.retransmit.tick(&self.config) {
+            RetransmitStep::Idle => Vec::new(),
+            RetransmitStep::Resend(bytes) => vec![HandshakeOutput::Send(bytes)],
+            RetransmitStep::TimedOut => {
+                self.state = ListenerHandshakeState::TimedOut;
+                vec![HandshakeOutput::TimedOut]
+            }
         }
     }
 
@@ -237,8 +227,7 @@ impl ListenerHandshake {
             extensions: HandshakeExtensions(&[]),
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
-        self.last_sent = Some(bytes.clone());
-        self.ticks_since_send = 0;
+        self.retransmit.arm(&bytes);
         self.state = ListenerHandshakeState::AwaitingConclusion;
         Ok(vec![HandshakeOutput::Send(bytes)])
     }
@@ -369,7 +358,7 @@ impl ListenerHandshake {
             extensions: HandshakeExtensions(&ext_bytes),
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
-        self.last_sent = Some(bytes.clone());
+        self.retransmit.remember(&bytes);
         self.negotiated = Some(negotiated.clone());
         self.state = ListenerHandshakeState::Connected;
         Ok(vec![
@@ -402,7 +391,7 @@ impl ListenerHandshake {
             extensions: HandshakeExtensions(&[]),
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
-        self.last_sent = Some(bytes.clone());
+        self.retransmit.remember(&bytes);
         Ok(vec![
             HandshakeOutput::Send(bytes),
             HandshakeOutput::Rejected(reason),

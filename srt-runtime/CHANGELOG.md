@@ -11,6 +11,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - `io.rs` uses the shared `contiguous_runs` instead of a private copy (dedupe D15).
+- The caller, listener and rendezvous handshakes share one `Retransmit` tick/bookkeeping type (c2 M2).
 
 ## [0.7.0] - 2026-11-03
 ### Added

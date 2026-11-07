@@ -100,6 +100,7 @@ use alloc::vec::Vec;
 use crate::error::{Error, Result};
 use crate::handshake_sm::{
     self, HANDSHAKE_VERSION_5, HandshakeConfig, HandshakeOutput, NegotiatedParams, RejectionReason,
+    Retransmit, RetransmitStep,
 };
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags,
@@ -316,9 +317,7 @@ pub struct RendezvousHandshake {
     /// The peer's `MTU` and `Maximum Flow Window Size` (§3.2.1), from the
     /// packet that carried its Handshake Extension Message.
     peer_limits: Option<(u32, u32)>,
-    last_sent: Option<Vec<u8>>,
-    ticks_since_send: u32,
-    retries: u32,
+    retransmit: Retransmit,
     negotiated: Option<NegotiatedParams>,
     #[cfg(feature = "crypto")]
     crypto_recovered: Option<handshake_sm::RecoveredSek>,
@@ -346,9 +345,7 @@ impl RendezvousHandshake {
             peer_cookie: 0,
             peer_hs_msg: None,
             peer_limits: None,
-            last_sent: None,
-            ticks_since_send: 0,
-            retries: 0,
+            retransmit: Retransmit::default(),
             negotiated: None,
             #[cfg(feature = "crypto")]
             crypto_recovered: None,
@@ -404,8 +401,7 @@ impl RendezvousHandshake {
             extensions: HandshakeExtensions(&[]),
         };
         let bytes = handshake_sm::build_bytes(hp)?;
-        self.last_sent = Some(bytes.clone());
-        self.ticks_since_send = 0;
+        self.retransmit.arm(&bytes);
         self.state = RendezvousHandshakeState::Waving;
         Ok(bytes)
     }
@@ -499,19 +495,13 @@ impl RendezvousHandshake {
         ) {
             return Vec::new();
         }
-        self.ticks_since_send += 1;
-        if self.ticks_since_send < self.config.retransmit_after_ticks {
-            return Vec::new();
-        }
-        self.ticks_since_send = 0;
-        self.retries += 1;
-        if self.retries > self.config.max_retries {
-            self.state = RendezvousHandshakeState::TimedOut;
-            return vec![HandshakeOutput::TimedOut];
-        }
-        match self.last_sent.clone() {
-            Some(bytes) => vec![HandshakeOutput::Send(bytes)],
-            None => Vec::new(),
+        match self.retransmit.tick(&self.config) {
+            RetransmitStep::Idle => Vec::new(),
+            RetransmitStep::Resend(bytes) => vec![HandshakeOutput::Send(bytes)],
+            RetransmitStep::TimedOut => {
+                self.state = RendezvousHandshakeState::TimedOut;
+                vec![HandshakeOutput::TimedOut]
+            }
         }
     }
 
@@ -810,8 +800,8 @@ impl RendezvousHandshake {
     }
 
     fn resend(&mut self) -> Vec<HandshakeOutput> {
-        match &self.last_sent {
-            Some(bytes) => vec![HandshakeOutput::Send(bytes.clone())],
+        match self.retransmit.last_sent() {
+            Some(bytes) => vec![HandshakeOutput::Send(bytes.to_vec())],
             None => Vec::new(),
         }
     }
@@ -867,9 +857,7 @@ impl RendezvousHandshake {
             extensions: HandshakeExtensions(&ext_bytes),
         };
         let bytes = handshake_sm::build_bytes(hp)?;
-        self.last_sent = Some(bytes.clone());
-        self.ticks_since_send = 0;
-        self.retries = 0;
+        self.retransmit.arm_fresh(&bytes);
         Ok(vec![HandshakeOutput::Send(bytes)])
     }
 
@@ -891,9 +879,7 @@ impl RendezvousHandshake {
             extensions: HandshakeExtensions(&[]),
         };
         let bytes = handshake_sm::build_bytes(hp)?;
-        self.last_sent = Some(bytes.clone());
-        self.ticks_since_send = 0;
-        self.retries = 0;
+        self.retransmit.arm_fresh(&bytes);
         Ok(vec![HandshakeOutput::Send(bytes)])
     }
 
