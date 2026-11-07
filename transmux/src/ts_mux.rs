@@ -1051,7 +1051,7 @@ pub struct TsContinuity {
 /// key) and the `version_number` it was written with.
 #[derive(Debug, Clone)]
 struct PmtRecord {
-    content_key: Vec<u8>,
+    pmt_at_v0: Vec<u8>,
     version: u8,
 }
 
@@ -1077,18 +1077,15 @@ impl TsContinuity {
     }
 
     /// The PMT `version_number` for a section whose version-0 rendering is
-    /// `content_key`: unchanged content keeps the previous version, changed
+    /// `pmt_at_v0`: unchanged content keeps the previous version, changed
     /// content increments it modulo 32 (§2.4.4.9), and the first PMT is 0.
-    fn pmt_version_for(&mut self, content_key: Vec<u8>) -> u8 {
+    fn pmt_version_for(&mut self, pmt_at_v0: Vec<u8>) -> u8 {
         let version = match &self.pmt {
             None => 0,
-            Some(prev) if prev.content_key == content_key => prev.version,
+            Some(prev) if prev.pmt_at_v0 == pmt_at_v0 => prev.version,
             Some(prev) => (prev.version + 1) % SECTION_VERSION_MODULUS,
         };
-        self.pmt = Some(PmtRecord {
-            content_key,
-            version,
-        });
+        self.pmt = Some(PmtRecord { pmt_at_v0, version });
         version
     }
 
