@@ -176,11 +176,13 @@ impl<'a> SimulcryptMessage<'a> {
         let mut off = 0usize;
         while off < body.len() {
             if body.len() - off < PARAMETER_HEADER_LEN {
-                return Err(Error::BufferTooShort {
-                    need: PARAMETER_HEADER_LEN,
-                    have: body.len() - off,
-                    what: "parameter TLV header",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: PARAMETER_HEADER_LEN,
+                        have: body.len() - off,
+                        what: "parameter TLV header",
+                    },
+                ));
             }
             let raw_ptype = u16::from_be_bytes([body[off], body[off + 1]]);
             let plen = u16::from_be_bytes([body[off + 2], body[off + 3]]) as usize;
@@ -221,30 +223,18 @@ impl Serialize for SimulcryptMessage<'_> {
         need_out(buf, total)?;
 
         let body_len = self.body_len();
-        if body_len > u16::MAX as usize {
-            return Err(Error::FieldTooWide {
-                what: "message_length",
-                value: body_len,
-                bits: 16,
-            });
-        }
+        let message_length = broadcast_common::len::fit_u16(body_len, "message_length")?;
 
         buf[0] = self.protocol_version;
         buf[1..3].copy_from_slice(&self.message_type.to_u16().to_be_bytes());
-        buf[3..5].copy_from_slice(&(body_len as u16).to_be_bytes());
+        buf[3..5].copy_from_slice(&message_length.to_be_bytes());
 
         let mut off = HEADER_LEN;
         for p in &self.parameters {
             let plen = p.value.len();
-            if plen > u16::MAX as usize {
-                return Err(Error::FieldTooWide {
-                    what: "parameter_length",
-                    value: plen,
-                    bits: 16,
-                });
-            }
+            let parameter_length = broadcast_common::len::fit_u16(plen, "parameter_length")?;
             buf[off..off + 2].copy_from_slice(&p.ptype.to_u16().to_be_bytes());
-            buf[off + 2..off + 4].copy_from_slice(&(plen as u16).to_be_bytes());
+            buf[off + 2..off + 4].copy_from_slice(&parameter_length.to_be_bytes());
             off += PARAMETER_HEADER_LEN;
             buf[off..off + plen].copy_from_slice(p.value);
             off += plen;
