@@ -20,6 +20,11 @@
 //! Packets are interleaved so that naive prefix/suffix cuts cannot pass the
 //! "only these PIDs" assertion.
 
+use crate::support::{
+    NULL_PID, P1_AUDIO_PID, P1_PCR_PID, P1_VIDEO_PID, P2_AUDIO_PID, P2_PCR_PID, P2_VIDEO_PID,
+    PAT_PID, PMT1_PID, PMT2_PID, build_two_program_ts, dummy_es_packet, null_packet, serialize_pat,
+    serialize_pmt,
+};
 use broadcast_common::traits::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::cat::CatSection;
@@ -28,170 +33,6 @@ use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::pid::Pid;
 use ts_fix::{PidFilter, TsFix};
-
-// ── PID constants ────────────────────────────────────────────────────────────
-
-const PAT_PID: Pid = Pid::new(0x0000);
-const PMT1_PID: Pid = Pid::new(0x0100);
-const PMT2_PID: Pid = Pid::new(0x0200);
-
-const P1_PCR_PID: Pid = Pid::new(0x0101);
-const P1_VIDEO_PID: Pid = Pid::new(0x0101);
-const P1_AUDIO_PID: Pid = Pid::new(0x0102);
-
-const P2_PCR_PID: Pid = Pid::new(0x0201);
-const P2_VIDEO_PID: Pid = Pid::new(0x0201);
-const P2_AUDIO_PID: Pid = Pid::new(0x0202);
-
-const NULL_PID: Pid = Pid::new(0x1FFF);
-
-// ── Synthetic 2-program mux builder ─────────────────────────────────────────
-
-/// Build a 188-byte TS packet carrying a dummy payload on `pid`.
-///
-/// Sets PUSI=false, adaptation_field_control=01 (payload only), CC=`cc`.
-fn dummy_es_packet(pid: Pid, cc: u8) -> [u8; 188] {
-    let mut pkt = [0u8; 188];
-    pkt[0] = 0x47; // sync byte
-    pkt[1] = ((pid.value() >> 8) as u8) & 0x1F; // PUSI=0, TEI=0, transport_priority=0
-    pkt[2] = (pid.value() & 0xFF) as u8;
-    pkt[3] = 0x10 | (cc & 0x0F); // adaptation_field_control=01 (payload only), CC
-    // payload: fill with a recognisable pattern
-    for (i, b) in pkt[4..].iter_mut().enumerate() {
-        *b = (i as u8).wrapping_add(pid.value() as u8);
-    }
-    pkt
-}
-
-/// Build a 188-byte null packet (PID 0x1FFF).
-fn null_packet() -> [u8; 188] {
-    let mut pkt = [0u8; 188];
-    pkt[0] = 0x47;
-    pkt[1] = 0x1F;
-    pkt[2] = 0xFF;
-    pkt[3] = 0x10; // payload only
-    for b in &mut pkt[4..] {
-        *b = 0xFF;
-    }
-    pkt
-}
-
-/// Serialize a `PatSection` to bytes.
-fn serialize_pat(pat: &PatSection) -> Vec<u8> {
-    let mut buf = vec![0u8; pat.serialized_len()];
-    pat.serialize_into(&mut buf).expect("PAT serialize");
-    buf
-}
-
-/// Serialize a `PmtSection` to bytes.
-fn serialize_pmt(pmt: &PmtSection<'_>) -> Vec<u8> {
-    let mut buf = vec![0u8; pmt.serialized_len()];
-    pmt.serialize_into(&mut buf).expect("PMT serialize");
-    buf
-}
-
-/// Build the synthetic 2-program TS as a flat `Vec<u8>`.
-///
-/// The stream contains, in interleaved order per cycle:
-///   PAT | PMT1 | PMT2 | P1-video | P1-audio | P2-video | P2-audio | null
-///
-/// We repeat the cycle `cycles` times so that every PID appears multiple
-/// times and packets from different programs are interleaved.
-fn build_two_program_ts(cycles: usize) -> Vec<u8> {
-    // ── PAT ─────────────────────────────────────────────────────────────────
-    let pat = PatSection::new(
-        1,
-        0,
-        true,
-        0,
-        0,
-        vec![PatEntry::new(1, PMT1_PID), PatEntry::new(2, PMT2_PID)],
-    );
-    let pat_section_bytes = serialize_pat(&pat);
-    let mut pat_pktz = SectionPacketiser::new(PAT_PID);
-    let pat_pkts = pat_pktz.packetise(&[&pat_section_bytes]);
-
-    // ── PMT1 ─────────────────────────────────────────────────────────────────
-    let pmt1 = PmtSection::new(
-        /* program_number */ 1,
-        /* version_number */ 0,
-        /* current_next_indicator */ true,
-        /* section_number */ 0,
-        /* last_section_number */ 0,
-        /* pcr_pid */ P1_PCR_PID,
-        /* program_info */ DescriptorLoop::new(&[]),
-        /* streams */
-        vec![
-            PmtStream::new(
-                StreamType::Mpeg2Video,
-                P1_VIDEO_PID,
-                DescriptorLoop::new(&[]),
-            ),
-            PmtStream::new(
-                StreamType::Mpeg2Audio,
-                P1_AUDIO_PID,
-                DescriptorLoop::new(&[]),
-            ),
-        ],
-    );
-    let pmt1_section_bytes = serialize_pmt(&pmt1);
-    let mut pmt1_pktz = SectionPacketiser::new(PMT1_PID);
-    let pmt1_pkts = pmt1_pktz.packetise(&[&pmt1_section_bytes]);
-
-    // ── PMT2 ─────────────────────────────────────────────────────────────────
-    let pmt2 = PmtSection::new(
-        /* program_number */ 2,
-        /* version_number */ 0,
-        /* current_next_indicator */ true,
-        /* section_number */ 0,
-        /* last_section_number */ 0,
-        /* pcr_pid */ P2_PCR_PID,
-        /* program_info */ DescriptorLoop::new(&[]),
-        /* streams */
-        vec![
-            PmtStream::new(
-                StreamType::Mpeg2Video,
-                P2_VIDEO_PID,
-                DescriptorLoop::new(&[]),
-            ),
-            PmtStream::new(
-                StreamType::Mpeg2Audio,
-                P2_AUDIO_PID,
-                DescriptorLoop::new(&[]),
-            ),
-        ],
-    );
-    let pmt2_section_bytes = serialize_pmt(&pmt2);
-    let mut pmt2_pktz = SectionPacketiser::new(PMT2_PID);
-    let pmt2_pkts = pmt2_pktz.packetise(&[&pmt2_section_bytes]);
-
-    // ── Assemble interleaved stream ──────────────────────────────────────────
-    let mut stream: Vec<u8> = Vec::new();
-
-    // PSI packets appear first (once — they're short enough to fit in one packet).
-    for pkt in &pat_pkts {
-        stream.extend_from_slice(pkt);
-    }
-    for pkt in &pmt1_pkts {
-        stream.extend_from_slice(pkt);
-    }
-    for pkt in &pmt2_pkts {
-        stream.extend_from_slice(pkt);
-    }
-
-    // Then interleave ES packets and nulls over `cycles` iterations.
-    for i in 0..cycles {
-        let cc = (i as u8) & 0x0F;
-        // Interleave both programs' ES so a prefix cut fails.
-        stream.extend_from_slice(&dummy_es_packet(P1_VIDEO_PID, cc));
-        stream.extend_from_slice(&dummy_es_packet(P2_VIDEO_PID, cc));
-        stream.extend_from_slice(&dummy_es_packet(P1_AUDIO_PID, cc));
-        stream.extend_from_slice(&dummy_es_packet(P2_AUDIO_PID, cc));
-        stream.extend_from_slice(&null_packet());
-    }
-
-    stream
-}
 
 // ── Helper: extract all PIDs present in a TS byte slice ─────────────────────
 
