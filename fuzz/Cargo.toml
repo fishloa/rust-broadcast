@@ -32,7 +32,6 @@ cc-data      = { path = "../cc-data" }
 dvb-ci       = { path = "../dvb-ci" }
 scte35-splice = { path = "../scte35-splice" }
 st291        = { path = "../st291", features = ["rtp"] }
-rtcp-packet  = { path = "../rtcp-packet" }
 rtp-packet   = { path = "../rtp-packet", features = ["rfc8285"] }
 st12-1       = { path = "../st12-1" }
 st337        = { path = "../st337" }
@@ -48,7 +47,6 @@ media-plane   = { path = "../media-plane" }
 ttml-subtitle = { path = "../ttml-subtitle" }
 broadcast-loudness = { path = "../broadcast-loudness" }
 buffering-runtime    = { path = "../buffering-runtime" }
-tshttp-runtime       = { path = "../tshttp-runtime" }
 broadcast-client     = { path = "../broadcast-client" }
 dvb-csa        = { path = "../dvb-csa" }
 dvb-mabr       = { path = "../dvb-mabr" }

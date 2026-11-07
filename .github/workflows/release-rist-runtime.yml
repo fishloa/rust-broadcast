@@ -7,7 +7,7 @@ name: Release rist-runtime
 # secret.
 #
 # DEPENDENCY ORDER: rist-runtime depends on broadcast-common (lockstep,
-# already live) and rtcp-packet (>= 0.2, already live). No new crate needs
+# already live) and rtp-packet (its `rtcp` module). No new crate needs
 # to land before this one.
 
 on:

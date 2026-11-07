@@ -476,7 +476,7 @@ trailer that earlier versions of `avc_config_from_sps_pps` omitted.
 
 ## Notes
 
-# rtcp-packet fixtures
+# rtp-packet `rtcp` module fixtures (formerly the rtcp-packet crate)
 
 ## `chrome-rr-pli-remb.bin` (68 bytes)
 
@@ -499,7 +499,7 @@ Wire layout (RFC 3550 §6 / RFC 4585 / the REMB draft
 2. **PSFB PLI** (RFC 4585 §6.3.1, PT 206 FMT 1), bytes `32..44`: sender
    SSRC=1, media source SSRC `0x407E522F`, no FCI.
 3. **PSFB REMB** (`draft-alvestrand-rmcat-remb-03`, PT 206 FMT 15 —
-   unregistered with IANA, not decoded by `rtcp-packet`, hence
+   unregistered with IANA, not decoded by `rtp_packet::rtcp`, hence
    `RtcpPacket::Unknown`), bytes `44..68`: sender SSRC=1, media source
    SSRC=0, ASCII `"REMB"`, then the bit-rate/SSRC-list FCI opaque to this
    crate.

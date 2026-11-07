@@ -71,11 +71,6 @@ cli     = ["dep:clap", "dep:container-probe", "std", "net", "serde"]
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
 tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
-# replaces the hand-written try_wait/sleep deadline poll in the old
-# test-bounded/tests/it/bounded.rs; the runner now lives in the shared `test-bounded`
-# crate (one copy across hls-runtime/multimux/media-doctor). Path-only
-# dev-dep, so it never reaches a published manifest.
-test-bounded = { path = "../test-bounded" }
 test-alloc = { path = "../test-alloc" }
 # `mediastreamvalidator_oracle.rs` (issue #870) renders real TS-HLS/CMAF-HLS
 # output through the `transmux` packager CLI core (`transmux::cli::run_bytes`)

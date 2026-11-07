@@ -12,12 +12,11 @@ const fn plain(name: &'static str) -> Crate {
 
 /// Members with no `src/lib.rs` (pure binaries: `dvb-tools`, `multimux-cli`) or no
 /// public enums in `src/` (`dvb-stream`: async stream adapters + a stats struct;
-/// `test-bounded`, `test-alloc`, `test-fixtures`: shared test helpers).
+/// `test-alloc`, `test-fixtures`: shared test helpers).
 pub const EXEMPT: &[&str] = &[
     "dvb-tools",
     "multimux-cli",
     "dvb-stream",
-    "test-bounded",
     "test-alloc",
     "test-fixtures",
 ];
@@ -63,7 +62,6 @@ pub const TABLE: &[Crate] = &[
     plain("rdd29"),
     plain("rist-runtime"),
     plain("rmt-flute"),
-    plain("rtcp-packet"),
     plain("rtmp-runtime"),
     plain("rtp-packet"),
     plain("rtsp-runtime"),
@@ -79,7 +77,6 @@ pub const TABLE: &[Crate] = &[
     plain("timed-metadata"),
     plain("transmux"),
     plain("ts-fix"),
-    plain("tshttp-runtime"),
     plain("ttml-subtitle"),
     plain("ule"),
     plain("webrtc-runtime"),

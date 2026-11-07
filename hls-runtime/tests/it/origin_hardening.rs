@@ -29,7 +29,7 @@ use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
-use test_bounded::output_bounded;
+use test_fixtures::process::output_bounded;
 
 /// The validator's own `-t` timeout, seconds.
 const VALIDATOR_TIMEOUT_SECS: u64 = 3;

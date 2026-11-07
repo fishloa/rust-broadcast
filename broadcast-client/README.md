@@ -1,7 +1,7 @@
 # broadcast-client
 
 Generic sans-IO client session for live media: auth, redirects, reconnect/retry and buffering
-decisions over a TS-over-HTTP source (`tshttp-runtime`), an HLS source (`hls-runtime`), a DASH
+decisions over a TS-over-HTTP source (its `tshttp` module), an HLS source (`hls-runtime`), a DASH
 source (`dash-runtime`), a Smooth Streaming source (`transmux`'s MS-SSTR parser), an RTMP play source (`rtmp-runtime`), an RTSP source (`rtsp-runtime`), an SRT caller source (`srt-runtime`) and UDP/RTP TS sources. The host performs only transport I/O (HTTP requests, a TCP
 connection for RTSP, a datagram socket for UDP and RTP); time is a caller-supplied monotonic `now_us`.
 
@@ -13,7 +13,7 @@ Does not: open sockets, run a TLS stack, spawn threads or read a clock. The host
 
 ## Standards supported
 
-The client defers each protocol to the crate that implements it: `tshttp-runtime` (TS over HTTP), `hls-runtime` (RFC 8216 and RFC 8216bis), `dash-runtime` (ISO/IEC 23009-1), `transmux` (MS-SSTR Smooth Streaming), `rtsp-runtime` (RFC 2326), `rtmp-runtime` (RTMP 1.0), `srt-runtime` (SRT) and `rtp-packet` (RFC 3550). The per-source sections below state the behaviour each source has under this client.
+The client defers each protocol to the crate that implements it: the `tshttp` module (TS over HTTP, the former `tshttp-runtime` crate), `hls-runtime` (RFC 8216 and RFC 8216bis), `dash-runtime` (ISO/IEC 23009-1), `transmux` (MS-SSTR Smooth Streaming), `rtsp-runtime` (RFC 2326), `rtmp-runtime` (RTMP 1.0), `srt-runtime` (SRT) and `rtp-packet` (RFC 3550). The per-source sections below state the behaviour each source has under this client.
 
 ## What is implemented
 
@@ -290,7 +290,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   `segment_inactivity_timeout_us`, `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, an invalid
   `dash` field (see the clock section), and a
   `buffer` that `buffering_runtime::ControllerConfig::validate` rejects. `ts_http` values are clamped to the
-  nearest valid ones (`tshttp_runtime::Config::clamped`), `max_key_failures: 0` behaves as `1`, `max_segment_failures: 0` makes the first segment failure final, and a
+  nearest valid ones (`tshttp::Config::clamped`), `max_key_failures: 0` behaves as `1`, `max_segment_failures: 0` makes the first segment failure final, and a
   playout lead that the stream cannot reach (`u64::MAX`) keeps the gate closed.
   The hold never changes the sample sequence (track, pts, dts, sync flag, join decision, bytes): it is
   identical to the disabled hold. Host contract: the held samples are delivered as one burst behind the
@@ -475,7 +475,7 @@ while let Some(action) = session.poll(0) {
 
 | Feature | Default | Effect |
 |---|---|---|
-| `serde` | no | `Serialize` on events and configuration, forwarded to `broadcast-common`, `transmux`, `tshttp-runtime` and `buffering-runtime`. |
+| `serde` | no | `Serialize` on events and configuration, forwarded to `broadcast-common`, `transmux` and `buffering-runtime` and enabling it on the `tshttp` types. |
 
 The crate is `std`-only and has no `std` feature.
 
@@ -485,7 +485,7 @@ The session design, the host contract and every decision behind it are in [`docs
 
 ## Related crates
 
-`tshttp-runtime`, `hls-runtime`, `dash-runtime`, `rtsp-runtime`, `rtmp-runtime`, `srt-runtime`, `transmux`, `rtp-packet`, `broadcast-auth` and `buffering-runtime` (the policy and protocol engines this session drives).
+`hls-runtime`, `dash-runtime`, `rtsp-runtime`, `rtmp-runtime`, `srt-runtime`, `transmux`, `rtp-packet`, `broadcast-auth` and `buffering-runtime` (the policy and protocol engines this session drives).
 
 ## MSRV and licence
 

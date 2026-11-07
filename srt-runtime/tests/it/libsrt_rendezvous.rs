@@ -22,7 +22,7 @@
 
 use std::net::SocketAddr;
 use std::time::Duration;
-use test_bounded::KillOnDrop;
+use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{IoConfig, SrtSocket};

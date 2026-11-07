@@ -414,7 +414,7 @@ async fn iframe_validator_clean() {
     use std::time::Duration;
 
     // availability check
-    if !test_bounded::msv::available() {
+    if !test_fixtures::process::msv::available() {
         eprintln!("SKIP iframe_validator_clean: `mediastreamvalidator` not on PATH ...");
         return;
     }
@@ -501,8 +501,9 @@ async fn iframe_validator_clean() {
     }
 
     // run validator
-    let json = test_bounded::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(35));
-    let findings = test_bounded::msv::findings(&json);
+    let json =
+        test_fixtures::process::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(35));
+    let findings = test_fixtures::process::msv::findings(&json);
     // Level-1 (MUST) findings Apple's validator still reports against the
     // live LL-HLS origin, each tied to its open issue. This is an exact
     // allow-list, not a suppression: any other level-1 finding fails the

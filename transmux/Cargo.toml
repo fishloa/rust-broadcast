@@ -35,7 +35,6 @@ mpeg-ts    = { path = "../mpeg-ts",  version = "0.6.2", default-features = false
 mpeg-pes   = { path = "../mpeg-pes", version = "0.6.0", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.6.0", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.5.0", default-features = false }
-rtcp-packet = { path = "../rtcp-packet", version = "0.6.0", default-features = false }
 bytes      = { version = "1", default-features = false }
 # Caption presence detection (`caption_detect`): `cc_data()` triplets and the 708 service decoder.
 cc-data    = { path = "../cc-data", version = "0.7.1", default-features = false, features = ["decode"] }
@@ -79,8 +78,8 @@ required-features = ["std"]
 
 [features]
 default = ["std", "cenc"]
-std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types"]
-serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
+std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types"]
+serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc", "dep:zeroize", "dep:subtle"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)
 # content protection. Extends `cenc` (which already pulls the `cbc` mode crate
@@ -94,7 +93,6 @@ cli    = ["dep:clap", "dep:container-probe", "std"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-test-bounded = { path = "../test-bounded" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc = { path = "../test-alloc" }
 # golden_gate.rs (issue #569) shells out to `ffprobe -of json` and parses the

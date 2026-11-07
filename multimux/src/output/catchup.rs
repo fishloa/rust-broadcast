@@ -1169,7 +1169,7 @@ mod tests {
     // --- independent oracle: Apple's `mediastreamvalidator` over the served
     //     catch-up playlist and the files it names ---
 
-    use test_bounded::output_bounded;
+    use test_fixtures::process::output_bounded;
 
     /// Hard deadline for the `--version` availability probe.
     const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);

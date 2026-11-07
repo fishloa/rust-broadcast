@@ -321,17 +321,9 @@ lifecycle = "active"
 
 [crate.rtp-packet]
 domain = "live"
-summary = "RTP fixed header, CSRC list, generic header extension; optional RFC 8285 extensions and AV3A payload."
-standards = "RFC 3550 §5.1 / §5.3.1; RFC 8285 (`rfc8285`); T/AI 109.7-2024 §10.1 AV3A-AATF payload (`av3a`)"
-what = "Spec-complete parse and serialize of the RTP packet header and its extension, with optional one-byte/two-byte extension multiplexing and the AVS3 audio (Audio Vivid) RTP payload."
-crates_io = true
-lifecycle = "active"
-
-[crate.rtcp-packet]
-domain = "live"
-summary = "RTCP SR/RR/SDES/BYE/APP and compound packets."
-standards = "RFC 3550 §6"
-what = "Typed, symmetric parse and serialize for every RFC 3550 RTCP packet type and the compound packet. Feedback messages (NACK) are in `rist-runtime`."
+summary = "RTP fixed header, CSRC list, generic header extension, RTCP SR/RR/SDES/BYE/APP and compound packets; optional RFC 8285 extensions and AV3A payload."
+standards = "RFC 3550 §5.1 / §5.3.1 and §6 (RTCP, `rtcp`); RFC 8285 (`rfc8285`); T/AI 109.7-2024 §10.1 AV3A-AATF payload (`av3a`)"
+what = "Spec-complete parse and serialize of the RTP packet header and its extension and (module `rtcp`) every RFC 3550 RTCP packet type and the compound packet, with optional one-byte/two-byte extension multiplexing and the AVS3 audio (Audio Vivid) RTP payload."
 crates_io = true
 lifecycle = "active"
 
@@ -339,7 +331,7 @@ lifecycle = "active"
 domain = "live"
 summary = "RIST Simple Profile RTCP messages (Generic/Range NACK, RTT Echo, compounds) and a sans-IO ARQ engine."
 standards = "VSF TR-06-1:2020 (RIST Simple Profile); RFC 4585 §6.2.1"
-what = "Wire codecs for the RIST Simple Profile RTCP messages on top of `rtcp-packet`, compound-packet builders that enforce the §5.2.1 structure, and a sans-IO sender/receiver ARQ engine (§5.3). TR-06-1 leaves most ARQ timing to the implementer, so several of the engine's numbers are this crate's own design choice, documented in the `arq` module. No socket adapter."
+what = "Wire codecs for the RIST Simple Profile RTCP messages on top of `rtp-packet`'s `rtcp` module, compound-packet builders that enforce the §5.2.1 structure, and a sans-IO sender/receiver ARQ engine (§5.3). TR-06-1 leaves most ARQ timing to the implementer, so several of the engine's numbers are this crate's own design choice, documented in the `arq` module. No socket adapter."
 crates_io = true
 lifecycle = "active"
 
@@ -567,21 +559,11 @@ what = "Turns chunk arrivals, PCR and the PTS-domain media position into a targe
 crates_io = true
 lifecycle = "active"
 
-[crate.tshttp-runtime]
-domain = "live"
-summary = "Sans-IO TS-over-HTTP pull session: reconnect/backoff, start and stall timers, demuxed events."
-standards = "none (implementation-defined policy; requirements from the zenith-tv player)"
-what = "Bytes-in/actions-out client session for a live MPEG-TS HTTP stream: Open/Reconnect/Abort actions, start timeout, stall notice and reconnect, 2/4/8 s then 10 s backoff, 404/410 events, demuxing through transmux StreamingTsDemux. Caller-supplied monotonic milliseconds, no I/O, no_std."
-crates_io = false
-lifecycle = "active"
-
-
-
 [crate.broadcast-client]
 domain = "live"
 summary = "Generic sans-IO client session: auth, redirects, TS-over-HTTP, HLS, DASH and RTSP sources."
 standards = "none (implementation-defined policy; requirements from zenith-tv player)"
-what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime), DASH (dash-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`) for live DASH, no I/O, std."
+what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (`tshttp` module: reconnect/backoff, start and stall timers, 404/410 events), HLS (hls-runtime), DASH (dash-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`) for live DASH, no I/O, std."
 crates_io = false
 lifecycle = "active"
 # ------------------------------------------------------------------ internal
@@ -594,19 +576,11 @@ what = "The single audited copy of the counting and capping allocators used by a
 crates_io = false
 lifecycle = "internal"
 
-[crate.test-bounded]
-domain = "internal"
-summary = "Deadline-bounded external-tool runner for tests."
-standards = "n/a"
-what = "`output_bounded(&mut Command, Duration)`: runs an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test."
-crates_io = false
-lifecycle = "internal"
-
 [crate.test-fixtures]
 domain = "internal"
-summary = "Shared loader for the workspace fixtures/ directory."
+summary = "Shared loader for the workspace fixtures/ directory, plus deadline-bounded external-tool process helpers."
 standards = "n/a"
-what = "Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong."
+what = "Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong. Module `process` holds `output_bounded` (run an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test), `KillOnDrop`, `tool_available`, free-port helpers and the `mediastreamvalidator` runner."
 crates_io = false
 lifecycle = "internal"
 

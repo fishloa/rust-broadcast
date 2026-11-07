@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::net::UdpSocket;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use test_bounded::{KillOnDrop, free_udp_port};
+use test_fixtures::process::{KillOnDrop, free_udp_port};
 
 use crate::support::replay::{SampleRec, replay_paced};
 use crate::support::srt_sim::config_with_seed;

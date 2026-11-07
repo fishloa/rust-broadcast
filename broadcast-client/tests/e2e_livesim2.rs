@@ -80,7 +80,7 @@ fn find_binary() -> Option<PathBuf> {
 fn module_cache_assets() -> Option<PathBuf> {
     let mut cmd = Command::new("go");
     cmd.args(["env", "GOMODCACHE"]);
-    let out = test_bounded::output_bounded(&mut cmd, TOOL_DEADLINE).ok()?;
+    let out = test_fixtures::process::output_bounded(&mut cmd, TOOL_DEADLINE).ok()?;
     let cache = String::from_utf8(out.stdout).ok()?;
     let dir = Path::new(cache.trim())
         .join(format!("{MODULE_DIR}@{PINNED_VERSION}"))

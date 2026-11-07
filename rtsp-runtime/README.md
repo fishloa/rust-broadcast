@@ -16,7 +16,7 @@ rtsp-runtime = { version = "0.8", features = ["tls"] }     # + rtsps:// (TLS)
 
 **Does:** run the RFC 2326 Appendix A session state machines (`Init`, `Ready`, `Playing`, `Recording`) on both sides; build outbound requests (OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, ANNOUNCE, RECORD, GET_PARAMETER) with an incrementing `CSeq` and match responses back to them; parse and serialize the `Transport` (§12.39) and `Session` (§12.37) headers; frame and de-frame `$`-channel interleaved RTP/RTCP (§10.12); answer `401` challenges with Basic, Digest or Bearer credentials, including `stale=true` nonce refresh; and manage the keepalive timeout. The server rejects a method that is illegal in the current state with `455`, allocates a `Session` id on SETUP (from a caller-supplied CSPRNG), and echoes the first offered transport.
 
-**Does not:** open sockets in the core (feed bytes in, get bytes and events out), parse RTP or RTCP payloads (use `rtp-packet` and `rtcp-packet`), parse SDP (use `sdp-types`), generate DESCRIBE SDP or challenge clients on the server side (the server session has no authentication; put a `broadcast-auth` `Verifier` in your own layer), or speak RTSP 2.0 (RFC 7826 is vendored but not implemented). The client has no SET_PARAMETER builder, and server-initiated REDIRECT is not modelled.
+**Does not:** open sockets in the core (feed bytes in, get bytes and events out), parse RTP or RTCP payloads (use `rtp-packet`, which also holds the `rtcp` module), parse SDP (use `sdp-types`), generate DESCRIBE SDP or challenge clients on the server side (the server session has no authentication; put a `broadcast-auth` `Verifier` in your own layer), or speak RTSP 2.0 (RFC 7826 is vendored but not implemented). The client has no SET_PARAMETER builder, and server-initiated REDIRECT is not modelled.
 
 Typical users: IP-camera ingest (`multimux`'s RTSP input), RTSP push to a media server, test servers, and tools that need to drive a camera session deterministically.
 
@@ -28,7 +28,7 @@ Typical users: IP-camera ingest (`multimux`'s RTSP input), RTSP push to a media 
 | IETF RFC 7826 "RTSP 2.0" | RFC 7826 (vendored, not implemented) | n/a | Not implemented | |
 | IETF RFC 7617 / RFC 7616 / RFC 6750 (Basic, Digest, Bearer) | not vendored, unverified here | Client side via `broadcast-auth` | Full | Server side has no authentication |
 | IETF RFC 8866 (SDP) | RFC 8866 (vendored) | Bodies carried opaque | Typed-opaque | Parse with `sdp-types` |
-| IETF RFC 3550 (RTP/RTCP) | RFC 3550 | Interleaved payload is carried as bytes | Typed-opaque | Decode with `rtp-packet` / `rtcp-packet` |
+| IETF RFC 3550 (RTP/RTCP) | RFC 3550 | Interleaved payload is carried as bytes | Typed-opaque | Decode with `rtp-packet` (`rtp_packet::rtcp` for RTCP) |
 | `rtsps://` (RTSP over TLS, default port 322) | n/a | Client `connect_tls`, server `accept_tls` | Full, behind `tls` | `webpki-roots` trust by default or a custom `rustls::ClientConfig` |
 
 | Method | Client builds | Server session handles | State effect |
@@ -111,7 +111,7 @@ Sans-IO: the core never reads a clock or a socket (the caller passes `Instant` f
 
 ## Related crates
 
-Builds on `rtsp-types` and `sdp-types` (codecs) and `broadcast-auth`. Pair with `rtp-packet` and `rtcp-packet` for the interleaved payloads. `multimux` uses it for RTSP input and push, and `transmux` for RTP depacketising.
+Builds on `rtsp-types` and `sdp-types` (codecs) and `broadcast-auth`. Pair with `rtp-packet` (RTP and RTCP) for the interleaved payloads. `multimux` uses it for RTSP input and push, and `transmux` for RTP depacketising.
 
 ## MSRV and licence
 

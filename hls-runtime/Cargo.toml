@@ -80,11 +80,6 @@ tokio = ["std", "dep:tokio", "dep:reqwest", "dep:broadcast-auth", "dep:backon", 
 # Loopback mock HTTP servers for `hls-runtime/tests/it/tokio_client_auth.rs` (tokio is
 # already a dependency; these are features only).
 tokio             = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
-# Bounded child-process waits for the CLI-driven tests (SP7). The runner
-# itself lives in the shared `test-bounded` crate (one copy, not the three
-# byte-identical `test-bounded/tests/it/bounded.rs` files it replaced); this is a
-# path-only dev-dep, so it never reaches a published manifest.
-test-bounded      = { path = "../test-bounded" }
 test-fixtures     = { path = "../test-fixtures" }
 axum              = { workspace = true }
 # `hls-runtime/tests/it/subtitle_renditions.rs` runs the independent `check_hls_playlist`

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- absorbs tshttp-runtime as `broadcast_client::tshttp` (`TsHttpClient`, `TsHttpPolicy`, `Config`, `Action`, `Event`, `StarveKind`, `DemuxEvent`); the `serde` feature now also enables `Serialize`/`Deserialize` on those types. The module is `std` like the rest of the crate (the standalone `no_std` build is gone).
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed

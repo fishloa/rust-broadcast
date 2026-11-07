@@ -10,7 +10,7 @@
 //!   helper is LINE-PINNED below (the exact `fn …` line must match): the
 //!   RTMP input (its `rtmp-runtime` server exposes only `bind(addr)`). An
 //!   external `mediamtx` whose config takes a numeric port uses
-//!   `test_bounded::free_tcp_port`. Note this is a
+//!   `test_fixtures::process::free_tcp_port`. Note this is a
 //!   NAME guard, not a behavioural one: it stops a new `reserve_*` helper name
 //!   from appearing, not a rebind written inline.
 //! - **Bare fixed sleeps** in `tests/**` outside the files that predate this

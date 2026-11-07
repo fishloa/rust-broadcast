@@ -24,7 +24,6 @@ pub const EXEMPT: &[&str] = &[
     "broadcast-hls",
     "broadcast-loudness",
     "buffering-runtime",
-    "tshttp-runtime",
     "broadcast-client",
     "dvb-csa",
     "dvb-mabr",
@@ -35,7 +34,6 @@ pub const EXEMPT: &[&str] = &[
     "ssai-runtime",
     "playout-runtime",
     "container-probe",
-    "test-bounded",
     "test-alloc",
     "test-fixtures",
 ];
@@ -150,10 +148,6 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "rmt-flute",
-        allowlist: &[],
-    },
-    Crate {
-        name: "rtcp-packet",
         allowlist: &[],
     },
     Crate {

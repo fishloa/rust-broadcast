@@ -35,7 +35,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use test_bounded::tool_available;
+use test_fixtures::process::tool_available;
 
 use serde_json::Value;
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};

@@ -459,14 +459,14 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sdp-types",
+ "serde",
+ "serde_json",
  "sha2 0.11.1",
  "srt-runtime",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
  "transmux",
- "tshttp-runtime",
  "url",
  "workspace-guards",
  "zeroize",
@@ -1756,7 +1756,6 @@ dependencies = [
  "media-plane",
  "reqwest",
  "serde",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
@@ -2391,7 +2390,6 @@ dependencies = [
  "socket2",
  "ssai-runtime",
  "test-alloc",
- "test-bounded",
  "test-fixtures",
  "timed-metadata",
  "tokio",
@@ -2559,6 +2557,7 @@ dependencies = [
  "backon",
  "base64 0.23.1",
  "broadcast-auth",
+ "broadcast-client",
  "broadcast-common",
  "broadcast-hls",
  "bytes",
@@ -2597,7 +2596,6 @@ dependencies = [
  "serde_json",
  "socket2",
  "srt-runtime",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
@@ -2608,7 +2606,6 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "transmux",
- "tshttp-runtime",
  "url",
  "webrtc-runtime",
  "workspace-guards",
@@ -3391,7 +3388,6 @@ name = "rist-runtime"
 version = "0.4.0"
 dependencies = [
  "broadcast-common",
- "rtcp-packet",
  "rtp-packet",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3589,17 +3585,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rtcp-packet"
-version = "0.6.0"
-dependencies = [
- "broadcast-common",
- "serde",
- "test-alloc",
- "test-fixtures",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "rtmp-runtime"
 version = "0.8.1"
 dependencies = [
@@ -3624,6 +3609,7 @@ version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "serde",
+ "test-alloc",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -4091,7 +4077,6 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "subtle",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
@@ -4248,18 +4233,12 @@ name = "test-alloc"
 version = "0.1.0"
 
 [[package]]
-name = "test-bounded"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wait-timeout",
-]
-
-[[package]]
 name = "test-fixtures"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "serde_json",
+ "wait-timeout",
 ]
 
 [[package]]
@@ -4623,7 +4602,6 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "quick-xml",
- "rtcp-packet",
  "rtp-packet",
  "scte35-splice",
  "sdp-types",
@@ -4631,7 +4609,6 @@ dependencies = [
  "serde_json",
  "subtle",
  "test-alloc",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
@@ -4658,17 +4635,6 @@ dependencies = [
  "scte35-splice",
  "test-fixtures",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "tshttp-runtime"
-version = "0.2.0"
-dependencies = [
- "broadcast-common",
- "serde",
- "serde_json",
- "test-fixtures",
- "transmux",
 ]
 
 [[package]]
@@ -4930,7 +4896,6 @@ dependencies = [
  "rtc-shared",
  "rtc-srtp",
  "rtc-stun",
- "rtcp-packet",
  "rtp-packet",
  "sansio",
  "sdp-types",

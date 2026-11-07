@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use test_bounded::output_bounded;
+use test_fixtures::process::output_bounded;
 
 /// Hard deadline for a `--version`/`-version` availability probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);

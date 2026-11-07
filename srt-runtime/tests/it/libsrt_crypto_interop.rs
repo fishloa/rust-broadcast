@@ -31,7 +31,7 @@
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
-use test_bounded::KillOnDrop;
+use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::caller::CallerHandshake;
 use srt_runtime::crypto::{SALT_LEN, aes_ctr_apply};

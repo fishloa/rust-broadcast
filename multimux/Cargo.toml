@@ -55,7 +55,7 @@ hls-runtime       = { path = "../hls-runtime",   version = "0.11", features = ["
 dash-runtime      = { path = "../dash-runtime", version = "0.2" }
 # TS-over-HTTP pull policy core (`source::ts_http`): finite/VOD detection and
 # the post-establishment stall decision; the demuxer stays `ts_program`.
-tshttp-runtime    = { path = "../tshttp-runtime", version = "0.2", default-features = false }
+broadcast-client  = { path = "../broadcast-client", version = "0.2.1" }
 # Needed directly (not just via hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
@@ -292,12 +292,6 @@ rtp-packet       = { path = "../rtp-packet", version = "0.5", default-features =
 # construction). Already a transitive dep via `webrtc-runtime/media` at the
 # locked version, so this adds no new lock entry.
 rtc-dtls         = "0.21"
-# `output_bounded`: the deadline-bounded external-tool runner (SP7.3). The
-# runner itself lives in the shared `test-bounded` crate (one copy across
-# hls-runtime/multimux/media-doctor, not three byte-identical
-# `test-bounded/tests/it/bounded.rs` files); this is a path-only dev-dep, so it never
-# reaches a published manifest.
-test-bounded     = { path = "../test-bounded" }
 # The independent ETSI TR 101 290 monitor `multimux/tests/it/push_ts_stream.rs` runs over
 # the TS a push output actually delivers (#1024). Dev-only; dvb-conformance
 # depends on neither multimux nor transmux, so there is no cycle.

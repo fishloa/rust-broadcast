@@ -13,7 +13,7 @@ use crate::support::hdr_route::{
     Source, attribute, contains, init_bytes, joined_mp4, load, master_text, route_app,
     route_app_from, scratch, validator_comments, video_codec,
 };
-use test_bounded::tool_available;
+use test_fixtures::process::tool_available;
 
 use broadcast_hls::MasterPlaylist;
 

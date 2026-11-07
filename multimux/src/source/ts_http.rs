@@ -13,7 +13,7 @@
 //! # Shared policy core
 //!
 //! Finite/VOD detection and the post-establishment stall decision come from
-//! `tshttp_runtime::TsHttpPolicy` (the demux-free core also under
+//! `broadcast_client::tshttp::TsHttpPolicy` (the demux-free core also under
 //! `broadcast-client`); demuxing stays in [`crate::source::ts_program`] and
 //! reconnect/backoff stays with the route supervisor, so the core's `Reconnect`
 //! actions are ignored here.
@@ -64,13 +64,15 @@ use std::time::Duration;
 #[cfg(test)]
 use transmux::TrackId;
 
+use broadcast_client::tshttp::{
+    Action, Config as PolicyConfig, Event as PolicyEvent, TsHttpPolicy,
+};
 use broadcast_common::Timestamp;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use media_plane::ingress::{Dialer, HandshakePolicy, IngestDriver, ProgramId};
 use media_plane::trunk::TrunkConfig;
 use reqwest::Client;
-use tshttp_runtime::{Action, Config as PolicyConfig, Event as PolicyEvent, TsHttpPolicy};
 use url::Url;
 
 use crate::error::{MultimuxError, Result};

@@ -1180,7 +1180,7 @@ async fn send_sample(
 /// `last_inbound` reset: a decrypted RTP or RTCP packet (the far end's
 /// decoder/receiver-report machinery is live, RFC 3550 §6.2; RFC 4585
 /// PLI/NACK/REMB feedback arrives as `Rtcp` carrying `RtcpPacket::Unknown`)
-/// — including an authenticated SRTCP packet `rtcp-packet` rejects as
+/// — including an authenticated SRTCP packet `rtp_packet::rtcp` rejects as
 /// malformed (`RtcpUnsupported`) — or the one-time DTLS handshake completion. A
 /// datagram failing SRTP/SRTCP authentication is an `Err`, never an event,
 /// so a stray still cannot count. Deliberately excludes
@@ -2358,7 +2358,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// makes — deterministically, against hand-constructed events, rather
     /// than relying only on the integration test's ability to provoke the
     /// right event shape from a real transport. `MediaEvent::Rtcp` isn't
-    /// exercised here (building one needs a real `rtcp_packet::
+    /// exercised here (building one needs a real `rtp_packet::rtcp::
     /// CompoundPacket`, which would add a new direct dependency this crate
     /// doesn't otherwise need); `Rtp`/`DtlsHandshakeComplete` and the two
     /// ICE-bookkeeping variants cover the actual decision boundary.

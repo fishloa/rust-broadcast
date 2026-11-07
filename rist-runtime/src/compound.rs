@@ -24,7 +24,7 @@ use broadcast_common::error::{BufferTooShort, UnsupportedVersion};
 use broadcast_common::len::need_out;
 
 use broadcast_common::{Parse, Serialize};
-use rtcp_packet::{
+use rtp_packet::rtcp::{
     PT_RECEIVER_REPORT, PT_SENDER_REPORT, PT_SOURCE_DESCRIPTION, ReceiverReport, SdesChunk,
     SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
@@ -113,7 +113,7 @@ fn header_of(bytes: &[u8]) -> Result<(usize, u8, usize)> {
     let total = peek_total_len(bytes)?;
     let packet_type = bytes[PT_OFFSET];
     let padding = if bytes[0] & RTCP_PADDING_MASK != 0 {
-        rtcp_packet::padding_count(&bytes[RTCP_HEADER_LEN..total])?
+        rtp_packet::rtcp::padding_count(&bytes[RTCP_HEADER_LEN..total])?
     } else {
         0
     };
@@ -180,7 +180,7 @@ fn write_header(
 
 /// Parse one sub-packet body (already isolated from any padding). Works for
 /// any sub-packet type, whether its `Parse::Error` is `rist_runtime::Error`
-/// (the RIST-specific types) or `rtcp_packet::Error` (the underlying
+/// (the RIST-specific types) or `rtp_packet::rtcp::Error` (the underlying
 /// SR/RR/SDES types) — both convert into [`Error`] via `?`.
 fn parse_body<'a, T>(bytes: &'a [u8]) -> Result<T>
 where
@@ -253,7 +253,7 @@ impl ReportPart {
     /// (`head.packet_type` selects SR or RR), returning it together with its
     /// preserved padding region (empty when the P bit was clear).
     ///
-    /// rtcp-packet's report parsers accept any sub-packet at least as long
+    /// the `rtcp` module's report parsers accept any sub-packet at least as long
     /// as the report's own content, so the region between the parsed value
     /// and the padding count byte is this crate's to validate: RFC 3550
     /// §6.4.1 fixes the padding bytes to zero (only the trailing count byte
@@ -263,7 +263,7 @@ impl ReportPart {
         let unpadded_end = head.unpadded_end();
         // RFC 3550 §6.4.1: the P-bit count covers the padding *and itself*,
         // so the count byte is part of the padding, not of the report body.
-        // rtcp-packet's parsers require the full claimed sub-packet length,
+        // the `rtcp` module's parsers require the full claimed sub-packet length,
         // so they see the whole sub-packet; the preserved region below is
         // then everything the count accounted for past the parsed value.
         let parse_end = if head.padding != 0 {
@@ -308,13 +308,13 @@ impl ReportPart {
 
     /// Serialize the report followed by the preserved `padding` region.
     ///
-    /// rtcp-packet's report serializers write their own common header, so
+    /// the `rtcp` module's report serializers write their own common header, so
     /// the value is serialized into a temporary of its exact length and the
     /// body is copied into `buf` after our [`write_header`] header; the
     /// padding region (zero-fill, guaranteed by [`ReportPart::parse`]) and
     /// its count byte follow. Handing the serializers a mid-buffer slice
     /// instead would fail their `buf.len()`-vs-own-length checks, and
-    /// rtcp-packet's SR additionally writes its fixed sender-info block by
+    /// the `rtcp` module's SR additionally writes its fixed sender-info block by
     /// position, reaching 4 bytes past the 28 its `serialized_len()` admits
     /// when `RC = 0`.
     fn serialize_with_padding(&self, padding: &[u8], buf: &mut [u8]) -> Result<usize> {
@@ -325,7 +325,7 @@ impl ReportPart {
         // the fn doc for why), into the *front* of `buf`, then rewrite the
         // first four bytes in place so the value's header becomes ours
         // (which it already equals when the value carries no real report
-        // blocks: rtcp-packet's RC-less header is byte-identical to the
+        // blocks: the `rtcp` module's RC-less header is byte-identical to the
         // header `write_header` writes for a padding-free RR/SR).
         match self {
             ReportPart::Sr(sr) => {

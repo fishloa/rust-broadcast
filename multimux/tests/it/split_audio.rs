@@ -1022,9 +1022,10 @@ async fn validator_must_findings(rig: &Rig, audio_renditions: usize) -> Vec<(Str
         }
     }
 
-    let json = test_bounded::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(60));
+    let json =
+        test_fixtures::process::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(60));
     eprintln!("SCRATCH={}", scratch.display());
-    let findings = test_bounded::msv::findings(&json);
+    let findings = test_fixtures::process::msv::findings(&json);
     for f in &findings {
         eprintln!(
             "VALIDATOR[{audio_renditions}]: {} level={} {}",
@@ -1068,7 +1069,7 @@ const TOLERATED: &[(&str, &str)] = &[
 
 #[tokio::test]
 async fn split_audio_validator_findings() {
-    if !test_bounded::msv::available() {
+    if !test_fixtures::process::msv::available() {
         eprintln!("SKIP split_audio_validator_findings: `mediastreamvalidator` not on PATH");
         return;
     }

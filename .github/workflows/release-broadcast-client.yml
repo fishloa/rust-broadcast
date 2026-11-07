@@ -7,7 +7,7 @@ name: Release broadcast-client
 # secret.
 #
 # DEPENDENCY ORDER: broadcast-client depends on broadcast-common, broadcast-auth,
-# transmux, dvb-si, mpeg-ts, buffering-runtime, tshttp-runtime, hls-runtime,
+# transmux, dvb-si, mpeg-ts, buffering-runtime, hls-runtime,
 # broadcast-hls and rtsp-runtime; all must be live at the versions in its
 # manifest first. It is the last crate in its lane.
 

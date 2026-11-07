@@ -6,7 +6,7 @@ use rist_runtime::{
     GenericNack, NackFci, PacketRange, RangeNack, ReportPart, RistReceiverCompound,
     RistSenderCompound, RttEcho, RttEchoKind,
 };
-use rtcp_packet::{ReceiverReport, ReportBlock, SenderReport};
+use rtp_packet::rtcp::{ReceiverReport, ReportBlock, SenderReport};
 
 // ---------------------------------------------------------------------------
 // GenericNack round-trips

@@ -4,7 +4,7 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
-use test_bounded::tool_available;
+use test_fixtures::process::tool_available;
 
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
@@ -315,7 +315,8 @@ fn mediastreamvalidator_reports_no_missing_frame_rate_on_the_measured_ts_variant
         .args(["--quiet", "-t", "5", "-O"])
         .arg(&report)
         .arg("master.m3u8");
-    test_bounded::output_bounded(&mut cmd, Duration::from_secs(35)).expect("run validator");
+    test_fixtures::process::output_bounded(&mut cmd, Duration::from_secs(35))
+        .expect("run validator");
     let text = std::fs::read_to_string(&report).expect("validator report");
     eprintln!(
         "VALIDATOR mentions FRAME-RATE: {}",

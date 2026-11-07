@@ -115,13 +115,11 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 | [`dash-runtime`](dash-runtime/) | Sans-IO MPEG-DASH: MPD model and parser, segment addressing, UTC clock and live-edge arithmetic, and a client for static (VOD) and dynamic (live) presentations. | ISO/IEC 23009-1:2022 (5.3, 5.6, 5.8.5.7, Annex A, Annex I); DASH-IF IOP v4.3 (live timing); ETSI TS 103 285 (BaseURL priority) | not on crates.io |
 | [`hls-runtime`](hls-runtime/) | Sans-IO Low-Latency HLS client and origin engines; optional tokio+reqwest client adapter. | RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS) | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) |
 | [`rist-runtime`](rist-runtime/) | RIST Simple Profile RTCP messages (Generic/Range NACK, RTT Echo, compounds) and a sans-IO ARQ engine. | VSF TR-06-1:2020 (RIST Simple Profile); RFC 4585 §6.2.1 | [![crates.io](https://img.shields.io/crates/v/rist-runtime.svg)](https://crates.io/crates/rist-runtime) |
-| [`rtcp-packet`](rtcp-packet/) | RTCP SR/RR/SDES/BYE/APP and compound packets. | RFC 3550 §6 | [![crates.io](https://img.shields.io/crates/v/rtcp-packet.svg)](https://crates.io/crates/rtcp-packet) |
 | [`rtmp-runtime`](rtmp-runtime/) | Sans-IO RTMP 1.0 ingest (publish) engine: handshake, chunk stream, AMF0 commands, server state machine. | Adobe RTMP 1.0 (Dec 2012); AMF0 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) |
-| [`rtp-packet`](rtp-packet/) | RTP fixed header, CSRC list, generic header extension; optional RFC 8285 extensions and AV3A payload. | RFC 3550 §5.1 / §5.3.1; RFC 8285 (`rfc8285`); T/AI 109.7-2024 §10.1 AV3A-AATF payload (`av3a`) | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) |
+| [`rtp-packet`](rtp-packet/) | RTP fixed header, CSRC list, generic header extension, RTCP SR/RR/SDES/BYE/APP and compound packets; optional RFC 8285 extensions and AV3A payload. | RFC 3550 §5.1 / §5.3.1 and §6 (RTCP, `rtcp`); RFC 8285 (`rfc8285`); T/AI 109.7-2024 §10.1 AV3A-AATF payload (`av3a`) | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) |
 | [`rtsp-runtime`](rtsp-runtime/) | Sans-IO RTSP 1.0 client + server session engine, interleaved RTP/RTCP, Basic/Digest/Bearer auth. | RFC 2326 (RTSP 1.0) incl. Appendix A state machines, §10.12 interleaving, §12.39 Transport, §14 auth | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) |
 | [`srt-runtime`](srt-runtime/) | SRT packet codecs, HSv5 handshake (caller/listener/rendezvous), ARQ, TSBPD, LiveCC/FileCC, optional crypto. | draft-sharabayko-srt-01 | [![crates.io](https://img.shields.io/crates/v/srt-runtime.svg)](https://crates.io/crates/srt-runtime) |
 | [`st2022`](st2022/) | SMPTE ST 2022-6 HBRMT (SDI over IP) RTP payload header. | SMPTE ST 2022-6:2012 | [![crates.io](https://img.shields.io/crates/v/st2022.svg)](https://crates.io/crates/st2022) |
-| [`tshttp-runtime`](tshttp-runtime/) | Sans-IO TS-over-HTTP pull session: reconnect/backoff, start and stall timers, demuxed events. | none (implementation-defined policy; requirements from the zenith-tv player) | not on crates.io |
 | [`webrtc-runtime`](webrtc-runtime/) | Sans-IO WHIP + WHEP HTTP signalling: SDP offer/answer, Trickle ICE, ICE restart, session lifecycle. | RFC 9725 (WHIP); draft-ietf-wish-whep-04; optional ICE/DTLS-SRTP transport (`media`) | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) |
 
 **Servers, runtimes and tools**
@@ -163,7 +161,7 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 |---|---|---|---|
 | [`broadcast-loudness`](broadcast-loudness/) | EBU R 128 / ITU-R BS.1770-5 loudness: integrated, momentary, short-term, LRA, true peak. | ITU-R BS.1770-5 (11/2023); EBU R 128, Tech 3341, Tech 3342 (all November 2023); GY/T 282-2014, GY/T 377-2023, GY/T 379-2023 target profiles | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) |
 
-Plus `test-alloc`, `test-bounded`, `test-fixtures`, `workspace-guards`: `publish = false` test helpers, see [docs/CRATES.md](docs/CRATES.md).
+Plus `test-alloc`, `test-fixtures`, `workspace-guards`: `publish = false` test helpers, see [docs/CRATES.md](docs/CRATES.md).
 <!-- END GENERATED: crate-table -->
 
 Outside the workspace: Python bindings [`dvb-si-py`](bindings/python/) and

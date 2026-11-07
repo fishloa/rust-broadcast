@@ -7,7 +7,7 @@ Sans-IO WHIP (RFC 9725) and WHEP (draft-ietf-wish-whep) HTTP signalling engines 
 
 ## What it does / what it does not
 
-**Does:** provide caller-driven state machines for both ends of both protocols. WHIP is ingest (`WhipClient` is the encoder, `WhipSession` is the server's session resource); WHEP is egress (`WhepPlayer` is the viewer, `WhepSession` is the server's session resource). Each client produces an `HttpRequest` descriptor (method, URL, `http::HeaderMap`, body) for you to send with any HTTP stack, and consumes the `HttpResponse` you feed back. They cover the SDP offer/answer exchange, Trickle ICE (PATCH), ICE restart, teardown (DELETE), the WHEP counter-offer (406) and no-publisher (409) paths, `ETag`/`If-Match` handling, Bearer authentication, and ICE-server discovery through `Link` headers. With the `media` feature, `media::MediaTransport` adds the ICE agent, the DTLS handshake with RFC 5764 SRTP key export, and SRTP/SRTCP encryption and decryption into this workspace's own `rtp-packet` and `rtcp-packet` types.
+**Does:** provide caller-driven state machines for both ends of both protocols. WHIP is ingest (`WhipClient` is the encoder, `WhipSession` is the server's session resource); WHEP is egress (`WhepPlayer` is the viewer, `WhepSession` is the server's session resource). Each client produces an `HttpRequest` descriptor (method, URL, `http::HeaderMap`, body) for you to send with any HTTP stack, and consumes the `HttpResponse` you feed back. They cover the SDP offer/answer exchange, Trickle ICE (PATCH), ICE restart, teardown (DELETE), the WHEP counter-offer (406) and no-publisher (409) paths, `ETag`/`If-Match` handling, Bearer authentication, and ICE-server discovery through `Link` headers. With the `media` feature, `media::MediaTransport` adds the ICE agent, the DTLS handshake with RFC 5764 SRTP key export, and SRTP/SRTCP encryption and decryption into this workspace's own `rtp-packet` types (including `rtp_packet::rtcp`).
 
 **Does not:** do HTTP, sockets, TLS or an async runtime (the caller drives them; there is no tokio adapter), generate or interpret SDP (the caller extracts `a=ice-ufrag`, `a=ice-pwd`, `a=fingerprint` and `a=candidate` and passes them in), encode or decode media, use TURN relay candidates in `media` (host and server-reflexive only), or implement simulcast, SVC or data channels.
 
@@ -99,7 +99,7 @@ Sans-IO and clock-free (`media` takes `Instant` from the caller and schedules fr
 
 ## Related crates
 
-`rtp-packet` and `rtcp-packet` (the `media` feature types its output with them); `broadcast-common`. `multimux` builds its `whip` input and `whep` output on this crate.
+`rtp-packet`, including its `rtcp` module (the `media` feature types its output with them); `broadcast-common`. `multimux` builds its `whip` input and `whep` output on this crate.
 
 ## MSRV and licence
 

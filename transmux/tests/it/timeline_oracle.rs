@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
-use test_bounded::tool_available;
+use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};

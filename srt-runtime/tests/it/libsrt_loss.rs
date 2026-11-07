@@ -27,7 +27,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
-use test_bounded::KillOnDrop;
+use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{SrtListener, SrtSocket};

@@ -1197,7 +1197,8 @@ async fn validator_findings(rig: &Rig, tag: &str, playlists: &[&str]) -> Vec<(i6
         .arg("-O")
         .arg(&report)
         .arg("master.m3u8");
-    let _ = test_bounded::output_bounded(&mut cmd, VALIDATOR_DEADLINE).expect("run validator");
+    let _ = test_fixtures::process::output_bounded(&mut cmd, VALIDATOR_DEADLINE)
+        .expect("run validator");
     let json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report).expect("report")).expect("json");
     let _ = fs::remove_dir_all(&scratch);

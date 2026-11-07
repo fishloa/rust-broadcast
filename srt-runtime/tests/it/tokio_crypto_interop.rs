@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 use std::time::Duration;
-use test_bounded::KillOnDrop;
+use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::{CryptoConfig, HandshakeConfig};

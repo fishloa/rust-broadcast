@@ -5,6 +5,7 @@
 - The DASH and LL-DASH `type="dynamic"` MPDs now carry `MPD@publishTime` (ISO/IEC 23009-1 section 5.3.1.2 Table 3: shall be present for dynamic MPDs, and a later value marks an update). It is the instant the newest listed segment became available, so it is unchanged while the window is unchanged and later after every new segment.
 - `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
 ### Changed
+- Depends on `broadcast-client` (its `tshttp` module) instead of the absorbed `tshttp-runtime` crate; the policy types are unchanged.
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - DASH and LL-DASH share one manifest handler and `ServedEgress` (`output::dash::serve_mpd`); the in-crate tests share `body_string`, `drain` and `video_spec` from `testutil` (c7 G7).
 - The DASH period stitcher's `ticks_to_us` uses `broadcast_common::timescale::to_micros` (c6 F7).

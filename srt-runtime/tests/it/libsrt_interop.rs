@@ -26,7 +26,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use test_bounded::KillOnDrop;
+use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::{HandshakeConfig, RejectionReason};

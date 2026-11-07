@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
-use test_bounded::tool_available;
+use test_fixtures::process::tool_available;
 
 use axum::Router;
 use axum::response::IntoResponse;

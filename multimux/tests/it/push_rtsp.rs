@@ -33,7 +33,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use test_bounded::{free_tcp_port, output_bounded};
+use test_fixtures::process::{free_tcp_port, output_bounded};
 
 /// Hard deadline for a `--version`/`-version` availability probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);

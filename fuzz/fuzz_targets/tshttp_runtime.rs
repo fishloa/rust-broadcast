@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tshttp_runtime::{Config, TsHttpClient, TsHttpPolicy};
+use broadcast_client::tshttp::{Config, TsHttpClient, TsHttpPolicy};
 
 fuzz_target!(|data: &[u8]| {
     let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);

@@ -439,11 +439,11 @@ pub enum MediaEvent {
     /// A decrypted, parsed inbound RTP packet.
     Rtp(DecryptedRtp),
     /// A decrypted inbound RTCP compound packet (RFC 3550 §6.1), parsed by
-    /// the workspace's own `rtcp-packet` crate.
-    Rtcp(rtcp_packet::CompoundPacket),
+    /// the workspace's own `rtp_packet::rtcp` crate.
+    Rtcp(rtp_packet::rtcp::CompoundPacket),
     /// An inbound SRTCP packet that decrypted and **authenticated** under
     /// the negotiated key (RFC 3711 §3.4), but whose plaintext is not a
-    /// well-formed RFC 3550 §6 compound `rtcp-packet` can parse at all —
+    /// well-formed RFC 3550 §6 compound `rtp_packet::rtcp` can parse at all —
     /// e.g. a bad version field, a truncated packet, or a leading
     /// SDES/BYE/APP not preceded by a report. It is a genuine packet from
     /// the authenticated peer (so, e.g., proof the peer is still live), not
@@ -454,9 +454,9 @@ pub enum MediaEvent {
     /// (NACK, PLI, REMB, transport-cc) or RFC 3611 XR packets a browser
     /// receiver sends continuously — including as the *only* packet in a
     /// Reduced-Size RTCP datagram (RFC 5506 §4.1) — decode fine as
-    /// [`MediaEvent::Rtcp`] via `rtcp_packet::RtcpPacket::Unknown`, so an SR/RR
+    /// [`MediaEvent::Rtcp`] via `rtp_packet::rtcp::RtcpPacket::Unknown`, so an SR/RR
     /// sharing that datagram is no longer discarded along with them (#1071).
-    RtcpUnsupported(rtcp_packet::Error),
+    RtcpUnsupported(rtp_packet::rtcp::Error),
     /// An inbound datagram in the RFC 5764 §5.1.2 SRTP/SRTCP band
     /// (first byte 128..=191) failed authentication under both the
     /// current and (if any) retired read key.
@@ -1409,7 +1409,10 @@ impl MediaTransport {
     /// Returns [`Error::Media`] if the DTLS handshake has not completed yet
     /// (no write context exists) or if `rtc-srtp` itself rejects the
     /// packet.
-    pub fn encrypt_rtcp(&mut self, packet: &rtcp_packet::CompoundPacket) -> Result<Vec<u8>, Error> {
+    pub fn encrypt_rtcp(
+        &mut self,
+        packet: &rtp_packet::rtcp::CompoundPacket,
+    ) -> Result<Vec<u8>, Error> {
         let ctx = self.srtp_write.as_mut().ok_or_else(|| {
             Error::Media("no srtp write context yet: dtls handshake has not completed".to_string())
         })?;
@@ -1565,12 +1568,12 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
         let plaintext = ctx
             .decrypt_rtcp(data)
             .map_err(|e| Error::Media(format!("srtcp decrypt: {e}")))?;
-        // Authentication already passed above. `rtcp_packet::CompoundPacket`
+        // Authentication already passed above. `rtp_packet::rtcp::CompoundPacket`
         // now decodes RFC 4585/3611 feedback (and RFC 5506 Reduced-Size RTCP)
         // via `RtcpPacket::Unknown`, so a parse failure from here on means the
         // plaintext genuinely isn't a well-formed RTCP compound packet, not a
         // forged or corrupt datagram — see [`MediaEvent::RtcpUnsupported`].
-        Ok(match rtcp_packet::CompoundPacket::parse(&plaintext) {
+        Ok(match rtp_packet::rtcp::CompoundPacket::parse(&plaintext) {
             Ok(compound) => MediaEvent::Rtcp(compound),
             Err(e) => MediaEvent::RtcpUnsupported(e),
         })
@@ -2214,7 +2217,7 @@ mod tests {
             payload: &[0xAAu8; 8],
         };
         assert!(matches!(mt.encrypt_rtp(&packet), Err(Error::Media(_))));
-        let empty = rtcp_packet::CompoundPacket {
+        let empty = rtp_packet::rtcp::CompoundPacket {
             packets: Vec::new(),
         };
         assert!(matches!(mt.encrypt_rtcp(&empty), Err(Error::Media(_))));
@@ -2223,11 +2226,18 @@ mod tests {
     #[test]
     fn encrypt_rtcp_reproduces_appendix_b3_behaviour() {
         let mut mt = transport_with_appendix_b3_write_context();
-        let compound =
-            rtcp_packet::CompoundPacket::new(vec![rtcp_packet::RtcpPacket::SenderReport(
-                rtcp_packet::SenderReport::new(0, 0, 0, 0, 0, 0, Vec::new()),
-            )])
-            .unwrap();
+        let compound = rtp_packet::rtcp::CompoundPacket::new(vec![
+            rtp_packet::rtcp::RtcpPacket::SenderReport(rtp_packet::rtcp::SenderReport::new(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Vec::new(),
+            )),
+        ])
+        .unwrap();
 
         let protected = mt.encrypt_rtcp(&compound).expect("encrypt_rtcp");
 
@@ -2389,11 +2399,18 @@ mod tests {
             "RTP encryption must not touch the RTCP counter"
         );
 
-        let compound =
-            rtcp_packet::CompoundPacket::new(vec![rtcp_packet::RtcpPacket::SenderReport(
-                rtcp_packet::SenderReport::new(0, 0, 0, 0, 0, 0, Vec::new()),
-            )])
-            .unwrap();
+        let compound = rtp_packet::rtcp::CompoundPacket::new(vec![
+            rtp_packet::rtcp::RtcpPacket::SenderReport(rtp_packet::rtcp::SenderReport::new(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Vec::new(),
+            )),
+        ])
+        .unwrap();
         mt.encrypt_rtcp(&compound).expect("encrypt_rtcp");
         assert_eq!(mt.write_rtcp_count, 1);
         assert_eq!(
@@ -2459,7 +2476,7 @@ mod tests {
 
     /// r14-RTCP-C1 (#1071): a browser WHEP viewer's SRTCP is mostly RFC 4585
     /// feedback (here a bare PSFB PLI, RFC 4585 §6.3.1, PT=206 FMT=1, sent
-    /// alone as Reduced-Size RTCP per RFC 5506 §4.1) — `rtcp-packet` now
+    /// alone as Reduced-Size RTCP per RFC 5506 §4.1) — `rtp_packet::rtcp` now
     /// decodes it as `RtcpPacket::Unknown` inside `MediaEvent::Rtcp`, not
     /// `RtcpUnsupported`, since `CompoundPacket` no longer requires an
     /// unrecognized leading PT to be SR/RR. Still surfaces as an event, not
@@ -2495,7 +2512,7 @@ mod tests {
             [MediaEvent::Rtcp(compound)] => {
                 assert_eq!(compound.packets.len(), 1);
                 match &compound.packets[0] {
-                    rtcp_packet::RtcpPacket::Unknown {
+                    rtp_packet::rtcp::RtcpPacket::Unknown {
                         packet_type,
                         payload,
                         ..
@@ -2545,11 +2562,11 @@ mod tests {
         };
         assert_eq!(compound.packets.len(), 2);
         match &compound.packets[0] {
-            rtcp_packet::RtcpPacket::SenderReport(sr) => assert_eq!(sr.ssrc, 0x1122_3344),
+            rtp_packet::rtcp::RtcpPacket::SenderReport(sr) => assert_eq!(sr.ssrc, 0x1122_3344),
             other => panic!("expected the SR to survive, got {other:?}"),
         }
         match &compound.packets[1] {
-            rtcp_packet::RtcpPacket::Unknown { packet_type, .. } => {
+            rtp_packet::rtcp::RtcpPacket::Unknown { packet_type, .. } => {
                 assert_eq!(*packet_type, 206);
             }
             other => panic!("expected the PSFB as Unknown, got {other:?}"),

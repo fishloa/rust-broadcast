@@ -1,0 +1,1936 @@
+//! RTCP control packets — RFC 3550 §6.
+//!
+//! Typed, symmetric [`Parse`]/[`Serialize`] for every RTCP packet type: SR
+//! (§6.4.1, PT 200), RR (§6.4.2, PT 201), SDES (§6.5, PT 202), BYE (§6.6, PT
+//! 203), APP (§6.7, PT 204), any other PT via `RtcpPacket::Unknown` (RFC 5506
+//! §4.1 Reduced-Size RTCP), the [`RtcpPacket`] dispatch enum, and
+//! [`CompoundPacket`] (§6.1: a `Vec` of packets that must start with SR/RR,
+//! or an unrecognized-PT packet per RFC 5506).
+//!
+//! This crate implements exactly the wire structures described in the
+//! curated spec transcription at `private/specs-verified/rtp/rtcp-packet/rtcp.md` (fetched
+//! directly from [RFC 3550](https://www.rfc-editor.org/rfc/rfc3550.txt),
+//! §6) — cite that file, not this doc comment, as the field-semantics
+//! oracle. It documents two known decode-completeness gaps (SR/RR
+//! profile-specific extensions, SDES PRIV sub-structure) that are not typed
+//! by this crate.
+//!
+//! RTCP carries **no media** — this is a standalone wire codec for the RTP
+//! control channel, not a hub `Package`/`Unpackage` spoke.
+//!
+//! # Wire formats
+//!
+//! - **Common header** (§6.1): `V(2)=2 | P(1) | RC/SC(5) | PT(8) | length(16)`,
+//!   where `length` is the packet size in 32-bit words **minus one**.
+//! - **SR** — Sender Report (§6.4.1, PT 200): 20-byte sender info
+//!   (SSRC, NTP MSW/LSW, RTP timestamp, packet count, octet count) then
+//!   `RC` × [`ReportBlock`].
+//! - **RR** — Receiver Report (§6.4.2, PT 201): reporter SSRC then
+//!   `RC` × [`ReportBlock`] (no sender info).
+//! - **[`ReportBlock`]** (§6.4.1, 24 bytes): `SSRC_n`, fraction lost,
+//!   cumulative lost (24-bit **signed**), extended highest sequence,
+//!   interarrival jitter, LSR, DLSR.
+//! - **SDES** — Source Description (§6.5, PT 202): `SC` chunks of
+//!   `SSRC/CSRC` + a list of `[type(8), length(8), text]` items, terminated by
+//!   a type-0 item and padded to a 32-bit boundary.
+//! - **BYE** (§6.6, PT 203): `SC` × `SSRC/CSRC` + an optional reason string.
+//! - **APP** (§6.7, PT 204): subtype (in the RC field), SSRC, 4-byte ASCII
+//!   name, application-dependent data (32-bit aligned).
+//! - **[`CompoundPacket`]** (§6.1): a sequence of RTCP packets that **must**
+//!   begin with an SR or RR, or (RFC 5506 §4.1) an unrecognized-PT packet.
+//! - **`RtcpPacket::Unknown`**: any PT outside 200-204 (e.g. RTPFB=205/
+//!   PSFB=206 [RFC 4585], XR=207 [RFC 3611]) — common-header framing only,
+//!   body opaque, round-trips byte-identical.
+//!
+//! # Reserved-bit / version policy
+//!
+//! The version field is validated (must be 2). For the typed packets (SR/RR/
+//! SDES/BYE/APP) the padding (`P`) bit is parsed, the padding is validated and
+//! stripped (RFC 3550 §6.4.1), and this codec re-emits them unpadded (`P=0`).
+//! `RtcpPacket::Unknown` is opaque: its `P` bit and trailing padding octets are
+//! preserved verbatim, so it round-trips byte-identical. `no_std` + `alloc`.
+
+use alloc::string::String;
+use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
+
+use broadcast_common::{Parse, Serialize};
+
+use super::error::{Error, PaddingCountError, Result};
+
+// ---------------------------------------------------------------------------
+// Named constants (no magic numbers — RFC 3550 §6)
+// ---------------------------------------------------------------------------
+
+/// RTCP protocol version — always 2 (RFC 3550 §6.4.1).
+const RTCP_VERSION: u8 = 2;
+/// Byte 0 of the common header with `V=2 P=0` and a zero count field.
+const RTCP_BYTE0_V2: u8 = RTCP_VERSION << 6;
+/// Common-header length in bytes (`V/P/count | PT | length(16)`).
+const RTCP_HEADER_LEN: usize = 4;
+/// Padding-bit mask within byte 0 (`P` — RFC 3550 §6.4.1).
+const RTCP_PADDING_MASK: u8 = 0x20;
+/// Report-count / source-count mask within byte 0 (low 5 bits).
+const RTCP_COUNT_MASK: u8 = 0x1F;
+/// One 32-bit word, in bytes — the unit of the header `length` field.
+const WORD_LEN: usize = 4;
+
+/// Packet type: Sender Report (RFC 3550 §6.4.1).
+pub const PT_SENDER_REPORT: u8 = 200;
+/// Packet type: Receiver Report (RFC 3550 §6.4.2).
+pub const PT_RECEIVER_REPORT: u8 = 201;
+/// Packet type: Source Description (RFC 3550 §6.5).
+pub const PT_SOURCE_DESCRIPTION: u8 = 202;
+/// Packet type: Goodbye (RFC 3550 §6.6).
+pub const PT_BYE: u8 = 203;
+/// Packet type: Application-defined (RFC 3550 §6.7).
+pub const PT_APP: u8 = 204;
+
+/// Length of a single [`ReportBlock`] on the wire (RFC 3550 §6.4.1).
+pub const REPORT_BLOCK_LEN: usize = 24;
+/// Length of the SR sender-info block (RFC 3550 §6.4.1), excluding the SSRC.
+const SR_SENDER_INFO_LEN: usize = 20;
+/// Length of the APP `name` field — 4 ASCII characters (RFC 3550 §6.7).
+pub const APP_NAME_LEN: usize = 4;
+/// Maximum count encodable in the 5-bit `RC`/`SC` field.
+const MAX_COUNT: usize = RTCP_COUNT_MASK as usize;
+
+// ---------------------------------------------------------------------------
+// Big-endian read helpers (bounds-checked)
+// ---------------------------------------------------------------------------
+
+/// Read a big-endian `u32` at `off`, or `BufferTooShort`.
+fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32> {
+    bytes
+        .get(off..off + 4)
+        .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: off + 4,
+                have: bytes.len(),
+                what,
+            },
+        ))
+}
+
+/// The padding count (RFC 3550 §6.4.1) of a packet whose `P` bit is set:
+/// "the last octet of the padding is a count of how many padding octets
+/// should be ignored, including itself." `body` is everything after the
+/// 4-byte common header; the count must be nonzero and no larger than it.
+pub fn padding_count(body: &[u8]) -> core::result::Result<usize, PaddingCountError> {
+    let count = body.last().map_or(0, |&c| usize::from(c));
+    if count == 0 || count > body.len() {
+        return Err(PaddingCountError {
+            count,
+            body: body.len(),
+        });
+    }
+    Ok(count)
+}
+
+/// Validates and strips the trailing `P` (padding) octets from a packet
+/// body, per RFC 3550 §6.4.1. Every per-type `parse` calls this on its body
+/// slice before any type-specific parsing — without it, the `P` bit was
+/// parsed but never acted on, so a padded BYE's first padding byte was
+/// misread as the reason-length octet, and a padded APP's padding bytes
+/// became part of `data` (audit run-09 RTCP-W1).
+///
+/// Returns `Ok(body)` unchanged when `padding` is `false`.
+fn strip_padding<'a>(body: &'a [u8], padding: bool, what: &'static str) -> Result<&'a [u8]> {
+    if !padding {
+        return Ok(body);
+    }
+    if body.is_empty() {
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what,
+            },
+        ));
+    }
+    let count = padding_count(body).map_err(|e| {
+        Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "rtcp_padding_count",
+            value: e.count as u64,
+            reason: "must be nonzero and no larger than the packet body",
+        })
+    })?;
+    Ok(&body[..body.len() - count])
+}
+
+// ---------------------------------------------------------------------------
+// RtcpPacketType — the PT byte, typed
+// ---------------------------------------------------------------------------
+
+/// The RTCP packet type carried in the common header `PT` byte (RFC 3550 §6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum RtcpPacketType {
+    /// Sender Report (PT 200).
+    SenderReport,
+    /// Receiver Report (PT 201).
+    ReceiverReport,
+    /// Source Description (PT 202).
+    SourceDescription,
+    /// Goodbye (PT 203).
+    Bye,
+    /// Application-defined (PT 204).
+    App,
+    /// A packet type outside the RFC 3550 §6 core set.
+    Unknown(u8),
+}
+
+impl RtcpPacketType {
+    /// Decode the wire `PT` byte.
+    pub fn from_pt(pt: u8) -> Self {
+        match pt {
+            PT_SENDER_REPORT => RtcpPacketType::SenderReport,
+            PT_RECEIVER_REPORT => RtcpPacketType::ReceiverReport,
+            PT_SOURCE_DESCRIPTION => RtcpPacketType::SourceDescription,
+            PT_BYE => RtcpPacketType::Bye,
+            PT_APP => RtcpPacketType::App,
+            other => RtcpPacketType::Unknown(other),
+        }
+    }
+
+    /// The wire `PT` byte for this packet type.
+    pub fn pt(&self) -> u8 {
+        match self {
+            RtcpPacketType::SenderReport => PT_SENDER_REPORT,
+            RtcpPacketType::ReceiverReport => PT_RECEIVER_REPORT,
+            RtcpPacketType::SourceDescription => PT_SOURCE_DESCRIPTION,
+            RtcpPacketType::Bye => PT_BYE,
+            RtcpPacketType::App => PT_APP,
+            RtcpPacketType::Unknown(pt) => *pt,
+        }
+    }
+
+    /// Spec token for this packet type.
+    pub fn name(&self) -> &'static str {
+        match self {
+            RtcpPacketType::SenderReport => "SR",
+            RtcpPacketType::ReceiverReport => "RR",
+            RtcpPacketType::SourceDescription => "SDES",
+            RtcpPacketType::Bye => "BYE",
+            RtcpPacketType::App => "APP",
+            RtcpPacketType::Unknown(_) => "reserved",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(RtcpPacketType, Unknown);
+
+// ---------------------------------------------------------------------------
+// Common header (RFC 3550 §6.1 / §6.4.1)
+// ---------------------------------------------------------------------------
+
+/// The 4-byte RTCP common header shared by every packet type (RFC 3550 §6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct CommonHeader {
+    /// The `P` (padding) bit.
+    pub padding: bool,
+    /// The `RC`/`SC` 5-bit count (report count for SR/RR, source count for
+    /// SDES/BYE, subtype for APP).
+    pub count: u8,
+    /// The `PT` (packet type) byte.
+    pub packet_type: u8,
+    /// The `length` field: packet size in 32-bit words **minus one**.
+    pub length: u16,
+}
+
+impl CommonHeader {
+    /// Build a header from decoded fields (`V=2`, `P=0`).
+    fn new(count: u8, packet_type: u8, length_words_minus_one: u16) -> Self {
+        Self {
+            padding: false,
+            count: count & RTCP_COUNT_MASK,
+            packet_type,
+            length: length_words_minus_one,
+        }
+    }
+
+    /// Parse the common header, validating the version field.
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        need_in(bytes, RTCP_HEADER_LEN, "RTCP common header")?;
+        let version = bytes[0] >> 6;
+        if version != RTCP_VERSION {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_version",
+                value: version as u64,
+                reason: "must be 2",
+            }));
+        }
+        Ok(Self {
+            padding: bytes[0] & RTCP_PADDING_MASK != 0,
+            count: bytes[0] & RTCP_COUNT_MASK,
+            packet_type: bytes[1],
+            length: u16::from_be_bytes([bytes[2], bytes[3]]),
+        })
+    }
+
+    /// The total on-the-wire byte length of the packet this header describes:
+    /// `(length + 1) * 4`.
+    fn total_len(&self) -> usize {
+        (self.length as usize + 1) * WORD_LEN
+    }
+
+    /// Write the 4-byte header (`V=2`, given `P`/count/PT/length).
+    fn write(&self, buf: &mut [u8]) {
+        buf[0] = RTCP_BYTE0_V2
+            | (if self.padding { RTCP_PADDING_MASK } else { 0 })
+            | (self.count & RTCP_COUNT_MASK);
+        buf[1] = self.packet_type;
+        buf[2..4].copy_from_slice(&self.length.to_be_bytes());
+    }
+}
+
+/// Compute the header `length` field (32-bit words − 1) for a body whose total
+/// serialized length (header included) is `total_len` bytes. `total_len` is a
+/// multiple of 4 for every RTCP packet this codec emits.
+///
+/// Returns [`Error::InvalidValue`] if the packet is too large for the 16-bit
+/// `length` field to represent (more than `0x1_0000` 32-bit words, i.e. 256 KiB).
+fn length_words_minus_one(total_len: usize) -> Result<u16> {
+    let words = (total_len / WORD_LEN).saturating_sub(1);
+    u16::try_from(words).map_err(|_| {
+        Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "rtcp_length",
+            value: total_len as u64,
+            reason: "packet exceeds the 16-bit RTCP length field (max 262140 bytes)",
+        })
+    })
+}
+
+// ---------------------------------------------------------------------------
+// ReportBlock (RFC 3550 §6.4.1)
+// ---------------------------------------------------------------------------
+
+/// A reception report block (RFC 3550 §6.4.1, 24 bytes). Carried by both SR and
+/// RR, one per reported source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct ReportBlock {
+    /// SSRC of the source this block reports on.
+    pub ssrc: u32,
+    /// Fraction of packets lost since the previous report (8.8 fixed-point num).
+    pub fraction_lost: u8,
+    /// Cumulative number of packets lost — a 24-bit **signed** value.
+    pub cumulative_lost: i32,
+    /// Extended highest sequence number received.
+    pub ext_highest_seq: u32,
+    /// Interarrival jitter estimate.
+    pub jitter: u32,
+    /// Last SR timestamp (middle 32 bits of the sender's NTP time), or 0.
+    pub lsr: u32,
+    /// Delay since last SR, in units of 1/65536 s, or 0.
+    pub dlsr: u32,
+}
+
+impl ReportBlock {
+    /// Sign-extend a 24-bit `cumulative_lost` field to `i32`.
+    fn decode_cumulative_lost(raw: u32) -> i32 {
+        // raw is a 24-bit two's-complement value; extend the sign bit (bit 23).
+        const SIGN_BIT: u32 = 1 << 23;
+        if raw & SIGN_BIT != 0 {
+            (raw | 0xFF00_0000) as i32
+        } else {
+            raw as i32
+        }
+    }
+
+    /// Encode a signed `cumulative_lost` back to its 24-bit field.
+    ///
+    /// The field is a 24-bit two's-complement value (`-0x80_0000..=0x7F_FFFF`);
+    /// anything outside that range is an error rather than silently wrapped
+    /// into a different loss count (#1129).
+    fn encode_cumulative_lost(&self) -> Result<u32> {
+        const MIN: i32 = -0x80_0000;
+        const MAX: i32 = 0x7F_FFFF;
+        if !(MIN..=MAX).contains(&self.cumulative_lost) {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "cumulative_lost",
+                value: i64::from(self.cumulative_lost) as u64,
+                reason: "outside the 24-bit signed range -8388608..=8388607",
+            }));
+        }
+        Ok((self.cumulative_lost as u32) & 0x00FF_FFFF)
+    }
+}
+
+impl<'a> Parse<'a> for ReportBlock {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(bytes, REPORT_BLOCK_LEN, "RTCP report block")?;
+        let ssrc = be_u32(bytes, 0, "report block ssrc")?;
+        let fraction_lost = bytes[4];
+        let cumulative_raw = u32::from_be_bytes([0, bytes[5], bytes[6], bytes[7]]);
+        Ok(ReportBlock {
+            ssrc,
+            fraction_lost,
+            cumulative_lost: ReportBlock::decode_cumulative_lost(cumulative_raw),
+            ext_highest_seq: be_u32(bytes, 8, "report block ext seq")?,
+            jitter: be_u32(bytes, 12, "report block jitter")?,
+            lsr: be_u32(bytes, 16, "report block lsr")?,
+            dlsr: be_u32(bytes, 20, "report block dlsr")?,
+        })
+    }
+}
+
+impl Serialize for ReportBlock {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        REPORT_BLOCK_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        need_out(buf, REPORT_BLOCK_LEN)?;
+        buf[0..4].copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[4] = self.fraction_lost;
+        let cum = self.encode_cumulative_lost()?.to_be_bytes();
+        buf[5..8].copy_from_slice(&cum[1..4]);
+        buf[8..12].copy_from_slice(&self.ext_highest_seq.to_be_bytes());
+        buf[12..16].copy_from_slice(&self.jitter.to_be_bytes());
+        buf[16..20].copy_from_slice(&self.lsr.to_be_bytes());
+        buf[20..24].copy_from_slice(&self.dlsr.to_be_bytes());
+        Ok(REPORT_BLOCK_LEN)
+    }
+}
+
+/// Parse `count` back-to-back report blocks from `bytes`.
+fn parse_report_blocks(bytes: &[u8], count: usize) -> Result<Vec<ReportBlock>> {
+    let mut blocks = Vec::with_capacity(count);
+    let mut off = 0;
+    for _ in 0..count {
+        let end = off + REPORT_BLOCK_LEN;
+        need_in(bytes, end, "RTCP report blocks")?;
+        blocks.push(ReportBlock::parse(&bytes[off..end])?);
+        off = end;
+    }
+    Ok(blocks)
+}
+
+/// Validate that profile-specific extension bytes are a whole number of
+/// 32-bit words (RFC 3550 §6.4.1/§6.4.2: the packet length is in words).
+fn check_profile_extensions(ext: &[u8]) -> Result<()> {
+    if !ext.len().is_multiple_of(WORD_LEN) {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "profile_extensions_len",
+            value: ext.len() as u64,
+            reason: "must be a multiple of 4 bytes (32-bit words)",
+        }));
+    }
+    Ok(())
+}
+
+/// Validate a report-block list fits the 5-bit `RC` count field.
+fn check_report_count(blocks: &[ReportBlock]) -> Result<u8> {
+    if blocks.len() > MAX_COUNT {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "rtcp_report_count",
+            value: blocks.len() as u64,
+            reason: "exceeds 5-bit RC field",
+        }));
+    }
+    Ok(blocks.len() as u8)
+}
+
+// ---------------------------------------------------------------------------
+// SenderReport (RFC 3550 §6.4.1, PT 200)
+// ---------------------------------------------------------------------------
+
+/// RTCP Sender Report (RFC 3550 §6.4.1, PT 200).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct SenderReport {
+    /// SSRC of the sender originating this report.
+    pub ssrc: u32,
+    /// NTP timestamp, most significant word (integer seconds).
+    pub ntp_msw: u32,
+    /// NTP timestamp, least significant word (fractional seconds).
+    pub ntp_lsw: u32,
+    /// RTP timestamp corresponding to the NTP wall-clock time.
+    pub rtp_timestamp: u32,
+    /// Sender's cumulative packet count.
+    pub packet_count: u32,
+    /// Sender's cumulative octet count.
+    pub octet_count: u32,
+    /// Reception report blocks (`RC` of them).
+    pub report_blocks: Vec<ReportBlock>,
+    /// Profile-specific extensions (RFC 3550 §6.4.1): the bytes after the
+    /// report blocks, retained verbatim. Must be a multiple of 4 bytes.
+    pub profile_extensions: Vec<u8>,
+}
+
+impl SenderReport {
+    /// Build an SR with no profile-specific extensions.
+    pub fn new(
+        ssrc: u32,
+        ntp_msw: u32,
+        ntp_lsw: u32,
+        rtp_timestamp: u32,
+        packet_count: u32,
+        octet_count: u32,
+        report_blocks: Vec<ReportBlock>,
+    ) -> Self {
+        SenderReport {
+            ssrc,
+            ntp_msw,
+            ntp_lsw,
+            rtp_timestamp,
+            packet_count,
+            octet_count,
+            report_blocks,
+            profile_extensions: Vec::new(),
+        }
+    }
+
+    /// Set the profile-specific extension bytes (RFC 3550 §6.4.1).
+    #[must_use]
+    pub fn with_profile_extensions(mut self, ext: Vec<u8>) -> Self {
+        self.profile_extensions = ext;
+        self
+    }
+}
+
+impl<'a> Parse<'a> for SenderReport {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let hdr = CommonHeader::parse(bytes)?;
+        if hdr.packet_type != PT_SENDER_REPORT {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_pt",
+                value: hdr.packet_type as u64,
+                reason: "expected SR (200)",
+            }));
+        }
+        let total = hdr.total_len();
+        need_in(bytes, total, "RTCP SR")?;
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP SR padding",
+        )?;
+        need_in(body, WORD_LEN + SR_SENDER_INFO_LEN, "RTCP SR sender info")?;
+        let ssrc = be_u32(body, 0, "SR ssrc")?;
+        let ntp_msw = be_u32(body, 4, "SR ntp msw")?;
+        let ntp_lsw = be_u32(body, 8, "SR ntp lsw")?;
+        let rtp_timestamp = be_u32(body, 12, "SR rtp ts")?;
+        let packet_count = be_u32(body, 16, "SR packet count")?;
+        let octet_count = be_u32(body, 20, "SR octet count")?;
+        let blocks_off = WORD_LEN + SR_SENDER_INFO_LEN;
+        let report_blocks = parse_report_blocks(&body[blocks_off..], hdr.count as usize)?;
+        let ext_off = blocks_off + report_blocks.len() * REPORT_BLOCK_LEN;
+        let profile_extensions = body[ext_off..].to_vec();
+        check_profile_extensions(&profile_extensions)?;
+        Ok(SenderReport {
+            ssrc,
+            ntp_msw,
+            ntp_lsw,
+            rtp_timestamp,
+            packet_count,
+            octet_count,
+            report_blocks,
+            profile_extensions,
+        })
+    }
+}
+
+impl Serialize for SenderReport {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        RTCP_HEADER_LEN
+            + WORD_LEN
+            + SR_SENDER_INFO_LEN
+            + self.report_blocks.len() * REPORT_BLOCK_LEN
+            + self.profile_extensions.len()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        need_out(buf, len)?;
+        let rc = check_report_count(&self.report_blocks)?;
+        check_profile_extensions(&self.profile_extensions)?;
+        let hdr = CommonHeader::new(rc, PT_SENDER_REPORT, length_words_minus_one(len)?);
+        hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
+        let mut off = RTCP_HEADER_LEN;
+        buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[off + 4..off + 8].copy_from_slice(&self.ntp_msw.to_be_bytes());
+        buf[off + 8..off + 12].copy_from_slice(&self.ntp_lsw.to_be_bytes());
+        buf[off + 12..off + 16].copy_from_slice(&self.rtp_timestamp.to_be_bytes());
+        buf[off + 16..off + 20].copy_from_slice(&self.packet_count.to_be_bytes());
+        buf[off + 20..off + 24].copy_from_slice(&self.octet_count.to_be_bytes());
+        off += WORD_LEN + SR_SENDER_INFO_LEN;
+        for block in &self.report_blocks {
+            block.serialize_into(&mut buf[off..off + REPORT_BLOCK_LEN])?;
+            off += REPORT_BLOCK_LEN;
+        }
+        buf[off..off + self.profile_extensions.len()].copy_from_slice(&self.profile_extensions);
+        Ok(len)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReceiverReport (RFC 3550 §6.4.2, PT 201)
+// ---------------------------------------------------------------------------
+
+/// RTCP Receiver Report (RFC 3550 §6.4.2, PT 201).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ReceiverReport {
+    /// SSRC of the packet sender originating this report.
+    pub ssrc: u32,
+    /// Reception report blocks (`RC` of them).
+    pub report_blocks: Vec<ReportBlock>,
+    /// Profile-specific extensions (RFC 3550 §6.4.2): the bytes after the
+    /// report blocks, retained verbatim. Must be a multiple of 4 bytes.
+    pub profile_extensions: Vec<u8>,
+}
+
+impl ReceiverReport {
+    /// Build an RR with no profile-specific extensions.
+    pub fn new(ssrc: u32, report_blocks: Vec<ReportBlock>) -> Self {
+        ReceiverReport {
+            ssrc,
+            report_blocks,
+            profile_extensions: Vec::new(),
+        }
+    }
+
+    /// Set the profile-specific extension bytes (RFC 3550 §6.4.2).
+    #[must_use]
+    pub fn with_profile_extensions(mut self, ext: Vec<u8>) -> Self {
+        self.profile_extensions = ext;
+        self
+    }
+}
+
+impl<'a> Parse<'a> for ReceiverReport {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let hdr = CommonHeader::parse(bytes)?;
+        if hdr.packet_type != PT_RECEIVER_REPORT {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_pt",
+                value: hdr.packet_type as u64,
+                reason: "expected RR (201)",
+            }));
+        }
+        let total = hdr.total_len();
+        need_in(bytes, total, "RTCP RR")?;
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP RR padding",
+        )?;
+        let ssrc = be_u32(body, 0, "RR ssrc")?;
+        let report_blocks = parse_report_blocks(&body[WORD_LEN..], hdr.count as usize)?;
+        let ext_off = WORD_LEN + report_blocks.len() * REPORT_BLOCK_LEN;
+        let profile_extensions = body[ext_off..].to_vec();
+        check_profile_extensions(&profile_extensions)?;
+        Ok(ReceiverReport {
+            ssrc,
+            report_blocks,
+            profile_extensions,
+        })
+    }
+}
+
+impl Serialize for ReceiverReport {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        RTCP_HEADER_LEN
+            + WORD_LEN
+            + self.report_blocks.len() * REPORT_BLOCK_LEN
+            + self.profile_extensions.len()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        need_out(buf, len)?;
+        let rc = check_report_count(&self.report_blocks)?;
+        check_profile_extensions(&self.profile_extensions)?;
+        let hdr = CommonHeader::new(rc, PT_RECEIVER_REPORT, length_words_minus_one(len)?);
+        hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
+        let mut off = RTCP_HEADER_LEN;
+        buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
+        off += WORD_LEN;
+        for block in &self.report_blocks {
+            block.serialize_into(&mut buf[off..off + REPORT_BLOCK_LEN])?;
+            off += REPORT_BLOCK_LEN;
+        }
+        buf[off..off + self.profile_extensions.len()].copy_from_slice(&self.profile_extensions);
+        Ok(len)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SourceDescription (RFC 3550 §6.5, PT 202)
+// ---------------------------------------------------------------------------
+
+/// SDES item type (RFC 3550 §6.5). Byte-valued; type 0 is the item terminator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum SdesItemType {
+    /// Canonical end-point identifier (CNAME = 1).
+    CName,
+    /// User name (NAME = 2).
+    Name,
+    /// Electronic mail address (EMAIL = 3).
+    Email,
+    /// Phone number (PHONE = 4).
+    Phone,
+    /// Geographic location (LOC = 5).
+    Loc,
+    /// Application / tool name+version (TOOL = 6).
+    Tool,
+    /// Notice / status (NOTE = 7).
+    Note,
+    /// Private extension (PRIV = 8).
+    Priv,
+    /// A type outside the RFC 3550 §6.5 set (never the 0 terminator).
+    Unknown(u8),
+}
+
+/// SDES item type value: CNAME (RFC 3550 §6.5.1).
+pub const SDES_CNAME: u8 = 1;
+/// SDES item type value: NAME (RFC 3550 §6.5.2).
+pub const SDES_NAME: u8 = 2;
+/// SDES item type value: EMAIL (RFC 3550 §6.5.3).
+pub const SDES_EMAIL: u8 = 3;
+/// SDES item type value: PHONE (RFC 3550 §6.5.4).
+pub const SDES_PHONE: u8 = 4;
+/// SDES item type value: LOC (RFC 3550 §6.5.5).
+pub const SDES_LOC: u8 = 5;
+/// SDES item type value: TOOL (RFC 3550 §6.5.6).
+pub const SDES_TOOL: u8 = 6;
+/// SDES item type value: NOTE (RFC 3550 §6.5.7).
+pub const SDES_NOTE: u8 = 7;
+/// SDES item type value: PRIV (RFC 3550 §6.5.8).
+pub const SDES_PRIV: u8 = 8;
+/// SDES chunk item-list terminator (RFC 3550 §6.5).
+const SDES_TERMINATOR: u8 = 0;
+
+impl SdesItemType {
+    /// Decode the wire item-type byte.
+    pub fn from_type(t: u8) -> Self {
+        match t {
+            SDES_CNAME => SdesItemType::CName,
+            SDES_NAME => SdesItemType::Name,
+            SDES_EMAIL => SdesItemType::Email,
+            SDES_PHONE => SdesItemType::Phone,
+            SDES_LOC => SdesItemType::Loc,
+            SDES_TOOL => SdesItemType::Tool,
+            SDES_NOTE => SdesItemType::Note,
+            SDES_PRIV => SdesItemType::Priv,
+            other => SdesItemType::Unknown(other),
+        }
+    }
+
+    /// The wire item-type byte.
+    pub fn item_type(&self) -> u8 {
+        match self {
+            SdesItemType::CName => SDES_CNAME,
+            SdesItemType::Name => SDES_NAME,
+            SdesItemType::Email => SDES_EMAIL,
+            SdesItemType::Phone => SDES_PHONE,
+            SdesItemType::Loc => SDES_LOC,
+            SdesItemType::Tool => SDES_TOOL,
+            SdesItemType::Note => SDES_NOTE,
+            SdesItemType::Priv => SDES_PRIV,
+            SdesItemType::Unknown(t) => *t,
+        }
+    }
+
+    /// Spec token for this item type.
+    pub fn name(&self) -> &'static str {
+        match self {
+            SdesItemType::CName => "CNAME",
+            SdesItemType::Name => "NAME",
+            SdesItemType::Email => "EMAIL",
+            SdesItemType::Phone => "PHONE",
+            SdesItemType::Loc => "LOC",
+            SdesItemType::Tool => "TOOL",
+            SdesItemType::Note => "NOTE",
+            SdesItemType::Priv => "PRIV",
+            SdesItemType::Unknown(_) => "reserved",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(SdesItemType, Unknown);
+
+/// A single SDES item: a typed, length-prefixed text field (RFC 3550 §6.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SdesItem {
+    /// The item type.
+    pub item_type: SdesItemType,
+    /// The item text (up to 255 bytes; UTF-8 per §6.5).
+    pub text: String,
+}
+
+/// An SDES chunk: an SSRC/CSRC plus its list of items (RFC 3550 §6.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SdesChunk {
+    /// The SSRC or CSRC this chunk describes.
+    pub source: u32,
+    /// The chunk's items (in wire order), before the type-0 terminator.
+    pub items: Vec<SdesItem>,
+}
+
+impl SdesChunk {
+    /// On-the-wire byte length of this chunk **before** 32-bit padding:
+    /// 4 (source) + Σ(2 + text.len()) + 1 (terminator).
+    fn unpadded_len(&self) -> usize {
+        WORD_LEN + self.items.iter().map(|it| 2 + it.text.len()).sum::<usize>() + 1
+    }
+
+    /// Padded (32-bit-aligned) length of this chunk on the wire.
+    fn padded_len(&self) -> usize {
+        self.unpadded_len().div_ceil(WORD_LEN) * WORD_LEN
+    }
+}
+
+/// RTCP Source Description (RFC 3550 §6.5, PT 202).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SourceDescription {
+    /// The chunks (`SC` of them), one per described source.
+    pub chunks: Vec<SdesChunk>,
+}
+
+impl<'a> Parse<'a> for SourceDescription {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let hdr = CommonHeader::parse(bytes)?;
+        if hdr.packet_type != PT_SOURCE_DESCRIPTION {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_pt",
+                value: hdr.packet_type as u64,
+                reason: "expected SDES (202)",
+            }));
+        }
+        let total = hdr.total_len();
+        need_in(bytes, total, "RTCP SDES")?;
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP SDES padding",
+        )?;
+        let mut chunks = Vec::with_capacity(hdr.count as usize);
+        let mut off = 0;
+        for _ in 0..hdr.count {
+            let (chunk, consumed) = parse_sdes_chunk(&body[off..])?;
+            chunks.push(chunk);
+            off += consumed;
+        }
+        Ok(SourceDescription { chunks })
+    }
+}
+
+/// Parse one SDES chunk starting at `bytes[0]`; return it and bytes consumed
+/// (including the type-0 terminator and any 32-bit padding).
+fn parse_sdes_chunk(bytes: &[u8]) -> Result<(SdesChunk, usize)> {
+    let source = be_u32(bytes, 0, "SDES chunk source")?;
+    let mut off = WORD_LEN;
+    let mut items = Vec::new();
+    loop {
+        let t = *bytes.get(off).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: off + 1,
+                have: bytes.len(),
+                what: "SDES item type",
+            },
+        ))?;
+        off += 1;
+        if t == SDES_TERMINATOR {
+            break;
+        }
+        let len = *bytes.get(off).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: off + 1,
+                have: bytes.len(),
+                what: "SDES item length",
+            },
+        ))? as usize;
+        off += 1;
+        let end = off + len;
+        let text_bytes = bytes.get(off..end).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: end,
+                have: bytes.len(),
+                what: "SDES item text",
+            },
+        ))?;
+        let text = core::str::from_utf8(text_bytes)
+            .map(String::from)
+            .map_err(|_| {
+                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "sdes_item_text",
+                    value: 0,
+                    reason: "not valid UTF-8",
+                })
+            })?;
+        items.push(SdesItem {
+            item_type: SdesItemType::from_type(t),
+            text,
+        });
+        off = end;
+    }
+    // Advance past the type-0 terminator to the next 32-bit boundary.
+    let padded = off.div_ceil(WORD_LEN) * WORD_LEN;
+    need_in(bytes, padded, "SDES chunk padding")?;
+    Ok((SdesChunk { source, items }, padded))
+}
+
+impl Serialize for SourceDescription {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        RTCP_HEADER_LEN + self.chunks.iter().map(SdesChunk::padded_len).sum::<usize>()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        need_out(buf, len)?;
+        if self.chunks.len() > MAX_COUNT {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_source_count",
+                value: self.chunks.len() as u64,
+                reason: "exceeds 5-bit SC field",
+            }));
+        }
+        let hdr = CommonHeader::new(
+            self.chunks.len() as u8,
+            PT_SOURCE_DESCRIPTION,
+            length_words_minus_one(len)?,
+        );
+        hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
+        let mut off = RTCP_HEADER_LEN;
+        for chunk in &self.chunks {
+            let padded = chunk.padded_len();
+            // Zero the whole chunk region first so padding bytes are 0.
+            for b in buf[off..off + padded].iter_mut() {
+                *b = 0;
+            }
+            buf[off..off + 4].copy_from_slice(&chunk.source.to_be_bytes());
+            let mut io = off + WORD_LEN;
+            for item in &chunk.items {
+                if item.text.len() > u8::MAX as usize {
+                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                        field: "sdes_item_len",
+                        value: item.text.len() as u64,
+                        reason: "exceeds 8-bit SDES item length",
+                    }));
+                }
+                buf[io] = item.item_type.item_type();
+                buf[io + 1] = item.text.len() as u8;
+                buf[io + 2..io + 2 + item.text.len()].copy_from_slice(item.text.as_bytes());
+                io += 2 + item.text.len();
+            }
+            // buf[io] terminator (already zeroed); remaining padding zeroed.
+            off += padded;
+        }
+        Ok(len)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bye (RFC 3550 §6.6, PT 203)
+// ---------------------------------------------------------------------------
+
+/// RTCP Goodbye (RFC 3550 §6.6, PT 203).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Bye {
+    /// The SSRC/CSRC sources leaving (`SC` of them).
+    pub sources: Vec<u32>,
+    /// Optional textual reason for leaving.
+    pub reason: Option<String>,
+}
+
+impl Bye {
+    /// Unpadded byte length of the reason field (length octet + text), if any.
+    fn reason_unpadded_len(&self) -> usize {
+        match &self.reason {
+            Some(r) => 1 + r.len(),
+            None => 0,
+        }
+    }
+}
+
+impl<'a> Parse<'a> for Bye {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let hdr = CommonHeader::parse(bytes)?;
+        if hdr.packet_type != PT_BYE {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_pt",
+                value: hdr.packet_type as u64,
+                reason: "expected BYE (203)",
+            }));
+        }
+        let total = hdr.total_len();
+        need_in(bytes, total, "RTCP BYE")?;
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP BYE padding",
+        )?;
+        let sc = hdr.count as usize;
+        need_in(body, sc * WORD_LEN, "RTCP BYE sources")?;
+        let mut sources = Vec::with_capacity(sc);
+        let mut off = 0;
+        for _ in 0..sc {
+            sources.push(be_u32(body, off, "BYE source")?);
+            off += WORD_LEN;
+        }
+        // Optional reason: a length octet + text, if any bytes remain.
+        let reason = if off < body.len() {
+            let len = body[off] as usize;
+            off += 1;
+            let end = off + len;
+            need_in(body, end, "RTCP BYE reason text")?;
+            let text = core::str::from_utf8(&body[off..end])
+                .map(String::from)
+                .map_err(|_| {
+                    Error::InvalidValue(broadcast_common::error::InvalidValue {
+                        field: "bye_reason",
+                        value: 0,
+                        reason: "not valid UTF-8",
+                    })
+                })?;
+            Some(text)
+        } else {
+            None
+        };
+        Ok(Bye { sources, reason })
+    }
+}
+
+impl Serialize for Bye {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let raw = RTCP_HEADER_LEN + self.sources.len() * WORD_LEN + self.reason_unpadded_len();
+        raw.div_ceil(WORD_LEN) * WORD_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        need_out(buf, len)?;
+        if self.sources.len() > MAX_COUNT {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_source_count",
+                value: self.sources.len() as u64,
+                reason: "exceeds 5-bit SC field",
+            }));
+        }
+        if let Some(r) = &self.reason
+            && r.len() > u8::MAX as usize
+        {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "bye_reason_len",
+                value: r.len() as u64,
+                reason: "exceeds 8-bit reason length",
+            }));
+        }
+        // Zero the whole region so trailing padding bytes are 0.
+        for b in buf[..len].iter_mut() {
+            *b = 0;
+        }
+        let hdr = CommonHeader::new(
+            self.sources.len() as u8,
+            PT_BYE,
+            length_words_minus_one(len)?,
+        );
+        hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
+        let mut off = RTCP_HEADER_LEN;
+        for src in &self.sources {
+            buf[off..off + 4].copy_from_slice(&src.to_be_bytes());
+            off += WORD_LEN;
+        }
+        if let Some(r) = &self.reason {
+            buf[off] = r.len() as u8;
+            off += 1;
+            buf[off..off + r.len()].copy_from_slice(r.as_bytes());
+        }
+        Ok(len)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// App (RFC 3550 §6.7, PT 204)
+// ---------------------------------------------------------------------------
+
+/// RTCP Application-defined packet (RFC 3550 §6.7, PT 204).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct App {
+    /// Application subtype (carried in the header's `RC` field, 5 bits).
+    pub subtype: u8,
+    /// SSRC/CSRC of the source.
+    pub ssrc: u32,
+    /// The 4-byte ASCII application name.
+    pub name: [u8; APP_NAME_LEN],
+    /// Application-dependent data (must be a multiple of 4 bytes on the wire).
+    pub data: Vec<u8>,
+}
+
+impl<'a> Parse<'a> for App {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let hdr = CommonHeader::parse(bytes)?;
+        if hdr.packet_type != PT_APP {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_pt",
+                value: hdr.packet_type as u64,
+                reason: "expected APP (204)",
+            }));
+        }
+        let total = hdr.total_len();
+        need_in(bytes, total, "RTCP APP")?;
+        let body = strip_padding(
+            &bytes[RTCP_HEADER_LEN..total],
+            hdr.padding,
+            "RTCP APP padding",
+        )?;
+        need_in(body, WORD_LEN + APP_NAME_LEN, "RTCP APP ssrc+name")?;
+        let ssrc = be_u32(body, 0, "APP ssrc")?;
+        let mut name = [0u8; APP_NAME_LEN];
+        name.copy_from_slice(&body[WORD_LEN..WORD_LEN + APP_NAME_LEN]);
+        let data = body[WORD_LEN + APP_NAME_LEN..].to_vec();
+        Ok(App {
+            subtype: hdr.count,
+            ssrc,
+            name,
+            data,
+        })
+    }
+}
+
+impl Serialize for App {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        RTCP_HEADER_LEN + WORD_LEN + APP_NAME_LEN + self.data.len()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        need_out(buf, len)?;
+        if !len.is_multiple_of(WORD_LEN) {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "app_data_len",
+                value: self.data.len() as u64,
+                reason: "APP data must be 32-bit aligned",
+            }));
+        }
+        if self.subtype > RTCP_COUNT_MASK {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "app_subtype",
+                value: self.subtype as u64,
+                reason: "exceeds 5-bit subtype field",
+            }));
+        }
+        let hdr = CommonHeader::new(self.subtype, PT_APP, length_words_minus_one(len)?);
+        hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
+        let mut off = RTCP_HEADER_LEN;
+        buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
+        off += WORD_LEN;
+        buf[off..off + APP_NAME_LEN].copy_from_slice(&self.name);
+        off += APP_NAME_LEN;
+        buf[off..off + self.data.len()].copy_from_slice(&self.data);
+        Ok(len)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RtcpPacket — the dispatch enum
+// ---------------------------------------------------------------------------
+
+/// Any single RTCP packet, dispatched by its common-header `PT` byte
+/// (RFC 3550 §6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum RtcpPacket {
+    /// A Sender Report (PT 200).
+    SenderReport(SenderReport),
+    /// A Receiver Report (PT 201).
+    ReceiverReport(ReceiverReport),
+    /// A Source Description (PT 202).
+    SourceDescription(SourceDescription),
+    /// A Goodbye (PT 203).
+    Bye(Bye),
+    /// An Application-defined packet (PT 204).
+    App(App),
+    /// A packet type outside the RFC 3550 §6 core set (e.g. RTPFB=205/
+    /// PSFB=206 [RFC 4585], XR=207 [RFC 3611]): common header framing is
+    /// generic to every RTCP packet, so this parses instead of rejecting
+    /// the whole datagram, keeping the body opaque and round-tripping it
+    /// byte-identical (RFC 5506 §4.1: Reduced-Size RTCP "allows any RTCP
+    /// packet type"; #1071).
+    Unknown {
+        /// The `PT` byte.
+        packet_type: u8,
+        /// The header's 5-bit `RC`/`SC`/subtype field, meaning unknown here.
+        count: u8,
+        /// The header's `P` (padding) bit, preserved verbatim: when set,
+        /// the trailing padding octets are *kept inside* `payload` (this
+        /// variant never interprets the body), so re-serializing is
+        /// byte-identical to the input.
+        padding: bool,
+        /// The body after the common header, opaque (unknown layout),
+        /// including any trailing padding octets (see `padding`).
+        payload: Vec<u8>,
+    },
+}
+
+impl RtcpPacket {
+    /// The packet type of this packet.
+    pub fn packet_type(&self) -> RtcpPacketType {
+        match self {
+            RtcpPacket::SenderReport(_) => RtcpPacketType::SenderReport,
+            RtcpPacket::ReceiverReport(_) => RtcpPacketType::ReceiverReport,
+            RtcpPacket::SourceDescription(_) => RtcpPacketType::SourceDescription,
+            RtcpPacket::Bye(_) => RtcpPacketType::Bye,
+            RtcpPacket::App(_) => RtcpPacketType::App,
+            RtcpPacket::Unknown { packet_type, .. } => RtcpPacketType::Unknown(*packet_type),
+        }
+    }
+
+    /// Spec token for this packet (`SR`/`RR`/`SDES`/`BYE`/`APP`).
+    pub fn name(&self) -> &'static str {
+        self.packet_type().name()
+    }
+
+    /// Whether this packet is a report (SR or RR) — the only valid *first*
+    /// packet of a **full** compound packet (RFC 3550 §6.1). Reduced-Size
+    /// RTCP (RFC 5506 §4.1) relaxes this; see [`CompoundPacket::parse`].
+    fn is_report(&self) -> bool {
+        matches!(
+            self,
+            RtcpPacket::SenderReport(_) | RtcpPacket::ReceiverReport(_)
+        )
+    }
+}
+
+broadcast_common::impl_spec_display!(RtcpPacket);
+
+impl<'a> Parse<'a> for RtcpPacket {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let hdr = CommonHeader::parse(bytes)?;
+        Ok(match RtcpPacketType::from_pt(hdr.packet_type) {
+            RtcpPacketType::SenderReport => RtcpPacket::SenderReport(SenderReport::parse(bytes)?),
+            RtcpPacketType::ReceiverReport => {
+                RtcpPacket::ReceiverReport(ReceiverReport::parse(bytes)?)
+            }
+            RtcpPacketType::SourceDescription => {
+                RtcpPacket::SourceDescription(SourceDescription::parse(bytes)?)
+            }
+            RtcpPacketType::Bye => RtcpPacket::Bye(Bye::parse(bytes)?),
+            RtcpPacketType::App => RtcpPacket::App(App::parse(bytes)?),
+            RtcpPacketType::Unknown(packet_type) => {
+                let total = hdr.total_len();
+                need_in(bytes, total, "RTCP packet (unrecognized PT)")?;
+                RtcpPacket::Unknown {
+                    packet_type,
+                    count: hdr.count,
+                    padding: hdr.padding,
+                    payload: bytes[RTCP_HEADER_LEN..total].to_vec(),
+                }
+            }
+        })
+    }
+}
+
+impl Serialize for RtcpPacket {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        match self {
+            RtcpPacket::SenderReport(p) => p.serialized_len(),
+            RtcpPacket::ReceiverReport(p) => p.serialized_len(),
+            RtcpPacket::SourceDescription(p) => p.serialized_len(),
+            RtcpPacket::Bye(p) => p.serialized_len(),
+            RtcpPacket::App(p) => p.serialized_len(),
+            RtcpPacket::Unknown { payload, .. } => RTCP_HEADER_LEN + payload.len(),
+        }
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        match self {
+            RtcpPacket::SenderReport(p) => p.serialize_into(buf),
+            RtcpPacket::ReceiverReport(p) => p.serialize_into(buf),
+            RtcpPacket::SourceDescription(p) => p.serialize_into(buf),
+            RtcpPacket::Bye(p) => p.serialize_into(buf),
+            RtcpPacket::App(p) => p.serialize_into(buf),
+            RtcpPacket::Unknown {
+                packet_type,
+                count,
+                padding,
+                payload,
+            } => {
+                if matches!(
+                    RtcpPacketType::from_pt(*packet_type),
+                    RtcpPacketType::SenderReport
+                        | RtcpPacketType::ReceiverReport
+                        | RtcpPacketType::SourceDescription
+                        | RtcpPacketType::Bye
+                        | RtcpPacketType::App
+                ) {
+                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                        field: "unknown_packet_type",
+                        value: *packet_type as u64,
+                        reason: "PT 200-204 are recognized types and cannot be carried as Unknown",
+                    }));
+                }
+                let len = RTCP_HEADER_LEN + payload.len();
+                need_out(buf, len)?;
+                if !len.is_multiple_of(WORD_LEN) {
+                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                        field: "unknown_payload_len",
+                        value: payload.len() as u64,
+                        reason: "RTCP packet payload must be 32-bit aligned",
+                    }));
+                }
+                if *count > RTCP_COUNT_MASK {
+                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                        field: "unknown_count",
+                        value: *count as u64,
+                        reason: "exceeds 5-bit RC/SC field",
+                    }));
+                }
+                let mut hdr = CommonHeader::new(*count, *packet_type, length_words_minus_one(len)?);
+                hdr.padding = *padding;
+                hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
+                buf[RTCP_HEADER_LEN..len].copy_from_slice(payload);
+                Ok(len)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CompoundPacket (RFC 3550 §6.1)
+// ---------------------------------------------------------------------------
+
+/// A compound RTCP packet (RFC 3550 §6.1): a sequence of RTCP packets sent in a
+/// single lower-layer datagram. The first packet **must** be a report (SR or
+/// RR) — or, per RFC 5506 §4.1's Reduced-Size RTCP ("allows any RTCP packet
+/// type"; #1071), a packet type this crate cannot itself frame as a recognized
+/// non-report RFC 3550 §6 type (i.e. [`RtcpPacket::Unknown`], such as
+/// RTPFB=205/PSFB=206 [RFC 4585] or XR=207 [RFC 3611]). A leading SDES/BYE/APP
+/// is still rejected: that ordering is checkable from bytes alone and RFC 5506
+/// does not license it. This is validated on both parse and serialize.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct CompoundPacket {
+    /// The constituent packets, in wire order (first is SR/RR, or an
+    /// unrecognized-PT Reduced-Size RTCP packet).
+    pub packets: Vec<RtcpPacket>,
+}
+
+impl CompoundPacket {
+    /// Build a compound packet, validating the §6.1 first-packet rule.
+    pub fn new(packets: Vec<RtcpPacket>) -> Result<Self> {
+        let cp = CompoundPacket { packets };
+        cp.check_leading_report()?;
+        Ok(cp)
+    }
+
+    /// Enforce RFC 3550 §6.1: a compound packet must start with SR or RR —
+    /// relaxed per RFC 5506 §3.4.2 ("the payload type numbers for the
+    /// (first) RTCP in the lower-layer datagram may differ from 200 or 201
+    /// (SR or RR)") to also accept a leading packet of unrecognized PT.
+    fn check_leading_report(&self) -> Result<()> {
+        match self.packets.first() {
+            Some(p) if p.is_report() || matches!(p, RtcpPacket::Unknown { .. }) => Ok(()),
+            Some(_) => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_compound",
+                value: self.packets[0].packet_type().pt() as u64,
+                reason: "compound packet must begin with SR, RR, or an unrecognized-PT \
+                         Reduced-Size RTCP packet (RFC 3550 §6.1 / RFC 5506 §4.1)",
+            })),
+            None => Err(Error::InvalidInput("empty RTCP compound packet")),
+        }
+    }
+}
+
+impl<'a> Parse<'a> for CompoundPacket {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let mut packets = Vec::new();
+        let mut off = 0;
+        while off < bytes.len() {
+            let hdr = CommonHeader::parse(&bytes[off..])?;
+            let total = hdr.total_len();
+            let end = off + total;
+            need_in(bytes, end, "RTCP compound sub-packet")?;
+            packets.push(RtcpPacket::parse(&bytes[off..end])?);
+            off = end;
+        }
+        let cp = CompoundPacket { packets };
+        cp.check_leading_report()?;
+        Ok(cp)
+    }
+}
+
+impl Serialize for CompoundPacket {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        self.packets.iter().map(RtcpPacket::serialized_len).sum()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.check_leading_report()?;
+        let len = self.serialized_len();
+        need_out(buf, len)?;
+        let mut off = 0;
+        for pkt in &self.packets {
+            let n = pkt.serialize_into(&mut buf[off..])?;
+            off += n;
+        }
+        Ok(off)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+    use alloc::vec;
+
+    #[test]
+    fn padding_count_reads_the_last_octet() {
+        assert_eq!(padding_count(&[0xAA, 0, 0, 3]), Ok(3));
+    }
+
+    #[test]
+    fn padding_count_rejects_zero_oversize_and_empty() {
+        assert_eq!(
+            padding_count(&[1, 2, 0]),
+            Err(PaddingCountError { count: 0, body: 3 })
+        );
+        assert_eq!(
+            padding_count(&[1, 2, 9]),
+            Err(PaddingCountError { count: 9, body: 3 })
+        );
+        assert_eq!(
+            padding_count(&[]),
+            Err(PaddingCountError { count: 0, body: 0 })
+        );
+        assert_eq!(padding_count(&[0, 0, 3]), Ok(3));
+    }
+
+    fn sample_block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
+        ReportBlock {
+            ssrc,
+            fraction_lost: 12,
+            cumulative_lost: cumulative,
+            ext_highest_seq: 0x0001_2345,
+            jitter,
+            lsr: 0xAABB_CCDD,
+            dlsr: 0x0000_1000,
+        }
+    }
+
+    fn sample_sr() -> SenderReport {
+        SenderReport {
+            ssrc: 0x1122_3344,
+            ntp_msw: 0xE0E1_E2E3,
+            ntp_lsw: 0x1020_3040,
+            rtp_timestamp: 0x0009_0000,
+            packet_count: 4321,
+            octet_count: 999_999,
+            report_blocks: vec![
+                sample_block(0xAAAA_AAAA, 500, 17),
+                sample_block(0xBBBB_BBBB, 750, -3),
+            ],
+            profile_extensions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn report_block_round_trip() {
+        let b = sample_block(0xDEAD_BEEF, 4242, -5);
+        let bytes = b.try_to_bytes().unwrap();
+        assert_eq!(bytes.len(), REPORT_BLOCK_LEN);
+        let parsed = ReportBlock::parse(&bytes).unwrap();
+        assert_eq!(parsed, b);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// #1129: an out-of-range `cumulative_lost` is rejected, not wrapped.
+    #[test]
+    fn report_block_cumulative_lost_out_of_range_rejected() {
+        for v in [0x80_0000_i32, -0x80_0001, i32::MAX, i32::MIN] {
+            let b = sample_block(1, 0, v);
+            let mut buf = [0u8; REPORT_BLOCK_LEN];
+            assert!(
+                matches!(b.serialize_into(&mut buf), Err(Error::InvalidValue(..))),
+                "cumulative_lost {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn report_block_negative_cumulative_lost() {
+        // Negative cumulative lost must survive the 24-bit signed field.
+        for v in [-1_i32, -2, -100, -0x80_0000, 0, 5, 0x7F_FFFF] {
+            let b = sample_block(1, 0, v);
+            let parsed = ReportBlock::parse(&b.try_to_bytes().unwrap()).unwrap();
+            assert_eq!(parsed.cumulative_lost, v, "cumulative_lost {v} round-trip");
+        }
+    }
+
+    #[test]
+    fn sr_round_trip_and_header_layout() {
+        let sr = sample_sr();
+        let bytes = sr.try_to_bytes().unwrap();
+        // V=2 in top 2 bits, RC=2 in low 5 bits.
+        assert_eq!(bytes[0] >> 6, 2);
+        assert_eq!(bytes[0] & 0x1F, 2);
+        // PT byte == 200.
+        assert_eq!(bytes[1], PT_SENDER_REPORT);
+        // length field == total_words − 1.
+        let total_words = bytes.len() / 4;
+        assert_eq!(
+            u16::from_be_bytes([bytes[2], bytes[3]]) as usize,
+            total_words - 1
+        );
+        let parsed = SenderReport::parse(&bytes).unwrap();
+        assert_eq!(parsed, sr);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn sr_two_report_blocks_boundary() {
+        let sr = sample_sr();
+        assert_eq!(sr.report_blocks.len(), 2);
+        let bytes = sr.try_to_bytes().unwrap();
+        // 4 (hdr) + 24 (sender info incl ssrc) + 2*24 = 76 bytes = 19 words.
+        assert_eq!(bytes.len(), 4 + 24 + 2 * REPORT_BLOCK_LEN);
+        assert_eq!(bytes.len() % 4, 0);
+        let parsed = SenderReport::parse(&bytes).unwrap();
+        assert_eq!(parsed.report_blocks.len(), 2);
+        assert_eq!(
+            u16::from_be_bytes([bytes[2], bytes[3]]) as usize,
+            bytes.len() / 4 - 1
+        );
+    }
+
+    // RFC 3550 §6.4.1/§6.4.2: profile-specific extensions follow the blocks.
+    #[test]
+    fn sr_rr_profile_extensions_round_trip() {
+        let ext = vec![0xDE, 0xAD, 0xBE, 0xEF, 1, 2, 3, 4];
+        let sr = sample_sr().with_profile_extensions(ext.clone());
+        let bytes = sr.try_to_bytes().unwrap();
+        assert_eq!(bytes.len(), 4 + 24 + 2 * REPORT_BLOCK_LEN + 8);
+        assert_eq!(&bytes[bytes.len() - 8..], &ext[..]);
+        assert_eq!(
+            u16::from_be_bytes([bytes[2], bytes[3]]) as usize,
+            bytes.len() / 4 - 1
+        );
+        let parsed = SenderReport::parse(&bytes).unwrap();
+        assert_eq!(parsed.profile_extensions, ext);
+        assert_eq!(parsed, sr);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+
+        let rr = ReceiverReport::new(0x0102_0304, vec![sample_block(1, 2, 3)])
+            .with_profile_extensions(ext.clone());
+        let bytes = rr.try_to_bytes().unwrap();
+        let parsed = ReceiverReport::parse(&bytes).unwrap();
+        assert_eq!(parsed.profile_extensions, ext);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+
+        // RR with zero blocks and only extensions (count 0).
+        let rr = ReceiverReport::new(9, vec![]).with_profile_extensions(vec![7; 4]);
+        let bytes = rr.try_to_bytes().unwrap();
+        assert_eq!(ReceiverReport::parse(&bytes).unwrap(), rr);
+    }
+
+    #[test]
+    fn profile_extensions_not_word_multiple_rejected() {
+        let sr = sample_sr().with_profile_extensions(vec![1, 2, 3]);
+        let mut buf = vec![0u8; 256];
+        assert!(matches!(
+            sr.serialize_into(&mut buf),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "profile_extensions_len",
+                ..
+            }))
+        ));
+        let rr = ReceiverReport::new(1, vec![]).with_profile_extensions(vec![1; 5]);
+        assert!(matches!(
+            rr.serialize_into(&mut buf),
+            Err(Error::InvalidValue(..))
+        ));
+
+        // Parse side: a well-formed packet whose trailing bytes are not a
+        // multiple of 4 after padding strip (P=1, 4 trailing bytes with the
+        // last = pad count 3 leaves 1 byte).
+        let mut bytes = ReceiverReport::new(1, vec![]).try_to_bytes().unwrap();
+        bytes.extend_from_slice(&[0xAA, 0, 0, 3]);
+        bytes[0] |= 0x20; // P bit
+        bytes[3] += 1; // length in words
+        assert!(matches!(
+            ReceiverReport::parse(&bytes),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "profile_extensions_len",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn trailing_bytes_after_blocks_are_kept_not_dropped() {
+        // RC=0 RR with 4 trailing "garbage" bytes: preserved verbatim.
+        let mut bytes = ReceiverReport::new(1, vec![]).try_to_bytes().unwrap();
+        bytes.extend_from_slice(&[0x13, 0x37, 0xC0, 0xDE]);
+        bytes[3] += 1;
+        let rr = ReceiverReport::parse(&bytes).unwrap();
+        assert_eq!(rr.profile_extensions, [0x13, 0x37, 0xC0, 0xDE]);
+        assert_eq!(rr.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn rr_round_trip() {
+        let rr = ReceiverReport {
+            ssrc: 0x0102_0304,
+            report_blocks: vec![sample_block(0xCAFE_BABE, 33, -7)],
+            profile_extensions: Vec::new(),
+        };
+        let bytes = rr.try_to_bytes().unwrap();
+        assert_eq!(bytes[1], PT_RECEIVER_REPORT);
+        let parsed = ReceiverReport::parse(&bytes).unwrap();
+        assert_eq!(parsed, rr);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn sdes_round_trip_cname_tool() {
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 0x1234_5678,
+                items: vec![
+                    SdesItem {
+                        item_type: SdesItemType::CName,
+                        text: "alice@example.com".to_string(),
+                    },
+                    SdesItem {
+                        item_type: SdesItemType::Tool,
+                        text: "transmux/1.0".to_string(),
+                    },
+                ],
+            }],
+        };
+        let bytes = sdes.try_to_bytes().unwrap();
+        assert_eq!(bytes[1], PT_SOURCE_DESCRIPTION);
+        assert_eq!(bytes.len() % 4, 0);
+        let parsed = SourceDescription::parse(&bytes).unwrap();
+        assert_eq!(parsed, sdes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn bye_round_trip_with_reason() {
+        let bye = Bye {
+            sources: vec![0x1111_1111, 0x2222_2222],
+            reason: Some("teardown".to_string()),
+        };
+        let bytes = bye.try_to_bytes().unwrap();
+        assert_eq!(bytes[1], PT_BYE);
+        assert_eq!(bytes[0] & 0x1F, 2); // SC = 2
+        assert_eq!(bytes.len() % 4, 0);
+        let parsed = Bye::parse(&bytes).unwrap();
+        assert_eq!(parsed, bye);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn bye_round_trip_no_reason() {
+        let bye = Bye {
+            sources: vec![0xABCD_0000],
+            reason: None,
+        };
+        let parsed = Bye::parse(&bye.try_to_bytes().unwrap()).unwrap();
+        assert_eq!(parsed, bye);
+    }
+
+    // Regression (audit run-09 RTCP-W1): a padded BYE's trailing padding
+    // octets must not be misread as the reason-length octet. Hand-built
+    // because this codec never emits `P=1` (a documented decode-completeness
+    // gap; padding is on the parse side only).
+    #[test]
+    fn bye_padding_is_stripped_not_misread_as_reason() {
+        // V=2,P=1,SC=1 | PT=BYE | length=2 (3 words: hdr+source+padding)
+        // source=0x11223344 | padding: 3 zero bytes + count byte 4
+        let bytes: [u8; 12] = [
+            0b1010_0001,
+            PT_BYE,
+            0x00,
+            0x02,
+            0x11,
+            0x22,
+            0x33,
+            0x44,
+            0x00,
+            0x00,
+            0x00,
+            0x04,
+        ];
+        let bye = Bye::parse(&bytes).unwrap();
+        assert_eq!(bye.sources, vec![0x1122_3344]);
+        assert_eq!(
+            bye.reason, None,
+            "the first padding byte must not be read as a reason length"
+        );
+    }
+
+    // Regression (audit run-09 RTCP-W1): a padded APP's trailing padding
+    // octets must not leak into `data`.
+    #[test]
+    fn app_padding_is_stripped_from_data() {
+        // V=2,P=1,RC(subtype)=0 | PT=APP | length=4 (5 words: hdr+ssrc+name+data+padding)
+        // ssrc=0x11223344 | name="TEST" | data=DE AD BE EF | padding: 3 zero bytes + count byte 4
+        let bytes: [u8; 20] = [
+            0b1010_0000,
+            PT_APP,
+            0x00,
+            0x04,
+            0x11,
+            0x22,
+            0x33,
+            0x44,
+            b'T',
+            b'E',
+            b'S',
+            b'T',
+            0xDE,
+            0xAD,
+            0xBE,
+            0xEF,
+            0x00,
+            0x00,
+            0x00,
+            0x04,
+        ];
+        let app = App::parse(&bytes).unwrap();
+        assert_eq!(app.ssrc, 0x1122_3344);
+        assert_eq!(&app.name, b"TEST");
+        assert_eq!(
+            app.data,
+            vec![0xDE, 0xAD, 0xBE, 0xEF],
+            "the padding bytes must not leak into data"
+        );
+    }
+
+    #[test]
+    fn app_round_trip() {
+        let app = App {
+            subtype: 3,
+            ssrc: 0x9988_7766,
+            name: *b"TMUX",
+            data: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04],
+        };
+        let bytes = app.try_to_bytes().unwrap();
+        assert_eq!(bytes[1], PT_APP);
+        assert_eq!(bytes[0] & 0x1F, 3); // subtype in RC field
+        let parsed = App::parse(&bytes).unwrap();
+        assert_eq!(parsed, app);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn sr_mutation_bites_packet_count() {
+        let sr = sample_sr();
+        let mut bytes = sr.try_to_bytes().unwrap();
+        let orig = SenderReport::parse(&bytes).unwrap();
+        // packet_count lives at offset 4(hdr)+16 = 20.
+        let pc_off = RTCP_HEADER_LEN + 16;
+        bytes[pc_off] ^= 0xFF;
+        let mutated = SenderReport::parse(&bytes).unwrap();
+        assert_ne!(mutated.packet_count, orig.packet_count);
+        // The mutated value re-serializes to the mutated bytes.
+        assert_eq!(mutated.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn report_block_mutation_bites_jitter() {
+        let mut sr = sample_sr();
+        sr.report_blocks[0].jitter = 500;
+        let before = sr.try_to_bytes().unwrap();
+        sr.report_blocks[0].jitter = 999;
+        let after = sr.try_to_bytes().unwrap();
+        assert_ne!(before, after);
+        let parsed = SenderReport::parse(&after).unwrap();
+        assert_eq!(parsed.report_blocks[0].jitter, 999);
+    }
+
+    #[test]
+    fn compound_sr_sdes_round_trip() {
+        let sdes = SourceDescription {
+            chunks: vec![SdesChunk {
+                source: 0x1122_3344,
+                items: vec![SdesItem {
+                    item_type: SdesItemType::CName,
+                    text: "cn".to_string(),
+                }],
+            }],
+        };
+        let cp = CompoundPacket::new(vec![
+            RtcpPacket::SenderReport(sample_sr()),
+            RtcpPacket::SourceDescription(sdes),
+        ])
+        .unwrap();
+        let bytes = cp.try_to_bytes().unwrap();
+        let parsed = CompoundPacket::parse(&bytes).unwrap();
+        assert_eq!(parsed.packets.len(), 2);
+        assert_eq!(parsed, cp);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn compound_must_start_with_report() {
+        // A BYE-first compound is rejected on construction.
+        let err = CompoundPacket::new(vec![RtcpPacket::Bye(Bye {
+            sources: vec![1],
+            reason: None,
+        })]);
+        assert!(matches!(
+            &(err),
+            Err(crate::rtcp::error::Error::InvalidValue(..))
+        ));
+        // And on parse: hand-build a BYE packet and try to parse as compound.
+        let bye = Bye {
+            sources: vec![1],
+            reason: None,
+        };
+        let bytes = bye.try_to_bytes().unwrap();
+        assert!(matches!(
+            &(CompoundPacket::parse(&bytes)),
+            Err(crate::rtcp::error::Error::InvalidValue(..))
+        ));
+    }
+
+    #[test]
+    fn any_packet_dispatch() {
+        let bytes = sample_sr().try_to_bytes().unwrap();
+        let any = RtcpPacket::parse(&bytes).unwrap();
+        assert_eq!(any.packet_type(), RtcpPacketType::SenderReport);
+        assert_eq!(any.name(), "SR");
+        assert_eq!(any.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn packet_type_display() {
+        assert_eq!(RtcpPacketType::SenderReport.to_string(), "SR");
+        assert_eq!(RtcpPacketType::Unknown(207).to_string(), "reserved(0xCF)");
+        assert_eq!(SdesItemType::CName.to_string(), "CNAME");
+    }
+
+    #[test]
+    fn app_oversized_payload_rejected_not_wrapped() {
+        // total_len = 12 (header + ssrc/name) + data.len(); pick data.len() so
+        // total_len/WORD_LEN - 1 overflows u16 (> 65535) instead of silently
+        // wrapping via `as u16` truncation.
+        let app = App {
+            subtype: 0,
+            ssrc: 1,
+            name: *b"BIGP",
+            data: vec![0u8; 262_136],
+        };
+        let len = app.serialized_len();
+        let mut buf = vec![0u8; len];
+        let err = app.serialize_into(&mut buf).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "rtcp_length",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_bad_version() {
+        let mut bytes = sample_sr().try_to_bytes().unwrap();
+        bytes[0] = 0x40; // V=1
+        assert!(matches!(
+            &(SenderReport::parse(&bytes)),
+            Err(crate::rtcp::error::Error::InvalidValue(..))
+        ));
+    }
+
+    /// Release audit: an `Unknown` packet with `P=1` and trailing padding octets
+    /// must round-trip byte-identical (the parse used to drop the P bit, so the
+    /// re-serialization wrote `P=0` and differed).
+    #[test]
+    fn unknown_padded_packet_round_trips_byte_identical() {
+        // V=2, P=1, FMT=1, PT=206 (PSFB), length=2 words: 4 hdr + 8 body.
+        let bytes = [
+            0xA1, 0xCE, 0x00, 0x02, // header, P=1
+            0x00, 0x00, 0x00, 0x01, // body
+            0x00, 0x00, 0x00, 0x04, // 3 pad zeros + count=4
+        ];
+        let p = RtcpPacket::parse(&bytes).unwrap();
+        match &p {
+            RtcpPacket::Unknown {
+                padding, payload, ..
+            } => {
+                assert!(*padding);
+                assert_eq!(payload.len(), 8);
+            }
+            other => panic!("expected Unknown, got {other:?}"),
+        }
+        assert_eq!(p.try_to_bytes().unwrap(), bytes);
+        assert_eq!(RtcpPacket::parse(&p.try_to_bytes().unwrap()).unwrap(), p);
+    }
+
+    /// Release audit: PT 200-204 cannot be carried as `Unknown` (they would
+    /// parse back as typed packets), so serialize must reject them.
+    #[test]
+    fn unknown_with_recognized_pt_is_rejected_on_serialize() {
+        for pt in 200u8..=204 {
+            let p = RtcpPacket::Unknown {
+                packet_type: pt,
+                count: 0,
+                padding: false,
+                payload: vec![0; 4],
+            };
+            let mut buf = [0u8; 16];
+            assert!(
+                matches!(
+                    p.serialize_into(&mut buf),
+                    Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                        field: "unknown_packet_type",
+                        ..
+                    }))
+                ),
+                "pt {pt}"
+            );
+        }
+    }
+}

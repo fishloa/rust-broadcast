@@ -15,7 +15,7 @@ use crate::ts_psi::{
 };
 use broadcast_common::{Package, Serialize, Unpackage};
 use mpeg_ts::ts::TsPacket;
-use test_bounded::tool_available;
+use test_fixtures::process::tool_available;
 use transmux::TrackId;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;

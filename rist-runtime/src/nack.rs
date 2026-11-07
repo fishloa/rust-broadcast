@@ -31,7 +31,7 @@ fn unpadded_end(bytes: &[u8], total_len: usize) -> Result<usize> {
     if bytes[0] & RTCP_PADDING_MASK == 0 {
         return Ok(total_len);
     }
-    let count = rtcp_packet::padding_count(&bytes[RTCP_HEADER_LEN..total_len])?;
+    let count = rtp_packet::rtcp::padding_count(&bytes[RTCP_HEADER_LEN..total_len])?;
     Ok(total_len - count)
 }
 

@@ -83,7 +83,7 @@ use broadcast_hls::{
 use serde_json::Value;
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
 
-use test_bounded::output_bounded;
+use test_fixtures::process::output_bounded;
 
 /// Hard deadline for a `--version` availability probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);

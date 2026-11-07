@@ -12,7 +12,7 @@
 //!   parse in typed, spec-named fields and re-emitted verbatim, so a stream
 //!   from a sender that deviates from the governing edition re-serializes
 //!   **byte-identically** (`dvb-si` descriptors, `mpeg-ps`, `rmt-flute`,
-//!   `cc-data` fixed bits, `rtcp-packet` `profile_extensions`, `mp4-emsg`
+//!   `cc-data` fixed bits, `rtp-packet`'s `rtcp` `profile_extensions`, `mp4-emsg`
 //!   flags). There is no raw passthrough blob.
 //! - **Constructed values default to the edition value**: a struct built by
 //!   hand (`new(..)` / `Default`) carries `1` for `reserved_future_use` and

@@ -4,7 +4,7 @@
 //!
 //! No RTMP wire format is written here: the client returns FLV tags, which
 //! [`transmux::StreamingFlvDemux`] turns into tracks and samples. The start, stall, backoff and
-//! reconnect rules are those of [`tshttp_runtime::TsHttpPolicy`], the demux-free policy core of the
+//! reconnect rules are those of [`crate::tshttp::TsHttpPolicy`], the demux-free policy core of the
 //! TS-over-HTTP source: `Open` becomes a `TcpConnect`, a connected socket plays the part of the
 //! `200` response, `Abort` becomes a `Close` and `Reconnect` a `WakeAt`.
 //!
@@ -15,10 +15,10 @@ use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use crate::tshttp::{Config as TsConfig, TsHttpPolicy};
 use percent_encoding::percent_decode_str;
 use rtmp_runtime::client::{ClientConfig, ClientEvent, ClientMode, ClientSession};
 use transmux::{DemuxEvent, StreamingFlvDemux, TrackId, TrackSpec};
-use tshttp_runtime::{Config as TsConfig, TsHttpPolicy};
 use url::{Host, Url};
 
 use crate::error::Error;
@@ -188,7 +188,7 @@ impl RtmpSource {
                 let mut sampled = false;
                 while let Some(ev) = demux.poll_event() {
                     sampled |= matches!(ev, DemuxEvent::Sample { .. });
-                    events.push_back(tshttp_runtime::Event::Demux(ev));
+                    events.push_back(crate::tshttp::Event::Demux(ev));
                 }
                 sampled
             });
@@ -345,7 +345,7 @@ impl RtmpSource {
         let mut sampled = false;
         while let Some(ev) = self.demux.poll_event() {
             sampled |= matches!(ev, DemuxEvent::Sample { .. });
-            self.policy.push_event(tshttp_runtime::Event::Demux(ev));
+            self.policy.push_event(crate::tshttp::Event::Demux(ev));
         }
         sampled
     }
@@ -417,9 +417,9 @@ impl RtmpSource {
         }
     }
 
-    fn map_action(&mut self, action: tshttp_runtime::Action, now_us: u64) {
+    fn map_action(&mut self, action: crate::tshttp::Action, now_us: u64) {
         match action {
-            tshttp_runtime::Action::Open { .. } => {
+            crate::tshttp::Action::Open { .. } => {
                 self.drop_connection();
                 self.demux = StreamingFlvDemux::new();
                 self.recorded = false;
@@ -434,8 +434,8 @@ impl RtmpSource {
                     identity: None,
                 });
             }
-            tshttp_runtime::Action::Abort => self.drop_connection(),
-            tshttp_runtime::Action::Reconnect { after_ms } => {
+            crate::tshttp::Action::Abort => self.drop_connection(),
+            crate::tshttp::Action::Reconnect { after_ms } => {
                 if self.failure_announced {
                     self.failure_announced = false;
                 } else {
@@ -446,13 +446,12 @@ impl RtmpSource {
                     now_us.saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
                 ));
             }
-            _ => {}
         }
     }
 
-    fn map_event(&mut self, event: tshttp_runtime::Event) {
+    fn map_event(&mut self, event: crate::tshttp::Event) {
         match event {
-            tshttp_runtime::Event::Connected => {
+            crate::tshttp::Event::Connected => {
                 self.tracks.clear();
                 self.tracks_dirty = true;
                 self.connection_count = self.connection_count.saturating_add(1);
@@ -463,17 +462,17 @@ impl RtmpSource {
                 self.seen_first_sample = false;
                 self.stalled = false;
             }
-            tshttp_runtime::Event::Demux(
+            crate::tshttp::Event::Demux(
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec),
             ) => {
                 self.tracks.insert(spec.track_id, spec);
                 self.tracks_dirty = true;
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::TrackRemoved { track_id, .. }) => {
+            crate::tshttp::Event::Demux(DemuxEvent::TrackRemoved { track_id, .. }) => {
                 self.tracks.remove(&track_id);
                 self.tracks_dirty = true;
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::Sample {
+            crate::tshttp::Event::Demux(DemuxEvent::Sample {
                 track_id, sample, ..
             }) => {
                 if !self.seen_first_sample {
@@ -495,7 +494,7 @@ impl RtmpSource {
                     join: None,
                 });
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::DisplayChanged {
+            crate::tshttp::Event::Demux(DemuxEvent::DisplayChanged {
                 track_id,
                 display,
                 pts,
@@ -510,20 +509,20 @@ impl RtmpSource {
                     display,
                 });
             }
-            tshttp_runtime::Event::StallNotice { secs } => {
+            crate::tshttp::Event::StallNotice { secs } => {
                 self.events
                     .push_back(Event::Status(Status::Stalled { secs }));
                 self.stalled = true;
             }
-            tshttp_runtime::Event::Reconnecting { attempt } => {
+            crate::tshttp::Event::Reconnecting { attempt } => {
                 self.failure_announced = true;
                 self.events
                     .push_back(Event::Status(Status::Reconnecting { attempt }));
             }
-            tshttp_runtime::Event::NotFound { .. } => {
+            crate::tshttp::Event::NotFound { .. } => {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            tshttp_runtime::Event::Starved(kind) => {
+            crate::tshttp::Event::Starved(kind) => {
                 self.events.push_back(Event::Starved(kind));
             }
             _ => {}
