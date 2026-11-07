@@ -33,10 +33,8 @@ pub const ANC_RTP_PAYLOAD_HEADER_LEN: usize = 8;
 
 /// Maximum `ANC_Count` value — an 8-bit field; "a single ANC data RTP packet
 /// payload cannot carry more than 255 ANC data packets" (§2.1).
+#[cfg(test)]
 const MAX_ANC_COUNT: usize = u8::MAX as usize;
-
-/// Maximum `Length` value — a 16-bit field (§2.1).
-const MAX_LENGTH: usize = u16::MAX as usize;
 
 /// `F` field bit shift within payload-header byte 5 (top 2 bits; the low 6
 /// bits are the top 6 bits of `reserved`, §2.1).
@@ -206,7 +204,7 @@ impl RtpAncPacket {
     /// Write this record (placement + content + `word_align`) into `w`.
     ///
     /// # Errors
-    /// [`Error::FieldTooWide`] if a placement field exceeds its wire width;
+    /// [`Error::FieldOverflow`] if a placement field exceeds its wire width;
     /// [`Error::InconsistentUdwLength`] if `content.user_data_words.len()`
     /// does not equal `content.data_count & 0xFF`.
     fn write_into(&self, w: &mut BitWriter<'_>) -> Result<()> {
@@ -237,7 +235,7 @@ impl RtpAncPacket {
     /// Read one record (placement + content + `word_align`) from `r`.
     ///
     /// # Errors
-    /// [`Error::ReservedNotZero`] if the `word_align` padding is not all-zero
+    /// [`Error::ReservedBits`] if the `word_align` padding is not all-zero
     /// (RFC 8331 §2.1 states its value is "0" bits); a bit-stream error if
     /// `r` runs out of bits mid-record.
     fn read_from(r: &mut BitReader<'_>) -> Result<Self> {
@@ -251,10 +249,11 @@ impl RtpAncPacket {
         if pad > 0 {
             let pad_value = r.read_bits(pad)?;
             if pad_value != 0 {
-                return Err(Error::ReservedNotZero {
-                    what: "word_align",
-                    value: pad_value,
-                });
+                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    field: "word_align",
+                    expected: 0,
+                    found: pad_value,
+                }));
             }
         }
         Ok(Self {
@@ -340,7 +339,7 @@ impl<'a> Parse<'a> for AncRtpPayload {
     /// slice for a `video/smpte291` packet).
     ///
     /// # Errors
-    /// [`Error::BufferTooShort`] if truncated; [`Error::ReservedNotZero`] if
+    /// [`Error::BufferTooShort`] if truncated; [`Error::ReservedBits`] if
     /// the 22-bit `reserved` field (or any per-packet `word_align`) is
     /// nonzero; [`Error::LengthMismatch`] if the declared `Length` does not
     /// match the bytes actually consumed while parsing `ANC_Count` packets
@@ -357,10 +356,11 @@ impl<'a> Parse<'a> for AncRtpPayload {
             | (u32::from(b[6]) << 8)
             | u32::from(b[7]);
         if reserved != 0 {
-            return Err(Error::ReservedNotZero {
-                what: "reserved (RFC 8331 §2.1)",
-                value: u64::from(reserved),
-            });
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "reserved (RFC 8331 §2.1)",
+                expected: 0,
+                found: u64::from(reserved),
+            }));
         }
         let field_sense = FieldSense::from_bits(f_bits);
 
@@ -375,10 +375,13 @@ impl<'a> Parse<'a> for AncRtpPayload {
         }
         let consumed_bytes = r.bits_read() / 8;
         if !r.is_byte_aligned() || consumed_bytes != body.len() {
-            return Err(Error::LengthMismatch {
-                declared: length,
-                computed: consumed_bytes,
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "ANC RTP payload",
+                    declared: length,
+                    actual: consumed_bytes,
+                },
+            ));
         }
 
         Ok(Self {
@@ -402,29 +405,17 @@ impl Serialize for AncRtpPayload {
     /// `anc_packets`.
     ///
     /// # Errors
-    /// [`Error::BufferTooShort`] if `buf` is too small; [`Error::FieldTooWide`]
+    /// [`Error::BufferTooShort`] if `buf` is too small; [`Error::FieldOverflow`]
     /// if `anc_packets.len()` exceeds 255 or the recomputed `Length` exceeds
-    /// 65535; [`Error::FieldTooWide`] / [`Error::InconsistentUdwLength`] from
+    /// 65535; [`Error::FieldOverflow`] / [`Error::InconsistentUdwLength`] from
     /// any [`RtpAncPacket`].
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let anc_count = self.anc_count();
-        if anc_count > MAX_ANC_COUNT {
-            return Err(Error::FieldTooWide {
-                what: "ANC_Count",
-                value: anc_count as u32,
-                bits: 8,
-            });
-        }
+        broadcast_common::len::fit_bits(anc_count as u64, 8, "ANC_Count")?;
         let body_len = self.body_len();
-        if body_len > MAX_LENGTH {
-            return Err(Error::FieldTooWide {
-                what: "Length",
-                value: body_len as u32,
-                bits: 16,
-            });
-        }
+        broadcast_common::len::fit_bits(body_len as u64, 16, "Length")?;
 
         buf[0..2].copy_from_slice(&self.extended_sequence_number.to_be_bytes());
         buf[2..4].copy_from_slice(&(body_len as u16).to_be_bytes());
@@ -494,10 +485,12 @@ mod tests {
         let mut out = vec![0u8; need - 1];
         assert_eq!(
             p.serialize_into(&mut out),
-            Err(crate::Error::OutputBufferTooSmall {
-                need,
-                have: need - 1
-            })
+            Err(crate::Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need,
+                    have: need - 1
+                }
+            ))
         );
     }
 
@@ -589,7 +582,7 @@ mod tests {
         out.extend_from_slice(&[0, 0, 0, 0]);
         assert!(matches!(
             AncRtpPayload::parse(&out),
-            Err(Error::LengthMismatch { .. })
+            Err(Error::LengthMismatch(..))
         ));
     }
 
@@ -613,7 +606,7 @@ mod tests {
         out[7] = 0x01; // low byte of the 22-bit reserved field
         assert!(matches!(
             AncRtpPayload::parse(&out),
-            Err(Error::ReservedNotZero { .. })
+            Err(Error::ReservedBits(..))
         ));
     }
 
@@ -628,10 +621,10 @@ mod tests {
         out[last] |= 0x01;
         assert!(matches!(
             AncRtpPayload::parse(&out),
-            Err(Error::ReservedNotZero {
-                what: "word_align",
+            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "word_align",
                 ..
-            })
+            }))
         ));
     }
 
@@ -674,10 +667,12 @@ mod tests {
         let mut out = vec![0u8; p.serialized_len()];
         assert!(matches!(
             p.serialize_into(&mut out),
-            Err(Error::FieldTooWide {
-                what: "StreamNum",
-                ..
-            })
+            Err(Error::FieldOverflow(
+                broadcast_common::error::FieldOverflow {
+                    field: "StreamNum",
+                    ..
+                }
+            ))
         ));
     }
 
@@ -734,10 +729,12 @@ mod tests {
         let mut out = vec![0u8; p.serialized_len()];
         assert!(matches!(
             p.serialize_into(&mut out),
-            Err(Error::FieldTooWide {
-                what: "ANC_Count",
-                ..
-            })
+            Err(Error::FieldOverflow(
+                broadcast_common::error::FieldOverflow {
+                    field: "ANC_Count",
+                    ..
+                }
+            ))
         ));
     }
 }

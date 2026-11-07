@@ -59,13 +59,7 @@ pub(crate) const W_CHECKSUM: u32 = 10;
 /// validation as well as this module's content fields.
 #[cfg(any(feature = "ts", feature = "rtp"))]
 pub(crate) fn check_field_width(what: &'static str, value: u64, bits: u32) -> Result<u64> {
-    if bits < 64 && value >= (1u64 << bits) {
-        return Err(Error::FieldTooWide {
-            what,
-            value: value as u32,
-            bits,
-        });
-    }
+    broadcast_common::len::fit_bits(value, bits, what)?;
     Ok(value)
 }
 
@@ -263,14 +257,10 @@ impl AncContent {
     /// length also sets the `Data_Count` value.
     ///
     /// # Errors
-    /// [`Error::FieldTooWide`] if `udw8s.len()` exceeds `u8::MAX`
+    /// [`Error::FieldOverflow`] if `udw8s.len()` exceeds `u8::MAX`
     /// (`Data_Count`'s 8-bit value field).
     pub fn build(did8: u8, sdid8: u8, udw8s: &[u8]) -> Result<Self> {
-        let count = u8::try_from(udw8s.len()).map_err(|_| Error::FieldTooWide {
-            what: "Data_Count",
-            value: udw8s.len() as u32,
-            bits: 8,
-        })?;
+        let count = broadcast_common::len::fit_u8(udw8s.len(), "Data_Count")?;
         let mut content = Self {
             did: Self::with_parity(did8),
             sdid: Self::with_parity(sdid8),
@@ -297,7 +287,7 @@ impl AncContent {
     ///
     /// # Errors
     /// [`Error::InconsistentUdwLength`] if `user_data_words.len()` does not
-    /// equal `data_count & 0xFF`; [`Error::FieldTooWide`] if any field
+    /// equal `data_count & 0xFF`; [`Error::FieldOverflow`] if any field
     /// exceeds its 10-bit wire width.
     #[cfg(any(feature = "ts", feature = "rtp"))]
     pub(crate) fn write_into(&self, w: &mut BitWriter<'_>) -> Result<()> {
@@ -650,10 +640,12 @@ mod parity_checksum_tests {
         let udws = alloc::vec![0u8; 256];
         assert!(matches!(
             AncContent::build(0x00, 0x00, &udws),
-            Err(Error::FieldTooWide {
-                what: "Data_Count",
-                ..
-            })
+            Err(Error::FieldOverflow(
+                broadcast_common::error::FieldOverflow {
+                    field: "Data_Count",
+                    ..
+                }
+            ))
         ));
     }
 }
