@@ -46,12 +46,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("source/rtmp.rs", 326, "RTMP accept pump TaskTracker"),
     (
         "source/rtmp.rs",
-        745,
+        739,
         "RTMP run task; owned by the route supervisor handle",
     ),
     (
         "source/rtmp.rs",
-        754,
+        748,
         "RTMP accept pump; owned by the route supervisor handle",
     ),
     (
@@ -76,27 +76,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        945,
+        891,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        999,
+        945,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1037,
+        983,
         "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        1668,
+        1614,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1690,
+        1636,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
@@ -111,27 +111,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/catchup.rs",
-        169,
+        167,
         "spawn_blocking archive scan; awaited inline",
     ),
     (
         "output/catchup.rs",
-        248,
+        250,
         "spawn_blocking archive scan; awaited inline",
     ),
     (
         "output/catchup.rs",
-        346,
+        352,
         "spawn_blocking archived-segment lookup; awaited inline",
     ),
     (
         "output/catchup.rs",
-        359,
+        365,
         "spawn_blocking archived-segment read; awaited inline",
     ),
     (
         "output/catchup.rs",
-        441,
+        447,
         "spawn_blocking archived-segment read; awaited inline",
     ),
     (

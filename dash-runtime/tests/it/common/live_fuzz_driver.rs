@@ -37,28 +37,46 @@ const HTTP_DATES: [&str; 3] = [
     "not a date",
 ];
 
-const MPDS: [&[u8]; 6] = [
-    include_bytes!("../../../../fixtures/dash/live-number/live.mpd"),
-    include_bytes!("../../../../fixtures/dash/live-timeline/live.mpd"),
-    include_bytes!("../../../../fixtures/dash/livesim2/segtimeline_time_a.mpd"),
-    include_bytes!("../../../../fixtures/dash/livesim2/segtimeline_time_b.mpd"),
-    include_bytes!("../../../../fixtures/dash/livesim2/segtimelinenr_a.mpd"),
-    include_bytes!("../../../../fixtures/dash/livesim2/segtimelinenr_b.mpd"),
-];
-const VIDEO_SEGS: [&[u8]; POOL] = [
-    include_bytes!("../../../../fixtures/dash/live-number/seg-0-005.m4s"),
-    include_bytes!("../../../../fixtures/dash/live-number/seg-0-006.m4s"),
-    include_bytes!("../../../../fixtures/dash/live-number/seg-0-007.m4s"),
-    include_bytes!("../../../../fixtures/dash/live-number/seg-0-008.m4s"),
-];
-const AUDIO_SEGS: [&[u8]; POOL] = [
-    include_bytes!("../../../../fixtures/dash/live-number/seg-1-005.m4s"),
-    include_bytes!("../../../../fixtures/dash/live-number/seg-1-006.m4s"),
-    include_bytes!("../../../../fixtures/dash/live-number/seg-1-007.m4s"),
-    include_bytes!("../../../../fixtures/dash/live-number/seg-1-008.m4s"),
-];
-const VIDEO_INIT: &[u8] = include_bytes!("../../../../fixtures/dash/live-number/init-0.m4s");
-const AUDIO_INIT: &[u8] = include_bytes!("../../../../fixtures/dash/live-number/init-1.m4s");
+struct World {
+    mpds: [Vec<u8>; 6],
+    video_segs: [Vec<u8>; POOL],
+    audio_segs: [Vec<u8>; POOL],
+    video_init: Vec<u8>,
+    audio_init: Vec<u8>,
+}
+
+static WORLD: std::sync::OnceLock<World> = std::sync::OnceLock::new();
+
+fn world() -> &'static World {
+    WORLD.get().expect("fixtures are loaded by `run`")
+}
+
+fn load_world(load: &dyn Fn(&str) -> Vec<u8>) -> World {
+    World {
+        mpds: [
+            load("dash/live-number/live.mpd"),
+            load("dash/live-timeline/live.mpd"),
+            load("dash/livesim2/segtimeline_time_a.mpd"),
+            load("dash/livesim2/segtimeline_time_b.mpd"),
+            load("dash/livesim2/segtimelinenr_a.mpd"),
+            load("dash/livesim2/segtimelinenr_b.mpd"),
+        ],
+        video_segs: [
+            load("dash/live-number/seg-0-005.m4s"),
+            load("dash/live-number/seg-0-006.m4s"),
+            load("dash/live-number/seg-0-007.m4s"),
+            load("dash/live-number/seg-0-008.m4s"),
+        ],
+        audio_segs: [
+            load("dash/live-number/seg-1-005.m4s"),
+            load("dash/live-number/seg-1-006.m4s"),
+            load("dash/live-number/seg-1-007.m4s"),
+            load("dash/live-number/seg-1-008.m4s"),
+        ],
+        video_init: load("dash/live-number/init-0.m4s"),
+        audio_init: load("dash/live-number/init-1.m4s"),
+    }
+}
 
 fn name_hash(name: &str) -> usize {
     name.bytes().fold(0usize, |h, b| {
@@ -71,11 +89,15 @@ fn real_body(url: &str, range: Option<(u64, u64)>) -> Option<Vec<u8>> {
     let name = path.rsplit('/').next()?;
     let audio = path.contains("-1-") || path.contains("A48") || path.contains("init-1");
     let all: &[u8] = if name.contains("init") {
-        if audio { AUDIO_INIT } else { VIDEO_INIT }
+        if audio {
+            &world().audio_init
+        } else {
+            &world().video_init
+        }
     } else if audio {
-        AUDIO_SEGS[name_hash(name) % POOL]
+        &world().audio_segs[name_hash(name) % POOL]
     } else {
-        VIDEO_SEGS[name_hash(name) % POOL]
+        &world().video_segs[name_hash(name) % POOL]
     };
     match range {
         None => Some(all.to_vec()),
@@ -176,7 +198,8 @@ fn utc_body(mode: u8, aux: u8, now: u64, base_unix: i64, rest: &mut &[u8]) -> Op
 /// its request window, never run time backwards, stop after a terminal event
 /// and keep its bookkeeping bounded.
 /// Returns `false` when `data` is outside the accepted size range.
-pub fn run(data: &[u8]) -> bool {
+pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
+    WORLD.get_or_init(|| load_world(load));
     if data.len() < HEADER || data.len() > MAX_INPUT {
         return false;
     }
@@ -196,14 +219,14 @@ pub fn run(data: &[u8]) -> bool {
     dash.early_grace_us = [0, MICROS, 5 * MICROS][usize::from((head[4] >> 2) % 3)];
     let window = limits.max_inflight_segments;
 
-    let selector = usize::from(head[1]) % (MPDS.len() + 1);
+    let selector = usize::from(head[1]) % (world().mpds.len() + 1);
     let mpd: Vec<u8> = if selector == 0 {
         let len = (usize::from(head[2]) << 8 | usize::from(head[3])) % (rest.len() + 1);
         let (m, tail) = rest.split_at(len);
         rest = tail;
         m.to_vec()
     } else {
-        MPDS[selector - 1].to_vec()
+        world().mpds[selector - 1].to_vec()
     };
     let publish = dash_runtime::mpd::Mpd::parse(&mpd)
         .ok()
@@ -287,7 +310,7 @@ pub fn run(data: &[u8]) -> bool {
             break;
         };
         let received = now.max(sent);
-        let alt = MPDS[usize::from(aux) % MPDS.len()];
+        let alt = world().mpds[usize::from(aux) % world().mpds.len()].as_slice();
         match action {
             Action::FetchMpd { .. } => {
                 let reply = answer(Some(mpd.clone()), mode, aux, &mut tail_data, Some(alt));

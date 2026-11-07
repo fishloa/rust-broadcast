@@ -6,5 +6,8 @@ use libfuzzer_sys::fuzz_target;
 mod driver;
 
 fuzz_target!(|data: &[u8]| {
-    driver::run(data);
+    driver::run(data, &|rel| {
+        std::fs::read(format!("{}/../fixtures/{rel}", env!("CARGO_MANIFEST_DIR")))
+            .expect("committed fixture")
+    });
 });
