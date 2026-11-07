@@ -48,9 +48,9 @@ fn every_nibble_pair_matches_table_29() {
             }
         }
     }
-    for n1 in 0..16 {
-        for n2 in 0..16 {
-            assert_eq!(covered[n1][n2], 1, "({n1:#X}, {n2:#X}) rows in Table 29");
+    for (n1, row) in covered.iter().enumerate() {
+        for (n2, rows) in row.iter().enumerate() {
+            assert_eq!(*rows, 1, "({n1:#X}, {n2:#X}) rows in Table 29");
         }
     }
 }
