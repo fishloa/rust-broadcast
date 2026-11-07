@@ -23,6 +23,7 @@
 //! preserves them losslessly rather than discarding).
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::traits::Serialize;
 
@@ -155,13 +156,7 @@ impl<'a> SimulcryptMessage<'a> {
     /// the buffer, and [`Error::TruncatedParameter`] if a `parameter_length`
     /// runs past the message body.
     pub fn parse_on(iface: Interface, bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "generic_message header",
-            });
-        }
+        need_in(bytes, HEADER_LEN, "generic_message header")?;
         let protocol_version = bytes[0];
         let raw_message_type = u16::from_be_bytes([bytes[1], bytes[2]]);
         let message_length = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
@@ -223,12 +218,7 @@ impl Serialize for SimulcryptMessage<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, total)?;
 
         let body_len = self.body_len();
         if body_len > u16::MAX as usize {
