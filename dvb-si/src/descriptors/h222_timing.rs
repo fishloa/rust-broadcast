@@ -375,7 +375,10 @@ mod tests {
             Err(crate::error::Error::BufferTooShort { .. })
         ));
         let mut d = HevcTimingAndHrd::new(true, Some(0x20), None);
-        assert!(d.write_body().is_err());
+        assert!(matches!(
+            d.write_body(),
+            Err(crate::Error::FieldOverflow(..))
+        ));
         d.target_schedule_idx = Some(0x1F);
         assert!(d.write_body().is_ok());
     }

@@ -135,7 +135,10 @@ mod tests {
             &(DvbHtmlApplicationLocationDescriptor::parse(&[TAG, 0])),
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
-        assert!(DvbHtmlApplicationLocationDescriptor::parse(&[TAG, 2, 5, b'a']).is_err());
+        assert!(matches!(
+            DvbHtmlApplicationLocationDescriptor::parse(&[TAG, 2, 5, b'a']),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         let big = vec![b'x'; 256];
         let d = DvbHtmlApplicationLocationDescriptor {
             physical_root: DvbText::new(&big),

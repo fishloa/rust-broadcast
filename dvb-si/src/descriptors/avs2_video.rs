@@ -226,10 +226,16 @@ mod tests {
         ));
         d.sample_precision = 1;
         d.reserved = 0x20;
-        assert!(d.serialize_into(&mut [0u8; 8]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 8]),
+            Err(Error::FieldOverflow(..))
+        ));
         d.reserved = 0x1F;
         d.chroma_format = 4;
-        assert!(d.serialize_into(&mut [0u8; 8]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 8]),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 
     #[test]

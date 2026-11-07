@@ -142,6 +142,9 @@ mod tests {
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
         }
-        assert!(TargetIpv6SourceSlashDescriptor::parse(&[0x11, 0]).is_err());
+        assert!(matches!(
+            TargetIpv6SourceSlashDescriptor::parse(&[0x11, 0]),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
     }
 }

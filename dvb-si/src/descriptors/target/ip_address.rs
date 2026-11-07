@@ -95,7 +95,13 @@ mod tests {
 
     #[test]
     fn rejects_missing_mask_and_wrong_tag() {
-        assert!(TargetIpAddressDescriptor::parse(&[TAG, 3, 1, 2, 3]).is_err());
-        assert!(TargetIpAddressDescriptor::parse(&[0x0A, 4, 1, 2, 3, 4]).is_err());
+        assert!(matches!(
+            TargetIpAddressDescriptor::parse(&[TAG, 3, 1, 2, 3]),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            TargetIpAddressDescriptor::parse(&[0x0A, 4, 1, 2, 3, 4]),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
     }
 }

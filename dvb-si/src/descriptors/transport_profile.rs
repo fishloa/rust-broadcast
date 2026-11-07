@@ -141,7 +141,10 @@ mod tests {
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
         }
-        assert!(TransportProfileDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            TransportProfileDescriptor::parse(&[TAG, 0]),
+            Err(Error::BufferTooShort { .. })
+        ));
         let mut d = TransportProfileDescriptor::new(TransportProfile::Complete);
         d.private_data = vec![0; 255];
         assert!(matches!(

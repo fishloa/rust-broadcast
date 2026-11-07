@@ -124,7 +124,10 @@ mod tests {
 
     #[test]
     fn unknown_value_rejected() {
-        assert!(TableId::try_from(0x99).is_err());
+        assert!(matches!(
+            TableId::try_from(0x99),
+            Err(num_enum::TryFromPrimitiveError { .. })
+        ));
     }
 
     #[test]

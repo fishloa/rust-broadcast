@@ -143,6 +143,9 @@ mod tests {
         let d = SubgroupAssociationDescriptor {
             subgroup_tag: SubgroupTag::new(0x0100_0000, 0),
         };
-        assert!(d.serialize_into(&mut [0u8; 7]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 7]),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 }

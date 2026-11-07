@@ -127,7 +127,10 @@ mod tests {
             b'b', // param_len=4, but only 2 bytes remain after length
                   // (body is only 3 bytes: [4, a, b])
         ];
-        assert!(DvbJApplicationDescriptor::parse(&bytes).is_err());
+        assert!(matches!(
+            DvbJApplicationDescriptor::parse(&bytes),
+            Err(Error::InvalidDescriptor { .. })
+        ));
     }
 
     #[test]

@@ -1035,7 +1035,10 @@ mod tests {
         // preamble presence must match SubstreamMarkingFlag
         d.layouts[0].patterns[0].pop();
         d.layouts[0].preamble = Some(HevcSubregionPreamble::new(0x11));
-        assert!(d.write_body().is_err());
+        assert!(matches!(
+            d.write_body(),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
         // PatternCount is 7 bits
         d.layouts[0].preamble = None;
         d.layouts[0].substream_count_minus_1 = 0;
@@ -1252,11 +1255,17 @@ mod tests {
             &(write_ptl(&p)),
             Err(crate::error::Error::FieldOverflow(_))
         ));
-        assert!(write_ptl(&ProfileTierLevelInfo::new(4, false, 0, 0, 0)).is_err());
+        assert!(matches!(
+            write_ptl(&ProfileTierLevelInfo::new(4, false, 0, 0, 0)),
+            Err(crate::Error::FieldOverflow(..))
+        ));
         assert!(matches!(
             &(write_ptl(&ProfileTierLevelInfo::new(0, false, 32, 0, 0))),
             Err(crate::error::Error::FieldOverflow(_))
         ));
-        assert!(parse_ptl(&PTL_VECTOR[..11]).is_err());
+        assert!(matches!(
+            parse_ptl(&PTL_VECTOR[..11]),
+            Err(crate::Error::BufferTooShort { .. })
+        ));
     }
 }

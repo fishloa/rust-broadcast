@@ -64,5 +64,8 @@ fn audio_descriptor_component_field_widths() {
         desc(component(8, 0)).try_to_bytes(),
         Err(scte35_splice::Error::FieldOverflow(..))
     ));
-    assert!(desc(component(0, 16)).try_to_bytes().is_err());
+    assert!(matches!(
+        desc(component(0, 16)).try_to_bytes(),
+        Err(scte35_splice::Error::FieldOverflow(..))
+    ));
 }

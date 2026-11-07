@@ -31,7 +31,10 @@ fn eit_event_duration_round_trips() {
 #[test]
 fn eit_event_set_duration_rejects_100_hours() {
     let mut ev = eit_event();
-    assert!(ev.set_duration(Duration::from_secs(100 * 3600)).is_err());
+    assert!(matches!(
+        ev.set_duration(Duration::from_secs(100 * 3600)),
+        Err(dvb_si::Error::ValueOutOfRange { .. })
+    ));
 }
 
 #[cfg(feature = "chrono")]
@@ -129,7 +132,10 @@ fn pdc_label_components_round_trip() {
         (15, 6, 20, 30)
     );
     // day exceeds its 5-bit field.
-    assert!(d.set_pil(32, 1, 1, 1).is_err());
+    assert!(matches!(
+        d.set_pil(32, 1, 1, 1),
+        Err(dvb_si::Error::ValueOutOfRange { .. })
+    ));
 }
 
 #[test]

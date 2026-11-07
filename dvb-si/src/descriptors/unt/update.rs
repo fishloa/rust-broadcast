@@ -258,6 +258,9 @@ mod tests {
             private_data: &[],
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 }

@@ -319,7 +319,10 @@ mod tests {
 
     #[test]
     fn malformed_is_rejected() {
-        assert!(QualityAccessUnit::parse(&[]).is_err());
+        assert!(matches!(
+            QualityAccessUnit::parse(&[]),
+            Err(Error::BufferTooShort { .. })
+        ));
         // metric_count=1 but no metric header
         assert!(matches!(
             &(QualityAccessUnit::parse(&[0x01, 0x01])),
@@ -348,7 +351,10 @@ mod tests {
         ));
         // trailing byte
         let ok = [0x01, 0x00, 0xFF];
-        assert!(QualityAccessUnit::parse(&ok).is_err());
+        assert!(matches!(
+            QualityAccessUnit::parse(&ok),
+            Err(Error::ValueOutOfRange { .. })
+        ));
         // sample width differs from field_size_bytes / DTS over 33 bits
         let unit = QualityAccessUnit::new(
             2,

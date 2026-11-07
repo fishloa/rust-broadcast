@@ -119,7 +119,10 @@ mod tests {
     #[test]
     fn text_never_panics_on_short_bodies() {
         let mut r = EntryReader::new(&[], 0, 0x5C);
-        assert!(r.text("overrun", 0).is_err());
+        assert!(matches!(
+            r.text("overrun", 0),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         let mut r = EntryReader::new(&[5, b'a'], 0, 0x5C);
         assert!(matches!(
             &(r.text("overrun", 0)),

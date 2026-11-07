@@ -440,7 +440,10 @@ mod tests {
         // flag/refs disagreement
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.library_stream_flag = true;
-        assert!(d.serialize_into(&mut [0u8; 32]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 32]),
+            Err(Error::ValueOutOfRange { .. })
+        ));
         // over-wide reserved
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.reserved = 8;

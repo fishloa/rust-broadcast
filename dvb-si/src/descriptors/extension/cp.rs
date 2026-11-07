@@ -131,7 +131,10 @@ mod tests {
     fn over_13bit_pid_is_unrepresentable() {
         // Pre-fix `cp_pid & MAX_PID` silently clipped bits 13..16 (r03-W3);
         // `Cp::new` now takes a `Pid`, which `try_new` refuses to build.
-        assert!(Pid::try_new(0x2000).is_err());
+        assert!(matches!(
+            Pid::try_new(0x2000),
+            Err(mpeg_ts::pid::PidOutOfRange { .. })
+        ));
         assert_eq!(Pid::try_new(0x1FFF).unwrap().value(), 0x1FFF);
     }
 

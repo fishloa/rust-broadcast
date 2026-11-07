@@ -77,7 +77,10 @@ mod tests {
 
     #[test]
     fn rejects_wrong_tag_and_overrun() {
-        assert!(TargetSerialNumberDescriptor::parse(&[0x06, 0]).is_err());
+        assert!(matches!(
+            TargetSerialNumberDescriptor::parse(&[0x06, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         assert!(matches!(
             &(TargetSerialNumberDescriptor::parse(&[TAG, 5, 1])),
             Err(crate::error::Error::BufferTooShort { .. })

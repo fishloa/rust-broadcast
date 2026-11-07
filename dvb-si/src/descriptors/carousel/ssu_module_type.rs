@@ -139,7 +139,10 @@ mod tests {
 
     #[test]
     fn wrong_length_rejected() {
-        assert!(SsuModuleTypeDescriptor::parse(&[TAG, 0]).is_err());
+        assert!(matches!(
+            SsuModuleTypeDescriptor::parse(&[TAG, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         assert!(matches!(
             &(SsuModuleTypeDescriptor::parse(&[TAG, 2, 0, 0])),
             Err(crate::error::Error::InvalidDescriptor { .. })

@@ -831,7 +831,10 @@ mod tests {
                 maximum_duration: 32,
             };
         }
-        assert!(over.write_body().is_err());
+        assert!(matches!(
+            over.write_body(),
+            Err(crate::Error::FieldOverflow(..))
+        ));
     }
 
     #[test]
@@ -867,7 +870,10 @@ mod tests {
             ));
         }
         // Truncated partition.
-        assert!(VirtualSegmentation::parse_body(&[0x3F, 0x8F]).is_err());
+        assert!(matches!(
+            VirtualSegmentation::parse_body(&[0x3F, 0x8F]),
+            Err(crate::Error::BufferTooShort { .. })
+        ));
         // Two bytes, zero partitions, no timescale: the second byte is trailing.
         let d = VirtualSegmentation::parse_body(&[0x0F, 0xAB]).unwrap();
         assert_eq!(d.trailing, [0xAB]);
@@ -888,7 +894,10 @@ mod tests {
             &(big.write_body()),
             Err(crate::error::Error::FieldOverflow(_))
         ));
-        assert!(GreenExtension::parse_body(&b[..4]).is_err());
+        assert!(matches!(
+            GreenExtension::parse_body(&b[..4]),
+            Err(crate::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

@@ -47,7 +47,7 @@ fn network_name_256_bytes_is_rejected_not_wrapped() {
     let bad = NetworkNameDescriptor {
         network_name: DvbText::new(&long),
     };
-    assert!(ser(&bad).is_err());
+    assert!(matches!(ser(&bad), Err(dvb_si::Error::FieldOverflow(..))));
     let max = vec![b'n'; 255];
     let ok = NetworkNameDescriptor {
         network_name: DvbText::new(&max),
@@ -64,7 +64,7 @@ fn registration_256_byte_body_is_rejected_not_wrapped() {
         format_identifier: *b"CUEI",
         additional_identification_info: &info,
     };
-    assert!(ser(&bad).is_err());
+    assert!(matches!(ser(&bad), Err(dvb_si::Error::FieldOverflow(..))));
     let info = vec![0u8; 251]; // 255
     let ok = RegistrationDescriptor {
         format_identifier: *b"CUEI",

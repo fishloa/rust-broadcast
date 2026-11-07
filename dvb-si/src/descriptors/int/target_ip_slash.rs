@@ -86,7 +86,10 @@ mod tests {
         let mut d = TargetIpSlashDescriptor::parse(&[TAG, 0]).unwrap();
         let long = [0u8; ENTRY_LEN];
         d.trailing = &long;
-        assert!(d.serialize_into(&mut [0u8; 64]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 64]),
+            Err(crate::Error::InvalidDescriptor { .. })
+        ));
         let mut buf = [0u8; 64];
         d.trailing = &long[..ENTRY_LEN - 1];
         let n = d.serialize_into(&mut buf).unwrap();

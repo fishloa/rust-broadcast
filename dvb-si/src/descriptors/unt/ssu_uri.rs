@@ -108,6 +108,9 @@ mod tests {
             &(SsuUriDescriptor::parse(&[TAG, 1, 0])),
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
-        assert!(SsuUriDescriptor::parse(&[0x0C, 2, 0, 0]).is_err());
+        assert!(matches!(
+            SsuUriDescriptor::parse(&[0x0C, 2, 0, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
     }
 }

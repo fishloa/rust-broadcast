@@ -242,7 +242,10 @@ mod tests {
             reserved_flags: 0x20,
             ..Default::default()
         };
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 
     #[test]

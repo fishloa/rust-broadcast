@@ -377,7 +377,10 @@ mod tests {
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
         // label overruns
-        assert!(ApplicationRecordingDescriptor::parse(&[TAG, 4, 0, 1, 5, b'a']).is_err());
+        assert!(matches!(
+            ApplicationRecordingDescriptor::parse(&[TAG, 4, 0, 1, 5, b'a']),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         // private_length overruns
         assert!(matches!(
             &(ApplicationRecordingDescriptor::parse(&[TAG, 4, 0, 0, 0, 0xFF])),
@@ -404,12 +407,18 @@ mod tests {
             ..Default::default()
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(Error::FieldOverflow(..))
+        ));
         let d = ApplicationRecordingDescriptor {
             reserved: 4,
             ..Default::default()
         };
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 }

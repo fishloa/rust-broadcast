@@ -134,7 +134,10 @@ mod tests {
 
     #[test]
     fn rejects_truncated_and_inconsistent() {
-        assert!(SsuLocationDescriptor::parse(&[TAG, 1, 0]).is_err());
+        assert!(matches!(
+            SsuLocationDescriptor::parse(&[TAG, 1, 0]),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         assert!(matches!(
             &(SsuLocationDescriptor::parse(&[TAG, 3, 0x00, 0x0A, 0x01])),
             Err(crate::error::Error::InvalidDescriptor { .. })

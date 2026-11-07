@@ -280,7 +280,10 @@ mod tests {
 
     #[test]
     fn rejects_bad_input() {
-        assert!(MetadataSection::parse(&[0x06, 0xB0, 0x00]).is_err());
+        assert!(matches!(
+            MetadataSection::parse(&[0x06, 0xB0, 0x00]),
+            Err(Error::BufferTooShort { .. })
+        ));
         let mut b = vec![0u8; 12];
         b[0] = 0x05;
         assert!(matches!(
@@ -288,7 +291,10 @@ mod tests {
             Err(Error::UnexpectedTableId { .. })
         ));
         let s = MetadataSection::new(1, SectionFragmentIndication::Complete, 32, 0, 0, &[]);
-        assert!(s.serialize_into(&mut [0u8; 16]).is_err());
+        assert!(matches!(
+            s.serialize_into(&mut [0u8; 16]),
+            Err(Error::FieldOverflow(..))
+        ));
         let big = vec![0u8; 4090];
         let s = MetadataSection::new(1, SectionFragmentIndication::Complete, 0, 0, 0, &big);
         assert!(matches!(

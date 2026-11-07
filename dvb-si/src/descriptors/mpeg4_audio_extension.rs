@@ -134,7 +134,10 @@ mod tests {
             Err(crate::error::Error::BufferTooShort { .. })
         ));
         let d = Mpeg4AudioExtensionDescriptor::new(vec![0; 16], None);
-        assert!(d.serialize_into(&mut [0u8; 64]).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut [0u8; 64]),
+            Err(crate::Error::FieldOverflow(..))
+        ));
         let d = Mpeg4AudioExtensionDescriptor::new(vec![], Some(vec![0; 256]));
         assert!(matches!(
             &(d.serialize_into(&mut [0u8; 300])),

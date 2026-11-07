@@ -170,7 +170,10 @@ mod tests {
             &(PrefetchDescriptor::parse(&[TAG, 0])),
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
-        assert!(PrefetchDescriptor::parse(&[TAG, 3, 7, 5, b'a']).is_err());
+        assert!(matches!(
+            PrefetchDescriptor::parse(&[TAG, 3, 7, 5, b'a']),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         let long = vec![0u8; 256];
         let d = PrefetchDescriptor {
             transport_protocol_label: 0,

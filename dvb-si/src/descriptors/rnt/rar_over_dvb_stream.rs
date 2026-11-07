@@ -245,7 +245,10 @@ mod tests {
         let mut trunc = sample(true);
         trunc.truncate(trunc.len() - 3);
         trunc[1] -= 3;
-        assert!(RarOverDvbStreamDescriptor::parse(&trunc).is_err());
+        assert!(matches!(
+            RarOverDvbStreamDescriptor::parse(&trunc),
+            Err(Error::InvalidDescriptor { .. })
+        ));
         assert!(matches!(
             &(RarOverDvbStreamDescriptor::parse(&[TAG, 3, 0, 0, 0])),
             Err(crate::error::Error::InvalidDescriptor { .. })
@@ -262,6 +265,9 @@ mod tests {
         let mut d = RarOverDvbStreamDescriptor::parse(&bytes).unwrap();
         d.weighting = 64;
         let mut out = vec![0u8; d.serialized_len()];
-        assert!(d.serialize_into(&mut out).is_err());
+        assert!(matches!(
+            d.serialize_into(&mut out),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 }
