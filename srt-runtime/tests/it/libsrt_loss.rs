@@ -38,7 +38,7 @@ include!("support/skip.rs");
 include!("support/libsrt_spawn.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
-const PERIODIC_NAK_LATENCY_MS: u16 = 8_000;
+const PERIODIC_NAK_LATENCY_MS: u16 = 2_000;
 /// Small payloads, so that a thousand of them fit a kernel UDP buffer in one
 /// go (the periodic-NAK test needs hundreds of losses outstanding at once).
 const PAYLOAD_LEN: usize = 256;
