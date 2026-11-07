@@ -935,27 +935,27 @@ fn split_audio_config_validates_rendition_sources() {
     )
     .expect("valid split config");
     check("", r#"["llhls"]"#).expect("declared-only config still valid");
-    assert!(
+    assert!(matches!(
         check(
             r#","audio_rendition_sources":[{"index":0}]"#,
             r#"["llhls"]"#
-        )
-        .is_err()
-    );
-    assert!(
+        ),
+        Err(multimux::error::MultimuxError::ConfigInvalid { .. })
+    ));
+    assert!(matches!(
         check(
             r#","audio_rendition_sources":[{"index":0},{"index":0}]"#,
             r#"["llhls"]"#
-        )
-        .is_err()
-    );
-    assert!(
+        ),
+        Err(multimux::error::MultimuxError::ConfigInvalid { .. })
+    ));
+    assert!(matches!(
         check(
             r#","audio_rendition_sources":[{"index":0},{"index":1}]"#,
             r#"["llhls","dash"]"#
-        )
-        .is_err()
-    );
+        ),
+        Err(multimux::error::MultimuxError::ConfigInvalid { .. })
+    ));
 }
 
 type Finding = (String, i64, String);

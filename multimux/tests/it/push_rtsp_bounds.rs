@@ -199,7 +199,10 @@ async fn a_peer_that_never_answers_options_fails_connect_at_the_bound() {
     let r = tokio::time::timeout(GUARD, RtspTransport::connect(&url, &config_with_bounds()))
         .await
         .expect("connect must fail at its bound, not hang on a peer that never answers OPTIONS");
-    assert!(r.is_err(), "no answer is a failure");
+    assert!(
+        matches!(r, Err(multimux::push::rtsp::RtspPushError::Protocol(..))),
+        "no answer is a failure"
+    );
 }
 
 /// A peer that completes RECORD then stops reading fails `send` at the write

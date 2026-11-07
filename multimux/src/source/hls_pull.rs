@@ -1941,7 +1941,7 @@ Content-Length: {over}
         .await
         .expect("run_hls_pull must not exceed the assertion window");
         assert!(
-            result.is_err(),
+            matches!(result, Err(crate::error::MultimuxError::Connect { .. })),
             "a stalled playlist fetch must fail, not hang forever"
         );
     }

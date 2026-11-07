@@ -803,7 +803,7 @@ mod tests {
         .await
         .expect("recv_and_feed must not exceed the assertion window");
         assert!(
-            outcome.is_err(),
+            matches!(outcome, Err(crate::error::MultimuxError::Connect { .. })),
             "expected a recoverable read-timeout error"
         );
     }

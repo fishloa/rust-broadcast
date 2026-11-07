@@ -2673,7 +2673,7 @@ mod program_registry_tests {
             route.await_trunk_change(&low),
         )
         .await;
-        assert!(pending.is_err(), "no change yet");
+        assert!(matches!(pending, Err(_)), "no change yet");
 
         let waiter = {
             let route = Arc::clone(&route);

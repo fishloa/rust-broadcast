@@ -1993,8 +1993,14 @@ mod tests {
 
     #[test]
     fn discover_moof_track_id_errors_not_panics_on_garbage() {
-        assert!(fragment_track_id(b"not a fragment at all").is_err());
-        assert!(fragment_track_id(&[]).is_err());
+        assert!(matches!(
+            fragment_track_id(b"not a fragment at all"),
+            Err(transmux::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            fragment_track_id(&[]),
+            Err(transmux::error::Error::UnexpectedBox { .. })
+        ));
     }
 
     /// Test-only: `fetch_one_bytes`, unwrapped to the body bytes (tests never

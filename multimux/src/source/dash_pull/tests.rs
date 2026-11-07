@@ -681,7 +681,10 @@ async fn a_missing_mpd_fails_the_attempt() {
     let (_, result) = Pull::start(route(origin.url("does-not-exist.mpd")), SkewedClock::new(0))
         .finish()
         .await;
-    assert!(result.is_err(), "a 404 MPD must fail the attempt");
+    assert!(
+        matches!(result, Err(crate::error::MultimuxError::Connect { .. })),
+        "a 404 MPD must fail the attempt"
+    );
 }
 
 /// A server that resolves the MPD and the inits but stalls on a segment must
@@ -817,7 +820,10 @@ async fn a_base_url_on_another_origin_is_refused_by_default() {
     let (delivered, result) = Pull::start(route(origins.mpd_url.clone()), SkewedClock::new(0))
         .finish()
         .await;
-    assert!(result.is_err(), "no Representation is left to play");
+    assert!(
+        matches!(result, Err(crate::error::MultimuxError::Connect { .. })),
+        "no Representation is left to play"
+    );
     assert!(delivered.samples.is_empty());
     assert!(
         origins.media.hits().is_empty(),

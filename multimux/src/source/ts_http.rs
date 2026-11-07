@@ -645,7 +645,10 @@ mod tests {
         let result = tokio::time::timeout(Duration::from_secs(60), open_stream(&route))
             .await
             .expect("open_stream timed out");
-        assert!(result.is_err(), "a 404 must fail open_stream()");
+        assert!(
+            matches!(result, Err(crate::error::MultimuxError::Connect { .. })),
+            "a 404 must fail open_stream()"
+        );
 
         server.abort();
     }
@@ -724,7 +727,7 @@ mod tests {
              not via the outer assertion window",
         );
         assert!(
-            result.is_err(),
+            matches!(result, Err(crate::error::MultimuxError::Connect { .. })),
             "a server that goes silent mid-body must fail, not hang forever"
         );
     }

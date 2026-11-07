@@ -205,7 +205,10 @@ async fn reuse_port_lets_two_sockets_share_a_port() {
     let held = plain.local_addr().unwrap();
     let conflict = bind_udp(&held.to_string(), None, UdpBindOptions::default()).await;
     assert!(
-        conflict.is_err(),
+        matches!(
+            conflict,
+            Err(multimux::error::MultimuxError::Connect { .. })
+        ),
         "binding a port held without reuse_port must fail (got {:?})",
         conflict.map(|s| s.local_addr())
     );

@@ -437,13 +437,19 @@ fn invalid_caption_override_is_rejected_by_config_validation() {
         instream_id: "CC5".into(),
         ..ClosedCaptionDecl::default()
     };
-    assert!(hls_runtime::server::validate_closed_caption_overrides(&[bad]).is_err());
+    assert!(matches!(
+        hls_runtime::server::validate_closed_caption_overrides(&[bad]),
+        Err(hls_runtime::server::HlsOriginBuildError::InvalidClosedCaptionInstreamId)
+    ));
     let one = ClosedCaptionDecl {
         instream_id: "SERVICE3".into(),
         ..ClosedCaptionDecl::default()
     };
     assert!(
-        hls_runtime::server::validate_closed_caption_overrides(&[one.clone(), one]).is_err(),
+        matches!(
+            hls_runtime::server::validate_closed_caption_overrides(&[one.clone(), one]),
+            Err(hls_runtime::server::HlsOriginBuildError::DuplicateClosedCaptionInstreamId)
+        ),
         "duplicate INSTREAM-ID"
     );
 }

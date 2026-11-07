@@ -995,7 +995,10 @@ mod tests {
     #[test]
     fn connect_addr_rejects_non_rtsp_scheme() {
         let base = Url::parse("http://cam.local/stream").unwrap();
-        assert!(connect_addr(&base).is_err());
+        assert!(matches!(
+            connect_addr(&base),
+            Err(crate::error::MultimuxError::Connect { .. })
+        ));
     }
 
     #[test]
@@ -1013,7 +1016,10 @@ mod tests {
     #[test]
     fn scheme_is_tls_rejects_other_scheme() {
         let base = Url::parse("http://cam.local/stream").unwrap();
-        assert!(scheme_is_tls(&base).is_err());
+        assert!(matches!(
+            scheme_is_tls(&base),
+            Err(crate::error::MultimuxError::Connect { .. })
+        ));
     }
 
     /// MUTATION VERIFIED: changing the `strip_prefix('[')`/`strip_suffix(']')`
@@ -2162,7 +2168,7 @@ mod tests {
             body: Vec::new(),
         });
         assert!(
-            err.is_err(),
+            matches!(err, Err(crate::error::MultimuxError::Protocol { .. })),
             "a non-success reply to a non-keepalive request must still be fatal"
         );
     }

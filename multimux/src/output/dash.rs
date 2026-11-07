@@ -714,19 +714,46 @@ mod tests {
     /// its `secs <= 0.0` guard let NaN through).
     #[test]
     fn xs_duration_secs_rejects_nan_inf_negative_and_overflow() {
-        assert!(xs_duration_secs(f64::NAN).is_err(), "NaN must be rejected");
         assert!(
-            xs_duration_secs(f64::INFINITY).is_err(),
+            matches!(
+                xs_duration_secs(f64::NAN),
+                Err(crate::output::dash::DurationError::InvalidInput { .. })
+            ),
+            "NaN must be rejected"
+        );
+        assert!(
+            matches!(
+                xs_duration_secs(f64::INFINITY),
+                Err(crate::output::dash::DurationError::InvalidInput { .. })
+            ),
             "+inf must be rejected"
         );
         assert!(
-            xs_duration_secs(f64::NEG_INFINITY).is_err(),
+            matches!(
+                xs_duration_secs(f64::NEG_INFINITY),
+                Err(crate::output::dash::DurationError::InvalidInput { .. })
+            ),
             "-inf must be rejected"
         );
-        assert!(xs_duration_secs(-1.0).is_err(), "negative must be rejected");
-        assert!(xs_duration_secs(0.0).is_err(), "zero must be rejected");
         assert!(
-            xs_duration_secs(f64::MAX).is_err(),
+            matches!(
+                xs_duration_secs(-1.0),
+                Err(crate::output::dash::DurationError::InvalidInput { .. })
+            ),
+            "negative must be rejected"
+        );
+        assert!(
+            matches!(
+                xs_duration_secs(0.0),
+                Err(crate::output::dash::DurationError::InvalidInput { .. })
+            ),
+            "zero must be rejected"
+        );
+        assert!(
+            matches!(
+                xs_duration_secs(f64::MAX),
+                Err(crate::output::dash::DurationError::InvalidInput { .. })
+            ),
             "overflow must be rejected, not panic"
         );
         // A valid value still renders.

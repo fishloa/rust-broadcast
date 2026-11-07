@@ -173,12 +173,15 @@ a=control:streamid=0\r\n";
     #[test]
     fn load_sdp_at_prefix_missing_file_errors() {
         let err = load_sdp("@/no/such/path/multimux-missing.sdp");
-        assert!(err.is_err());
+        assert!(matches!(err, Err(crate::error::MultimuxError::Sdp { .. })));
     }
 
     #[test]
     fn rejects_sdp_without_media() {
         let sdp = b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n";
-        assert!(parse_sdp_tracks(sdp).is_err());
+        assert!(matches!(
+            parse_sdp_tracks(sdp),
+            Err(crate::error::MultimuxError::Sdp { .. })
+        ));
     }
 }

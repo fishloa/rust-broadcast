@@ -1765,20 +1765,29 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff\r\n",
             "",
         );
-        assert!(parse_whep_offer(&offer).is_err());
+        assert!(matches!(
+            parse_whep_offer(&offer),
+            Err(crate::error::MultimuxError::Sdp { .. })
+        ));
     }
 
     #[test]
     fn rejects_offer_with_no_video() {
         let offer = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n\
 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxxxxxxxx\r\n";
-        assert!(parse_whep_offer(offer).is_err());
+        assert!(matches!(
+            parse_whep_offer(offer),
+            Err(crate::error::MultimuxError::Sdp { .. })
+        ));
     }
 
     #[test]
     fn rejects_offer_with_audio_and_video() {
         let offer = OFFER.replace("m=video 9", "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=video 9");
-        assert!(parse_whep_offer(&offer).is_err());
+        assert!(matches!(
+            parse_whep_offer(&offer),
+            Err(crate::error::MultimuxError::Sdp { .. })
+        ));
     }
 
     /// MUTATION-CHECKED: swapping the two match arms below (`"active" =>
@@ -2453,15 +2462,17 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let username = b"localuf01:remoteuf01";
 
         assert!(
-            media
-                .handle_datagram(Instant::now(), from, &stun_binding_request(username, false))
-                .is_err(),
+            matches!(
+                media.handle_datagram(Instant::now(), from, &stun_binding_request(username, false)),
+                Err(webrtc_runtime::error::Error::Media(..))
+            ),
             "a Binding Request missing MESSAGE-INTEGRITY entirely must be Err"
         );
         assert!(
-            media
-                .handle_datagram(Instant::now(), from, &stun_binding_request(username, true))
-                .is_err(),
+            matches!(
+                media.handle_datagram(Instant::now(), from, &stun_binding_request(username, true)),
+                Err(webrtc_runtime::error::Error::Media(..))
+            ),
             "a Binding Request with a wrong MESSAGE-INTEGRITY must be Err"
         );
     }

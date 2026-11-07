@@ -156,7 +156,7 @@ async fn body_cut_short_of_declared_length_fails() {
     let route = TsHttpRoute::new("truncated", url).with_timeouts(timeouts(STALL_READ));
     let (result, _) = run(&route).await;
     assert!(
-        result.is_err(),
+        matches!(result, Err(multimux::error::MultimuxError::Connect { .. })),
         "a body that ends before its Content-Length must not be reported as ended"
     );
 }
@@ -239,5 +239,8 @@ async fn endless_redirects_fail_instead_of_looping() {
     let url = format!("{}/hop", spawn(app).await);
     let route = TsHttpRoute::new("loop", url).with_timeouts(timeouts(STALL_READ));
     let (result, _) = run(&route).await;
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(multimux::error::MultimuxError::Connect { .. })
+    ));
 }

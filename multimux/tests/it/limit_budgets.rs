@@ -146,7 +146,7 @@ async fn a_shared_concurrency_pool_is_one_across_routes() {
     // While the permit is held, the second route must be blocked (it waits for
     // the shared semaphore and times out rather than completing).
     assert!(
-        second.await.unwrap().is_err(),
+        matches!(second.await.unwrap(), Err(_)),
         "a different route must be blocked by the shared pool while a request holds the permit"
     );
 
@@ -209,7 +209,7 @@ async fn the_whip_router_uses_one_shared_pool_across_routes() {
     });
 
     assert!(
-        second.await.unwrap().is_err(),
+        matches!(second.await.unwrap(), Err(_)),
         "a different route must be blocked by the shared pool while a request holds the permit"
     );
 
