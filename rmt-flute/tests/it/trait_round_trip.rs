@@ -22,7 +22,7 @@ fn alc_packet_serializes_byte_identically_through_the_trait() {
 fn lct_header_and_extension_serialize_through_the_trait() {
     let data = fixture();
     let pkt = AlcPacket::parse(&data, FEC_PAYLOAD_ID_128_LEN).unwrap();
-    let hdr_bytes = usize::from(pkt.lct.hdr_len()) * 4;
+    let hdr_bytes = pkt.lct.hdr_len() * 4;
     assert_eq!(
         Serialize::try_to_bytes(&pkt.lct).unwrap(),
         &data[..hdr_bytes]
