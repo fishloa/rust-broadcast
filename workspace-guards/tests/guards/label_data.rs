@@ -139,7 +139,8 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-common",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        skip: &[],
+        // `BitError`: structured error with a message-bearing Display, not a spec label.
+        skip: &["BitError"],
         expected: None,
         min_enums: None,
     },

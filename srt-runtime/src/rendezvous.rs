@@ -153,11 +153,7 @@ impl RendezvousHandshakeState {
     }
 }
 
-impl core::fmt::Display for RendezvousHandshakeState {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.name())
-    }
-}
+broadcast_common::impl_spec_display!(RendezvousHandshakeState);
 
 /// The role a [`RendezvousHandshake`] plays, resolved by the cookie contest
 /// (`draft-sharabayko-srt-01` §4.3.2, L2107-2135): "When one party's cookie
