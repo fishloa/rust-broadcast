@@ -70,8 +70,7 @@
 //! `Trunk`'s four rings. [`HlsOrigin::set_init`] is the (small, honest) side
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
-use super::ids::Generation;
-use media_plane::ids::{PartIndex, SegmentSeq};
+use media_plane::ids::{Generation, PartIndex, SegmentSeq};
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
