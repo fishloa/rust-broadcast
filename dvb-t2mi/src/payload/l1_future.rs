@@ -4,6 +4,7 @@
 //! signalling data. Per §5.5, this is always the **last** T2-MI packet
 //! for a given `frame_idx` (if used in current frame).
 
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -39,7 +40,7 @@ fn length_prefixed_block<'d>(
     let len_field = data
         .get(pos..)
         .and_then(|rest| rest.first_chunk::<LENGTH_FIELD_BYTES>())
-        .ok_or(crate::Error::BufferTooShort {
+        .ok_or(BufferTooShort {
             need: pos.saturating_add(LENGTH_FIELD_BYTES),
             have: data.len(),
             what: len_what,
@@ -47,7 +48,7 @@ fn length_prefixed_block<'d>(
     let block_len = usize::from(u16::from_be_bytes(*len_field)).div_ceil(8);
     let start = pos + LENGTH_FIELD_BYTES;
     let end = start.saturating_add(block_len);
-    let block = data.get(start..end).ok_or(crate::Error::BufferTooShort {
+    let block = data.get(start..end).ok_or(BufferTooShort {
         need: end,
         have: data.len(),
         what: block_what,
@@ -261,13 +262,14 @@ mod tests {
             frame_idx: 0,
             l1_future_data: &data,
         };
-        assert!(matches!(
+        assert_eq!(
             pkt.l1_dynamic_next2(0, 0),
-            Err(crate::Error::BufferTooShort {
+            Err(crate::Error::BufferTooShort(BufferTooShort {
+                need: 4,
+                have: 3,
                 what: "L1DYN_NEXT2_LEN",
-                ..
-            })
-        ));
+            }))
+        );
     }
 
     #[test]
@@ -277,12 +279,13 @@ mod tests {
             frame_idx: 0,
             l1_future_data: &data,
         };
-        assert!(matches!(
+        assert_eq!(
             pkt.l1_dynamic_next2(0, 0),
-            Err(crate::Error::BufferTooShort {
+            Err(crate::Error::BufferTooShort(BufferTooShort {
+                need: 2 + 0xFFFF_usize.div_ceil(8),
+                have: 2,
                 what: "L1DYN_NEXT (scanning for NEXT2)",
-                ..
-            })
-        ));
+            }))
+        );
     }
 }

@@ -217,7 +217,12 @@ impl L1Pre {
         let expected = u32::from_be_bytes([crc[0], crc[1], crc[2], crc[3]]);
         let computed = broadcast_common::crc32_mpeg2::compute(info);
         if computed != expected {
-            return Err(crate::Error::CrcMismatch { computed, expected });
+            return Err(broadcast_common::error::CrcMismatch {
+                what: "L1-pre",
+                computed,
+                expected,
+            }
+            .into());
         }
         L1Pre::parse(info)
     }
@@ -452,10 +457,13 @@ mod tests {
         ]);
         assert_eq!(
             L1Pre::parse_with_crc(&bytes),
-            Err(crate::Error::CrcMismatch {
-                computed: expected_crc,
-                expected: flipped,
-            })
+            Err(crate::Error::CrcMismatch(
+                broadcast_common::error::CrcMismatch {
+                    what: "L1-pre",
+                    computed: expected_crc,
+                    expected: flipped,
+                }
+            ))
         );
     }
 
@@ -474,13 +482,16 @@ mod tests {
     fn parse_with_crc_ignores_trailing_bytes_and_rejects_short_input() {
         let pre = synthetic_pre();
         let mut bytes = pre.serialize_with_crc().unwrap();
-        assert!(matches!(
+        assert_eq!(
             L1Pre::parse_with_crc(&bytes[..L1PRE_WITH_CRC_BYTES - 1]),
-            Err(crate::Error::BufferTooShort {
-                need: L1PRE_WITH_CRC_BYTES,
-                ..
-            })
-        ));
+            Err(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: L1PRE_WITH_CRC_BYTES,
+                    have: L1PRE_WITH_CRC_BYTES - 1,
+                    what: "L1Pre with CRC",
+                }
+            ))
+        );
         bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
         assert_eq!(L1Pre::parse_with_crc(&bytes).unwrap(), pre);
     }
