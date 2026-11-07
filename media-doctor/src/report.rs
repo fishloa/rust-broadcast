@@ -210,6 +210,9 @@ mod tests {
             0x0001_0064
         );
         // An out-of-range PID cannot be turned into a typed location at all.
-        assert!(Pid::try_new(0x2064).is_err());
+        assert!(matches!(
+            Pid::try_new(0x2064),
+            Err(mpeg_ts::pid::PidOutOfRange { .. })
+        ));
     }
 }

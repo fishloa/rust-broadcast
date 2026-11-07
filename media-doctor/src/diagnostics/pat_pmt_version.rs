@@ -482,10 +482,12 @@ mod tests {
             *byte ^= 0xFF;
         }
         assert!(
-            Section::parse(&ts[payload_start..])
-                .expect("PAT section")
-                .validate_crc(&ts[payload_start..])
-                .is_err(),
+            matches!(
+                Section::parse(&ts[payload_start..])
+                    .expect("PAT section")
+                    .validate_crc(&ts[payload_start..]),
+                Err(mpeg_ts::error::Error::CrcMismatch { .. })
+            ),
             "test setup must actually corrupt the CRC",
         );
 
