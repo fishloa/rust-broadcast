@@ -1,9 +1,12 @@
 //! TS byte-stream resynchronisation helpers for `dvb-stream`.
 //!
-//! Thin wrappers over [`mpeg_ts::resync::TsResync`] — the shared stateful
-//! resynchroniser lives in `mpeg-ts` (feature `ts`).  This module keeps
-//! the public surface that `section_stream` and `t2mi_stream` use (the
-//! stateless `resync` + `aligned_packets` pair and the size/sync constants).
+//! The stateless 188-byte alignment scan `TsDecoder` uses
+//! per datagram, plus the size/sync constants. It is deliberately not
+//! [`mpeg_ts::resync::TsResync`]: that resynchroniser needs
+//! `LOCK_CONFIRMATIONS` consecutive packets (and also locks 204-byte
+//! strides), so a short UDP datagram holding one or two packets would never
+//! lock, while this scan accepts a lone sync byte when the buffer is too
+//! small to confirm.
 
 pub use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
@@ -38,14 +41,4 @@ pub fn resync(buf: &[u8]) -> Option<usize> {
         i += 1;
     }
     None
-}
-
-/// Return an iterator over aligned 188-byte TS packet slices in `buf`.
-///
-/// Requires that `buf` is already aligned (i.e. `buf[0] == 0x47`).  Each
-/// yielded slice is exactly [`TS_PACKET_SIZE`] bytes.  Trailing bytes that do
-/// not form a complete packet are ignored.
-pub fn aligned_packets(buf: &[u8]) -> impl Iterator<Item = &[u8]> {
-    buf.chunks_exact(TS_PACKET_SIZE)
-        .filter(|pkt| pkt[0] == TS_SYNC_BYTE)
 }

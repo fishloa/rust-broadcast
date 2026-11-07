@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- Unused `resync::aligned_packets`; the `resync` module doc no longer claims to wrap `mpeg_ts::resync::TsResync` (c2 H7).
 
 ## [0.7.0] - 2026-10-17
 ### Documentation
