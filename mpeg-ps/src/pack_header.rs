@@ -6,6 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::scr::{self, Scr};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// `pack_start_code` — `0x000001BA`.
@@ -52,13 +53,7 @@ impl<'a> Parse<'a> for PackHeader<'a> {
     type Error = Error;
 
     fn parse(b: &'a [u8]) -> Result<Self> {
-        if b.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: b.len(),
-                what: "pack_header",
-            });
-        }
+        need_in(b, FIXED_LEN, "pack_header")?;
 
         if u32::from_be_bytes([b[0], b[1], b[2], b[3]]) != PACK_START_CODE {
             return Err(Error::BadPackStartCode(u32::from_be_bytes([
@@ -93,13 +88,7 @@ impl<'a> Parse<'a> for PackHeader<'a> {
         let stuffing_length = b[13] & 0x07;
 
         let total = FIXED_LEN + stuffing_length as usize;
-        if b.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: b.len(),
-                what: "pack_header stuffing bytes",
-            });
-        }
+        need_in(b, total, "pack_header stuffing bytes")?;
 
         Ok(PackHeader {
             scr,
@@ -136,13 +125,7 @@ impl Serialize for PackHeader<'_> {
             "pack_header.reserved",
         )? as u8;
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "pack_header serialize output",
-            });
-        }
+        need_in(buf, len, "pack_header serialize output")?;
 
         // pack_start_code
         buf[0..4].copy_from_slice(&PACK_START_CODE.to_be_bytes());

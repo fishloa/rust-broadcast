@@ -7,6 +7,7 @@
 //! The stream terminates with the `MPEG_program_end_code` `0x000001B9`.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -50,13 +51,7 @@ pub struct Pack<'a> {
 /// Returns `Ok((Some(pack), consumed_bytes))` on success,
 /// or `Ok((None, 4))` when `MPEG_program_end_code` `0x000001B9` is reached.
 pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
-    if b.len() < 4 {
-        return Err(Error::BufferTooShort {
-            need: 4,
-            have: b.len(),
-            what: "pack start_code or end_code",
-        });
-    }
+    need_in(b, 4, "pack start_code or end_code")?;
 
     let start = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
     if start == PROGRAM_END_CODE {
