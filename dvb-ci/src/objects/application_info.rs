@@ -166,11 +166,13 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
         let menu_string_length = body[5] as usize;
         let menu_end = APP_INFO_PREFIX + menu_string_length;
         if body.len() < menu_end {
-            return Err(Error::LengthMismatch {
-                what: "application_info menu_string",
-                declared: menu_string_length,
-                actual: body.len() - APP_INFO_PREFIX,
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "application_info menu_string",
+                    declared: menu_string_length,
+                    actual: body.len() - APP_INFO_PREFIX,
+                },
+            ));
         }
         // EN 50221 Table 21 / TS 101 699 §5 define no field after menu_string.
         super::reject_trailing_body(body, menu_end, "application_info")?;

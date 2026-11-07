@@ -676,7 +676,9 @@ impl Serialize for ActivationStatus {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if buf.is_empty() {
-            return Err(Error::OutputBufferTooSmall { need: 1, have: 0 });
+            return Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall { need: 1, have: 0 },
+            ));
         }
         let mut b = 0u8;
         if self.event_activated {

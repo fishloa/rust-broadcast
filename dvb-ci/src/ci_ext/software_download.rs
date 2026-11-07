@@ -258,11 +258,13 @@ fn parse_dsmcc_header<'a>(
     // reserved(1) adaptationLength(1) messageLength(2) = 12.
     const HDR: usize = 12;
     if body.len() < HDR {
-        return Err(Error::BufferTooShort {
-            need: HDR,
-            have: body.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: HDR,
+                have: body.len(),
+                what,
+            },
+        ));
     }
     if body[0] != DSMCC_PROTOCOL_DISCRIMINATOR {
         return Err(Error::InvalidObject {
@@ -286,22 +288,26 @@ fn parse_dsmcc_header<'a>(
     let id = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
     let adaptation_length = body[9] as usize;
     if body.len() < HDR + adaptation_length {
-        return Err(Error::BufferTooShort {
-            need: HDR + adaptation_length,
-            have: body.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: HDR + adaptation_length,
+                have: body.len(),
+                what,
+            },
+        ));
     }
     let declared_message_length = u16::from_be_bytes([body[10], body[11]]) as usize;
     // messageLength counts everything after the messageLength field itself
     // (§6.7.5: adaptationType/adaptationDataBytes + the message body).
     let actual_message_length = body.len() - HDR;
     if declared_message_length != actual_message_length {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: declared_message_length,
-            actual: actual_message_length,
-        });
+        return Err(Error::LengthMismatch(
+            broadcast_common::error::LengthMismatch {
+                what,
+                declared: declared_message_length,
+                actual: actual_message_length,
+            },
+        ));
     }
     let adaptation = &body[HDR..HDR + adaptation_length];
     let rest = &body[HDR + adaptation_length..];
@@ -360,11 +366,13 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
             parse_dsmcc_header(body, MSG_ID_DOWNLOAD_INFO_REQUEST, what)?;
         // bufferSize(4) maximumBlockSize(2) compatibilityDescriptorLength(2).
         if rest.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 8,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         let buffer_size = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
         let maximum_block_size = u16::from_be_bytes([rest[4], rest[5]]);
@@ -374,11 +382,13 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
         let compat_start = 6; // start of compatibilityDescriptor block (incl. its length field)
         let compat_block_end = compat_start + 2 + compat_len;
         if rest.len() < compat_block_end + 2 {
-            return Err(Error::BufferTooShort {
-                need: compat_block_end + 2,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: compat_block_end + 2,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         let compatibility_descriptor = &rest[compat_start..compat_block_end];
         let priv_len =
@@ -386,11 +396,13 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
         let priv_start = compat_block_end + 2;
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
-            return Err(Error::BufferTooShort {
-                need: priv_end,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: priv_end,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         Ok(Self {
             transaction_id,
@@ -487,11 +499,13 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
         // tCDownloadWindow(4) tCDownloadScenario(4) compatibilityDescriptorLength(2).
         const FIXED: usize = 4 + 2 + 1 + 1 + 4 + 4 + 2;
         if rest.len() < FIXED {
-            return Err(Error::BufferTooShort {
-                need: FIXED,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: FIXED,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         let download_id = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
         let block_size = u16::from_be_bytes([rest[4], rest[5]]);
@@ -505,11 +519,13 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
         let compat_block_end = compat_len_off + 2 + compat_len;
         // + numberOfModules(2) at compat_block_end.
         if rest.len() < compat_block_end + 2 {
-            return Err(Error::BufferTooShort {
-                need: compat_block_end + 2,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: compat_block_end + 2,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         let compatibility_descriptor = &rest[compat_len_off..compat_block_end];
         let number_of_modules =
@@ -518,39 +534,47 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
         for _ in 0..number_of_modules {
             // moduleId(2) moduleSize(4) moduleVersion(1) moduleInfoLength(1).
             if rest.len() < mpos + 8 {
-                return Err(Error::BufferTooShort {
-                    need: mpos + 8,
-                    have: rest.len(),
-                    what,
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: mpos + 8,
+                        have: rest.len(),
+                        what,
+                    },
+                ));
             }
             let module_info_len = rest[mpos + 7] as usize;
             mpos += 8 + module_info_len;
             if rest.len() < mpos {
-                return Err(Error::BufferTooShort {
-                    need: mpos,
-                    have: rest.len(),
-                    what,
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: mpos,
+                        have: rest.len(),
+                        what,
+                    },
+                ));
             }
         }
         let modules = &rest[compat_block_end..mpos];
         if rest.len() < mpos + 2 {
-            return Err(Error::BufferTooShort {
-                need: mpos + 2,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: mpos + 2,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         let priv_len = u16::from_be_bytes([rest[mpos], rest[mpos + 1]]) as usize;
         let priv_start = mpos + 2;
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
-            return Err(Error::BufferTooShort {
-                need: priv_end,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: priv_end,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         Ok(Self {
             transaction_id,
@@ -647,11 +671,13 @@ impl<'a> Parse<'a> for DownloadCancel<'a> {
         // downloadId(4) moduleId(2) blockNumber(2) downloadCancelReason(1) privateDataLength(2).
         const FIXED: usize = 4 + 2 + 2 + 1 + 2;
         if rest.len() < FIXED {
-            return Err(Error::BufferTooShort {
-                need: FIXED,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: FIXED,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         let download_id = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
         let module_id = u16::from_be_bytes([rest[4], rest[5]]);
@@ -661,11 +687,13 @@ impl<'a> Parse<'a> for DownloadCancel<'a> {
         let priv_start = 11;
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
-            return Err(Error::BufferTooShort {
-                need: priv_end,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: priv_end,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         Ok(Self {
             transaction_id,
@@ -740,11 +768,13 @@ impl<'a> Parse<'a> for DownloadDataRequest<'a> {
         // moduleId(2) blockNumber(2) downloadReason(1).
         const FIXED: usize = 5;
         if rest.len() < FIXED {
-            return Err(Error::BufferTooShort {
-                need: FIXED,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: FIXED,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         Ok(Self {
             download_id,
@@ -810,11 +840,13 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
         // moduleId(2) moduleVersion(1) reserved(1) blockNumber(2).
         const FIXED: usize = 6;
         if rest.len() < FIXED {
-            return Err(Error::BufferTooShort {
-                need: FIXED,
-                have: rest.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: FIXED,
+                    have: rest.len(),
+                    what,
+                },
+            ));
         }
         Ok(Self {
             download_id,
@@ -1075,7 +1107,7 @@ mod tests {
         bytes[11] ^= 0xFF;
         assert!(matches!(
             DownloadInfoRequest::parse(&bytes),
-            Err(Error::LengthMismatch { .. })
+            Err(Error::LengthMismatch(..))
         ));
     }
 

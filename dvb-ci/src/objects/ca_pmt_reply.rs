@@ -165,11 +165,13 @@ pub(crate) fn parse_reply_streams(
     let mut streams = Vec::new();
     while pos < body.len() {
         if pos + ES_LEN > body.len() {
-            return Err(Error::BufferTooShort {
-                need: pos + ES_LEN,
-                have: body.len(),
-                what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + ES_LEN,
+                    have: body.len(),
+                    what,
+                },
+            ));
         }
         let elementary_pid = Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
         let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[pos + 2]);

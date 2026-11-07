@@ -293,11 +293,13 @@ mod tests {
         assert_eq!(decode(&[]), Err(Error::InvalidLength("empty length_field")));
         assert_eq!(
             decode(&[0x82, 0x12]),
-            Err(Error::BufferTooShort {
-                need: 3,
-                have: 2,
-                what: "length_field (long form)"
-            })
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: 2,
+                    what: "length_field (long form)"
+                }
+            ))
         );
     }
 

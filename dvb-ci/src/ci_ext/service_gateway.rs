@@ -282,11 +282,13 @@ impl<'a> Parse<'a> for ServiceListAck {
         let count = u16::from_be_bytes([body[1], body[2]]) as usize;
         let list = &body[SERVICE_LIST_ACK_PREFIX..];
         if list.len() < count * SERVICE_REF_LEN {
-            return Err(Error::LengthMismatch {
-                what: "ServiceListAck services",
-                declared: count * SERVICE_REF_LEN,
-                actual: list.len(),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "ServiceListAck services",
+                    declared: count * SERVICE_REF_LEN,
+                    actual: list.len(),
+                },
+            ));
         }
         objects::reject_trailing_body(list, count * SERVICE_REF_LEN, "ServiceListAck")?;
         let mut services = Vec::with_capacity(count);
@@ -391,11 +393,13 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
         let desc_start = SERVICE_DESC_ACK_PREFIX;
         let desc_end = desc_start + loop_len;
         if body.len() < desc_end {
-            return Err(Error::LengthMismatch {
-                what: "ServiceDescAck descriptors",
-                declared: loop_len,
-                actual: body.len() - desc_start,
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "ServiceDescAck descriptors",
+                    declared: loop_len,
+                    actual: body.len() - desc_start,
+                },
+            ));
         }
         objects::reject_trailing_body(body, desc_end, "ServiceDescAck")?;
         Ok(Self {

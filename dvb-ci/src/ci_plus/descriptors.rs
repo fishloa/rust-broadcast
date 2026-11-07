@@ -91,11 +91,13 @@ impl Serialize for CiplusKeyIdentifierDescriptor<'_> {
 /// tag and returning the exactly-`descriptor_length` body slice.
 fn parse_tlv<'a>(bytes: &'a [u8], expected_tag: u8, what: &'static str) -> Result<&'a [u8]> {
     if bytes.len() < DESC_HEADER {
-        return Err(Error::BufferTooShort {
-            need: DESC_HEADER,
-            have: bytes.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: DESC_HEADER,
+                have: bytes.len(),
+                what,
+            },
+        ));
     }
     if bytes[0] != expected_tag {
         return Err(Error::InvalidObject {
@@ -106,11 +108,13 @@ fn parse_tlv<'a>(bytes: &'a [u8], expected_tag: u8, what: &'static str) -> Resul
     let len = bytes[1] as usize;
     let end = DESC_HEADER + len;
     if bytes.len() < end {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: len,
-            actual: bytes.len().saturating_sub(DESC_HEADER),
-        });
+        return Err(Error::LengthMismatch(
+            broadcast_common::error::LengthMismatch {
+                what,
+                declared: len,
+                actual: bytes.len().saturating_sub(DESC_HEADER),
+            },
+        ));
     }
     Ok(&bytes[DESC_HEADER..end])
 }

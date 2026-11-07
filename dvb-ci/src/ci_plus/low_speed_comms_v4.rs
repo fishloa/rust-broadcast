@@ -697,11 +697,13 @@ fn parse_descriptor_header<'a>(
     what: &'static str,
 ) -> Result<&'a [u8]> {
     if bytes.len() < DESCRIPTOR_HEADER {
-        return Err(Error::BufferTooShort {
-            need: DESCRIPTOR_HEADER,
-            have: bytes.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: DESCRIPTOR_HEADER,
+                have: bytes.len(),
+                what,
+            },
+        ));
     }
     if bytes[0] != expected_tag {
         return Err(Error::InvalidObject {
@@ -712,11 +714,13 @@ fn parse_descriptor_header<'a>(
     let len = bytes[1] as usize;
     let end = DESCRIPTOR_HEADER + len;
     if bytes.len() < end {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: len,
-            actual: bytes.len().saturating_sub(DESCRIPTOR_HEADER),
-        });
+        return Err(Error::LengthMismatch(
+            broadcast_common::error::LengthMismatch {
+                what,
+                declared: len,
+                actual: bytes.len().saturating_sub(DESCRIPTOR_HEADER),
+            },
+        ));
     }
     Ok(&bytes[DESCRIPTOR_HEADER..end])
 }

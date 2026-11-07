@@ -69,11 +69,13 @@ impl<'a> Text<'a> {
         let body_start = 3 + len_hdr;
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
-            return Err(Error::LengthMismatch {
-                what: "text component",
-                declared: len_value,
-                actual: bytes.len().saturating_sub(body_start),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "text component",
+                    declared: len_value,
+                    actual: bytes.len().saturating_sub(body_start),
+                },
+            ));
         }
         Ok((
             Self {
@@ -106,11 +108,13 @@ impl<'a> Parse<'a> for Text<'a> {
         let (t, consumed) = Self::parse_component(bytes)?;
         // The whole APDU must be exactly this component.
         if consumed != bytes.len() {
-            return Err(Error::LengthMismatch {
-                what: "text",
-                declared: consumed,
-                actual: bytes.len(),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "text",
+                    declared: consumed,
+                    actual: bytes.len(),
+                },
+            ));
         }
         Ok(t)
     }
@@ -273,11 +277,13 @@ impl<'a> Parse<'a> for Answ<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::ANSW, "answ")?;
-        let id_byte = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "answ answ_id",
-        })?;
+        let id_byte = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "answ answ_id",
+            },
+        ))?;
         let answ_id = AnswId::from_u8(id_byte);
         let text_chars = if answ_id == AnswId::Answer {
             &body[1..]
@@ -393,11 +399,13 @@ impl<'a> Menu<'a> {
     fn parse_with_tag(bytes: &'a [u8], expected: ApduTag, what: &'static str) -> Result<Self> {
         let more = expected == tag::MENU_MORE || expected == tag::LIST_MORE;
         let (length_form, body) = super::parse_apdu_header(bytes, expected, what)?;
-        let choice_nb = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what,
-        })?;
+        let choice_nb = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what,
+            },
+        ))?;
         let mut pos = 1usize;
         let (title, n) = Text::parse_component(&body[pos..])?;
         pos += n;
@@ -540,11 +548,13 @@ impl<'a> Parse<'a> for MenuAnsw {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::MENU_ANSW, "menu_answ")?;
-        let choice_ref = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "menu_answ choice_ref",
-        })?;
+        let choice_ref = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "menu_answ choice_ref",
+            },
+        ))?;
         super::reject_trailing_body(body, 1, "menu_answ")?;
         Ok(Self {
             length_form,

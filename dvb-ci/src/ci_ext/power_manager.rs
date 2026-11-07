@@ -291,11 +291,13 @@ mod tests {
         }
         assert!(matches!(
             PowerManagerApdu::parse(&[0x9F, 0x80]),
-            Err(Error::BufferTooShort {
-                need: 3,
-                have: 2,
-                ..
-            })
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: 2,
+                    ..
+                }
+            ))
         ));
     }
 

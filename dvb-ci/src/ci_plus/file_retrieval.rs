@@ -116,11 +116,13 @@ impl<'a> Parse<'a> for FileSystemOffer<'a> {
         let len = body[0] as usize;
         let end = OFFER_PREFIX + len;
         if body.len() < end {
-            return Err(Error::LengthMismatch {
-                what: "FileSystemOffer DomainIdentifier",
-                declared: len,
-                actual: body.len().saturating_sub(OFFER_PREFIX),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "FileSystemOffer DomainIdentifier",
+                    declared: len,
+                    actual: body.len().saturating_sub(OFFER_PREFIX),
+                },
+            ));
         }
         objects::reject_trailing_body(body, end, "FileSystemOffer")?;
         Ok(Self {

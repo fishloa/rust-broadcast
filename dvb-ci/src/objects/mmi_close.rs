@@ -72,11 +72,13 @@ impl<'a> Parse<'a> for CloseMmi {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::CLOSE_MMI, "close_mmi")?;
-        let cmd_byte = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "close_mmi cmd_id",
-        })?;
+        let cmd_byte = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "close_mmi cmd_id",
+            },
+        ))?;
         let cmd_id = CloseMmiCmdId::from_u8(cmd_byte);
         let delay = if cmd_id == CloseMmiCmdId::Delay {
             if body.len() < 2 {

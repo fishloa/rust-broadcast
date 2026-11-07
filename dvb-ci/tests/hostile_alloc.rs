@@ -19,7 +19,7 @@ fn capabilities_reply_count_does_not_drive_allocation() {
     let r = PlayerCapabilitiesReply::parse(&apdu);
     let largest = A.largest();
     assert!(
-        matches!(&r, Err(dvb_ci::error::Error::BufferTooShort { .. })),
+        matches!(&r, Err(dvb_ci::error::Error::BufferTooShort(..))),
         "a count with no entries must be rejected"
     );
     // 0xFFFF entries x 2 bytes = 131 070 bytes if the count were trusted.

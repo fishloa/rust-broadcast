@@ -158,18 +158,22 @@ impl<'a> ConnectionDescriptor<'a> {
         let body_start = 3 + len_hdr;
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
-            return Err(Error::LengthMismatch {
-                what: "connection_descriptor",
-                declared: len_value,
-                actual: bytes.len().saturating_sub(body_start),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "connection_descriptor",
+                    declared: len_value,
+                    actual: bytes.len().saturating_sub(body_start),
+                },
+            ));
         }
         let body = &bytes[body_start..body_end];
-        let type_byte = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "connection_descriptor type",
-        })?;
+        let type_byte = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "connection_descriptor type",
+            },
+        ))?;
         Ok((
             Self {
                 length_form,
@@ -201,11 +205,13 @@ impl<'a> Parse<'a> for ConnectionDescriptor<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (c, consumed) = Self::parse_component(bytes)?;
         if consumed != bytes.len() {
-            return Err(Error::LengthMismatch {
-                what: "connection_descriptor",
-                declared: consumed,
-                actual: bytes.len(),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "connection_descriptor",
+                    declared: consumed,
+                    actual: bytes.len(),
+                },
+            ));
         }
         Ok(c)
     }
@@ -284,11 +290,13 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::COMMS_CMD, "comms_cmd")?;
-        let id_byte = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "comms_cmd command_id",
-        })?;
+        let id_byte = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "comms_cmd command_id",
+            },
+        ))?;
         let command_id = CommsCommandId::from_u8(id_byte);
         let rest = &body[1..];
         let params = match command_id {
@@ -312,11 +320,13 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
                 }
             }
             CommsCommandId::GetNextBuffer => {
-                let comms_phase_id = *rest.first().ok_or(Error::BufferTooShort {
-                    need: 1,
-                    have: 0,
-                    what: "comms_cmd get_next_buffer",
-                })?;
+                let comms_phase_id = *rest.first().ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 1,
+                        have: 0,
+                        what: "comms_cmd get_next_buffer",
+                    },
+                ))?;
                 super::reject_trailing_body(rest, 1, "comms_cmd get_next_buffer")?;
                 CommsCmdParams::GetNextBuffer { comms_phase_id }
             }
@@ -590,11 +600,13 @@ impl<'a> Parse<'a> for CommsSend<'a> {
             _ => (tag::COMMS_SEND_LAST, false),
         };
         let (length_form, body) = super::parse_apdu_header(bytes, expected, "comms_send")?;
-        let comms_phase_id = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "comms_send comms_phase_id",
-        })?;
+        let comms_phase_id = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "comms_send comms_phase_id",
+            },
+        ))?;
         Ok(Self {
             length_form,
             more,
@@ -669,11 +681,13 @@ impl<'a> Parse<'a> for CommsRcv<'a> {
             _ => (tag::COMMS_RCV_LAST, false),
         };
         let (length_form, body) = super::parse_apdu_header(bytes, expected, "comms_rcv")?;
-        let comms_phase_id = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "comms_rcv comms_phase_id",
-        })?;
+        let comms_phase_id = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "comms_rcv comms_phase_id",
+            },
+        ))?;
         Ok(Self {
             length_form,
             more,

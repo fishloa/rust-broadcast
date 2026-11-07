@@ -171,11 +171,13 @@ impl<'a> Parse<'a> for ClearReplace {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::CLEAR_REPLACE, "clear_replace")?;
-        let replacement_ref = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "clear_replace replacement_ref",
-        })?;
+        let replacement_ref = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "clear_replace replacement_ref",
+            },
+        ))?;
         super::reject_trailing_body(body, 1, "clear_replace")?;
         Ok(Self {
             length_form,

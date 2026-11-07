@@ -102,11 +102,13 @@ fn parse_spdu_header<'a>(
     expected: u8,
     what: &'static str,
 ) -> Result<(LengthForm, &'a [u8])> {
-    let first = *bytes.first().ok_or(Error::BufferTooShort {
-        need: 1,
-        have: 0,
-        what,
-    })?;
+    let first = *bytes.first().ok_or(Error::BufferTooShort(
+        broadcast_common::error::BufferTooShort {
+            need: 1,
+            have: 0,
+            what,
+        },
+    ))?;
     if first != expected {
         return Err(Error::UnexpectedSpduTag {
             got: first,
@@ -118,11 +120,13 @@ fn parse_spdu_header<'a>(
     let start = 1 + hdr;
     let end = start + len;
     if bytes.len() < end {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: len,
-            actual: bytes.len().saturating_sub(start),
-        });
+        return Err(Error::LengthMismatch(
+            broadcast_common::error::LengthMismatch {
+                what,
+                declared: len,
+                actual: bytes.len().saturating_sub(start),
+            },
+        ));
     }
     Ok((form, &bytes[start..end]))
 }

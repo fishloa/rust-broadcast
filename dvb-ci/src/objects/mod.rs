@@ -45,11 +45,13 @@ pub(crate) fn parse_apdu_header<'a>(
     what: &'static str,
 ) -> Result<(LengthForm, &'a [u8])> {
     if bytes.len() < 3 {
-        return Err(Error::BufferTooShort {
-            need: 3,
-            have: bytes.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 3,
+                have: bytes.len(),
+                what,
+            },
+        ));
     }
     let got = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
     if got != expected {
@@ -63,11 +65,13 @@ pub(crate) fn parse_apdu_header<'a>(
     let body_start = 3 + len_hdr;
     let body_end = body_start + len_value;
     if bytes.len() < body_end {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: len_value,
-            actual: bytes.len().saturating_sub(body_start),
-        });
+        return Err(Error::LengthMismatch(
+            broadcast_common::error::LengthMismatch {
+                what,
+                declared: len_value,
+                actual: bytes.len().saturating_sub(body_start),
+            },
+        ));
     }
     Ok((form, &bytes[body_start..body_end]))
 }

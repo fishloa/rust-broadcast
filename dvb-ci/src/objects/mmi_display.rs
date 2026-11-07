@@ -153,11 +153,13 @@ impl<'a> Parse<'a> for DisplayControl {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::DISPLAY_CONTROL, "display_control")?;
-        let cmd_byte = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "display_control cmd",
-        })?;
+        let cmd_byte = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "display_control cmd",
+            },
+        ))?;
         let cmd = DisplayControlCmd::from_u8(cmd_byte);
         let mmi_mode = if cmd == DisplayControlCmd::SetMmiMode {
             need_in(body, 2, "display_control mmi_mode")?;
@@ -458,11 +460,13 @@ impl<'a> Parse<'a> for DisplayReply {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::DISPLAY_REPLY, "display_reply")?;
-        let id_byte = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "display_reply id",
-        })?;
+        let id_byte = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "display_reply id",
+            },
+        ))?;
         let reply_id = DisplayReplyId::from_u8(id_byte);
         let rest = &body[1..];
         let body = match reply_id {
@@ -475,11 +479,13 @@ impl<'a> Parse<'a> for DisplayReply {
                 DisplayReplyBody::CharacterTables(rest.to_vec())
             }
             DisplayReplyId::MmiModeAck => {
-                let m = *rest.first().ok_or(Error::BufferTooShort {
-                    need: 1,
-                    have: 0,
-                    what: "display_reply mmi_mode_ack",
-                })?;
+                let m = *rest.first().ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 1,
+                        have: 0,
+                        what: "display_reply mmi_mode_ack",
+                    },
+                ))?;
                 super::reject_trailing_body(rest, 1, "display_reply mmi_mode_ack")?;
                 DisplayReplyBody::MmiModeAck(MmiMode::from_u8(m))
             }
@@ -618,11 +624,13 @@ impl<'a> Parse<'a> for KeypadControl {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::KEYPAD_CONTROL, "keypad_control")?;
-        let cmd_byte = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "keypad_control cmd",
-        })?;
+        let cmd_byte = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "keypad_control cmd",
+            },
+        ))?;
         let cmd = KeypadControlCmd::from_u8(cmd_byte);
         let key_codes = if cmd.carries_key_codes() {
             body[1..].to_vec()
@@ -686,11 +694,13 @@ impl<'a> Parse<'a> for Keypress {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::KEYPRESS, "keypress")?;
-        let key_code = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "keypress key_code",
-        })?;
+        let key_code = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "keypress key_code",
+            },
+        ))?;
         super::reject_trailing_body(body, 1, "keypress")?;
         Ok(Self {
             length_form,
@@ -889,11 +899,13 @@ impl<'a> Parse<'a> for DisplayMessage {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::DISPLAY_MESSAGE, "display_message")?;
-        let message_id = DisplayMessageId::from_u8(*body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "display_message id",
-        })?);
+        let message_id = DisplayMessageId::from_u8(*body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "display_message id",
+            },
+        ))?);
         super::reject_trailing_body(body, 1, "display_message")?;
         Ok(Self {
             length_form,
@@ -950,11 +962,13 @@ impl<'a> Parse<'a> for SceneEndMark {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::SCENE_END_MARK, "scene_end_mark")?;
-        let b = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "scene_end_mark",
-        })?;
+        let b = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "scene_end_mark",
+            },
+        ))?;
         super::reject_trailing_body(body, 1, "scene_end_mark")?;
         Ok(Self {
             length_form,
@@ -1022,11 +1036,13 @@ impl<'a> Parse<'a> for SceneDoneMessage {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::SCENE_DONE, "scene_done_message")?;
-        let b = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "scene_done_message",
-        })?;
+        let b = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "scene_done_message",
+            },
+        ))?;
         super::reject_trailing_body(body, 1, "scene_done_message")?;
         Ok(Self {
             length_form,
@@ -1089,11 +1105,13 @@ impl<'a> Parse<'a> for SceneControl {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::SCENE_CONTROL, "scene_control")?;
-        let b = *body.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "scene_control",
-        })?;
+        let b = *body.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "scene_control",
+            },
+        ))?;
         super::reject_trailing_body(body, 1, "scene_control")?;
         Ok(Self {
             length_form,

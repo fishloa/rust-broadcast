@@ -375,20 +375,24 @@ impl Serialize for PlayerVerifyReq<'_> {
 
 fn parse_service_location<'a>(body: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
     if body.len() < SERVICE_LOCATION_PREFIX {
-        return Err(Error::BufferTooShort {
-            need: SERVICE_LOCATION_PREFIX,
-            have: body.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: SERVICE_LOCATION_PREFIX,
+                have: body.len(),
+                what,
+            },
+        ));
     }
     let len = u16::from_be_bytes([body[0], body[1]]) as usize;
     let end = SERVICE_LOCATION_PREFIX + len;
     if body.len() < end {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: len,
-            actual: body.len().saturating_sub(SERVICE_LOCATION_PREFIX),
-        });
+        return Err(Error::LengthMismatch(
+            broadcast_common::error::LengthMismatch {
+                what,
+                declared: len,
+                actual: body.len().saturating_sub(SERVICE_LOCATION_PREFIX),
+            },
+        ));
     }
     // `service_location` is the last field of both objects using this helper.
     objects::reject_trailing_body(body, end, what)?;
@@ -634,11 +638,13 @@ impl<'a> Parse<'a> for PlayerStartReq<'a> {
         let pmt_length = u16::from_be_bytes([body[5], body[6]]) as usize;
         let end = START_REQ_PREFIX + pmt_length;
         if body.len() < end {
-            return Err(Error::LengthMismatch {
-                what: "CICAM_player_start_req PMT",
-                declared: pmt_length,
-                actual: body.len().saturating_sub(START_REQ_PREFIX),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "CICAM_player_start_req PMT",
+                    declared: pmt_length,
+                    actual: body.len().saturating_sub(START_REQ_PREFIX),
+                },
+            ));
         }
         objects::reject_trailing_body(body, end, "CICAM_player_start_req")?;
         Ok(Self {
@@ -1054,11 +1060,13 @@ fn parse_lts_id_body(
 ) -> Result<(LengthForm, u8)> {
     let (length_form, body) = objects::parse_apdu_header(bytes, expected, what)?;
     if body.len() < LTS_ID_BODY {
-        return Err(Error::BufferTooShort {
-            need: LTS_ID_BODY,
-            have: body.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: LTS_ID_BODY,
+                have: body.len(),
+                what,
+            },
+        ));
     }
     objects::reject_trailing_body(body, LTS_ID_BODY, what)?;
     Ok((length_form, body[0]))
@@ -1298,11 +1306,13 @@ impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
         let pmt_length = u16::from_be_bytes([body[1], body[2]]) as usize;
         let end = UPDATE_REQ_PREFIX + pmt_length;
         if body.len() < end {
-            return Err(Error::LengthMismatch {
-                what: "CICAM_player_update_req PMT",
-                declared: pmt_length,
-                actual: body.len().saturating_sub(UPDATE_REQ_PREFIX),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "CICAM_player_update_req PMT",
+                    declared: pmt_length,
+                    actual: body.len().saturating_sub(UPDATE_REQ_PREFIX),
+                },
+            ));
         }
         objects::reject_trailing_body(body, end, "CICAM_player_update_req")?;
         Ok(Self {
