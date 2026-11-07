@@ -301,7 +301,7 @@ mod tests {
         };
         assert_eq!(
             get_required_raw(&[], 0x3C0A, "Instance UID", "Preface"),
-            Err(expected.clone())
+            Err(expected)
         );
         assert_eq!(
             get_required_fixed::<16>(&[], 0x3C0A, "Instance UID", "Preface"),

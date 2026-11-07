@@ -560,7 +560,7 @@ mod tests {
             tag: 0,
             name: "UTF-16 string",
         };
-        assert_eq!(decode_utf16_be(&[0x00]), Err(invalid.clone()));
+        assert_eq!(decode_utf16_be(&[0x00]), Err(invalid));
         assert_eq!(decode_utf16_be(&[0xD8, 0x00]), Err(invalid));
     }
 }

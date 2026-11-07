@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio")]
+
 use rtmp_runtime::target::{RtmpTarget, RtmpUrlError};
 
 #[test]
