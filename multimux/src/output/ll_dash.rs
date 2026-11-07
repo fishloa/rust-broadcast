@@ -248,6 +248,7 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<
     // Tuned to the chunk/part interval, not the whole-segment target -- an
     // LL-DASH client should re-poll roughly as often as a new chunk can
     // appear.
+    packager.base.publish_time = Some(crate::output::dash::publish_time(origin, &window));
     packager.base.minimum_update_period = Some(xs_duration_secs_checked(
         "minimum_update_period",
         chunk_duration_secs,
@@ -303,6 +304,46 @@ mod tests {
             segment_seq: seq,
             part_count: 2,
         }
+    }
+
+    fn publish_time_of(mpd: &str) -> String {
+        let key = "publishTime=\"";
+        let at = mpd.find(key).expect("dynamic MPD carries publishTime") + key.len();
+        mpd[at..]
+            .split('"')
+            .next()
+            .expect("closing quote")
+            .to_string()
+    }
+
+    #[test]
+    fn publish_time_present_stable_when_unchanged_and_later_per_new_segment() {
+        let route = RouteHandle::new(4.0, 500, 2);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![video_spec(TrackId::new(1))],
+        );
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
+        let first = publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"));
+        assert_eq!(
+            first,
+            publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"))
+        );
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 0.5))
+            .expect("add_segment");
+        let second = publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"));
+        let (t1, t2): (jiff::Timestamp, jiff::Timestamp) = (
+            first.parse().expect("xs:dateTime"),
+            second.parse().expect("xs:dateTime"),
+        );
+        assert!(t2 > t1, "{second} must be later than {first}");
+        assert_eq!(first, "2023-11-14T22:13:24Z");
+        assert_eq!(second, "2023-11-14T22:13:24.5Z");
     }
 
     #[test]
