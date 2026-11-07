@@ -79,8 +79,8 @@ impl LlDashPackager {
     /// `MPD@availabilityStartTime` (ISO-8601 UTC). The `availabilityTimeOffset`
     /// is derived as `segment_duration_secs − chunk_duration_secs`.
     /// `MPD@publishTime` (mandatory for a dynamic MPD, ISO/IEC 23009-1 §5.3.1.2
-    /// Table 3) starts equal to `availability_start_time`; set
-    /// `base.publish_time` to a later value for every updated MPD.
+    /// Table 3) is not defaulted: set `base.publish_time`, and advance it on
+    /// every updated MPD.
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if the durations are not positive/finite, or the
@@ -106,11 +106,9 @@ impl LlDashPackager {
                 "chunk_duration_secs must not exceed segment_duration_secs",
             ));
         }
-        let availability_start_time = availability_start_time.into();
         let base = DashPackager {
             dynamic: true,
-            publish_time: Some(availability_start_time.clone()),
-            availability_start_time: Some(availability_start_time),
+            availability_start_time: Some(availability_start_time.into()),
             ..DashPackager::default()
         };
         Ok(Self {

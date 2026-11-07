@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
-use transmux::ll_dash::{Chunk, LlDashPackager, LlSegmenter};
+use transmux::ll_dash::{Chunk, LlSegmenter};
 use transmux::media::{Fmp4Demux, Media};
 use transmux::pipeline::{FragmentTrackData, TrackSpec};
 use transmux::ts_demux::TsDemux;
@@ -323,9 +323,7 @@ fn full_stream_video_nal_sequence_preserved() {
 #[test]
 fn ll_mpd_carries_availability_and_service_description() {
     let media = demux_media();
-    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
-        .unwrap()
-        .with_playback_rate(0.9, 1.1);
+    let mut pkg = crate::common::ll_packager(2.0, 0.5, 3000).with_playback_rate(0.9, 1.1);
     let xml = pkg.package(&media).expect("LL MPD");
 
     let root = xml::parse(&xml);
@@ -389,7 +387,7 @@ fn ll_mpd_carries_availability_for_timeline_addressing() {
         })
         .collect();
 
-    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z").unwrap();
+    let mut pkg = crate::common::ll_packager(2.0, 0.5, 3000);
     pkg.base.addressing = transmux::Addressing::Timeline;
     pkg.base.segments = segments;
     let xml = pkg.package(&media).expect("LL MPD (Timeline addressing)");
@@ -622,12 +620,10 @@ mod xml {
 #[test]
 fn ll_mpd_carries_utc_timing() {
     let media = demux_media();
-    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
-        .unwrap()
-        .with_utc_timing(
-            transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014,
-            "https://time.example/x?a=1&b=2",
-        );
+    let mut pkg = crate::common::ll_packager(2.0, 0.5, 3000).with_utc_timing(
+        transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014,
+        "https://time.example/x?a=1&b=2",
+    );
     let xml = pkg.package(&media).expect("LL MPD");
 
     let root = xml::parse(&xml);
@@ -656,7 +652,7 @@ fn ll_mpd_carries_utc_timing() {
 #[test]
 fn ll_mpd_omits_utc_timing_by_default() {
     let media = demux_media();
-    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z").unwrap();
+    let mut pkg = crate::common::ll_packager(2.0, 0.5, 3000);
     let xml = pkg.package(&media).expect("LL MPD");
     assert!(
         !xml.contains("<UTCTiming"),
