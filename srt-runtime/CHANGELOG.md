@@ -6,12 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
-- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 - `arq::seq::contiguous_runs`: inclusive circular runs of consecutive sequence numbers, shared with `broadcast-client` (dedupe D15).
 - `SrtSocket::connect_from_socket` and `SrtSocket::rendezvous_from_socket`: connect or rendezvous over an already-bound `tokio::net::UdpSocket`, so a caller can hold its local port from bind to use. `connect_from_with` and `rendezvous_with` now bind and delegate to them (#1671).
 - `broadcast_common::Parse` / `Serialize` implemented for the crate's wire types, delegating to the existing inherent methods (which stay); each type is round-trip tested through the traits (c6 C6-06).
 
 ### Changed
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidField` now wrap `broadcast_common::error::{BufferTooShort, OutputBufferTooSmall, InvalidField}` (`InvalidField`'s `what` field is `field`); `FieldTooWide { what, value, bits }` is replaced by `FieldOverflow(broadcast_common::error::FieldOverflow)` (`field`, `value`, `max = 2^bits - 1`); `ReservedFieldNotZero { what, value }` is replaced by `ReservedBits(broadcast_common::error::ReservedBits)` (`field`, `expected: 0`, `found`).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The rendezvous handshake accepts the peer key material in one `accept_peer_crypto` instead of two pasted blocks, and the three handshake `tick`s share `RetransmitStep::into_outputs` (c4 D5, M5).
 - `io.rs` uses the shared `contiguous_runs` instead of a private copy (dedupe D15).

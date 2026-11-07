@@ -19,6 +19,7 @@
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidField;
 #[cfg(feature = "crypto")]
 use subtle::ConstantTimeEq;
 #[cfg(feature = "crypto")]
@@ -671,39 +672,47 @@ pub(crate) fn parse_peer_extensions<'a>(
 
     let mut out = ParsedPeerExtensions::default();
     for block in hp.extensions.iter() {
-        let block = block.map_err(|_| Error::InvalidField {
-            what: "handshake extensions",
-            reason: "malformed extension block",
+        let block = block.map_err(|_| {
+            Error::InvalidField(InvalidField {
+                field: "handshake extensions",
+                reason: "malformed extension block",
+            })
         })?;
         match block.ext_type {
             ExtensionType::HsReq | ExtensionType::HsRsp => {
-                let msg = block.as_hs_ext_message().map_err(|_| Error::InvalidField {
-                    what: "handshake extension message",
-                    reason: "malformed HSREQ/HSRSP contents",
+                let msg = block.as_hs_ext_message().map_err(|_| {
+                    Error::InvalidField(InvalidField {
+                        field: "handshake extension message",
+                        reason: "malformed HSREQ/HSRSP contents",
+                    })
                 })?;
                 out.hs_msg = Some(msg);
             }
             ExtensionType::Sid => {
-                let sid = block.as_stream_id().map_err(|_| Error::InvalidField {
-                    what: "stream ID extension",
-                    reason: "malformed or non-UTF-8 contents",
+                let sid = block.as_stream_id().map_err(|_| {
+                    Error::InvalidField(InvalidField {
+                        field: "stream ID extension",
+                        reason: "malformed or non-UTF-8 contents",
+                    })
                 })?;
                 out.stream_id = Some(sid);
             }
             ExtensionType::Group => {
-                let g = block
-                    .as_group_membership()
-                    .map_err(|_| Error::InvalidField {
-                        what: "group membership extension",
+                let g = block.as_group_membership().map_err(|_| {
+                    Error::InvalidField(InvalidField {
+                        field: "group membership extension",
                         reason: "malformed contents",
-                    })?;
+                    })
+                })?;
                 out.group = Some(g);
             }
             #[cfg(feature = "crypto")]
             ExtensionType::KmReq | ExtensionType::KmRsp => {
-                let km = block.as_key_material().map_err(|_| Error::InvalidField {
-                    what: "key material extension",
-                    reason: "malformed contents",
+                let km = block.as_key_material().map_err(|_| {
+                    Error::InvalidField(InvalidField {
+                        field: "key material extension",
+                        reason: "malformed contents",
+                    })
                 })?;
                 out.km = Some(km);
             }
@@ -763,10 +772,10 @@ pub(crate) type RecoveredSek = (SecretBytes, [u8; crate::crypto::SALT_LEN]);
 #[cfg(feature = "crypto")]
 pub(crate) fn recover_sek(passphrase: &[u8], km: &KeyMaterial<'_>) -> Result<RecoveredSek> {
     if km.salt.len() != crate::crypto::SALT_LEN {
-        return Err(Error::InvalidField {
-            what: "Key Material Salt",
+        return Err(Error::InvalidField(InvalidField {
+            field: "Key Material Salt",
             reason: "must be 16 bytes (the only Salt length this crate's codec accepts)",
-        });
+        }));
     }
     let mut salt = [0u8; crate::crypto::SALT_LEN];
     salt.copy_from_slice(km.salt);

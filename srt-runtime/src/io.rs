@@ -66,6 +66,7 @@
 //! `tokio` feature, the crate stays `no_std`+`alloc` and nothing in this
 //! module is compiled.
 
+use broadcast_common::error::InvalidField;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -682,10 +683,10 @@ impl SrtSocket {
                         // indistinguishable from a genuine ISN of 0 and would
                         // seed ARQ/TSBPD sequence tracking wrong for the life
                         // of the connection.
-                        let received = received.ok_or(Error::InvalidField {
-                            what: "handshake",
+                        let received = received.ok_or(Error::InvalidField(InvalidField {
+                            field: "handshake",
                             reason: "Connected without a received datagram",
-                        })?;
+                        }))?;
                         let peer_hs = peer_handshake(&received)?;
                         return Ok(Self::established(
                             socket,
@@ -915,10 +916,10 @@ impl SrtSocket {
                         send_bounded(&socket, &bytes, peer, io.write, "send hs").await?;
                     }
                     HandshakeOutput::Connected(params) => {
-                        let peer_hs = last_peer_hs.ok_or(Error::InvalidField {
-                            what: "handshake",
+                        let peer_hs = last_peer_hs.ok_or(Error::InvalidField(InvalidField {
+                            field: "handshake",
                             reason: "Connected without having received a peer Handshake packet",
-                        })?;
+                        }))?;
                         return Ok(Self::established(
                             socket,
                             peer,
@@ -2533,10 +2534,13 @@ impl ListenerCore {
             );
         }
 
-        let entry = self.pending.get_mut(&src).ok_or(Error::InvalidField {
-            what: "pending",
-            reason: "no pending entry",
-        })?;
+        let entry = self
+            .pending
+            .get_mut(&src)
+            .ok_or(Error::InvalidField(InvalidField {
+                field: "pending",
+                reason: "no pending entry",
+            }))?;
 
         if let ControlPacket::Handshake(hp) = &ctrl
             && hp.handshake_type == HandshakeType::Conclusion
@@ -2640,10 +2644,10 @@ impl ListenerCore {
         // `Connected` entries always carry negotiated parameters, but a
         // missing one must not panic the accept loop.
         let Some(negotiated) = entry.handshake.negotiated() else {
-            return Some(Err(Error::InvalidField {
-                what: "listener handshake",
+            return Some(Err(Error::InvalidField(InvalidField {
+                field: "listener handshake",
                 reason: "Connected without negotiated parameters",
-            }));
+            })));
         };
         let peer_initial_seq = entry.peer_initial_seq;
         // The peer's negotiated SRT Socket ID (distinct from its ISN above).
@@ -3018,11 +3022,11 @@ fn peer_handshake(bytes: &[u8]) -> Result<PeerHandshake> {
             initial_seq_number: hp.initial_seq_number,
             timestamp_us: hp.timestamp,
         }),
-        _ => Err(Error::InvalidField {
-            what: "peer handshake",
+        _ => Err(Error::InvalidField(InvalidField {
+            field: "peer handshake",
             reason: "handshake reached Connected but its final packet did not re-parse as a \
                      Handshake control packet; refusing to seed ARQ/TSBPD with a fabricated ISN",
-        }),
+        })),
     }
 }
 
@@ -3059,6 +3063,8 @@ mod socket_id_tests {
 
 #[cfg(test)]
 mod isn_tests {
+    use broadcast_common::error::InvalidField;
+
     use super::*;
     use crate::packet::{
         EncryptionField, HandshakeExtensionFlags, HandshakeExtensions, HandshakePacket,
@@ -3106,10 +3112,10 @@ mod isn_tests {
         let err = peer_handshake(&[0u8; 4]).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidField {
-                what: "peer handshake",
+            Error::InvalidField(InvalidField {
+                field: "peer handshake",
                 ..
-            }
+            })
         ));
     }
 
@@ -3127,10 +3133,10 @@ mod isn_tests {
         let err = peer_handshake(&buf).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidField {
-                what: "peer handshake",
+            Error::InvalidField(InvalidField {
+                field: "peer handshake",
                 ..
-            }
+            })
         ));
     }
 }
@@ -3146,6 +3152,7 @@ mod adapter_tests {
         AckCif, AckPacket, DataPacket, DropReqPacket, EncryptionKeyField, HandshakeExtensionFlags,
         HandshakeExtensions, HandshakePacket, PacketPosition,
     };
+    use broadcast_common::error::BufferTooShort;
 
     const PEER: &str = "10.0.0.1:9999";
     /// TSBPD latency used by the test drivers (the spec minimum, §4.5.1).
@@ -4289,7 +4296,10 @@ mod adapter_tests {
         };
         assert_eq!(stage, "parse");
         assert!(
-            matches!(*source, Error::BufferTooShort { have: 4, .. }),
+            matches!(
+                *source,
+                Error::BufferTooShort(BufferTooShort { have: 4, .. })
+            ),
             "the cause must be preserved, got {source:?}"
         );
     }

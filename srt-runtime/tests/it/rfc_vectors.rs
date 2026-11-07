@@ -17,6 +17,7 @@
 
 #![cfg(feature = "crypto")]
 
+use broadcast_common::error::InvalidField;
 use srt_runtime::Error;
 use srt_runtime::crypto::{derive_kek, pbkdf2_hmac_sha1, unwrap_sek, wrap_sek};
 
@@ -137,10 +138,10 @@ fn rfc3394_unwrap_rejects_corruption() {
     assert!(
         matches!(
             err,
-            Error::InvalidField {
-                what: "AES key wrap",
+            Error::InvalidField(InvalidField {
+                field: "AES key wrap",
                 ..
-            }
+            })
         ),
         "expected typed InvalidField error, got {err:?}"
     );

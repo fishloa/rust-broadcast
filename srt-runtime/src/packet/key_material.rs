@@ -24,6 +24,7 @@
 //! (see the crate root docs).
 
 use super::{Error, Result, be32, put_be32};
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 
 const S_FIXED: u8 = 0;
@@ -414,22 +415,22 @@ impl<'a> KeyMaterial<'a> {
         let mut offset = 16usize;
         let salt = bytes
             .get(offset..offset + slen)
-            .ok_or(Error::BufferTooShort {
+            .ok_or(Error::BufferTooShort(BufferTooShort {
                 need: offset + slen,
                 have: bytes.len(),
                 what: "key material salt",
-            })?;
+            }))?;
         offset += slen;
 
         let n = usize::from(kk.key_count());
         let wrap_len = 8 + n * klen;
         let wrap = bytes
             .get(offset..offset + wrap_len)
-            .ok_or(Error::BufferTooShort {
+            .ok_or(Error::BufferTooShort(BufferTooShort {
                 need: offset + wrap_len,
                 have: bytes.len(),
                 what: "key material wrap field",
-            })?;
+            }))?;
         offset += wrap_len;
 
         if offset != bytes.len() {
@@ -481,12 +482,7 @@ impl<'a> KeyMaterial<'a> {
         // would otherwise shift into the reserved `Resv3` bits, misframing
         // the message with `Ok` (#1129). Checked in `usize` before the
         // 8-bit field is packed below.
-        broadcast_common::len::fit_bits((self.salt.len() / 4) as u64, 8, "Salt length / 4 (SLen)")
-            .map_err(|e| Error::FieldTooWide {
-                what: e.field,
-                value: e.value,
-                bits: 8,
-            })?;
+        broadcast_common::len::fit_u8(self.salt.len() / 4, "Salt length / 4 (SLen)")?;
         if !matches!(self.x_sek.len(), 16 | 24 | 32) {
             return Err(Error::InvalidKeyMaterial {
                 field: "xSEK",
@@ -682,8 +678,8 @@ mod tests {
         let mut buf = alloc::vec![0u8; km.serialized_len()];
         let err = km.serialize_into(&mut buf).unwrap_err();
         assert!(
-            matches!(err, Error::FieldTooWide { bits: 8, .. }),
-            "expected FieldTooWide(bits=8) for SLen, got {err:?}"
+            matches!(err, Error::FieldOverflow(e) if e.max == u64::from(u8::MAX)),
+            "expected FieldOverflow(max=255) for SLen, got {err:?}"
         );
     }
 

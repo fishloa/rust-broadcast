@@ -115,17 +115,11 @@ impl Iterator for LossListIter<'_> {
 /// (Appendix A). Inverse of [`NakPacket::entries`].
 ///
 /// # Errors
-/// [`Error::FieldTooWide`] if a sequence number does not fit in 31 bits.
+/// [`Error::FieldOverflow`] if a sequence number does not fit in 31 bits.
 pub fn build_loss_list(entries: &[LossListEntry]) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(entries.len() * 4);
     let check = |seq: u32| -> Result<()> {
-        if seq > SEQ_NUMBER_MASK {
-            return Err(Error::FieldTooWide {
-                what: "loss list sequence number",
-                value: u64::from(seq),
-                bits: 31,
-            });
-        }
+        broadcast_common::len::fit_bits(u64::from(seq), 31, "loss list sequence number")?;
         Ok(())
     };
     for entry in entries {
@@ -206,7 +200,7 @@ mod tests {
     fn overwide_sequence_number_errs() {
         assert!(matches!(
             build_loss_list(&[LossListEntry::Single(0x8000_0000)]),
-            Err(Error::FieldTooWide { .. })
+            Err(Error::FieldOverflow(_))
         ));
     }
 }

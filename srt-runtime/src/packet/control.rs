@@ -25,6 +25,7 @@ use super::misc::{
 };
 use super::nak::NakPacket;
 use super::{Error, Result, SRT_HEADER_LEN, be32, put_be32};
+use broadcast_common::error::ReservedBits;
 use broadcast_common::len::{need_in, need_out};
 
 /// `Control Type` wire values (`draft-sharabayko-srt-01` §3.2, Table 1).
@@ -195,20 +196,22 @@ pub enum ControlPacket<'a> {
 
 fn check_reserved_u16(what: &'static str, v: u16) -> Result<()> {
     if v != 0 {
-        return Err(Error::ReservedFieldNotZero {
-            what,
-            value: u64::from(v),
-        });
+        return Err(Error::ReservedBits(ReservedBits {
+            field: what,
+            expected: 0,
+            found: u64::from(v),
+        }));
     }
     Ok(())
 }
 
 fn check_reserved_u32(what: &'static str, v: u32) -> Result<()> {
     if v != 0 {
-        return Err(Error::ReservedFieldNotZero {
-            what,
-            value: u64::from(v),
-        });
+        return Err(Error::ReservedBits(ReservedBits {
+            field: what,
+            expected: 0,
+            found: u64::from(v),
+        }));
     }
     Ok(())
 }
@@ -236,10 +239,11 @@ fn check_no_cif_or_libsrt_pad(what: &'static str, cif: &[u8]) -> Result<bool> {
         LIBSRT_CIF_PAD_LEN => {
             let value = be32(cif, 0);
             if value != 0 {
-                return Err(Error::ReservedFieldNotZero {
-                    what,
-                    value: u64::from(value),
-                });
+                return Err(Error::ReservedBits(ReservedBits {
+                    field: what,
+                    expected: 0,
+                    found: u64::from(value),
+                }));
             }
             Ok(true)
         }
@@ -492,13 +496,7 @@ impl<'a> ControlPacket<'a> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let control_type_bits = self.control_type().to_bits();
-        if control_type_bits > 0x7FFF {
-            return Err(Error::FieldTooWide {
-                what: "Control Type",
-                value: u64::from(control_type_bits),
-                bits: 15,
-            });
-        }
+        broadcast_common::len::fit_bits(u64::from(control_type_bits), 15, "Control Type")?;
         let word0 = super::F_BIT | (u32::from(control_type_bits) << 16) | u32::from(self.subtype());
         put_be32(buf, 0, word0);
         put_be32(buf, 4, self.word1());

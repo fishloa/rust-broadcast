@@ -25,7 +25,7 @@ pub(crate) const MESSAGE_NUMBER_MASK: u32 = (1 << MESSAGE_NUMBER_BITS) - 1;
 /// A plain `u32::wrapping_add(1)` (which this replaces, issue #1062) only
 /// wraps at 2^32: once a long-lived sender's message counter passed
 /// `MESSAGE_NUMBER_MASK` (after ~67 million messages), [`DataPacket::serialize_into`]
-/// started returning `Error::FieldTooWide` for every packet, and every caller
+/// started returning `Error::FieldOverflow` for every packet, and every caller
 /// that assumed that could only fail on a too-small buffer (`.expect("buffer
 /// sized from serialized_len")` in `arq::sender`) panicked.
 ///
@@ -245,20 +245,12 @@ impl<'a> DataPacket<'a> {
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        if self.seq_number > SEQ_NUMBER_MASK {
-            return Err(Error::FieldTooWide {
-                what: "Packet Sequence Number",
-                value: u64::from(self.seq_number),
-                bits: 31,
-            });
-        }
-        if self.message_number > MESSAGE_NUMBER_MASK {
-            return Err(Error::FieldTooWide {
-                what: "Message Number",
-                value: u64::from(self.message_number),
-                bits: MESSAGE_NUMBER_BITS,
-            });
-        }
+        broadcast_common::len::fit_bits(u64::from(self.seq_number), 31, "Packet Sequence Number")?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.message_number),
+            MESSAGE_NUMBER_BITS,
+            "Message Number",
+        )?;
         let word0 = self.seq_number; // F bit (bit 31) stays clear.
         let word1 = (u32::from(self.position.to_bits()) << PP_SHIFT)
             | (u32::from(self.in_order) << O_SHIFT)
@@ -309,7 +301,7 @@ mod tests {
         // The actual boundary (issue #1062): one past the max 26-bit value
         // must wrap back into range, not silently produce an out-of-range
         // value that later fails `DataPacket::serialize_into`'s
-        // `FieldTooWide` check — and specifically to `1`, not `0`: libsrt's
+        // `FieldOverflow` check — and specifically to `1`, not `0`: libsrt's
         // `srt.h` reserves message number `0` (`SRT_MSGNO_CONTROL`) for its
         // own packet-filter control messages, never a real data message.
         assert_eq!(next_message_number(MESSAGE_NUMBER_MASK), 1);
@@ -419,7 +411,7 @@ mod tests {
         let mut buf = [0u8; 20];
         assert!(matches!(
             pkt.serialize_into(&mut buf),
-            Err(Error::FieldTooWide { .. })
+            Err(Error::FieldOverflow(_))
         ));
     }
 }

@@ -47,6 +47,7 @@ use aes::{Aes128, Aes192, Aes256};
 use aes_kw::{KeyInit, KwAes128, KwAes192, KwAes256};
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidField;
 use ctr::Ctr128BE;
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
@@ -82,10 +83,10 @@ const AES_BLOCK_LEN: usize = 16;
 /// A key length not one of AES-128/192/256's 16/24/32 bytes (`KLen/4` ∈
 /// `{4,6,8}`, `srt-rules.md` §3.2.2).
 fn invalid_key_length(what: &'static str) -> Error {
-    Error::InvalidField {
-        what,
+    Error::InvalidField(InvalidField {
+        field: what,
         reason: "length must be 16, 24, or 32 bytes (AES-128/192/256)",
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -180,9 +181,11 @@ pub fn wrap_sek(kek: &[u8], plaintext_keys: &[u8]) -> Result<([u8; 8], Vec<u8>)>
             .map(|_| ()),
         _ => return Err(invalid_key_length("KEK")),
     }
-    .map_err(|_| Error::InvalidField {
-        what: "SEK",
-        reason: "length must be a multiple of 8 bytes (RFC 3394 semiblocks)",
+    .map_err(|_| {
+        Error::InvalidField(InvalidField {
+            field: "SEK",
+            reason: "length must be a multiple of 8 bytes (RFC 3394 semiblocks)",
+        })
     })?;
     let mut icv = [0u8; 8];
     icv.copy_from_slice(&out[..8]);
@@ -210,9 +213,11 @@ pub fn unwrap_sek(kek: &[u8], icv: &[u8; 8], wrapped: &[u8]) -> Result<Zeroizing
     input.extend_from_slice(icv);
     input.extend_from_slice(wrapped);
     let mut out = Zeroizing::new(vec![0u8; wrapped.len()]);
-    let bad_wrap = || Error::InvalidField {
-        what: "AES key wrap",
-        reason: "integrity check failed (wrong KEK / passphrase, or corrupt wire data)",
+    let bad_wrap = || {
+        Error::InvalidField(InvalidField {
+            field: "AES key wrap",
+            reason: "integrity check failed (wrong KEK / passphrase, or corrupt wire data)",
+        })
     };
     match kek.len() {
         16 => KwAes128::new_from_slice(kek)
@@ -348,29 +353,33 @@ pub fn select_sek<'a>(
     even: Option<&'a [u8]>,
     odd: Option<&'a [u8]>,
 ) -> Result<&'a [u8]> {
-    let no_sek = |parity: &'static str| Error::InvalidField {
-        what: "SEK",
-        reason: match parity {
-            "even" => "even key not currently held",
-            _ => "odd key not currently held",
-        },
+    let no_sek = |parity: &'static str| {
+        Error::InvalidField(InvalidField {
+            field: "SEK",
+            reason: match parity {
+                "even" => "even key not currently held",
+                _ => "odd key not currently held",
+            },
+        })
     };
     match key_flag {
         EncryptionKeyField::Even => even.ok_or_else(|| no_sek("even")),
         EncryptionKeyField::Odd => odd.ok_or_else(|| no_sek("odd")),
-        EncryptionKeyField::NotEncrypted => Err(Error::InvalidField {
-            what: "KK",
+        EncryptionKeyField::NotEncrypted => Err(Error::InvalidField(InvalidField {
+            field: "KK",
             reason: "packet is not encrypted (KK=00b)",
-        }),
-        EncryptionKeyField::Reserved(_) => Err(Error::InvalidField {
-            what: "KK",
+        })),
+        EncryptionKeyField::Reserved(_) => Err(Error::InvalidField(InvalidField {
+            field: "KK",
             reason: "reserved value (11b) is control-packet-only, not valid on a data packet",
-        }),
+        })),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidField;
+
     use super::*;
 
     // -----------------------------------------------------------------
@@ -443,7 +452,7 @@ mod tests {
         wrong_kek[0] ^= 0xFF;
         assert!(matches!(
             unwrap_sek(&wrong_kek, &icv, &RFC3394_WRAPPED_128[8..]),
-            Err(crate::error::Error::InvalidField { .. })
+            Err(crate::error::Error::InvalidField(..))
         ));
     }
 
@@ -564,15 +573,15 @@ mod tests {
         let salt = [0u8; SALT_LEN];
         assert!(matches!(
             derive_kek(b"pw", &salt, 20),
-            Err(crate::error::Error::InvalidField { .. })
+            Err(crate::error::Error::InvalidField(..))
         ));
         assert!(matches!(
             wrap_sek(&[0u8; 20], &[0u8; 16]),
-            Err(crate::error::Error::InvalidField { .. })
+            Err(crate::error::Error::InvalidField(..))
         ));
         assert!(matches!(
             aes_ctr_apply(&[0u8; 20], &salt, 0, &mut [0u8; 4]),
-            Err(crate::error::Error::InvalidField { .. })
+            Err(crate::error::Error::InvalidField(..))
         ));
     }
 
@@ -590,15 +599,15 @@ mod tests {
         );
         assert!(matches!(
             select_sek(EncryptionKeyField::Even, None, Some(&odd)),
-            Err(Error::InvalidField { .. })
+            Err(Error::InvalidField(..))
         ));
         assert!(matches!(
             select_sek(EncryptionKeyField::NotEncrypted, Some(&even), Some(&odd)),
-            Err(Error::InvalidField { what: "KK", .. })
+            Err(Error::InvalidField(InvalidField { field: "KK", .. }))
         ));
         assert!(matches!(
             select_sek(EncryptionKeyField::Reserved(0b11), Some(&even), Some(&odd)),
-            Err(Error::InvalidField { what: "KK", .. })
+            Err(Error::InvalidField(InvalidField { field: "KK", .. }))
         ));
     }
 
