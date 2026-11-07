@@ -31,11 +31,8 @@ use std::time::Duration;
 use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
-use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 
-use crate::support::listener;
-use listener::bind_tcp;
+use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
 use transmux::smooth_parse::SmoothManifest;
 
 fn fixture_path() -> PathBuf {
@@ -49,17 +46,6 @@ fn have_oracle(bin: &str) -> bool {
         .or_else(|_| Command::new(bin).arg("-h").output())
         .map(|_| true)
         .unwrap_or(false)
-}
-
-/// Bind `127.0.0.1:0` for UDP and return the live address + the still-bound
-/// socket, handed to the route via `Config::prebound` so it never races a
-/// reserve-then-rebind (SP7.1).
-async fn bind_udp_addr() -> (std::net::SocketAddr, tokio::net::UdpSocket) {
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("bind 127.0.0.1:0 udp");
-    let addr = socket.local_addr().expect("local addr");
-    (addr, socket)
 }
 
 fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
@@ -125,37 +111,12 @@ struct Served {
 /// neither address can lose a bind race.
 async fn serve_smooth_until_fragment(min_chunks: usize) -> Served {
     let client = reqwest::Client::new();
-    let (bind_addr, bind_listener) = bind_tcp();
-    let (udp_addr, udp_socket) = bind_udp_addr().await;
-    let mut config = base_config(
+    let UdpTsOrigin {
         bind_addr,
-        InputSpec::TsUdp {
-            addr: udp_addr.to_string(),
-            multicast_group: None,
-            socket: Default::default(),
-        },
-    );
-    config.prebound.with_udp(udp_addr.to_string(), udp_socket);
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
-
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac-40s.ts fixture must exist");
-    let stop = Arc::new(AtomicBool::new(false));
-    let sender_stop = Arc::clone(&stop);
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("bind sender");
-    let sender = tokio::spawn(async move {
-        while !sender_stop.load(Ordering::Relaxed) {
-            for chunk in ts_bytes.chunks(7 * 188) {
-                let _ = socket.send_to(chunk, udp_addr).await;
-                tokio::time::sleep(Duration::from_millis(3)).await;
-            }
-        }
-    });
+        server,
+        stop,
+        sender,
+    } = spawn_udp_ts_origin(base_config, &fixture_path(), Duration::from_millis(3)).await;
 
     let url = format!("http://{bind_addr}/cam/Manifest");
     let manifest = tokio::time::timeout(
