@@ -8,7 +8,13 @@ fn a_zero_backoff_entry_is_rejected_and_clamped_to_one_millisecond() {
         backoff_ms: BACKOFF_WITH_ZERO.to_vec(),
         ..Config::default()
     };
-    assert!(config.validate().is_err(), "a 0 ms backoff spins");
+    assert!(
+        matches!(
+            config.validate(),
+            Err(tshttp_runtime::config::ConfigError::ZeroBackoffEntry)
+        ),
+        "a 0 ms backoff spins"
+    );
     assert_eq!(config.clamped().backoff_ms, vec![2_000, 1, 8_000]);
     assert_eq!(
         Config::default().clamped(),
