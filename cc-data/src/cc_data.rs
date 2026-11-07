@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// Largest `cc_count` the 5-bit field can carry.
@@ -140,13 +141,7 @@ impl<'a> Parse<'a> for CcData {
     fn parse(b: &'a [u8]) -> Result<Self> {
         // byte0: reserved(1) | process_cc_data_flag(1) | zero_bit(1) | cc_count(5)
         // byte1: reserved 0xFF
-        if b.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: b.len(),
-                what: "cc_data header",
-            });
-        }
+        need_in(b, 2, "cc_data header")?;
         // byte0 bits 7 and 5 are reserved/zero in Table B.9 but carry
         // `process_em_data_flag` / `additional_data_flag` in real A/53
         // streams: accept either value and keep it (reserved-bit policy).
@@ -156,13 +151,7 @@ impl<'a> Parse<'a> for CcData {
         let cc_count = usize::from(b[0] & CC_COUNT_MASK);
         let reserved_byte1 = b[1];
         let total = 2 + cc_count * 3 + 1; // header + triplets + marker
-        if b.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: b.len(),
-                what: "cc_data triplets",
-            });
-        }
+        need_in(b, total, "cc_data triplets")?;
         let mut triplets = Vec::with_capacity(cc_count);
         let mut pos = 2;
         for _ in 0..cc_count {
@@ -212,12 +201,7 @@ impl Serialize for CcData {
             return Err(Error::TooManyTriplets(self.triplets.len()));
         }
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         // process_em_data_flag, process_cc_data_flag, additional_data_flag,
         // cc_count (<= MAX_CC_COUNT, checked above).
         let cc_count = self.triplets.len() as u8;
