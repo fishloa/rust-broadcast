@@ -39,43 +39,11 @@ where
     b
 }
 
-/// Re-serialize any parsed section (the survey's `ser!` list).
+/// Re-serialize any parsed section; `None` for `Unknown`/`Other`.
 fn reserialize(t: &AnyTableSection<'_>) -> Option<Vec<u8>> {
-    macro_rules! s {
-        ($t:expr) => {
-            Some(ser($t))
-        };
-    }
     match t {
-        AnyTableSection::PatSection(t) => s!(t),
-        AnyTableSection::CatSection(t) => s!(t),
-        AnyTableSection::PmtSection(t) => s!(t),
-        AnyTableSection::TsdtSection(t) => s!(t),
-        AnyTableSection::DsmccSection(t) => s!(t),
-        AnyTableSection::NitSection(t) => s!(t),
-        AnyTableSection::SdtSection(t) => s!(t),
-        AnyTableSection::BatSection(t) => s!(t),
-        AnyTableSection::UntSection(t) => s!(t),
-        AnyTableSection::IntSection(t) => s!(t),
-        AnyTableSection::SatSection(t) => s!(t),
-        AnyTableSection::EitSection(t) => s!(t),
-        AnyTableSection::TdtSection(t) => s!(t),
-        AnyTableSection::RstSection(t) => s!(t),
-        AnyTableSection::StSection(t) => s!(t),
-        AnyTableSection::TotSection(t) => s!(t),
-        AnyTableSection::AitSection(t) => s!(t),
-        AnyTableSection::ContainerSection(t) => s!(t),
-        AnyTableSection::RctSection(t) => s!(t),
-        AnyTableSection::CitSection(t) => s!(t),
-        AnyTableSection::MpeFecSection(t) => s!(t),
-        AnyTableSection::RntSection(t) => s!(t),
-        AnyTableSection::MpeIfecSection(t) => s!(t),
-        AnyTableSection::ProtectionMessage(t) => s!(t),
-        AnyTableSection::DownloadableFontInfo(t) => s!(t),
-        AnyTableSection::DitSection(t) => s!(t),
-        AnyTableSection::SitSection(t) => s!(t),
-        AnyTableSection::MpeDatagram(t) => s!(t),
-        _ => None,
+        AnyTableSection::Unknown { .. } | AnyTableSection::Other { .. } => None,
+        _ => Some(ser(t)),
     }
 }
 
@@ -609,6 +577,63 @@ fn single_bit_flip_built_sections_keep_every_bit() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn any_table_section_serialize_round_trips_every_built_table_type() {
+    let mut names = BTreeSet::new();
+    for (name, sec, _) in built_sections() {
+        let t = AnyTableSection::parse(&sec).unwrap_or_else(|e| panic!("{name}: parse: {e}"));
+        assert_eq!(t.serialized_len(), sec.len(), "{name}: serialized_len");
+        assert_eq!(t.try_to_bytes().unwrap(), sec, "{name}: bytes");
+        let mut short = vec![0u8; sec.len() - 1];
+        assert!(
+            matches!(
+                t.serialize_into(&mut short),
+                Err(dvb_si::Error::OutputBufferTooSmall(_) | dvb_si::Error::BufferTooShort(_))
+            ),
+            "{name}: short buffer"
+        );
+        names.insert(t.name());
+    }
+    assert!(
+        names.len() >= 19,
+        "built sections cover only {} dispatched table types",
+        names.len()
+    );
+}
+
+#[test]
+fn any_table_section_serialize_unknown_copies_raw_and_other_is_rejected() {
+    let raw = [0xF0u8, 0x00, 0x01, 0x02];
+    let unknown = AnyTableSection::Unknown {
+        table_id: 0xF0,
+        raw: &raw,
+    };
+    assert_eq!(unknown.try_to_bytes().unwrap(), raw);
+    let mut small = [0u8; 3];
+    assert_eq!(
+        unknown.serialize_into(&mut small),
+        Err(dvb_si::Error::OutputBufferTooSmall(
+            broadcast_common::error::OutputBufferTooSmall { need: 4, have: 3 }
+        ))
+    );
+
+    #[derive(Debug)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    struct Custom;
+    let other = AnyTableSection::Other {
+        table_id: 0x90,
+        value: Box::new(Custom),
+    };
+    assert_eq!(other.serialized_len(), 0);
+    assert_eq!(
+        other.try_to_bytes(),
+        Err(dvb_si::Error::ValueOutOfRange {
+            field: "AnyTableSection::Other",
+            reason: "type-erased custom table section has no serializer",
+        })
+    );
 }
 
 // ---------------------------------------------------------------------------

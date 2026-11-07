@@ -212,6 +212,50 @@ macro_rules! declare_tables {
             }
         }
 
+        impl<$lt> broadcast_common::Serialize for AnyTableSection<$lt> {
+            type Error = crate::Error;
+
+            /// Length of the contained section; an [`AnyTableSection::Other`]
+            /// (type-erased custom section) has no serializer and reports 0.
+            fn serialized_len(&self) -> usize {
+                match self {
+                    $( Self::$variant(t) => broadcast_common::Serialize::serialized_len(t), )+
+                    $($( Self::$nd_variant(t) => broadcast_common::Serialize::serialized_len(t), )+)?
+                    Self::Other { .. } => 0,
+                    Self::Unknown { raw, .. } => raw.len(),
+                }
+            }
+
+            /// Serialize the contained section; `Unknown` copies its raw bytes.
+            ///
+            /// # Errors
+            /// - [`crate::Error::OutputBufferTooSmall`] — `buf` is too short.
+            /// - [`crate::Error::ValueOutOfRange`] — `Other` (a type-erased custom
+            ///   section carries no serializer).
+            /// - Any serialize error from the contained type.
+            fn serialize_into(&self, buf: &mut [u8]) -> crate::Result<usize> {
+                match self {
+                    $( Self::$variant(t) => broadcast_common::Serialize::serialize_into(t, buf), )+
+                    $($( Self::$nd_variant(t) => broadcast_common::Serialize::serialize_into(t, buf), )+)?
+                    Self::Other { .. } => Err(crate::Error::ValueOutOfRange {
+                        field: "AnyTableSection::Other",
+                        reason: "type-erased custom table section has no serializer",
+                    }),
+                    Self::Unknown { raw, .. } => {
+                        let have = buf.len();
+                        let dst = buf.get_mut(..raw.len()).ok_or(
+                            broadcast_common::error::OutputBufferTooSmall {
+                                need: raw.len(),
+                                have,
+                            },
+                        )?;
+                        dst.copy_from_slice(raw);
+                        Ok(raw.len())
+                    }
+                }
+            }
+        }
+
         #[cfg(test)]
         mod macro_drift {
             #[test]

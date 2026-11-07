@@ -61,6 +61,8 @@ const TOLERATED: &[(&str, &str)] = &[
     ("test-062.", "MPE_FEC (tid 0x78)"),
     ("test-062.", "MPE_IFEC (tid 0x7A)"),
     ("test-062.", "PROTECTION_MESSAGE (tid 0x7B)"),
+    ("test-062.", "ISO_IEC_14496 (tid 0x08)"),
+    ("test-062.", "METADATA (tid 0x06)"),
 ];
 
 /// `(stride, offset_of_188_packet_in_stride, first_sync)` or `None`.
@@ -271,46 +273,13 @@ fn survey_section(
     crc_ok: bool,
     t: &AnyTableSection<'_>,
 ) {
-    macro_rules! ser {
-        ($t:expr) => {{
-            let mut b = vec![0u8; $t.serialized_len()];
-            $t.serialize_into(&mut b)
-                .map(|_| b)
-                .map_err(|e| format!("{e:?}"))
-        }};
+    if matches!(
+        t,
+        AnyTableSection::Unknown { .. } | AnyTableSection::Other { .. }
+    ) {
+        return;
     }
-    let re: Result<Vec<u8>, String> = match t {
-        AnyTableSection::PatSection(t) => ser!(t),
-        AnyTableSection::CatSection(t) => ser!(t),
-        AnyTableSection::PmtSection(t) => ser!(t),
-        AnyTableSection::TsdtSection(t) => ser!(t),
-        AnyTableSection::DsmccSection(t) => ser!(t),
-        AnyTableSection::NitSection(t) => ser!(t),
-        AnyTableSection::SdtSection(t) => ser!(t),
-        AnyTableSection::BatSection(t) => ser!(t),
-        AnyTableSection::UntSection(t) => ser!(t),
-        AnyTableSection::IntSection(t) => ser!(t),
-        AnyTableSection::SatSection(t) => ser!(t),
-        AnyTableSection::EitSection(t) => ser!(t),
-        AnyTableSection::TdtSection(t) => ser!(t),
-        AnyTableSection::RstSection(t) => ser!(t),
-        AnyTableSection::StSection(t) => ser!(t),
-        AnyTableSection::TotSection(t) => ser!(t),
-        AnyTableSection::AitSection(t) => ser!(t),
-        AnyTableSection::ContainerSection(t) => ser!(t),
-        AnyTableSection::RctSection(t) => ser!(t),
-        AnyTableSection::CitSection(t) => ser!(t),
-        AnyTableSection::MpeFecSection(t) => ser!(t),
-        AnyTableSection::RntSection(t) => ser!(t),
-        AnyTableSection::MpeIfecSection(t) => ser!(t),
-        AnyTableSection::ProtectionMessage(t) => ser!(t),
-        AnyTableSection::DownloadableFontInfo(t) => ser!(t),
-        AnyTableSection::DitSection(t) => ser!(t),
-        AnyTableSection::SitSection(t) => ser!(t),
-        AnyTableSection::MpeDatagram(t) => ser!(t),
-        AnyTableSection::Unknown { .. } => return,
-        _ => return,
-    };
+    let re: Result<Vec<u8>, String> = t.try_to_bytes().map_err(|e| format!("{e:?}"));
     if !crc_ok {
         s.bad_crc += 1;
         return;
