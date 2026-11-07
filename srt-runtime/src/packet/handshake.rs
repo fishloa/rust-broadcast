@@ -184,6 +184,10 @@ pub const HS_EXT_FLAG_CONFIG: u16 = 0x0004;
 pub struct HandshakeExtensionFlags(pub u16);
 
 impl HandshakeExtensionFlags {
+    /// `HSREQ` bit set.
+    pub fn hsreq(self) -> bool {
+        self.0 & HS_EXT_FLAG_HSREQ != 0
+    }
     /// `KMREQ` bit set.
     pub fn kmreq(self) -> bool {
         self.0 & HS_EXT_FLAG_KMREQ != 0
@@ -311,6 +315,14 @@ pub const HS_MSG_FLAG_PACKET_FILTER: u32 = 0x0000_0080;
 pub struct HandshakeExtensionMessageFlags(pub u32);
 
 impl HandshakeExtensionMessageFlags {
+    /// TSBPD used for sending.
+    pub fn tsbpdsnd(self) -> bool {
+        self.0 & HS_MSG_FLAG_TSBPDSND != 0
+    }
+    /// TSBPD used for receiving.
+    pub fn tsbpdrcv(self) -> bool {
+        self.0 & HS_MSG_FLAG_TSBPDRCV != 0
+    }
     /// Legacy flag: peer understands the data packet `KK` field. MUST be set.
     pub fn crypt(self) -> bool {
         self.0 & HS_MSG_FLAG_CRYPT != 0
@@ -319,9 +331,21 @@ impl HandshakeExtensionMessageFlags {
     pub fn tlpktdrop(self) -> bool {
         self.0 & HS_MSG_FLAG_TLPKTDROP != 0
     }
+    /// Peer will send periodic NAK packets.
+    pub fn periodicnak(self) -> bool {
+        self.0 & HS_MSG_FLAG_PERIODICNAK != 0
+    }
+    /// Legacy flag: peer understands the data packet `R` field. MUST be set.
+    pub fn rexmitflg(self) -> bool {
+        self.0 & HS_MSG_FLAG_REXMITFLG != 0
+    }
     /// Buffer mode (`true`) vs message mode (`false`).
     pub fn stream(self) -> bool {
         self.0 & HS_MSG_FLAG_STREAM != 0
+    }
+    /// Peer supports packet filter.
+    pub fn packet_filter(self) -> bool {
+        self.0 & HS_MSG_FLAG_PACKET_FILTER != 0
     }
 }
 
@@ -901,5 +925,43 @@ mod tests {
         ] {
             assert_eq!(HandshakeType::from_bits(t.to_bits()), t);
         }
+    }
+
+    #[test]
+    fn hsreq_and_message_flag_accessors_follow_their_bit_constants() {
+        assert!(HandshakeExtensionFlags(HS_EXT_FLAG_HSREQ).hsreq());
+        assert!(!HandshakeExtensionFlags(HS_EXT_FLAG_KMREQ).hsreq());
+
+        let flags = |bits: u32| {
+            let f = HandshakeExtensionMessageFlags(bits);
+            [
+                f.tsbpdsnd(),
+                f.tsbpdrcv(),
+                f.periodicnak(),
+                f.rexmitflg(),
+                f.packet_filter(),
+            ]
+        };
+        assert_eq!(flags(0), [false; 5]);
+        assert_eq!(
+            flags(HS_MSG_FLAG_TSBPDSND),
+            [true, false, false, false, false]
+        );
+        assert_eq!(
+            flags(HS_MSG_FLAG_TSBPDRCV),
+            [false, true, false, false, false]
+        );
+        assert_eq!(
+            flags(HS_MSG_FLAG_PERIODICNAK),
+            [false, false, true, false, false]
+        );
+        assert_eq!(
+            flags(HS_MSG_FLAG_REXMITFLG),
+            [false, false, false, true, false]
+        );
+        assert_eq!(
+            flags(HS_MSG_FLAG_PACKET_FILTER),
+            [false, false, false, false, true]
+        );
     }
 }

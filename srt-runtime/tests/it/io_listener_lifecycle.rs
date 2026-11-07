@@ -137,3 +137,11 @@ async fn a_handshake_after_the_handle_is_gone_does_not_break_an_accepted_connect
         .unwrap();
     assert_eq!(&got[..], b"still routed");
 }
+
+#[tokio::test]
+async fn a_fresh_listener_has_dropped_no_overflowing_connections() {
+    let listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
+        .await
+        .unwrap();
+    assert_eq!(listener.accept_overflow_dropped(), 0);
+}
