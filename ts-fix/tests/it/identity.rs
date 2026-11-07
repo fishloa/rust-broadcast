@@ -101,11 +101,11 @@ fn identity_rejects_bad_sync_byte() {
     pkt[0] = 0x00; // wrong sync byte
     let result = engine.push(&pkt, |_| {});
     assert!(
-        matches!(&result, Err(ts_fix::error::Error::NoSyncByte { .. })),
+        matches!(&result, Err(ts_fix::error::Error::InvalidSync(..))),
         "engine should reject a packet with bad sync byte"
     );
     match result.unwrap_err() {
-        ts_fix::Error::NoSyncByte { found } => assert_eq!(found, 0x00),
+        ts_fix::Error::InvalidSync(e) => assert_eq!(e.found, 0x00),
         other => panic!("unexpected error: {other:?}"),
     }
 }
@@ -120,7 +120,7 @@ fn error_is_non_exhaustive() {
     let err = ts_fix::Error::ShortPacket { len: 42 };
     let _label = match err {
         ts_fix::Error::ShortPacket { len } => alloc::format!("short:{len}"),
-        ts_fix::Error::NoSyncByte { found } => alloc::format!("sync:{found:#04x}"),
+        ts_fix::Error::InvalidSync(e) => alloc::format!("sync:{:#04x}", e.found),
         // Wildcard required because Error is #[non_exhaustive].
         _ => "unknown".to_string(),
     };

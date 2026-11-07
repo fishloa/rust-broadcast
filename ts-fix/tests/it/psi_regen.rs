@@ -231,7 +231,7 @@ fn parse_pat_from_packet(pkt: &[u8]) -> Result<PatSection, String> {
 }
 
 const ZEROED_PAT_ERR: &str =
-    "failed to parse PAT: BufferTooShort { need: 12, have: 3, what: \"PatSection\" }";
+    "failed to parse PAT: BufferTooShort(BufferTooShort { need: 12, have: 3, what: \"PatSection\" })";
 
 /// Verify the CRC-32 (MPEG-2) trailing a PAT section in a PAT packet.
 ///
