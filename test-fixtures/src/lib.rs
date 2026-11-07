@@ -200,29 +200,34 @@ pub fn require(rel: &str, who: &str) -> Option<PathBuf> {
     if let Some((p, _)) = find(rel) {
         return Some(p);
     }
+    let root = private_tier_root("fixture", rel, who)?;
+    panic!(
+        "{who}: fixture `{rel}` is in none of fixtures/, {}/fixtures/",
+        root.display()
+    )
+}
+
+fn private_tier_root(kind: &str, rel: &str, who: &str) -> Option<PathBuf> {
     if flag_set(std::env::var_os(SKIP_PRIVATE_ENV).as_deref()) {
         eprintln!(
-            "{who}: SKIPPED - private fixture `{rel}`: the private tier is disabled by \
+            "{who}: SKIPPED - private {kind} `{rel}`: the private tier is disabled by \
              {SKIP_PRIVATE_ENV}=1"
         );
         return None;
     }
     match private_root() {
         None if flag_set(std::env::var_os(REQUIRE_PRIVATE_ENV).as_deref()) => panic!(
-            "{who}: private fixture `{rel}` unavailable but {REQUIRE_PRIVATE_ENV}=1 (CI has the \
+            "{who}: private {kind} `{rel}` unavailable but {REQUIRE_PRIVATE_ENV}=1 (CI has the \
              deploy key, so the private checkout must exist - a skip here would hide the test)"
         ),
         None => {
             eprintln!(
-                "{who}: SKIPPED - private fixture `{rel}` unavailable: the private repo is not \
+                "{who}: SKIPPED - private {kind} `{rel}` unavailable: the private repo is not \
                  checked out (git submodule update --init private, or set {PRIVATE_ENV})"
             );
             None
         }
-        Some(root) => panic!(
-            "{who}: fixture `{rel}` is in none of fixtures/, {}/fixtures/",
-            root.display()
-        ),
+        Some(root) => Some(root),
     }
 }
 
@@ -235,35 +240,14 @@ pub fn require(rel: &str, who: &str) -> Option<PathBuf> {
 /// [`REQUIRE_PRIVATE_ENV`] is `1` and the private repo is unavailable.
 #[must_use]
 pub fn spec(rel: &str, who: &str) -> Option<PathBuf> {
-    if flag_set(std::env::var_os(SKIP_PRIVATE_ENV).as_deref()) {
-        eprintln!(
-            "{who}: SKIPPED - private spec `{rel}`: the private tier is disabled by \
-             {SKIP_PRIVATE_ENV}=1"
-        );
-        return None;
-    }
-    match private_root() {
-        None if flag_set(std::env::var_os(REQUIRE_PRIVATE_ENV).as_deref()) => panic!(
-            "{who}: private spec `{rel}` unavailable but {REQUIRE_PRIVATE_ENV}=1 (CI has the \
-             deploy key, so the private checkout must exist - a skip here would hide the test)"
-        ),
-        None => {
-            eprintln!(
-                "{who}: SKIPPED - private spec `{rel}` unavailable: the private repo is not \
-                 checked out (git submodule update --init private, or set {PRIVATE_ENV})"
-            );
-            None
-        }
-        Some(root) => {
-            let p = root.join("specs-verified").join(rel);
-            assert!(
-                p.exists(),
-                "{who}: private spec `{rel}` missing at {}",
-                p.display()
-            );
-            Some(p)
-        }
-    }
+    let root = private_tier_root("spec", rel, who)?;
+    let p = root.join("specs-verified").join(rel);
+    assert!(
+        p.exists(),
+        "{who}: private spec `{rel}` missing at {}",
+        p.display()
+    );
+    Some(p)
 }
 
 /// UTF-8 text of [`spec`]`(rel, who)`, or `None` on a loud skip.
@@ -546,4 +530,14 @@ mod tests {
             "a missing entry in a checkout WITH private/ must panic"
         );
     }
+}
+
+/// Decode a hex literal (ASCII whitespace ignored) into bytes.
+///
+/// # Panics
+/// If `s` is not valid even-length hex; the message carries the offending text.
+#[must_use]
+pub fn hex_bytes(s: &str) -> Vec<u8> {
+    let digits: String = s.split_ascii_whitespace().collect();
+    hex::decode(&digits).unwrap_or_else(|e| panic!("bad hex literal {s:?}: {e}"))
 }
