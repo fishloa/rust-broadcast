@@ -103,3 +103,29 @@ fn a_configured_token_with_surrounding_spaces_verifies() {
     assert_eq!(verify(&v, "Bearer   tok-1  "), AuthResult::Ok);
     assert_eq!(verify(&v, "Bearer tok-2"), AuthResult::Unauthorized);
 }
+
+#[test]
+fn a_bearer_challenge_error_code_maps_to_its_variant() {
+    use broadcast_auth::{BearerError, parse_challenges};
+    let parsed = parse_challenges(&[
+        "Bearer error=\"invalid_request\"",
+        "Bearer error=\"invalid_token\"",
+        "Bearer error=\"insufficient_scope\"",
+        "Bearer error=\"x-ext\"",
+    ]);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+    let codes: Vec<_> = parsed
+        .challenges
+        .iter()
+        .map(|c| c.error.clone().expect("error code"))
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            BearerError::InvalidRequest,
+            BearerError::InvalidToken,
+            BearerError::InsufficientScope,
+            BearerError::Other("x-ext".to_string()),
+        ]
+    );
+}
