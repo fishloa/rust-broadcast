@@ -343,7 +343,13 @@ mod tests {
             "--outputs",
             "lldash",
         ]);
-        assert!(build_config(cli).is_err());
+        assert!(matches!(
+            build_config(cli),
+            Err(MultimuxError::ConfigInvalid {
+                field: "outputs",
+                ..
+            })
+        ));
     }
 
     #[test]
