@@ -23,72 +23,19 @@
 //! spawned. Any pending I/O is abandoned; partially reassembled sections are
 //! discarded.
 
-use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use bytes::Bytes;
 use dvb_si::demux::{SectionEvent, SiDemux};
 use futures_core::Stream;
 use tokio::io::AsyncRead;
 use tokio_util::codec::FramedRead;
 
 use crate::ResyncStats;
+use crate::pump::PacketPump;
 use crate::ts_codec::TsDecoder;
 #[cfg(feature = "udp")]
 use crate::udp::{MulticastConfig, UdpPackets};
-
-/// Shared by every `SectionStream` flavour: drains a stream of aligned packets
-/// into the demux.
-pub(crate) struct SectionPump<S> {
-    pub(crate) frames: S,
-    demux: SiDemux,
-    queue: VecDeque<SectionEvent>,
-    io_error: Option<std::io::Error>,
-    done: bool,
-}
-
-impl<S: Stream<Item = std::io::Result<Bytes>> + Unpin> SectionPump<S> {
-    pub(crate) fn new(frames: S, demux: SiDemux) -> Self {
-        Self {
-            frames,
-            demux,
-            queue: VecDeque::new(),
-            io_error: None,
-            done: false,
-        }
-    }
-
-    pub(crate) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<SectionEvent>> {
-        loop {
-            if let Some(ev) = self.queue.pop_front() {
-                return Poll::Ready(Some(ev));
-            }
-            if self.done {
-                return Poll::Ready(None);
-            }
-            match Pin::new(&mut self.frames).poll_next(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(None) => self.done = true,
-                Poll::Ready(Some(Err(e))) => {
-                    // Keep the error so a caller can tell a failed source from a
-                    // clean EOF (#1036 / W-DS-1).
-                    self.io_error = Some(e);
-                    self.done = true;
-                }
-                Poll::Ready(Some(Ok(pkt))) => self.queue.extend(self.demux.feed(&pkt)),
-            }
-        }
-    }
-
-    pub(crate) fn stats(&self) -> dvb_si::demux::Stats {
-        self.demux.stats()
-    }
-
-    pub(crate) fn take_io_error(&mut self) -> Option<std::io::Error> {
-        self.io_error.take()
-    }
-}
 
 /// Async [`Stream`] of [`SectionEvent`]s from a raw TS byte source.
 ///
@@ -111,7 +58,7 @@ impl<S: Stream<Item = std::io::Result<Bytes>> + Unpin> SectionPump<S> {
 ///
 /// Drop the stream. No internal tasks are spawned.
 pub struct SectionStream<R> {
-    pump: SectionPump<FramedRead<R, TsDecoder>>,
+    pump: PacketPump<FramedRead<R, TsDecoder>, SiDemux>,
 }
 
 impl<R: AsyncRead + Unpin> SectionStream<R> {
@@ -126,7 +73,7 @@ impl<R: AsyncRead + Unpin> SectionStream<R> {
     #[must_use]
     pub fn with_demux(reader: R, demux: SiDemux) -> Self {
         Self {
-            pump: SectionPump::new(FramedRead::new(reader, TsDecoder::new()), demux),
+            pump: PacketPump::new(FramedRead::new(reader, TsDecoder::new()), demux),
         }
     }
 
@@ -169,7 +116,7 @@ impl<R: AsyncRead + Unpin> Stream for SectionStream<R> {
 /// W-DS-2).
 #[cfg(feature = "udp")]
 pub struct UdpSectionStream {
-    pump: SectionPump<UdpPackets>,
+    pump: PacketPump<UdpPackets, SiDemux>,
 }
 
 #[cfg(feature = "udp")]
@@ -184,7 +131,7 @@ impl UdpSectionStream {
     #[must_use]
     pub fn from_socket_with_demux(socket: tokio::net::UdpSocket, demux: SiDemux) -> Self {
         Self {
-            pump: SectionPump::new(UdpPackets::new(socket), demux),
+            pump: PacketPump::new(UdpPackets::new(socket), demux),
         }
     }
 

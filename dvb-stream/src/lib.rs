@@ -16,6 +16,7 @@
 // (`#[non_exhaustive]`) guard has anything to police. Recorded in the EXEMPT
 // lists of `workspace-guards`.
 
+mod pump;
 pub mod resync;
 pub mod section_stream;
 pub mod t2mi_stream;

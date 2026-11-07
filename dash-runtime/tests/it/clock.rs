@@ -146,7 +146,10 @@ fn bodies_by_scheme() {
         sample_from_body(UtcScheme::Ntp, b"x", ex, MAX_RTT),
         Err(TimingError::SchemeNotSampled(UtcScheme::Ntp))
     ));
-    assert!(sample_from_body(UtcScheme::HttpXsdate, b"yesterday", ex, MAX_RTT).is_err());
+    assert!(matches!(
+        sample_from_body(UtcScheme::HttpXsdate, b"yesterday", ex, MAX_RTT),
+        Err(dash_runtime::timing::TimingError::DateTime(_))
+    ));
     let d = sample_from_direct("2026-10-26T08:39:04Z", Exchange::new(0, 400), MAX_RTT).unwrap();
     assert_eq!(d.mono_us, 200);
 }

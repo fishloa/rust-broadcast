@@ -519,7 +519,13 @@ mod tests {
         let sps = alloc::vec![0x67u8, 0x42]; // type 7 (SPS), but only 2 bytes
         let sprop = base64_encode(&sps);
         let result = avc_config_from_sprop(&sprop);
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(Error::BufferTooShort {
+                what: "SPS profile/level bytes",
+                ..
+            })
+        ));
         // Verify it's a BufferTooShort error.
         if let Err(Error::BufferTooShort { need, have, what }) = result {
             assert_eq!(need, 4);

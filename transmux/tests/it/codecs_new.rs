@@ -484,7 +484,14 @@ fn heaac_escape_sampling_frequency_is_rejected_for_adts() {
     let mut asc = AudioSpecificConfig::parse(&[0x12, 0x08]).unwrap();
     asc.sampling_frequency_index = transmux::SamplingFrequencyIndex::Escape;
     asc.sampling_frequency = Some(48000);
-    assert!(asc.to_adts_header(200).is_err());
+    assert!(matches!(
+        asc.to_adts_header(200),
+        Err(transmux::Error::InvalidValue {
+            field: "sampling_frequency_index",
+            value: 15,
+            ..
+        })
+    ));
 }
 
 #[test]

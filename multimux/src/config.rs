@@ -4092,7 +4092,10 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -5043,7 +5046,10 @@ mod tests {
             }),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -5055,7 +5061,10 @@ mod tests {
             }),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -5093,7 +5102,10 @@ mod tests {
             }),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -5250,7 +5262,10 @@ mod tests {
             output_auth: Some(OutputAuthSpec::SignedUrl { keys: vec![] }),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]

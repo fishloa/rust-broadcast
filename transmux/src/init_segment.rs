@@ -82,6 +82,63 @@ pub(crate) fn check_entry_count(
     Ok(())
 }
 
+pub(crate) fn parse_flat_table<E>(
+    bytes: &[u8],
+    what: &'static str,
+    count_field: &'static str,
+    entry_len: usize,
+    read: fn(&[u8]) -> E,
+) -> Result<(u8, u32, Vec<E>)> {
+    let compact = crate::box_types::compact_form(bytes)?;
+    let bytes: &[u8] = &compact;
+    if bytes.len() < 16 {
+        return Err(Error::BufferTooShort {
+            need: 16,
+            have: bytes.len(),
+            what,
+        });
+    }
+    let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
+    let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    let body = &bytes[16..];
+    check_entry_count(body.len(), entry_len, count, count_field)?;
+    let mut entries = Vec::with_capacity(bounded_entry_count(body.len(), entry_len, count));
+    entries.extend(body.chunks_exact(entry_len).take(count).map(read));
+    Ok((bytes[8], flags, entries))
+}
+
+pub(crate) fn flat_table_len(entries: usize, entry_len: usize) -> usize {
+    crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + entries * entry_len)
+}
+
+pub(crate) fn serialize_flat_table<E>(
+    buf: &mut [u8],
+    fourcc: &[u8; 4],
+    (version, flags): (u8, u32),
+    entries: &[E],
+    entry_len: usize,
+    mut write: impl FnMut(&E, &mut [u8]) -> Result<usize>,
+) -> Result<usize> {
+    let need = flat_table_len(entries.len(), entry_len);
+    if buf.len() < need {
+        return Err(Error::OutputBufferTooSmall {
+            need,
+            have: buf.len(),
+        });
+    }
+    let mut c = crate::box_types::write_box_header(buf, fourcc, need)?;
+    buf[c] = version;
+    buf[c + 1..c + 4].copy_from_slice(&flags.to_be_bytes()[1..]);
+    c += 4;
+    let entry_count = broadcast_common::len::fit_u32(entries.len(), "entry_count")?;
+    buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
+    c += 4;
+    for entry in entries {
+        c += write(entry, &mut buf[c..])?;
+    }
+    Ok(c)
+}
+
 // ---------------------------------------------------------------------------
 // Container child walker — ISO/IEC 14496-12:2015 §4.2
 // ---------------------------------------------------------------------------
@@ -1666,44 +1723,12 @@ pub struct ChunkOffsetBox {
 impl<'a> Parse<'a> for ChunkOffsetBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
-        let bytes: &[u8] = &compact;
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "stco",
-            });
-        }
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        check_entry_count(
-            bytes.len().saturating_sub(16),
-            4,
-            count,
-            "ChunkOffsetBox.entry_count",
-        )?;
-        let mut entries = Vec::with_capacity(bounded_entry_count(
-            bytes.len().saturating_sub(16),
-            4,
-            count,
-        ));
-        let mut off = 16usize;
-        for _ in 0..count {
-            if off + 4 > bytes.len() {
-                break;
-            }
-            entries.push(u32::from_be_bytes([
-                bytes[off],
-                bytes[off + 1],
-                bytes[off + 2],
-                bytes[off + 3],
-            ]));
-            off += 4;
-        }
+        let (version, flags, entries) =
+            parse_flat_table(bytes, "stco", "ChunkOffsetBox.entry_count", 4, |b| {
+                u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+            })?;
         Ok(Self {
-            version: ver,
+            version,
             flags,
             entries,
         })
@@ -1713,31 +1738,20 @@ impl<'a> Parse<'a> for ChunkOffsetBox {
 impl Serialize for ChunkOffsetBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + self.entries.len() * 4)
+        flat_table_len(self.entries.len(), 4)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"stco", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
-        for entry in &self.entries {
-            buf[c..c + 4].copy_from_slice(&entry.to_be_bytes());
-            c += 4;
-        }
-        Ok(c)
+        serialize_flat_table(
+            buf,
+            b"stco",
+            (self.version, self.flags),
+            &self.entries,
+            4,
+            |entry, out| {
+                out[..4].copy_from_slice(&entry.to_be_bytes());
+                Ok(4)
+            },
+        )
     }
 }
 
@@ -1761,48 +1775,12 @@ pub struct ChunkLargeOffsetBox {
 impl<'a> Parse<'a> for ChunkLargeOffsetBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
-        let bytes: &[u8] = &compact;
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "co64",
-            });
-        }
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        check_entry_count(
-            bytes.len().saturating_sub(16),
-            8,
-            count,
-            "ChunkLargeOffsetBox.entry_count",
-        )?;
-        let mut entries = Vec::with_capacity(bounded_entry_count(
-            bytes.len().saturating_sub(16),
-            8,
-            count,
-        ));
-        let mut off = 16usize;
-        for _ in 0..count {
-            if off + 8 > bytes.len() {
-                break;
-            }
-            entries.push(u64::from_be_bytes([
-                bytes[off],
-                bytes[off + 1],
-                bytes[off + 2],
-                bytes[off + 3],
-                bytes[off + 4],
-                bytes[off + 5],
-                bytes[off + 6],
-                bytes[off + 7],
-            ]));
-            off += 8;
-        }
+        let (version, flags, entries) =
+            parse_flat_table(bytes, "co64", "ChunkLargeOffsetBox.entry_count", 8, |b| {
+                u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+            })?;
         Ok(Self {
-            version: ver,
+            version,
             flags,
             entries,
         })
@@ -1812,31 +1790,20 @@ impl<'a> Parse<'a> for ChunkLargeOffsetBox {
 impl Serialize for ChunkLargeOffsetBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + self.entries.len() * 8)
+        flat_table_len(self.entries.len(), 8)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"co64", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
-        for entry in &self.entries {
-            buf[c..c + 8].copy_from_slice(&entry.to_be_bytes());
-            c += 8;
-        }
-        Ok(c)
+        serialize_flat_table(
+            buf,
+            b"co64",
+            (self.version, self.flags),
+            &self.entries,
+            8,
+            |entry, out| {
+                out[..8].copy_from_slice(&entry.to_be_bytes());
+                Ok(8)
+            },
+        )
     }
 }
 
@@ -1861,44 +1828,12 @@ pub struct SyncSampleBox {
 impl<'a> Parse<'a> for SyncSampleBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
-        let bytes: &[u8] = &compact;
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "stss",
-            });
-        }
-        let ver = bytes[8];
-        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
-        check_entry_count(
-            bytes.len().saturating_sub(16),
-            4,
-            count,
-            "SyncSampleBox.entry_count",
-        )?;
-        let mut entries = Vec::with_capacity(bounded_entry_count(
-            bytes.len().saturating_sub(16),
-            4,
-            count,
-        ));
-        let mut off = 16usize;
-        for _ in 0..count {
-            if off + 4 > bytes.len() {
-                break;
-            }
-            entries.push(u32::from_be_bytes([
-                bytes[off],
-                bytes[off + 1],
-                bytes[off + 2],
-                bytes[off + 3],
-            ]));
-            off += 4;
-        }
+        let (version, flags, entries) =
+            parse_flat_table(bytes, "stss", "SyncSampleBox.entry_count", 4, |b| {
+                u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+            })?;
         Ok(Self {
-            version: ver,
+            version,
             flags,
             entries,
         })
@@ -1908,31 +1843,20 @@ impl<'a> Parse<'a> for SyncSampleBox {
 impl Serialize for SyncSampleBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + self.entries.len() * 4)
+        flat_table_len(self.entries.len(), 4)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"stss", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
-        for entry in &self.entries {
-            buf[c..c + 4].copy_from_slice(&entry.to_be_bytes());
-            c += 4;
-        }
-        Ok(c)
+        serialize_flat_table(
+            buf,
+            b"stss",
+            (self.version, self.flags),
+            &self.entries,
+            4,
+            |entry, out| {
+                out[..4].copy_from_slice(&entry.to_be_bytes());
+                Ok(4)
+            },
+        )
     }
 }
 

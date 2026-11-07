@@ -414,7 +414,10 @@ mod tests {
         );
         let (file, moof_off) = file_with(&[traf], &mdat_body);
         let moof = parse_moof(&file, moof_off);
-        assert!(sample_ranges(&file, moof_off, &moof, TrackId::new(1)).is_err());
+        assert!(matches!(
+            sample_ranges(&file, moof_off, &moof, TrackId::new(1)),
+            Err(Error::InvalidInput(_))
+        ));
     }
 
     /// Total handed-out bytes are capped: 10k overlapping runs cannot amplify.
@@ -519,7 +522,10 @@ mod tests {
         );
         let (full3, moof_off3) = file_with(&[traf], &mdat_body);
         let moof3 = parse_moof(&full3, moof_off3);
-        assert!(sample_ranges(&full3[..payload + 5], moof_off3, &moof3, TrackId::new(1)).is_err());
+        assert!(matches!(
+            sample_ranges(&full3[..payload + 5], moof_off3, &moof3, TrackId::new(1)),
+            Err(Error::InvalidInput(_))
+        ));
     }
 
     /// `Fmp4Demux` scans the file's `mdat`s exactly once however many

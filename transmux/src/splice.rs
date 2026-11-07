@@ -636,13 +636,9 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         let shifted_resume = shift_samples(&bt.samples[split_index..], resume_shift);
 
         let mut samples: Vec<Sample> = Vec::with_capacity(bt.samples.len() + adt.samples.len());
-        // 1. Base up to the split (unchanged).
         samples.extend(bt.samples[..split_index].iter().cloned());
-        // 2. The ad, rebased onto the boundary.
         let ad_index = samples.len();
         samples.extend(shifted_ad.iter().cloned());
-        // 3. The remainder of the base, rebased forward so it resumes
-        //    exactly where the rebased ad ends.
         let resume_index = samples.len();
         samples.extend(shifted_resume.iter().cloned());
 

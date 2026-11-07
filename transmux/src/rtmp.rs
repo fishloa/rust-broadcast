@@ -1888,7 +1888,10 @@ mod tests {
         );
         // And a message built to exhaust the stack (~250k levels from ~1 MiB)
         // is rejected immediately rather than aborting.
-        assert!(AmfValue::parse(&nested(250_000)).is_err());
+        assert!(matches!(
+            AmfValue::parse(&nested(250_000)),
+            Err(RtmpError::Amf0TooDeep { .. })
+        ));
     }
 
     /// §5.3.1.3: when a chunk's 24-bit timestamp field reads the sentinel, the

@@ -14,7 +14,7 @@
 //! (no `self.raw`).
 
 use crate::error::{Error, Result};
-use crate::init_segment::bounded_entry_count;
+use crate::init_segment::{bounded_entry_count, flat_table_len, serialize_flat_table};
 use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
@@ -127,33 +127,21 @@ impl<'a> Parse<'a> for TimeToSampleBox {
 impl Serialize for TimeToSampleBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * 8)
+        flat_table_len(self.entries.len(), 8)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"stts", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
-        for entry in &self.entries {
-            buf[c..c + 4].copy_from_slice(&entry.sample_count.to_be_bytes());
-            buf[c + 4..c + 8].copy_from_slice(&entry.sample_delta.to_be_bytes());
-            c += 8;
-        }
-        Ok(c)
+        serialize_flat_table(
+            buf,
+            b"stts",
+            (self.version, self.flags),
+            &self.entries,
+            8,
+            |entry, out| {
+                out[..4].copy_from_slice(&entry.sample_count.to_be_bytes());
+                out[4..8].copy_from_slice(&entry.sample_delta.to_be_bytes());
+                Ok(8)
+            },
+        )
     }
 }
 
@@ -263,33 +251,21 @@ impl<'a> Parse<'a> for CompositionOffsetBox {
 impl Serialize for CompositionOffsetBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * 8)
+        flat_table_len(self.entries.len(), 8)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"ctts", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
-        for entry in &self.entries {
-            buf[c..c + 4].copy_from_slice(&entry.sample_count.to_be_bytes());
-            buf[c + 4..c + 8].copy_from_slice(&(entry.sample_offset as u32).to_be_bytes());
-            c += 8;
-        }
-        Ok(c)
+        serialize_flat_table(
+            buf,
+            b"ctts",
+            (self.version, self.flags),
+            &self.entries,
+            8,
+            |entry, out| {
+                out[..4].copy_from_slice(&entry.sample_count.to_be_bytes());
+                out[4..8].copy_from_slice(&(entry.sample_offset as u32).to_be_bytes());
+                Ok(8)
+            },
+        )
     }
 }
 
@@ -574,63 +550,56 @@ impl<'a> Parse<'a> for EditListBox {
     }
 }
 
+impl EditListBox {
+    fn entry_wire_len(version: u8) -> usize {
+        if version == 0 { 12 } else { 20 }
+    }
+}
+
 impl Serialize for EditListBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let entry_wire = if self.version == 0 { 12 } else { 20 };
-        crate::box_types::box_len(
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * entry_wire,
-        )
+        flat_table_len(self.entries.len(), Self::entry_wire_len(self.version))
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"elst", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
-        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
-        c += 4;
-        for entry in &self.entries {
-            if self.version == 0 {
-                let segment_duration = broadcast_common::len::fit_bits(
-                    entry.segment_duration,
-                    32,
-                    "segment_duration",
-                )? as u32;
-                // `media_time` is signed (-1 = empty edit, §8.6.6): version 0
-                // stores it as i32, so the check is range membership, not an
-                // unsigned bit-width fit.
-                let media_time = i32::try_from(entry.media_time).map_err(|_| {
-                    Error::FieldOverflow(broadcast_common::len::FieldOverflow {
-                        field: "media_time",
-                        value: entry.media_time as u64,
-                        max: i64::from(i32::MAX) as u64,
-                    })
-                })?;
-                buf[c..c + 4].copy_from_slice(&segment_duration.to_be_bytes());
-                buf[c + 4..c + 8].copy_from_slice(&(media_time as u32).to_be_bytes());
-                c += 8;
-            } else {
-                buf[c..c + 8].copy_from_slice(&entry.segment_duration.to_be_bytes());
-                buf[c + 8..c + 16].copy_from_slice(&entry.media_time.to_be_bytes());
-                c += 16;
-            }
-            buf[c..c + 2].copy_from_slice(&entry.media_rate_integer.to_be_bytes());
-            buf[c + 2..c + 4].copy_from_slice(&entry.media_rate_fraction.to_be_bytes());
-            c += 4;
-        }
-        Ok(c)
+        let version = self.version;
+        serialize_flat_table(
+            buf,
+            b"elst",
+            (version, self.flags),
+            &self.entries,
+            Self::entry_wire_len(version),
+            |entry, out| {
+                let mut c = 0;
+                if version == 0 {
+                    let segment_duration = broadcast_common::len::fit_bits(
+                        entry.segment_duration,
+                        32,
+                        "segment_duration",
+                    )? as u32;
+                    // `media_time` is signed (-1 = empty edit, §8.6.6): version 0
+                    // stores it as i32, so the check is range membership, not an
+                    // unsigned bit-width fit.
+                    let media_time = i32::try_from(entry.media_time).map_err(|_| {
+                        Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                            field: "media_time",
+                            value: entry.media_time as u64,
+                            max: i64::from(i32::MAX) as u64,
+                        })
+                    })?;
+                    out[..4].copy_from_slice(&segment_duration.to_be_bytes());
+                    out[4..8].copy_from_slice(&(media_time as u32).to_be_bytes());
+                    c += 8;
+                } else {
+                    out[..8].copy_from_slice(&entry.segment_duration.to_be_bytes());
+                    out[8..16].copy_from_slice(&entry.media_time.to_be_bytes());
+                    c += 16;
+                }
+                out[c..c + 2].copy_from_slice(&entry.media_rate_integer.to_be_bytes());
+                out[c + 2..c + 4].copy_from_slice(&entry.media_rate_fraction.to_be_bytes());
+                Ok(c + 4)
+            },
+        )
     }
 }
 

@@ -1117,7 +1117,13 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         ));
         // And through the box path.
         let boxed = VvcConfigurationBox::new(record);
-        assert!(boxed.try_to_bytes().is_err());
+        assert!(matches!(
+            boxed.try_to_bytes(),
+            Err(Error::InvalidValue {
+                field: "general_constraint_info",
+                ..
+            })
+        ));
     }
 
     /// r04-W45: the `VvcBitWriter` must clear bits it writes as zero rather than

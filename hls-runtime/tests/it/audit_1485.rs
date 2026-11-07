@@ -173,7 +173,13 @@ fn an_unmergeable_delta_requests_a_full_playlist_instead_of_misnumbering() {
     drain(&mut client);
 
     let result = client.on_playlist(delta_playlist(40, Some(20), 49, false).as_bytes());
-    assert!(result.is_err(), "an unmergeable delta must be reported");
+    assert!(
+        matches!(
+            result,
+            Err(hls_runtime::client::Error::DeltaNotMergeable { .. })
+        ),
+        "an unmergeable delta must be reported"
+    );
     let actions = drain(&mut client);
     assert_eq!(
         resource_ids(&actions),

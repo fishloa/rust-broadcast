@@ -195,7 +195,10 @@ mod tests {
         assert_eq!(w.len(), 1);
         let h = p("abc;foo=bar");
         assert_eq!(h.extensions, vec![("foo".into(), Some("bar".into()))]);
-        assert!(SessionHeader::parse("").is_err());
+        assert!(matches!(
+            SessionHeader::parse(""),
+            Err(Error::SessionParse(_))
+        ));
         assert!(SessionHeader::parse("  ;timeout=5").is_err());
         assert_eq!(p("12345678").timeout, None);
     }
@@ -246,17 +249,29 @@ mod tests {
         ));
         let mut h = SessionHeader::new("abc");
         h.extensions.push(("x\r\ny".into(), None));
-        assert!(h.to_header_value().is_err());
+        assert!(matches!(
+            h.to_header_value(),
+            Err(Error::HeaderSerialize(_))
+        ));
         let mut h = SessionHeader::new("abc");
         h.extensions.push(("x".into(), Some("a\r\nb".into())));
-        assert!(h.to_header_value().is_err());
+        assert!(matches!(
+            h.to_header_value(),
+            Err(Error::HeaderSerialize(_))
+        ));
         let mut h = SessionHeader::new("abc");
         h.id = String::new();
-        assert!(h.to_header_value().is_err());
+        assert!(matches!(
+            h.to_header_value(),
+            Err(Error::HeaderSerialize(_))
+        ));
         // an id that would swallow the `;` separator cannot be emitted faithfully
         let mut h = SessionHeader::new("ab\"c");
         h.timeout = Some(Duration::from_secs(5));
-        assert!(h.to_header_value().is_err());
+        assert!(matches!(
+            h.to_header_value(),
+            Err(Error::HeaderSerialize(_))
+        ));
     }
     /// Fuzz regression (crash input `";;!` from the rtsp_headers target): a received id of a
     /// lone `"` parses (receive is lenient) but cannot be emitted unambiguously (emit is strict).

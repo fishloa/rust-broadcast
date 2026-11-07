@@ -8,6 +8,7 @@
 //! Spec inputs: `private/specs-verified/smpte/video/hdr10plus/`.
 #![cfg(feature = "std")]
 
+use crate::bit_writer::BitWriter;
 use broadcast_common::mux::{Package, Unpackage};
 use broadcast_common::{Parse, Serialize};
 use transmux::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
@@ -420,14 +421,23 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
     };
     let mut too_wide = base.clone();
     too_wide.primary_window.max_scl[0] = 1 << 17;
-    assert!(too_wide.try_to_bytes().is_err());
+    assert!(matches!(
+        too_wide.try_to_bytes(),
+        Err(transmux::Error::FieldOverflow(_))
+    ));
     let mut bad_table = base.clone();
     bad_table.mastering_display_actual_peak_luminance = Some(PeakLuminanceTable {
         rows: 2,
         columns: 2,
         values: vec![0; 3],
     });
-    assert!(bad_table.try_to_bytes().is_err());
+    assert!(matches!(
+        bad_table.try_to_bytes(),
+        Err(transmux::Error::InvalidValue {
+            field: "mastering_display_actual_peak_luminance",
+            ..
+        })
+    ));
     let mut too_many_windows = base.clone();
     for k in 0..3 {
         too_many_windows.additional_windows.push(AdditionalWindow {
@@ -435,7 +445,14 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
             color_volume: transform(2),
         });
     }
-    assert!(too_many_windows.try_to_bytes().is_err());
+    assert!(matches!(
+        too_many_windows.try_to_bytes(),
+        Err(transmux::Error::InvalidValue {
+            field: "num_windows",
+            value: 4,
+            ..
+        })
+    ));
     let mut too_many_points = base;
     too_many_points.primary_window.distribution_max_rgb = (0..16u32)
         .map(|k| DistributionPoint {
@@ -443,7 +460,10 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
             percentile: k,
         })
         .collect();
-    assert!(too_many_points.try_to_bytes().is_err());
+    assert!(matches!(
+        too_many_points.try_to_bytes(),
+        Err(transmux::Error::FieldOverflow(_))
+    ));
 }
 
 fn hevc_track(media: &Media) -> &transmux::ir::Track {
@@ -654,71 +674,39 @@ fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_ts_output() {
     assert_eq!(control_text.matches(FFPROBE_SIDE_DATA).count(), 0);
 }
 
-struct Bits {
-    bytes: Vec<u8>,
-    used: usize,
+fn window_color_volume(w: &mut BitWriter, seed: u64) {
+    w.u(17, 100 + seed).u(17, 200 + seed).u(17, 300 + seed);
+    w.u(17, 400 + seed);
+    w.u(4, 2);
+    w.u(7, 1).u(17, 1000 + seed);
+    w.u(7, 99).u(17, 131071);
+    w.u(10, 777 + seed);
 }
 
-impl Bits {
-    fn new() -> Self {
-        Self {
-            bytes: Vec::new(),
-            used: 0,
-        }
-    }
-
-    fn put(&mut self, value: u64, width: usize) -> &mut Self {
-        assert!(
-            width == 64 || value < (1 << width),
-            "{value} wider than {width}"
-        );
-        for shift in (0..width).rev() {
-            if self.used.is_multiple_of(8) {
-                self.bytes.push(0);
-            }
-            let bit = ((value >> shift) & 1) as u8;
-            *self.bytes.last_mut().unwrap() |= bit << (7 - self.used % 8);
-            self.used += 1;
-        }
-        self
-    }
-
-    fn window_color_volume(&mut self, seed: u64) -> &mut Self {
-        self.put(100 + seed, 17)
-            .put(200 + seed, 17)
-            .put(300 + seed, 17);
-        self.put(400 + seed, 17);
-        self.put(2, 4);
-        self.put(1, 7).put(1000 + seed, 17);
-        self.put(99, 7).put(131071, 17);
-        self.put(777 + seed, 10)
-    }
-}
-
-fn payload_with(bits: Bits) -> Vec<u8> {
+fn payload_with(bits: BitWriter) -> Vec<u8> {
     let mut out = vec![0xB5, 0x00, 0x3C, 0x00, 0x01, 0x04, 0x01];
-    out.extend_from_slice(&bits.bytes);
+    out.extend_from_slice(&bits.finish());
     out
 }
 
 #[test]
 fn a_payload_assembled_independently_field_by_field_decodes_to_those_fields() {
-    let mut b = Bits::new();
-    b.put(1, 2);
-    b.put(1000, 27);
-    b.put(1, 1).put(2, 5).put(3, 5);
+    let mut b = BitWriter::new();
+    b.u(2, 1);
+    b.u(27, 1000);
+    b.u(1, 1).u(5, 2).u(5, 3);
     for v in [0, 1, 2, 3, 14, 15] {
-        b.put(v, 4);
+        b.u(4, v);
     }
-    b.window_color_volume(0);
-    b.put(1, 1).put(1, 5).put(2, 5).put(9, 4).put(15, 4);
-    b.put(1, 1)
-        .put(4095, 12)
-        .put(1234, 12)
-        .put(2, 4)
-        .put(1023, 10)
-        .put(5, 10);
-    b.put(1, 1).put(63, 6);
+    window_color_volume(&mut b, 0);
+    b.u(1, 1).u(5, 1).u(5, 2).u(4, 9).u(4, 15);
+    b.u(1, 1)
+        .u(12, 4095)
+        .u(12, 1234)
+        .u(4, 2)
+        .u(10, 1023)
+        .u(10, 5);
+    b.u(1, 1).u(6, 63);
     let bytes = payload_with(b);
     let meta = Hdr10PlusMetadata::parse(&bytes).unwrap();
     assert_eq!(meta.targeted_system_display_maximum_luminance, 1000);
@@ -761,26 +749,24 @@ fn a_payload_assembled_independently_field_by_field_decodes_to_those_fields() {
 
 #[test]
 fn a_three_window_payload_assembled_independently_decodes_to_those_fields() {
-    let mut b = Bits::new();
-    b.put(3, 2);
+    let mut b = BitWriter::new();
+    b.u(2, 3);
     for base in [10u64, 20] {
         for v in 0..6 {
-            b.put(base + v, 16);
+            b.u(16, base + v);
         }
-        b.put(90 + base, 8);
-        b.put(1000 + base, 16)
-            .put(2000 + base, 16)
-            .put(3000 + base, 16);
-        b.put(base % 2, 1);
+        b.u(8, 90 + base);
+        b.u(16, 1000 + base).u(16, 2000 + base).u(16, 3000 + base);
+        b.u(1, base % 2);
     }
-    b.put(5, 27).put(0, 1);
-    b.window_color_volume(0)
-        .window_color_volume(1)
-        .window_color_volume(2);
-    b.put(0, 1);
-    b.put(0, 1).put(0, 1);
-    b.put(1, 1).put(0, 12).put(0, 12).put(0, 4).put(0, 1);
-    b.put(0, 1).put(1, 1).put(8, 6);
+    b.u(27, 5).u(1, 0);
+    for seed in 0..3 {
+        window_color_volume(&mut b, seed);
+    }
+    b.u(1, 0);
+    b.u(1, 0).u(1, 0);
+    b.u(1, 1).u(12, 0).u(12, 0).u(4, 0).u(1, 0);
+    b.u(1, 0).u(1, 1).u(6, 8);
     let bytes = payload_with(b);
     let meta = Hdr10PlusMetadata::parse(&bytes).unwrap();
     assert_eq!(meta.num_windows(), 3);

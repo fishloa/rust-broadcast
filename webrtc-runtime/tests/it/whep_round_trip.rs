@@ -569,10 +569,16 @@ fn whep_server_wrong_state_errors() {
     assert!(matches!(err.unwrap_err(), Error::WrongState { .. }));
 
     // DELETE before any offer -> error
-    assert!(session.on_delete().is_err());
+    assert!(matches!(
+        session.on_delete(),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
 
     // Post twice -> error
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "e".into());
-    assert!(session.on_post(SDP_OFFER.to_vec()).is_err());
+    assert!(matches!(
+        session.on_post(SDP_OFFER.to_vec()),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
 }

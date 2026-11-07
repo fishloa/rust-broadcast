@@ -326,7 +326,10 @@ fn explicit_he_aac_is_rewritable_and_rejects_what_it_cannot_express() {
         .map(|t| t.spec.clone())
         .find(|s| !matches!(s.config, CodecConfig::Aac { .. }))
         .expect("non-AAC track");
-    assert!(video.with_explicit_he_aac(HeAacProfile::V1).is_err());
+    assert!(matches!(
+        video.with_explicit_he_aac(HeAacProfile::V1),
+        Err(transmux::Error::UnsupportedCodec { .. })
+    ));
 
     let asc = asc_in_init(&spec);
     let mut with_extension = asc.clone();

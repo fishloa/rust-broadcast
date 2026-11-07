@@ -304,9 +304,18 @@ mod tests {
         let (addr, _) = parse_srt_url("[::1]:9001").unwrap();
         assert_eq!(addr, "[::1]:9001");
         // A bare, unbracketed IPv6 authority is ambiguous → error.
-        assert!(parse_srt_url("::1").is_err());
-        assert!(parse_srt_url("::1:9000").is_err());
-        assert!(parse_srt_url("srt://::1").is_err());
+        assert!(matches!(
+            parse_srt_url("::1"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("::1:9000"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("srt://::1"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
 
         // Haivision `#!::r=…` streamid keeps the whole value (a `#` is not a
         // fragment delimiter here); an unencoded value passes through
@@ -322,18 +331,48 @@ mod tests {
 
         // Hostile inputs: empty host, bad port, out-of-range latency, a
         // non-caller mode, and a passphrase are all rejected, not panicked.
-        assert!(parse_srt_url("").is_err());
-        assert!(parse_srt_url(":9000").is_err());
-        assert!(parse_srt_url("host:notaport").is_err());
-        assert!(parse_srt_url("host:99999").is_err());
-        assert!(parse_srt_url("host:9000?latency=notanumber").is_err());
-        assert!(parse_srt_url("host:9000?latency=99999").is_err());
-        assert!(parse_srt_url("host:9000?mode=listener").is_err());
-        assert!(parse_srt_url("host:9000?passphrase=secret").is_err());
+        assert!(matches!(
+            parse_srt_url(""),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url(":9000"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("host:notaport"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("host:99999"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("host:9000?latency=notanumber"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("host:9000?latency=99999"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("host:9000?mode=listener"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("host:9000?passphrase=secret"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
         // A userinfo prefix is rejected, not silently dropped (the parser
         // would otherwise reduce `user:key@host:9000` to `host:9000`).
-        assert!(parse_srt_url("srt://user:key@host:9000").is_err());
-        assert!(parse_srt_url("srt://user@host:9000").is_err());
+        assert!(matches!(
+            parse_srt_url("srt://user:key@host:9000"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
+        assert!(matches!(
+            parse_srt_url("srt://user@host:9000"),
+            Err(srt_runtime::Error::Io { .. })
+        ));
         // `mode=caller` is accepted.
         assert!(parse_srt_url("host:9000?mode=caller").is_ok());
     }

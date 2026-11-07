@@ -440,49 +440,9 @@ fn peek_pps_id(nal: &[u8]) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_bits::BitWriter;
     use alloc::vec;
     use alloc::vec::Vec;
-
-    /// Minimal MSB-first bit writer for building spec-shaped test NALs.
-    #[derive(Default)]
-    struct W {
-        out: Vec<u8>,
-        cur: u8,
-        n: u8,
-    }
-    impl W {
-        fn u(&mut self, bits: u32, v: u32) {
-            for i in (0..bits).rev() {
-                self.cur = (self.cur << 1) | ((v >> i) & 1) as u8;
-                self.n += 1;
-                if self.n == 8 {
-                    self.out.push(self.cur);
-                    self.cur = 0;
-                    self.n = 0;
-                }
-            }
-        }
-        fn ue(&mut self, v: u32) {
-            let x = v + 1;
-            let len = 32 - x.leading_zeros();
-            self.u(len - 1, 0);
-            self.u(len, x);
-        }
-        fn se(&mut self, v: i32) {
-            self.ue(if v > 0 {
-                (2 * v - 1) as u32
-            } else {
-                (-2 * v) as u32
-            });
-        }
-        fn finish(mut self) -> Vec<u8> {
-            self.u(1, 1);
-            while self.n != 0 {
-                self.u(1, 0);
-            }
-            self.out
-        }
-    }
 
     fn nal(ref_idc: u8, t: u8, rbsp: Vec<u8>) -> Vec<u8> {
         let mut v = vec![(ref_idc << 5) | t];
@@ -491,13 +451,13 @@ mod tests {
     }
 
     fn sps_nal(poc_type: u32, frame_mbs_only: bool) -> Vec<u8> {
-        let mut w = W::default();
+        let mut w = BitWriter::new();
         w.u(8, 77);
         w.u(8, 0);
         w.u(8, 30);
         w.ue(0); // sps id
         w.ue(0); // log2_max_frame_num_minus4 -> 4 bits
-        w.ue(poc_type);
+        w.ue(u64::from(poc_type));
         if poc_type == 0 {
             w.ue(2); // log2_max_poc_lsb_minus4 -> 6 bits
         } else if poc_type == 1 {
@@ -510,23 +470,23 @@ mod tests {
         w.u(1, 0);
         w.ue(3);
         w.ue(1);
-        w.u(1, frame_mbs_only as u32);
+        w.u(1, u64::from(frame_mbs_only as u32));
         if !frame_mbs_only {
             w.u(1, 0);
         }
         w.u(1, 1);
         w.u(1, 0);
         w.u(1, 0);
-        nal(3, 7, w.finish())
+        nal(3, 7, w.trailing())
     }
 
     fn pps_nal(id: u32, bottom_poc: bool, redundant: bool, slice_groups: u32) -> Vec<u8> {
-        let mut w = W::default();
-        w.ue(id);
+        let mut w = BitWriter::new();
+        w.ue(u64::from(id));
         w.ue(0);
         w.u(1, 0);
-        w.u(1, bottom_poc as u32);
-        w.ue(slice_groups);
+        w.u(1, u64::from(bottom_poc as u32));
+        w.ue(u64::from(slice_groups));
         if slice_groups > 0 {
             w.ue(6); // map type 6
             w.ue(3); // pic_size_in_map_units_minus1 -> 4 ids
@@ -543,8 +503,8 @@ mod tests {
         w.se(0);
         w.u(1, 1);
         w.u(1, 0);
-        w.u(1, redundant as u32);
-        nal(3, 8, w.finish())
+        w.u(1, u64::from(redundant as u32));
+        nal(3, 8, w.trailing())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -554,26 +514,26 @@ mod tests {
         frame_num: u32,
         field: Option<bool>,
         poc_lsb: u32,
-        extra_after_poc: &dyn Fn(&mut W),
+        extra_after_poc: &dyn Fn(&mut BitWriter),
     ) -> Vec<u8> {
-        let mut w = W::default();
+        let mut w = BitWriter::new();
         w.ue(0); // first_mb
         w.ue(7); // slice_type I
         w.ue(0); // pps id
-        w.u(4, frame_num);
+        w.u(4, u64::from(frame_num));
         if let Some(bottom) = field {
             w.u(1, 1);
-            w.u(1, bottom as u32);
+            w.u(1, u64::from(bottom as u32));
         } else {
             w.u(1, 0);
         }
         if idr {
             w.ue(9);
         }
-        w.u(6, poc_lsb);
+        w.u(6, u64::from(poc_lsb));
         extra_after_poc(&mut w);
         w.ue(1); // trailing slice data stand-in
-        nal(ref_idc, if idr { 5 } else { 1 }, w.finish())
+        nal(ref_idc, if idr { 5 } else { 1 }, w.trailing())
     }
 
     fn annexb(nals: &[Vec<u8>]) -> Vec<u8> {
@@ -608,7 +568,9 @@ mod tests {
         assert_eq!(h.delta_pic_order_cnt_bottom, -5);
         assert_eq!(h.redundant_pic_cnt, 3);
         // Field picture: no delta_pic_order_cnt_bottom even though the PPS flag is set.
-        let n = slice(2, false, 15, Some(true), 63, &|w| w.ue(2));
+        let n = slice(2, false, 15, Some(true), 63, &|w| {
+            w.ue(2);
+        });
         let h = parse_avc_slice_header(&n, &sps, &pps).unwrap();
         assert!(h.field_pic_flag && h.bottom_field_flag);
         assert_eq!((h.frame_num, h.pic_order_cnt_lsb), (15, Some(63)));
@@ -623,13 +585,13 @@ mod tests {
         assert_eq!(sps.pic_order_cnt_type, 1);
         let pps = decode_avc_slice_pps(&pps_nal(0, false, false, 0)).unwrap();
         // frame_mbs_only: no field_pic_flag bit at all; POC type 1: delta_pic_order_cnt[0].
-        let mut w = W::default();
+        let mut w = BitWriter::new();
         w.ue(0);
         w.ue(0);
         w.ue(0);
         w.u(4, 3);
         w.se(7);
-        let n = nal(1, 1, w.finish());
+        let n = nal(1, 1, w.trailing());
         let h = parse_avc_slice_header(&n, &sps, &pps).unwrap();
         assert!(!h.field_pic_flag);
         assert_eq!((h.frame_num, h.delta_pic_order_cnt), (3, [7, 0]));
@@ -647,11 +609,27 @@ mod tests {
         let pps = decode_avc_slice_pps(&pps_nal(0, false, false, 0)).unwrap();
         let n = slice(1, false, 1, Some(false), 1, &|_| {});
         for cut in 1..4 {
-            assert!(parse_avc_slice_header(&n[..cut], &sps, &pps).is_err());
+            assert!(matches!(
+                parse_avc_slice_header(&n[..cut], &sps, &pps),
+                Err(Error::BufferTooShort { .. })
+            ));
         }
         let other = AvcSlicePps { pps_id: 4, ..pps };
-        assert!(parse_avc_slice_header(&n, &sps, &other).is_err());
-        assert!(parse_avc_slice_header(&[0x67, 0x01], &sps, &pps).is_err());
+        assert!(matches!(
+            parse_avc_slice_header(&n, &sps, &other),
+            Err(Error::InvalidValue {
+                field: "pic_parameter_set_id",
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_avc_slice_header(&[0x67, 0x01], &sps, &pps),
+            Err(Error::InvalidValue {
+                field: "nal_unit_type",
+                value: 7,
+                ..
+            })
+        ));
     }
 
     fn params() -> (Vec<u8>, Vec<u8>) {

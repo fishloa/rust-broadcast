@@ -480,7 +480,10 @@ fn terminal_error_still_returns_the_events_decoded_before_it() {
 
     // The all-or-nothing form keeps its documented behaviour: the error, and
     // no events.
-    assert!(session_awaiting_play().handle_data_strict(&stream).is_err());
+    assert!(matches!(
+        session_awaiting_play().handle_data_strict(&stream),
+        Err(rtsp_runtime::Error::MessageParse(_))
+    ));
 
     // Chunk-size invariance: byte-at-a-time yields the same events, then the
     // same terminal error.

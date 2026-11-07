@@ -935,8 +935,21 @@ mod tests {
         assert!(matches!(parsed[0], WvttSampleBox::AdditionalText(_)));
         assert!(matches!(parsed[1], WvttSampleBox::Empty(_)));
         // A box that runs past the sample is an error, not a silent truncation.
-        assert!(parse_wvtt_sample(&bytes[..bytes.len() - 1]).is_err());
-        assert!(parse_wvtt_sample(&[0, 0, 0, 4, b'v', b't', b't', b'e']).is_err());
+        assert!(matches!(
+            parse_wvtt_sample(&bytes[..bytes.len() - 1]),
+            Err(Error::InvalidValue {
+                field: "wvtt sample box size",
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_wvtt_sample(&[0, 0, 0, 4, b'v', b't', b't', b'e']),
+            Err(Error::InvalidValue {
+                field: "wvtt sample box size",
+                value: 4,
+                ..
+            })
+        ));
     }
 
     #[test]

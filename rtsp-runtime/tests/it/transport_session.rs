@@ -317,21 +317,39 @@ fn the_serializer_rejects_control_characters_and_non_token_names() {
     // CRLF in an unknown parameter's value and name
     let mut spec = TransportSpec::default();
     spec.extensions.push(("x".into(), Some("q\nr".into())));
-    assert!(Transport::single(spec).to_header_value().is_err());
+    assert!(matches!(
+        Transport::single(spec).to_header_value(),
+        Err(rtsp_runtime::Error::HeaderSerialize(_))
+    ));
     let mut spec = TransportSpec::default();
     spec.extensions.push(("x\r\ny".into(), None));
-    assert!(Transport::single(spec).to_header_value().is_err());
+    assert!(matches!(
+        Transport::single(spec).to_header_value(),
+        Err(rtsp_runtime::Error::HeaderSerialize(_))
+    ));
     // a non-token mode method
     let mut spec = TransportSpec::default();
     spec.mode.push(TransportMode::Other("A\r\nB".into()));
-    assert!(Transport::single(spec).to_header_value().is_err());
+    assert!(matches!(
+        Transport::single(spec).to_header_value(),
+        Err(rtsp_runtime::Error::HeaderSerialize(_))
+    ));
     // an id and an extension name on the Session side
     let mut h = SessionHeader::new("ok");
     h.id = "a\r\nb".into();
-    assert!(h.to_header_value().is_err());
+    assert!(matches!(
+        h.to_header_value(),
+        Err(rtsp_runtime::Error::HeaderSerialize(_))
+    ));
     let mut h = SessionHeader::new("ok");
     h.extensions.push(("n\r\nm".into(), None));
-    assert!(h.to_header_value().is_err());
+    assert!(matches!(
+        h.to_header_value(),
+        Err(rtsp_runtime::Error::HeaderSerialize(_))
+    ));
     // and the parsers reject a CRLF inside a quoted value up front
-    assert!(Transport::parse("RTP/AVP;destination=\"a\r\nb\"").is_err());
+    assert!(matches!(
+        Transport::parse("RTP/AVP;destination=\"a\r\nb\""),
+        Err(rtsp_runtime::Error::TransportParse(_))
+    ));
 }

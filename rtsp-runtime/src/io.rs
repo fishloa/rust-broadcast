@@ -801,14 +801,10 @@ where
             self.timeouts.handshake
         };
         loop {
-            // 1. Finish any response write a cancelled earlier call left in the
-            //    framed write buffer (never re-sent: `flush` drains it once).
             bounded(self.timeouts.write, "write", self.framed.flush()).await?;
-            // 2. Hand out the events of a request whose response is now fully written.
             if let Some(events) = self.ready.take() {
                 return Ok(Some(events));
             }
-            // 3. Read the next frame under ONE deadline.
             let frame = match tokio::time::timeout(limit, self.framed.next()).await {
                 Err(_) => return Err(Error::Timeout { what: "read" }),
                 Ok(None) => return Ok(None),

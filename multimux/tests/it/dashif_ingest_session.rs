@@ -105,7 +105,10 @@ fn session_basic_flow() {
         },
         ts,
     );
-    assert!(r.is_err());
+    assert!(matches!(
+        r,
+        Err(multimux::dashif_ingest::SessionError::Ingest(_))
+    ));
 
     // header rep 1 only
     session
@@ -210,7 +213,10 @@ fn session_basic_flow() {
         },
         ts,
     );
-    assert!(r.is_err());
+    assert!(matches!(
+        r,
+        Err(multimux::dashif_ingest::SessionError::Ingest(_))
+    ));
 
     // duplicate segment => no extra events
     // feed same segment again on original session (now live)
@@ -251,7 +257,10 @@ fn session_basic_flow() {
         },
         ts,
     );
-    assert!(r.is_err());
+    assert!(matches!(
+        r,
+        Err(multimux::dashif_ingest::SessionError::Ingest(_))
+    ));
 
     // identical header repeat ignored
     session

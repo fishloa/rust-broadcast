@@ -2055,7 +2055,13 @@ pub(crate) mod tests {
         // hand; a frame still being received is judged on the header alone.
         let mut damaged = core.clone();
         damaged[100] ^= 0x01;
-        assert!(Ec3SyncframeInfo::parse_at(&damaged, 0).is_err());
+        assert!(matches!(
+            Ec3SyncframeInfo::parse_at(&damaged, 0),
+            Err(Error::InvalidValue {
+                field: "AC-3 crc2",
+                ..
+            })
+        ));
         assert!(Ec3SyncframeInfo::parse_at(&damaged[..1000], 0).is_ok());
     }
 
@@ -2082,10 +2088,19 @@ pub(crate) mod tests {
             "expected InvalidValue for a dependent-only AU, got {err:?}"
         );
         // The empty slice is the same case.
-        assert!(Ec3SpecificBox::from_syncframes(&[]).is_err());
+        assert!(matches!(
+            Ec3SpecificBox::from_syncframes(&[]),
+            Err(Error::InvalidValue { .. })
+        ));
         // `into_dec3` on a dependent frame errors too, rather than returning a
         // box that cannot be serialized.
-        assert!(frames[0].into_dec3().is_err());
+        assert!(matches!(
+            frames[0].into_dec3(),
+            Err(Error::InvalidValue {
+                field: "dec3 num_ind_sub",
+                ..
+            })
+        ));
     }
 
     /// r04-W5 regression: a backlog of **repeated access units** (the shape

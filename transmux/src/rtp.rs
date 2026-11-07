@@ -766,8 +766,6 @@ fn fragment_fu_a(
         .filter(|&b| b > 0)
         .ok_or(Error::InvalidInput("MTU too small for FU-A fragmentation"))?;
 
-    // Compute the offset of `payload` within the sample's backing buffer
-    // so we can slice the sample's Bytes zero-copy.
     let base_offset = nal.as_ptr() as usize - sample_data.as_ptr() as usize + 1;
 
     let total = payload.len();

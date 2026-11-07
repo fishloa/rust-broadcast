@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `SectionPump` and `T2miPumpDriver` replaced by one `PacketPump` over a `PacketSink` trait; no public API change (c3 P1).
+
 ### Removed
 - Unused `resync::aligned_packets`; the `resync` module doc no longer claims to wrap `mpeg_ts::resync::TsResync` (c2 H7).
 - Unused `SectionStream::with_builder` and `MulticastConfig::with_interface` (c2 TH1).
