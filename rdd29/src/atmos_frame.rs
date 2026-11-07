@@ -170,11 +170,11 @@ impl<'a> AtmosFrame<'a> {
             if let AnyElement::ObjectDefinition1(obj) = e
                 && obj.pan_sub_blocks.len() != usize::from(self.frame_rate.num_pan_sub_blocks()?)
             {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "ATMOSFrame.elements[].pan_sub_blocks.len()",
                     value: obj.pan_sub_blocks.len() as u64,
                     reason: "pan_sub_blocks.len() must equal frame_rate.num_pan_sub_blocks()",
-                });
+                }));
             }
         }
         Ok(())
@@ -196,18 +196,20 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
         let element_size = read_plex(&mut r, 8, "ElementSize")?;
         debug_assert!(r.is_byte_aligned());
         let header_len = r.bits_read() / 8;
-        let element_size = usize::try_from(element_size).map_err(|_| Error::InvalidValue {
-            field: "ElementSize",
-            value: element_size,
-            reason: "does not fit in this platform's usize",
+        let element_size = usize::try_from(element_size).map_err(|_| {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "ElementSize",
+                value: element_size,
+                reason: "does not fit in this platform's usize",
+            })
         })?;
         let body_end = header_len
             .checked_add(element_size)
-            .ok_or(Error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ElementSize",
                 value: element_size as u64,
                 reason: "overflowed usize",
-            })?;
+            }))?;
         need_in(bytes, body_end, "ATMOSFrame body")?;
         let body = &bytes[header_len..body_end];
 
@@ -238,11 +240,11 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
         // observable, so it can carry a regression test.
         let remaining = body.len().saturating_sub(offset);
         if sub_element_count > remaining as u64 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ATMOSFrame.SubElementCount",
                 value: sub_element_count,
                 reason: "exceeds the bytes remaining in the frame body",
-            });
+            }));
         }
         let mut elements = Vec::with_capacity(sub_element_count as usize);
         for _ in 0..sub_element_count {
@@ -252,11 +254,11 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
             elements.push(element);
         }
         if offset != body.len() {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ATMOSFrame",
                 value: (body.len() - offset) as u64,
                 reason: "trailing bytes remain after SubElementCount elements",
-            });
+            }));
         }
 
         Ok(Self {
@@ -381,10 +383,12 @@ mod tests {
         let mut out = alloc::vec![0u8; need - 1];
         assert_eq!(
             frame.serialize_into(&mut out),
-            Err(Error::OutputBufferTooSmall {
-                need,
-                have: need - 1
-            })
+            Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need,
+                    have: need - 1
+                }
+            ))
         );
     }
 
@@ -440,7 +444,10 @@ mod tests {
         // `value` is the offending count (8), not an element index.
         assert!(matches!(
             frame.serialize_into(&mut buf),
-            Err(Error::InvalidValue { value: 8, .. })
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                value: 8,
+                ..
+            }))
         ));
     }
 

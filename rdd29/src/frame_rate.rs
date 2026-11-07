@@ -94,11 +94,11 @@ impl FrameRate {
             Self::Fps24 | Self::Fps25 | Self::Fps30 => Ok(8),
             Self::Fps48 | Self::Fps50 | Self::Fps60 => Ok(4),
             Self::Fps96 | Self::Fps100 | Self::Fps120 => Ok(2),
-            Self::Reserved(v) => Err(Error::InvalidValue {
+            Self::Reserved(v) => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "FrameRate",
                 value: u64::from(v),
                 reason: "reserved FrameRate has no Table 7 NumPanSubBlocks entry",
-            }),
+            })),
         }
     }
 }
@@ -130,7 +130,7 @@ mod tests {
     fn reserved_frame_rate_has_no_pan_sub_block_count() {
         assert!(matches!(
             FrameRate::Reserved(0x9).num_pan_sub_blocks(),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
     }
 

@@ -59,7 +59,11 @@ fn a_huge_plex_sub_element_count_does_not_reserve() {
     // overcommit, so only AddressSanitizer would notice. Asserting the specific
     // error is what makes this guard able to fail.
     match AtmosFrame::parse(&data) {
-        Err(rdd29::Error::InvalidValue { field, value, .. }) => {
+        Err(rdd29::Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field,
+            value,
+            ..
+        })) => {
             assert_eq!(field, "ATMOSFrame.SubElementCount");
             assert_eq!(value, 0x7FFF_FFFF);
         }
@@ -110,19 +114,19 @@ fn arbitrary_short_inputs_do_not_reserve() {
             ),
             2..=11 => assert_eq!(
                 err,
-                Error::BufferTooShort {
+                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                     need: 12,
                     have: n,
                     what: "ATMOSFrame body"
-                }
+                })
             ),
             _ => assert_eq!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "ATMOSFrame.SubElementCount",
                     value: 0x7FFF_FFFF,
                     reason: "exceeds the bytes remaining in the frame body"
-                }
+                })
             ),
         }
     }
@@ -177,7 +181,11 @@ fn a_channel_count_over_the_provable_ceiling_is_rejected() {
         0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
     match BedDefinition1::parse(&data) {
-        Err(rdd29::Error::InvalidValue { field, value, .. }) => {
+        Err(rdd29::Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field,
+            value,
+            ..
+        })) => {
             assert_eq!(field, "BedDefinition1.ChannelCount");
             assert_eq!(value, 8);
         }

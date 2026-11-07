@@ -210,11 +210,11 @@ impl<'a> Parse<'a> for BedDefinition1 {
         let remaining_bits = r.bits_remaining() as u64;
         let provable_ceiling = remaining_bits / BITS_PER_CHANNEL_DESCRIPTION;
         if channel_count > provable_ceiling {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "BedDefinition1.ChannelCount",
                 value: channel_count,
                 reason: "exceeds the bits remaining in the element",
-            });
+            }));
         }
         let mut channels = Vec::with_capacity(channel_count as usize);
         for _ in 0..channel_count {
@@ -378,7 +378,7 @@ mod tests {
         let last = bytes.len() - 2;
         bytes[last] = 0xAA; // corrupt "Reserved (set to 0x5)"
         let err = BedDefinition1::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::InvalidReserved { .. }));
+        assert!(matches!(err, Error::ReservedBits(..)));
     }
 
     #[test]
@@ -429,7 +429,7 @@ mod tests {
         let mut buf = alloc::vec![0u8; bed.serialized_len()];
         assert!(matches!(
             bed.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
     }
 }
