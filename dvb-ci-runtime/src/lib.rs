@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-
 // The portable core is unsafe-free; only the optional Linux device leaf
 // (`#[allow(unsafe_code)]` in `linux`) uses ioctls, so this is `deny`, not
 // `forbid`.
