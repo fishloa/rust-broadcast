@@ -38,7 +38,7 @@ pub(crate) enum Tag {
 pub(crate) trait XmlWalkError: Sized {
     fn unterminated_tag(pos: usize) -> Self;
     fn mismatched_end_tag(expected: String, found: String) -> Self;
-    fn xml(pos: usize, message: String) -> Self;
+    fn ill_formed(pos: usize, message: String) -> Self;
     fn malformed_attribute(pos: usize) -> Self;
     fn unexpected_eof() -> Self;
     fn missing_attribute(element: &'static str, attr: &'static str) -> Self;
@@ -61,13 +61,13 @@ fn xml_error<E: XmlWalkError>(reader: &XmlReader<'_>, err: &quick_xml::Error) ->
         Qe::IllFormed(IllFormedError::MismatchedEndTag { expected, found }) => {
             E::mismatched_end_tag(local_part(expected), local_part(found))
         }
-        _ => E::xml(pos, err.to_string()),
+        _ => E::ill_formed(pos, err.to_string()),
     }
 }
 
 /// A well-formedness error described by `message` at the reader's position.
 pub(crate) fn xml_message<E: XmlWalkError>(reader: &XmlReader<'_>, message: String) -> E {
-    E::xml(position(reader), message)
+    E::ill_formed(position(reader), message)
 }
 
 /// The local part of a (possibly prefixed) qualified name.

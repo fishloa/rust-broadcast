@@ -248,7 +248,7 @@ impl crate::xml_walk::XmlWalkError for DashParseError {
     fn mismatched_end_tag(expected: String, found: String) -> Self {
         Self::MismatchedEndTag { expected, found }
     }
-    fn xml(pos: usize, message: String) -> Self {
+    fn ill_formed(pos: usize, message: String) -> Self {
         Self::Xml { pos, message }
     }
     fn malformed_attribute(pos: usize) -> Self {
