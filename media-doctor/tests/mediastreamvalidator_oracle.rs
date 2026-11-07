@@ -225,8 +225,9 @@ fn run_validator(dir: &Path, entry: &str, parse_only: bool, timeout_secs: u32) -
     let text = fs::read_to_string(&out_json).unwrap_or_else(|e| {
         panic!(
             "mediastreamvalidator produced no JSON at {} ({e}); \
-             stdout={} stderr={}",
+             status={:?} stdout={} stderr={}",
             out_json.display(),
+            out.status,
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr),
         )

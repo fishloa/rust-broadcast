@@ -38,6 +38,7 @@ include!("support/skip.rs");
 include!("support/libsrt_spawn.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
+const PERIODIC_NAK_LATENCY_MS: u16 = 2_000;
 /// Small payloads, so that a thousand of them fit a kernel UDP buffer in one
 /// go (the periodic-NAK test needs hundreds of losses outstanding at once).
 const PAYLOAD_LEN: usize = 256;
@@ -378,8 +379,9 @@ async fn libsrt_sender_recovers_a_hundreds_of_losses_list_from_our_periodic_nak(
         let (mut receiver, relay, _libsrt, src_port) = our_listener_behind_a_relay(
             HandshakeConfig {
                 // Room for the periodic NAK to do the recovering before
-                // libsrt's sender would give up on a packet.
-                latency_ms: 2_000,
+                // either side would give up on a packet, however long the
+                // host stalls the NAK/retransmit exchange.
+                latency_ms: PERIODIC_NAK_LATENCY_MS,
                 ..HandshakeConfig::default()
             },
             "latency=120",

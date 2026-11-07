@@ -216,18 +216,21 @@ mod tests {
         (Server { addr, token, task }, tx)
     }
 
-    async fn scrape(addr: std::net::SocketAddr) -> String {
-        let mut s = TcpStream::connect(addr).await.unwrap();
-        s.write_all(REQ).await.unwrap();
+    async fn try_scrape(addr: std::net::SocketAddr) -> std::io::Result<String> {
+        let mut s = TcpStream::connect(addr).await?;
+        s.write_all(REQ).await?;
         let mut out = String::new();
         tokio::time::timeout(
             std::time::Duration::from_secs(5),
             s.read_to_string(&mut out),
         )
         .await
-        .expect("scrape timed out")
-        .unwrap();
-        out
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "scrape timed out"))??;
+        Ok(out)
+    }
+
+    async fn scrape(addr: std::net::SocketAddr) -> String {
+        try_scrape(addr).await.expect("scrape")
     }
 
     fn cfg(max_conns: usize, io_timeout_ms: u64) -> MetricsServerConfig {
@@ -319,10 +322,14 @@ mod tests {
             flood.push(TcpStream::connect(srv.addr).await.unwrap());
         }
         drop(flood);
-        // Condition-wait with a bound (no fixed sleep): retry until a scrape is 200.
+        // Until the server has reaped the flood, a scrape is closed at accept
+        // (EOF, reset or a failed write); each such attempt is just "not yet".
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            if scrape(srv.addr).await.starts_with("HTTP/1.1 200 OK") {
+            if try_scrape(srv.addr)
+                .await
+                .is_ok_and(|body| body.starts_with("HTTP/1.1 200 OK"))
+            {
                 break;
             }
             assert!(

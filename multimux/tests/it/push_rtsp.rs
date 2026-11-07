@@ -188,24 +188,27 @@ impl MediaMtx {
         }
     }
 
-    /// Waits (bounded) until `mediamtx` reports at least one reader attached
-    /// to `path` — i.e. the reader's RTSP `PLAY` completed — so the publisher
-    /// sends only once there is somebody to receive from the first frame.
-    async fn wait_for_reader(&self, path: &str, guard: Duration) {
-        let url = format!("http://127.0.0.1:{}/v3/paths/get/{path}", self.api_port);
+    /// Waits (bounded) until `mediamtx` reports an RTSP session in the `read` state, i.e. the
+    /// reader's `PLAY` completed. The path's `readers` list is not enough: it names a reader
+    /// from `SETUP` on, and a packet published before `PLAY` has started its writer is not
+    /// delivered to it, which leaves `ffprobe` waiting for a first packet that never comes.
+    async fn wait_for_reader(&self, guard: Duration) {
+        let url = format!("http://127.0.0.1:{}/v3/rtspsessions/list", self.api_port);
         let client = reqwest::Client::new();
         let deadline = tokio::time::Instant::now() + guard;
         loop {
             if let Ok(resp) = client.get(&url).send().await
                 && resp.status().is_success()
                 && let Ok(body) = resp.json::<serde_json::Value>().await
-                && body["readers"].as_array().is_some_and(|r| !r.is_empty())
+                && body["items"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|i| i["state"] == "read"))
             {
                 return;
             }
             assert!(
                 tokio::time::Instant::now() < deadline,
-                "mediamtx never reported a reader on {path}"
+                "mediamtx never reported a session in the read state"
             );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
@@ -266,7 +269,6 @@ fn ffprobe_read(url: &str) -> (bool, String, String) {
 /// (effectively instantaneous, no real-time pacing) fixture bytes.
 async fn push_and_read_back(
     server: &MediaMtx,
-    path: &str,
     cfg: RtspTransportConfig,
     push_url: String,
     read_url: String,
@@ -304,7 +306,7 @@ async fn push_and_read_back(
     // `send_media` ships the fixture.
     let reader_url = read_url.clone();
     let reader = tokio::task::spawn_blocking(move || ffprobe_read(&reader_url));
-    server.wait_for_reader(path, GUARD).await;
+    server.wait_for_reader(GUARD).await;
 
     tokio::time::timeout(GUARD, transport.send_media(&media))
         .await
@@ -341,7 +343,7 @@ async fn rtsp_push_survives_digest_auth_against_mediamtx() {
         credentials: Some(("pushuser".to_string(), "pushpass123".to_string())),
         ..Default::default()
     };
-    push_and_read_back(&server, PATH, cfg, push_url, read_url).await;
+    push_and_read_back(&server, cfg, push_url, read_url).await;
 }
 
 /// Same oracle, Basic auth (RFC 2326 §14 / RFC 7617) — the other scheme
@@ -357,5 +359,5 @@ async fn rtsp_push_survives_basic_auth_against_mediamtx() {
         credentials: Some(("pushuser".to_string(), "pushpass123".to_string())),
         ..Default::default()
     };
-    push_and_read_back(&server, PATH, cfg, push_url, read_url).await;
+    push_and_read_back(&server, cfg, push_url, read_url).await;
 }
