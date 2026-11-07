@@ -54,10 +54,6 @@ impl BitWriter {
         })
     }
 
-    pub(crate) fn aligned(&self) -> bool {
-        self.n == 0
-    }
-
     pub(crate) fn align_zero(&mut self) -> &mut Self {
         while self.n != 0 {
             self.bit(false);
