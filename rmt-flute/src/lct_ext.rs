@@ -2,6 +2,7 @@
 //! (RFC 5651 §5.2.1, §5.2.2, §9.2).
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use crate::error::{Error, Result};
 use crate::ext::{HeaderExtension, WORD};
@@ -148,13 +149,7 @@ impl ExtTime {
     /// is [`HET_EXT_TIME`] (the content is everything after HET+HEL: the 2-byte
     /// Use field followed by the time values).
     pub fn parse(content: &[u8]) -> Result<Self> {
-        if content.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: content.len(),
-                what: "EXT_TIME Use field",
-            });
-        }
+        need_in(content, 2, "EXT_TIME Use field")?;
         let use_field = u16::from_be_bytes([content[0], content[1]]);
         let pi_specific = (use_field & USE_PI_SPECIFIC_MASK) as u8;
         // Reserved-by-LCT bits (Use & USE_RESERVED_MASK): RFC 5651 makes
@@ -174,13 +169,7 @@ impl ExtTime {
             if !present {
                 return Ok(None);
             }
-            if content.len() < off + WORD {
-                return Err(Error::BufferTooShort {
-                    need: off + WORD,
-                    have: content.len(),
-                    what: "EXT_TIME time value",
-                });
-            }
+            need_in(content, off + WORD, "EXT_TIME time value")?;
             let v = u32::from_be_bytes([
                 content[off],
                 content[off + 1],

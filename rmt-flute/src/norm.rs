@@ -15,6 +15,7 @@
 //! has no defined wire format (RFC 5740 §4.4.1) — exposed as opaque content.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{self, HeaderExtension, WORD};
@@ -150,13 +151,7 @@ impl NormCommonHeader {
     /// Parse the 8-byte common header. Returns the header and the `hdr_len`
     /// value (in 32-bit words) read from the wire.
     pub fn parse(data: &[u8]) -> Result<(Self, u8)> {
-        if data.len() < COMMON_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: COMMON_HEADER_LEN,
-                have: data.len(),
-                what: "NORM common header",
-            });
-        }
+        need_in(data, COMMON_HEADER_LEN, "NORM common header")?;
         let version = data[0] >> 4;
         let message_type = NormMessageType::from_u8(data[0] & 0x0F);
         let hdr_len = data[1];
@@ -176,12 +171,7 @@ impl NormCommonHeader {
     /// Serialize the common header into `out`, writing the supplied `hdr_len`
     /// (caller computes it from the message body). Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8], hdr_len: u8) -> Result<usize> {
-        if out.len() < COMMON_HEADER_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: COMMON_HEADER_LEN,
-                have: out.len(),
-            });
-        }
+        need_out(out, COMMON_HEADER_LEN)?;
         if self.version > 0x0F {
             return Err(Error::FieldTooWide {
                 what: "version",
@@ -223,13 +213,7 @@ pub struct SenderWord {
 impl SenderWord {
     /// Parse the 4-byte sender word.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < SENDER_WORD_LEN {
-            return Err(Error::BufferTooShort {
-                need: SENDER_WORD_LEN,
-                have: data.len(),
-                what: "NORM sender word",
-            });
-        }
+        need_in(data, SENDER_WORD_LEN, "NORM sender word")?;
         Ok(SenderWord {
             instance_id: u16::from_be_bytes([data[0], data[1]]),
             grtt: data[2],
@@ -240,12 +224,7 @@ impl SenderWord {
 
     /// Serialize the 4-byte sender word into `out`.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
-        if out.len() < SENDER_WORD_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: SENDER_WORD_LEN,
-                have: out.len(),
-            });
-        }
+        need_out(out, SENDER_WORD_LEN)?;
         if self.backoff > 0x0F {
             return Err(Error::FieldTooWide {
                 what: "backoff",
@@ -327,13 +306,7 @@ impl<'a> NormInfo<'a> {
         }
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
-        if data.len() < off + WORD {
-            return Err(Error::BufferTooShort {
-                need: off + WORD,
-                have: data.len(),
-                what: "NORM_INFO flags word",
-            });
-        }
+        need_in(data, off + WORD, "NORM_INFO flags word")?;
         let flags = data[off];
         let fec_id = data[off + 1];
         let object_transport_id = u16::from_be_bytes([data[off + 2], data[off + 3]]);
@@ -346,13 +319,7 @@ impl<'a> NormInfo<'a> {
                 reason: "hdr_len smaller than the NORM_INFO fixed header",
             });
         }
-        if data.len() < header_end {
-            return Err(Error::BufferTooShort {
-                need: header_end,
-                have: data.len(),
-                what: "NORM_INFO header (per hdr_len)",
-            });
-        }
+        need_in(data, header_end, "NORM_INFO header (per hdr_len)")?;
         let extensions = ext::parse_chain(&data[NORM_INFO_FIXED_LEN..header_end])?;
         let payload = &data[header_end..];
 
@@ -370,12 +337,7 @@ impl<'a> NormInfo<'a> {
     /// Serialize into `out`, recomputing `hdr_len`. Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         let words = hdr_len_words(self.header_bytes(), "NORM_INFO hdr_len")?;
         let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
@@ -465,25 +427,13 @@ impl<'a> NormData<'a> {
         }
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let mut off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
-        if data.len() < off + WORD {
-            return Err(Error::BufferTooShort {
-                need: off + WORD,
-                have: data.len(),
-                what: "NORM_DATA flags word",
-            });
-        }
+        need_in(data, off + WORD, "NORM_DATA flags word")?;
         let flags = data[off];
         let fec_id = data[off + 1];
         let object_transport_id = u16::from_be_bytes([data[off + 2], data[off + 3]]);
         off += WORD;
 
-        if data.len() < off + fec_payload_id_len {
-            return Err(Error::BufferTooShort {
-                need: off + fec_payload_id_len,
-                have: data.len(),
-                what: "NORM_DATA fec_payload_id",
-            });
-        }
+        need_in(data, off + fec_payload_id_len, "NORM_DATA fec_payload_id")?;
         let fec_payload_id = &data[off..off + fec_payload_id_len];
         off += fec_payload_id_len;
 
@@ -496,13 +446,7 @@ impl<'a> NormData<'a> {
                 reason: "hdr_len smaller than the fixed NORM_DATA header + fec_payload_id",
             });
         }
-        if data.len() < header_end {
-            return Err(Error::BufferTooShort {
-                need: header_end,
-                have: data.len(),
-                what: "NORM_DATA header (per hdr_len)",
-            });
-        }
+        need_in(data, header_end, "NORM_DATA header (per hdr_len)")?;
         let extensions = ext::parse_chain(&data[off..header_end])?;
         let payload = &data[header_end..];
 
@@ -521,12 +465,7 @@ impl<'a> NormData<'a> {
     /// Serialize into `out`, recomputing `hdr_len`. Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         let words = hdr_len_words(self.header_bytes(), "NORM_DATA hdr_len")?;
         let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
@@ -829,13 +768,7 @@ impl<'a> NormCmd<'a> {
         }
         let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
         let mut off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
-        if data.len() < off + WORD {
-            return Err(Error::BufferTooShort {
-                need: off + WORD,
-                have: data.len(),
-                what: "NORM_CMD sub-type word",
-            });
-        }
+        need_in(data, off + WORD, "NORM_CMD sub-type word")?;
         let sub_type = NormCmdType::from_u8(data[off]);
         let (b1, b2, b3) = (data[off + 1], data[off + 2], data[off + 3]);
         off += WORD;
@@ -844,13 +777,11 @@ impl<'a> NormCmd<'a> {
             NormCmdType::Flush | NormCmdType::Squelch => {
                 let fec_id = b1;
                 let object_transport_id = u16::from_be_bytes([b2, b3]);
-                if data.len() < off + fec_payload_id_len {
-                    return Err(Error::BufferTooShort {
-                        need: off + fec_payload_id_len,
-                        have: data.len(),
-                        what: "NORM_CMD(FLUSH/SQUELCH) fec_payload_id",
-                    });
-                }
+                need_in(
+                    data,
+                    off + fec_payload_id_len,
+                    "NORM_CMD(FLUSH/SQUELCH) fec_payload_id",
+                )?;
                 let fec_payload_id = &data[off..off + fec_payload_id_len];
                 off += fec_payload_id_len;
                 if sub_type == NormCmdType::Flush {
@@ -869,13 +800,7 @@ impl<'a> NormCmd<'a> {
             }
             NormCmdType::Eot => NormCmdBody::Eot,
             NormCmdType::Cc => {
-                if data.len() < off + 8 {
-                    return Err(Error::BufferTooShort {
-                        need: off + 8,
-                        have: data.len(),
-                        what: "NORM_CMD(CC) send_time_sec/send_time_usec",
-                    });
-                }
+                need_in(data, off + 8, "NORM_CMD(CC) send_time_sec/send_time_usec")?;
                 let cc_sequence = u16::from_be_bytes([b2, b3]);
                 let send_time_sec = u32::from_be_bytes(data[off..off + 4].try_into().unwrap());
                 let send_time_usec = u32::from_be_bytes(data[off + 4..off + 8].try_into().unwrap());
@@ -902,13 +827,7 @@ impl<'a> NormCmd<'a> {
                 reason: "hdr_len smaller than the NORM_CMD fixed header + fixed body",
             });
         }
-        if data.len() < header_end {
-            return Err(Error::BufferTooShort {
-                need: header_end,
-                have: data.len(),
-                what: "NORM_CMD header (per hdr_len)",
-            });
-        }
+        need_in(data, header_end, "NORM_CMD header (per hdr_len)")?;
         let extensions = ext::parse_chain(&data[off..header_end])?;
         let content = &data[header_end..];
         Ok(NormCmd {
@@ -924,12 +843,7 @@ impl<'a> NormCmd<'a> {
     /// Serialize into `out`, recomputing `hdr_len`. Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         let words = hdr_len_words(self.header_bytes(), "NORM_CMD hdr_len")?;
         let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
@@ -1027,13 +941,7 @@ impl<'a> NormFeedback<'a> {
                 reason: "expected NORM_NACK (type 4) or NORM_ACK (type 5)",
             });
         }
-        if data.len() < FEEDBACK_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FEEDBACK_FIXED_LEN,
-                have: data.len(),
-                what: "NORM feedback fixed header",
-            });
-        }
+        need_in(data, FEEDBACK_FIXED_LEN, "NORM feedback fixed header")?;
         let server_id = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
         let instance_id = u16::from_be_bytes([data[12], data[13]]);
         let ack_or_reserved = u16::from_be_bytes([data[14], data[15]]);
@@ -1047,13 +955,7 @@ impl<'a> NormFeedback<'a> {
                 reason: "hdr_len smaller than the NORM feedback fixed header",
             });
         }
-        if data.len() < header_end {
-            return Err(Error::BufferTooShort {
-                need: header_end,
-                have: data.len(),
-                what: "NORM feedback header (per hdr_len)",
-            });
-        }
+        need_in(data, header_end, "NORM feedback header (per hdr_len)")?;
         let extensions = ext::parse_chain(&data[FEEDBACK_FIXED_LEN..header_end])?;
         let payload = &data[header_end..];
         Ok(NormFeedback {
@@ -1071,12 +973,7 @@ impl<'a> NormFeedback<'a> {
     /// Serialize into `out`, recomputing `hdr_len`. Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         let words = hdr_len_words(self.header_bytes(), "NORM feedback hdr_len")?;
         let mut off = self.common.serialize_into(out, words)?;
         out[off..off + 4].copy_from_slice(&self.server_id.to_be_bytes());

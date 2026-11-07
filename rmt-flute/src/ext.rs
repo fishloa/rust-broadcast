@@ -18,6 +18,7 @@
 //! typed wrappers do the splitting.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 
@@ -88,13 +89,7 @@ impl<'a> HeaderExtension<'a> {
         let het = data[0];
         if het >= FIXED_HET_MIN {
             // Fixed-length: one 32-bit word, three content bytes after HET.
-            if data.len() < WORD {
-                return Err(Error::BufferTooShort {
-                    need: WORD,
-                    have: data.len(),
-                    what: "fixed-length header extension",
-                });
-            }
+            need_in(data, WORD, "fixed-length header extension")?;
             Ok((
                 HeaderExtension {
                     het,
@@ -104,13 +99,7 @@ impl<'a> HeaderExtension<'a> {
             ))
         } else {
             // Variable-length: HET, HEL, then 4*HEL-2 content bytes.
-            if data.len() < 2 {
-                return Err(Error::BufferTooShort {
-                    need: 2,
-                    have: data.len(),
-                    what: "variable-length header extension HEL",
-                });
-            }
+            need_in(data, 2, "variable-length header extension HEL")?;
             let hel = data[1] as usize;
             if hel == 0 {
                 return Err(Error::InvalidExtension {
@@ -118,13 +107,7 @@ impl<'a> HeaderExtension<'a> {
                 });
             }
             let total = hel * WORD;
-            if data.len() < total {
-                return Err(Error::BufferTooShort {
-                    need: total,
-                    have: data.len(),
-                    what: "variable-length header extension content",
-                });
-            }
+            need_in(data, total, "variable-length header extension content")?;
             Ok((
                 HeaderExtension {
                     het,
@@ -139,12 +122,7 @@ impl<'a> HeaderExtension<'a> {
     /// length. Returns the number of bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
         out[0] = self.het;
         if self.is_fixed() {
             if self.content.len() != WORD - 1 {
