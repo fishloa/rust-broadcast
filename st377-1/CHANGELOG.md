@@ -10,8 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `as_uuid_bytes`, `from_ul`, `from_uuid`.
 - `Error::InvalidKeyLength`: never constructed; a short buffer is reported as `BufferTooShort`.
 ### Changed
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-
+### Added
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 
 ## [0.5.0] - 2026-10-17
 ### Documentation
