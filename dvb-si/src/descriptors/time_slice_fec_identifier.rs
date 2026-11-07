@@ -2,8 +2,8 @@
 //! ETSI TS 102 772 §6.2 Table 4 (tag 0x77).
 //!
 //! Carried in the INT / PMT to describe DVB-H time-slicing and MPE-FEC for an
-//! elementary stream. Per en_301_192.md "Table 40" (PDF p. 53) and
-//! ts_102_772_mpe_ifec.md "Table 4 — Time Slice and FEC identifier descriptor"
+//! elementary stream. Per private/specs-verified/dvb/dvb-si/descriptors/en_301_192/40-time-slice-and-fec-identifier-descriptor.md "Table 40" (PDF p. 53) and
+//! private/specs-verified/dvb/dvb-si/descriptors/ts_102_772/4-time-slice-and-fec-identifier-descriptor.md "Table 4 — Time Slice and FEC identifier descriptor"
 //! (PDF p. 19) the fixed 3-byte head is:
 //!   byte0: time_slicing(1) + mpe_fec(2) + reserved_for_future_use(2) + frame_size(3)
 //!   byte1: max_burst_duration(8)

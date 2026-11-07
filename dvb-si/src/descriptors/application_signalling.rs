@@ -2,7 +2,7 @@
 //! (tag 0x6F).
 //!
 //! Carried in the PMT to point at the AIT and enumerate the application types
-//! present alongside the AIT version expected. Per ts_102_809_apps.md
+//! present alongside the AIT version expected. Per private/specs-verified/dvb/dvb-si/descriptors/ts_102_809/17-application-signalling-descriptor-syntax.md
 //! "Table 17 — Application signalling descriptor syntax" (PDF p. 37) each loop
 //! entry is 3 bytes: reserved_future_use(1) + application_type(15), then
 //! reserved_future_use(3) + AIT_version_number(5).

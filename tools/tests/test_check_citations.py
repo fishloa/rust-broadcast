@@ -351,3 +351,24 @@ def test_path_in_third_party_crate_is_not_checked(tmp_path, monkeypatch, capsys)
     monkeypatch.setattr(cc, "WORKSPACE_MEMBERS", {"foo"})
     _scratch(tmp_path, {"foo/src/a.rs": "// see backon/src/backoff/exponential.rs\n"})
     assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_bare_spec_file_name_matching_no_file_fails(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
+    (tmp_path / "private" / "specs-verified" / "dvb").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "private" / "specs-verified" / "dvb" / "44-ecm-repetition-rate-descriptor.md").write_text("x\n")
+    _scratch(tmp_path, {"foo/src/a.rs": '//! Per en_301_192.md "Table 44"\n'})
+    assert "spec file name matches no file: en_301_192.md" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_bare_spec_file_name_naming_a_real_file_passes(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
+    (tmp_path / "private" / "specs-verified" / "dvb").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "private" / "specs-verified" / "dvb" / "en_301_192.md").write_text("x\n")
+    _scratch(tmp_path, {"foo/src/a.rs": "//! Per en_301_192.md Table 44\n"})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_bare_spec_file_name_skipped_without_private(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/src/a.rs": "//! Per en_301_192.md Table 44\n"})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""

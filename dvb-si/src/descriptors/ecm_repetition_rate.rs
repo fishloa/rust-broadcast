@@ -1,7 +1,7 @@
 //! ECM Repetition Rate Descriptor — ETSI EN 301 192 §9.9, Table 44 (tag 0x78).
 //!
 //! Carried in the PMT to advertise the maximum interval between ECMs for a
-//! given CA system. Per en_301_192.md "Table 44 — ECM repetition rate
+//! given CA system. Per private/specs-verified/dvb/dvb-si/descriptors/en_301_192/44-ecm-repetition-rate-descriptor.md "Table 44 — ECM repetition rate
 //! descriptor" (PDF p. 56) the body is: CA_system_ID(16) +
 //! ECM_repetition_rate(16) + trailing private_data_byte run.
 

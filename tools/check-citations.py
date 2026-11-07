@@ -13,6 +13,9 @@ Scans every tracked text file outside private/ and fails when:
      `.test-streams` outside the fetch script;
   h. a `../fixtures/...` citation, or a literal `test_fixtures::path|read|
      read_to_string("<topic>/<file>")` argument, does not resolve;
+  j. a bare spec file name (`en_301_192.md`, `ts_102_809_apps.md`, ...) that
+     is not the name of any file in the public tree or private/ (when it is
+     checked out); cite the private/specs-verified/... path instead;
   i. a `<member>/(src|tests|examples|benches|docs)/...` or bare
      `(src|tests|examples|benches|docs)/...` path to a source, script, doc or
      manifest file named in a comment or document does not exist (string
@@ -85,6 +88,9 @@ FIXTURE_CALL = re.compile(
 PATH_CITE = re.compile(
     r"(?<![\w./-])((?:[\w+-]+/)*(?:src|tests|examples|benches|docs)/(?:[\w.+-]+/)*[\w.+-]+"
     r"\.(?:rs|py|md|toml|sh|yml|yaml|json|mpd|csv))"
+)
+SPEC_FILE_NAME = re.compile(
+    r"(?<![\w/.-])((?:en|ts|tr|etsi|ansi|iso|itu|smpte|scte|atsc)_[0-9][\w.-]*\.(?:md|pdf|txt))"
 )
 CRATE_RELATIVE_ROOTS = ("src", "tests", "examples", "benches", "docs")
 EXTERNAL_PATH_DOCS = {"docs/migration-notes-downstream.md"}
@@ -327,6 +333,10 @@ def main() -> int:
             for fn in fs:
                 private_files.append(os.path.join(root, fn).replace(os.sep, "/").replace(str(ROOT) + "/", ""))
 
+    known_basenames = {posixpath.basename(f) for f in present} | {
+        posixpath.basename(f) for f in private_files
+    }
+
     for rel in files:
         if rel.startswith("private/"):
             continue
@@ -510,6 +520,13 @@ def main() -> int:
                     bases += sorted(WORKSPACE_MEMBERS)
                 if not cite_resolves(cite, bases, present, present_dirs):
                     errors.append(f"{rel}: path does not exist: {cite}")
+
+        # j. bare spec file names must name a real file
+        if rel not in RETIRED_EXEMPT and not skip_private:
+            for m in SPEC_FILE_NAME.finditer(text):
+                name = m.group(1)
+                if name not in known_basenames:
+                    errors.append(f"{rel}: spec file name matches no file: {name}")
 
         # c. markdown links into private/
         for m in MD_LINK.finditer(text):

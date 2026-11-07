@@ -28,8 +28,8 @@
 //! slice (e.g. service_prominence target_region loop is raw). Per-variant
 //! section comments cite the governing table + clause.
 //!
-//! Typed (syntax table vendored in `en_300_468.md`, except TTML in
-//! `en_303_560_ttml.md` and CPCM in `ts_102825.md`):
+//! Typed (syntax table vendored under `private/specs-verified/dvb/dvb-si/descriptors/en_300_468/`, except TTML under
+//! `private/specs-verified/dvb/dvb-si/descriptors/en_303_560/` and CPCM under `private/specs-verified/dvb/dvb-si/descriptors/ts_102_825/`):
 //! - `0x00` image_icon (Table 145, §6.4.7) — fully typed; icon TransportMode per
 //!   Table 146, coordinate_system per Table 147.
 //! - `0x01` cpcm_delivery_signalling (ETSI TS 102 825-9 Table 2, §4.1.5) — `cpcm_version`
@@ -57,7 +57,7 @@
 //!   channel + channel-bond entries typed; reserved_tail raw.
 //! - `0x18` protection_message (ETSI TS 102 809 Table 40, §9.3.3).
 //! - `0x19` audio_preselection (Table 110, §6.4.1) — preselection loop unfolded.
-//! - `0x20` TTML_subtitling (`en_303_560_ttml.md` Table 1, §5.2.1.1).
+//! - `0x20` TTML_subtitling (`private/specs-verified/dvb/dvb-si/descriptors/en_303_560/1-ttml-subtitling-descriptor.md` Table 1, §5.2.1.1).
 //! - `0x21` DTS-UHD (Annex G.5, Tables G.15–G.17) — `DecoderProfileCode`, `FrameDurationCode`,
 //!   `MaxPayloadCode`, `StreamIndex` + `codec_selector`.
 //! - `0x22` service_prominence (Table 162c, §6.4.18) — SOGI loop typed; target_region loop raw.
