@@ -13,7 +13,7 @@ W1-R-low-b change) with:
 GOLDEN_UPDATE=1 cargo test --locked -p hls-runtime --all-features --test it golden_client
 ```
 
-`tests/golden_client.rs` compares the live output to this file byte-for-byte.
+`hls-runtime/tests/it/golden_client.rs` compares the live output to this file byte-for-byte.
 
 
 
@@ -25,7 +25,7 @@ Generated from unmodified `main` at commit 182d03f78bd508981c2f2dace5efeebcfe882
 
 Bless command (writes instead of comparing):
 
-    GOLDEN_BLESS=$PWD/timed-metadata/tests/golden cargo test -p timed-metadata --all-features --locked --test golden_wire
+    GOLDEN_BLESS=$PWD/fixtures/golden/hls cargo test -p timed-metadata --all-features --locked --test golden_wire
 
 Never regenerate on this branch; a deliberate difference is edited into the file in the commit that causes it and listed in CHANGELOG `[Unreleased]`.
 
@@ -58,7 +58,7 @@ CHANGELOG `### Changed` section; none of them is exercised by these inputs.
 `rtp-sdp-h264-aac.sdp`, `rtp-sdp-conn-v4.sdp`, `rtp-sdp-conn-v6.sdp` and `hls-iv.txt` (test: `tests/it/golden_wire.rs`) were
 generated from unmodified `main` at commit 182d03f78bd508981c2f2dace5efeebcfe8823d6 with:
 
-    GOLDEN_BLESS=$PWD/transmux/tests/golden cargo test -p transmux --all-features --locked --test golden_wire
+    GOLDEN_BLESS=$PWD/fixtures cargo test -p transmux --all-features --locked --test golden_wire
 
 The W1-T `xs:duration` change (Task 12c) intentionally edits the `PT...S` values in the `*.mpd` goldens (listed in the CHANGELOG);
 these four files stay byte-identical.

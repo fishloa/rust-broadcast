@@ -116,7 +116,7 @@ capture), kept for reference only.
 ### Verified with our own tools (mp4-emsg + scte35-splice)
 
 The raw `emsg` box was located and extracted byte-for-byte from
-`dash/V300/3.m4s` (box starts 24 bytes into the fragment; `size=98`,
+`dash/v300/3.m4s` (box starts 24 bytes into the fragment; `size=98`,
 matches GPAC `MP4Box -diso`'s independent box-tree dump) and committed as
 `emsg-splice-insert.bin`. Decoded with this workspace's own `mp4-emsg`:
 
@@ -268,7 +268,7 @@ bytes.
 **`transmux`'s `Fmp4Demux` cannot currently build a track from this real
 fixture.** Root cause, isolated:
 
-- `dash/V300/init.mp4`'s `avc1` sample entry declares
+- `dash/v300/init.mp4`'s `avc1` sample entry declares
   `AVCProfileIndication = 100` (H.264 High Profile).
 - `transmux::avc_config::AVCDecoderConfigurationRecord::parse`
   (`transmux/src/avc_config.rs`, `has_high_profile_ext`/`is_high_profile`
@@ -337,11 +337,11 @@ issue/PR. Recommend filing one; this fixture is the reproducer.
 ```
 fixtures/scte35/
 ├── PROVENANCE.md
-├── emsg-splice-insert.bin          # real emsg box, 98 bytes (from dash/V300/3.m4s)
+├── emsg-splice-insert.bin          # real emsg box, 98 bytes (from dash/v300/3.m4s)
 ├── dash/
 │   ├── manifest-template.mpd       # live MPD as served at capture time (reference only)
-│   ├── V300/{init.mp4,0.m4s..12.m4s}   # real H.264 video, avc1 High Profile, 90kHz
-│   └── A48/{init.mp4,0.m4s..12.m4s}    # real AAC audio, mp4a
+│   ├── v300/{init.mp4,0.m4s..12.m4s}   # real H.264 video, avc1 High Profile, 90kHz
+│   └── a48/{init.mp4,0.m4s..12.m4s}    # real AAC audio, mp4a
 └── ts/
     └── video-with-scte35-splice-insert.ts   # real video + real cue, TS-packaged
 ```

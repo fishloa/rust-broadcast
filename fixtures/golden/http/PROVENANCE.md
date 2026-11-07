@@ -9,7 +9,7 @@ Generated from unmodified `main` at commit 182d03f78bd508981c2f2dace5efeebcfe882
 
 Bless command (writes instead of comparing):
 
-    GOLDEN_BLESS=$PWD/broadcast-auth/tests/golden cargo test -p broadcast-auth --locked --test golden_wire
+    GOLDEN_BLESS=$PWD/fixtures/golden/http cargo test -p broadcast-auth --locked --test golden_wire
 
 Never regenerate on this branch. A deliberate difference is edited into the file in the commit that causes it and
 listed in CHANGELOG `[Unreleased]`.
@@ -115,7 +115,7 @@ set on the wire. The HlsOrigin instance token in the instance-named init URI is 
 `Content-Length` (a process-global counter exposition) is omitted. Regenerate:
 
 ```bash
-GOLDEN_BLESS=multimux/tests/golden cargo test -p multimux --all-features --locked \
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked \
   --lib origin::tests::origin_response_headers_match_golden
 ```
 
@@ -131,7 +131,7 @@ normalised to `{date}`/`{etag}`). Generated from `origin/main` commit `9dd1e31e`
 `CorsLayer`. Regenerate:
 
 ```bash
-GOLDEN_BLESS=multimux/tests/golden cargo test -p multimux --all-features --locked --lib \
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked --lib \
   source::whip::tests::whip_response_headers_match_golden \
   output::whep::tests::whep_response_headers_match_golden
 ```
@@ -154,8 +154,7 @@ is byte-identical to main (main already listed only the selected PT). See the CH
 Regenerate:
 
 ```bash
-cd multimux
-GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked \
   --test it -- whip_whep_sdp:: whep_sdp_golden::
 ```
 
@@ -168,8 +167,7 @@ Byte-for-byte expected DASH (`output::dash::render_mpd_at`) and LL-DASH
 witness that no wire byte changed. Regenerate:
 
 ```bash
-cd multimux
-GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked \
   --lib matches_frozen_now_golden
 ```
 

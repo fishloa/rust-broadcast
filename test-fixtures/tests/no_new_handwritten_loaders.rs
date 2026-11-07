@@ -4,7 +4,7 @@
 //! `read_to_string` / `path` instead of building a `CARGO_MANIFEST_DIR` path
 //! in its own `fn fixture()` / `read_fixture()` / `fixture_path()`. The files
 //! below predate the helper and use shapes it does not yet cover
-//! (workspace-relative or crate-local `tests/fixtures` paths, per-name subdir
+//! (workspace-relative or crate-local fixture paths, per-name subdir
 //! logic); migrate one and delete it from the list. The list may only shrink.
 
 use std::path::{Path, PathBuf};

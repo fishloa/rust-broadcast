@@ -5,7 +5,7 @@
 //! stream does not exercise, built from values chosen from the semantics (no
 //! real capture carries them).
 //!
-//! Spec inputs: `private/specs-verified/smpte/video/hdr10plus/`.
+//! Spec inputs: `private/specs-verified/smpte/hdr10plus/`.
 #![cfg(feature = "std")]
 
 use broadcast_common::mux::{Package, Unpackage};
