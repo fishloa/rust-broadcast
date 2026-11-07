@@ -1,4 +1,3 @@
-use broadcast_common::Parse;
 use rmt_flute::{Error, NORM_INFO_FIXED_LEN, NormInfo};
 
 #[test]
