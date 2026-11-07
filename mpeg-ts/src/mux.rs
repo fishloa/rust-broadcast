@@ -183,8 +183,21 @@ impl SectionPacketiser {
 
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — NIT maximum interval.
 pub const NIT_MAX_INTERVAL: Duration = Duration::from_secs(10);
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — BAT maximum interval.
+pub const BAT_MAX_INTERVAL: Duration = Duration::from_secs(10);
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT actual maximum interval.
 pub const SDT_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — SDT other maximum interval.
+pub const SDT_OTHER_MAX_INTERVAL: Duration = Duration::from_secs(10);
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — EIT p/f actual maximum interval.
+pub const EIT_PF_ACTUAL_MAX_INTERVAL: Duration = Duration::from_secs(2);
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT p/f other maximum interval (sat/cable;
+/// terrestrial is 20 s per §4.4.2).
+pub const EIT_PF_OTHER_MAX_INTERVAL: Duration = Duration::from_secs(10);
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT schedule first 8 days maximum interval.
+pub const EIT_SCHED_MAX_INTERVAL: Duration = Duration::from_secs(10);
+/// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1 — EIT schedule beyond 8 days maximum interval.
+pub const EIT_SCHED_EXT_MAX_INTERVAL: Duration = Duration::from_secs(30);
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — TDT maximum interval.
 pub const TDT_MAX_INTERVAL: Duration = Duration::from_secs(30);
 /// private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2 — TOT maximum interval.
@@ -309,6 +322,13 @@ impl SiMux {
         }
     }
 
+    /// PAT at [`PAT_MAX_INTERVAL`] on PID 0x0000.
+    ///
+    /// Interval cites private/specs-verified/dvb/dvb-si/ §4.1.7.
+    pub fn upsert_pat(&mut self, sections: Vec<u8>) {
+        self.upsert(well_known::PAT, sections, PAT_MAX_INTERVAL);
+    }
+
     /// PMT at [`PMT_MAX_INTERVAL`] on the caller-supplied `pid`.
     ///
     /// Interval cites private/specs-verified/dvb/dvb-si/ §4.1.7.
@@ -321,6 +341,13 @@ impl SiMux {
     /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
     pub fn upsert_sdt_actual(&mut self, sections: Vec<u8>) {
         self.upsert(well_known::SDT_BAT, sections, SDT_ACTUAL_MAX_INTERVAL);
+    }
+
+    /// NIT at [`NIT_MAX_INTERVAL`] on PID 0x0010.
+    ///
+    /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
+    pub fn upsert_nit(&mut self, sections: Vec<u8>) {
+        self.upsert(well_known::NIT, sections, NIT_MAX_INTERVAL);
     }
 
     /// TDT at [`TDT_MAX_INTERVAL`] on PID 0x0014.
@@ -524,7 +551,13 @@ mod tests {
     fn interval_constants_match_spec() {
         // TR 101 211 §4.4.1/§4.4.2
         assert_eq!(NIT_MAX_INTERVAL, Duration::from_secs(10));
+        assert_eq!(BAT_MAX_INTERVAL, Duration::from_secs(10));
         assert_eq!(SDT_ACTUAL_MAX_INTERVAL, Duration::from_secs(2));
+        assert_eq!(SDT_OTHER_MAX_INTERVAL, Duration::from_secs(10));
+        assert_eq!(EIT_PF_ACTUAL_MAX_INTERVAL, Duration::from_secs(2));
+        assert_eq!(EIT_PF_OTHER_MAX_INTERVAL, Duration::from_secs(10));
+        assert_eq!(EIT_SCHED_MAX_INTERVAL, Duration::from_secs(10));
+        assert_eq!(EIT_SCHED_EXT_MAX_INTERVAL, Duration::from_secs(30));
         assert_eq!(TDT_MAX_INTERVAL, Duration::from_secs(30));
         assert_eq!(TOT_MAX_INTERVAL, Duration::from_secs(30));
 
@@ -777,6 +810,19 @@ mod tests {
     // ── convenience constructors ─────────────────────────────────────────────
 
     #[test]
+    fn upsert_pat_uses_correct_pid() {
+        let s = build_section(0x00, &[0x01, 0x02]);
+        let mut mux = SiMux::new();
+        mux.upsert_pat(s);
+        let pkts = mux.poll(Duration::ZERO);
+        let pids: Vec<Pid> = pkts
+            .iter()
+            .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
+            .collect();
+        assert!(pids.iter().all(|&p| p == well_known::PAT));
+    }
+
+    #[test]
     fn upsert_sdt_actual_uses_correct_pid() {
         let s = build_section(0x42, &[0x01]);
         let mut mux = SiMux::new();
@@ -787,6 +833,19 @@ mod tests {
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
         assert!(pids.iter().all(|&p| p == well_known::SDT_BAT));
+    }
+
+    #[test]
+    fn upsert_nit_uses_correct_pid() {
+        let s = build_section(0x40, &[0x01]);
+        let mut mux = SiMux::new();
+        mux.upsert_nit(s);
+        let pkts = mux.poll(Duration::ZERO);
+        let pids: Vec<Pid> = pkts
+            .iter()
+            .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
+            .collect();
+        assert!(pids.iter().all(|&p| p == well_known::NIT));
     }
 
     #[test]

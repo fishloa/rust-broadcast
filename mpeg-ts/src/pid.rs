@@ -153,6 +153,8 @@ pub mod well_known {
     pub const RNT: Pid = Pid::new(0x0016);
     /// Satellite Access Table (EN 300 468 Table 1).
     pub const SAT: Pid = Pid::new(0x001B);
+    /// Link-local inband signalling (reserved).
+    pub const INBAND_SIGNALLING: Pid = Pid::new(0x001C);
     /// Measurement (reserved).
     pub const MEASUREMENT: Pid = Pid::new(0x001D);
     /// Discontinuity Information Table.
@@ -165,4 +167,14 @@ pub mod well_known {
 
     /// Null-packet padding PID. Payload is ignored.
     pub const NULL: Pid = Pid::new(0x1FFF);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inband_signalling_pid_is_0x001c() {
+        assert_eq!(well_known::INBAND_SIGNALLING.value(), 0x001C);
+    }
 }
