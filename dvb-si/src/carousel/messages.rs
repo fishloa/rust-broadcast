@@ -435,16 +435,18 @@ fn parse_header<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, u32, &'
             },
         ))?;
     if hdr[0] != PROTOCOL_DISCRIMINATOR {
-        return Err(Error::ReservedBitsViolation {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "protocolDiscriminator",
-            reason: "must be 0x11 (ISO/IEC 13818-6 §7.2)",
-        });
+            value: u64::from(hdr[0]),
+            reason: "must be 0x11",
+        }));
     }
     if hdr[1] != DSMCC_TYPE_UN_DOWNLOAD {
-        return Err(Error::ReservedBitsViolation {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "dsmccType",
-            reason: "must be 0x03 — U-N download (ISO/IEC 13818-6 §7.2)",
-        });
+            value: u64::from(hdr[1]),
+            reason: "must be 0x03 (U-N download)",
+        }));
     }
     let message_id = u16::from_be_bytes([hdr[2], hdr[3]]);
     let id = u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]);
@@ -663,11 +665,11 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                     private_data,
                 }))
             }
-            _ => Err(Error::ReservedBitsViolation {
+            _ => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "messageId",
-                reason: "expected 0x1002 (DII) or 0x1006 (DSI) on table_id 0x3B \
-                         (ISO/IEC 13818-6 §7.3)",
-            }),
+                value: u64::from(message_id),
+                reason: "expected 0x1002 (DII) or 0x1006 (DSI) on table_id 0x3B",
+            })),
         }
     }
 }
@@ -798,10 +800,11 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
         let (message_id, download_id, adaptation, payload) =
             parse_header(bytes, "DownloadDataBlock header")?;
         if message_id != MESSAGE_ID_DDB {
-            return Err(Error::ReservedBitsViolation {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "messageId",
-                reason: "expected 0x1003 (DDB) on table_id 0x3C (ISO/IEC 13818-6 §7.3.7)",
-            });
+                value: u64::from(message_id),
+                reason: "expected 0x1003 (DDB) on table_id 0x3C",
+            }));
         }
         let (ddb_hdr, _) =
             payload
@@ -1019,13 +1022,14 @@ mod tests {
         let mut buf = vec![0u8; msg.serialized_len()];
         msg.serialize_into(&mut buf).unwrap();
         buf[0] = 0x12;
-        assert!(matches!(
+        assert_eq!(
             UnMessage::parse(&buf).unwrap_err(),
-            Error::ReservedBitsViolation {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "protocolDiscriminator",
-                ..
-            }
-        ));
+                value: 0x12,
+                reason: "must be 0x11",
+            })
+        );
     }
 
     #[test]
@@ -1035,13 +1039,14 @@ mod tests {
         msg.serialize_into(&mut buf).unwrap();
         buf[2] = 0x10;
         buf[3] = 0x01; // 0x1001 DownloadInfoRequest — not valid broadcast-side
-        assert!(matches!(
+        assert_eq!(
             UnMessage::parse(&buf).unwrap_err(),
-            Error::ReservedBitsViolation {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "messageId",
-                ..
-            }
-        ));
+                value: 0x1001,
+                reason: "expected 0x1002 (DII) or 0x1006 (DSI) on table_id 0x3B",
+            })
+        );
     }
 
     #[test]
@@ -1084,13 +1089,14 @@ mod tests {
         let msg = sample_dsi();
         let mut buf = vec![0u8; msg.serialized_len()];
         msg.serialize_into(&mut buf).unwrap();
-        assert!(matches!(
+        assert_eq!(
             DownloadDataBlock::parse(&buf).unwrap_err(),
-            Error::ReservedBitsViolation {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "messageId",
-                ..
-            }
-        ));
+                value: 0x1006,
+                reason: "expected 0x1003 (DDB) on table_id 0x3C",
+            })
+        );
     }
 
     #[test]

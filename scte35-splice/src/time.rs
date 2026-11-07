@@ -127,10 +127,11 @@ impl Serialize for SpliceTime {
         match self.pts_time {
             Some(pts) => {
                 if pts > PTS_MAX {
-                    return Err(Error::InvalidValue {
+                    return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                         field: "splice_time.pts_time",
-                        reason: "exceeds 33-bit range",
-                    });
+                        value: pts,
+                        max: PTS_MAX,
+                    }));
                 }
                 // time_specified_flag=1, 6 reserved bits = 1, top pts bit.
                 buf[0] = 0x80 | 0x7E | ((pts >> 32) as u8 & 0x01);
@@ -191,10 +192,11 @@ impl Serialize for BreakDuration {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, Self::LEN)?;
         if self.duration > PTS_MAX {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "break_duration.duration",
-                reason: "exceeds 33-bit range",
-            });
+                value: self.duration,
+                max: PTS_MAX,
+            }));
         }
         let d = self.duration;
         // auto_return, 6 reserved bits = 1, top duration bit.
@@ -288,7 +290,16 @@ mod tests {
         let st = SpliceTime {
             pts_time: Some(1u64 << 33),
         };
-        assert!(matches!(st.try_to_bytes(), Err(Error::InvalidValue { .. })));
+        assert_eq!(
+            st.try_to_bytes().err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "splice_time.pts_time",
+                    value: 1u64 << 33,
+                    max: PTS_MAX
+                }
+            ))
+        );
     }
 
     #[test]
@@ -297,10 +308,16 @@ mod tests {
             auto_return: false,
             duration: 1u64 << 33,
         };
-        assert!(matches!(
-            &(bd.try_to_bytes()),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            bd.try_to_bytes().err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "break_duration.duration",
+                    value: 1u64 << 33,
+                    max: PTS_MAX
+                }
+            ))
+        );
     }
 
     #[test]

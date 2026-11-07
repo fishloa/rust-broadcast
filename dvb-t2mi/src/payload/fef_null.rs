@@ -40,11 +40,12 @@ impl From<S1Field> for u8 {
 }
 
 impl From<num_enum::TryFromPrimitiveError<S1Field>> for crate::error::Error {
-    fn from(_: num_enum::TryFromPrimitiveError<S1Field>) -> Self {
-        crate::error::Error::ReservedBitsViolation {
+    fn from(e: num_enum::TryFromPrimitiveError<S1Field>) -> Self {
+        crate::error::Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "s1_field",
-            reason: "Must be 0..=7",
-        }
+            value: u64::from(e.number),
+            reason: "must be 0..=7",
+        })
     }
 }
 
@@ -188,10 +189,13 @@ impl<'a> Parse<'a> for FefNullPayload {
         // Layout (Figure 12): fef_idx(8) | rfu(9) | s1_field(3) | s2_field(4).
         // rfu spans all of byte 1 plus the top bit of byte 2.
         if bytes[1] != 0 || bytes[2] & 0x80 != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "9-bit rfu",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.9)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "9-bit rfu",
+                    expected: 0,
+                    found: (u64::from(bytes[1]) << 1) | u64::from(bytes[2] >> 7),
+                },
+            ));
         }
         Ok(FefNullPayload {
             fef_idx: bytes[0],
@@ -217,10 +221,13 @@ impl Serialize for FefNullPayload {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
         need_out(buf, self.serialized_len())?;
         if self.s2_field > 0x0F {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "s2_field",
-                reason: "Must fit in 4 bits",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "s2_field",
+                    value: u64::from(self.s2_field),
+                    max: 0x0F,
+                },
+            ));
         }
         buf[0] = self.fef_idx;
         buf[1] = 0; // rfu (high 8 of the 9 reserved bits)
@@ -259,10 +266,16 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu() {
         let buf = [0x00u8, 0x1F, 0x00];
-        assert!(matches!(
-            &(FefNullPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            FefNullPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "9-bit rfu",
+                    expected: 0,
+                    found: 62
+                }
+            ))
+        );
     }
 
     #[test]

@@ -41,10 +41,13 @@ impl<'a> Parse<'a> for BbframePayload<'a> {
 
         // RFU: byte 2 bits 6..0 — must be zero
         if bytes[2] & 0x7F != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "byte 2 bits 6..0",
-                reason: "RFU must be zero (ETSI TS 102 773 §5.2.1)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 2 bits 6..0",
+                    expected: 0,
+                    found: u64::from(bytes[2] & 0x7F),
+                },
+            ));
         }
 
         let bbframe = &bytes[3..];
@@ -112,14 +115,16 @@ mod tests {
     fn parse_rejects_nonzero_rfu_bits() {
         let buf = [0x00u8, 0x00, 0x40];
         let result = BbframePayload::parse(&buf);
-        assert!(matches!(
-            &(result),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
-        assert!(matches!(
-            result.unwrap_err(),
-            crate::Error::ReservedBitsViolation { .. }
-        ));
+        assert_eq!(
+            result.err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 2 bits 6..0",
+                    expected: 0,
+                    found: 64
+                }
+            ))
+        );
     }
 
     #[test]

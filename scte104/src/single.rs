@@ -154,9 +154,12 @@ impl Serialize for SingleOperationMessage<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let message_size = u16::try_from(need).map_err(|_| Error::InvalidValue {
-            field: "messageSize",
-            reason: "message exceeds the 16-bit messageSize field",
+        let message_size = u16::try_from(need).map_err(|_| {
+            Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "messageSize",
+                value: need as u64,
+                max: u64::from(u16::MAX),
+            })
         })?;
         buf[0..2].copy_from_slice(&self.op_id.to_be_bytes());
         buf[2..4].copy_from_slice(&message_size.to_be_bytes());
@@ -193,6 +196,30 @@ mod tests {
         let back = SingleOperationMessage::parse(&bytes).unwrap();
         assert_eq!(msg, back);
         assert!(matches!(back.data, AnySingleOperation::GeneralResponse(_)));
+    }
+
+    #[test]
+    fn oversized_message_size_is_rejected() {
+        let contents = vec![0u8; 65_530];
+        let msg = SingleOperationMessage::new_request(
+            0x7777,
+            0,
+            1,
+            1,
+            0,
+            AnySingleOperation::Unknown {
+                op_id: 0x7777,
+                body: &contents,
+            },
+        );
+        assert_eq!(
+            msg.try_to_bytes().err(),
+            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "messageSize",
+                value: 65_543,
+                max: 65_535,
+            }))
+        );
     }
 
     #[test]

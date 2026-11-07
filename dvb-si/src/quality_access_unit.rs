@@ -182,11 +182,19 @@ impl<'a> Parse<'a> for QualityAccessUnit<'a> {
                 let mut field = [0u8; DTS_FIELD_LEN];
                 field.copy_from_slice(dts);
                 let marked = unpack_marked(&field);
-                if marked.prefix != DTS_PREFIX || marked.markers != clock33::MARKERS_ALL_SET {
-                    return Err(Error::ReservedBitsViolation {
-                        field: "media_DTS",
-                        reason: "'0010' prefix or marker_bit missing",
-                    });
+                if marked.prefix != DTS_PREFIX {
+                    return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                        field: "media_DTS prefix",
+                        expected: u64::from(DTS_PREFIX),
+                        found: u64::from(marked.prefix),
+                    }));
+                }
+                if marked.markers != clock33::MARKERS_ALL_SET {
+                    return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                        field: "media_DTS marker_bits",
+                        expected: u64::from(clock33::MARKERS_ALL_SET),
+                        found: u64::from(marked.markers),
+                    }));
                 }
                 samples.push(QualitySample {
                     media_dts: marked.timestamp,
@@ -333,18 +341,26 @@ mod tests {
         let bad = [
             0x01, 0x01, 0, 0, 0, 1, 1, 0x31, 0x00, 0x01, 0x00, 0x01, 0x07,
         ];
-        assert!(matches!(
+        assert_eq!(
             QualityAccessUnit::parse(&bad),
-            Err(Error::ReservedBitsViolation { .. })
-        ));
+            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "media_DTS prefix",
+                expected: 0b0010,
+                found: 3,
+            }))
+        );
         // clear marker bit
         let bad = [
             0x01, 0x01, 0, 0, 0, 1, 1, 0x20, 0x00, 0x01, 0x00, 0x01, 0x07,
         ];
-        assert!(matches!(
-            &(QualityAccessUnit::parse(&bad)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            QualityAccessUnit::parse(&bad),
+            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "media_DTS marker_bits",
+                expected: 0b111,
+                found: 0b011,
+            }))
+        );
         // trailing byte
         let ok = [0x01, 0x00, 0xFF];
         assert!(matches!(

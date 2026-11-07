@@ -76,10 +76,13 @@ fn compressed_zeros_output_is_bounded() {
 
     let result = decompress_zlib(&compressed);
     assert!(
-        matches!(
-            &(result),
-            Err(dvb_si::error::Error::ReservedBitsViolation { .. })
-        ),
+        result
+            == Err(dvb_si::error::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "compressed_module_descriptor body",
+                    reason: "zlib output exceeds the decompressed-size limit",
+                }
+            )),
         "a compressed stream inflating to {INFLATED_LEN} bytes (past \
          MAX_DECOMPRESSED_MODULE_SIZE = 64 MiB) must return Err, not silently \
          allocate and return the full output"
@@ -94,10 +97,13 @@ fn compressed_zeros_bounded_explicit_cap_is_rejected() {
     let compressed = compressed_zeros(100 * 1024 * 1024);
     let result = decompress_zlib_bounded(&compressed, 1024 * 1024);
     assert!(
-        matches!(
-            &(result),
-            Err(dvb_si::error::Error::ReservedBitsViolation { .. })
-        ),
+        result
+            == Err(dvb_si::error::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "compressed_module_descriptor body",
+                    reason: "zlib output exceeds the decompressed-size limit",
+                }
+            )),
         "output exceeding an explicit 1 MiB cap must return Err"
     );
 }

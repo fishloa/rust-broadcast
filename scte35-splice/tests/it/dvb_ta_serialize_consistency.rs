@@ -35,10 +35,17 @@ fn reserved_dvb_data_after_temi_round_trips() {
 #[test]
 fn reserved_timeline_aliasing_temi_needs_temi_fields() {
     // Reserved(2) writes the TEMI wire value, so the temi bytes are required.
-    assert!(matches!(
-        &(payload(TimelineType::Reserved(2), None, &[]).try_to_bytes()),
-        Err(scte35_splice::error::Error::InvalidValue { .. })
-    ));
+    assert_eq!(
+        payload(TimelineType::Reserved(2), None, &[])
+            .try_to_bytes()
+            .err(),
+        Some(scte35_splice::error::Error::InvalidField(
+            broadcast_common::error::InvalidField {
+                field: "DSM-CC_stream_event_payload_binary.temi",
+                reason: "temi_* fields must be present exactly when timeline_type is 0x2 (TEMI)"
+            }
+        ))
+    );
     let ok = payload(TimelineType::Reserved(2), Some((1, 2)), &[]);
     let bytes = ok.try_to_bytes().unwrap();
     assert_eq!(
@@ -75,16 +82,26 @@ fn compact_splice_insert_e_crc_must_match_encrypted_flag() {
     })
     .unwrap();
     si.e_crc_32 = Some(0xDEAD_BEEF); // not encrypted: a surplus CRC
-    assert!(matches!(
-        &(si.try_to_bytes()),
-        Err(scte35_splice::error::Error::InvalidValue { .. })
-    ));
+    assert_eq!(
+        si.try_to_bytes().err(),
+        Some(scte35_splice::error::Error::InvalidField(
+            broadcast_common::error::InvalidField {
+                field: "e_crc_32",
+                reason: "must be Some exactly when encrypted_packet is set"
+            }
+        ))
+    );
     si.encrypted_packet = true;
     let bytes = si.try_to_bytes().unwrap();
     assert_eq!(CompactSpliceInsert::parse(&bytes).unwrap(), si);
     si.e_crc_32 = None; // encrypted: a missing CRC
-    assert!(matches!(
-        si.try_to_bytes(),
-        Err(scte35_splice::Error::InvalidValue { .. })
-    ));
+    assert_eq!(
+        si.try_to_bytes().err(),
+        Some(scte35_splice::Error::InvalidField(
+            broadcast_common::error::InvalidField {
+                field: "e_crc_32",
+                reason: "must be Some exactly when encrypted_packet is set"
+            }
+        ))
+    );
 }

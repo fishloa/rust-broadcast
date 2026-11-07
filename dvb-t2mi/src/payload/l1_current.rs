@@ -33,11 +33,12 @@ impl From<FrequencySource> for u8 {
 }
 
 impl From<num_enum::TryFromPrimitiveError<FrequencySource>> for crate::error::Error {
-    fn from(_: num_enum::TryFromPrimitiveError<FrequencySource>) -> Self {
-        crate::error::Error::ReservedBitsViolation {
+    fn from(e: num_enum::TryFromPrimitiveError<FrequencySource>) -> Self {
+        crate::error::Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "freq_source",
-            reason: "Must be 0b00, 0b01, or 0b10 (ETSI TS 102 773 §5.2.4)",
-        }
+            value: u64::from(e.number),
+            reason: "must be 0b00, 0b01 or 0b10",
+        })
     }
 }
 
@@ -119,10 +120,13 @@ impl<'a> Parse<'a> for L1CurrentPayload<'a> {
         // RFU: byte 1 bottom 6 bits — must be 0
         let rfu = bytes[1] & 0x3F;
         if rfu != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "6-bit RFU after freq_source",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.4)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "6-bit RFU after freq_source",
+                    expected: 0,
+                    found: u64::from(rfu),
+                },
+            ));
         }
 
         Ok(L1CurrentPayload {
@@ -209,10 +213,16 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu() {
         let buf = [0x00u8, 0x01, 0x00]; // freq_source=00, bottom 6 RFU bits nonzero
-        assert!(matches!(
-            &(L1CurrentPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            L1CurrentPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "6-bit RFU after freq_source",
+                    expected: 0,
+                    found: 1
+                }
+            ))
+        );
     }
 
     #[test]

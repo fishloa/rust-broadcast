@@ -720,10 +720,13 @@ impl L1ExtBlock {
         // region (W-T2-5).
         let expected_bytes = (self.data_bit_len as usize).div_ceil(8);
         if self.data.len() != expected_bytes {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "L1ExtBlock.data",
-                reason: "data.len() must equal ceil(data_bit_len / 8)",
-            });
+            return Err(crate::Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "L1ExtBlock.data (ceil(data_bit_len / 8) bytes)",
+                    declared: expected_bytes,
+                    actual: self.data.len(),
+                },
+            ));
         }
 
         w.write_bits(u64::from(self.block_type), L1_EXT_BLOCK_TYPE_BITS)?;
@@ -888,13 +891,7 @@ fn push_framed_block<F>(out: &mut Vec<u8>, bit_len: usize, write: F) -> crate::e
 where
     F: FnOnce(&mut BitWriter<'_>) -> crate::error::Result<()>,
 {
-    let bit_len_field =
-        broadcast_common::len::fit_u16(bit_len, "framed_block bit_len").map_err(|_| {
-            crate::Error::ReservedBitsViolation {
-                field: "framed_block bit_len",
-                reason: "Must be in range 0..=65535 (16-bit field)",
-            }
-        })?;
+    let bit_len_field = broadcast_common::len::fit_u16(bit_len, "framed_block bit_len")?;
     out.extend_from_slice(&bit_len_field.to_be_bytes());
     let start = out.len();
     out.resize(start + bit_len.div_ceil(8), 0);
@@ -1154,10 +1151,16 @@ mod tests {
         // framed-block length field) silently wrapped and returned Ok.
         let mut out = Vec::new();
         let result = push_framed_block(&mut out, 65_536, |_w| Ok(()));
-        assert!(matches!(
-            result,
-            Err(crate::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            result.err(),
+            Some(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "framed_block bit_len",
+                    value: 65536,
+                    max: 65535
+                }
+            ))
+        );
     }
 
     #[test]
@@ -1181,9 +1184,15 @@ mod tests {
         let mut buf = [0u8; 8];
         let mut w = BitWriter::new(&mut buf);
         let result = block.write(&mut w);
-        assert!(
-            matches!(result, Err(crate::Error::ReservedBitsViolation { .. })),
-            "expected a rejection, got {result:?}"
+        assert_eq!(
+            result.err(),
+            Some(crate::Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "L1ExtBlock.data (ceil(data_bit_len / 8) bytes)",
+                    declared: 1,
+                    actual: 2
+                }
+            ))
         );
     }
 
@@ -1199,9 +1208,15 @@ mod tests {
         let mut buf = [0u8; 8];
         let mut w = BitWriter::new(&mut buf);
         let result = block.write(&mut w);
-        assert!(matches!(
-            result,
-            Err(crate::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            result.err(),
+            Some(crate::Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "L1ExtBlock.data (ceil(data_bit_len / 8) bytes)",
+                    declared: 2,
+                    actual: 1
+                }
+            ))
+        );
     }
 }

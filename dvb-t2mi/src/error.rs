@@ -23,14 +23,25 @@ pub enum Error {
         found: u8,
     },
 
-    /// A reserved bit was not in the expected state.
-    #[error("reserved bits violation in {field}: {reason}")]
-    ReservedBitsViolation {
-        /// Where.
-        field: &'static str,
-        /// Why.
-        reason: &'static str,
-    },
+    /// A reserved (RFU) bit group was not zero.
+    #[error(transparent)]
+    ReservedBits(#[from] broadcast_common::error::ReservedBits),
+
+    /// A field held a value its spec clause forbids.
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+
+    /// A field is structurally invalid with no single offending number.
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
+
+    /// A value (or a length) does not fit the wire field it is serialized into.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+
+    /// A length field disagrees with the bytes actually present.
+    #[error(transparent)]
+    LengthMismatch(#[from] broadcast_common::error::LengthMismatch),
 
     /// An individual-addressing `function_length` is below 2. It counts the whole
     /// `function()` including its own `function_tag` and `function_length`

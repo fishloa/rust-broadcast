@@ -33,14 +33,14 @@ pub enum Error {
     #[error(transparent)]
     ReservedBits(#[from] broadcast_common::error::ReservedBits),
 
-    /// A field carried an out-of-range value.
-    #[error("invalid value for {field}: {reason}")]
-    InvalidValue {
-        /// Field being validated.
-        field: &'static str,
-        /// Why the value is rejected.
-        reason: &'static str,
-    },
+    /// A field carried a value its spec clause forbids (the offending value
+    /// is carried).
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+
+    /// A field is structurally invalid with no single offending number.
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
 
     /// Output buffer for `serialize_into` was too small.
     #[error(transparent)]

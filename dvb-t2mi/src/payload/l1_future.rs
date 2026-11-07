@@ -134,10 +134,13 @@ impl<'a> Parse<'a> for L1FuturePayload<'a> {
         need_in(bytes, L1_FUTURE_HEADER_LEN, "L1FuturePayload header")?;
 
         if bytes[1] != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "byte 1 RFU",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.5)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 1 RFU",
+                    expected: 0,
+                    found: u64::from(bytes[1]),
+                },
+            ));
         }
 
         Ok(L1FuturePayload {
@@ -189,10 +192,16 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu() {
         let buf = [0x00u8, 0x01, 0x00];
-        assert!(matches!(
-            &(L1FuturePayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            L1FuturePayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 1 RFU",
+                    expected: 0,
+                    found: 1
+                }
+            ))
+        );
     }
 
     #[test]

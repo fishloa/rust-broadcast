@@ -107,10 +107,11 @@ impl Serialize for AudioDescriptor {
         let need = self.serialized_len();
         need_out(buf, need)?;
         if self.components.len() > 15 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "audio_descriptor.audio_count",
-                reason: "more than 15 components (4-bit count)",
-            });
+                value: self.components.len() as u64,
+                max: 15,
+            }));
         }
         let body_len = 1 + self.components.len() * COMPONENT_LEN;
         header::write_header(buf, TAG, self.identifier, body_len)?;

@@ -235,10 +235,11 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
         pos += 1;
         let private_data = if private_data_length > 0 {
             if private_data_length < 4 {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "DSM-CC_stream_event_payload_binary.private_data_length",
+                    value: private_data_length as u64,
                     reason: "must be >= 4 (32-bit private_data_specifier) when present",
-                });
+                }));
             }
             if bytes.len() < pos + private_data_length {
                 return Err(Error::LengthOverflow {
@@ -325,10 +326,10 @@ impl Serialize for StreamEventPayload<'_> {
         // The temi_* bytes are present iff timeline_type == 0x2 (§6.3.1), so
         // the two must agree or the output would not re-parse equal.
         if (timeline_bits == TIMELINE_TYPE_TEMI) != self.temi.is_some() {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                 field: "DSM-CC_stream_event_payload_binary.temi",
                 reason: "temi_* fields must be present exactly when timeline_type is 0x2 (TEMI)",
-            });
+            }));
         }
         // reserved(3)=1, event_type(1), timeline_type(4).
         buf[1] = 0xE0 | (self.carriage.event_type() << 4) | timeline_bits;
@@ -344,10 +345,11 @@ impl Serialize for StreamEventPayload<'_> {
 
         let pdl = self.private_data_field_len();
         if pdl > u8::MAX as usize {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "DSM-CC_stream_event_payload_binary.private_data_length",
-                reason: "exceeds 8-bit field",
-            });
+                value: pdl as u64,
+                max: u64::from(u8::MAX),
+            }));
         }
         buf[pos] = pdl as u8;
         pos += 1;
@@ -365,10 +367,11 @@ impl Serialize for StreamEventPayload<'_> {
             }
             Scte35Carriage::CarouselObject(name) => {
                 if name.len() > u8::MAX as usize {
-                    return Err(Error::InvalidValue {
+                    return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                         field: "DSM-CC_stream_event_payload_binary.carousel_object_name_length",
-                        reason: "exceeds 8-bit field",
-                    });
+                        value: name.len() as u64,
+                        max: u64::from(u8::MAX),
+                    }));
                 }
                 buf[pos] = name.len() as u8;
                 pos += 1;

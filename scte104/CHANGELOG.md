@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - `insert_avail_descriptor` and `start_schedule_download` share one `provider_avail_id` loop parser/writer (internal).
+- BREAKING: `Error::InvalidValue { field, reason }` (no value) is replaced. `Error::InvalidValue` now wraps `broadcast_common::error::InvalidValue { field, value, reason }` and is returned for an unknown `time_type`; a serializer value above its field's range returns `Error::FieldOverflow { field, value, max }` (`TAI_seconds` over 48 bits, `messageSize` over 16 bits); the `component_mode`/`injector_component_list` presence mismatch returns `Error::InvalidField { field, reason }`. New variant: `InvalidField`.
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_common::error` types (tuple variants); `ReservedSet { field, expected: u16, got: u16 }` is replaced by `ReservedBits(broadcast_common::error::ReservedBits)` (`found` replaces `got`, widened to u64). Hand-written `From` impls removed. `InvalidValue` stays crate-specific (carries no offending value).
 
 ### Removed

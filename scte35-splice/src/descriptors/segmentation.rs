@@ -425,10 +425,11 @@ impl Serialize for SegmentationDescriptor<'_> {
         need_out(buf, need)?;
         let body_len = self.body_len();
         if body_len + 4 > u8::MAX as usize {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "segmentation_descriptor.descriptor_length",
-                reason: "descriptor body exceeds 8-bit descriptor_length",
-            });
+                value: (body_len + 4) as u64,
+                max: u64::from(u8::MAX),
+            }));
         }
         header::write_header(buf, TAG, self.identifier, body_len)?;
         let mut pos = HEADER_LEN;
@@ -472,10 +473,11 @@ impl Serialize for SegmentationDescriptor<'_> {
             for c in &self.components {
                 buf[pos] = c.component_tag;
                 if c.pts_offset > crate::time::PTS_MAX {
-                    return Err(Error::InvalidValue {
+                    return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                         field: "segmentation_descriptor.component.pts_offset",
-                        reason: "exceeds 33-bit range",
-                    });
+                        value: c.pts_offset,
+                        max: crate::time::PTS_MAX,
+                    }));
                 }
                 let o = c.pts_offset;
                 // 7 reserved bits = 1, then top pts_offset bit.
@@ -490,10 +492,11 @@ impl Serialize for SegmentationDescriptor<'_> {
 
         if let Some(d) = self.segmentation_duration {
             if d > crate::time::DURATION_40_MAX {
-                return Err(Error::InvalidValue {
+                return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                     field: "segmentation_descriptor.segmentation_duration",
-                    reason: "exceeds 40-bit range",
-                });
+                    value: d,
+                    max: crate::time::DURATION_40_MAX,
+                }));
             }
             buf[pos] = (d >> 32) as u8;
             buf[pos + 1] = (d >> 24) as u8;
@@ -608,10 +611,16 @@ mod tests {
             segments_expected: 1,
             ..Default::default()
         };
-        assert!(matches!(
-            &(d.try_to_bytes()),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            d.try_to_bytes().err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "segmentation_descriptor.component.pts_offset",
+                    value: 1u64 << 33,
+                    max: crate::time::PTS_MAX
+                }
+            ))
+        );
     }
 
     /// SC-W4 (#1129): `segmentation_duration` used to be masked with
@@ -627,10 +636,16 @@ mod tests {
             segments_expected: 1,
             ..Default::default()
         };
-        assert!(matches!(
-            &(d.try_to_bytes()),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            d.try_to_bytes().err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "segmentation_descriptor.segmentation_duration",
+                    value: 1u64 << 40,
+                    max: crate::time::DURATION_40_MAX
+                }
+            ))
+        );
     }
 
     #[test]

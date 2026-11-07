@@ -38,13 +38,14 @@ impl From<SubpartVariety> for u16 {
 }
 
 impl From<num_enum::TryFromPrimitiveError<SubpartVariety>> for crate::error::Error {
-    fn from(_: num_enum::TryFromPrimitiveError<SubpartVariety>) -> Self {
+    fn from(e: num_enum::TryFromPrimitiveError<SubpartVariety>) -> Self {
         // subpart_variety is a 16-bit field — casting the offending value to u8
         // would truncate it, and InvalidPacketType is the wrong category anyway.
-        crate::error::Error::ReservedBitsViolation {
+        crate::error::Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "subpart_variety",
-            reason: "Must be 0x0000..=0x0003 per ETSI TS 102 773 §5.2.12 Table 13",
-        }
+            value: u64::from(e.number),
+            reason: "must be 0x0000..=0x0003 (Table 13)",
+        })
     }
 }
 
@@ -138,20 +139,26 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
 
         // rfu1: bytes 3-6 (32 bits) — must be 0
         if hdr[3] != 0 || hdr[4] != 0 || hdr[5] != 0 || hdr[6] != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "32-bit RFU (rfu1)",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.12)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "32-bit RFU (rfu1)",
+                    expected: 0,
+                    found: u64::from(u32::from_be_bytes([hdr[3], hdr[4], hdr[5], hdr[6]])),
+                },
+            ));
         }
 
         let variety = SubpartVariety::try_from(u16::from_be_bytes([hdr[9], hdr[10]]))?;
 
         // rfu2: byte 11 (8 bits) + byte 12 [7:6] (2 bits) = 10 bits — must be 0
         if hdr[11] != 0 || (hdr[12] & 0xC0 != 0) {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "10-bit RFU (rfu2)",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.12)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "10-bit RFU (rfu2)",
+                    expected: 0,
+                    found: (u64::from(hdr[11]) << 2) | u64::from(hdr[12] >> 6),
+                },
+            ));
         }
 
         // subpart_length: byte 12 [5:0] (6 bits) + byte 13 (8 bits) + byte 14 (8 bits) = 22 bits
@@ -185,10 +192,13 @@ impl Serialize for FefSubPartPayload<'_> {
         need_out(buf, self.serialized_len())?;
 
         if self.subpart_length > SUBPART_LENGTH_MASK {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "subpart_length",
-                reason: "Must fit in 22 bits",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "subpart_length",
+                    value: u64::from(self.subpart_length),
+                    max: u64::from(SUBPART_LENGTH_MASK),
+                },
+            ));
         }
 
         buf[0] = self.fef_idx;
@@ -275,20 +285,32 @@ mod tests {
         let mut buf = [0u8; 15];
         buf[9] = 0x00;
         buf[10] = 0x04; // variety = 0x0004 (reserved)
-        assert!(matches!(
-            &(FefSubPartPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            FefSubPartPayload::parse(&buf).err(),
+            Some(crate::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "subpart_variety",
+                    value: 4,
+                    reason: "must be 0x0000..=0x0003 (Table 13)"
+                }
+            ))
+        );
     }
 
     #[test]
     fn parse_rejects_nonzero_rfu1() {
         let mut buf = [0u8; 15];
         buf[3] = 0x01;
-        assert!(matches!(
-            &(FefSubPartPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            FefSubPartPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "32-bit RFU (rfu1)",
+                    expected: 0,
+                    found: 16777216
+                }
+            ))
+        );
     }
 
     #[test]
@@ -297,10 +319,13 @@ mod tests {
         buf[11] = 0x01;
         assert_eq!(
             FefSubPartPayload::parse(&buf).err(),
-            Some(crate::Error::ReservedBitsViolation {
-                field: "10-bit RFU (rfu2)",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.12)"
-            })
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "10-bit RFU (rfu2)",
+                    expected: 0,
+                    found: 4
+                }
+            ))
         );
     }
 
@@ -308,10 +333,16 @@ mod tests {
     fn parse_rejects_nonzero_rfu2_byte12_top() {
         let mut buf = [0u8; 15];
         buf[12] = 0xC0;
-        assert!(matches!(
-            &(FefSubPartPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            FefSubPartPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "10-bit RFU (rfu2)",
+                    expected: 0,
+                    found: 3
+                }
+            ))
+        );
     }
 
     #[test]

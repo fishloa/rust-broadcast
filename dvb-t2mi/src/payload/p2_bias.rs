@@ -26,10 +26,15 @@ impl<'a> Parse<'a> for P2BiasPayload {
 
         // rfu is 17 bits: all of bytes[1], bytes[2], and the top bit of bytes[3].
         if bytes[1] != 0 || bytes[2] != 0 || (bytes[3] & 0x80) != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "17-bit RFU",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.6)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "17-bit RFU",
+                    expected: 0,
+                    found: (u64::from(bytes[1]) << 9)
+                        | (u64::from(bytes[2]) << 1)
+                        | u64::from(bytes[3] >> 7),
+                },
+            ));
         }
 
         // num_active_bias_cells_per_p2 is 15 bits: bottom 7 of bytes[3] + bytes[4].
@@ -58,10 +63,13 @@ impl Serialize for P2BiasPayload {
         need_out(buf, self.serialized_len())?;
 
         if self.num_active_bias_cells_per_p2 > 0x7FFF {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "num_active_bias_cells_per_p2",
-                reason: "Must fit in 15 bits",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "num_active_bias_cells_per_p2",
+                    value: u64::from(self.num_active_bias_cells_per_p2),
+                    max: 0x7FFF,
+                },
+            ));
         }
 
         buf[0] = self.frame_idx;
@@ -99,17 +107,26 @@ mod tests {
     fn parse_rejects_nonzero_rfu() {
         // top bit of bytes[3] is part of the RFU
         let buf = [0x00u8, 0x00, 0x00, 0x80, 0x00];
-        assert!(matches!(
-            &(P2BiasPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            P2BiasPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "17-bit RFU",
+                    expected: 0,
+                    found: 1
+                }
+            ))
+        );
         // a byte in the middle of the RFU span
         assert_eq!(
             P2BiasPayload::parse(&[0x00u8, 0x01, 0x00, 0x00, 0x00]).err(),
-            Some(crate::Error::ReservedBitsViolation {
-                field: "17-bit RFU",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.6)"
-            })
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "17-bit RFU",
+                    expected: 0,
+                    found: 512
+                }
+            ))
         );
     }
 

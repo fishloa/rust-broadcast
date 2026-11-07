@@ -288,10 +288,11 @@ impl DvbDasDescriptor<'_> {
         // Max allowed body_len = 255 − 4 = 251; a longer upid would make
         // `4 + body_len ≥ 256`, silently truncating the length byte.
         if body_len > 251 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "DVB_DAS_descriptor.descriptor_length",
-                reason: "upid too long: descriptor_length would overflow u8",
-            });
+                value: (4 + body_len) as u64,
+                max: u64::from(u8::MAX),
+            }));
         }
         header::write_header(buf, TAG, self.identifier, body_len)?;
         buf[HEADER_LEN] = self.break_num;
@@ -406,15 +407,13 @@ mod tests {
         let err = d
             .serialize_into(&mut vec![0u8; d.serialized_len()])
             .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                Error::InvalidValue {
-                    field: "DVB_DAS_descriptor.descriptor_length",
-                    ..
-                }
-            ),
-            "expected InvalidValue for descriptor_length overflow, got {err:?}"
+        assert_eq!(
+            err,
+            Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "DVB_DAS_descriptor.descriptor_length",
+                value: 259,
+                max: 255
+            })
         );
     }
 

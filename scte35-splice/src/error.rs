@@ -38,15 +38,15 @@ pub enum Error {
         expected: u8,
     },
 
-    /// A field carried a value the structure cannot represent or that violates
-    /// a spec constraint (e.g. a 33-bit field given a value ≥ 2^33).
-    #[error("invalid value for {field}: {reason}")]
-    InvalidValue {
-        /// Field being validated.
-        field: &'static str,
-        /// Why the value is rejected.
-        reason: &'static str,
-    },
+    /// A field carried a value its spec clause forbids (the offending value
+    /// is carried).
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+
+    /// A field is structurally invalid with no single offending number (a
+    /// missing or inconsistent part).
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
 
     /// A declared length (section_length, descriptor_length, …) ran past the
     /// bytes available in the buffer.

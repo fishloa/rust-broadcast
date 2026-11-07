@@ -184,10 +184,10 @@ fn derive_command_length(command_type: u8, payload: &[u8]) -> Result<usize> {
             return Ok(n);
         }
     }
-    Err(Error::InvalidValue {
+    Err(Error::InvalidField(broadcast_common::error::InvalidField {
         field: "splice_info_section.splice_command_length",
         reason: "0xFFF sentinel and the command's extent cannot be derived from its structure",
-    })
+    }))
 }
 
 impl<'a> Parse<'a> for SpliceInfoSection<'a> {
@@ -353,17 +353,19 @@ impl Serialize for SpliceInfoSection<'_> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         if self.pts_adjustment > PTS_MAX {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "splice_info_section.pts_adjustment",
-                reason: "exceeds 33-bit range",
-            });
+                value: self.pts_adjustment,
+                max: PTS_MAX,
+            }));
         }
         // `tier` is 12 bits; its maximum is the `TIER_IGNORE` value itself.
         if self.tier > TIER_IGNORE {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "splice_info_section.tier",
-                reason: "exceeds 12-bit range",
-            });
+                value: u64::from(self.tier),
+                max: u64::from(TIER_IGNORE),
+            }));
         }
 
         // section_length counts the bytes after byte 2 up to and including CRC.
@@ -371,10 +373,11 @@ impl Serialize for SpliceInfoSection<'_> {
         // must be rejected, not silently wrapped (#1129).
         let section_length_usize = need - 3;
         if section_length_usize > 4093 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "splice_info_section.section_length",
-                reason: "exceeds 4093",
-            });
+                value: section_length_usize as u64,
+                max: 4093,
+            }));
         }
         let section_length = section_length_usize as u16;
 
@@ -464,10 +467,10 @@ impl Serialize for SpliceInfoSection<'_> {
                 buf[11] = ((self.tier & 0x0F) as u8) << 4;
                 buf[12] = 0;
                 // No command/payload: splice_command_type would be missing.
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                     field: "splice_info_section",
                     reason: "neither a clear command nor an encrypted payload is present",
-                });
+                }));
             }
         }
 
@@ -502,11 +505,11 @@ mod tests {
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         assert_eq!(
             section.serialize_into(&mut buf).err(),
-            Some(Error::InvalidValue {
+            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "splice_info_section.section_length",
-                reason: "exceeds 4093"
-            }),
-            "an oversized body must be rejected, not silently wrapped into a short section_length"
+                value: 65557,
+                max: 4093
+            }))
         );
     }
 
@@ -547,10 +550,16 @@ mod tests {
             &[],
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        assert!(matches!(
-            &(section.serialize_into(&mut buf)),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            section.serialize_into(&mut buf).err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "splice_info_section.section_length",
+                    value: 4114,
+                    max: 4093
+                }
+            ))
+        );
     }
 
     /// SC-C1: `descriptor_loop_length` is a 16-bit field; a loop of 64 KiB or
@@ -566,10 +575,16 @@ mod tests {
             &descriptor_loop,
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        assert!(matches!(
-            &(section.serialize_into(&mut buf)),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            section.serialize_into(&mut buf).err(),
+            Some(crate::error::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "splice_info_section.section_length",
+                    value: 65557,
+                    max: 4093
+                }
+            ))
+        );
     }
 
     /// W2 (#1102): `alignment_stuffing()` (Table 5) between the descriptor

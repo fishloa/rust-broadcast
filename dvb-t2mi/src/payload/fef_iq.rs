@@ -47,10 +47,13 @@ impl<'a> Parse<'a> for FefIqPayload<'a> {
         // Layout (Figure 13): fef_idx(8) | rfu(9) | s1_field(3) | s2_field(4) | data.
         // rfu spans all of byte 1 plus the top bit of byte 2.
         if bytes[1] != 0 || bytes[2] & 0x80 != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "9-bit rfu",
-                reason: "Must be zero (ETSI TS 102 773 §5.2.10)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "9-bit rfu",
+                    expected: 0,
+                    found: (u64::from(bytes[1]) << 1) | u64::from(bytes[2] >> 7),
+                },
+            ));
         }
 
         Ok(FefIqPayload {
@@ -79,10 +82,13 @@ impl Serialize for FefIqPayload<'_> {
         need_out(buf, self.serialized_len())?;
 
         if self.s2_field > 0x0F {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "s2_field",
-                reason: "Must fit in 4 bits",
-            });
+            return Err(crate::Error::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "s2_field",
+                    value: u64::from(self.s2_field),
+                    max: 0x0F,
+                },
+            ));
         }
 
         buf[0] = self.fef_idx;
@@ -132,10 +138,16 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_rfu() {
         let buf = [0x00u8, 0x1F, 0x00];
-        assert!(matches!(
-            &(FefIqPayload::parse(&buf)),
-            Err(crate::error::Error::ReservedBitsViolation { .. })
-        ));
+        assert_eq!(
+            FefIqPayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "9-bit rfu",
+                    expected: 0,
+                    found: 62
+                }
+            ))
+        );
     }
 
     #[test]

@@ -91,10 +91,11 @@ impl Serialize for TimeDescriptor {
         let need = self.serialized_len();
         need_out(buf, need)?;
         if self.tai_seconds > (1u64 << 48) - 1 {
-            return Err(Error::InvalidValue {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "time_descriptor.tai_seconds",
-                reason: "exceeds 48-bit range",
-            });
+                value: self.tai_seconds,
+                max: (1u64 << 48) - 1,
+            }));
         }
         header::write_header(buf, TAG, self.identifier, BODY_LEN)?;
         let s = self.tai_seconds;

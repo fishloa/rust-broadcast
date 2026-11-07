@@ -288,16 +288,18 @@ impl Serialize for MpeDatagramSection<'_> {
         // 2-bit scrambling fields must fit; reject over-range values rather
         // than silently truncating (mirrors cit/sdt guarding derived fields).
         if self.payload_scrambling_control > 0x03 {
-            return Err(Error::ReservedBitsViolation {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "payload_scrambling_control",
-                reason: "value exceeds 2-bit field",
-            });
+                value: u64::from(self.payload_scrambling_control),
+                max: 0x03,
+            }));
         }
         if self.address_scrambling_control > 0x03 {
-            return Err(Error::ReservedBitsViolation {
+            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "address_scrambling_control",
-                reason: "value exceeds 2-bit field",
-            });
+                value: u64::from(self.address_scrambling_control),
+                max: 0x03,
+            }));
         }
 
         buf[0] = TABLE_ID;
@@ -641,13 +643,14 @@ mod tests {
             __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
-        assert!(matches!(
+        assert_eq!(
             sec.serialize_into(&mut buf).unwrap_err(),
-            Error::ReservedBitsViolation {
+            Error::FieldOverflow(broadcast_common::len::FieldOverflow {
                 field: "payload_scrambling_control",
-                ..
-            }
-        ));
+                value: 4,
+                max: 3,
+            })
+        );
     }
 
     #[test]

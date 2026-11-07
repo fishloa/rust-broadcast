@@ -255,10 +255,16 @@ fn pts_adjustment_33bit_wrap_boundary() {
     let mut bad = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(SpliceNull), &[]);
     bad.pts_adjustment = PTS_MODULUS; // 2^33, one past the max
     let mut buf = vec![0u8; bad.serialized_len()];
-    assert!(matches!(
-        bad.serialize_into(&mut buf),
-        Err(scte35_splice::Error::InvalidValue { .. })
-    ));
+    assert_eq!(
+        bad.serialize_into(&mut buf).err(),
+        Some(scte35_splice::Error::FieldOverflow(
+            broadcast_common::len::FieldOverflow {
+                field: "splice_info_section.pts_adjustment",
+                value: PTS_MODULUS,
+                max: PTS_MAX
+            }
+        ))
+    );
 
     // Adding pts_adjustment to a pts_time wraps modulo 2^33, dropping the carry.
     assert_eq!(pts_add_wrapping(PTS_MAX, 1), 0);

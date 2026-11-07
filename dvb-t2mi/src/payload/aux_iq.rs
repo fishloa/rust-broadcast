@@ -41,19 +41,25 @@ impl<'a> Parse<'a> for AuxIqPayload<'a> {
         let aux_id = (bytes[1] >> 4) & 0x0F;
 
         if !(AUX_ID_MIN..=AUX_ID_MAX).contains(&aux_id) {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "aux_id",
-                reason: "aux_id out of range 1..=15 (ETSI TS 102 773 §5.2.2)",
-            });
+            return Err(crate::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "aux_id",
+                    value: u64::from(aux_id),
+                    reason: "aux_id out of range 1..=15",
+                },
+            ));
         }
 
         // rfu: byte 1 [3:0] + byte 2 [7:0] = 12 bits
         let rfu = ((bytes[1] & 0x0F) as u16) << 8 | (bytes[2] as u16);
         if rfu != 0 {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "byte 1 [3:0] + byte 2",
-                reason: "12-bit RFU must be zero (ETSI TS 102 773 §5.2.2)",
-            });
+            return Err(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 1 [3:0] + byte 2",
+                    expected: 0,
+                    found: u64::from(rfu),
+                },
+            ));
         }
 
         Ok(AuxIqPayload {
@@ -80,10 +86,13 @@ impl Serialize for AuxIqPayload<'_> {
         need_out(buf, self.serialized_len())?;
 
         if !(AUX_ID_MIN..=AUX_ID_MAX).contains(&self.aux_id) {
-            return Err(crate::Error::ReservedBitsViolation {
-                field: "aux_id",
-                reason: "aux_id out of range 1..=15 (ETSI TS 102 773 §5.2.2)",
-            });
+            return Err(crate::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "aux_id",
+                    value: u64::from(self.aux_id),
+                    reason: "aux_id out of range 1..=15",
+                },
+            ));
         }
 
         buf[0] = self.frame_idx;
@@ -113,10 +122,13 @@ mod tests {
         let result = AuxIqPayload::parse(&buf);
         assert_eq!(
             result.err(),
-            Some(crate::Error::ReservedBitsViolation {
-                field: "aux_id",
-                reason: "aux_id out of range 1..=15 (ETSI TS 102 773 §5.2.2)"
-            })
+            Some(crate::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "aux_id",
+                    value: 0,
+                    reason: "aux_id out of range 1..=15"
+                }
+            ))
         );
     }
 
@@ -134,10 +146,13 @@ mod tests {
         let result = AuxIqPayload::parse(&buf);
         assert_eq!(
             result.err(),
-            Some(crate::Error::ReservedBitsViolation {
-                field: "byte 1 [3:0] + byte 2",
-                reason: "12-bit RFU must be zero (ETSI TS 102 773 §5.2.2)"
-            })
+            Some(crate::Error::ReservedBits(
+                broadcast_common::error::ReservedBits {
+                    field: "byte 1 [3:0] + byte 2",
+                    expected: 0,
+                    found: 4095
+                }
+            ))
         );
     }
 
@@ -191,10 +206,13 @@ mod tests {
         let mut buf = [0u8; 3];
         assert_eq!(
             payload.serialize_into(&mut buf).err(),
-            Some(crate::Error::ReservedBitsViolation {
-                field: "aux_id",
-                reason: "aux_id out of range 1..=15 (ETSI TS 102 773 §5.2.2)"
-            })
+            Some(crate::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "aux_id",
+                    value: 0,
+                    reason: "aux_id out of range 1..=15"
+                }
+            ))
         );
     }
 
