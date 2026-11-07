@@ -77,6 +77,24 @@ fn ca_descriptors_filtered(loop_: &DescriptorLoop<'_>, allowed: Option<&[u16]>) 
     out
 }
 
+/// Drop every `CA_descriptor` TLV in `buf` whose `CA_system_id` is not in
+/// `allowed`. `buf` holds only tag-`0x09` TLVs (a built CA-descriptor loop).
+fn retain_loop(buf: &mut Vec<u8>, allowed: &[u16]) {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while pos + 2 <= buf.len() {
+        let end = pos + 2 + buf[pos + 1] as usize;
+        if end > buf.len() {
+            break;
+        }
+        if ca_system_id(&buf[pos + 2..end]).is_some_and(|id| allowed.contains(&id)) {
+            out.extend_from_slice(&buf[pos..end]);
+        }
+        pos = end;
+    }
+    *buf = out;
+}
+
 /// Build the `ca_pmt` projection of `pmt` for the given list-management and
 /// command-id. Strips all non-CA descriptors; keeps `CA_descriptor`s at
 /// programme and ES level.
@@ -167,6 +185,17 @@ impl CaPmtBuilt {
                     ca_descriptors: &s.ca_descriptors,
                 })
                 .collect(),
+        }
+    }
+
+    /// Drop every `CA_descriptor` (programme- and ES-level) whose `CA_system_id`
+    /// is not in `allowed`. Use this to post-filter a `ca_pmt` to the CAM's
+    /// advertised CAIDs once its `ca_info` is known (equivalent to having built
+    /// it with [`build_ca_pmt_for_caids`]).
+    pub fn retain_caids(&mut self, allowed: &[u16]) {
+        retain_loop(&mut self.program_ca_descriptors, allowed);
+        for s in &mut self.streams {
+            retain_loop(&mut s.ca_descriptors, allowed);
         }
     }
 
@@ -350,6 +379,25 @@ mod tests {
             ),
             "an over-long program_info_length must surface as Err, not panic"
         );
+    }
+
+    #[test]
+    fn retain_caids_matches_the_filtering_constructor() {
+        let pmt_bytes = build_test_pmt();
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        let allow = [0x1800u16];
+
+        let mut post = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling);
+        post.retain_caids(&allow);
+        let pre = build_ca_pmt_for_caids(
+            &pmt,
+            &allow,
+            CaPmtListManagement::Only,
+            CaPmtCmdId::OkDescrambling,
+        );
+        assert_eq!(post, pre);
+        // 0x1800 only existed at programme level → ES loops emptied.
+        assert_eq!(caids(&post.program_ca_descriptors), vec![0x1800]);
     }
 
     // --- helper: assemble a small but realistic PMT with CA descriptors ---
