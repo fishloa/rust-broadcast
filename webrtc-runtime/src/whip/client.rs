@@ -3,11 +3,11 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use headers::{HeaderMapExt, IfMatch};
-use http::{HeaderMap, StatusCode};
+use http::StatusCode;
 
 use crate::Error;
 use crate::http_util;
+use crate::session_common::{Established, Origin, PendingRequest, classify_established};
 
 /// State of a WHIP client session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,23 +46,6 @@ pub enum Event {
     },
     /// Session terminated by server (DELETE acknowledged).
     Terminated,
-}
-
-/// The kind of request currently awaiting a response while [`State::Established`]
-/// (audit run-09 W21): `handle_established_response` used to classify a
-/// response by its status code and `ETag` alone, which cannot tell a
-/// trickle-ICE ack apart from an ICE-restart answer (both are PATCH,
-/// both can legally come back `200` with an `ETag`) or a `DELETE` ack from a
-/// trickle ack (both can legally come back with no body and no `ETag`).
-/// Tracking which request is actually in flight removes the ambiguity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PendingRequest {
-    /// A trickle-ICE (aggregated candidate) `PATCH`.
-    Trickle,
-    /// An ICE-restart `PATCH` (`If-Match: *`).
-    IceRestart,
-    /// A `DELETE`.
-    Delete,
 }
 
 /// Sans-IO WHIP client state machine.
@@ -123,7 +106,7 @@ impl WhipClient {
                 state: state_name(&self.state),
             });
         }
-        let req = self.build_request(
+        let req = self.origin().request(
             Method::POST,
             self.endpoint_url.clone(),
             Some(super::content_type::SDP),
@@ -137,16 +120,9 @@ impl WhipClient {
     /// candidate fragment.
     pub fn flush_candidates(&mut self, aggregated_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, etag) = self.established_fields()?;
-        let mut req = self.build_request(
-            Method::PATCH,
-            session_url,
-            Some(super::content_type::TRICKLE_ICE),
-            aggregated_fragment,
-        )?;
-        if let Some(etag) = etag {
-            req.headers
-                .typed_insert(IfMatch::from(http_util::etag(&etag)?));
-        }
+        let req = self
+            .origin()
+            .trickle(session_url, etag, aggregated_fragment)?;
         self.pending = Some(PendingRequest::Trickle);
         Ok(req)
     }
@@ -154,13 +130,7 @@ impl WhipClient {
     /// Generate ICE restart PATCH request.
     pub fn ice_restart(&mut self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
-        let mut req = self.build_request(
-            Method::PATCH,
-            session_url,
-            Some(super::content_type::TRICKLE_ICE),
-            sdp_fragment,
-        )?;
-        req.headers.typed_insert(IfMatch::any());
+        let req = self.origin().ice_restart(session_url, sdp_fragment)?;
         self.pending = Some(PendingRequest::IceRestart);
         Ok(req)
     }
@@ -168,7 +138,7 @@ impl WhipClient {
     /// Generate DELETE request to terminate the session.
     pub fn terminate(&mut self) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
-        let req = self.build_request(Method::DELETE, session_url, None, Vec::new())?;
+        let req = self.origin().delete(session_url)?;
         self.pending = Some(PendingRequest::Delete);
         Ok(req)
     }
@@ -206,50 +176,25 @@ impl WhipClient {
     /// ambiguous between a trickle-ICE ack, an ICE-restart answer, and a
     /// `DELETE` ack (see [`PendingRequest`]).
     fn handle_established_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
-        match self.pending.take() {
-            Some(PendingRequest::Delete) => match resp.status {
-                StatusCode::OK | StatusCode::NO_CONTENT => {
-                    self.state = State::Closed;
-                    Ok(Some(Event::Terminated))
-                }
-                _ => Err(Error::Http {
-                    status: resp.status.as_u16(),
-                }),
-            },
-            Some(PendingRequest::IceRestart) => {
-                match (resp.status, http_util::etag_of(&resp.headers)) {
-                    (StatusCode::OK, Some(new_etag)) => {
-                        if let State::Established { etag, .. } = &mut self.state {
-                            *etag = Some(new_etag.clone());
-                        }
-                        Ok(Some(Event::IceRestart {
-                            sdp_fragment: resp.body,
-                            new_etag,
-                        }))
-                    }
-                    (StatusCode::OK, None) => Err(Error::MissingHeader { header: "ETag" }),
-                    _ => Err(Error::Http {
-                        status: resp.status.as_u16(),
-                    }),
-                }
-            }
-            Some(PendingRequest::Trickle) => match resp.status {
-                StatusCode::OK | StatusCode::NO_CONTENT => {
-                    if let Some(new_etag) = http_util::etag_of(&resp.headers)
-                        && let State::Established { etag, .. } = &mut self.state
-                    {
-                        *etag = Some(new_etag);
-                    }
-                    Ok(None)
-                }
-                _ => Err(Error::Http {
-                    status: resp.status.as_u16(),
-                }),
-            },
-            None => Err(Error::WrongState {
+        let State::Established { etag, .. } = &mut self.state else {
+            return Err(Error::WrongState {
                 operation: "on_response",
-                state: "established with no request pending",
-            }),
+                state: state_name(&self.state),
+            });
+        };
+        match classify_established(self.pending.take(), resp, etag)? {
+            Established::Terminated => {
+                self.state = State::Closed;
+                Ok(Some(Event::Terminated))
+            }
+            Established::IceRestart {
+                sdp_fragment,
+                new_etag,
+            } => Ok(Some(Event::IceRestart {
+                sdp_fragment,
+                new_etag,
+            })),
+            Established::Acknowledged => Ok(None),
         }
     }
 
@@ -263,30 +208,11 @@ impl WhipClient {
         }
     }
 
-    fn build_request(
-        &self,
-        method: Method,
-        url: String,
-        content_type: Option<&'static str>,
-        body: Vec<u8>,
-    ) -> Result<HttpRequest, Error> {
-        let mut headers = HeaderMap::new();
-        // The token is bound to the endpoint it was configured for: a
-        // session URL (`Location`) on another origin never receives it.
-        if let Some(token) = &self.bearer_token
-            && http_util::same_origin(&self.endpoint_url, &url)
-        {
-            headers.typed_insert(http_util::bearer(token)?);
+    fn origin(&self) -> Origin<'_> {
+        Origin {
+            endpoint_url: &self.endpoint_url,
+            bearer_token: self.bearer_token.as_deref(),
         }
-        if let Some(ct) = content_type {
-            headers.typed_insert(http_util::content_type(ct)?);
-        }
-        Ok(HttpRequest {
-            method,
-            url,
-            headers,
-            body,
-        })
     }
 }
 

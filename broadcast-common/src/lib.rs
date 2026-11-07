@@ -63,6 +63,8 @@ pub mod stage;
 pub mod time;
 pub mod traits;
 pub mod ts_dup;
+#[cfg(feature = "xml")]
+pub mod xml_chars;
 
 pub use cenc::CencScheme;
 pub use mux::{Decrypt, Encrypt, Package, Unpackage};

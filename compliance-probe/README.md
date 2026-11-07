@@ -35,7 +35,7 @@ A green dashboard must mean "checked and passing", never "not checked":
   60 s still-picture threshold): this crate adds no buffer-model logic.
 - **SCTE-35 malformed-section detection on the Trunk-cursor path**: an event in
   a `Trunk`'s log was already parsed successfully upstream; only the wire path
-  (`Probe::feed_scte35_section`) can observe malformedness.
+  (`scte35::check_section`) can observe malformedness.
 - **A fabricated "now" for an unresolved SCTE-35 anchor**: a
   `media_plane::EventAnchor::Segment`/`Utc` entry stays unresolved, never
   guessed into a media time.
@@ -111,7 +111,7 @@ Runnable examples: `cargo run -p compliance-probe --example fixture_report`
 
 | Item | Purpose |
 |---|---|
-| `Probe` (`new`, `with_config(dvb_conformance::Config)`, `feed_ts_packet(&[u8;188], t)`, `feed_scte35_section(section, now_pts) -> Scte35Sanity`, `conformance_stats`) | Per-packet and per-section checks |
+| `Probe` (`new`, `with_config(dvb_conformance::Config)`, `feed_ts_packet(&[u8;188], t)`, `conformance_stats`) | Per-packet and per-section checks |
 | `Probe::drain_byte_tap`, `drain_event_cursor`, `note_media_time`; `trunk_bridge::TrunkBridge` (`std`) | One bounded, non-blocking cursor on a `media_plane::ByteTap` (TR 101 290 needs raw wire bytes: a demuxed sample has already dropped the continuity counter) and on a `Trunk`'s `EventCursor` (SCTE-35), never a second copy of the stream |
 | `conformance::PcrSample { pid, drift_ppm, jitter_ppm }` | Per-PID PCR estimate; baseline resets on `discontinuity_indicator` |
 | `scte35::{Scte35Sanity, check_section}` | `Malformed`, `NotSpliceInsert`, `Immediate`, `InFuture`, `InPast` |

@@ -77,7 +77,7 @@ pub const H264_SKIP_LEN: usize = 144;
 /// AC-3 / E-AC-3 (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1, §5, §6).
 pub const AUDIO_CLEAR_LEADER_LEN: usize = 16;
 /// ADTS fixed+variable header length with no CRC (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
-pub const ADTS_HEADER_LEN_NO_CRC: usize = 7;
+pub const ADTS_HEADER_LEN_NO_CRC: usize = crate::aac_asc::ADTS_HEADER_SIZE;
 /// ADTS header length with CRC protection (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §4.1).
 pub const ADTS_HEADER_LEN_WITH_CRC: usize = 9;
 

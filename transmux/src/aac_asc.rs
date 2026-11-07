@@ -25,7 +25,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
-const ADTS_HEADER_SIZE: usize = 7;
+/// ADTS fixed + variable header length without CRC (ISO/IEC 13818-7 §6.2, Tables 8/9: 28 + 28 bits).
+pub(crate) const ADTS_HEADER_SIZE: usize = 7;
 
 /// Maximum `frame_length` an ADTS fixed header can carry: a 13-bit field
 /// (ISO/IEC 13818-7:2003 §A.2.2.3, header size included) — `2^13 - 1`.

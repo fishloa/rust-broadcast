@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The H.222.0 descriptor bit reader and the SAT bit reader are error-mapping adapters over `broadcast_common::bits::BitReader`; the SAT reader no longer rebuilds and re-skips a reader on every read (dedupe D6). The two writers stay local: one grows a `Vec`, the other emits into a slice with this crate's own overflow errors.
 
 ## [12.1.0] - 2026-11-03
 ### Added

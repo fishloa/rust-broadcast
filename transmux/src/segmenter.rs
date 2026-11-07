@@ -641,14 +641,10 @@ impl Stage for Segmenter {
     /// sync sample that may never arrive. Below the bound there is no hard cap
     /// to report, so `want_bytes` stays the honest "no preference" default.
     fn demand(&self) -> Demand {
-        if self
-            .tracks
-            .iter()
-            .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK)
-        {
-            Demand::saturated()
-        } else {
-            Demand::default()
-        }
+        Demand::saturated_if(
+            self.tracks
+                .iter()
+                .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK),
+        )
     }
 }

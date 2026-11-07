@@ -42,44 +42,34 @@ fn pad_to_byte(bits: usize) -> usize {
 // ── Bit-level reader/writer ──────────────────────────────────────────────────
 
 struct BitReader<'a> {
-    data: &'a [u8],
-    bit_pos: usize,
+    inner: broadcast_common::bits::BitReader<'a>,
 }
 
 impl<'a> BitReader<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Self { data, bit_pos: 0 }
+        Self {
+            inner: broadcast_common::bits::BitReader::new(data),
+        }
     }
     fn remaining_bits(&self) -> usize {
-        (self.data.len() * 8).saturating_sub(self.bit_pos)
+        self.inner.bits_remaining()
     }
     fn bits_consumed(&self) -> usize {
-        self.bit_pos
+        self.inner.bits_read()
     }
-    // Bounds are checked here exactly as before (`need`/`have` in absolute
-    // bits, matching this crate's own `Error::BufferTooShort` convention);
-    // the extraction itself delegates to `broadcast_common::bits::BitReader`
-    // (already a dependency of this crate, and already reused by
-    // `dvb-t2mi`/`rdd29`/`st291`) so a bit-order/overrun fix there reaches
-    // this reader too. The companion `BitWriter` below stays hand-rolled —
-    // see its own comment for why.
-    fn read_u(&mut self, bits: u8) -> Result<u64> {
-        let bits = bits as usize;
-        if self.bit_pos + bits > self.data.len() * 8 {
-            return Err(Error::BufferTooShort {
-                need: self.bit_pos + bits,
-                have: self.data.len() * 8,
-                what: "SatSection bit reader overrun",
-            });
+    // `need`/`have` are absolute bits, this crate's `Error::BufferTooShort`
+    // convention for the SAT.
+    fn overrun(&self, bits: usize) -> Error {
+        Error::BufferTooShort {
+            need: self.inner.bits_read() + bits,
+            have: self.inner.total_bits(),
+            what: "SatSection bit reader overrun",
         }
-        let mut br = broadcast_common::bits::BitReader::new(self.data);
-        br.skip_bits(self.bit_pos)
-            .expect("bounds already validated above");
-        let val = br
-            .read_bits(bits as u32)
-            .expect("bounds already validated above");
-        self.bit_pos += bits;
-        Ok(val)
+    }
+    fn read_u(&mut self, bits: u8) -> Result<u64> {
+        self.inner
+            .read_bits(u32::from(bits))
+            .map_err(|_| self.overrun(bits as usize))
     }
     fn read_i(&mut self, bits: u8) -> Result<i64> {
         let raw = self.read_u(bits)?;
@@ -90,16 +80,14 @@ impl<'a> BitReader<'a> {
             Ok(raw as i64)
         }
     }
+    fn seek_forward(&mut self, target_bits: usize) {
+        let target = target_bits.min(self.inner.total_bits());
+        let _ = self.inner.skip_bits(target - self.inner.bits_read());
+    }
     fn skip(&mut self, bits: u8) -> Result<()> {
-        if self.bit_pos + bits as usize > self.data.len() * 8 {
-            return Err(Error::BufferTooShort {
-                need: self.bit_pos + bits as usize,
-                have: self.data.len() * 8,
-                what: "SatSection bit reader overrun",
-            });
-        }
-        self.bit_pos += bits as usize;
-        Ok(())
+        self.inner
+            .skip_bits(bits as usize)
+            .map_err(|_| self.overrun(bits as usize))
     }
 }
 
@@ -1626,7 +1614,7 @@ fn sat_body_parse_entries(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         what: "SatSection Beamhopping plan_length shorter than plan fields",
                     });
                 }
-                r.bit_pos = plan_end_bits;
+                r.seek_forward(plan_end_bits);
                 plans.push(BeamhoppingPlan {
                     beamhopping_time_plan_id,
                     time_plan_mode,

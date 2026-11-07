@@ -24,6 +24,7 @@
 //! syncframe's own bit stream information rather than assuming one PES
 //! payload equals one syncframe.
 
+use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -1518,12 +1519,6 @@ fn find_syncword(data: &[u8]) -> Result<usize> {
     Err(Error::InvalidInput(
         "AC-3/E-AC-3 syncword (0x0B77) not found in elementary stream",
     ))
-}
-
-/// Read `n` bits MSB-first from `data` at the current `bit_pos`, advancing it
-/// ([`crate::bitreader::read_bits_checked`]).
-fn read_bits(data: &[u8], bit_pos: &mut usize, n: usize, what: &'static str) -> Result<u64> {
-    crate::bitreader::read_bits_checked(data, bit_pos, n, what)
 }
 
 /// Write `n` bits from `val` MSB-first into `buf` at `bit_pos`, advancing it.

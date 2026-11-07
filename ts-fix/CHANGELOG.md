@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).
 
 ## [0.7.0] - 2026-10-17
 ### Documentation

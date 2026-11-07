@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `credentials_from_url` / `strip_userinfo` (and `Error::InvalidUserinfo` / `Error::UserinfoNotRemovable`): decode a URL's percent-encoded userinfo into `Credentials` and remove it, shared by `multimux` instead of three private copies (dedupe D7).
 
 ## [0.5.1] - 2026-11-01
 ### Changed

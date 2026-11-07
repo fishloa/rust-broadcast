@@ -11,7 +11,7 @@ use core::time::Duration;
 
 use sha2::{Digest, Sha256};
 use srt_runtime::arq::Receiver as ArqReceiver;
-use srt_runtime::arq::seq::{seq_diff, seq_in_closed_range, seq_lt, seq_next};
+use srt_runtime::arq::seq::{contiguous_runs, seq_diff, seq_in_closed_range, seq_lt};
 use srt_runtime::caller::CallerHandshake;
 use srt_runtime::crypto::{SALT_LEN, aes_ctr_apply, select_sek};
 use srt_runtime::handshake_sm::{CryptoConfig, HandshakeConfig, HandshakeOutput, NegotiatedParams};
@@ -480,15 +480,4 @@ impl Link {
             self.control.push_back(bytes);
         }
     }
-}
-
-fn contiguous_runs(seqs: &[u32]) -> Vec<(u32, u32)> {
-    let mut runs: Vec<(u32, u32)> = Vec::new();
-    for &s in seqs {
-        match runs.last_mut() {
-            Some((_, last)) if seq_next(*last) == s => *last = s,
-            _ => runs.push((s, s)),
-        }
-    }
-    runs
 }

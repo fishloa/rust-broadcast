@@ -1549,15 +1549,11 @@ impl Stage for StreamingTsHlsSegmenter {
     /// [`feed`](Stage::feed) errors rather than buffering a stream that never
     /// produces the sync sample a `.ts` segment must open on.
     fn demand(&self) -> Demand {
-        if self
-            .tracks
-            .iter()
-            .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK)
-        {
-            Demand::saturated()
-        } else {
-            Demand::default()
-        }
+        Demand::saturated_if(
+            self.tracks
+                .iter()
+                .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK),
+        )
     }
 }
 

@@ -37,7 +37,7 @@
 //! - a `c@r` repeat count — [`StreamIndex::enumerate_chunks`] errors
 //!   ([`SmoothParseError::ChunkRunTooLong`]) rather than expanding past
 //!   [`MAX_CHUNK_RUN`];
-//! - a `QualityLevel@CodecPrivateData` hex string — [`hex_decode`] errors
+//! - a `QualityLevel@CodecPrivateData` hex string — `hex_decode` errors
 //!   ([`SmoothParseError::CodecPrivateDataTooLong`]) rather than allocating
 //!   past [`MAX_CODEC_PRIVATE_DATA_HEX_LEN`], checked *before* any decode
 //!   allocation.
@@ -87,7 +87,7 @@ use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264, SMOOTH_TIMESCALE};
 use crate::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
-use crate::xml_chars::{char_data, is_xml_char};
+use broadcast_common::xml_chars::{char_data, is_xml_char};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::errors::IllFormedError;
@@ -613,7 +613,7 @@ impl StreamIndex {
 /// allocation, defending against a hostile Manifest's unbounded
 /// `CodecPrivateData`) and erroring on odd length or a non-hex-digit byte
 /// rather than panicking.
-pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
+pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
     if s.len() > MAX_CODEC_PRIVATE_DATA_HEX_LEN {
         return Err(SmoothParseError::CodecPrivateDataTooLong { len: s.len() });
     }

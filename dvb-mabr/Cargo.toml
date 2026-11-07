@@ -30,7 +30,7 @@ test-fixtures = { path = "../test-fixtures" }
 default = ["std"]
 # `std` is REQUIRED for any XML parsing/serialising: `quick-xml` is std-only, so a
 # `no_std` build exposes only `error`. Not buildable on bare metal beyond that.
-std     = ["broadcast-common/std", "thiserror/std", "dep:quick-xml"]
+std     = ["broadcast-common/std", "broadcast-common/xml", "thiserror/std", "dep:quick-xml"]
 
 [lints]
 workspace = true

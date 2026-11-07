@@ -29,32 +29,23 @@ use crate::error::{MultimuxError, Result};
 /// Extracts [`Credentials`] from `url`'s userinfo, if any.
 ///
 /// Returns `Ok(None)` when the URL carries no username — the common case,
-/// meaning "connect with no auth". Mirrors
-/// [`crate::source::rtsp`]'s `extract_credentials`.
+/// meaning "connect with no auth".
 pub(crate) fn credentials_from_url(url: &Url) -> Result<Option<Credentials>> {
-    if url.username().is_empty() {
-        return Ok(None);
-    }
-    let username = percent_decode(url.username())?;
-    let password = match url.password() {
-        Some(p) => percent_decode(p)?,
-        None => String::new(),
-    };
-    Ok(Some(Credentials::new(username, password)))
+    broadcast_auth::credentials_from_url(url).map_err(|e| userinfo_error(e, url))
 }
 
-/// Percent-decodes a URL userinfo component (RFC 3986 §2.1) to UTF-8.
-///
-/// The error message deliberately does **not** echo `s` — it is (part of) a
-/// still percent-encoded credential, and even encoded it must never appear
-/// in an error/log.
-fn percent_decode(s: &str) -> Result<String> {
-    percent_encoding::percent_decode_str(s)
-        .decode_utf8()
-        .map(|c| c.into_owned())
-        .map_err(|e| MultimuxError::Auth {
-            reason: format!("invalid percent-encoded userinfo: {e}"),
-        })
+fn userinfo_error(e: broadcast_auth::Error, url: &Url) -> MultimuxError {
+    match e {
+        broadcast_auth::Error::UserinfoNotRemovable(component) => MultimuxError::Connect {
+            reason: format!(
+                "failed to strip {component} from URL {}",
+                crate::redact::redact_url(url.as_str())
+            ),
+        },
+        other => MultimuxError::Auth {
+            reason: other.to_string(),
+        },
+    }
 }
 
 /// Resolves the credentials a connection actually authenticates with:
@@ -116,26 +107,9 @@ pub(crate) fn scope_credentials(
 
 /// Returns a copy of `url` with its userinfo (username/password) removed, so
 /// it is safe to use in the actual request line and in any error/log
-/// message. Mirrors [`crate::source::rtsp`]'s `strip_userinfo`.
+/// message.
 pub(crate) fn strip_userinfo(url: &Url) -> Result<Url> {
-    let mut clean = url.clone();
-    clean
-        .set_username("")
-        .map_err(|()| MultimuxError::Connect {
-            reason: format!(
-                "failed to strip username from URL {}",
-                crate::redact::redact_url(url.as_str())
-            ),
-        })?;
-    clean
-        .set_password(None)
-        .map_err(|()| MultimuxError::Connect {
-            reason: format!(
-                "failed to strip password from URL {}",
-                crate::redact::redact_url(url.as_str())
-            ),
-        })?;
-    Ok(clean)
+    broadcast_auth::strip_userinfo(url).map_err(|e| userinfo_error(e, url))
 }
 
 /// Performs `GET url`, answering a `401` challenge with `credentials` (if

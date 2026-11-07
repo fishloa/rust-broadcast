@@ -903,20 +903,16 @@ impl Cea608Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Add odd parity to a 7-bit value (so inputs look like real line-21 bytes).
-    fn par(v: u8) -> u8 {
-        broadcast_common::parity::set_odd_parity(v)
-    }
+    use broadcast_common::parity::set_odd_parity;
 
     /// Pop-on caption: RCL, PAC row 15 indent 0, "HI", EOC → on-screen "HI".
     #[test]
     fn pop_on_caption() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x20)); // RCL
-        dec.push_pair(false, par(0x14), par(0x70)); // PAC row 15 (col B), white indent0
-        dec.push_pair(false, par(b'H'), par(b'I'));
-        dec.push_pair(false, par(0x14), par(0x2F)); // EOC → flip to displayed
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x20)); // RCL
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x70)); // PAC row 15 (col B), white indent0
+        dec.push_pair(false, set_odd_parity(b'H'), set_odd_parity(b'I'));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2F)); // EOC → flip to displayed
         assert_eq!(dec.channel_text(Cea608Channel::Cc1), "HI");
         assert_eq!(dec.mode(Cea608Channel::Cc1), Cea608Mode::PopOn);
     }
@@ -928,12 +924,12 @@ mod tests {
     #[test]
     fn rcl_does_not_erase_loaded_text() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x20)); // RCL
-        dec.push_pair(false, par(0x14), par(0x70)); // PAC row 15
-        dec.push_pair(false, par(b'H'), par(b'I'));
-        dec.push_pair(false, par(0x14), par(0x20)); // RCL again
-        dec.push_pair(false, par(0x14), par(0x2C)); // EDM
-        dec.push_pair(false, par(0x14), par(0x2F)); // EOC
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x20)); // RCL
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x70)); // PAC row 15
+        dec.push_pair(false, set_odd_parity(b'H'), set_odd_parity(b'I'));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x20)); // RCL again
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2C)); // EDM
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2F)); // EOC
         assert_eq!(dec.channel_text(Cea608Channel::Cc1), "HI");
     }
 
@@ -941,11 +937,11 @@ mod tests {
     #[test]
     fn enm_erases_loaded_text() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x20)); // RCL
-        dec.push_pair(false, par(0x14), par(0x70));
-        dec.push_pair(false, par(b'H'), par(b'I'));
-        dec.push_pair(false, par(0x14), par(0x2E)); // ENM
-        dec.push_pair(false, par(0x14), par(0x2F)); // EOC
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x20)); // RCL
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x70));
+        dec.push_pair(false, set_odd_parity(b'H'), set_odd_parity(b'I'));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2E)); // ENM
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2F)); // EOC
         assert_eq!(dec.channel_text(Cea608Channel::Cc1), "");
     }
 
@@ -953,22 +949,22 @@ mod tests {
     #[test]
     fn control_doubling() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x29)); // RDC
-        dec.push_pair(false, par(0x14), par(0x29)); // doubled — ignored
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x29)); // RDC
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x29)); // doubled — ignored
         assert_eq!(dec.mode(Cea608Channel::Cc1), Cea608Mode::PaintOn);
         // a non-doubled second RDC after a non-control acts again
-        dec.push_pair(false, par(b'X'), par(0x00));
-        dec.push_pair(false, par(0x14), par(0x2C)); // EDM
+        dec.push_pair(false, set_odd_parity(b'X'), set_odd_parity(0x00));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2C)); // EDM
     }
 
     /// Roll-up across ≥2 rows: RU2, write line 1, CR, write line 2.
     #[test]
     fn roll_up_two_rows() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x25)); // RU2
-        dec.push_pair(false, par(b'A'), par(b'B'));
-        dec.push_pair(false, par(0x14), par(0x2D)); // CR
-        dec.push_pair(false, par(b'C'), par(b'D'));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x25)); // RU2
+        dec.push_pair(false, set_odd_parity(b'A'), set_odd_parity(b'B'));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2D)); // CR
+        dec.push_pair(false, set_odd_parity(b'C'), set_odd_parity(b'D'));
         let text = dec.channel_text(Cea608Channel::Cc1);
         assert!(text.contains("AB"), "got {text:?}");
         assert!(text.contains("CD"), "got {text:?}");
@@ -982,12 +978,12 @@ mod tests {
     #[test]
     fn mid_row_colour() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x20)); // RCL
-        dec.push_pair(false, par(0x14), par(0x70)); // PAC row 15
-        dec.push_pair(false, par(b'A'), par(0x00));
-        dec.push_pair(false, par(0x11), par(0x22)); // mid-row Green
-        dec.push_pair(false, par(b'B'), par(0x00));
-        dec.push_pair(false, par(0x14), par(0x2F)); // EOC
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x20)); // RCL
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x70)); // PAC row 15
+        dec.push_pair(false, set_odd_parity(b'A'), set_odd_parity(0x00));
+        dec.push_pair(false, set_odd_parity(0x11), set_odd_parity(0x22)); // mid-row Green
+        dec.push_pair(false, set_odd_parity(b'B'), set_odd_parity(0x00));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2F)); // EOC
         // Find the styled cells; "B" must be green.
         let screen = dec.screen(Cea608Channel::Cc1);
         let mut found_green_b = false;
@@ -1005,8 +1001,8 @@ mod tests {
     #[test]
     fn caption_text_is_tracked_per_channel() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x1C), par(0x29));
-        dec.push_pair(false, par(b'H'), par(b'I'));
+        dec.push_pair(false, set_odd_parity(0x1C), set_odd_parity(0x29));
+        dec.push_pair(false, set_odd_parity(b'H'), set_odd_parity(b'I'));
         assert!(dec.has_caption_text(Cea608Channel::Cc2));
         assert!(!dec.has_caption_text(Cea608Channel::Cc1));
         assert!(!dec.has_caption_text(Cea608Channel::Cc3));
@@ -1016,12 +1012,12 @@ mod tests {
     #[test]
     fn control_codes_xds_and_text_mode_are_not_caption_text() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x20));
-        dec.push_pair(true, par(0x01), par(0x03));
-        dec.push_pair(true, par(b'A'), par(b'B'));
-        dec.push_pair(true, par(0x0F), par(0x2C));
-        dec.push_pair(false, par(0x14), par(0x2A));
-        dec.push_pair(false, par(b'T'), par(b'X'));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x20));
+        dec.push_pair(true, set_odd_parity(0x01), set_odd_parity(0x03));
+        dec.push_pair(true, set_odd_parity(b'A'), set_odd_parity(b'B'));
+        dec.push_pair(true, set_odd_parity(0x0F), set_odd_parity(0x2C));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2A));
+        dec.push_pair(false, set_odd_parity(b'T'), set_odd_parity(b'X'));
         for ch in [
             Cea608Channel::Cc1,
             Cea608Channel::Cc2,
@@ -1036,8 +1032,8 @@ mod tests {
     #[test]
     fn special_char_music_note() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x29)); // RDC (paint-on → displayed)
-        dec.push_pair(false, par(0x11), par(0x37)); // ♪ on CC1
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x29)); // RDC (paint-on → displayed)
+        dec.push_pair(false, set_odd_parity(0x11), set_odd_parity(0x37)); // ♪ on CC1
         assert!(dec.channel_text(Cea608Channel::Cc1).contains('\u{266A}'));
     }
 
@@ -1045,9 +1041,9 @@ mod tests {
     #[test]
     fn extended_char_backspace() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x14), par(0x29)); // RDC
-        dec.push_pair(false, par(b'u'), par(0x00)); // fallback 'u'
-        dec.push_pair(false, par(0x12), par(0x25)); // extended ü (block1 0x25)
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x29)); // RDC
+        dec.push_pair(false, set_odd_parity(b'u'), set_odd_parity(0x00)); // fallback 'u'
+        dec.push_pair(false, set_odd_parity(0x12), set_odd_parity(0x25)); // extended ü (block1 0x25)
         let t = dec.channel_text(Cea608Channel::Cc1);
         assert_eq!(t, "\u{00FC}"); // just ü, the 'u' was backspaced
     }
@@ -1056,7 +1052,7 @@ mod tests {
     #[test]
     fn channel_cc2() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(false, par(0x1C), par(0x29)); // RDC on data channel 2 → CC2
+        dec.push_pair(false, set_odd_parity(0x1C), set_odd_parity(0x29)); // RDC on data channel 2 → CC2
         assert_eq!(dec.mode(Cea608Channel::Cc2), Cea608Mode::PaintOn);
         assert_eq!(dec.mode(Cea608Channel::Cc1), Cea608Mode::None);
     }
@@ -1070,7 +1066,7 @@ mod tests {
     #[test]
     fn field2_cc3() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(true, par(0x15), par(0x29)); // RDC field 2 ch1 (0x15) → CC3
+        dec.push_pair(true, set_odd_parity(0x15), set_odd_parity(0x29)); // RDC field 2 ch1 (0x15) → CC3
         assert_eq!(dec.mode(Cea608Channel::Cc3), Cea608Mode::PaintOn);
     }
 
@@ -1079,7 +1075,7 @@ mod tests {
     #[test]
     fn field2_cc4() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(true, par(0x1D), par(0x29)); // RDC field 2 ch2 (0x1D) → CC4
+        dec.push_pair(true, set_odd_parity(0x1D), set_odd_parity(0x29)); // RDC field 2 ch2 (0x1D) → CC4
         assert_eq!(dec.mode(Cea608Channel::Cc4), Cea608Mode::PaintOn);
         assert_eq!(dec.mode(Cea608Channel::Cc3), Cea608Mode::None);
     }
@@ -1088,9 +1084,9 @@ mod tests {
     #[test]
     fn xds_skipped() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(true, par(0x01), par(0x02)); // XDS start (Current class)
-        dec.push_pair(true, par(0x20), par(0x21)); // XDS informational
-        dec.push_pair(true, par(0x0F), par(0x40)); // XDS end + checksum
+        dec.push_pair(true, set_odd_parity(0x01), set_odd_parity(0x02)); // XDS start (Current class)
+        dec.push_pair(true, set_odd_parity(0x20), set_odd_parity(0x21)); // XDS informational
+        dec.push_pair(true, set_odd_parity(0x0F), set_odd_parity(0x40)); // XDS end + checksum
         assert_eq!(dec.channel_text(Cea608Channel::Cc3), "");
     }
 
@@ -1102,11 +1098,11 @@ mod tests {
     #[test]
     fn control_code_interrupts_open_xds() {
         let mut dec = Cea608Decoder::new();
-        dec.push_pair(true, par(0x01), par(0x02)); // XDS start (Current class)
-        dec.push_pair(true, par(0x15), par(0x20)); // RCL on CC3 (field-2 misc)
-        dec.push_pair(true, par(0x15), par(0x70)); // PAC row 15 white indent0
-        dec.push_pair(true, par(b'H'), par(b'I'));
-        dec.push_pair(true, par(0x15), par(0x2F)); // EOC → flip to displayed
+        dec.push_pair(true, set_odd_parity(0x01), set_odd_parity(0x02)); // XDS start (Current class)
+        dec.push_pair(true, set_odd_parity(0x15), set_odd_parity(0x20)); // RCL on CC3 (field-2 misc)
+        dec.push_pair(true, set_odd_parity(0x15), set_odd_parity(0x70)); // PAC row 15 white indent0
+        dec.push_pair(true, set_odd_parity(b'H'), set_odd_parity(b'I'));
+        dec.push_pair(true, set_odd_parity(0x15), set_odd_parity(0x2F)); // EOC → flip to displayed
         assert_eq!(dec.channel_text(Cea608Channel::Cc3), "HI");
     }
 
@@ -1119,15 +1115,15 @@ mod tests {
     fn standard_chars_follow_last_control_channel() {
         let mut dec = Cea608Decoder::new();
         // CC1: pop-on "AB".
-        dec.push_pair(false, par(0x14), par(0x20)); // RCL (CC1, base1=0x14)
-        dec.push_pair(false, par(0x14), par(0x70)); // PAC row 15 (CC1)
-        dec.push_pair(false, par(b'A'), par(b'B'));
-        dec.push_pair(false, par(0x14), par(0x2F)); // EOC (CC1)
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x20)); // RCL (CC1, base1=0x14)
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x70)); // PAC row 15 (CC1)
+        dec.push_pair(false, set_odd_parity(b'A'), set_odd_parity(b'B'));
+        dec.push_pair(false, set_odd_parity(0x14), set_odd_parity(0x2F)); // EOC (CC1)
         // CC2: pop-on "CD" — b1 in 0x18..=0x1F selects data channel 2.
-        dec.push_pair(false, par(0x1C), par(0x20)); // RCL (CC2, base1=0x14 folded)
-        dec.push_pair(false, par(0x1C), par(0x70)); // PAC row 15 (CC2)
-        dec.push_pair(false, par(b'C'), par(b'D'));
-        dec.push_pair(false, par(0x1C), par(0x2F)); // EOC (CC2)
+        dec.push_pair(false, set_odd_parity(0x1C), set_odd_parity(0x20)); // RCL (CC2, base1=0x14 folded)
+        dec.push_pair(false, set_odd_parity(0x1C), set_odd_parity(0x70)); // PAC row 15 (CC2)
+        dec.push_pair(false, set_odd_parity(b'C'), set_odd_parity(b'D'));
+        dec.push_pair(false, set_odd_parity(0x1C), set_odd_parity(0x2F)); // EOC (CC2)
         assert_eq!(dec.channel_text(Cea608Channel::Cc1), "AB");
         assert_eq!(dec.channel_text(Cea608Channel::Cc2), "CD");
     }

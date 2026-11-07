@@ -253,7 +253,7 @@
       "id": 32,
       "type": "stat",
       "title": "Malformed sections/s (wire path only)",
-      "description": "compliance_probe_scte35_malformed_total — only observable via Probe::feed_scte35_section; structurally always 0 on the Trunk-cursor path.",
+      "description": "compliance_probe_scte35_malformed_total — only observable via scte35::check_section; structurally always 0 on the Trunk-cursor path.",
       "gridPos": { "h": 8, "w": 4, "x": 8, "y": 32 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [

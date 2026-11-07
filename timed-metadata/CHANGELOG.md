@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Removed
+- `webvtt::teletext::decode_odd_parity` and `encode_odd_parity` (one-line forwards). Use `broadcast_common::parity::strip_parity` and `broadcast_common::parity::set_odd_parity` (dedupe R3).
 
 ## [0.8.0] - 2026-11-01
 

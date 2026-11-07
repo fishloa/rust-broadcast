@@ -144,7 +144,8 @@ impl PushTransport for RtspTransport {
 
         // Config credentials win over the URL's own userinfo (mirrors
         // `crate::source::http_auth::resolve_credentials`'s precedence).
-        let url_credentials = credentials_from_url(&parsed)?;
+        let url_credentials = broadcast_auth::credentials_from_url(&parsed)
+            .map_err(|e| RtspPushError::Connect(e.to_string()))?;
         let _ = parsed.set_username("");
         let _ = parsed.set_password(None);
         let clean_url = parsed.to_string();
@@ -336,21 +337,6 @@ impl RtspTransport {
     }
 }
 
-/// Extracts [`Credentials`] from `url`'s userinfo (RFC 3986 §3.2.1), if any.
-/// Mirrors `crate::source::http_auth::credentials_from_url`, kept local so
-/// this module's errors stay `RtspPushError` rather than `MultimuxError`.
-fn credentials_from_url(url: &url::Url) -> Result<Option<Credentials>, RtspPushError> {
-    if url.username().is_empty() {
-        return Ok(None);
-    }
-    let username = percent_decode(url.username())?;
-    let password = match url.password() {
-        Some(p) => percent_decode(p)?,
-        None => String::new(),
-    };
-    Ok(Some(Credentials::new(username, password)))
-}
-
 /// The RTSP presentation control URL: the base URL with `trackID=0` appended
 /// as a final path segment (RFC 2326 §10.5 `control`). Built via
 /// `Url::path_segments_mut` so a trailing slash never doubles and an IPv6 host
@@ -385,16 +371,6 @@ fn control_url(base: &url::Url) -> Result<String, RtspPushError> {
 pub fn control_url_for_test(url: &str) -> Result<String, String> {
     let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
     control_url(&parsed).map_err(|e| e.to_string())
-}
-
-/// Percent-decodes a URL userinfo component (RFC 3986 §2.1) to UTF-8. The
-/// error message deliberately never echoes `s` — it is (part of) a still
-/// percent-encoded credential.
-fn percent_decode(s: &str) -> Result<String, RtspPushError> {
-    percent_encoding::percent_decode_str(s)
-        .decode_utf8()
-        .map(|c| c.into_owned())
-        .map_err(|e| RtspPushError::Connect(format!("invalid percent-encoded userinfo: {e}")))
 }
 
 /// Builds the SDP for the push session: one `m=` line for the whole

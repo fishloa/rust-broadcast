@@ -27,6 +27,10 @@ chrono = ["dep:chrono"]
 # serialization framework, and a consumer that wants one enables it through
 # its own `serde` feature (e.g. `transmux/serde`, `broadcast-hls/serde`).
 serde = ["dep:serde"]
+# `xml_chars`: the XML 1.0 character-data core shared by every crate that reads
+# XML through `quick-xml` (dvb-mabr, ttml-subtitle, dash-runtime, transmux).
+# std-only, because quick-xml is.
+xml = ["std", "dep:quick-xml"]
 
 [dependencies]
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
@@ -38,6 +42,7 @@ chrono = { workspace = true, optional = true, features = ["alloc"] }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # Only pulled in by the `serde` feature — see its comment above. Configured
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.
+quick-xml = { workspace = true, optional = true }
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
 [dev-dependencies]

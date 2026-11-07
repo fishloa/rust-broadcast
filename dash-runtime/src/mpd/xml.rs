@@ -8,7 +8,6 @@
 
 use quick_xml::NsReader;
 use quick_xml::XmlVersion;
-use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 
@@ -103,14 +102,6 @@ impl Elem {
     }
 }
 
-fn is_xml_char(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}'
-    )
-}
-
-const BAD_CHAR: &str = "character not allowed in XML 1.0 (Char production, 2.2)";
 const BOM: char = '\u{FEFF}';
 
 struct Reader<'a> {
@@ -163,8 +154,8 @@ impl<'a> Reader<'a> {
                     max: limits.max_attribute_bytes,
                 });
             }
-            if !value.chars().all(is_xml_char) {
-                return Err(self.fail(BAD_CHAR));
+            if !value.chars().all(broadcast_common::xml_chars::is_xml_char) {
+                return Err(self.fail(broadcast_common::xml_chars::BAD_CHAR));
             }
             let (ns, local) = resolver.resolve_attribute(key);
             out.push(Attr {
@@ -177,24 +168,7 @@ impl<'a> Reader<'a> {
     }
 
     fn char_data(&self, event: &Event<'_>) -> Result<Option<String>, MpdError> {
-        let content = match event {
-            Event::Text(t) => t.xml10_content().into_owned(),
-            Event::CData(c) => c.xml10_content().into_owned(),
-            Event::GeneralRef(r) => match r.resolve_char_ref() {
-                Ok(Some(c)) => c.to_string(),
-                Ok(None) => match resolve_predefined_entity(r) {
-                    Some(s) => s.to_string(),
-                    None => return Err(self.fail(format!("undefined entity reference &{};", &**r))),
-                },
-                Err(e) => return Err(self.fail(e.to_string())),
-            },
-            _ => return Ok(None),
-        };
-        if content.chars().all(is_xml_char) {
-            Ok(Some(content))
-        } else {
-            Err(self.fail(BAD_CHAR))
-        }
+        broadcast_common::xml_chars::char_data(event).map_err(|m| self.fail(m))
     }
 }
 

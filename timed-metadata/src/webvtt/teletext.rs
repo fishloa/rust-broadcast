@@ -15,7 +15,7 @@
 //! - [`decode_hamming_8_4`] / [`encode_hamming_8_4`] — the 4-data-bit +
 //!   4-parity-bit code protecting packet addresses and page header fields
 //!   (§8.2): single-bit errors corrected, double-bit errors rejected.
-//! - [`decode_odd_parity`] / [`encode_odd_parity`] — the 7-data-bit + 1-parity
+//! - `broadcast_common::parity::{strip_parity, set_odd_parity}` — the 7-data-bit + 1-parity
 //!   code protecting displayable row bytes (§8.1): errors only *detected*
 //!   (odd parity carries no correction capability), rendered as
 //!   `'\u{FFFD}'`.
@@ -115,25 +115,6 @@ pub fn encode_hamming_8_4(nibble: u8) -> u8 {
     let p3 = 1 ^ d1 ^ d2 ^ d3;
     let p4 = 1 ^ p1 ^ d1 ^ p2 ^ d2 ^ p3 ^ d3 ^ d4;
     p1 | (d1 << 1) | (p2 << 2) | (d2 << 3) | (p3 << 4) | (d3 << 5) | (p4 << 6) | (d4 << 7)
-}
-
-/// Decode an odd-parity protected byte (ETSI EN 300 706 §8.1): bit 8 (the
-/// MSB, `0x80`) is the parity bit, bits 1-7 (`0x7F`) carry the 7 data bits.
-/// Odd parity **detects but cannot correct** single-bit errors (unlike
-/// Hamming-8/4): returns `None` on any parity mismatch.
-///
-/// Returns the 7-bit data value, or `None` if the byte does not have odd
-/// parity (an even count of set bits).
-#[must_use]
-pub fn decode_odd_parity(byte: u8) -> Option<u8> {
-    broadcast_common::parity::strip_parity(byte)
-}
-
-/// Encode a 7-bit data value with odd parity in bit 8 (MSB), per ETSI
-/// EN 300 706 §8.1. Only the low 7 bits of `data7` are used.
-#[must_use]
-pub fn encode_odd_parity(data7: u8) -> u8 {
-    broadcast_common::parity::set_odd_parity(data7)
 }
 
 /// The C12/C13/C14 "National Option Character Subset" selector (ETSI
@@ -453,7 +434,7 @@ fn decode_row_codes(txt_data_block: &[u8; 42]) -> RowCodes {
         .iter_mut()
         .zip(&txt_data_block[ROW_PAYLOAD_START..ROW_PAYLOAD_START + ROW_LEN])
     {
-        *slot = decode_odd_parity(b);
+        *slot = broadcast_common::parity::strip_parity(b);
     }
     codes
 }
@@ -643,22 +624,22 @@ mod tests {
     #[test]
     fn odd_parity_round_trips_all_128_values() {
         for data7 in 0u8..128 {
-            let byte = encode_odd_parity(data7);
+            let byte = broadcast_common::parity::set_odd_parity(data7);
             assert_eq!(
                 byte.count_ones() % 2,
                 1,
                 "encoded byte must have odd parity"
             );
-            assert_eq!(decode_odd_parity(byte), Some(data7));
+            assert_eq!(broadcast_common::parity::strip_parity(byte), Some(data7));
         }
     }
 
     #[test]
     fn odd_parity_detects_but_does_not_correct() {
-        let byte = encode_odd_parity(b'H' & 0x7F);
+        let byte = broadcast_common::parity::set_odd_parity(b'H' & 0x7F);
         let corrupted = byte ^ 0x01; // flip one data bit -> even parity
         assert_eq!(
-            decode_odd_parity(corrupted),
+            broadcast_common::parity::strip_parity(corrupted),
             None,
             "odd parity only detects errors; a corrupted byte must not decode"
         );
@@ -952,7 +933,7 @@ mod tests {
         let c14 = opt_bits & 1;
         b[9] = encode_hamming_8_4((c14 << 3) | (c13 << 2) | (c12 << 1)); // C11=0
         for byte in b.iter_mut().skip(10) {
-            *byte = encode_odd_parity(0x20); // row-0 text: spaces
+            *byte = broadcast_common::parity::set_odd_parity(0x20); // row-0 text: spaces
         }
         b
     }
@@ -970,7 +951,7 @@ mod tests {
         let bytes = text.as_bytes();
         for i in 0..40usize {
             let ch = bytes.get(i).copied().unwrap_or(b' ');
-            b[2 + i] = encode_odd_parity(ch & 0x7F);
+            b[2 + i] = broadcast_common::parity::set_odd_parity(ch & 0x7F);
         }
         b
     }
@@ -994,14 +975,14 @@ mod tests {
         b[1] = encode_hamming_8_4(row >> 1);
         for i in 0..40usize {
             let code = codes.get(i).copied().unwrap_or(b' ');
-            b[2 + i] = encode_odd_parity(code & 0x7F);
+            b[2 + i] = broadcast_common::parity::set_odd_parity(code & 0x7F);
         }
         b
     }
 
     pub(super) fn field_from_block(block: [u8; 42], line: u8) -> dvb_vbi::TeletextDataField {
         // `build_header_block`/`build_row_block` produce the spec's own
-        // (canonical) byte values via `encode_hamming_8_4`/`encode_odd_parity`;
+        // (canonical) byte values via `encode_hamming_8_4`/`set_odd_parity`;
         // reverse each bit to emulate the LSB-first wire bytes `push` now
         // un-reverses, so these tests exercise the real wire path.
         dvb_vbi::TeletextDataField {

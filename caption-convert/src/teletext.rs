@@ -107,6 +107,7 @@ impl TeletextToWebVtt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::parity::set_odd_parity;
     use dvb_vbi::{FRAMING_CODE_EBU, LineHeader};
 
     fn hamming(n: u8) -> u8 {
@@ -116,10 +117,6 @@ mod tests {
         let p3 = 1 ^ d1 ^ d2 ^ d3;
         let p4 = 1 ^ p1 ^ d1 ^ p2 ^ d2 ^ p3 ^ d3 ^ d4;
         p1 | (d1 << 1) | (p2 << 2) | (d2 << 3) | (p3 << 4) | (d3 << 5) | (p4 << 6) | (d4 << 7)
-    }
-
-    fn parity(d7: u8) -> u8 {
-        broadcast_common::parity::set_odd_parity(d7)
     }
 
     fn field(block: [u8; 42]) -> TeletextDataField {
@@ -143,19 +140,19 @@ mod tests {
         header[5] = hamming(0b1000); // C4 erase_page
         header[7] = hamming(0b1000); // C6 subtitle
         for b in header.iter_mut().skip(10) {
-            *b = parity(0x20);
+            *b = set_odd_parity(0x20);
         }
 
         let mut row1 = [0u8; 42];
         row1[0] = hamming(1 << 3); // magazine 8, Y bit0 = 1 (row 1)
         row1[1] = hamming(0);
-        row1[2] = parity(0x0B); // Start Box, doubled
-        row1[3] = parity(0x0B);
-        row1[4] = parity(b'H');
-        row1[5] = parity(b'I');
-        row1[6] = parity(0x0A); // End Box
+        row1[2] = set_odd_parity(0x0B); // Start Box, doubled
+        row1[3] = set_odd_parity(0x0B);
+        row1[4] = set_odd_parity(b'H');
+        row1[5] = set_odd_parity(b'I');
+        row1[6] = set_odd_parity(0x0A); // End Box
         for b in row1.iter_mut().skip(7) {
-            *b = parity(0x20);
+            *b = set_odd_parity(0x20);
         }
 
         let mut conv = TeletextToWebVtt::new(8, 0x88);
@@ -176,7 +173,7 @@ mod tests {
         header[5] = hamming(0b1000);
         header[7] = hamming(0b1000);
         for b in header.iter_mut().skip(10) {
-            *b = parity(0x20);
+            *b = set_odd_parity(0x20);
         }
         let mut wire = alloc::vec![
             LineHeader::new(true, 0).to_byte().unwrap(),
