@@ -4,6 +4,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::error::BufferTooShort;
 
 /// Take the next `n` bytes at `*cursor`, advancing it. `BufferTooShort` (with the
 /// byte count needed) if fewer remain.
@@ -14,11 +15,13 @@ pub(crate) fn take<'a>(
     what: &'static str,
 ) -> Result<&'a [u8]> {
     let end = cursor.saturating_add(n);
-    let slice = bytes.get(*cursor..end).ok_or(Error::BufferTooShort {
-        need: end,
-        have: bytes.len(),
-        what,
-    })?;
+    let slice = bytes
+        .get(*cursor..end)
+        .ok_or(Error::BufferTooShort(BufferTooShort {
+            need: end,
+            have: bytes.len(),
+            what,
+        }))?;
     *cursor = end;
     Ok(slice)
 }
@@ -64,6 +67,8 @@ pub(crate) fn be_u64(bytes: &[u8], off: usize, what: &'static str) -> Result<u64
 
 #[cfg(test)]
 mod be_u64_tests {
+    use broadcast_common::error::BufferTooShort;
+
     use super::*;
 
     #[test]
@@ -72,18 +77,18 @@ mod be_u64_tests {
         assert_eq!(be_u64(&b, 2, "t").unwrap(), 0x0102_0304_0506_0708);
         assert!(matches!(
             be_u64(&b, 3, "t"),
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 need: 11,
                 have: 10,
                 what: "t"
-            })
+            }))
         ));
         assert!(matches!(
             be_u64(&b, usize::MAX, "t"),
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 need: usize::MAX,
                 ..
-            })
+            }))
         ));
     }
 }

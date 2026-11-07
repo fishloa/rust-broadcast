@@ -96,6 +96,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidField;
 
 use crate::error::{Error, Result};
 use crate::handshake_sm::{
@@ -272,22 +273,28 @@ enum PeerHsExt {
 fn parse_peer_hs_ext(hp: &HandshakePacket<'_>) -> Result<PeerHsExt> {
     let mut found = PeerHsExt::None;
     for block in hp.extensions.iter() {
-        let block = block.map_err(|_| Error::InvalidField {
-            what: "rendezvous handshake extensions",
-            reason: "malformed extension block",
+        let block = block.map_err(|_| {
+            Error::InvalidField(InvalidField {
+                field: "rendezvous handshake extensions",
+                reason: "malformed extension block",
+            })
         })?;
         match block.ext_type {
             ExtensionType::HsReq => {
-                let msg = block.as_hs_ext_message().map_err(|_| Error::InvalidField {
-                    what: "HSREQ extension message",
-                    reason: "malformed contents",
+                let msg = block.as_hs_ext_message().map_err(|_| {
+                    Error::InvalidField(InvalidField {
+                        field: "HSREQ extension message",
+                        reason: "malformed contents",
+                    })
                 })?;
                 found = PeerHsExt::HsReq(msg);
             }
             ExtensionType::HsRsp => {
-                let msg = block.as_hs_ext_message().map_err(|_| Error::InvalidField {
-                    what: "HSRSP extension message",
-                    reason: "malformed contents",
+                let msg = block.as_hs_ext_message().map_err(|_| {
+                    Error::InvalidField(InvalidField {
+                        field: "HSRSP extension message",
+                        reason: "malformed contents",
+                    })
                 })?;
                 found = PeerHsExt::HsRsp(msg);
             }
@@ -733,10 +740,10 @@ impl RendezvousHandshake {
     /// [`cookie_contest`].
     fn resolve_role(&self, peer_cookie: u32) -> Result<RendezvousRole> {
         if peer_cookie == self.own_cookie {
-            return Err(Error::InvalidField {
-                what: "rendezvous cookie",
+            return Err(Error::InvalidField(InvalidField {
+                field: "rendezvous cookie",
                 reason: "identical to the peer's cookie (collision, L2119-2124)",
-            });
+            }));
         }
         Ok(cookie_contest(self.own_cookie, peer_cookie))
     }

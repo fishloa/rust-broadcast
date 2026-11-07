@@ -23,6 +23,7 @@
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -719,11 +720,11 @@ pub fn build_adts_header(profile: u8, sfi: u8, cc: u8, frame_len: u16) -> [u8; A
 pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
     need_in(bytes, ADTS_HEADER_SIZE, "ADTS")?;
     if bytes[0] != 0xFF || (bytes[1] & 0xF0) != 0xF0 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "adts_syncword",
             value: ((bytes[0] as u64) << 8) | (bytes[1] as u64),
             reason: "must be 0xFFF",
-        });
+        }));
     }
     let (b2, b3, b4, b5, b6) = (bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]);
     Ok(AdtsHeader {
@@ -740,25 +741,25 @@ pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
 impl AudioSpecificConfig {
     pub fn to_adts_header(&self, frame_len: u16) -> Result<[u8; ADTS_HEADER_SIZE]> {
         if frame_len < ADTS_HEADER_SIZE as u16 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "frame_len",
                 value: frame_len as u64,
                 reason: "too small",
-            });
+            }));
         }
         if frame_len > ADTS_FRAME_LENGTH_MAX {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "frame_len",
                 value: frame_len as u64,
                 reason: "exceeds ADTS 13-bit frame_length maximum (8191)",
-            });
+            }));
         }
         if self.sampling_frequency_index == SamplingFrequencyIndex::Escape {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "sampling_frequency_index",
                 value: self.sampling_frequency_index.raw() as u64,
                 reason: "escape (explicit rate) is not representable in ADTS's 4-bit field",
-            });
+            }));
         }
         // C2 (#1008): with explicit hierarchical HE-AAC/HE-AACv2 signaling
         // (`audioObjectType == 5`/`29`), the ASC's *first* AOT is the SBR/PS
@@ -774,11 +775,11 @@ impl AudioSpecificConfig {
             .map(|(aot, _, _)| aot)
             .unwrap_or(self.audio_object_type.raw());
         if !(1..=4).contains(&core_aot) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "audio_object_type",
                 value: core_aot as u64,
                 reason: "core AOT is not representable in ADTS's 2-bit profile field (must be Main/LC/SSR/LTP, 1..=4)",
-            });
+            }));
         }
         Ok(build_adts_header(
             core_aot - 1,
@@ -883,24 +884,24 @@ impl AudioSpecificConfig {
         if let Some(current) = current {
             let derived = self.with_plain_core().build_explicit_he_aac(current)?;
             if derived.trailing_top != self.trailing_top || derived.trailing != self.trailing {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "trailing",
                     value: self.trailing.len() as u64,
                     reason: "hierarchical config is not the default AAC-LC form",
-                });
+                }));
             }
         } else if self.audio_object_type != AudioObjectType::AacLc {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "audio_object_type",
                 value: u64::from(raw_aot),
                 reason: "explicit HE-AAC signalling needs an AAC-LC core",
-            });
+            }));
         } else if !self.trailing.is_empty() || self.trailing_top.is_some_and(|t| t != 0) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "trailing",
                 value: self.trailing.len() as u64,
                 reason: "config already carries GASpecificConfig/extension data",
-            });
+            }));
         }
         let base = if current.is_some() {
             self.with_plain_core()
@@ -925,17 +926,17 @@ impl AudioSpecificConfig {
         let core_hz = self
             .sampling_frequency_index
             .table_hz()
-            .ok_or(Error::InvalidValue {
+            .ok_or(Error::InvalidValue(InvalidValue {
                 field: "sampling_frequency_index",
                 value: u64::from(self.sampling_frequency_index.raw()),
                 reason: "core rate is not a Table 1.10 rate",
-            })?;
+            }))?;
         let ext_hz = core_hz.saturating_mul(SBR_RATE_FACTOR);
-        let ext_index = extension_index_for(ext_hz).ok_or(Error::InvalidValue {
+        let ext_index = extension_index_for(ext_hz).ok_or(Error::InvalidValue(InvalidValue {
             field: "extension_sampling_frequency_index",
             value: u64::from(ext_hz),
             reason: "doubled core rate has no Table 1.10 index",
-        })?;
+        }))?;
         let tail = (u16::from(ext_index.raw()) << (AOT_BITS + GA_HEAD_BITS))
             | (u16::from(AOT_AAC_LC) << GA_HEAD_BITS);
         let top = (tail >> TAIL_SPILL_BITS) as u8;

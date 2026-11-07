@@ -58,12 +58,12 @@ fn ber_length_indefinite_form_rejected() {
     // 0x80 alone (indefinite form) is not permitted in KLV → error, no panic.
     assert!(matches!(
         ber_length(&[0x80]),
-        Err(transmux::error::Error::InvalidValue { .. })
+        Err(transmux::error::Error::InvalidValue(..))
     ));
     // Long form promising bytes that aren't there → error, no panic.
     assert!(matches!(
         ber_length(&[0x82, 0x01]),
-        Err(transmux::error::Error::BufferTooShort { .. })
+        Err(transmux::error::Error::BufferTooShort(..))
     ));
 }
 

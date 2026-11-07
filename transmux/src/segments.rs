@@ -13,6 +13,7 @@
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 
 /// Four-CC of the File Type Box.
@@ -210,11 +211,11 @@ impl MediaDataBox {
             (size32 as usize, 8usize)
         };
         if size < hdr || size > bytes.len() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: size,
                 have: bytes.len(),
                 what: "mdat payload",
-            });
+            }));
         }
         Ok(Self {
             data: bytes[hdr..size].to_vec(),
@@ -261,11 +262,11 @@ fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; 4]) -> Result<&'a [u8]> {
     }
     let size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
     if size < 8 || size > bytes.len() {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: size,
             have: bytes.len(),
             what: "box size",
-        });
+        }));
     }
     Ok(&bytes[8..size])
 }

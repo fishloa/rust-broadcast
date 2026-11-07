@@ -9,6 +9,7 @@
 //! be appended for path-MTU probing.
 
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, UnsupportedVersion};
 use broadcast_common::len::need_out;
 
 use broadcast_common::{Parse, Serialize};
@@ -132,15 +133,19 @@ impl<'a> Parse<'a> for RttEcho {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         if bytes.len() < RTCP_HEADER_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: RTCP_HEADER_LEN,
                 have: bytes.len(),
-            });
+                what: "RTCP common header",
+            }));
         }
 
         let version = bytes[0] >> 6;
         if version != RTCP_VERSION {
-            return Err(Error::InvalidVersion(version));
+            return Err(Error::UnsupportedVersion(UnsupportedVersion {
+                what: "RTCP",
+                found: version,
+            }));
         }
 
         // TR-06-1 §5.2.6 fixes P = 0: the packet's padding is its own opaque
@@ -164,17 +169,19 @@ impl<'a> Parse<'a> for RttEcho {
         let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: total_len,
                 have: bytes.len(),
-            });
+                what: "RTT Echo",
+            }));
         }
 
         if total_len < RTT_ECHO_MIN_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: RTT_ECHO_MIN_LEN,
                 have: total_len,
-            });
+                what: "RTT Echo",
+            }));
         }
 
         // SSRC of media source.

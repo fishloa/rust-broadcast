@@ -377,7 +377,7 @@ fn generic_nack_rejects_wrong_version() {
     bytes[0] = 0x41; // V=1, FMT=1
     assert!(matches!(
         GenericNack::parse(&bytes),
-        Err(rist_runtime::error::Error::InvalidVersion(..))
+        Err(rist_runtime::error::Error::UnsupportedVersion(..))
     ));
 }
 

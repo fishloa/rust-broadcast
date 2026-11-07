@@ -40,6 +40,7 @@ use crate::init_segment::bounded_entry_count;
 use crate::nalu_types::{HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES};
 use crate::wire_cursor::{read_u8, read_u16, read_u32, read_u48};
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
@@ -190,11 +191,11 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
         let temporal_id_nested = ((b_cfr >> 2) & 0x01) != 0;
         let length_size_minus_one = b_cfr & 0x03;
         if !VALID_LENGTH_SIZES.contains(&length_size_minus_one) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "lengthSizeMinusOne",
                 value: length_size_minus_one as u64,
                 reason: "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2017 §8.3.3)",
-            });
+            }));
         }
 
         // numOfArrays (8)
@@ -456,6 +457,8 @@ impl Serialize for HEVCConfigurationBox {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
     use alloc::vec;
     use broadcast_common::{Parse, Serialize};
@@ -545,10 +548,10 @@ mod tests {
         let err = HEVCDecoderConfigurationRecord::parse(&body).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(InvalidValue {
                 field: "lengthSizeMinusOne",
                 ..
-            }
+            })
         ));
     }
 

@@ -26,11 +26,10 @@ use alloc::collections::{BTreeSet, VecDeque};
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use crate::error::{Error, Result};
-use crate::packet::data::MESSAGE_NUMBER_MASK;
+use crate::error::Result;
 use crate::packet::{
     AckAckPacket, AckCif, AckPacket, ControlPacket, DataPacket, EncryptionKeyField, LossListEntry,
-    NakPacket, PacketPosition, SEQ_NUMBER_MASK,
+    NakPacket, PacketPosition,
 };
 
 use super::rtt::RttEstimator;
@@ -153,7 +152,7 @@ impl Sender {
     /// buffer is searched by binary search, and a debug build asserts it.
     ///
     /// # Errors
-    /// [`Error::FieldTooWide`] if `seq` does not fit its 31-bit field or
+    /// [`crate::error::Error::FieldOverflow`] if `seq` does not fit its 31-bit field or
     /// `message_number` its 26-bit one; nothing is buffered then.
     pub fn on_data(
         &mut self,
@@ -165,20 +164,8 @@ impl Sender {
         // The wire fields are 31 and 26 bits wide (§3.1): a wider value is a
         // caller bug, reported rather than silently wrapped into another
         // packet's number.
-        if seq > SEQ_NUMBER_MASK {
-            return Err(Error::FieldTooWide {
-                what: "Packet Sequence Number",
-                value: u64::from(seq),
-                bits: 31,
-            });
-        }
-        if message_number > MESSAGE_NUMBER_MASK {
-            return Err(Error::FieldTooWide {
-                what: "Message Number",
-                value: u64::from(message_number),
-                bits: 26,
-            });
-        }
+        broadcast_common::len::fit_bits(u64::from(seq), 31, "Packet Sequence Number")?;
+        broadcast_common::len::fit_bits(u64::from(message_number), 26, "Message Number")?;
         debug_assert!(
             self.buffer
                 .back()
@@ -218,20 +205,8 @@ impl Sender {
         key_flag: EncryptionKeyField,
         now: Duration,
     ) -> Result<Vec<u8>> {
-        if seq > SEQ_NUMBER_MASK {
-            return Err(Error::FieldTooWide {
-                what: "Packet Sequence Number",
-                value: u64::from(seq),
-                bits: 31,
-            });
-        }
-        if message_number > MESSAGE_NUMBER_MASK {
-            return Err(Error::FieldTooWide {
-                what: "Message Number",
-                value: u64::from(message_number),
-                bits: 26,
-            });
-        }
+        broadcast_common::len::fit_bits(u64::from(seq), 31, "Packet Sequence Number")?;
+        broadcast_common::len::fit_bits(u64::from(message_number), 26, "Message Number")?;
         debug_assert!(
             self.buffer
                 .back()
@@ -400,6 +375,9 @@ impl Sender {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
+    use crate::packet::SEQ_NUMBER_MASK;
+    use crate::packet::data::MESSAGE_NUMBER_MASK;
     use crate::packet::nak::build_loss_list;
 
     const PEER: u32 = 0xAAAA;
@@ -636,11 +614,11 @@ mod tests {
         let mut s = Sender::new(PEER);
         assert!(matches!(
             s.on_data(SEQ_NUMBER_MASK + 1, 0, b"x", Duration::ZERO),
-            Err(Error::FieldTooWide { bits: 31, .. })
+            Err(Error::FieldOverflow(e)) if e.max == u64::from(SEQ_NUMBER_MASK)
         ));
         assert!(matches!(
             s.on_data(0, MESSAGE_NUMBER_MASK + 1, b"x", Duration::ZERO),
-            Err(Error::FieldTooWide { bits: 26, .. })
+            Err(Error::FieldOverflow(e)) if e.max == u64::from(MESSAGE_NUMBER_MASK)
         ));
         assert_eq!(s.buffered_count(), 0, "a rejected packet is not buffered");
         let bytes = s

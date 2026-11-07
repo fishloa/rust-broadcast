@@ -16,6 +16,7 @@
 use crate::error::{Error, Result};
 use crate::init_segment::{bounded_entry_count, flat_table_len, serialize_flat_table};
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
@@ -97,11 +98,11 @@ impl<'a> Parse<'a> for TimeToSampleBox {
         need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "stts box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != STTS_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected stts",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
@@ -203,11 +204,11 @@ impl<'a> Parse<'a> for CompositionOffsetBox {
         need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "ctts box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != CTTS_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected ctts",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
@@ -268,11 +269,11 @@ impl CompositionToDecodeBox {
             (8, "cslg v1 field")
         };
         if payload.len() < fld_size * 5 {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: FULLBOX_EXTRA_SIZE + fld_size * 5,
                 have: body.len(),
                 what: have,
-            });
+            }));
         }
         let mut c = 0usize;
         let read_i64 = |buf: &[u8], off: usize, sz: usize| -> i64 {
@@ -318,11 +319,11 @@ impl<'a> Parse<'a> for CompositionToDecodeBox {
         need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "cslg box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != CSLG_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected cslg",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
@@ -470,11 +471,11 @@ impl<'a> Parse<'a> for EditListBox {
         need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "elst box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != ELST_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected elst",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
@@ -678,11 +679,11 @@ impl<'a> Parse<'a> for SegmentIndexBox {
         need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "sidx box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != SIDX_TYPE {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "box_type",
                 value: ty as u64,
                 reason: "expected sidx",
-            });
+            }));
         }
         Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
@@ -870,10 +871,7 @@ mod tests {
     fn ctts_parse_wrong_type() {
         let bytes = [0, 0, 0, 16, b'x', b'x', b'x', b'x', 0, 0, 0, 0, 0, 0, 0, 0];
         let result = CompositionOffsetBox::parse(&bytes);
-        assert!(matches!(
-            result,
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert!(matches!(result, Err(crate::error::Error::InvalidValue(..))));
     }
 
     // -----------------------------------------------------------------------

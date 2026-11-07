@@ -23,6 +23,7 @@
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -39,15 +40,17 @@ fn parse_cstring(buf: &[u8], pos: usize) -> Result<(String, usize)> {
     let nul = rest
         .iter()
         .position(|&b| b == 0)
-        .ok_or(Error::BufferTooShort {
+        .ok_or(Error::BufferTooShort(BufferTooShort {
             need: pos + rest.len() + 1,
             have: buf.len(),
             what: "null-terminated string",
-        })?;
-    let s = core::str::from_utf8(&rest[..nul]).map_err(|_| Error::InvalidValue {
-        field: "utf8 string",
-        value: 0,
-        reason: "invalid UTF-8 in null-terminated string",
+        }))?;
+    let s = core::str::from_utf8(&rest[..nul]).map_err(|_| {
+        Error::InvalidValue(InvalidValue {
+            field: "utf8 string",
+            value: 0,
+            reason: "invalid UTF-8 in null-terminated string",
+        })
     })?;
     Ok((String::from(s), pos + nul + 1))
 }
@@ -233,11 +236,11 @@ macro_rules! utf8_text_box {
             pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
                 need_in(bytes, BOX_HDR, $fourcc)?;
                 let body = &bytes[crate::box_types::box_header_len(bytes)?..];
-                let text = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
+                let text = core::str::from_utf8(body).map_err(|_| Error::InvalidValue(InvalidValue {
                     field: concat!($fourcc, " ", stringify!($field)),
                     value: 0,
                     reason: concat!("invalid UTF-8 in ", $fourcc, " ", stringify!($field)),
-                })?;
+                }))?;
                 Ok(Self {
                     $field: String::from(text),
                 })
@@ -434,11 +437,11 @@ impl VttCueBox {
             }
             pos = pos.saturating_add(sz);
         }
-        let payload = payload.ok_or(Error::BufferTooShort {
+        let payload = payload.ok_or(Error::BufferTooShort(BufferTooShort {
             need: 0,
             have: 0,
             what: "vttc missing required payl child",
-        })?;
+        }))?;
         Ok(Self {
             payload,
             settings,
@@ -476,11 +479,11 @@ impl VttCueBox {
 
 /// A `vttc` child that the class admits at most once appeared a second time.
 fn duplicate_cue_child(field: &'static str) -> Error {
-    Error::InvalidValue {
+    Error::InvalidValue(InvalidValue {
         field,
         value: 2,
         reason: "vttc admits at most one such child (ISO/IEC 14496-30 VTTCueBox)",
-    }
+    })
 }
 
 impl<'a> Parse<'a> for VttCueBox {
@@ -610,11 +613,11 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
         need_in(rest, BOX_HDR, "wvtt sample box header")?;
         let size = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
         if size < BOX_HDR || size > rest.len() {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "wvtt sample box size",
                 value: size as u64,
                 reason: "box size is below the 8-byte header or past the end of the sample",
-            });
+            }));
         }
         let boxed = &rest[..size];
         out.push(match &boxed[4..8] {
@@ -737,11 +740,11 @@ impl WvttSampleEntry {
             pos = pos.saturating_add(sz);
         }
 
-        let config = config.ok_or(Error::BufferTooShort {
+        let config = config.ok_or(Error::BufferTooShort(BufferTooShort {
             need: 0,
             have: 0,
             what: "wvtt missing required vttC child",
-        })?;
+        }))?;
 
         Ok(Self {
             data_reference_index,
@@ -798,6 +801,8 @@ impl Serialize for WvttSampleEntry {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
     use broadcast_common::Serialize;
 
@@ -878,18 +883,18 @@ mod tests {
         // A box that runs past the sample is an error, not a silent truncation.
         assert!(matches!(
             parse_wvtt_sample(&bytes[..bytes.len() - 1]),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "wvtt sample box size",
                 ..
-            })
+            }))
         ));
         assert!(matches!(
             parse_wvtt_sample(&[0, 0, 0, 4, b'v', b't', b't', b'e']),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(InvalidValue {
                 field: "wvtt sample box size",
                 value: 4,
                 ..
-            })
+            }))
         ));
     }
 

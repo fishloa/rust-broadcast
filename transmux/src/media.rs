@@ -219,7 +219,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 // usertype cut short (`UuidBufferTooShort`), and a `largesize`
                 // field cut short (`LargesizeBufferTooShort`) — and all three
                 // mean the same thing at the tail (audit item 9, round 3).
-                Err(Error::BufferTooShort { .. })
+                Err(Error::BufferTooShort(..))
                 | Err(Error::UuidBufferTooShort { .. })
                 | Err(Error::LargesizeBufferTooShort { .. }) => break,
                 Err(e) => return Err(e),

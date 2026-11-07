@@ -32,6 +32,7 @@
 //! See ISO/IEC 14496-12:2015 §4.2 (fulltext L1254–L1304).
 
 use crate::error::{Error, Result};
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
@@ -403,11 +404,11 @@ pub(crate) fn box_body<'a>(
     let hdr = box_header_len(bytes)?;
     let body = &bytes[hdr..];
     if body.len() < min_body {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: hdr + min_body,
             have: bytes.len(),
             what,
-        });
+        }));
     }
     Ok(body)
 }
@@ -562,19 +563,21 @@ impl Serialize for BoxHeader {
             // largesize marker with no largesize following, so a header that
             // declares no largesize must not claim that size.
             if self.size == SIZE_INDICATES_LARGESIZE as u64 {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "BoxHeader.size",
                     value: self.size,
                     reason: "size 1 signals a 64-bit largesize, but has_largesize is false",
-                });
+                }));
             }
             // The compact form's 32-bit field cannot hold a larger size; a
             // header that claims one without setting `has_largesize` would
             // silently wrap (r04-W8).
-            let size32 = u32::try_from(self.size).map_err(|_| Error::InvalidValue {
-                field: "BoxHeader.size",
-                value: self.size,
-                reason: "size exceeds the 32-bit field and has_largesize is false",
+            let size32 = u32::try_from(self.size).map_err(|_| {
+                Error::InvalidValue(InvalidValue {
+                    field: "BoxHeader.size",
+                    value: self.size,
+                    reason: "size exceeds the 32-bit field and has_largesize is false",
+                })
             })?;
             buf[0..4].copy_from_slice(&size32.to_be_bytes());
             cursor += 4;
@@ -587,11 +590,11 @@ impl Serialize for BoxHeader {
         // and write nothing into it.
         if self.box_type.is(b"uuid") {
             let Some(ut) = &self.usertype else {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: "BoxHeader.usertype",
                     value: 0,
                     reason: "a uuid box header requires a 16-byte usertype",
-                });
+                }));
             };
             buf[cursor..cursor + UUID_TYPE_SIZE].copy_from_slice(ut);
             cursor += UUID_TYPE_SIZE;
@@ -703,10 +706,12 @@ pub fn parse_box<'a>(bytes: &'a [u8]) -> Result<(BoxRef<'a>, usize)> {
         // To end of buffer.
         &bytes[hdr_sz..]
     } else {
-        let total = usize::try_from(header.size).map_err(|_| Error::BufferTooShort {
-            need: usize::MAX,
-            have: bytes.len(),
-            what: "BoxRef body",
+        let total = usize::try_from(header.size).map_err(|_| {
+            Error::BufferTooShort(BufferTooShort {
+                need: usize::MAX,
+                have: bytes.len(),
+                what: "BoxRef body",
+            })
         })?;
         if total < hdr_sz {
             return Err(Error::BoxSizeUnderflow {
@@ -915,6 +920,8 @@ pub(crate) fn descend_boxes<'a>(start: &'a [u8], path: &[&[u8; 4]]) -> Option<&'
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::{BufferTooShort, InvalidValue};
+
     use super::*;
     use broadcast_common::{Parse, Serialize};
 
@@ -958,10 +965,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "BoxHeader.size",
                     ..
-                }
+                })
             ),
             "expected InvalidValue for an oversized compact size, got {err:?}"
         );
@@ -1005,10 +1012,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "BoxHeader.usertype",
                     ..
-                }
+                })
             ),
             "expected InvalidValue for the missing usertype, got {err:?}"
         );
@@ -1029,10 +1036,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidValue {
+                Error::InvalidValue(InvalidValue {
                     field: "BoxHeader.size",
                     ..
-                }
+                })
             ),
             "{err:?}"
         );
@@ -1112,7 +1119,10 @@ mod tests {
     fn test_box_header_too_short() {
         let too_short = [0u8; 4];
         let err = BoxHeader::parse(&too_short).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { need: 8, .. }));
+        assert!(matches!(
+            err,
+            Error::BufferTooShort(BufferTooShort { need: 8, .. })
+        ));
     }
 
     #[test]
@@ -1356,6 +1366,8 @@ mod tests {
 /// with a small real payload from a committed fixture.
 #[cfg(test)]
 mod largesize_tests {
+    use broadcast_common::error::OutputBufferTooSmall;
+
     use super::*;
     use crate::{MovieBox, MovieFragmentBox};
     use broadcast_common::{Parse, Serialize};
@@ -1436,7 +1448,7 @@ mod largesize_tests {
         let err = write_box_header(&mut buf, b"stts", 1usize << 32).unwrap_err();
         assert!(matches!(
             err,
-            Error::OutputBufferTooSmall { need: 16, have: 12 }
+            Error::OutputBufferTooSmall(OutputBufferTooSmall { need: 16, have: 12 })
         ));
     }
 

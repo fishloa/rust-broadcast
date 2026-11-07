@@ -75,6 +75,7 @@
 use crate::TrackId;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use core::fmt;
 use core::str::FromStr;
 
@@ -785,15 +786,19 @@ pub fn track_spec_from_quality_level(
                 .and_then(|s| s.decode().ok())
                 .map(|info| {
                     Ok::<_, CrateError>((
-                        u16::try_from(info.width).map_err(|_| CrateError::InvalidValue {
-                            field: "SPS sps_pic_width_max_in_luma_samples",
-                            value: u64::from(info.width),
-                            reason: "does not fit the IR's 16-bit dimension field",
+                        u16::try_from(info.width).map_err(|_| {
+                            CrateError::InvalidValue(InvalidValue {
+                                field: "SPS sps_pic_width_max_in_luma_samples",
+                                value: u64::from(info.width),
+                                reason: "does not fit the IR's 16-bit dimension field",
+                            })
                         })?,
-                        u16::try_from(info.height).map_err(|_| CrateError::InvalidValue {
-                            field: "SPS sps_pic_height_max_in_luma_samples",
-                            value: u64::from(info.height),
-                            reason: "does not fit the IR's 16-bit dimension field",
+                        u16::try_from(info.height).map_err(|_| {
+                            CrateError::InvalidValue(InvalidValue {
+                                field: "SPS sps_pic_height_max_in_luma_samples",
+                                value: u64::from(info.height),
+                                reason: "does not fit the IR's 16-bit dimension field",
+                            })
                         })?,
                     ))
                 })
@@ -882,10 +887,12 @@ fn is_fourcc(value: &str, expected: &str) -> bool {
 /// over-range value rather than truncating it (the `#997` class).
 fn checked_u16(value: Option<u32>, field: &'static str) -> CrateResult<u16> {
     match value {
-        Some(v) => u16::try_from(v).map_err(|_| CrateError::InvalidValue {
-            field,
-            value: u64::from(v),
-            reason: "does not fit the IR's 16-bit dimension field",
+        Some(v) => u16::try_from(v).map_err(|_| {
+            CrateError::InvalidValue(InvalidValue {
+                field,
+                value: u64::from(v),
+                reason: "does not fit the IR's 16-bit dimension field",
+            })
         }),
         None => Ok(0),
     }
@@ -998,6 +1005,8 @@ fn channel_configuration_for(channels: u16) -> CrateResult<u8> {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::InvalidValue;
+
     use super::*;
 
     /// Character data inside a skipped subtree (e.g. `<Protection>`) or between
@@ -1737,11 +1746,11 @@ mod tests {
             .expect("the oversize SPS decodes");
         assert_eq!(decoded.width, 65_536);
         match track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality) {
-            Err(CrateError::InvalidValue {
+            Err(CrateError::InvalidValue(InvalidValue {
                 field: "SPS sps_pic_width_max_in_luma_samples",
                 value: 65_536,
                 ..
-            }) => {}
+            })) => {}
             other => panic!("expected an SPS width overflow InvalidValue, got {other:?}"),
         }
     }
@@ -1768,11 +1777,11 @@ mod tests {
             audio_tag: None,
         };
         match track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality) {
-            Err(CrateError::InvalidValue {
+            Err(CrateError::InvalidValue(InvalidValue {
                 field: "QualityLevel@MaxWidth",
                 value: 70_000,
                 ..
-            }) => {}
+            })) => {}
             other => panic!("expected a MaxWidth overflow error, got {other:?}"),
         }
     }

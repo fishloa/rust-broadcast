@@ -18,15 +18,8 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
-    #[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]
-    BufferTooShort {
-        /// Bytes required to proceed.
-        need: usize,
-        /// Bytes actually available.
-        have: usize,
-        /// Human-readable name of the type or field being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Box size was declared as 1 (triggers largesize) but fewer than 8 bytes available.
     #[error("largesize indicated but buffer too short: need {need}, have {have}")]
@@ -56,24 +49,12 @@ pub enum Error {
     },
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
-    #[error("serialize: output buffer too small — need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Required size.
-        need: usize,
-        /// Actual size.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// A field had an invalid or reserved value.
-    #[error("invalid {field}: {reason} (value: 0x{value:X})")]
-    InvalidValue {
-        /// Name of the field.
-        field: &'static str,
-        /// The parsed value.
-        value: u64,
-        /// Human-readable explanation.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
 
     /// A box did not carry the four-CC the parser expected.
     #[error("unexpected box: expected {expected}")]
@@ -261,7 +242,7 @@ pub enum Error {
     /// masked it) would have silently wrapped and emitted a misframed box or
     /// section; this is returned instead.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
 
     /// The input needs a feature this crate does not implement yet.
     ///
@@ -301,23 +282,4 @@ pub enum Error {
         /// The `main_adaptation_set_id` supplied by the caller.
         main_adaptation_set_id: u32,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

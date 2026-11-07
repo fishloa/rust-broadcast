@@ -44,7 +44,7 @@ fn invalid_bytes_and_whitespace_are_errors() {
         assert!(
             matches!(
                 base64_decode(bad),
-                Err(transmux::error::Error::InvalidValue { .. })
+                Err(transmux::error::Error::InvalidValue(..))
             ),
             "{bad:?}"
         );
@@ -58,7 +58,7 @@ fn invalid_bytes_and_whitespace_are_errors() {
 fn stray_equals_inside_the_data_is_an_error() {
     assert!(matches!(
         base64_decode("Zm9v=YmFy"),
-        Err(transmux::error::Error::InvalidValue { .. })
+        Err(transmux::error::Error::InvalidValue(..))
     ));
 }
 
@@ -87,7 +87,7 @@ fn truncated_last_quantum_and_excess_padding_are_errors() {
         assert!(
             matches!(
                 base64_decode(bad),
-                Err(transmux::error::Error::InvalidValue { .. })
+                Err(transmux::error::Error::InvalidValue(..))
             ),
             "{bad:?}"
         );

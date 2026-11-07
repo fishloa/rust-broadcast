@@ -10,33 +10,14 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
     /// A field value did not fit in its wire bit-width.
-    #[error("field {what} value {value} does not fit in {bits} bits")]
-    FieldTooWide {
-        /// The over-wide field name.
-        what: &'static str,
-        /// The offending value.
-        value: u64,
-        /// The field width on the wire.
-        bits: u32,
-    },
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
     /// The Control Information Field length did not match any known ACK
     /// variant (Full / Small / Light — `draft-sharabayko-srt-01` §3.2.4).
     #[error("ACK CIF length {len} does not match Full (28), Small (16), or Light (4)")]
@@ -85,22 +66,12 @@ pub enum Error {
     /// §3.2, e.g. `Subtype` on a defined control type, or the header
     /// `Type-specific Information` word where the packet type does not use
     /// it) carried a non-zero value.
-    #[error("reserved field {what} must be zero, found {value:#x}")]
-    ReservedFieldNotZero {
-        /// The offending field.
-        what: &'static str,
-        /// The non-zero value found.
-        value: u64,
-    },
+    #[error(transparent)]
+    ReservedBits(#[from] broadcast_common::error::ReservedBits),
     /// A general structural constraint (not a bit-width overflow) was
     /// violated — e.g. a length that must be a whole number of 4-byte words.
-    #[error("invalid {what}: {reason}")]
-    InvalidField {
-        /// The offending field/value.
-        what: &'static str,
-        /// Why it is invalid.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
     /// A Control Information Field documented as absent (Keep-Alive,
     /// Congestion Warning, Shutdown, ACKACK, Peer Error — §3.2) carried extra
     /// bytes.
@@ -171,23 +142,4 @@ pub enum Error {
         /// `"send"`).
         context: &'static str,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

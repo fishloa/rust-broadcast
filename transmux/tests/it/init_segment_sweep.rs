@@ -185,7 +185,7 @@ fn a_moov_with_trailing_partial_bytes_is_rejected() {
         patched[..4].copy_from_slice(&new_size.to_be_bytes());
         let err = MovieBox::parse(&patched).expect_err("trailing partial bytes must be rejected");
         assert!(
-            matches!(err, transmux::Error::BufferTooShort { .. }),
+            matches!(err, transmux::Error::BufferTooShort(..)),
             "extra={extra}: expected BufferTooShort, got {err:?}"
         );
     }
@@ -337,7 +337,7 @@ fn vp09_truncated_child_is_an_error() {
         .expect_err("a truncated sample-entry child must be rejected");
 
     assert!(
-        matches!(err, transmux::Error::BufferTooShort { .. }),
+        matches!(err, transmux::Error::BufferTooShort(..)),
         "expected BufferTooShort, got {err:?}"
     );
 }

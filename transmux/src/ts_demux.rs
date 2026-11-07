@@ -229,6 +229,7 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 use mpeg_ts::pid::Pid;
@@ -929,7 +930,7 @@ fn sync_from_parse<H>(r: Result<H>, frame_len: impl FnOnce(&H) -> Option<usize>)
             Some(len) if len != 0 => SyncParse::Frame(h, len),
             _ => SyncParse::NotSync,
         },
-        Err(Error::BufferTooShort { .. }) => SyncParse::NeedMore,
+        Err(Error::BufferTooShort(..)) => SyncParse::NeedMore,
         Err(_) => SyncParse::NotSync,
     }
 }
@@ -1248,11 +1249,11 @@ struct PmtSectionHeader {
 /// **applied** version), before paying for the ES-loop walk in [`parse_pmt`].
 fn parse_pmt_section_header(section: &[u8]) -> Result<PmtSectionHeader> {
     if section.first().copied() != Some(TABLE_ID_PMT) {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "table_id",
             value: section.first().copied().unwrap_or(0) as u64,
             reason: "not a PMT section",
-        });
+        }));
     }
     need_in(section, SECTION_HEADER_LEN, "PMT section header")?;
     Ok(PmtSectionHeader {
@@ -1309,11 +1310,11 @@ fn parse_pmt(section: &[u8]) -> Result<Vec<(Pid, Codec, Vec<u8>)>> {
 /// bounded by the declared `section_length`.
 fn section_body<'a>(section: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
     if section.len() < SECTION_HEADER_LEN + CRC32_LEN {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: SECTION_HEADER_LEN + CRC32_LEN,
             have: section.len(),
             what,
-        });
+        }));
     }
     // section_length counts the bytes AFTER the 3-byte header, i.e. through CRC.
     let section_length =
@@ -1321,11 +1322,11 @@ fn section_body<'a>(section: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
     let total = 3 + section_length;
     let end = total.min(section.len());
     if end < SECTION_HEADER_LEN + CRC32_LEN {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: SECTION_HEADER_LEN + CRC32_LEN,
             have: end,
             what,
-        });
+        }));
     }
     Ok(&section[SECTION_HEADER_LEN..end - CRC32_LEN])
 }

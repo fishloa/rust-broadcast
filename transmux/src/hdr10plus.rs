@@ -32,6 +32,7 @@ use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -249,11 +250,11 @@ fn read_lut(r: &mut BitReader<'_>, what: &'static str) -> Result<PeakLuminanceTa
     let rows = read(r, LUT_DIMENSION_BITS, what)? as u8;
     let columns = read(r, LUT_DIMENSION_BITS, what)? as u8;
     if rows > LUT_MAX_DIMENSION || columns > LUT_MAX_DIMENSION {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: what,
             value: u64::from(rows.max(columns)),
             reason: "more than 25 rows or columns (ST 2094-40 clause 7.2)",
-        });
+        }));
     }
     let count = usize::from(rows) * usize::from(columns);
     let mut values = Vec::with_capacity(count);
@@ -284,11 +285,11 @@ fn write_lut(
         || l.columns > LUT_MAX_DIMENSION
         || l.values.len() != usize::from(l.rows) * usize::from(l.columns)
     {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: what,
             value: l.values.len() as u64,
             reason: "table size disagrees with rows x columns or exceeds 25x25",
-        });
+        }));
     }
     write_bits_checked(w, u64::from(l.rows), LUT_DIMENSION_BITS, what)?;
     write_bits_checked(w, u64::from(l.columns), LUT_DIMENSION_BITS, what)?;
@@ -687,36 +688,36 @@ impl<'a> Parse<'a> for Hdr10PlusMetadata {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, T35_HEADER_LEN, "HDR10+ T.35 header")?;
         if bytes[..T35_HEADER_LEN - 2] != T35_HEADER_V1[..T35_HEADER_LEN - 2] {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "itu_t_t35 header",
                 value: u64::from(bytes[0]),
                 reason: "not the HDR10+ country/provider/oriented code",
-            });
+            }));
         }
         if bytes[T35_HEADER_LEN - 2] != APPLICATION_IDENTIFIER {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "application_identifier",
                 value: u64::from(bytes[T35_HEADER_LEN - 2]),
                 reason: "ST 2094-40 clause 5 requires 4",
-            });
+            }));
         }
         let application_version = bytes[T35_HEADER_LEN - 1];
         if application_version > APPLICATION_VERSION_MAX {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "application_version",
                 value: u64::from(application_version),
                 reason: "ST 2094-40 clause 5 allows 0 or 1",
-            });
+            }));
         }
 
         let mut r = BitReader::new(&bytes[T35_HEADER_LEN..]);
         let num_windows = read(&mut r, NUM_WINDOWS_BITS, "num_windows")? as usize;
         if !(MIN_WINDOWS..=MAX_WINDOWS).contains(&num_windows) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "num_windows",
                 value: num_windows as u64,
                 reason: "ST 2094-40 clause 9.2 allows 1 to 3 windows",
-            });
+            }));
         }
         let mut regions = Vec::with_capacity(num_windows - 1);
         for _ in 1..num_windows {
@@ -760,21 +761,21 @@ impl<'a> Parse<'a> for Hdr10PlusMetadata {
 
         let pad = r.bits_remaining();
         if pad >= BITS_PER_BYTE as usize {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "HDR10+ payload",
                 value: (pad / BITS_PER_BYTE as usize) as u64,
                 reason: "trailing bytes after the defined syntax",
-            });
+            }));
         }
         let alignment_padding = read(&mut r, pad as u32, "alignment padding")? as u8;
 
         let mut transforms = transforms.into_iter();
         let Some(primary_window) = transforms.next() else {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "num_windows",
                 value: 0,
                 reason: "at least one window is required",
-            });
+            }));
         };
         let additional_windows = regions
             .into_iter()
@@ -807,18 +808,18 @@ impl Serialize for Hdr10PlusMetadata {
         let need = self.serialized_len();
         need_out(buf, need)?;
         if self.application_version > APPLICATION_VERSION_MAX {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "application_version",
                 value: u64::from(self.application_version),
                 reason: "ST 2094-40 clause 5 allows 0 or 1",
-            });
+            }));
         }
         if self.num_windows() > MAX_WINDOWS {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "num_windows",
                 value: self.num_windows() as u64,
                 reason: "ST 2094-40 clause 9.2 allows 1 to 3 windows",
-            });
+            }));
         }
         buf[..T35_HEADER_LEN - 1].copy_from_slice(&T35_HEADER_V1[..T35_HEADER_LEN - 1]);
         buf[T35_HEADER_LEN - 1] = self.application_version;
@@ -865,11 +866,11 @@ impl Serialize for Hdr10PlusMetadata {
                 "alignment padding",
             )?;
         } else if self.alignment_padding != 0 {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "alignment padding",
                 value: u64::from(self.alignment_padding),
                 reason: "payload is byte aligned, there are no padding bits",
-            });
+            }));
         }
         Ok(need)
     }

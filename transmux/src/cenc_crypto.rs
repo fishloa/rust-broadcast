@@ -63,6 +63,7 @@
 
 use aes::cipher::Block;
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, StreamCipher};
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use bytes::{Bytes, BytesMut};
 
 use crate::cenc::{CencScheme, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
@@ -145,11 +146,11 @@ fn validate_subsample_map(subsamples: &[SubSampleEntry], data_len: usize) -> Res
                 "CENC subsample protected length overflow",
             ))?;
         if end > data_len {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: end,
                 have: data_len,
                 what: "CENC subsample range exceeds sample",
-            });
+            }));
         }
         offset = end;
     }
@@ -177,11 +178,11 @@ const VALID_IV_LENS: [usize; 2] = [8, 16];
 /// Reject an IV length that is not exactly 8 or 16 bytes.
 fn check_iv_len(len: usize) -> Result<()> {
     if !VALID_IV_LENS.contains(&len) {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: "CENC IV length",
             value: len as u64,
             reason: "ISO/IEC 23001-7 §9.2/§12.2 permit only 8 or 16 bytes",
-        });
+        }));
     }
     Ok(())
 }
@@ -764,7 +765,7 @@ mod tests {
             let untouched = data.clone();
             let err = apply_ctr(&iv, &KEY, &[], &mut data).unwrap_err();
             assert!(
-                matches!(err, Error::InvalidValue { .. }),
+                matches!(err, Error::InvalidValue(..)),
                 "len {len}: expected InvalidValue, got {err:?}"
             );
             assert_eq!(
@@ -795,7 +796,7 @@ mod tests {
         };
         let mut data: Vec<u8> = (0u8..64).collect();
         let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }), "got {err:?}");
+        assert!(matches!(err, Error::InvalidValue(..)), "got {err:?}");
 
         // Same rejection when the 12-byte IV instead comes from
         // `tenc.default_constant_IV` (empty per-sample IV, constant-IV
@@ -818,7 +819,7 @@ mod tests {
             CbcsOp::Decrypt,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }), "got {err:?}");
+        assert!(matches!(err, Error::InvalidValue(..)), "got {err:?}");
     }
 
     /// A subsample map covering only part of the sample must error — ISO/IEC
@@ -911,10 +912,7 @@ mod tests {
                 }
             })
             .expect_err("an overrunning subsample map must be rejected");
-            assert!(
-                matches!(err, Error::BufferTooShort { .. }),
-                "{label}: {err:?}"
-            );
+            assert!(matches!(err, Error::BufferTooShort(..)), "{label}: {err:?}");
             assert_eq!(
                 &data[..],
                 &plaintext[..],

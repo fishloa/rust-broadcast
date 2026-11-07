@@ -5,9 +5,8 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Added
-- `From<broadcast_common::len::BufferTooShort>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
+- BREAKING: error variant `RtmpError::BufferTooShort` now wraps `broadcast_common::error::BufferTooShort` (same `need`/`have`/`what`; the message text is the shared one).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - Server and client connection adapters share one private `Driver` and `SessionCodec` over an `RtmpSession` trait; no public API change (c3 R1).
 - Dropped the unused `log` dependency (c2 TH4).

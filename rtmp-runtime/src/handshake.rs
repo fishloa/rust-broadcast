@@ -320,6 +320,8 @@ impl Handshake {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::BufferTooShort;
+
     use super::*;
 
     fn patterned_random(seed: u8) -> [u8; RANDOM_LEN] {
@@ -356,11 +358,11 @@ mod tests {
         let bytes: [u8; 0] = [];
         assert!(matches!(
             Version::parse(&bytes),
-            Err(RtmpError::BufferTooShort {
+            Err(RtmpError::BufferTooShort(BufferTooShort {
                 need: VERSION_LEN,
                 have: 0,
                 ..
-            })
+            }))
         ));
     }
 
@@ -401,11 +403,11 @@ mod tests {
         let bytes = [0u8; HANDSHAKE_PACKET_LEN - 1];
         assert!(matches!(
             HandshakePacket::parse(&bytes),
-            Err(RtmpError::BufferTooShort {
+            Err(RtmpError::BufferTooShort(BufferTooShort {
                 need: HANDSHAKE_PACKET_LEN,
                 have,
                 ..
-            }) if have == HANDSHAKE_PACKET_LEN - 1
+            })) if have == HANDSHAKE_PACKET_LEN - 1
         ));
     }
 
@@ -444,11 +446,11 @@ mod tests {
         let bytes = [0u8; 10];
         assert!(matches!(
             EchoPacket::parse(&bytes),
-            Err(RtmpError::BufferTooShort {
+            Err(RtmpError::BufferTooShort(BufferTooShort {
                 need: HANDSHAKE_PACKET_LEN,
                 have: 10,
                 ..
-            })
+            }))
         ));
     }
 
@@ -547,7 +549,7 @@ mod tests {
         let full = build_c0_c1(0, patterned_random(1));
         let partial = &full[..full.len() - 1];
         let err = hs.read(partial).unwrap_err();
-        assert!(matches!(err, RtmpError::BufferTooShort { .. }));
+        assert!(matches!(err, RtmpError::BufferTooShort(..)));
         assert!(!hs.is_done(), "state must not advance on a short read");
     }
 
@@ -561,7 +563,7 @@ mod tests {
         let full_c2 = build_c2(0, 0, patterned_random(2));
         let partial_c2 = &full_c2[..full_c2.len() - 1];
         let err = hs.read(partial_c2).unwrap_err();
-        assert!(matches!(err, RtmpError::BufferTooShort { .. }));
+        assert!(matches!(err, RtmpError::BufferTooShort(..)));
         assert!(
             !hs.is_done(),
             "state must not advance to Done on a short C2 read"

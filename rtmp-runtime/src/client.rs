@@ -8,6 +8,7 @@
 //! automatically emits `createStream`, and a successful `createStream`
 //! `_result` emits `publish`.
 
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
@@ -424,7 +425,7 @@ impl ClientSession {
                         out.extend_from_slice(&self.build_connect()?);
                     }
                 }
-                Err(RtmpError::BufferTooShort { .. }) => {
+                Err(RtmpError::BufferTooShort(..)) => {
                     return Ok(None);
                 }
                 Err(e) => return Err(e),
@@ -662,11 +663,14 @@ impl ClientSession {
             self.handle_command(&cmd, out, events)?;
         }
         if msg.message_type_id == msg_type::COMMAND_AMF3 {
-            let body = msg.payload.get(1..).ok_or(RtmpError::BufferTooShort {
-                need: 1,
-                have: msg.payload.len(),
-                what: "AMF3 command encoding marker byte",
-            })?;
+            let body = msg
+                .payload
+                .get(1..)
+                .ok_or(RtmpError::BufferTooShort(BufferTooShort {
+                    need: 1,
+                    have: msg.payload.len(),
+                    what: "AMF3 command encoding marker byte",
+                }))?;
             let cmd = Command::parse(body)?;
             self.handle_command(&cmd, out, events)?;
         }

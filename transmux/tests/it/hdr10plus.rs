@@ -9,6 +9,7 @@
 #![cfg(feature = "std")]
 
 use crate::bit_writer::BitWriter;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::mux::{Package, Unpackage};
 use broadcast_common::{Parse, Serialize};
 use transmux::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
@@ -371,7 +372,7 @@ fn malformed_payloads_are_rejected() {
         assert!(
             matches!(
                 Hdr10PlusMetadata::parse(&good[..cut]),
-                Err(transmux::error::Error::BufferTooShort { .. })
+                Err(transmux::error::Error::BufferTooShort(..))
             ),
             "cut {cut}"
         );
@@ -380,31 +381,31 @@ fn malformed_payloads_are_rejected() {
     extra.push(0);
     assert!(matches!(
         Hdr10PlusMetadata::parse(&extra),
-        Err(transmux::error::Error::InvalidValue { .. })
+        Err(transmux::error::Error::InvalidValue(..))
     ));
     let mut zero_windows = good.clone();
     zero_windows[7] &= 0b0011_1111;
     assert!(matches!(
         Hdr10PlusMetadata::parse(&zero_windows),
-        Err(transmux::error::Error::InvalidValue { .. })
+        Err(transmux::error::Error::InvalidValue(..))
     ));
     let mut wrong_provider = good.clone();
     wrong_provider[2] = 0x3D;
     assert!(matches!(
         Hdr10PlusMetadata::parse(&wrong_provider),
-        Err(transmux::error::Error::InvalidValue { .. })
+        Err(transmux::error::Error::InvalidValue(..))
     ));
     let mut wrong_app = good.clone();
     wrong_app[5] = 5;
     assert!(matches!(
         Hdr10PlusMetadata::parse(&wrong_app),
-        Err(transmux::error::Error::InvalidValue { .. })
+        Err(transmux::error::Error::InvalidValue(..))
     ));
     let mut wrong_version = good;
     wrong_version[6] = 2;
     assert!(matches!(
         Hdr10PlusMetadata::parse(&wrong_version),
-        Err(transmux::error::Error::InvalidValue { .. })
+        Err(transmux::error::Error::InvalidValue(..))
     ));
 }
 
@@ -433,10 +434,10 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
     });
     assert!(matches!(
         bad_table.try_to_bytes(),
-        Err(transmux::Error::InvalidValue {
+        Err(transmux::Error::InvalidValue(InvalidValue {
             field: "mastering_display_actual_peak_luminance",
             ..
-        })
+        }))
     ));
     let mut too_many_windows = base.clone();
     for k in 0..3 {
@@ -447,11 +448,11 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
     }
     assert!(matches!(
         too_many_windows.try_to_bytes(),
-        Err(transmux::Error::InvalidValue {
+        Err(transmux::Error::InvalidValue(InvalidValue {
             field: "num_windows",
             value: 4,
             ..
-        })
+        }))
     ));
     let mut too_many_points = base;
     too_many_points.primary_window.distribution_max_rgb = (0..16u32)

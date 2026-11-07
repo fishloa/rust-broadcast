@@ -15,6 +15,7 @@
 //! The fixture is real, tool-generated media — see
 //! `../fixtures/mp4/cmaf-av-subtitle/PROVENANCE.md`.
 
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
 use transmux::{Error, MovieBox, OpaqueBox};
@@ -234,7 +235,7 @@ fn truncated_moov_child_is_an_error() {
 
     let err = MovieBox::parse(&moov).expect_err("a truncated child must be rejected");
     assert!(
-        matches!(err, Error::BufferTooShort { .. }),
+        matches!(err, Error::BufferTooShort(..)),
         "expected BufferTooShort, got {err:?}"
     );
 }
@@ -249,7 +250,7 @@ fn trailing_partial_child_header_is_an_error() {
 
     let err = MovieBox::parse(&moov).expect_err("3 trailing bytes must be rejected");
     assert!(
-        matches!(err, Error::BufferTooShort { .. }),
+        matches!(err, Error::BufferTooShort(..)),
         "expected BufferTooShort, got {err:?}"
     );
 }
@@ -378,7 +379,7 @@ fn truncated_sample_tables_are_rejected() {
 /// entirely (audit item 6, round 3).
 fn assert_label(err: &Error, expected: &str) {
     match err {
-        Error::BufferTooShort { what, .. } => {
+        Error::BufferTooShort(BufferTooShort { what, .. }) => {
             assert_eq!(*what, expected, "the error must name its own box");
         }
         other => panic!("expected BufferTooShort, got {other:?}"),

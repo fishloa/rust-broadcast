@@ -10,6 +10,7 @@
 //! protocol control messages ([`ProtocolControl`], §4/§5.4), and the
 //! streaming-layer user control events ([`UserControl`], §5.3/§6.2/§6.7).
 
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
@@ -79,11 +80,11 @@ fn read_u32_be(b: &[u8]) -> u32 {
 
 fn need_u32(bytes: &[u8], what: &'static str) -> Result<u32> {
     if bytes.len() < U32_LEN {
-        return Err(RtmpError::BufferTooShort {
+        return Err(RtmpError::BufferTooShort(BufferTooShort {
             need: U32_LEN,
             have: bytes.len(),
             what,
-        });
+        }));
     }
     Ok(read_u32_be(bytes))
 }

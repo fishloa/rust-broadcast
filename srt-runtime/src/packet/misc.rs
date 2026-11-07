@@ -3,6 +3,7 @@
 //! Drop Request (§3.2.9), and Peer Error (§3.2.10).
 
 use super::{Error, Result, be32, put_be32};
+use broadcast_common::error::BufferTooShort;
 
 /// Peer error code for a file-system error — the only value
 /// `draft-sharabayko-srt-01` §3.2.10 currently defines.
@@ -88,11 +89,11 @@ impl DropReqPacket {
         cif: &[u8],
     ) -> Result<Self> {
         if cif.len() != 8 {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: 8,
                 have: cif.len(),
                 what: "drop request CIF",
-            });
+            }));
         }
         Ok(DropReqPacket {
             message_number,
@@ -311,7 +312,7 @@ mod tests {
         buf[19] = 0x01; // non-zero byte in the 4-byte pad
         assert!(matches!(
             ControlPacket::parse(&buf),
-            Err(Error::ReservedFieldNotZero { .. })
+            Err(Error::ReservedBits(_))
         ));
     }
 }

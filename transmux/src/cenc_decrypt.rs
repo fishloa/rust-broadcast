@@ -1193,7 +1193,7 @@ mod tests {
         ]);
         assert!(matches!(
             progressive_sample_layout(&stbl, 64),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -1427,7 +1427,7 @@ mod tests {
             .decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
             .unwrap_err();
         assert!(
-            matches!(err, Error::InvalidInput(_) | Error::BufferTooShort { .. }),
+            matches!(err, Error::InvalidInput(_) | Error::BufferTooShort(..)),
             "got {err:?}"
         );
         let after: Vec<Vec<u8>> = media

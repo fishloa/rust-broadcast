@@ -10,6 +10,7 @@
 //! Fixtures: `fixtures/mp4/{av1,opus,flac,vp9}.mp4`, `fixtures/ts/heaac/heaac-v{1,2}.mp4`.
 //! Oracle refs: `fixtures/mp4/PROVENANCE.md`, `fixtures/ts/ac4/dac4-oracle.md`.
 
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::{Parse, Serialize};
 use test_fixtures::vectors::DAC4_ORACLE;
 use transmux::TrackId;
@@ -170,11 +171,11 @@ fn dops_truncated_channel_mapping_errors() {
     assert!(
         matches!(
             err,
-            transmux::Error::BufferTooShort {
+            transmux::Error::BufferTooShort(BufferTooShort {
                 need: 19,
                 have: 15,
                 what: "dOps ChannelMapping"
-            }
+            })
         ),
         "expected BufferTooShort for the short ChannelMapping, got {err:?}"
     );
@@ -478,7 +479,7 @@ fn heaac_hierarchical_with_unrepresentable_core_aot_is_rejected() {
     let asc = AudioSpecificConfig::parse(&bytes).unwrap();
     assert!(matches!(
         asc.to_adts_header(200),
-        Err(transmux::error::Error::InvalidValue { .. })
+        Err(transmux::error::Error::InvalidValue(..))
     ));
 }
 
@@ -492,11 +493,11 @@ fn heaac_escape_sampling_frequency_is_rejected_for_adts() {
     asc.sampling_frequency = Some(48000);
     assert!(matches!(
         asc.to_adts_header(200),
-        Err(transmux::Error::InvalidValue {
+        Err(transmux::Error::InvalidValue(InvalidValue {
             field: "sampling_frequency_index",
             value: 15,
             ..
-        })
+        }))
     ));
 }
 

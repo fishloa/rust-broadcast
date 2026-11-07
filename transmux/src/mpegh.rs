@@ -30,6 +30,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -128,11 +129,11 @@ impl<'a> Parse<'a> for MHADecoderConfigurationRecord {
         )?;
         let configuration_version = bytes[0];
         if configuration_version != MHAC_CONFIGURATION_VERSION {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(InvalidValue {
                 field: "configurationVersion",
                 value: configuration_version as u64,
                 reason: "must be 1 (ISO/IEC 23008-3 §20)",
-            });
+            }));
         }
         let mpegh3da_profile_level_indication = bytes[1];
         let reference_channel_layout = bytes[2];

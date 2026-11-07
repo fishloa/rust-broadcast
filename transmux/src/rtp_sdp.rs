@@ -32,6 +32,7 @@ use crate::pipeline::CodecConfig;
 use crate::rtp::{base64_decode, hex_decode};
 use alloc::vec::Vec;
 use broadcast_common::Parse;
+use broadcast_common::error::InvalidValue;
 use broadcast_common::len::need_in;
 
 /// Length prefix size transmux uses for coded NALs (4-byte).
@@ -59,11 +60,11 @@ fn asc_sample_rate(asc: &AudioSpecificConfig) -> Result<u32> {
     }
     asc.sampling_frequency_index
         .table_hz()
-        .ok_or(Error::InvalidValue {
+        .ok_or(Error::InvalidValue(InvalidValue {
             field: "sampling_frequency_index",
             value: u64::from(asc.sampling_frequency_index.raw()),
             reason: "no frequency for index",
-        })
+        }))
 }
 
 /// Parse an SDP AAC `config` fmtp value (RFC 3640 §4.1: hex-encoded
@@ -310,6 +311,8 @@ pub fn rtpmap_clock_rate(rtpmap: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::BufferTooShort;
+
     use super::*;
     use crate::rtp::base64_encode;
     use broadcast_common::Serialize;
@@ -431,10 +434,7 @@ mod tests {
         let err = avc_config_from_sps_pps(alloc::vec![AvcSps(sps)], alloc::vec![AvcPps(pps)])
             .expect_err("a High profile SPS with no decodable body must not yield a record");
         assert!(
-            matches!(
-                err,
-                Error::BufferTooShort { .. } | Error::InvalidValue { .. }
-            ),
+            matches!(err, Error::BufferTooShort(..) | Error::InvalidValue(..)),
             "must be a structured decode error, got {err:?}"
         );
     }
@@ -504,7 +504,7 @@ mod tests {
         let sprop = "not-valid-base64!!!";
         assert!(matches!(
             avc_config_from_sprop(sprop),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
     }
 
@@ -516,13 +516,13 @@ mod tests {
         let result = avc_config_from_sprop(&sprop);
         assert!(matches!(
             result,
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(BufferTooShort {
                 what: "SPS profile/level bytes",
                 ..
-            })
+            }))
         ));
         // Verify it's a BufferTooShort error.
-        if let Err(Error::BufferTooShort { need, have, what }) = result {
+        if let Err(Error::BufferTooShort(BufferTooShort { need, have, what })) = result {
             assert_eq!(need, 4);
             assert_eq!(have, 2);
             assert!(what.contains("SPS"));

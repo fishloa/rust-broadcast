@@ -25,6 +25,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -585,11 +586,11 @@ impl SampleAuxInfoSizesBox {
             (None, None)
         };
         if bytes.len() < offset + 1 + 4 {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: offset + 5,
                 have: bytes.len(),
                 what: "saiz default_sample_info_size+sample_count",
-            });
+            }));
         }
         let default_size = bytes[offset];
         offset += 1;
@@ -1010,20 +1011,22 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
         need_in(bytes, BOX_HDR, "sinf")?;
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         if body.len() < 8 + 4 {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: 8 + 4,
                 have: bytes.len(),
                 what: "sinf (frma)",
-            });
+            }));
         }
         let frma_sz = u32::from_be_bytes([body[0], body[1], body[2], body[3]]) as usize;
         // The declared frma size is wire-controlled; bound it before slicing
         // (r05-C2).
-        let frma_bytes = body.get(..frma_sz).ok_or(Error::BufferTooShort {
-            need: frma_sz,
-            have: body.len(),
-            what: "sinf (frma)",
-        })?;
+        let frma_bytes = body
+            .get(..frma_sz)
+            .ok_or(Error::BufferTooShort(BufferTooShort {
+                need: frma_sz,
+                have: body.len(),
+                what: "sinf (frma)",
+            }))?;
         let original_format = OriginalFormatBox::parse(frma_bytes)?;
 
         let mut off = frma_sz;
@@ -1050,11 +1053,11 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
                     // they are read (r05-C2).
                     let full_end = off + BOX_HDR + FULL_HDR;
                     if sz < BOX_HDR + FULL_HDR || end < full_end {
-                        return Err(Error::BufferTooShort {
+                        return Err(Error::BufferTooShort(BufferTooShort {
                             need: full_end,
                             have: body.len(),
                             what: "sinf (schm)",
-                        });
+                        }));
                     }
                     let full = &body[off + BOX_HDR..full_end];
                     scheme_type = Some(SchemeTypeBox::parse_body(
@@ -1169,6 +1172,8 @@ broadcast_common::impl_spec_display!(ConstantIvSenc);
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::error::BufferTooShort;
+
     use super::*;
 
     #[test]
@@ -1210,11 +1215,11 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::BufferTooShort {
+                Error::BufferTooShort(BufferTooShort {
                     need: 20,
                     have: 19,
                     ..
-                }
+                })
             ),
             "expected BufferTooShort {{ need: 20, have: 19, .. }}, got {err:?}"
         );
@@ -1304,7 +1309,7 @@ mod tests {
             let err = SampleEncryptionBox::parse_body(&body, 0, flags, iv_size)
                 .expect_err("a hostile sample_count must be rejected");
             assert!(
-                matches!(err, Error::BufferTooShort { .. }),
+                matches!(err, Error::BufferTooShort(..)),
                 "iv_size={iv_size} flags={flags:#x}: expected BufferTooShort, got {err:?}"
             );
         }
@@ -1340,7 +1345,7 @@ mod tests {
         let err = SampleAuxInfoOffsetsBox::parse_body(&body, 1, 0)
             .expect_err("a hostile entry_count must be rejected");
         assert!(
-            matches!(err, Error::BufferTooShort { .. } | Error::InvalidInput(_)),
+            matches!(err, Error::BufferTooShort(..) | Error::InvalidInput(_)),
             "{err:?}"
         );
     }
@@ -1360,7 +1365,7 @@ mod tests {
         let err = ProtectionSchemeInfoBox::parse(&bytes)
             .expect_err("a frma size beyond the sinf body must be rejected");
         assert!(
-            matches!(err, Error::BufferTooShort { .. }),
+            matches!(err, Error::BufferTooShort(..)),
             "expected BufferTooShort, got {err:?}"
         );
     }
@@ -1380,7 +1385,7 @@ mod tests {
         let err = ProtectionSchemeInfoBox::parse(&bytes)
             .expect_err("a schm without FullBox header must be rejected");
         assert!(
-            matches!(err, Error::BufferTooShort { .. }),
+            matches!(err, Error::BufferTooShort(..)),
             "expected BufferTooShort, got {err:?}"
         );
     }
@@ -1394,7 +1399,7 @@ mod tests {
         let err = ProtectionSystemSpecificHeaderBox::parse_body(&body, 1)
             .expect_err("a v1 pssh without DataSize must be rejected");
         assert!(
-            matches!(err, Error::BufferTooShort { .. }),
+            matches!(err, Error::BufferTooShort(..)),
             "expected BufferTooShort, got {err:?}"
         );
     }
@@ -1409,7 +1414,7 @@ mod tests {
         let err = ProtectionSystemSpecificHeaderBox::parse_body(&body, 1)
             .expect_err("a hostile KID_count must be rejected");
         assert!(
-            matches!(err, Error::BufferTooShort { .. } | Error::InvalidInput(_)),
+            matches!(err, Error::BufferTooShort(..) | Error::InvalidInput(_)),
             "expected BufferTooShort/InvalidInput, got {err:?}"
         );
     }

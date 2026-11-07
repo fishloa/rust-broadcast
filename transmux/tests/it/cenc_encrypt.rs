@@ -667,7 +667,7 @@ fn rejected_encrypt_leaves_media_and_counter_untouched() {
         .encrypt(&mut media, &cenc_cfg())
         .expect_err("a sample whose NAL length prefix overruns must be rejected");
     assert!(
-        matches!(err, transmux::Error::BufferTooShort { .. })
+        matches!(err, transmux::Error::BufferTooShort(..))
             || matches!(err, transmux::Error::InvalidInput(_)),
         "expected a buffer/input error, got {err:?}"
     );

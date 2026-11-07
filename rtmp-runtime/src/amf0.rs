@@ -34,6 +34,7 @@
 //! SKIP-list candidate rather than a `name()`/`impl_spec_display!` target
 //! (tracked for the crate's Task 10 label-coverage pass).
 
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
@@ -127,7 +128,7 @@ pub enum Amf0Value {
 }
 
 fn buffer_too_short(need: usize, have: usize, what: &'static str) -> RtmpError {
-    RtmpError::BufferTooShort { need, have, what }
+    RtmpError::BufferTooShort(BufferTooShort { need, have, what })
 }
 
 /// Read a `U16`-length-prefixed UTF-8 string from the front of `bytes`.
@@ -713,7 +714,7 @@ mod tests {
         let truncated = &full[..full.len() - 3];
         assert!(matches!(
             Amf0Value::parse(truncated),
-            Err(RtmpError::BufferTooShort { .. })
+            Err(RtmpError::BufferTooShort(..))
         ));
     }
 
@@ -726,7 +727,7 @@ mod tests {
         bytes.extend_from_slice(b"short"); // only 5 present
         assert!(matches!(
             Amf0Value::parse(&bytes),
-            Err(RtmpError::BufferTooShort { .. })
+            Err(RtmpError::BufferTooShort(..))
         ));
     }
 
@@ -768,11 +769,11 @@ mod tests {
     fn empty_buffer_and_truncated_marker_are_buffer_too_short_not_panics() {
         assert!(matches!(
             Amf0Value::parse(&[]),
-            Err(RtmpError::BufferTooShort { .. })
+            Err(RtmpError::BufferTooShort(..))
         ));
         assert!(matches!(
             Amf0Value::parse(&[marker::NUMBER, 0, 0, 0]),
-            Err(RtmpError::BufferTooShort { .. })
+            Err(RtmpError::BufferTooShort(..))
         ));
     }
 
@@ -866,7 +867,7 @@ mod tests {
         let err = Amf0Value::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            RtmpError::Malformed { .. } | RtmpError::BufferTooShort { .. }
+            RtmpError::Malformed { .. } | RtmpError::BufferTooShort(..)
         ));
     }
 

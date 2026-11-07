@@ -43,6 +43,7 @@
 use crate::TrackId;
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
 use core::fmt;
 use core::marker::PhantomData;
@@ -519,11 +520,11 @@ struct FlvErrorAsError(FlvError);
 impl From<FlvErrorAsError> for Error {
     fn from(w: FlvErrorAsError) -> Self {
         match w.0 {
-            FlvError::TagOverrun { need, have, .. } => Error::BufferTooShort {
+            FlvError::TagOverrun { need, have, .. } => Error::BufferTooShort(BufferTooShort {
                 need,
                 have,
                 what: "FLV tag body",
-            },
+            }),
             other => Error::InvalidInput(match other {
                 FlvError::BadSignature(_) => "FLV bad signature",
                 FlvError::NoSupportedTrack => "FLV no supported track",
@@ -545,11 +546,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
         // never see the previous stream's truncation reported against this one.
         self.truncated_tail = false;
         if input.len() < FLV_HEADER_LEN {
-            return Err(FlvError::Codec(Error::BufferTooShort {
+            return Err(FlvError::Codec(Error::BufferTooShort(BufferTooShort {
                 need: FLV_HEADER_LEN,
                 have: input.len(),
                 what: "FLV header",
-            }));
+            })));
         }
         if input[0..3] != FLV_SIGNATURE {
             return Err(FlvError::BadSignature([input[0], input[1], input[2]]));

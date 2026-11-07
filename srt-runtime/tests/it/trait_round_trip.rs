@@ -1,5 +1,6 @@
 //! Every SRT packet type round-trips through `broadcast_common::{Parse, Serialize}`.
 
+use broadcast_common::error::OutputBufferTooSmall;
 use broadcast_common::{Parse, Serialize};
 use core::fmt::Debug;
 use srt_runtime::Error;
@@ -117,6 +118,9 @@ fn serialize_into_short_buffer_is_output_buffer_too_small() {
     };
     assert_eq!(
         Serialize::serialize_into(&m, &mut [0u8; 11]),
-        Err(Error::OutputBufferTooSmall { need: 12, have: 11 })
+        Err(Error::OutputBufferTooSmall(OutputBufferTooSmall {
+            need: 12,
+            have: 11
+        }))
     );
 }

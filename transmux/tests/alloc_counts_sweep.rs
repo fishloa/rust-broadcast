@@ -335,10 +335,7 @@ mod hvcc_prealloc {
     fn declared_counts_do_not_drive_preallocation() {
         let bytes = hostile();
         let (r, allocs, bytes_alloc) = measure(|| HEVCDecoderConfigurationRecord::parse(&bytes));
-        assert!(matches!(
-            r,
-            Err(transmux::error::Error::BufferTooShort { .. })
-        ));
+        assert!(matches!(r, Err(transmux::error::Error::BufferTooShort(..))));
         eprintln!("hvcC hostile counts: {allocs} allocs, {bytes_alloc} bytes");
         assert!(bytes_alloc <= HVCC_BYTES_BUDGET, "{bytes_alloc} bytes");
     }

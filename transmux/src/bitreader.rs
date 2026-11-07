@@ -11,6 +11,7 @@
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitError, BitWriter};
+use broadcast_common::error::{BufferTooShort, InvalidValue};
 
 /// Unescape a NAL unit byte stream into an RBSP: remove every `00 00 03` → `00 00`.
 pub(crate) fn unescape(nal: &[u8]) -> Vec<u8> {
@@ -59,17 +60,17 @@ pub(crate) fn read_bits_checked(
     what: &'static str,
 ) -> Result<u64> {
     if n > 64 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(InvalidValue {
             field: what,
             value: n as u64,
             reason: "bit count > 64",
-        });
+        }));
     }
-    read_bits_at(data, bit_pos, n).ok_or(Error::BufferTooShort {
+    read_bits_at(data, bit_pos, n).ok_or(Error::BufferTooShort(BufferTooShort {
         need: bytes_needed(*bit_pos, n),
         have: data.len(),
         what,
-    })
+    }))
 }
 
 /// Bytes needed to hold `n` more bits starting at `bit_pos` (saturating, for
@@ -84,26 +85,26 @@ pub(crate) fn bit_error(what: &'static str, e: BitError) -> Error {
         BitError::OutOfBounds {
             needed_bits,
             remaining_bits,
-        } => Error::BufferTooShort {
+        } => Error::BufferTooShort(BufferTooShort {
             need: remaining_bits.div_ceil(8) + needed_bits.div_ceil(8),
             have: remaining_bits.div_ceil(8),
             what,
-        },
-        BitError::TooManyBits { requested } => Error::InvalidValue {
+        }),
+        BitError::TooManyBits { requested } => Error::InvalidValue(InvalidValue {
             field: what,
             value: u64::from(requested),
             reason: "field wider than 64 bits",
-        },
-        BitError::ValueTooWide { value, .. } => Error::InvalidValue {
+        }),
+        BitError::ValueTooWide { value, .. } => Error::InvalidValue(InvalidValue {
             field: what,
             value,
             reason: "value does not fit the field width",
-        },
-        _ => Error::InvalidValue {
+        }),
+        _ => Error::InvalidValue(InvalidValue {
             field: what,
             value: 0,
             reason: "bit reader error",
-        },
+        }),
     }
 }
 
@@ -136,11 +137,11 @@ impl BitReader {
     /// entanglement — the data is copied into the reader).
     pub fn from_rbsp(data: &[u8], what: &'static str) -> Result<Self> {
         if data.is_empty() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: 1,
                 have: 0,
                 what,
-            });
+            }));
         }
         Ok(Self {
             data: data.to_vec(),
@@ -153,11 +154,11 @@ impl BitReader {
     pub fn with_unescape(nal_body: &[u8], what: &'static str) -> Result<Self> {
         let rbsp = unescape(nal_body);
         if rbsp.is_empty() {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: 1,
                 have: 0,
                 what,
-            });
+            }));
         }
         Ok(Self {
             data: rbsp,
@@ -177,21 +178,22 @@ impl BitReader {
     /// self-referential lifetime).
     pub fn read_bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
         if n > 64 || !self.has_bits(n) {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: self.bit_pos + n,
                 have: self.data.len() * 8,
                 what,
-            });
+            }));
         }
         if n == 0 {
             return Ok(0);
         }
         let mut pos = self.bit_pos;
-        let val = read_bits_at(&self.data, &mut pos, n).ok_or(Error::BufferTooShort {
-            need: self.bit_pos.saturating_add(n),
-            have: self.data.len() * 8,
-            what,
-        })?;
+        let val =
+            read_bits_at(&self.data, &mut pos, n).ok_or(Error::BufferTooShort(BufferTooShort {
+                need: self.bit_pos.saturating_add(n),
+                have: self.data.len() * 8,
+                what,
+            }))?;
         self.bit_pos = pos;
         Ok(val)
     }
@@ -222,11 +224,11 @@ impl BitReader {
         // loops on the decoded value (`sps.rs`'s SPS walk) never terminates:
         // a ~20-byte hostile SPS hung the demuxer.
         if !self.has_bits(1) {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: self.bit_pos + 1,
                 have: self.data.len() * 8,
                 what,
-            });
+            }));
         }
         let mut leading_zero_bits: u32 = 0;
         while self.read_bits(1, what)? == 0 {
@@ -235,18 +237,18 @@ impl BitReader {
             // a longer run is not a valid `ue(v)` and must never reach a
             // caller's loop count or shift.
             if leading_zero_bits > 32 {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(InvalidValue {
                     field: what,
                     value: leading_zero_bits as u64,
                     reason: "ue(v) with more than 32 leading zero bits",
-                });
+                }));
             }
             if !self.has_bits(1) {
-                return Err(Error::BufferTooShort {
+                return Err(Error::BufferTooShort(BufferTooShort {
                     need: self.bit_pos + 1,
                     have: self.data.len() * 8,
                     what,
-                });
+                }));
             }
         }
         // The loop exits just past the terminating 1-bit; the
@@ -254,11 +256,11 @@ impl BitReader {
         // leading run of zero this check is trivially true and the result is
         // codeNum 0, matching §9.1.)
         if !self.has_bits(leading_zero_bits as usize) {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: self.bit_pos + leading_zero_bits as usize,
                 have: self.data.len() * 8,
                 what,
-            });
+            }));
         }
         let info = self.read_bits(leading_zero_bits as usize, what)?;
         Ok((1u64 << leading_zero_bits) - 1 + info)
@@ -288,12 +290,12 @@ mod tests {
         let mut pos = 0usize;
         assert!(matches!(
             read_bits_checked(&data, &mut pos, 65, "x"),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
         assert_eq!(read_bits_checked(&data, &mut pos, 4, "x").unwrap(), 0xA);
         assert!(matches!(
             read_bits_checked(&data, &mut pos, 16, "x"),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         assert_eq!(pos, 4, "a failed read leaves the cursor unchanged");
     }
@@ -354,7 +356,7 @@ mod tests {
         }
         assert!(matches!(
             r.read_ue("ue at EOF"),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -372,7 +374,7 @@ mod tests {
         let mut r = BitReader::from_rbsp(&rbsp, "test").unwrap();
         assert!(matches!(
             r.read_ue("huge ue"),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
     }
 }

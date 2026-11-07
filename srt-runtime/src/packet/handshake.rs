@@ -25,6 +25,8 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::error::InvalidField;
+use broadcast_common::error::{BufferTooShort, OutputBufferTooSmall};
 use broadcast_common::len::need_in;
 
 use super::key_material::KeyMaterial;
@@ -349,11 +351,11 @@ impl HsExtMessage {
     /// contents (must be exactly 12 bytes).
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != HS_EXT_MESSAGE_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: HS_EXT_MESSAGE_LEN,
                 have: bytes.len(),
                 what: "handshake extension message",
-            });
+            }));
         }
         Ok(HsExtMessage {
             srt_version: be32(bytes, 0),
@@ -391,10 +393,10 @@ impl broadcast_common::Serialize for HsExtMessage {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         if buf.len() < HS_EXT_MESSAGE_LEN {
-            return Err(crate::Error::OutputBufferTooSmall {
+            return Err(crate::Error::OutputBufferTooSmall(OutputBufferTooSmall {
                 need: HS_EXT_MESSAGE_LEN,
                 have: buf.len(),
-            });
+            }));
         }
         buf[..HS_EXT_MESSAGE_LEN].copy_from_slice(&self.to_bytes());
         Ok(HS_EXT_MESSAGE_LEN)
@@ -513,11 +515,11 @@ impl GroupMembershipExtension {
     /// Parse from an extension block's contents (must be exactly 8 bytes).
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != GROUP_MEMBERSHIP_EXT_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: GROUP_MEMBERSHIP_EXT_LEN,
                 have: bytes.len(),
                 what: "group membership extension",
-            });
+            }));
         }
         let group_id = be32(bytes, 0);
         let word1 = be32(bytes, 4);
@@ -558,10 +560,10 @@ impl broadcast_common::Serialize for GroupMembershipExtension {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         if buf.len() < GROUP_MEMBERSHIP_EXT_LEN {
-            return Err(crate::Error::OutputBufferTooSmall {
+            return Err(crate::Error::OutputBufferTooSmall(OutputBufferTooSmall {
                 need: GROUP_MEMBERSHIP_EXT_LEN,
                 have: buf.len(),
-            });
+            }));
         }
         buf[..GROUP_MEMBERSHIP_EXT_LEN].copy_from_slice(&self.to_bytes());
         Ok(GROUP_MEMBERSHIP_EXT_LEN)
@@ -603,11 +605,11 @@ impl<'a> HandshakeExtensionBlock<'a> {
     /// trailing NUL padding is trimmed, and the result is validated as UTF-8.
     pub fn as_stream_id(&self) -> Result<String> {
         if !self.contents.len().is_multiple_of(4) {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: self.contents.len().div_ceil(4) * 4,
                 have: self.contents.len(),
                 what: "stream ID extension (not a whole number of 4-byte words)",
-            });
+            }));
         }
         let mut bytes = Vec::with_capacity(self.contents.len());
         for word in self.contents.chunks_exact(4) {
@@ -646,21 +648,17 @@ pub fn encode_stream_id(id: &str) -> Vec<u8> {
 /// repeated calls to chain multiple blocks.
 ///
 /// # Errors
-/// [`Error::FieldTooWide`] if `contents` is not a whole number of 4-byte
+/// [`Error::FieldOverflow`] if `contents` is not a whole number of 4-byte
 /// words, or has more than `0xFFFF` such words.
 pub fn build_extension_block(ext_type: ExtensionType, contents: &[u8]) -> Result<Vec<u8>> {
     if !contents.len().is_multiple_of(4) {
-        return Err(Error::InvalidField {
-            what: "Extension Contents",
+        return Err(Error::InvalidField(InvalidField {
+            field: "Extension Contents",
             reason: "length must be a whole number of 4-byte words",
-        });
+        }));
     }
     let words = contents.len() / 4;
-    let words_u16 = u16::try_from(words).map_err(|_| Error::FieldTooWide {
-        what: "Extension Length",
-        value: words as u64,
-        bits: 16,
-    })?;
+    let words_u16 = broadcast_common::len::fit_u16(words, "Extension Length")?;
     let mut out = Vec::with_capacity(4 + contents.len());
     out.extend_from_slice(&ext_type.to_bits().to_be_bytes());
     out.extend_from_slice(&words_u16.to_be_bytes());
@@ -696,11 +694,11 @@ impl<'a> Iterator for HandshakeExtensionIter<'a> {
         }
         if self.rest.len() < 4 {
             self.rest = &[];
-            return Some(Err(Error::BufferTooShort {
+            return Some(Err(Error::BufferTooShort(BufferTooShort {
                 need: 4,
                 have: self.rest.len(),
                 what: "handshake extension block header",
-            }));
+            })));
         }
         let ext_type_bits = be16(self.rest, 0);
         let ext_len_words = be16(self.rest, 2);

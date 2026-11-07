@@ -103,11 +103,11 @@ mod tests {
     fn av2c_rejects_truncation_and_overlong_header() {
         assert!(matches!(
             Avs2ConfigurationBox::parse(&[1, 0]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             Avs2ConfigurationBox::parse(&[1, 0, 3, 0, 0]),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let c = Avs2ConfigurationBox::new(vec![0; 70_000]);
         assert!(matches!(
