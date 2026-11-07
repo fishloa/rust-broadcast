@@ -196,7 +196,10 @@ macro_rules! declare_tables {
             /// // A deliberately-too-short slice: parse_as propagates the
             /// // BufferTooShort error from MpeDatagramSection::parse.
             /// let err = AnyTableSection::parse_as::<MpeDatagramSection>(&[0x3E, 0x00]);
-            /// assert!(err.is_err());
+            /// assert_eq!(
+            ///     err.unwrap_err(),
+            ///     dvb_si::Error::BufferTooShort { need: 16, have: 2, what: "MpeDatagramSection" }
+            /// );
             /// ```
             ///
             /// # Errors

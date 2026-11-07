@@ -51,15 +51,15 @@ fn over_range_u16_fields_are_errors_not_wraps() {
         .serialize_into(&mut buf)),
         Err(dvb_ci::error::Error::LengthTooLarge(_))
     ));
-    assert!(
-        PlayerUpdateReq {
+    assert!(matches!(
+        &(PlayerUpdateReq {
             length_form: LengthForm::Minimal,
             lts_id: 0,
             pmt: &big
         }
-        .serialize_into(&mut buf)
-        .is_err()
-    );
+        .serialize_into(&mut buf)),
+        Err(dvb_ci::error::Error::LengthTooLarge(_))
+    ));
     assert!(matches!(
         &(PlayerCapabilitiesReply {
             length_form: LengthForm::Minimal,

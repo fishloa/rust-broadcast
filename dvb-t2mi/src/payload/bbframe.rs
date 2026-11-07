@@ -143,7 +143,14 @@ mod tests {
             &(BbframePayload::parse(&[0x00, 0x00])),
             Err(crate::error::Error::BufferTooShort { .. })
         ));
-        assert!(BbframePayload::parse(&[]).is_err());
+        assert_eq!(
+            BbframePayload::parse(&[]).err(),
+            Some(crate::Error::BufferTooShort {
+                need: 3,
+                have: 0,
+                what: "BbframePayload header (frame_idx + plp_id + intl_frame_start + rfu)"
+            })
+        );
     }
 
     #[test]

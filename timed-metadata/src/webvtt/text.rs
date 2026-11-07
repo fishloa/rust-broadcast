@@ -273,19 +273,19 @@ mod tests {
 
     #[test]
     fn parse_rejects_bad_ms_length() {
-        assert!(parse_timestamp("00:00:01.0", '.').is_err());
-        assert!(parse_timestamp("00:00:01.00000", '.').is_err());
+        assert_eq!(parse_timestamp("00:00:01.0", '.'), Err(TimestampError));
+        assert_eq!(parse_timestamp("00:00:01.00000", '.'), Err(TimestampError));
     }
 
     #[test]
     fn parse_rejects_out_of_range_fields() {
-        assert!(parse_timestamp("00:60:00.000", '.').is_err());
-        assert!(parse_timestamp("00:00:60.000", '.').is_err());
+        assert_eq!(parse_timestamp("00:60:00.000", '.'), Err(TimestampError));
+        assert_eq!(parse_timestamp("00:00:60.000", '.'), Err(TimestampError));
     }
 
     #[test]
     fn parse_rejects_missing_separator() {
-        assert!(parse_timestamp("00:00:01", '.').is_err());
+        assert_eq!(parse_timestamp("00:00:01", '.'), Err(TimestampError));
     }
 
     #[test]
@@ -294,8 +294,14 @@ mod tests {
         // is a validly-parsed `u64` that still overflows the to-milliseconds /
         // to-ticks widening multiplications (found by fuzzing - a
         // debug-assertions build used to panic on this input).
-        assert!(parse_timestamp("11662322688380341727:00:01.000", '.').is_err());
-        assert!(parse_timestamp("18446744073709551615:00:00.000", '.').is_err());
+        assert_eq!(
+            parse_timestamp("11662322688380341727:00:01.000", '.'),
+            Err(TimestampError)
+        );
+        assert_eq!(
+            parse_timestamp("18446744073709551615:00:00.000", '.'),
+            Err(TimestampError)
+        );
     }
 
     #[test]
@@ -304,8 +310,8 @@ mod tests {
             parse_timestamp("00:00:01,500", ','),
             Ok(MediaTime(90_000 + 45_000))
         );
-        assert!(parse_timestamp("00:00:01,500", '.').is_err());
-        assert!(parse_timestamp("00:00:01.500", ',').is_err());
+        assert_eq!(parse_timestamp("00:00:01,500", '.'), Err(TimestampError));
+        assert_eq!(parse_timestamp("00:00:01.500", ','), Err(TimestampError));
     }
 
     /// CV-O1 (#1109): `str::parse::<u64>` accepts a leading `+`; the timestamp
@@ -319,7 +325,7 @@ mod tests {
             "00:00:01.+00",
             "+1:00:00:01.000",
         ] {
-            assert!(parse_timestamp(bad, '.').is_err(), "{bad}");
+            assert_eq!(parse_timestamp(bad, '.'), Err(TimestampError), "{bad}");
         }
         assert!(parse_timestamp("00:00:01.000", '.').is_ok());
     }

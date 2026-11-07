@@ -295,10 +295,25 @@ mod tests {
 
     #[test]
     fn rejects_indefinite_and_wide() {
-        assert!(decode(&[0x80]).is_err()); // indefinite form
-        assert!(decode(&[0x85, 0, 0, 0, 0, 0]).is_err()); // 5 length bytes
-        assert!(decode(&[]).is_err());
-        assert!(decode(&[0x82, 0x12]).is_err()); // truncated long form
+        assert_eq!(
+            decode(&[0x80]),
+            Err(Error::InvalidLength("indefinite length form not allowed"))
+        );
+        assert_eq!(
+            decode(&[0x85, 0, 0, 0, 0, 0]),
+            Err(Error::InvalidLength(
+                "length_field_size exceeds 4 length octets"
+            ))
+        );
+        assert_eq!(decode(&[]), Err(Error::InvalidLength("empty length_field")));
+        assert_eq!(
+            decode(&[0x82, 0x12]),
+            Err(Error::BufferTooShort {
+                need: 3,
+                have: 2,
+                what: "length_field (long form)"
+            })
+        );
     }
 
     /// r10-W-4: every wire form of a `length_field` is captured by
@@ -357,19 +372,53 @@ mod tests {
     fn encode_with_rejects_a_form_that_cannot_hold_the_value() {
         let mut buf = [0u8; 8];
         // 0x100 needs 2 octets.
-        assert!(encode_with(0x100, LengthForm::Long { octets: 1 }, &mut buf).is_err());
+        assert_eq!(
+            encode_with(0x100, LengthForm::Long { octets: 1 }, &mut buf),
+            Err(Error::InvalidLength(
+                "length value does not fit the recorded length_field_size"
+            ))
+        );
         // The minimal coding spelled as `Long` is an alias of `Minimal`: refused.
-        assert!(encode_with(0x80, LengthForm::Long { octets: 1 }, &mut buf).is_err());
-        assert!(encode_with(0xFF, LengthForm::Long { octets: 1 }, &mut buf).is_err());
-        assert!(encode_with(0x100, LengthForm::Long { octets: 2 }, &mut buf).is_err());
-        assert!(encode_with(0xFFFF, LengthForm::Long { octets: 2 }, &mut buf).is_err());
+        assert_eq!(
+            encode_with(0x80, LengthForm::Long { octets: 1 }, &mut buf),
+            Err(Error::InvalidLength(
+                "Long form with the minimal number of octets is LengthForm::Minimal"
+            ))
+        );
+        assert_eq!(
+            encode_with(0xFF, LengthForm::Long { octets: 1 }, &mut buf),
+            Err(Error::InvalidLength(
+                "Long form with the minimal number of octets is LengthForm::Minimal"
+            ))
+        );
+        assert_eq!(
+            encode_with(0x100, LengthForm::Long { octets: 2 }, &mut buf),
+            Err(Error::InvalidLength(
+                "Long form with the minimal number of octets is LengthForm::Minimal"
+            ))
+        );
+        assert_eq!(
+            encode_with(0xFFFF, LengthForm::Long { octets: 2 }, &mut buf),
+            Err(Error::InvalidLength(
+                "Long form with the minimal number of octets is LengthForm::Minimal"
+            ))
+        );
         // Non-minimal long forms stay legal.
         assert!(encode_with(0x7F, LengthForm::Long { octets: 1 }, &mut buf).is_ok());
         assert!(encode_with(0x80, LengthForm::Long { octets: 2 }, &mut buf).is_ok());
         assert!(encode_with(0x100, LengthForm::Long { octets: 3 }, &mut buf).is_ok());
-        assert!(encode_with(5, LengthForm::Long { octets: 0 }, &mut buf).is_err());
-        assert!(encode_with(5, LengthForm::Long { octets: 5 }, &mut buf).is_err());
-        assert!(encode_with(0x1_0000, LengthForm::Long { octets: 4 }, &mut buf).is_err());
+        assert_eq!(
+            encode_with(5, LengthForm::Long { octets: 0 }, &mut buf),
+            Err(Error::InvalidLength("length_field_size must be 1..=4"))
+        );
+        assert_eq!(
+            encode_with(5, LengthForm::Long { octets: 5 }, &mut buf),
+            Err(Error::InvalidLength("length_field_size must be 1..=4"))
+        );
+        assert_eq!(
+            encode_with(0x1_0000, LengthForm::Long { octets: 4 }, &mut buf),
+            Err(Error::LengthTooLarge(0x1_0000))
+        );
     }
 
     #[test]

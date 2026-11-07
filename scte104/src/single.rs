@@ -212,8 +212,13 @@ mod tests {
             0x00u8, 0x00, 0x00, 0x05, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x01, 0x07, 0x00, 0x00,
         ];
         let result = SingleOperationMessage::parse(&bad_msg);
-        assert!(
-            result.is_err(),
+        assert_eq!(
+            result.err(),
+            Some(Error::BufferTooShort {
+                need: 13,
+                have: 5,
+                what: "messageSize too small"
+            }),
             "parse should reject messageSize < HEADER_LEN"
         );
     }

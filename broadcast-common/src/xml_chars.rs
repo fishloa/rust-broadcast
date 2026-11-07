@@ -192,7 +192,7 @@ mod tests {
                 .unwrap_err()
                 .contains("undefined entity")
         );
-        assert!(first_char_data("<a>&#1;</a>").is_err());
+        assert_eq!(first_char_data("<a>&#1;</a>").unwrap_err(), BAD_CHAR);
     }
 
     #[test]

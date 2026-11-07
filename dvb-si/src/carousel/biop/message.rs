@@ -2205,8 +2205,12 @@ mod tests {
 
         // Output one byte over `max_len` is Err.
         let err = decompress_zlib_bounded(&compressed, original.len() - 1);
-        assert!(
-            err.is_err(),
+        assert_eq!(
+            err.err(),
+            Some(crate::error::Error::ReservedBitsViolation {
+                field: "compressed_module_descriptor body",
+                reason: "zlib output exceeds the decompressed-size limit"
+            }),
             "output exceeding max_len by exactly 1 byte must return Err"
         );
     }
@@ -2630,8 +2634,12 @@ mod tests {
             "sanity: with zero bindings, messageBody_length must equal bindings_count field size"
         );
         buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
-        assert!(
-            BiopMessage::parse_at(&buf).is_err(),
+        assert_eq!(
+            BiopMessage::parse_at(&buf).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 2
+            }),
             "messageBody_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -2655,8 +2663,12 @@ mod tests {
             "sanity: computed messageBody_length offset must match the wire value"
         );
         buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
-        assert!(
-            BiopMessage::parse_at(&buf).is_err(),
+        assert_eq!(
+            BiopMessage::parse_at(&buf).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 16
+            }),
             "messageBody_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -2677,8 +2689,12 @@ mod tests {
             "sanity: computed content_length offset must match the wire value"
         );
         buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
-        assert!(
-            BiopMessage::parse_at(&buf).is_err(),
+        assert_eq!(
+            BiopMessage::parse_at(&buf).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 12
+            }),
             "content_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -2716,8 +2732,12 @@ mod tests {
             "sanity: messageBody_length offset must match the byte anchor"
         );
         buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
-        assert!(
-            BiopMessage::parse_at(&buf).is_err(),
+        assert_eq!(
+            BiopMessage::parse_at(&buf).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 8
+            }),
             "messageBody_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -2751,8 +2771,12 @@ mod tests {
             "sanity: messageBody_length offset must match the byte anchor"
         );
         buf[off..off + 4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
-        assert!(
-            BiopMessage::parse_at(&buf).is_err(),
+        assert_eq!(
+            BiopMessage::parse_at(&buf).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 6
+            }),
             "messageBody_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -2766,8 +2790,12 @@ mod tests {
 
         // message_size is the BIOP header's own 32-bit length (bytes [8..12]).
         buf[8..12].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
-        assert!(
-            BiopMessage::parse_at(&buf).is_err(),
+        assert_eq!(
+            BiopMessage::parse_at(&buf).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 41
+            }),
             "message_size=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -2787,8 +2815,12 @@ mod tests {
         let compressed = encoder.finish().unwrap();
 
         let result = decompress_zlib_bounded(&compressed, 1024);
-        assert!(
-            result.is_err(),
+        assert_eq!(
+            result.err(),
+            Some(crate::error::Error::ReservedBitsViolation {
+                field: "compressed_module_descriptor body",
+                reason: "zlib output exceeds the decompressed-size limit"
+            }),
             "decompressed output exceeding max_len must return Err"
         );
     }

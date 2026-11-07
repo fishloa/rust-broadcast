@@ -121,8 +121,12 @@ fn walk_int(raw: &[u8], names: &mut BTreeSet<&'static str>) {
         // omitting the mandatory `selector_length_flag` byte (7-byte body, EN 301 192
         // V1.7.1 Table 33 requires 8): a spec violation we report as a parse error.
         if tag == 0x15 && full.len() == 2 + 7 {
-            assert!(
-                d.is_err(),
+            assert_eq!(
+                d.as_ref().err(),
+                Some(&dvb_si::Error::InvalidDescriptor {
+                    tag: 0x15,
+                    reason: "IP/MAC_generic_stream_location_descriptor body shorter than 8 bytes"
+                }),
                 "7-byte generic_stream_location must be rejected"
             );
             continue;

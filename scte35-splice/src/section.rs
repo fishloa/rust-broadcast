@@ -498,8 +498,12 @@ mod tests {
             &[],
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
-        assert!(
-            section.serialize_into(&mut buf).is_err(),
+        assert_eq!(
+            section.serialize_into(&mut buf).err(),
+            Some(Error::InvalidValue {
+                field: "splice_info_section.section_length",
+                reason: "exceeds 4093"
+            }),
             "an oversized body must be rejected, not silently wrapped into a short section_length"
         );
     }

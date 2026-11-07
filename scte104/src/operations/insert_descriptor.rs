@@ -157,6 +157,13 @@ mod tests {
         let op = InsertDescriptor {
             descriptor_images: alloc::vec![img; 256],
         };
-        assert!(op.try_to_bytes().is_err());
+        assert_eq!(
+            op.try_to_bytes().err(),
+            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "insert_descriptor.descriptor_count",
+                value: 256,
+                max: 255
+            }))
+        );
     }
 }

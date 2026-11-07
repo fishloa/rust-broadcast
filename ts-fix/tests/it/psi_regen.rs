@@ -230,6 +230,9 @@ fn parse_pat_from_packet(pkt: &[u8]) -> Result<PatSection, String> {
     PatSection::parse(section).map_err(|e| format!("failed to parse PAT: {e:?}"))
 }
 
+const ZEROED_PAT_ERR: &str =
+    "failed to parse PAT: BufferTooShort { need: 12, have: 3, what: \"PatSection\" }";
+
 /// Verify the CRC-32 (MPEG-2) trailing a PAT section in a PAT packet.
 ///
 /// `PatSection::parse` does not validate the CRC, so the test checks it
@@ -311,8 +314,9 @@ fn regen_pat_from_zero_corruption() {
 
     // Sanity: the corrupted PAT slot must no longer parse (fault really injected).
     let corrupt_pat_pkt = find_pat_packet(&corrupted).expect("corrupted stream still has PAT slot");
-    assert!(
-        parse_pat_from_packet(corrupt_pat_pkt).is_err(),
+    assert_eq!(
+        parse_pat_from_packet(corrupt_pat_pkt).err(),
+        Some(ZEROED_PAT_ERR.to_string()),
         "corruption must make the original PAT unparseable"
     );
 
@@ -404,8 +408,9 @@ fn identity_fails_to_repair_corrupted_pat() {
     let pat_pkt = find_pat_packet(&output).expect("output must have a PAT packet");
 
     // Attempt to parse: this should FAIL because the section is still corrupted.
-    assert!(
-        parse_pat_from_packet(pat_pkt).is_err(),
+    assert_eq!(
+        parse_pat_from_packet(pat_pkt).err(),
+        Some(ZEROED_PAT_ERR.to_string()),
         "identity pass-through must fail to parse a corrupted PAT (proves regen is needed)"
     );
 }
@@ -521,8 +526,9 @@ fn regen_pat_on_m6_single() {
 
     // Sanity: the first corrupted PAT slot must no longer parse.
     let corrupt_pat_pkt = find_pat_packet(&corrupted).expect("corrupted stream keeps PAT slots");
-    assert!(
-        parse_pat_from_packet(corrupt_pat_pkt).is_err(),
+    assert_eq!(
+        parse_pat_from_packet(corrupt_pat_pkt).err(),
+        Some(ZEROED_PAT_ERR.to_string()),
         "corruption must make the original PAT unparseable"
     );
 
@@ -557,8 +563,9 @@ fn identity_fails_on_corrupted_m6_single() {
 
     let output = run(&corrupted, |b| b);
     let pat_pkt = find_pat_packet(&output).expect("output must have a PAT slot");
-    assert!(
-        parse_pat_from_packet(pat_pkt).is_err(),
+    assert_eq!(
+        parse_pat_from_packet(pat_pkt).err(),
+        Some(ZEROED_PAT_ERR.to_string()),
         "identity must leave the corrupted m6 PAT unparseable (proves regen test bites)"
     );
 }

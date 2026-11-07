@@ -525,7 +525,14 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = MpeDatagramSection::parse(&[TABLE_ID, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert_eq!(
+            err,
+            Error::BufferTooShort {
+                need: MIN_SECTION_LEN,
+                have: 2,
+                what: "MpeDatagramSection"
+            }
+        );
     }
 
     #[test]

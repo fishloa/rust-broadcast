@@ -847,15 +847,26 @@ mod tests {
             AudioDescription::none(),
         )
         .unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }));
+        assert_eq!(
+            err,
+            Error::InvalidValue {
+                field: "ObjectDefinition1.pan_sub_blocks[0]",
+                value: 0,
+                reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)"
+            }
+        );
     }
 
     #[test]
     fn embedded_nul_in_text_is_rejected() {
-        assert!(matches!(
-            &(AudioDescription::with_text(b"bad\0text")),
-            Err(crate::error::Error::InvalidValue { .. })
-        ));
+        assert_eq!(
+            AudioDescription::with_text(b"bad\0text").err(),
+            Some(Error::InvalidValue {
+                field: "AudioDescription.text",
+                value: 0,
+                reason: "text must not contain an embedded NUL byte"
+            })
+        );
     }
 
     #[test]
@@ -864,7 +875,14 @@ mod tests {
         let bytes = obj.try_to_bytes().unwrap();
         let err =
             ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Reserved(0x9)).unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }));
+        assert_eq!(
+            err,
+            Error::InvalidValue {
+                field: "FrameRate",
+                value: 9,
+                reason: "reserved FrameRate has no Table 7 NumPanSubBlocks entry"
+            }
+        );
     }
 
     #[test]

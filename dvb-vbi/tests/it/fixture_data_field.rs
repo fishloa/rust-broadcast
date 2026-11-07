@@ -110,8 +110,13 @@ fn truncating_the_fixture_fails_to_parse() {
     let mut data = fixture();
     // Drop the last stuffing byte: the final data unit now under-runs.
     data.pop();
-    assert!(
-        DataField::parse(&data).is_err(),
+    assert_eq!(
+        DataField::parse(&data).err(),
+        Some(dvb_vbi::Error::BufferTooShort {
+            need: 5,
+            have: 4,
+            what: "data_unit body"
+        }),
         "a truncated data unit must be rejected"
     );
 }

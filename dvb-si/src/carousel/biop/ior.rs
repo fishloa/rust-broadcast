@@ -1546,8 +1546,12 @@ mod tests {
         // guard rather than the earlier `ValueOutOfRange` alignment check;
         // 0xFFFF_FFFC (4294967292) is a multiple of 4.
         raw[0..4].copy_from_slice(&0xFFFF_FFFCu32.to_be_bytes());
-        assert!(
-            Ior::parse(&raw).is_err(),
+        assert_eq!(
+            Ior::parse(&raw).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967292,
+                available: 56
+            }),
             "type_id_length=0xFFFFFFFC must return Err, not panic"
         );
     }
@@ -1559,8 +1563,12 @@ mod tests {
         // after type_id_length(4)+type_id(4)+taggedProfiles_count(4)+profileId_tag(4).
         assert_eq!(&raw[16..20], &[0x00, 0x00, 0x00, 0x28]);
         raw[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
-        assert!(
-            Ior::parse(&raw).is_err(),
+        assert_eq!(
+            Ior::parse(&raw).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 40
+            }),
             "profile_data_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -1570,8 +1578,12 @@ mod tests {
         // id_length = 0xFFFFFFFF; far too little data follows.
         let bytes: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00];
         let end = bytes.len();
-        assert!(
-            NameComponent::parse_32bit(bytes, 0, end).is_err(),
+        assert_eq!(
+            NameComponent::parse_32bit(bytes, 0, end).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 4
+            }),
             "CosNaming id_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -1584,8 +1596,12 @@ mod tests {
             0xFF, 0xFF, 0xFF, 0xFF, // kind_length = 0xFFFFFFFF
         ];
         let end = bytes.len();
-        assert!(
-            NameComponent::parse_32bit(bytes, 0, end).is_err(),
+        assert_eq!(
+            NameComponent::parse_32bit(bytes, 0, end).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 0
+            }),
             "CosNaming kind_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -1597,8 +1613,12 @@ mod tests {
         bytes.extend_from_slice(&0u32.to_be_bytes()); // nameComponents_count = 0
         bytes.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // initialContext_length
         let end = bytes.len();
-        assert!(
-            ServiceLocation::parse_from(&bytes, 0, end).is_err(),
+        assert_eq!(
+            ServiceLocation::parse_from(&bytes, 0, end).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 0
+            }),
             "initialContext_length=0xFFFFFFFF must return Err, not panic"
         );
     }
@@ -1608,8 +1628,12 @@ mod tests {
         let mut bytes = vec![0x00u8, 0x01]; // byte_order=0, component_count=1
         bytes.extend_from_slice(&TAG_SERVICE_LOCATION.to_be_bytes());
         bytes.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // component_data_length
-        assert!(
-            LiteOptionsProfileBody::parse_from(&bytes).is_err(),
+        assert_eq!(
+            LiteOptionsProfileBody::parse_from(&bytes).err(),
+            Some(crate::error::Error::SectionLengthOverflow {
+                declared: 4294967295,
+                available: 0
+            }),
             "ServiceLocation component_data_length=0xFFFFFFFF must return Err, not panic"
         );
     }

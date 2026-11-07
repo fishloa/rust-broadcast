@@ -3,6 +3,7 @@
 //! `wire::be_u16`/`be_u32` (replacing `first_chunk::<N>().unwrap()`).
 
 use broadcast_common::{Parse, Serialize};
+use dvb_si::Error;
 use dvb_si::descriptors::ca_identifier::CaIdentifierDescriptor;
 use dvb_si::descriptors::local_time_offset::LocalTimeOffsetDescriptor;
 use dvb_si::descriptors::nvod_reference::NvodReferenceDescriptor;
@@ -11,24 +12,47 @@ use dvb_si::descriptors::subtitling::SubtitlingDescriptor;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use mpeg_ts::pid::Pid;
 
-/// Parse every strict prefix of `full` (which itself must parse) and require Err.
-fn all_prefixes_err<'a, T: Parse<'a>>(full: &'a [u8]) {
+/// Parse every strict prefix of `full` (which itself must parse) and require the
+/// exact truncation error: below the 2-byte tag+length header the header is
+/// short, from there on the whole descriptor is.
+fn all_prefixes_err<'a, T: Parse<'a, Error = Error>>(full: &'a [u8], what: &'static str) {
     assert!(T::parse(full).is_ok(), "full buffer must parse");
     for n in 0..full.len() {
-        assert!(T::parse(&full[..n]).is_err(), "prefix len {n} must be Err");
+        let need = if n < 2 { 2 } else { full.len() };
+        assert_eq!(
+            T::parse(&full[..n]).err(),
+            Some(Error::BufferTooShort {
+                need,
+                have: n,
+                what
+            }),
+            "prefix len {n}"
+        );
     }
 }
 
 #[test]
 fn descriptors_truncated_is_err() {
     // tag, length, body
-    all_prefixes_err::<ServiceListDescriptor>(&[0x41, 6, 0, 1, 1, 0, 2, 2]);
-    all_prefixes_err::<CaIdentifierDescriptor>(&[0x53, 4, 0x0B, 0x00, 0x18, 0x11]);
-    all_prefixes_err::<NvodReferenceDescriptor>(&[0x4B, 6, 0, 1, 0, 2, 0, 3]);
-    all_prefixes_err::<SubtitlingDescriptor>(&[0x59, 8, b'e', b'n', b'g', 0x10, 0, 1, 0, 2]);
+    all_prefixes_err::<ServiceListDescriptor>(
+        &[0x41, 6, 0, 1, 1, 0, 2, 2],
+        "ServiceListDescriptor",
+    );
+    all_prefixes_err::<CaIdentifierDescriptor>(
+        &[0x53, 4, 0x0B, 0x00, 0x18, 0x11],
+        "CaIdentifierDescriptor",
+    );
+    all_prefixes_err::<NvodReferenceDescriptor>(
+        &[0x4B, 6, 0, 1, 0, 2, 0, 3],
+        "NvodReferenceDescriptor",
+    );
+    all_prefixes_err::<SubtitlingDescriptor>(
+        &[0x59, 8, b'e', b'n', b'g', 0x10, 0, 1, 0, 2],
+        "SubtitlingDescriptor",
+    );
     let mut lto = vec![0x58, 13, b'G', b'B', b'R', 0x02, 0x01, 0x00];
     lto.extend_from_slice(&[0, 0, 0, 0, 0, 0x01, 0x00]);
-    all_prefixes_err::<LocalTimeOffsetDescriptor>(&lto);
+    all_prefixes_err::<LocalTimeOffsetDescriptor>(&lto, "LocalTimeOffsetDescriptor");
 }
 
 #[test]
@@ -46,5 +70,25 @@ fn pat_truncated_is_err() {
     );
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).unwrap();
-    all_prefixes_err::<PatSection>(&buf);
+    assert!(PatSection::parse(&buf).is_ok(), "full buffer must parse");
+    let declared = buf.len() - 3;
+    for n in 0..buf.len() {
+        let expected = if n < 12 {
+            Error::BufferTooShort {
+                need: 12,
+                have: n,
+                what: "PatSection",
+            }
+        } else {
+            Error::SectionLengthOverflow {
+                declared,
+                available: n - 3,
+            }
+        };
+        assert_eq!(
+            PatSection::parse(&buf[..n]).err(),
+            Some(expected),
+            "prefix len {n}"
+        );
+    }
 }

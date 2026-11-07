@@ -192,6 +192,13 @@ mod tests {
     fn push_wire_fields_rejects_short_input() {
         let mut conv = TeletextToWebVtt::new(8, 0x88);
         let err = conv.push_wire_fields(0, &[&[0x00]]);
-        assert!(err.is_err());
+        assert_eq!(
+            err.err(),
+            Some(crate::Error::DvbVbi(dvb_vbi::Error::BufferTooShort {
+                need: 44,
+                have: 1,
+                what: "txt_data_field"
+            }))
+        );
     }
 }

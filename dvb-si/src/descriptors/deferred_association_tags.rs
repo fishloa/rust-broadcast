@@ -286,9 +286,12 @@ mod tests {
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
         // one private byte cannot hold org_network_id
-        assert!(
-            DeferredAssociationTagsDescriptor::parse(&[0x15, 0x06, 0x00, 0, 1, 0, 2, 0xFF])
-                .is_err()
+        assert_eq!(
+            DeferredAssociationTagsDescriptor::parse(&[0x15, 0x06, 0x00, 0, 1, 0, 2, 0xFF]).err(),
+            Some(crate::error::Error::InvalidDescriptor {
+                tag: 21,
+                reason: "deferred_service_location shorter than org_network_id"
+            })
         );
         assert!(matches!(
             &(DeferredAssociationTagsDescriptor::parse(&[0x14, 0x00])),

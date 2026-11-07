@@ -162,7 +162,13 @@ mod tests {
     #[test]
     fn parse_rejects_nonzero_32bit_rfu2() {
         let buf = [0x00u8, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00];
-        assert!(FefCompositePayload::parse(&buf).is_err());
+        assert_eq!(
+            FefCompositePayload::parse(&buf).err(),
+            Some(crate::Error::ReservedBitsViolation {
+                field: "32-bit RFU (rfu2)",
+                reason: "Must be zero (ETSI TS 102 773 §5.2.11)"
+            })
+        );
     }
 
     #[test]
@@ -197,7 +203,10 @@ mod tests {
             num_subparts: 0,
         };
         let mut buf = [0u8; 7];
-        assert!(payload.serialize_into(&mut buf).is_err());
+        assert_eq!(
+            payload.serialize_into(&mut buf).err(),
+            Some(crate::Error::OutputBufferTooSmall { need: 8, have: 7 })
+        );
     }
 
     #[test]

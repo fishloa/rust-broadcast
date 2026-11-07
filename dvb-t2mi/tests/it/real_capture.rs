@@ -88,8 +88,9 @@ fn typed_pid_filter_selects_the_t2mi_pid_on_a_real_capture() {
     };
     assert!(count(T2MI_PID) > 100, "T2-MI PID must yield packets");
     assert_eq!(count(Pid::try_new(0x0041).unwrap()), 0);
-    assert!(
-        Pid::try_new(0x2040).is_err(),
+    assert_eq!(
+        Pid::try_new(0x2040).unwrap_err().value,
+        0x2040,
         "0x2040 aliases 0x0040 if masked"
     );
 }

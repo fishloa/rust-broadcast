@@ -690,10 +690,13 @@ mod tests {
     fn time_signal_truncated_is_an_error() {
         let bytes = sample_time_signal().try_to_bytes().unwrap();
         for cut in 0..bytes.len() {
-            assert!(
-                CompactTimeSignal::parse(&bytes[..cut]).is_err(),
-                "cut {cut}"
-            );
+            match CompactTimeSignal::parse(&bytes[..cut]) {
+                Err(Error::BufferTooShort { need, have, .. }) => {
+                    assert_eq!(have, cut);
+                    assert!(need > cut, "cut {cut}: need {need}");
+                }
+                other => panic!("cut {cut}: expected BufferTooShort, got {other:?}"),
+            }
         }
     }
 

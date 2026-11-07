@@ -492,23 +492,38 @@ fn tick_rate_explicit_value_still_wins() {
 fn time_expression_malformed_rejected() {
     let ctx = time::TimeContext::default();
 
-    let bad_exprs = vec![
-        "",
-        "abc",
-        "12:34",                          // missing seconds
-        "00:60:00",                       // minutes out of range
-        "00:00:61",                       // seconds out of range
-        "0:00:00",                        // hours < 10 without leading zero
-        "00:0:00",                        // minutes < 10 without leading zero
-        "00:00:0",                        // seconds < 10 without leading zero
-        "wallclock(2024-01-01T00:00:00)", // wallclock on non-clock timebase
+    let bad_exprs = [
+        ("", "empty time expression"),
+        (
+            "abc",
+            "offset-time must end with a metric: h, m, s, ms, f, or t",
+        ),
+        (
+            "12:34",
+            "clock-time must have exactly 3 or 4 colon-separated components",
+        ),
+        ("00:60:00", "minutes must be in [0, 59]"),
+        ("00:00:61", "seconds must be in [0, 60]"),
+        (
+            "0:00:00",
+            "hours < 100 must have leading zero (at least 2 digits)",
+        ),
+        ("00:0:00", "minutes must be exactly 2 digits"),
+        ("00:00:0", "seconds must be exactly 2 digits"),
+        (
+            "wallclock(2024-01-01T00:00:00)",
+            "wallclock-time is an error when timeBase is not clock",
+        ),
     ];
 
-    for expr in &bad_exprs {
-        assert!(
-            time::parse_time_expression(expr, &ctx).is_err(),
-            "should reject malformed expression: '{expr}'"
-        );
+    for (expr, expected) in bad_exprs {
+        match time::parse_time_expression(expr, &ctx) {
+            Err(Error::InvalidTimeExpression { value, reason }) => {
+                assert_eq!(value, expr);
+                assert_eq!(reason, expected, "expression '{expr}'");
+            }
+            other => panic!("'{expr}': expected InvalidTimeExpression, got {other:?}"),
+        }
     }
 }
 

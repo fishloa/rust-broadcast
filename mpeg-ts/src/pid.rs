@@ -34,7 +34,7 @@ impl Pid {
     /// use mpeg_ts::pid::Pid;
     /// // reserved(3) = 0b111 followed by PID 0x0100.
     /// assert_eq!(Pid::from_wire_masked(0xE100).value(), 0x0100);
-    /// assert!(Pid::try_new(0xE100).is_err());
+    /// assert_eq!(Pid::try_new(0xE100).unwrap_err().value, 0xE100);
     /// ```
     #[must_use]
     pub const fn from_wire_masked(value: u16) -> Self {
