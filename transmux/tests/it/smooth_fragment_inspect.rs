@@ -4,15 +4,17 @@
 //! and malformed classifications, plus `package_track_fragment`'s own contract.
 
 use broadcast_common::Unpackage;
+use transmux::Error;
 use transmux::media::{Media, Track};
 use transmux::smooth::SmoothPackager;
 use transmux::smooth_fragment::{FragmentState, fragment_state, fragment_tfxd, fragment_track_id};
 use transmux::ts_demux::TsDemux;
-use transmux::Error;
 
 fn media() -> Media {
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    TsDemux::new().unpackage(&ts[..]).expect("demux h264-aac.ts")
+    TsDemux::new()
+        .unpackage(&ts[..])
+        .expect("demux h264-aac.ts")
 }
 
 fn bx(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
@@ -107,7 +109,11 @@ fn malformed_structures_fail_closed_after_a_moof_and_open_before_one() {
     let moof_len = u32::from_be_bytes(good[..4].try_into().unwrap());
     bad_size.extend_from_slice(&[0, 0, 0, 3, b'f', b'r', b'e', b'e']);
     assert_eq!(fragment_state(&bad_size), FragmentState::Undetermined);
-    assert_eq!(moof_len as usize + 24, good.len(), "moof then a 16-byte mdat box");
+    assert_eq!(
+        moof_len as usize + 24,
+        good.len(),
+        "moof then a 16-byte mdat box"
+    );
 
     let truncated_moof = &good[..moof_len as usize - 2];
     assert_eq!(fragment_state(truncated_moof), FragmentState::Undetermined);

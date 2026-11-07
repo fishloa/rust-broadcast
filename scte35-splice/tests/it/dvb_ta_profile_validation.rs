@@ -1,7 +1,9 @@
 //! `validate_po_segmentation` (ETSI TS 103 752-1 §5.3.5): one descriptor per
 //! `ProfileViolation` outcome, checked in the order the function evaluates them.
 
-use scte35_splice::descriptors::{SegmentationDescriptor, SegmentationTypeId, SegmentationUpidType};
+use scte35_splice::descriptors::{
+    SegmentationDescriptor, SegmentationTypeId, SegmentationUpidType,
+};
 use scte35_splice::dvb_ta::{ProfileViolation, validate_po_segmentation};
 
 fn po(type_id: SegmentationTypeId) -> SegmentationDescriptor<'static> {

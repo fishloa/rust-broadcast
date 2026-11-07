@@ -2,9 +2,7 @@
 //! RTCP message type.
 
 use broadcast_common::Serialize;
-use rist_runtime::{
-    Error, GenericNack, NackFci, PacketRange, RangeNack, RttEcho, RttEchoKind,
-};
+use rist_runtime::{Error, GenericNack, NackFci, PacketRange, RangeNack, RttEcho, RttEchoKind};
 
 fn too_small(e: &Error) -> Option<(usize, usize)> {
     match e {
@@ -19,7 +17,10 @@ fn generic_nack_rejects_every_short_buffer() {
         ssrc_sender: 0x0102_0304,
         ssrc_media: 0x0506_0708,
         nacks: vec![
-            NackFci { pid: 42, blp: 0xABCD },
+            NackFci {
+                pid: 42,
+                blp: 0xABCD,
+            },
             NackFci { pid: 99, blp: 0 },
         ],
         padding: Vec::new(),
@@ -35,7 +36,10 @@ fn generic_nack_rejects_every_short_buffer() {
 fn range_nack_rejects_every_short_buffer() {
     let nack = RangeNack {
         ssrc_media: 0x0506_0708,
-        ranges: vec![PacketRange { start: 100, additional: 7 }],
+        ranges: vec![PacketRange {
+            start: 100,
+            additional: 7,
+        }],
         padding: Vec::new(),
     };
     test_fixtures::assert_short_buffers_rejected(

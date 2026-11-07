@@ -44,7 +44,10 @@ fn junk_before_the_first_frame_stops_a_strict_scan_and_is_skipped_by_a_resyncing
         .map(|&(s, e)| (s + junk.len(), e + junk.len()))
         .collect();
     assert_eq!(resynced, shifted);
-    assert_ne!(resynced[0].0, 0, "after a resync ranges do not start at offset 0");
+    assert_ne!(
+        resynced[0].0, 0,
+        "after a resync ranges do not start at offset 0"
+    );
 }
 
 #[test]
@@ -56,7 +59,11 @@ fn a_damaged_frame_loses_only_that_frame_when_resyncing() {
     damaged[clean[victim].0] = 0x00;
 
     let strict = split_ac3_syncframe_ranges(&damaged, false);
-    assert_eq!(strict, clean[..victim].to_vec(), "a strict scan stops at the damage");
+    assert_eq!(
+        strict,
+        clean[..victim].to_vec(),
+        "a strict scan stops at the damage"
+    );
 
     let resynced = split_ac3_syncframe_ranges(&damaged, true);
     let mut expected = clean.clone();

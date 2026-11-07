@@ -43,10 +43,22 @@ fn expect_audio(mutate: impl FnOnce(&mut Vec<AudioRenditionDecl>), want: HlsOrig
 
 #[test]
 fn strict_audio_validation_reports_each_rule() {
-    expect_audio(|d| d[1].group_id.clear(), HlsOriginBuildError::EmptyAudioRenditionGroupId);
-    expect_audio(|d| d[1].name.clear(), HlsOriginBuildError::EmptyAudioRenditionName);
-    expect_audio(|d| d[1].language.clear(), HlsOriginBuildError::EmptyAudioRenditionLanguage);
-    expect_audio(|d| d[1].uri.clear(), HlsOriginBuildError::EmptyAudioRenditionUri);
+    expect_audio(
+        |d| d[1].group_id.clear(),
+        HlsOriginBuildError::EmptyAudioRenditionGroupId,
+    );
+    expect_audio(
+        |d| d[1].name.clear(),
+        HlsOriginBuildError::EmptyAudioRenditionName,
+    );
+    expect_audio(
+        |d| d[1].language.clear(),
+        HlsOriginBuildError::EmptyAudioRenditionLanguage,
+    );
+    expect_audio(
+        |d| d[1].uri.clear(),
+        HlsOriginBuildError::EmptyAudioRenditionUri,
+    );
     expect_audio(
         |d| d[0].autoselect = false,
         HlsOriginBuildError::AudioRenditionDefaultNotAutoselect,
@@ -55,8 +67,14 @@ fn strict_audio_validation_reports_each_rule() {
         |d| d[1].name = "English".into(),
         HlsOriginBuildError::DuplicateAudioRenditionName,
     );
-    expect_audio(|d| d[1].default = true, HlsOriginBuildError::AudioRenditionDefaultCount);
-    expect_audio(|d| d[0].default = false, HlsOriginBuildError::AudioRenditionDefaultCount);
+    expect_audio(
+        |d| d[1].default = true,
+        HlsOriginBuildError::AudioRenditionDefaultCount,
+    );
+    expect_audio(
+        |d| d[0].default = false,
+        HlsOriginBuildError::AudioRenditionDefaultCount,
+    );
 }
 
 #[test]
@@ -119,7 +137,10 @@ fn subtitle(name: &str, language: &str, uri: &str) -> SubtitleRenditionDecl {
 
 #[test]
 fn subtitle_validation_reports_each_rule() {
-    let ok = vec![subtitle("English", "en", "en.m3u8"), subtitle("Deutsch", "de", "de.m3u8")];
+    let ok = vec![
+        subtitle("English", "en", "en.m3u8"),
+        subtitle("Deutsch", "de", "de.m3u8"),
+    ];
     assert_eq!(validate_subtitle_renditions(&ok), Ok(()));
     assert_eq!(validate_subtitle_renditions(&[]), Ok(()));
 
@@ -161,7 +182,10 @@ fn subtitle_default_rules() {
         validate_subtitle_renditions(&[a.clone(), b]),
         Err(HlsOriginBuildError::MultipleDefaultSubtitleRenditions)
     );
-    assert_eq!(validate_subtitle_renditions(std::slice::from_ref(&a)), Ok(()));
+    assert_eq!(
+        validate_subtitle_renditions(std::slice::from_ref(&a)),
+        Ok(())
+    );
     a.autoselect = false;
     assert_eq!(
         validate_subtitle_renditions(&[a]),

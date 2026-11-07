@@ -23,7 +23,10 @@ fn classify_nals_agrees_with_classify_au_on_a_real_paff_capture() {
     let mut by_au = AvcParamSets::new();
     let (mut frames, mut fields) = (0, 0);
     for sample in &track.samples {
-        let nals: Vec<&[u8]> = iter_length_prefixed_nals(&sample.data).unwrap().into_iter().collect();
+        let nals: Vec<&[u8]> = iter_length_prefixed_nals(&sample.data)
+            .unwrap()
+            .into_iter()
+            .collect();
         let mut annexb = Vec::new();
         for n in &nals {
             annexb.extend([0, 0, 0, 1]);
@@ -43,9 +46,20 @@ fn classify_nals_agrees_with_classify_au_on_a_real_paff_capture() {
 #[test]
 fn no_slice_nal_is_unknown() {
     let mut ps = AvcParamSets::new();
-    assert_eq!(ps.classify_nals(std::iter::empty::<&[u8]>()), AvcPicture::Unknown);
-    assert_eq!(ps.classify_nals([&[0x09u8, 0xF0][..]]), AvcPicture::Unknown, "AUD only");
-    assert_eq!(ps.classify_nals([&[][..]]), AvcPicture::Unknown, "empty NAL");
+    assert_eq!(
+        ps.classify_nals(std::iter::empty::<&[u8]>()),
+        AvcPicture::Unknown
+    );
+    assert_eq!(
+        ps.classify_nals([&[0x09u8, 0xF0][..]]),
+        AvcPicture::Unknown,
+        "AUD only"
+    );
+    assert_eq!(
+        ps.classify_nals([&[][..]]),
+        AvcPicture::Unknown,
+        "empty NAL"
+    );
     let idr_without_parameter_sets = [0x65u8, 0x88, 0x84, 0x00];
     assert_eq!(
         ps.classify_nals([&idr_without_parameter_sets[..]]),

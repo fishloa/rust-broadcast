@@ -16,10 +16,9 @@ fuzz_target!(|data: &[u8]| {
         let Ok(parsed) = SimulcryptMessage::parse_on(iface, data) else {
             continue;
         };
-        let bytes = parsed
-            .try_to_bytes()
-            .expect("a parsed message serializes");
-        let reparsed = SimulcryptMessage::parse_on(iface, &bytes).expect("serialized message reparses");
+        let bytes = parsed.try_to_bytes().expect("a parsed message serializes");
+        let reparsed =
+            SimulcryptMessage::parse_on(iface, &bytes).expect("serialized message reparses");
         assert_eq!(parsed, reparsed, "simulcrypt parse->serialize->parse");
     }
 });

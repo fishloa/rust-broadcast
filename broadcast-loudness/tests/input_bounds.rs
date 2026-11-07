@@ -8,7 +8,10 @@ fn sample_rate_zero_and_above_the_cap_are_rejected_with_the_offending_rate() {
     for bad in [0, MAX_SAMPLE_RATE + 1, 4_000_000_000, u32::MAX] {
         match LoudnessMeter::new(bad, ChannelLayout::Stereo) {
             Err(Error::InvalidSampleRate { got }) => assert_eq!(got, bad),
-            other => panic!("rate {bad}: expected InvalidSampleRate, got {:?}", other.map(|_| ())),
+            other => panic!(
+                "rate {bad}: expected InvalidSampleRate, got {:?}",
+                other.map(|_| ())
+            ),
         }
     }
 }

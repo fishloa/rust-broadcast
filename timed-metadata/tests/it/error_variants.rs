@@ -37,7 +37,9 @@ fn a_non_scte35_emsg_names_its_scheme() {
         Err(Error::UnsupportedScheme { scheme }) => assert_eq!(scheme, "urn:mpeg:dash:event:2012"),
         other => panic!("{other:?}"),
     }
-    let ok = emsg(SCTE35_SCHEME, PresentationTime::Delta(0)).to_vec().unwrap();
+    let ok = emsg(SCTE35_SCHEME, PresentationTime::Delta(0))
+        .to_vec()
+        .unwrap();
     assert_eq!(emsg_to_scte35(&ok).unwrap(), vec![0xFC, 0x30]);
 }
 
@@ -50,7 +52,10 @@ fn a_delta_beyond_u32_is_reported_with_its_value() {
         emsg_to_v0(&e, &timing(ept)),
         Err(Error::EmsgDeltaOverflow(d)) if d == delta
     ));
-    let at_limit = emsg(SCTE35_SCHEME, PresentationTime::Absolute(ept + u64::from(u32::MAX)));
+    let at_limit = emsg(
+        SCTE35_SCHEME,
+        PresentationTime::Absolute(ept + u64::from(u32::MAX)),
+    );
     let v0 = emsg_to_v0(&at_limit, &timing(ept)).unwrap();
     assert_eq!(v0.presentation_time, PresentationTime::Delta(u32::MAX));
 }
@@ -71,11 +76,17 @@ fn a_timescale_mismatch_reports_both_timescales() {
     t.timescale = 1_000;
     assert!(matches!(
         emsg_to_v1(&e, &t),
-        Err(Error::EmsgTimescaleMismatch { emsg: TIMESCALE, timing: 1_000 })
+        Err(Error::EmsgTimescaleMismatch {
+            emsg: TIMESCALE,
+            timing: 1_000
+        })
     ));
     assert!(matches!(
         emsg_to_v0(&e, &t),
-        Err(Error::EmsgTimescaleMismatch { emsg: TIMESCALE, timing: 1_000 })
+        Err(Error::EmsgTimescaleMismatch {
+            emsg: TIMESCALE,
+            timing: 1_000
+        })
     ));
 }
 
@@ -97,8 +108,14 @@ fn daterange_parse_failures_carry_a_reason() {
         "DATERANGE missing ID"
     );
     let base = "#EXT-X-DATERANGE:ID=\"a\",START-DATE=\"2026-01-01T00:00:00Z\"";
-    assert_eq!(attr_parse(&format!("{base},DURATION=abc")), "bad number: abc");
-    assert_eq!(attr_parse(&format!("{base},SCTE35-OUT=0xABC")), "odd-length hex");
+    assert_eq!(
+        attr_parse(&format!("{base},DURATION=abc")),
+        "bad number: abc"
+    );
+    assert_eq!(
+        attr_parse(&format!("{base},SCTE35-OUT=0xABC")),
+        "odd-length hex"
+    );
     assert_eq!(attr_parse(&format!("{base},SCTE35-IN=0xZZ")), "bad hex");
     assert_eq!(attr_parse(&format!("{base},SCTE35-CMD=0xGG00")), "bad hex");
 }

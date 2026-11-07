@@ -5,7 +5,7 @@
 
 use broadcast_common::{Parse, Serialize};
 use mpeg_ps::program_stream;
-use mpeg_ps::{EsMapEntry, Error, PackHeader, ProgramStreamMap, SystemHeader};
+use mpeg_ps::{Error, EsMapEntry, PackHeader, ProgramStreamMap, SystemHeader};
 
 const PACK_HEADER_FIXED_LEN: usize = 14;
 const MUX_RATE_BYTES: std::ops::Range<usize> = 10..13;

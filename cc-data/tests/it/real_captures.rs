@@ -100,7 +100,16 @@ fn every_real_cc_data_round_trips_byte_exact_with_the_hand_counted_totals() {
         assert_eq!(valid, cap.valid, "{}: cc_valid triplets", cap.rel);
         assert_eq!(c608, cap.cea608, "{}: CEA-608 triplets", cap.rel);
         assert_eq!(c708, cap.cea708, "{}: CEA-708 triplets", cap.rel);
-        assert_eq!(c608 + c708, triplets, "{}: every triplet classified", cap.rel);
-        assert_eq!(em_clear, cap.em_data_clear, "{}: process_em_data clear", cap.rel);
+        assert_eq!(
+            c608 + c708,
+            triplets,
+            "{}: every triplet classified",
+            cap.rel
+        );
+        assert_eq!(
+            em_clear, cap.em_data_clear,
+            "{}: process_em_data clear",
+            cap.rel
+        );
     }
 }

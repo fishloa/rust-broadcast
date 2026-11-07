@@ -33,7 +33,10 @@ fn the_block_is_decoded_and_trailing_bytes_are_left_alone() {
     assert_eq!(expected.frame_idx, 0x2A);
     assert_eq!(expected.len_bits(), usize::from(DYNAMIC_BITS_NO_PLP_NO_AUX));
 
-    assert_eq!(payload(&data).l1_dynamic_next(0, 0), Ok(Some(expected.clone())));
+    assert_eq!(
+        payload(&data).l1_dynamic_next(0, 0),
+        Ok(Some(expected.clone()))
+    );
 
     data.extend_from_slice(&[0xAB; 7]);
     assert_eq!(payload(&data).l1_dynamic_next(0, 0), Ok(Some(expected)));

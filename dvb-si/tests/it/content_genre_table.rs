@@ -7,7 +7,8 @@
 use dvb_si::descriptors::content::content_genre_name;
 
 fn parse_nibble_range(cell: &str) -> (u8, u8) {
-    let hex = |s: &str| u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).expect("hex nibble");
+    let hex =
+        |s: &str| u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).expect("hex nibble");
     match cell.split_once(" to ") {
         Some((lo, hi)) => (hex(lo), hex(hi)),
         None => (hex(cell), hex(cell)),

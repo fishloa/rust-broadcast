@@ -33,7 +33,10 @@ fn afd_with_the_active_format_flag_decodes_the_code() {
 
 #[test]
 fn afd_with_the_flag_cleared_is_present_but_empty() {
-    assert_eq!(afd_from_t35_payload(&afd_payload(&[0x00, 0xFF])), Some(None));
+    assert_eq!(
+        afd_from_t35_payload(&afd_payload(&[0x00, 0xFF])),
+        Some(None)
+    );
     assert_eq!(afd_from_t35_payload(&afd_payload(&[0x00])), Some(None));
 }
 
@@ -41,7 +44,11 @@ fn afd_with_the_flag_cleared_is_present_but_empty() {
 fn afd_rejects_foreign_or_short_payloads() {
     assert_eq!(afd_from_t35_payload(&[]), None);
     assert_eq!(afd_from_t35_payload(&afd_payload(&[])), None);
-    assert_eq!(afd_from_t35_payload(&afd_payload(&[0x40])), None, "flag set, code byte missing");
+    assert_eq!(
+        afd_from_t35_payload(&afd_payload(&[0x40])),
+        None,
+        "flag set, code byte missing"
+    );
     let mut wrong_country = afd_payload(&[0x40, 0x04]);
     wrong_country[0] = 0xB4;
     assert_eq!(afd_from_t35_payload(&wrong_country), None);
@@ -63,9 +70,15 @@ fn bar_data_decodes_each_flagged_value_in_order() {
         left_bar_end_pixel: Some(0x30),
         right_bar_start_pixel: Some(0x40),
     };
-    assert_eq!(bar_data_from_t35_payload(&bar_payload(&rest)), Some(want.clone()));
+    assert_eq!(
+        bar_data_from_t35_payload(&bar_payload(&rest)),
+        Some(want.clone())
+    );
     assert_eq!(bar_data_from_ga94_payload(&rest), Some(want.clone()));
-    assert_eq!(bar_data_from_ga94_payload(&[GA94.as_slice(), &rest].concat()), Some(want));
+    assert_eq!(
+        bar_data_from_ga94_payload(&[GA94.as_slice(), &rest].concat()),
+        Some(want)
+    );
 }
 
 #[test]
@@ -100,8 +113,15 @@ fn only_the_flagged_bars_are_read() {
 fn bar_data_rejects_foreign_short_or_wrong_type_payloads() {
     assert_eq!(bar_data_from_ga94_payload(&[]), None);
     assert_eq!(bar_data_from_ga94_payload(&[0x06]), None);
-    assert_eq!(bar_data_from_ga94_payload(&[0x03, 0x80, 0xC0, 0x10]), None, "not bar_data");
-    assert_eq!(bar_data_from_t35_payload(&[0xB5, 0x00, 0x31, b'G', b'A', b'9', b'4', 0x06]), None);
+    assert_eq!(
+        bar_data_from_ga94_payload(&[0x03, 0x80, 0xC0, 0x10]),
+        None,
+        "not bar_data"
+    );
+    assert_eq!(
+        bar_data_from_t35_payload(&[0xB5, 0x00, 0x31, b'G', b'A', b'9', b'4', 0x06]),
+        None
+    );
     let mut wrong_country = bar_payload(&[0x06, 0x80, 0xC0, 0x10]);
     wrong_country[0] = 0xB4;
     assert_eq!(bar_data_from_t35_payload(&wrong_country), None);

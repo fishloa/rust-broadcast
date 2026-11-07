@@ -35,7 +35,10 @@ fn serializing_a_unit_under_an_inconsistent_id_is_rejected_with_the_id_and_paylo
     let field = DataField::parse(&data).expect("real VBI data field");
     let mut checked = 0;
     for unit in &field.data_units {
-        assert!(unit.payload.is_consistent_with(unit.id), "parsed pairs are consistent");
+        assert!(
+            unit.payload.is_consistent_with(unit.id),
+            "parsed pairs are consistent"
+        );
         let mut mislabelled = unit.clone();
         mislabelled.id = if unit.id == DataUnitId::Vps {
             DataUnitId::Wss

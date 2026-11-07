@@ -33,7 +33,10 @@ fn zero_timestamp_scale_is_reported_as_a_malformed_info() {
     for value in [&[0u8][..], &[0, 0, 0, 0, 0, 0, 0, 0][..]] {
         let degraded = degraded_of(value);
         assert_eq!(degraded.len(), 1, "{degraded:?}");
-        assert!(matches!(degraded[0], InputDegradation::MalformedUnit { .. }));
+        assert!(matches!(
+            degraded[0],
+            InputDegradation::MalformedUnit { .. }
+        ));
     }
 }
 
@@ -45,7 +48,10 @@ fn timestamp_scale_beyond_i64_is_reported_as_a_malformed_info() {
     ] {
         let degraded = degraded_of(&value);
         assert_eq!(degraded.len(), 1, "{value:?}: {degraded:?}");
-        assert!(matches!(degraded[0], InputDegradation::MalformedUnit { .. }));
+        assert!(matches!(
+            degraded[0],
+            InputDegradation::MalformedUnit { .. }
+        ));
     }
 }
 

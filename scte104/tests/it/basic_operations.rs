@@ -9,8 +9,8 @@
 use broadcast_common::{Parse, Serialize};
 use scte104::Error;
 use scte104::operations::{
-    AliveRequest, AliveResponse, ConfigRequest, ConfigResponse, FaultRequest, InjectCompleteResponse,
-    InjectResponse,
+    AliveRequest, AliveResponse, ConfigRequest, ConfigResponse, FaultRequest,
+    InjectCompleteResponse, InjectResponse,
 };
 use scte104::time::Time;
 
@@ -40,7 +40,11 @@ fn assert_truncations_rejected<'a, T: Parse<'a, Error = Error> + core::fmt::Debu
                 have: got,
                 what: w,
             }) => {
-                assert_eq!((need, got, w), (wire.len(), have, what), "{have}-byte prefix");
+                assert_eq!(
+                    (need, got, w),
+                    (wire.len(), have, what),
+                    "{have}-byte prefix"
+                );
             }
             other => panic!("{have}-byte prefix of {what}: {other:?}"),
         }
@@ -109,7 +113,10 @@ fn inject_complete_response_wire_round_trip_and_truncation() {
     };
     assert_eq!(op.try_to_bytes().unwrap(), [0x2A, 0x03]);
     assert_eq!(InjectCompleteResponse::parse(&[0x2A, 0x03]).unwrap(), op);
-    assert_truncations_rejected::<InjectCompleteResponse>(&[0x2A, 0x03], "inject_complete_response");
+    assert_truncations_rejected::<InjectCompleteResponse>(
+        &[0x2A, 0x03],
+        "inject_complete_response",
+    );
     assert_short_buffers(&op);
 }
 

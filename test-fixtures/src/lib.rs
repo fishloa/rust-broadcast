@@ -427,8 +427,9 @@ pub fn assert_short_buffers_rejected<E: std::fmt::Debug>(
         match serialize(&mut short) {
             Ok(n) => panic!("a {have}-byte buffer (need {serialized_len}) serialized {n} bytes"),
             Err(e) => {
-                let (need_field, have_field) = too_small(&e)
-                    .unwrap_or_else(|| panic!("{have}-byte buffer gave {e:?}, not OutputBufferTooSmall"));
+                let (need_field, have_field) = too_small(&e).unwrap_or_else(|| {
+                    panic!("{have}-byte buffer gave {e:?}, not OutputBufferTooSmall")
+                });
                 assert_eq!(have_field, have, "have field for a {have}-byte buffer");
                 assert!(
                     need_field > have && need_field <= serialized_len,

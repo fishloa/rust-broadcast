@@ -33,7 +33,9 @@ fn rejection_for(reason: RejectionReason, own_socket_id: u32) -> Vec<u8> {
         extensions: HandshakeExtensions(&[]),
     });
     let mut bytes = vec![0u8; packet.serialized_len()];
-    packet.serialize_into(&mut bytes).expect("serialize rejection");
+    packet
+        .serialize_into(&mut bytes)
+        .expect("serialize rejection");
     bytes
 }
 
@@ -87,8 +89,16 @@ fn each_induction_rejection_reason_is_reported_by_name_and_retried_after_a_backo
             sim.count(|e| matches!(e, Event::Status(Status::Reconnecting { .. }))) >= 1,
             "{reason:?}"
         );
-        assert_eq!(sim.binds_count(), 1, "{reason:?}: the retry waits for the backoff");
+        assert_eq!(
+            sim.binds_count(),
+            1,
+            "{reason:?}: the retry waits for the backoff"
+        );
         sim.advance_by(3 * SECOND_US);
-        assert_eq!(sim.binds_count(), 2, "{reason:?}: retried after the backoff");
+        assert_eq!(
+            sim.binds_count(),
+            2,
+            "{reason:?}: retried after the backoff"
+        );
     }
 }
