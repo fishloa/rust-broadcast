@@ -1,4 +1,4 @@
-use tshttp_runtime::{Action, Config, Event, TsHttpClient};
+use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
 
 fn samples_for(chunk_size: usize) -> Option<(usize, usize, usize)> {
     let bytes = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "real_stream")?;

@@ -188,15 +188,6 @@ pub const NEEDLE_CRATES: &[Needles] = &[
         allow: &[],
     },
     Needles {
-        name: "tshttp-runtime",
-        extra: &[],
-        allow: &[(
-            "client/tokio_client.rs",
-            "tokio::time::sleep(",
-            "backon-scheduled retry delay and WaitMs hint, both raced against the CancellationToken in sleep_or_cancelled",
-        )],
-    },
-    Needles {
         name: "webrtc-runtime",
         extra: &[],
         allow: &[],

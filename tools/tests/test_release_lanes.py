@@ -18,7 +18,7 @@ PAIRS_FILE = REPO / "docs" / "release-plan-2026-10.pairs"
 LANES = sorted(WF.glob("release-*.yml"))
 LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 ABANDONED = {"atsc3"}  # lane fails safe by design; never in the pair list
-UNRELEASED: set[str] = {"tshttp-runtime", "broadcast-client", "dash-runtime"}  # lanes staged ahead of owner sign-off; leaves this set when a pairs file plans them
+UNRELEASED: set[str] = {"broadcast-client", "dash-runtime"}  # lanes staged ahead of owner sign-off; leaves this set when a pairs file plans them
 
 
 def _pr():

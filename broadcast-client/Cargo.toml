@@ -23,7 +23,6 @@ transmux           = { path = "../transmux", version = "0.29.1", default-feature
 dvb-si             = { path = "../dvb-si", version = "12.1.0", default-features = false, features = ["ts", "std"] }
 mpeg-ts            = { path = "../mpeg-ts", version = "0.6.2", default-features = false, features = ["std"] }
 buffering-runtime  = { path = "../buffering-runtime", version = "0.1.0", default-features = false, features = ["std"] }
-tshttp-runtime     = { path = "../tshttp-runtime", version = "0.2.0", default-features = false, features = ["std"] }
 hls-runtime        = { path = "../hls-runtime", version = "0.11.0" }
 dash-runtime       = { path = "../dash-runtime", version = "0.2.0" }
 broadcast-hls      = { path = "../broadcast-hls", version = "0.5.0" }
@@ -42,6 +41,7 @@ headers            = { workspace = true }
 cookie             = { version = "0.18", default-features = false }
 cookie_store       = { version = "~0.22.1", default-features = false }
 thiserror          = "2"
+serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc", "std"] }
 
 [dev-dependencies]
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -57,12 +57,13 @@ rtsp-types = "0.1"
 url = "2"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 test-bounded = { path = "../test-bounded" }
+serde_json = { workspace = true }
 workspace-guards = { path = "../workspace-guards" }
 tokio = { version = "1", default-features = false, features = ["rt", "time", "net"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
 
 [features]
-serde = ["broadcast-common/serde", "transmux/serde", "tshttp-runtime/serde", "buffering-runtime/serde"]
+serde = ["dep:serde", "broadcast-common/serde", "transmux/serde", "buffering-runtime/serde"]
 
 __test-seams = []
 

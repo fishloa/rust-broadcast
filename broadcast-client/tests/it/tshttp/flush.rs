@@ -1,5 +1,5 @@
+use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
 use std::collections::BTreeMap;
-use tshttp_runtime::{Action, Config, Event, TsHttpClient};
 
 fn samples_by_track(events: &[Event]) -> BTreeMap<u32, usize> {
     let mut m = BTreeMap::new();

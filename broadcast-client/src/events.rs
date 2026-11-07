@@ -707,7 +707,7 @@ pub enum Event {
     /// Status.
     Status(Status),
     /// Starved.
-    Starved(tshttp_runtime::StarveKind),
+    Starved(crate::tshttp::StarveKind),
     /// Buffer event.
     Buffer(BufferEvent),
     /// Auth required. `resource_metadata` is chosen by the server that sent the challenge and can
@@ -965,8 +965,8 @@ pub struct Config {
     pub kind: SourceKind,
     /// TS-over-HTTP config (also the RTSP timers). An inconsistent value (a zero timeout, an
     /// empty or zero-entry backoff, a stall reconnect not after the notice) is replaced by the
-    /// nearest valid one, see `tshttp_runtime::Config::clamped`; it is not rejected.
-    pub ts_http: tshttp_runtime::Config,
+    /// nearest valid one, see `crate::tshttp::Config::clamped`; it is not rejected.
+    pub ts_http: crate::tshttp::Config,
     /// Maximum redirects per open (per request for HLS). `0` follows none: a redirect response
     /// fails the connection.
     pub max_redirects: u32,
@@ -1187,7 +1187,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             kind: SourceKind::Auto,
-            ts_http: tshttp_runtime::Config::default(),
+            ts_http: crate::tshttp::Config::default(),
             max_redirects: 5,
             extra_headers: Vec::new(),
             initial_cookies: Vec::new(),

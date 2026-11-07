@@ -55,7 +55,7 @@ hls-runtime       = { path = "../hls-runtime",   version = "0.11", features = ["
 dash-runtime      = { path = "../dash-runtime", version = "0.2" }
 # TS-over-HTTP pull policy core (`source::ts_http`): finite/VOD detection and
 # the post-establishment stall decision; the demuxer stays `ts_program`.
-tshttp-runtime    = { path = "../tshttp-runtime", version = "0.2", default-features = false }
+broadcast-client  = { path = "../broadcast-client", version = "0.2.1" }
 # Needed directly (not just via hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.

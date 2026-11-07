@@ -1,15 +1,13 @@
-# tshttp-runtime
+Sans-IO TS-over-HTTP pull session client (module `broadcast_client::tshttp`, the former `tshttp-runtime` crate).
 
-Sans-IO TS-over-HTTP pull session client.
-
-The host performs all I/O; this crate owns the session state machine, demuxing
+The host performs all I/O; this module owns the session state machine, demuxing
 via `transmux::StreamingTsDemux`, backoff and stall detection.
 
 ## What it does / what it does not
 
 Does: run the session state machine of a TS-over-HTTP pull (open, connect, play, stall detection, reconnect with backoff, 404/410 handling, finite-resource completion), and demux the body with `transmux::StreamingTsDemux`. The host supplies the clock (a monotonic millisecond count) and performs every HTTP request.
 
-Does not: open sockets, parse HTTP, read a clock, decrypt, or play HLS/DASH (see `hls-runtime` and `dash-runtime`). `broadcast-client` drives this crate for its TS-over-HTTP source.
+Does not: open sockets, parse HTTP, read a clock, decrypt, or play HLS/DASH (see `hls-runtime` and `dash-runtime`). `Session` drives it for the TS-over-HTTP source; `multimux` and the RTMP source use the demux-free `TsHttpPolicy` core directly.
 
 ## Standards supported
 
@@ -21,7 +19,7 @@ Does not: open sockets, parse HTTP, read a clock, decrypt, or play HLS/DASH (see
 ## Quick start
 
 ```no_run
-use tshttp_runtime::{Config, TsHttpClient};
+use broadcast_client::tshttp::{Config, TsHttpClient};
 
 let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);
 // Drive I/O from the host:
@@ -59,14 +57,13 @@ stall_reconnect_ms 30000, backoff_ms `[2000,4000,8000]`, backoff_cap_ms 10000, m
 
 ## no_std
 
-`#![no_std]` + `alloc`; time is a caller-supplied monotonic millisecond count.
+The module uses only `core` and `alloc` and time is a caller-supplied monotonic millisecond count, but it is part of the `std` crate `broadcast-client`: the former standalone `no_std` build of `tshttp-runtime` (and its `thumbv7em-none-eabi` CI check) no longer exists. Nothing in this workspace built it without `std`.
 
 ## Feature flags
 
 | Feature | Default | Effect |
 |---|---|---|
-| `std` | yes | Links the standard library (`broadcast-common/std`, `transmux/std`). |
-| `serde` | no | `Serialize`/`Deserialize` on the public event and config types. |
+| `serde` | no | `broadcast-client`'s `serde` feature adds `Serialize`/`Deserialize` on this module's public event and config types. |
 
 ## Transitions
 
@@ -89,8 +86,4 @@ The full state table and the rules behind each transition are in [`docs/tshttp-r
 
 ## Related crates
 
-`transmux` (the streaming TS demuxer this crate wraps), `broadcast-client` (the session that drives it), `hls-runtime` and `dash-runtime` (the other pull sources).
-
-## MSRV and licence
-
-MSRV 1.95.0. Licensed under MIT OR Apache-2.0.
+`transmux` (the streaming TS demuxer this module wraps), `hls-runtime` and `dash-runtime` (the other pull sources). Pre-merge history: `docs/history/tshttp-runtime/CHANGELOG.md`.

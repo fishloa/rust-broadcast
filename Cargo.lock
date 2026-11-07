@@ -459,6 +459,8 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sdp-types",
+ "serde",
+ "serde_json",
  "sha2 0.11.1",
  "srt-runtime",
  "test-bounded",
@@ -466,7 +468,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "transmux",
- "tshttp-runtime",
  "url",
  "workspace-guards",
  "zeroize",
@@ -2559,6 +2560,7 @@ dependencies = [
  "backon",
  "base64 0.23.1",
  "broadcast-auth",
+ "broadcast-client",
  "broadcast-common",
  "broadcast-hls",
  "bytes",
@@ -2608,7 +2610,6 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "transmux",
- "tshttp-runtime",
  "url",
  "webrtc-runtime",
  "workspace-guards",
@@ -4646,17 +4647,6 @@ dependencies = [
  "scte35-splice",
  "test-fixtures",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "tshttp-runtime"
-version = "0.2.0"
-dependencies = [
- "broadcast-common",
- "serde",
- "serde_json",
- "test-fixtures",
- "transmux",
 ]
 
 [[package]]

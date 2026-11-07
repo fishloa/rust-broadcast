@@ -1,4 +1,4 @@
-use tshttp_runtime::{Action, Config, Event, TsHttpClient};
+use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
 
 static D: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
@@ -298,7 +298,7 @@ fn bytes_after_a_stall_notice_restart_the_notice_schedule() {
 
 #[test]
 fn validate_rejects_each_inconsistent_field() {
-    use tshttp_runtime::config::ConfigError;
+    use broadcast_client::tshttp::config::ConfigError;
     assert_eq!(Config::default().validate(), Ok(()));
     let bad = |f: fn(&mut Config)| {
         let mut c = Config::default();

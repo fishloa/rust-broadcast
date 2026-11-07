@@ -1,4 +1,4 @@
-use tshttp_runtime::{Config, TsHttpClient};
+use broadcast_client::tshttp::{Config, TsHttpClient};
 
 static DATA: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
@@ -11,12 +11,12 @@ fn main() {
     let mut connected = false;
 
     // Initial open.
-    if let Some(tshttp_runtime::Action::Open { .. }) = client.poll() {
+    if let Some(broadcast_client::tshttp::Action::Open { .. }) = client.poll() {
         opens += 1;
     }
     client.on_response(200, &[], 0);
     while let Some(e) = client.poll_event() {
-        if matches!(e, tshttp_runtime::Event::Connected) {
+        if matches!(e, broadcast_client::tshttp::Event::Connected) {
             connected = true;
         }
     }
@@ -28,7 +28,7 @@ fn main() {
         while let Some(e) = client.poll_event() {
             if matches!(
                 e,
-                tshttp_runtime::Event::Demux(transmux::DemuxEvent::Sample { .. })
+                broadcast_client::tshttp::Event::Demux(transmux::DemuxEvent::Sample { .. })
             ) {
                 samples += 1;
             }
@@ -39,9 +39,9 @@ fn main() {
     client.reconnect(1000);
     while let Some(a) = client.poll() {
         match a {
-            tshttp_runtime::Action::Abort => {}
-            tshttp_runtime::Action::Reconnect { .. } => reconnects += 1,
-            tshttp_runtime::Action::Open { .. } => opens += 1,
+            broadcast_client::tshttp::Action::Abort => {}
+            broadcast_client::tshttp::Action::Reconnect { .. } => reconnects += 1,
+            broadcast_client::tshttp::Action::Open { .. } => opens += 1,
             _ => {}
         }
     }

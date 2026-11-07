@@ -559,21 +559,11 @@ what = "Turns chunk arrivals, PCR and the PTS-domain media position into a targe
 crates_io = true
 lifecycle = "active"
 
-[crate.tshttp-runtime]
-domain = "live"
-summary = "Sans-IO TS-over-HTTP pull session: reconnect/backoff, start and stall timers, demuxed events."
-standards = "none (implementation-defined policy; requirements from the zenith-tv player)"
-what = "Bytes-in/actions-out client session for a live MPEG-TS HTTP stream: Open/Reconnect/Abort actions, start timeout, stall notice and reconnect, 2/4/8 s then 10 s backoff, 404/410 events, demuxing through transmux StreamingTsDemux. Caller-supplied monotonic milliseconds, no I/O, no_std."
-crates_io = false
-lifecycle = "active"
-
-
-
 [crate.broadcast-client]
 domain = "live"
 summary = "Generic sans-IO client session: auth, redirects, TS-over-HTTP, HLS, DASH and RTSP sources."
 standards = "none (implementation-defined policy; requirements from zenith-tv player)"
-what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (tshttp-runtime), HLS (hls-runtime), DASH (dash-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`) for live DASH, no I/O, std."
+what = "Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (`tshttp` module: reconnect/backoff, start and stall timers, 404/410 events), HLS (hls-runtime), DASH (dash-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`) for live DASH, no I/O, std."
 crates_io = false
 lifecycle = "active"
 # ------------------------------------------------------------------ internal

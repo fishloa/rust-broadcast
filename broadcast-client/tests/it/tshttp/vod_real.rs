@@ -1,4 +1,4 @@
-use tshttp_runtime::{Action, Config, Event, TsHttpClient};
+use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
 
 fn cfg() -> Config {
     Config::default()

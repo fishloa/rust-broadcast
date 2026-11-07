@@ -2,9 +2,9 @@
 
 use core::marker::PhantomData;
 
+use broadcast_client::tshttp::{Config, Event, StarveKind, TsHttpClient};
 use serde::de::DeserializeOwned;
 use transmux::StreamingTsDemux;
-use tshttp_runtime::{Config, Event, StarveKind, TsHttpClient};
 
 struct Probe<T>(PhantomData<T>);
 

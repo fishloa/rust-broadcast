@@ -1,4 +1,4 @@
-use tshttp_runtime::{Action, Config, Event, TsHttpClient};
+use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
 
 static D: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));

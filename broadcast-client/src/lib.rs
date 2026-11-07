@@ -21,8 +21,10 @@ pub mod session;
 pub mod source;
 pub mod srt;
 pub mod timeline;
+pub mod tshttp;
 pub mod udp;
 
+pub use crate::tshttp::StarveKind;
 pub use broadcast_auth::Credentials;
 #[cfg(feature = "__test-seams")]
 #[doc(hidden)]
@@ -43,7 +45,6 @@ pub use source::ts_http::TsHttpSource;
 pub use srt::{SrtConfig, SrtEncryption, SrtEntropySeed, SrtKeyLength};
 pub use timeline::TimelineJumpConfig;
 pub use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};
-pub use tshttp_runtime::StarveKind;
 pub use udp::{DatagramStats, MulticastJoin, UdpConfig, UdpMode};
 
 /// Re-exported connection identifier.

@@ -1,4 +1,4 @@
-use tshttp_runtime::{Config, TsHttpClient};
+use broadcast_client::tshttp::{Config, TsHttpClient};
 
 fn main() {
     let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);
@@ -15,8 +15,8 @@ fn main() {
     let mut starved = 0;
     while let Some(e) = client.poll_event() {
         match e {
-            tshttp_runtime::Event::StallNotice { .. } => stall_notices += 1,
-            tshttp_runtime::Event::Starved(_) => starved += 1,
+            broadcast_client::tshttp::Event::StallNotice { .. } => stall_notices += 1,
+            broadcast_client::tshttp::Event::Starved(_) => starved += 1,
             _ => {}
         }
     }
@@ -26,8 +26,8 @@ fn main() {
     let mut reconnects = 0;
     while let Some(a) = client.poll() {
         match a {
-            tshttp_runtime::Action::Abort => aborted = true,
-            tshttp_runtime::Action::Reconnect { after_ms } => {
+            broadcast_client::tshttp::Action::Abort => aborted = true,
+            broadcast_client::tshttp::Action::Reconnect { after_ms } => {
                 reconnects += 1;
                 assert_eq!(after_ms, 0);
             }

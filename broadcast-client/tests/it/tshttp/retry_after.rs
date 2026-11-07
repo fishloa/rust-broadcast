@@ -1,4 +1,4 @@
-use tshttp_runtime::{Action, Config, TsHttpClient};
+use broadcast_client::tshttp::{Action, Config, TsHttpClient};
 
 const URL: &str = "http://example/live.ts";
 const FIRST_BACKOFF_MS: u64 = 2_000;

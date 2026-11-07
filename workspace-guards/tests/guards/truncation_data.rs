@@ -24,7 +24,6 @@ pub const EXEMPT: &[&str] = &[
     "broadcast-hls",
     "broadcast-loudness",
     "buffering-runtime",
-    "tshttp-runtime",
     "broadcast-client",
     "dvb-csa",
     "dvb-mabr",

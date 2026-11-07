@@ -1700,14 +1700,6 @@ pub const TABLE: &[Crate] = &[
     // (issue #873's `HlsOriginBuilder::build`), not a spec/field label.
     // - `HlsMasterError` (`server::engine`) — structured `thiserror` error
     // (`HlsOrigin::master_playlist`), not a spec/field label.
-    Crate {
-        name: "tshttp-runtime",
-        scope: Scope::Crate,
-        matcher: Matcher::Strict,
-        skip: &["Action", "Event"],
-        expected: None,
-        min_enums: None,
-    },
     // Drift-guard for the spec/field-enum label convention (issue #204).
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented

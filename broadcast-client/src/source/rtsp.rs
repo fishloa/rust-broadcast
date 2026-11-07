@@ -10,10 +10,10 @@ use alloc::collections::{BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use crate::tshttp::{Config as TsConfig, StarveKind};
 use rtsp_runtime::transport::{LowerTransport, Transport, TransportSpec};
 use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, StatusCode};
 use transmux::{CodecConfig, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample, TrackId};
-use tshttp_runtime::{Config as TsConfig, StarveKind};
 use url::{Host, Url};
 
 use crate::auth::{AuthDecision, AuthState};

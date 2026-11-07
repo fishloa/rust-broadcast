@@ -1,4 +1,4 @@
-use tshttp_runtime::{Action, Config, TsHttpClient};
+use broadcast_client::tshttp::{Action, Config, TsHttpClient};
 
 const BACKOFF_WITH_ZERO: [u64; 3] = [2_000, 0, 8_000];
 
@@ -11,7 +11,7 @@ fn a_zero_backoff_entry_is_rejected_and_clamped_to_one_millisecond() {
     assert!(
         matches!(
             config.validate(),
-            Err(tshttp_runtime::config::ConfigError::ZeroBackoffEntry)
+            Err(broadcast_client::tshttp::config::ConfigError::ZeroBackoffEntry)
         ),
         "a 0 ms backoff spins"
     );

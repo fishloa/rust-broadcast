@@ -1,8 +1,8 @@
 use alloc::collections::VecDeque;
 use alloc::string::String;
 
-use crate::config::Config;
-use crate::events::{Action, Event, StarveKind};
+use crate::tshttp::config::Config;
+use crate::tshttp::events::{Action, Event, StarveKind};
 
 const STALL_NOTICE_REPEAT_MS: u64 = 1_000;
 const IDENTITY_CODING: &str = "identity";

@@ -1,14 +1,14 @@
-//! Adapter over [`tshttp_runtime::TsHttpClient`].
+//! Adapter over [`crate::tshttp::TsHttpClient`].
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
 use url::Url;
 
+use crate::tshttp::{Config as TsConfig, TsHttpClient};
 use broadcast_common::clock33::PCR_HZ;
 use broadcast_common::timescale::{Rounding, rescale_u64};
 use transmux::{DemuxEvent, TrackId, TrackSpec};
-use tshttp_runtime::{Config as TsConfig, TsHttpClient};
 
 use mpeg_ts::pid::Pid;
 
@@ -47,7 +47,7 @@ pub struct TsHttpSource {
     connection_count: u32,
     stalled: bool,
     failure_announced: bool,
-    caller_actions: VecDeque<tshttp_runtime::Action>,
+    caller_actions: VecDeque<crate::tshttp::Action>,
     last_pcr_27mhz: Option<u64>,
     now_us: u64,
     declared: Option<DeclaredStreams>,
@@ -144,12 +144,12 @@ impl TsHttpSource {
     }
 
     /// Poll next tshttp action.
-    pub fn poll_action(&mut self) -> Option<tshttp_runtime::Action> {
+    pub fn poll_action(&mut self) -> Option<crate::tshttp::Action> {
         if let Some(action) = self.caller_actions.pop_front() {
             return Some(action);
         }
         let action = self.ts.poll()?;
-        if matches!(action, tshttp_runtime::Action::Reconnect { .. }) {
+        if matches!(action, crate::tshttp::Action::Reconnect { .. }) {
             if self.failure_announced {
                 self.failure_announced = false;
             } else {
@@ -371,17 +371,17 @@ impl TsHttpSource {
         self.release_hold_if_due();
     }
 
-    fn map_ts_event(&mut self, e: tshttp_runtime::Event) {
+    fn map_ts_event(&mut self, e: crate::tshttp::Event) {
         match e {
-            tshttp_runtime::Event::Finite { expected_bytes } => {
+            crate::tshttp::Event::Finite { expected_bytes } => {
                 self.release_hold();
                 self.push(Event::Finite { expected_bytes });
             }
-            tshttp_runtime::Event::Ended => {
+            crate::tshttp::Event::Ended => {
                 self.release_hold();
                 self.push(Event::Status(Status::Ended));
             }
-            tshttp_runtime::Event::Connected => {
+            crate::tshttp::Event::Connected => {
                 self.refused = None;
                 self.release_hold();
                 self.declared = Some(DeclaredStreams::new());
@@ -397,29 +397,29 @@ impl TsHttpSource {
                 self.conn_connected = true;
                 self.conn_seen_first_sample = false;
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::ClockReference {
+            crate::tshttp::Event::Demux(DemuxEvent::ClockReference {
                 ticks, clock_hz, ..
             }) => {
                 self.last_pcr_27mhz = Some(to_27mhz(ticks, clock_hz));
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::Discontinuity { .. }) => {
+            crate::tshttp::Event::Demux(DemuxEvent::Discontinuity { .. }) => {
                 self.push_item(None);
             }
-            tshttp_runtime::Event::Demux(
+            crate::tshttp::Event::Demux(
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec),
             ) => {
                 self.note_resolved(spec.source_pid);
                 self.tracks.insert(spec.track_id, spec);
                 self.tracks_dirty = true;
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::TrackAbandoned { provenance, .. }) => {
+            crate::tshttp::Event::Demux(DemuxEvent::TrackAbandoned { provenance, .. }) => {
                 self.note_resolved(provenance.pid);
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::TrackRemoved { track_id, .. }) => {
+            crate::tshttp::Event::Demux(DemuxEvent::TrackRemoved { track_id, .. }) => {
                 self.tracks.remove(&track_id);
                 self.tracks_dirty = true;
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::Sample {
+            crate::tshttp::Event::Demux(DemuxEvent::Sample {
                 track_id, sample, ..
             }) => {
                 let pts = sample.pts;
@@ -449,7 +449,7 @@ impl TsHttpSource {
                 });
                 self.note_held_sample(track_id, pts);
             }
-            tshttp_runtime::Event::Demux(DemuxEvent::DisplayChanged {
+            crate::tshttp::Event::Demux(DemuxEvent::DisplayChanged {
                 track_id,
                 display,
                 pts,
@@ -467,21 +467,21 @@ impl TsHttpSource {
                     display,
                 });
             }
-            tshttp_runtime::Event::StallNotice { secs } => {
+            crate::tshttp::Event::StallNotice { secs } => {
                 self.release_hold();
                 self.push(Event::Status(Status::Stalled { secs }));
                 self.stalled = true;
             }
-            tshttp_runtime::Event::Reconnecting { attempt } => {
+            crate::tshttp::Event::Reconnecting { attempt } => {
                 self.release_hold();
                 self.failure_announced = true;
                 self.push(Event::Status(Status::Reconnecting { attempt }));
             }
-            tshttp_runtime::Event::NotFound { status: _ } => {
+            crate::tshttp::Event::NotFound { status: _ } => {
                 self.release_hold();
                 self.push(Event::Status(Status::NotFound));
             }
-            tshttp_runtime::Event::Starved(k) => {
+            crate::tshttp::Event::Starved(k) => {
                 self.release_hold();
                 self.push(Event::Starved(k));
             }

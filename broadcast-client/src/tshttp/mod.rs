@@ -1,10 +1,4 @@
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![no_std]
-#![forbid(unsafe_code)]
-#![deny(missing_docs)]
-#![doc = include_str!("../README.md")]
-
-extern crate alloc;
+#![doc = include_str!("README.md")]
 
 /// Client state machine implementation.
 pub mod client;

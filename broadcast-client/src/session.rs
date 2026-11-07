@@ -33,7 +33,7 @@ use crate::source::ts_http_hold::{HoldLimits, StreamKind};
 use crate::timeline::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
-use tshttp_runtime::Action as TsAction;
+use crate::tshttp::Action as TsAction;
 
 const SCHEME_HTTP: &str = "http";
 const SCHEME_HTTPS: &str = "https";
@@ -1383,7 +1383,6 @@ impl Session {
                         .saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
                 ));
             }
-            _ => {}
         }
     }
 

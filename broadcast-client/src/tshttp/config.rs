@@ -3,7 +3,7 @@ use alloc::vec;
 /// Session configuration (defaults per DESIGN.md).
 ///
 /// [`Config::validate`] reports an inconsistent configuration;
-/// [`TsHttpClient::new`](crate::TsHttpClient::new) never rejects one but
+/// [`TsHttpClient::new`](crate::tshttp::TsHttpClient::new) never rejects one but
 /// replaces each offending field with the nearest valid value (see
 /// [`Config::clamped`]).
 #[derive(Debug, Clone, PartialEq, Eq)]

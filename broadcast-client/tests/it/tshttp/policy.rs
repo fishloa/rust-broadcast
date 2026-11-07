@@ -1,4 +1,4 @@
-use tshttp_runtime::{Action, Config, Event, StarveKind, TsHttpClient};
+use broadcast_client::tshttp::{Action, Config, Event, StarveKind, TsHttpClient};
 
 #[test]
 fn backoff_2_4_8_then_10_forever() {

@@ -78,7 +78,6 @@ pub const TABLE: &[Crate] = &[
     plain("timed-metadata"),
     plain("transmux"),
     plain("ts-fix"),
-    plain("tshttp-runtime"),
     plain("ttml-subtitle"),
     plain("ule"),
     plain("webrtc-runtime"),

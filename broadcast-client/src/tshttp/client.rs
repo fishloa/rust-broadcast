@@ -2,9 +2,9 @@ use alloc::string::String;
 
 use transmux::{DemuxEvent, StreamingTsDemux};
 
-use crate::config::Config;
-use crate::events::{Action, Event};
-use crate::policy::TsHttpPolicy;
+use crate::tshttp::config::Config;
+use crate::tshttp::events::{Action, Event};
+use crate::tshttp::policy::TsHttpPolicy;
 
 /// TS-over-HTTP pull session client (DESIGN.md): [`TsHttpPolicy`] plus a
 /// [`StreamingTsDemux`] fed the body bytes.

@@ -1,4 +1,4 @@
-use tshttp_runtime::{Config, Event, TsHttpClient, TsHttpPolicy};
+use broadcast_client::tshttp::{Config, Event, TsHttpClient, TsHttpPolicy};
 
 const URL: &str = "http://example/live.ts";
 const CHUNK: usize = 1316;
@@ -25,7 +25,7 @@ type Trace = Vec<String>;
 
 fn describe(
     events: &mut Vec<Event>,
-    actions: &mut Vec<tshttp_runtime::Action>,
+    actions: &mut Vec<broadcast_client::tshttp::Action>,
     deadline: Option<u64>,
 ) -> String {
     let ev: Vec<String> = events
@@ -37,7 +37,7 @@ fn describe(
     format!("events={ev:?} actions={ac:?} deadline={deadline:?}")
 }
 
-fn drain_client(c: &mut TsHttpClient) -> (Vec<Event>, Vec<tshttp_runtime::Action>, bool) {
+fn drain_client(c: &mut TsHttpClient) -> (Vec<Event>, Vec<broadcast_client::tshttp::Action>, bool) {
     let mut events = Vec::new();
     let mut sampled = false;
     while let Some(e) = c.poll_event() {
