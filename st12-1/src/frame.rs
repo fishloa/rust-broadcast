@@ -2,7 +2,7 @@
 //! the curated spec transcription this module implements field-for-field.
 
 use broadcast_common::bcd::bcd_to_decimal;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
@@ -407,7 +407,7 @@ impl Serialize for LtcFrame {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        need_in(buf, FRAME_LEN, "LTC codeword serialize output")?;
+        need_out(buf, FRAME_LEN)?;
         self.validate()?;
 
         let frame_units = self.frames % 10;
@@ -479,6 +479,19 @@ mod tests {
         ));
         f.frames = 23;
         assert!(f.validate_for_rate(FrameRate::Fps24).is_ok());
+    }
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let f = sample_frame();
+        let mut out = [0u8; FRAME_LEN - 1];
+        assert_eq!(
+            f.serialize_into(&mut out),
+            Err(Error::OutputBufferTooSmall {
+                need: FRAME_LEN,
+                have: FRAME_LEN - 1
+            })
+        );
     }
 
     #[test]

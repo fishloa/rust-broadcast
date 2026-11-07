@@ -13,7 +13,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -537,7 +537,7 @@ impl Serialize for LocalSet<'_> {
             });
         }
         let total = self.serialized_len();
-        need_in(buf, total, "Local Set")?;
+        need_out(buf, total)?;
         buf[..16].copy_from_slice(&self.key);
         let mode = self.item_length_mode();
         let items_len: usize = self

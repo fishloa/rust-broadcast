@@ -1,7 +1,7 @@
 //! Page Composition Segment — ETSI EN 300 743 §7.2.2, Table 9 (segment_type 0x10).
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// The page_composition_segment segment_type.
@@ -179,7 +179,7 @@ impl Serialize for PageCompositionSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        need_in(buf, len, "page_composition_segment serialize")?;
+        need_out(buf, len)?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

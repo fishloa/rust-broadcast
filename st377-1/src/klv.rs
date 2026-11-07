@@ -11,7 +11,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -138,7 +138,7 @@ impl Serialize for KlvItem<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        need_in(buf, total, "KLV item")?;
+        need_out(buf, total)?;
         buf[..16].copy_from_slice(&self.key);
         let len_size =
             encode_ber_length_as(self.value.len() as u64, self.len_size, &mut buf[16..])?;
@@ -181,6 +181,20 @@ pub fn collect_klv_items(bytes: &[u8]) -> Result<Vec<(usize, KlvItem<'_>)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let item = KlvItem::new([0xAAu8; 16], &[1, 2, 3, 4]);
+        let need = item.serialized_len();
+        let mut buf = alloc::vec![0u8; need - 1];
+        assert_eq!(
+            item.serialize_into(&mut buf),
+            Err(Error::OutputBufferTooSmall {
+                need,
+                have: need - 1
+            })
+        );
+    }
 
     #[test]
     fn klv_item_round_trip_short_form() {

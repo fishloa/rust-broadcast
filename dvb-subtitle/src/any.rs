@@ -119,10 +119,10 @@ macro_rules! declare_segments {
                         Self::$variant(s) => s.serialize_into(buf),
                     )+
                     Self::Unknown { segment_type, page_id, data } => {
-                        Self::serialize_raw_segment(*segment_type, *page_id, data, buf, "Unknown segment serialize")
+                        Self::serialize_raw_segment(*segment_type, *page_id, data, buf)
                     }
                     Self::Malformed { segment_type, page_id, data, .. } => {
-                        Self::serialize_raw_segment(*segment_type, *page_id, data, buf, "Malformed segment serialize")
+                        Self::serialize_raw_segment(*segment_type, *page_id, data, buf)
                     }
                 }
             }
@@ -134,16 +134,9 @@ macro_rules! declare_segments {
                 page_id: u16,
                 data: &[u8],
                 buf: &mut [u8],
-                what: &'static str,
             ) -> crate::Result<usize> {
                 let len = 6 + data.len();
-                if buf.len() < len {
-                    return Err(crate::error::Error::BufferTooShort {
-                        need: len,
-                        have: buf.len(),
-                        what,
-                    });
-                }
+                broadcast_common::len::need_out(buf, len)?;
                 buf[0] = crate::pes_data_field::SYNC_BYTE;
                 buf[1] = segment_type;
                 buf[2..4].copy_from_slice(&page_id.to_be_bytes());

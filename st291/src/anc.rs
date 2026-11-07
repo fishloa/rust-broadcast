@@ -34,7 +34,7 @@
 //! field layout is unchanged by this — see `anc_content`'s module doc for why.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::bits::{BitReader, BitWriter};
 
@@ -422,7 +422,7 @@ impl AncDataPacket {
     /// `user_data_words.len()` does not equal `data_count & 0xFF`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        need_in(buf, len, "ANC PES serialize output")?;
+        need_out(buf, len)?;
         let pes_len = self.pes_packet_length();
         if pes_len > usize::from(u16::MAX) {
             return Err(Error::PesLengthTooLarge(pes_len));

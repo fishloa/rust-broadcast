@@ -10,7 +10,7 @@
 //!   length bytes) — `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 /// High bit of the first BER length byte: set means long form (X.690 §8.1.3).
 const BER_LONG_FORM_FLAG: u8 = 0x80;
@@ -109,7 +109,7 @@ pub fn ber_length_size(len: u64) -> usize {
 /// the number of bytes written (always [`ber_length_size`]`(len)`).
 pub fn encode_ber_length(len: u64, buf: &mut [u8]) -> Result<usize> {
     let size = ber_length_size(len);
-    need_in(buf, size, "BER length output")?;
+    need_out(buf, size)?;
     if len <= BER_SHORT_FORM_MAX {
         buf[0] = len as u8;
     } else {
@@ -155,7 +155,7 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
             if size > BER_MAX_TOKEN_LEN {
                 return Err(Error::BerLengthTooLong { bytes: size - 1 });
             }
-            need_in(buf, size, "BER length output")?;
+            need_out(buf, size)?;
             if size == 1 {
                 if len > BER_SHORT_FORM_MAX {
                     return Err(Error::FixedBerLengthTooSmall {

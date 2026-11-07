@@ -3,7 +3,7 @@
 //! transcription this module implements field-for-field.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -272,7 +272,7 @@ impl Serialize for RtpPacket<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        need_in(buf, len, "RTP packet serialize output")?;
+        need_out(buf, len)?;
         if self.csrc.len() > MAX_CSRC_COUNT {
             return Err(Error::InvalidValue {
                 field: "csrc.len()",
@@ -390,6 +390,20 @@ mod tests {
             padding: None,
             payload: &[0xAA, 0xBB, 0xCC, 0xDD],
         }
+    }
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let p = simple_packet();
+        let need = p.serialized_len();
+        let mut out = vec![0u8; need - 1];
+        assert_eq!(
+            p.serialize_into(&mut out),
+            Err(Error::OutputBufferTooSmall {
+                need,
+                have: need - 1
+            })
+        );
     }
 
     #[test]

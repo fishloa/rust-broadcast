@@ -3,7 +3,7 @@
 //! Defines the display resolution and optional display window for a subtitle service.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// The display_definition_segment segment_type as listed in Table 7.
@@ -121,7 +121,7 @@ impl Serialize for DisplayDefinitionSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        need_in(buf, len, "display_definition_segment serialize")?;
+        need_out(buf, len)?;
         // Generic header
         buf[0] = 0x0F; // sync_byte
         buf[1] = SEGMENT_TYPE;

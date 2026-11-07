@@ -38,7 +38,7 @@ use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::need_in;
+use broadcast_common::len::need_out;
 
 /// Default RTP timestamp clock rate (10.1.2.2; 10.1.4.2 `rate` default 90000).
 pub const DEFAULT_CLOCK_RATE: u32 = 90_000;
@@ -410,7 +410,7 @@ impl<'a> AatfFrame<'a> {
     /// content variant disagrees with `coding_profile`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        need_in(buf, need, "aatf_frame")?;
+        need_out(buf, need)?;
         let hdr_bytes = self.header_bits().div_ceil(8);
         buf[..hdr_bytes].fill(0);
         {
@@ -1064,7 +1064,7 @@ mod tests {
                 Some(0)
             )
             .serialize_into(&mut [0u8; 2])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::OutputBufferTooSmall { have: 2, .. })
         ));
     }
 

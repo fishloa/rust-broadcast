@@ -6,7 +6,7 @@
 //! `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 3 for the exact boundary and why.
 
 use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{BitResultExt, Error, Result};
@@ -102,7 +102,7 @@ impl Serialize for AudioDataDlc<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        need_in(buf, need, "AudioDataDLC")?;
+        need_out(buf, need)?;
         let header_len;
         {
             let mut w = BitWriter::new(&mut buf[..need]);

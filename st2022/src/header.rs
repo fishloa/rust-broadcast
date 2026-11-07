@@ -29,7 +29,7 @@
 //! throughout this workspace (e.g. `st337::BurstPreamble`'s six-word-preamble
 //! detection) so caller state can never disagree with the wire.
 
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
@@ -1171,7 +1171,7 @@ impl Serialize for PayloadHeader<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.validate()?;
         let len = self.serialized_len();
-        need_in(buf, len, "HBRMT payload header serialize output")?;
+        need_out(buf, len)?;
 
         let f_bit = if self.video_source_format.is_some() {
             F_BIT
@@ -1225,6 +1225,19 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let header = minimal_header();
+        let mut out = [0u8; FIXED_HEADER_LEN - 1];
+        assert_eq!(
+            header.serialize_into(&mut out),
+            Err(Error::OutputBufferTooSmall {
+                need: FIXED_HEADER_LEN,
+                have: FIXED_HEADER_LEN - 1
+            })
+        );
     }
 
     #[test]

@@ -17,6 +17,16 @@ pub enum Error {
         /// What was being parsed.
         what: &'static str,
     },
+
+    /// Output buffer smaller than the serialized form requires.
+    #[error("output buffer too small: need {need}, have {have}")]
+    OutputBufferTooSmall {
+        /// Bytes required.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+
     /// The `data_identifier` was not the required `0x20`.
     #[error("bad data_identifier: {0:#04X} (expected 0x20)")]
     BadDataIdentifier(u8),
@@ -80,6 +90,15 @@ impl From<broadcast_common::len::BufferTooShort> for Error {
             need: e.need,
             have: e.have,
             what: e.what,
+        }
+    }
+}
+
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
         }
     }
 }

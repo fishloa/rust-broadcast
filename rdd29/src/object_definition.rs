@@ -6,7 +6,7 @@
 //! optional text description.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::need_out;
 
 use broadcast_common::Serialize;
 use broadcast_common::bits::{BitReader, BitWriter};
@@ -643,7 +643,7 @@ impl Serialize for ObjectDefinition1<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.validate_for_serialize()?;
         let need = self.serialized_len();
-        need_in(buf, need, "ObjectDefinition1")?;
+        need_out(buf, need)?;
         let mut w = BitWriter::new(&mut buf[..need]);
         write_plex(
             &mut w,

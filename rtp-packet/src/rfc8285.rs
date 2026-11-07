@@ -13,7 +13,7 @@
 //! interpretation is opt-in and profile-scoped).
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -220,11 +220,7 @@ impl Serialize for OneByteElements<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        need_in(
-            buf,
-            len,
-            "RFC 8285 one-byte extension elements serialize output",
-        )?;
+        need_out(buf, len)?;
         // Validate every element before writing a byte, so an error leaves
         // `buf` untouched rather than half-serialized (r14-RTP-O1).
         for e in &self.0 {
@@ -343,11 +339,7 @@ impl Serialize for TwoByteElements<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        need_in(
-            buf,
-            len,
-            "RFC 8285 two-byte extension elements serialize output",
-        )?;
+        need_out(buf, len)?;
         // Validate first (see `OneByteElements::serialize_into`).
         for e in &self.0 {
             if e.data.len() > TWO_BYTE_DATA_MAX {

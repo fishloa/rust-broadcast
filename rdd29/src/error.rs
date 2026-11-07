@@ -12,7 +12,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// Input (on parse) or output buffer (on serialize) shorter than
+    /// Input buffer shorter than
     /// required.
     #[error("buffer too short: need {need}, have {have} ({what})")]
     BufferTooShort {
@@ -23,6 +23,16 @@ pub enum Error {
         /// What was being parsed/serialized.
         what: &'static str,
     },
+
+    /// Output buffer smaller than the serialized form requires.
+    #[error("output buffer too small: need {need}, have {have}")]
+    OutputBufferTooSmall {
+        /// Bytes required.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+
     /// A bit-level read/write (via [`broadcast_common::bits`]) failed while
     /// decoding or encoding `what`.
     #[error("bit-level error decoding/encoding {what}: {source}")]
@@ -115,5 +125,14 @@ pub(crate) trait BitResultExt<T> {
 impl<T> BitResultExt<T> for core::result::Result<T, BitError> {
     fn ctx(self, what: &'static str) -> Result<T> {
         self.map_err(|source| Error::Bits { what, source })
+    }
+}
+
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
+        }
     }
 }

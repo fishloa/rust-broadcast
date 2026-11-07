@@ -17,7 +17,7 @@
 //! big-endian-per-word carriage (which this crate has not observed in
 //! practice) fails with [`Error::InvalidSync`].
 
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
@@ -472,7 +472,7 @@ impl Serialize for Burst<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        need_in(buf, len, "burst serialize output")?;
+        need_out(buf, len)?;
         self.preamble.validate()?;
 
         let extended_offset_bits = if self.preamble.extended.is_some() {
@@ -516,6 +516,21 @@ impl Serialize for Burst<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serialize_into_short_output_is_output_buffer_too_small() {
+        let payload = [0xAAu8, 0xBB, 0xCC];
+        let burst = Burst::new(1, DataMode::Mode16, false, 0, 0, None, &payload).unwrap();
+        let need = burst.serialized_len();
+        let mut out = vec![0u8; need - 1];
+        assert_eq!(
+            burst.serialize_into(&mut out),
+            Err(Error::OutputBufferTooSmall {
+                need,
+                have: need - 1
+            })
+        );
+    }
 
     #[test]
     fn round_trips_a_minimal_four_word_burst() {

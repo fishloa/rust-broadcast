@@ -5,7 +5,7 @@
 
 use crate::any::AnySegment;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// The required `data_identifier` value for DVB subtitles.
@@ -133,7 +133,7 @@ impl Serialize for PesDataField<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        need_in(buf, len, "PES_data_field serialize")?;
+        need_out(buf, len)?;
         buf[0] = DATA_IDENTIFIER;
         buf[1] = self.subtitle_stream_id;
         let mut off = 2;
