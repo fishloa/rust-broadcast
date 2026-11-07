@@ -4,7 +4,7 @@
 //! Every test drives the *real* HTTP surface (two real bound TCP listeners —
 //! media and admin — real `reqwest` requests), never `RouteRegistry`
 //! directly (that type is crate-private): this is the same "drive it through
-//! the real dispatch path" discipline `multimux/tests/dispatch_ingest.rs`
+//! the real dispatch path" discipline `multimux/tests/it/dispatch_ingest.rs`
 //! established for `serve_with_registry` itself.
 //!
 //! An `InputSpec::Custom` "instant" scheme (mirroring

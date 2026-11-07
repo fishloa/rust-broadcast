@@ -364,7 +364,7 @@ mod tests {
     /// A fake transport double: no real socket, just an in-memory record of
     /// what `send`/`encode_media` were asked to do — enough to test
     /// [`PushTransportEgress`]'s negotiation/send logic without a real RTMP
-    /// server (that's `multimux/tests/push_rtmp.rs`'s job, for the transport
+    /// server (that's `multimux/tests/it/push_rtmp.rs`'s job, for the transport
     /// itself).
     #[derive(Default)]
     struct FakeTransport {

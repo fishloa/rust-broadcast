@@ -155,7 +155,7 @@ for `OggS`) is "stop" for that prober, not "read more".
 
 `#![no_std]` + `alloc`, `#![forbid(unsafe_code)]`. All public enums are
 `#[non_exhaustive]` with `name()` and `Display` (label convention, guarded by
-`tests/label_coverage.rs`). The crate needs no spec transcription of its own:
+`workspace-guards/tests/guards/label.rs`). The crate needs no spec transcription of its own:
 every constant is reused from a sibling crate that round-trips real fixtures,
 pinned by a dev-dependency drift guard (`mpeg-ts`, `mpeg-ps`, `st377-1`). There
 is no wire format, so the workspace round-trip invariant does not apply; the

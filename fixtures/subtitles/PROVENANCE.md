@@ -52,7 +52,6 @@ the reason `VttCueBox` now keeps child order and unknown children, and why
 
 ---
 
-# Merged from fixtures/subtitles/PROVENANCE.md
 
 # Fixture provenance
 
@@ -139,7 +138,7 @@ documents — and if hand-constructed, say so at the test site, because a hand-m
 only exercises the violation its author imagined.
 
 
-## Folded note: README.md
+## Notes
 
 # `fixtures/subtitles/`
 
@@ -188,7 +187,6 @@ and `caption-convert/tests/it/srt_real_fixture.rs` for their usage.
 
 ---
 
-# Merged from fixtures/subtitles/PROVENANCE.md
 
 # Teletext fixtures — provenance
 
@@ -200,12 +198,12 @@ page plan. Bytes are constructed with this crate's own verified
 `encode_hamming_8_4`/`encode_odd_parity`, then stored **bit-reversed**
 (wire/LSB-first order — issue #1041): EN 300 706 transmits each byte
 LSB-first, so a real DVB capture's PES bytes are the bit-reversal of the
-spec's own canonical values. Used by `tests/webvtt_teletext_fixture.rs` and
+spec's own canonical values. Used by `timed-metadata/tests/it/webvtt_teletext_fixture.rs` and
 `caption-convert/tests/it/teletext_to_webvtt_fixture.rs`.
 
 ## `teletext-subtitle-boxed.ts` + `teletext-subtitle-boxed.tsduck-oracle.srt`
 
-Independent-tool oracle for issue #1041 (`tests/webvtt_teletext_tsduck_oracle.rs`).
+Independent-tool oracle for issue #1041 (`timed-metadata/tests/it/webvtt_teletext_tsduck_oracle.rs`).
 `teletext-subtitle-synthetic.txt`'s oracle is this project's own reading of EN
 300 706 and a hand-generated fixture; this pair instead cross-checks this
 crate's Teletext decode against **TSDuck 3.44-4676's own independent Teletext

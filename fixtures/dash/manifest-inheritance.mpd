@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Derived from fixtures/dash/manifest.mpd (real ffmpeg output) - see README.md.
+<!-- Derived from fixtures/dash/manifest.mpd (real ffmpeg output) - see fixtures/dash/PROVENANCE.md.
      ISO/IEC 23009-1 Annex G.12/G.13 SegmentTemplate inheritance shape:
      @timescale/@duration-level attributes at the Period, @media at the
      AdaptationSet, @initialization per Representation. -->

@@ -5,7 +5,7 @@ Q15 forgetting histogram, stall max-hold, policy, state machine, decision
 contract), written from the design text and NOT from the Rust source, in the
 tick-driven protocol the crate uses: a virtual renderer ticked every
 TICK_US (5 ms) plus one extra tick at every chunk arrival. The Rust test
-`tests/real_traces.rs` replays the same traces and asserts the numbers this
+`buffering-runtime/tests/it/real_traces.rs` replays the same traces and asserts the numbers this
 script prints (they are pasted into that file's comments with this path).
 
     python3 docs/buffering-runtime/analysis/golden_oracle.py [--dir <traces>] [--initial-ms N]

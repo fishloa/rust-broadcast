@@ -81,7 +81,7 @@ broadcast_common::impl_spec_display!(ElementId, Reserved);
 
 /// Any parsed Dolby Atmos bitstream element — the result of one
 /// `ReadElement()` dispatch (§4.1). A tag-dispatch enum (see this crate's
-/// `tests/label_coverage.rs` SKIP list), not itself a spec/field label.
+/// `workspace-guards/tests/guards/label.rs` SKIP list), not itself a spec/field label.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum AnyElement<'a> {

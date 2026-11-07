@@ -2,13 +2,13 @@
 //! fixtures repo, `private/fixtures/logs/buffering/`, see its PROVENANCE.md)
 //! replayed through the controller, asserted against an INDEPENDENT oracle.
 //!
-//! Oracle: `docs/logs/buffering/analysis/golden_oracle.py` (a second, integer,
+//! Oracle: `docs/buffering-runtime/analysis/golden_oracle.py` (a second, integer,
 //! from-the-design implementation in Python, same tick schedule: 5 ms virtual
 //! ticks plus one at every chunk arrival). Regenerate the numbers below with
 //!
 //! ```text
-//! python3 docs/logs/buffering/analysis/golden_oracle.py                  # initial 1800 ms
-//! python3 docs/logs/buffering/analysis/golden_oracle.py --initial-ms 500
+//! python3 docs/buffering-runtime/analysis/golden_oracle.py                  # initial 1800 ms
+//! python3 docs/buffering-runtime/analysis/golden_oracle.py --initial-ms 500
 //! ```
 //!
 //! The older sample-driven `controller_sim.py` model agrees on the headline
@@ -48,7 +48,7 @@ struct Golden {
     target_sum: u64,
 }
 
-/// `python3 docs/logs/buffering/analysis/golden_oracle.py` (initial 1800 ms).
+/// `python3 docs/buffering-runtime/analysis/golden_oracle.py` (initial 1800 ms).
 const GOLDEN_1800: &[Golden] = &[
     Golden {
         name: "t18",
@@ -215,7 +215,7 @@ fn the_default_initial_target_survives_the_tf1_and_6ter_gaps() {
     }
 }
 
-/// `python3 docs/logs/buffering/analysis/golden_oracle.py --initial-ms 500`:
+/// `python3 docs/buffering-runtime/analysis/golden_oracle.py --initial-ms 500`:
 /// the old 500 ms start stalls once at the gap and resumes ~1.75 s later.
 #[test]
 fn golden_initial_500_stalls_once_at_the_gap() {

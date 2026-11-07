@@ -13,7 +13,7 @@ use crate::handroll_dehandroll::Crate as Dehandroll;
 use crate::handroll_lines::Crate as Lines;
 use crate::handroll_needles::Crate as Needles;
 
-/// Shape 1 (was `tests/dehandroll_guard.rs`).
+/// Shape 1.
 pub const DEHANDROLL: &[Dehandroll] = &[
     Dehandroll {
         name: "broadcast-auth",
@@ -37,7 +37,7 @@ pub const DEHANDROLL: &[Dehandroll] = &[
     },
 ];
 
-/// Shape 2 (was `tests/no_handroll_guard.rs` with `PATTERNS`).
+/// Shape 2.
 pub const LINE_PATTERNS: &[Lines] = &[
     // Tripwire (de-hand-roll W1-P, spec §5): fails if `src/` (outside
     // `#[cfg(test)] mod` bodies) reintroduces a hand-rolled pattern the
@@ -171,7 +171,7 @@ pub const LINE_PATTERNS: &[Lines] = &[
     },
 ];
 
-/// Shape 3 (was `tests/no_handroll_guard.rs` with `NEEDLES`).
+/// Shape 3.
 pub const NEEDLE_CRATES: &[Needles] = &[
     Needles {
         name: "hls-runtime",

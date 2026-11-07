@@ -101,7 +101,7 @@ assert!(c.target_us() <= ControllerConfig::default().policy.max_us);
 - Integer-only (Q8/Q15 fixed point, `u128` only inside one widening helper); no `f32`/`f64` in `src` (guarded by a test).
 - Bounded memory: the sliding-minimum deque is pre-sized to `max_samples`, the histogram to `buckets`, the event queue to 16 (the oldest non-critical event is dropped first; `Pause`/`Resume`/`StartPlaying` survive unless the queue holds only those).
 - PCR wrap arithmetic only through `broadcast_common::clock33` (a `clock33_guard` test bans `abs_diff` and a literal 2^33).
-- Public enums carry `name()` and `Display` (workspace label convention; `tests/label_coverage.rs`).
+- Public enums carry `name()` and `Display` (workspace label convention; `workspace-guards/tests/guards/label.rs`).
 - No panics on any input: `u64` extremes, non-monotonic clocks and zero config values return typed errors or are ignored and counted.
 - Oracles: a brute-force sliding window, an exact Q15 reference, the RFC 3550 A.8 algorithm, the RFC 5481 definition and the stdlib Python scripts in `docs/buffering-runtime/analysis/` (an independent second implementation) against the real traces. The traces live in the private fixtures repo; the public suite carries a synthetic generator (1x/2x/4x stall patterns, loss, ramping jitter, drift, reconnect).
 

@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: dvb-mabr golden README
+## Dvb-mabr goldens
 
 # Golden outputs
 

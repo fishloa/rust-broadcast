@@ -19,7 +19,7 @@ All wire rules come from in-repo transcriptions of vendored ETSI/ISO PDFs. Do
 
 ## What to build
 
-A new module `dvb-si/src/mux.rs`, `#[cfg(feature = "ts")]`, registered in
+A new module `mpeg-ts/src/mux.rs`, `#[cfg(feature = "ts")]`, registered in
 `dvb-si/src/lib.rs` next to `pub mod ts;` / `pub mod demux;`. Module doc comment
 must cite ISO/IEC 13818-1 §2.4.4 and name `private/specs-verified/dvb/dvb-si/` (follow
 the citation style in `ts.rs:223`).
@@ -137,7 +137,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p dvb-si --all-features --no-deps --locked
 
 ## Boundaries
 
-- Touch only `dvb-si/src/mux.rs` (new) and `dvb-si/src/lib.rs` (one `pub mod`
+- Touch only `mpeg-ts/src/mux.rs` (new) and `dvb-si/src/lib.rs` (one `pub mod`
   line + the `#[cfg(feature = "ts")]`). Do **not** touch `ts.rs`, `demux.rs`, or
   any table/descriptor module.
 - Do **not** implement the `SiMux` scheduler — that is story 56b.

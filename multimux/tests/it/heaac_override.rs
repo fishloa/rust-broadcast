@@ -2,7 +2,7 @@
 //! stream (issue #1428): the fMP4 init carries explicit SBR/PS signalling and
 //! the master playlist `CODECS` says `mp4a.40.5` / `mp4a.40.29`.
 //!
-//! Real artifacts: `fixtures/ts/heaac/heaac_v{1,2}_adts.ts` (macOS AudioToolbox
+//! Real artifacts: `fixtures/ts/heaac/heaac-v{1,2}-adts.ts` (macOS AudioToolbox
 //! encoder; commands in `fixtures/ts/PROVENANCE.md`). Every test drives the
 //! production path: `RouteHandle::set_track_specs` + `ProgramSegmenter::pump`
 //! over a `Trunk`, read back through the axum router as a player would.

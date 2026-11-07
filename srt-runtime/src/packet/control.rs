@@ -220,7 +220,7 @@ fn check_reserved_u32(what: &'static str, v: u32) -> Result<()> {
 /// allow this" (`packet.cpp`, `CPacket::pack`, e.g. the `UMSG_KEEPALIVE` arm)
 /// — and `m_extra_pad` is a zero-initialized member, so the 4 bytes are
 /// always zero on the wire. Confirmed against a real `srt-live-transmit`
-/// 1.5.5 KEEPALIVE/ACKACK capture (`../fixtures/srt/libsrt_*.bin`).
+/// 1.5.5 KEEPALIVE/ACKACK capture (`../fixtures/srt/libsrt-*.bin`).
 const LIBSRT_CIF_PAD_LEN: usize = 4;
 
 /// Accept either the pure-spec empty CIF or libsrt's 4-byte zero pad (see

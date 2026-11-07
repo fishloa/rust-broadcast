@@ -1,6 +1,6 @@
 //! Workspace-wide lexical guards (unpublished).
 //!
-//! The guard tests live in `tests/guards.rs`; each guard family walks every
+//! The guard tests live in `tests/guards/main.rs`; each guard family walks every
 //! member crate named in its own per-crate data table and applies one shared
 //! scanner. A new crate opts in by adding a line to that table, not by copying
 //! a test file.

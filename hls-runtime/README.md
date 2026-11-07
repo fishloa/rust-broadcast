@@ -81,7 +81,7 @@ assert_eq!(init, 1, "exactly one init precedes the samples");
 assert!(samples > 0, "real H.264 and AAC access units came out");
 ```
 
-For the origin, `examples/origin_playlist.rs` builds a `Trunk`, publishes parts and segments, and renders a playlist through `HlsOrigin::resolve`; `examples/client_stepping.rs` steps the client against that origin's output. Run them with `cargo run -p hls-runtime --example <name>`. `tests/origin_loop.rs` drives the client against a real `transmux::ll_hls::LlHlsSegmenter` in process.
+For the origin, `examples/origin_playlist.rs` builds a `Trunk`, publishes parts and segments, and renders a playlist through `HlsOrigin::resolve`; `examples/client_stepping.rs` steps the client against that origin's output. Run them with `cargo run -p hls-runtime --example <name>`. `hls-runtime/tests/it/origin_loop.rs` drives the client against a real `transmux::ll_hls::LlHlsSegmenter` in process.
 
 ## What is implemented
 
@@ -90,7 +90,7 @@ For the origin, `examples/origin_playlist.rs` builds a `Trunk`, publishes parts 
 - **`server`** (feature `std`): `HlsOrigin` and its builder (`target_duration_secs`, `window_segments`, `low_latency`), `HlsRequest`, `BlockingQuery`, `HlsBody`, `ClosedSegment`, `master_playlist` (measured peak `BANDWIDTH`, the init segment's `CODECS`, audio rendition groups via `audio_renditions`/`closed_captions_none`, split-audio groups via `audio_sibling_origins` (per-group `CODECS`, video+audio `BANDWIDTH`, PMT-derived `LANGUAGE`/`NAME`/`CHARACTERISTICS`), typed `HlsMasterError`), `master_playlist_m3u8` (context-free renderer), `set_init`, `set_track_specs` (TS origins), `DEFAULT_TRACK_ID`.
 - **Typed identifiers:** `server::SegmentSeq` and `server::PartIndex` re-export `media_plane::ids`, `server::Generation` types the init-segment generation, and tracks are `transmux::TrackId`, so a swapped segment, part or generation argument is a compile error. Wire names (`seg-1-5-7.m4s`, `init-1-5-2.mp4`) are unchanged.
 - **Cache policy:** each resolved resource carries a `media_plane::egress::CachePolicy` (`Immutable` for instance-named parts, segments and generation-named inits; `NoCache` for the bare current init and playlists).
-- **Poison-tolerant locks** in the origin, and bounded behaviour on abusive requests (`tests/origin_hardening.rs`).
+- **Poison-tolerant locks** in the origin, and bounded behaviour on abusive requests (`hls-runtime/tests/it/origin_hardening.rs`).
 - **HDR and subtitle signalling:** multivariant `SUPPLEMENTAL-CODECS` and `VIDEO-RANGE` for HDR10, HLG, Dolby Vision (profiles 5, 8.1, 8.4) and HDR10+ (`/cdm4`); `Container::WebVtt` renditions served as `.vtt` segments, with Partial Segments on a low-latency origin; `HlsOrigin::set_part_target_ms` for renditions whose frame grid does not divide the part target.
 - **Caption signalling:** `HlsOrigin::set_declared_closed_caption_languages` and `HlsOrigin::set_detected_closed_captions` render `CLOSED-CAPTIONS` (or `CLOSED-CAPTIONS=NONE`) on every variant from the ATSC `caption_service_descriptor` (issue #1428).
 - **Blocking reloads:** `HlsOrigin::published_target_duration()` exposes the frozen `EXT-X-TARGETDURATION` so an adapter can bound a blocking reload by three target durations (issue #1651).

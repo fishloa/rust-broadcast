@@ -35,7 +35,7 @@ Why U1/U2 cannot be made safe by changing crate: I checked `rustix` 1.1.5 in the
 
 | # | Location | Issue | Safe replacement |
 |---|---|---|---|
-| U4 | `multimux/tests/udp_bind.rs:32` | `socket2::Socket::from_raw_fd(self.as_raw_fd())` builds an **owning** socket from a borrowed fd, then relies on `mem::forget`. If the next `.expect("SO_RCVBUF readable")` panics, the socket drops and **closes an fd it does not own** (double-close; a later fd reuse can then hit the wrong file). | `socket2::SockRef::from(&udp)` (safe, borrowing; exists in socket2) |
+| U4 | `multimux/tests/it/udp_bind.rs:32` | `socket2::Socket::from_raw_fd(self.as_raw_fd())` builds an **owning** socket from a borrowed fd, then relies on `mem::forget`. If the next `.expect("SO_RCVBUF readable")` panics, the socket drops and **closes an fd it does not own** (double-close; a later fd reuse can then hit the wrong file). | `socket2::SockRef::from(&udp)` (safe, borrowing; exists in socket2) |
 | U5 | `dvb-ci-runtime/src/linux.rs:353, 629` (inside the test module) | `libc::mkfifo`, `libc::poll` | `rustix::fs::mkfifoat` (exists, safe) and `rustix::event::poll` (already imported at `linux.rs:20`) |
 | U6 | `dvb-csa/src/zeroize.rs:71` | `ptr::drop_in_place` in a test | Disappears with U3 (`zeroize::Zeroizing`) |
 | U7 | 8 test files: `dvb-ci-runtime/tests/pump_alloc.rs`, `dvb-ci/tests/hostile_alloc.rs`, `dvb-si/tests/decompression_size_bounds.rs`, `ssai-runtime/tests/per_viewer_allocations.rs`, `transmux/tests/{alloc_counts_sweep,alloc_measurement,cenc_senc_alloc_bound,hostile_input_bounds}.rs` | The same counting `unsafe impl GlobalAlloc` copied 8 times (5 to 7 `unsafe` lexical hits each). | One shared, unpublished test-support crate wrapping a vetted allocation-counting crate (the `unsafe` then lives in the dependency, not our code), like the `test-bounded` crate added in this release. |
@@ -88,7 +88,7 @@ No `unsafe impl Send/Sync`, no raw-pointer dereference, no uninitialised memory 
 ## Prioritised action plan
 
 **Quick wins (hours each)**
-1. U4: replace the owning `from_raw_fd` with `SockRef::from(&udp)` in `multimux/tests/udp_bind.rs`.
+1. U4: replace the owning `from_raw_fd` with `SockRef::from(&udp)` in `multimux/tests/it/udp_bind.rs`.
 2. U3/U6: delete `dvb-csa/src/zeroize.rs`; use `zeroize::Zeroizing` / `Zeroize` (already in the tree).
 3. U5: `rustix::fs::mkfifoat` and `rustix::event::poll` in the `dvb-ci-runtime` test module.
 4. P1: make `ChunkWriter::write` return an error on an invalid chunk-stream id.

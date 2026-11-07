@@ -68,11 +68,11 @@
 //! `EXT-X-DEFINE` and `EXT-X-SESSION-KEY` appear in no §9 example at all;
 //! `EXT-X-SESSION-DATA` appears only in §9.8, which is an explicit
 //! *fragment* with no `#EXTM3U` line and is therefore excluded from the
-//! spec tier — see MANIFEST.md). The `handbuilt/` fixtures fill exactly
+//! spec tier — see fixtures/hls/PROVENANCE.md). The `handbuilt/` fixtures fill exactly
 //! that gap. They are **not** spec vectors and are deliberately pathed and
 //! named so nobody mistakes them for one; their `EXT-X-VERSION` lines are
 //! derived from the §8 table in `private/specs-verified/hls/ietf/rfc8216bis-version-compatibility.md`
-//! rather than invented (see MANIFEST.md for each derivation).
+//! rather than invented (see fixtures/hls/PROVENANCE.md for each derivation).
 
 use std::fs;
 use std::path::PathBuf;
@@ -207,13 +207,13 @@ fn assert_case(case: &Case) {
 // ---------------------------------------------------------------------------
 //
 // §9.8 (Session Data fragment) and §9.9 (bare CHARACTERISTICS attribute
-// value) are excluded per MANIFEST.md — neither begins with #EXTM3U, so
+// value) are excluded per fixtures/hls/PROVENANCE.md — neither begins with #EXTM3U, so
 // neither is a playlist a parser could ever be expected to accept. §9.12's
 // and §9.13's JSON Steering Manifests are committed as `.json`, not parsed
 // here (this test is playlist-only); §9.6/§9.7/§9.10/§9.12 additionally carry
 // a `.rfc-verbatim.txt` sibling (backslash line-continuations exactly as
 // printed in the spec) that is deliberately NOT a `.m3u8` and NOT parsed —
-// it exists purely for byte-provenance, see MANIFEST.md.
+// it exists purely for byte-provenance, see fixtures/hls/PROVENANCE.md.
 
 const SPEC_CASES: &[Case] = &[
     Case {
@@ -318,7 +318,7 @@ fn spec_dir_has_no_untested_m3u8_fixtures() {
 // NOT spec vectors. Each is authored in-repo from the confirmed attribute
 // grammar in `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`, covering tags no §9
 // example exercises as a complete playlist. Provenance + per-file
-// EXT-X-VERSION derivation in MANIFEST.md.
+// EXT-X-VERSION derivation in fixtures/hls/PROVENANCE.md.
 // ---------------------------------------------------------------------------
 
 const HANDBUILT_CASES: &[Case] = &[
@@ -331,7 +331,7 @@ const HANDBUILT_CASES: &[Case] = &[
     },
     // SESSION-DATA in all three shapes (URI form, and VALUE+LANGUAGE twice
     // sharing a DATA-ID) — derived from the §9.8 fragment, made into a real
-    // playlist. See MANIFEST.md.
+    // playlist. See fixtures/hls/PROVENANCE.md.
     Case {
         path: "handbuilt/session-data-multivariant.m3u8",
         kind: Kind::Master,
@@ -347,7 +347,7 @@ const HANDBUILT_CASES: &[Case] = &[
     // Derived from §9.10: EXT-X-DATERANGE with SCTE35-OUT and SCTE35-IN,
     // made parseable by supplying the real Media Segments the spec elides
     // with its `...` markers. DATERANGE tags are unmodeled and preserved
-    // via `extra_tags`. See MANIFEST.md for EXT-X-VERSION derivation.
+    // via `extra_tags`. See fixtures/hls/PROVENANCE.md for EXT-X-VERSION derivation.
     Case {
         path: "handbuilt/daterange-scte35-media.m3u8",
         kind: Kind::Media,
@@ -356,7 +356,7 @@ const HANDBUILT_CASES: &[Case] = &[
     // Derived from §9.11: EXT-X-PART partial segments, EXT-X-PRELOAD-HINT,
     // EXT-X-RENDITION-REPORT, and an EXT-X-DISCONTINUITY mid-roll ad break,
     // with the leading `...` replaced by real header tags
-    // (EXT-X-VERSION, SERVER-CONTROL, PART-INF, MAP). See MANIFEST.md.
+    // (EXT-X-VERSION, SERVER-CONTROL, PART-INF, MAP). See fixtures/hls/PROVENANCE.md.
     Case {
         path: "handbuilt/low-latency-parts-preload-report.m3u8",
         kind: Kind::Media,
@@ -510,7 +510,7 @@ fn handbuilt_fixtures_expose_the_872_tags_as_typed_data() {
 
 // ---------------------------------------------------------------------------
 // Pre-existing hand-made fixtures (fixtures/hls/*.m3u8) — kept for
-// regression coverage; provenance in MANIFEST.md. Four are well-formed
+// regression coverage; provenance in fixtures/hls/PROVENANCE.md. Four are well-formed
 // enough to parse (the deliberate defects they carry — EXTINF exceeding
 // TARGETDURATION, a DATERANGE missing its required ID — are semantic rule
 // violations that `media-doctor::check_playlist` flags, not syntax errors
@@ -557,7 +557,7 @@ fn hand_made_fixtures_parse_as_expected() {
 // ---------------------------------------------------------------------------
 // Tier 2 — real Apple HLS example streams (fixtures/hls/real/) — playlists
 // only, no segment media. Provenance (exact URLs, fetch date) in
-// MANIFEST.md. Every one of these is a real encoder's output, so all are
+// fixtures/hls/PROVENANCE.md. Every one of these is a real encoder's output, so all are
 // expected to parse cleanly; a failure here would be a genuine parser bug
 // against production content, not a spec-fixture curiosity.
 // ---------------------------------------------------------------------------

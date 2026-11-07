@@ -338,7 +338,6 @@ while off + 16 <= len(d):
 
 ---
 
-# Merged from fixtures/rtp/PROVENANCE.md
 
 # ST 2110-20/-30 fixture provenance (`fixtures/rtp/`)
 
@@ -443,17 +442,16 @@ Neither was available within this task's scope, so target 2 stops here.
 
 ---
 
-# Merged from fixtures/rtp/PROVENANCE.md
 
 # RTP/SDP oracle fixtures
 
-Produced locally with ffmpeg 8.1 (no packet is sent; `-f rtp` only writes the
+Produced locally with ffmpeg 8.1, run from `fixtures/rtp/` (no packet is sent; `-f rtp` only writes the
 SDP when a `sdp_file` is given):
 
 ```
-ffmpeg -y -i ../../../../fixtures/ts/h264/high.ts     -c copy -f rtp \
+ffmpeg -y -i ../ts/h264/high.ts     -c copy -f rtp \
        -sdp_file high-ffmpeg.sdp      rtp://127.0.0.1:5999
-ffmpeg -y -i ../../../../fixtures/ts/h264/baseline.ts -c copy -f rtp \
+ffmpeg -y -i ../ts/h264/baseline.ts -c copy -f rtp \
        -sdp_file baseline-ffmpeg.sdp  rtp://127.0.0.1:5998
 ```
 
@@ -476,7 +474,7 @@ It is the independent ground truth for the High profile chroma/bit-depth
 trailer that earlier versions of `avc_config_from_sps_pps` omitted.
 
 
-## Folded note: README.md
+## Notes
 
 # rtcp-packet fixtures
 
@@ -574,7 +572,7 @@ captures** (the values in step 1 below are the pre-regeneration words).
      `st291::AncRtpPayload` (the inner ANC payload).
    - The decoded fields match every value listed above exactly.
 
-The one-off generator script (`st291/examples/_gen_rtp_fixture.rs`) is not
+The one-off generator script is not
 committed — it was run once and deleted; this file documents the recipe.
 
 ## Used by

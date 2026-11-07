@@ -1,8 +1,7 @@
 //! `dvb-tools t2mi <file> [--pid 0xNNN|raw] [--inner] [--plp N]` — T2-MI
 //! pump + optional inner-TS extraction.
 //!
-//! Without `--inner` this is byte-identical to the former
-//! `dvb-t2mi/examples/t2mi_dump.rs`. With `--inner` it chains
+//! With `--inner` it chains
 //! [`dvb_t2mi::inner_ts::InnerTsRecovery`] to recover the inner MPEG-TS
 //! carried inside the BBFrames of the T2-MI stream and writes the recovered
 //! 188-byte packets to stdout, so a caller can `> inner.ts` and pipe them

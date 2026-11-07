@@ -11,5 +11,5 @@ ffmpeg -i fixtures/ts/h264-aac-40s.ts -t 14 -c copy -f hls -hls_time 2 \
 ffmpeg 8.1.2. Only the playlist is kept (the 311 KB `index.ts` it references is
 not needed): seven `EXT-X-BYTERANGE` segments of the single resource
 `index.ts`, with ffmpeg's own explicit offsets, used by
-`tests/client_state.rs` as the oracle for the byte ranges the client must
+`hls-runtime/tests/it/client_state.rs` as the oracle for the byte ranges the client must
 request when the offsets are omitted (RFC 8216 §4.3.2.2).

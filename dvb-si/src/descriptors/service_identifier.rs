@@ -2,7 +2,7 @@
 //!
 //! Carried in the SDT/service loop to give a service a stable textual
 //! identifier. The body is a run of `textual_service_identifier_bytes`
-//! (ASCII), per ts_102_809_apps.md "Table 39 — Service identifier descriptor"
+//! (ASCII), per private/specs-verified/dvb/dvb-si/descriptors/ts_102_809/39-service-identifier-descriptor.md "Table 39 — Service identifier descriptor"
 //! (PDF p. 62).
 
 use super::descriptor_body;

@@ -174,7 +174,7 @@ let p = dvb_si::pid::Pid::from(0x0012u16);             // u16 → Pid
   sections only.
 - [`tables::AnyTable`] — dispatch any complete section by table_id.
 - [`descriptors::DescriptorRegistry`] — register private descriptors at runtime.
-- `examples/si_dump.rs` — `cargo run -p dvb-si --example si_dump -- file.ts [--json]`.
+- `cargo run -p dvb-tools -- dump file.ts [--json]`.
 
 ---
 

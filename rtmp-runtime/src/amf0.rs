@@ -1,7 +1,7 @@
 //! AMF0 (Action Message Format 0) value encoding/decoding, used by RTMP
 //! command and data messages.
 //!
-//! See [`private/specs-verified/rtmp/rtmp-runtime/rtmp.md`](../README.md) §8 (AMF0) for the full transcription
+//! See `private/specs-verified/rtmp/rtmp-runtime/rtmp.md` §8 (AMF0) for the full transcription
 //! of `[AMF0]` (the companion spec this doc cites): §8.1 for the type marker
 //! table, §8.2 for the wire encoding of each data type needed by RTMP command
 //! messages.

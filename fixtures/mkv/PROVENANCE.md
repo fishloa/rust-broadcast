@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: GENERATE.md
+## Regeneration
 
 # Regenerating the Matroska (MKV) muxer fixtures (issue #915)
 

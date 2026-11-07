@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: FMP4-GAPS-ORACLE.md
+## fMP4 gap oracle
 
 # fMP4 gap-tier fixture oracle (#429–#437)
 
@@ -10,7 +10,7 @@ Each gate builds its box from the source and must reproduce the body byte-for-by
 (same technique that verified esds/dac3/dec3 in 0.4.1). Bodies below are the bytes
 **after** the 8-byte box header; truncated to 64 hex where long.
 
-Regenerate: see "Folded note: GENERATE.md" below.
+Regenerate: see the "Regeneration" section below.
 
 ## avcC / hvcC value-verification (the #425 follow-up — clean reference)
 
@@ -102,7 +102,7 @@ and wrap it in the `ac-4` sample entry; gate = build the entry, re-parse, dac4 b
 
 
 
-## Folded note: GENERATE.md
+## Regeneration
 
 # Regenerating the fMP4 gap-tier fixtures
 
@@ -181,7 +181,7 @@ ffmpeg -y -f lavfi -i testsrc2=size=320x240:rate=25 -t 0.4 -c:v libvpx-vp9 -f mp
 ```
 
 Extract a config-box body: find the fourcc, read the big-endian `u32` size 4 bytes
-before it, slice `[i-4 .. i-4+size]`, body = `[8..]`. See `FMP4-GAPS-ORACLE.md`.
+before it, slice `[i-4 .. i-4+size]`, body = `[8..]`. See the "fMP4 gap oracle" section above.
 
 # #1010 (C9) sidx — real MP4Box -dash onDemand-profile output
 ffmpeg -y -f lavfi -i testsrc2=duration=2:size=160x120:rate=25 -preset ultrafast -crf 40 \
@@ -257,7 +257,7 @@ ffmpeg -y -r 30000/1001 -i /tmp/vps.hevc -c copy -f mp4 fixtures/mp4/hevc-vps-ti
 
 
 
-## Folded note: ORACLES.md
+## Independent oracles
 
 # Independent oracle fixtures (audit r05 W1 / W2 / W7)
 
@@ -290,7 +290,7 @@ carry the IV across two **independent** syncframes; ffmpeg and Bento4 reset it t
 
 
 
-## Folded note: README.md
+## Notes
 
 # transmux test fixtures
 

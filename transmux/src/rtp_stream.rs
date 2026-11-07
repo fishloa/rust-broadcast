@@ -6,7 +6,7 @@
 //! from IDR detection) carrying the real [`CodecConfig`] supplied at
 //! construction (e.g. from [`crate::rtp_sdp`]).
 //!
-//! See [`private/specs-verified/mpeg/transmux/rtp/rtp-payload-formats.md`](../README.md)
+//! See `private/specs-verified/mpeg/transmux/rtp/rtp-payload-formats.md`
 //! for the RFC background and timing-model specification.
 //!
 //! # Timing model
@@ -348,7 +348,7 @@ pub enum RtpLossEvent {
 
 // `RtpLossEvent` is a data-carrying ADT (each variant is a distinct
 // structured signal, not a flat spec code) — see this crate's
-// `tests/label_coverage.rs` SKIP list (same category as `DemuxEvent`), so it
+// `workspace-guards/tests/guards/label.rs` SKIP list (same category as `DemuxEvent`), so it
 // is intentionally exempt from the #204 `name()`/`impl_spec_display!`
 // convention.
 

@@ -5,7 +5,7 @@
 Media plane step 2d (`CodecConfig::Subtitle` coverage): a real, fragmented
 CMAF file carrying an AVC video track plus a TTML/IMSC (`stpp`, ISO/IEC
 14496-30 §7.2) subtitle track, generated locally with ffmpeg 8.1.2 — not
-hand-built/fabricated bytes. Used by `tests/subtitle_demux.rs`'s ordering-guard
+hand-built/fabricated bytes. Used by `transmux/tests/it/subtitle_manifests.rs`'s ordering-guard
 test (`Fmp4Demux` must demux the `stpp` track as `CodecConfig::Subtitle`, not
 drop it).
 

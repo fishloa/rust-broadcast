@@ -48,7 +48,7 @@ impl StunGather {
         // verified by reading `rtc-stun` 0.20.0's own source (not assumed
         // from its name), pinned in this workspace's `Cargo.lock`:
         //
-        //   $CARGO_HOME/registry/src/.../rtc-stun-0.20.0/src/message.rs:48
+        //   `rtc-stun` 0.20.0, `message.rs:48`
         //     pub fn new() -> Self {
         //         let mut b = TransactionId([0u8; TRANSACTION_ID_SIZE]);
         //         rand::rng().fill(&mut b.0);   // doc comment: "using crypto/rand as source"
@@ -58,7 +58,7 @@ impl StunGather {
         // `rand::rng()` resolves (per this workspace's locked `rand
         // 0.10.2`) to `rand::rngs::thread::rng()` → `ThreadRng`, whose
         // generator core is, per that crate's own source
-        // ($CARGO_HOME/registry/src/.../rand-0.10.2/src/rngs/thread.rs:41):
+        // (`rand` 0.10.2, `rngs/thread.rs:41`):
         //
         //     type Core = chacha20::ChaChaCore<chacha20::R12, chacha20::variants::Legacy>;
         //

@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: README.md
+## Notes
 
 # Fixture provenance — `fixtures/mp4/cenc-boxes/`
 

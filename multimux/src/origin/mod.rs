@@ -341,7 +341,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 
 /// A real [`router`] over a one-stream (`cam1`) state with `ordinary`
 /// concurrent ordinary-request permits and a `queue` wait — the harness
-/// `tests/limit_budgets.rs` drives to hold a permit in an unread response
+/// `multimux/tests/it/limit_budgets.rs` drives to hold a permit in an unread response
 /// body and prove the shared pool sheds a cross-route request.
 #[doc(hidden)]
 pub fn limit_budget_test_app(ordinary: usize, queue: Duration) -> Router {
@@ -4441,7 +4441,7 @@ mod tests {
     }
 
     /// A minimal, `sdp-types`-parseable single-media SDP (mirrors
-    /// `multimux/tests/rtsp_ingest.rs`'s own `sdp_body`) — just enough for
+    /// `multimux/tests/it/rtsp_ingest.rs`'s own `sdp_body`) — just enough for
     /// [`crate::config::InputSpec::Rtp`]'s `sdp` field to be genuinely valid,
     /// so that variant's dispatch reaches its real "bind the UDP socket and
     /// wait for datagrams" path rather than failing earlier on SDP parsing.

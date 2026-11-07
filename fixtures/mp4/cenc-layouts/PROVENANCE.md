@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: README.md
+## Notes
 
 # CENC fragmented-MP4 addressing layouts (audit r05-W7, ISO/IEC 14496-12 §8.8.7 / §8.8.8)
 

@@ -72,7 +72,7 @@ cli     = ["dep:clap", "dep:container-probe", "std", "net"]
 test-fixtures = { path = "../test-fixtures" }
 tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
 # replaces the hand-written try_wait/sleep deadline poll in the old
-# tests/support/bounded.rs; the runner now lives in the shared `test-bounded`
+# test-bounded/tests/it/bounded.rs; the runner now lives in the shared `test-bounded`
 # crate (one copy across hls-runtime/multimux/media-doctor). Path-only
 # dev-dep, so it never reaches a published manifest.
 test-bounded = { path = "../test-bounded" }

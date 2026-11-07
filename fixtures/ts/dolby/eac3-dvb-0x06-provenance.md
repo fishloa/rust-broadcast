@@ -26,7 +26,7 @@ fixture reproduces it deterministically from real captured audio bytes.
    correctly shows `Elementary stream: type 0x06 (MPEG-2 PES private data)`
    with `Descriptor 0: Enhanced AC-3 (0x7A, 122), 1 bytes`.
 
-The one-off generator script (`transmux/examples/_gen_641_fixture.rs`) is not
+The one-off generator script is not
 committed -- it was run once and deleted; this file documents the recipe.
 
 ## Used by

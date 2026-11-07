@@ -661,7 +661,7 @@ async fn serve_read_load_inner(
 }
 
 /// `#[doc(hidden)]` test hook: parse a WHIP offer's ICE credentials (media
-/// level first, session level fallback) so `tests/whip_whep_sdp.rs` can pin
+/// level first, session level fallback) so `multimux/tests/it/whip_whep_sdp.rs` can pin
 /// the media-first decision.
 #[doc(hidden)]
 #[cfg(feature = "test-hooks")]
@@ -672,7 +672,7 @@ pub fn parse_offer_for_test(offer: &str) -> (String, String) {
 
 /// `#[doc(hidden)]` test hook: render a WHIP SDP answer deterministically —
 /// the offer, local address, ICE credentials, fingerprint and candidate lines
-/// are all caller-supplied, so `tests/whip_whep_sdp.rs` can golden
+/// are all caller-supplied, so `multimux/tests/it/whip_whep_sdp.rs` can golden
 /// `sdp_types::Session::write`'s line ordering (the review's answer-golden
 /// gap) without the random cert/candidate values.
 #[doc(hidden)]

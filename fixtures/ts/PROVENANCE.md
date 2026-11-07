@@ -107,7 +107,6 @@ b/s` (188 bytes/pkt).
 
 ---
 
-# Merged from fixtures/ts/PROVENANCE.md
 
 # `fixtures/ts/`
 
@@ -140,7 +139,7 @@ Oracle values from ffprobe 8.1.2 and a raw byte scan:
 
 
 
-## Folded note: CODEC-ORACLE.md
+## Codec oracle
 
 # Codec-config fixture oracle
 
@@ -207,7 +206,7 @@ comes from ETSI TS 102 366 Annex F when implementing #426.
 
 
 
-## Folded note: GENERATE.md
+## Regeneration
 
 # Regenerating the codec-config fixtures
 
@@ -262,13 +261,13 @@ ffmpeg -y -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=
   -c:a eac3 -b:a 192k -f mpegts fixtures/ts/dolby/eac3.ts
 ```
 
-## HE-AAC in TS (`fixtures/ts/heaac/heaac_v{1,2}_adts.ts`, issue #1428)
+## HE-AAC in TS (`fixtures/ts/heaac/heaac-v{1,2}-adts.ts`, issue #1428)
 
 Real HE-AAC (ADTS in TS) from the macOS AudioToolbox encoder, audio of this
 workspace's own `fixtures/ts/h264-aac.ts`, video stream-copied. ffmpeg 8.1.2
 (`aac_at`) rejects the profile names `aac_he`/`aac_he_v2`; the numeric
 AudioToolbox profile values `4` (HE-AAC) and `28` (HE-AAC v2) work (same values
-as the `heaac_v{1,2}.mp4` oracles). The source audio is mono; both profiles are
+as the `heaac-v{1,2}.mp4` oracles). The source audio is mono; both profiles are
 asked for stereo with `-ac 2` (v1 given mono produces parametric stereo).
 
 ```bash

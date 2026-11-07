@@ -15,7 +15,7 @@
 //! shifts its PCR values (via TSDuck's `pcredit --add-pcr`, which performs
 //! correct modular PCR arithmetic) so they cross the 27 MHz PCR wrap
 //! (`2^33 * 300` ticks, ISO/IEC 13818-1 §2.4.2.2/§2.4.3.5, ~26.5h) partway
-//! through the file — see `ts/README.md` for the exact
+//! through the file — see `fixtures/ts/PROVENANCE.md` for the exact
 //! commands. Before the wrap-unwrap fix, comparing raw (wrapped)
 //! first/last 27 MHz values on this fixture makes `last_v > first_v` false
 //! and `estimate_bitrate_mbps` reports "n/a" even though a single PCR PID

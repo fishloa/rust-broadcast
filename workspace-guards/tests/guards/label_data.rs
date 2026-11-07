@@ -279,7 +279,7 @@ pub const TABLE: &[Crate] = &[
     // not a wire-format token, but carrying `name()` + `impl_spec_display!` like
     // every other labelled enum in the workspace per convention. Copied
     // per-file (not per-crate-concatenated) from `webrtc-runtime`'s variant —
-    // see that crate's `tests/label_coverage.rs` for why per-file scope is the
+    // see the label guard (`workspace-guards/tests/guards/label.rs`) for why per-file scope is the
     // semantically correct one (`impl_spec_display!` resolves in the module it
     // is invoked from).
     Crate {
@@ -1068,7 +1068,7 @@ pub const TABLE: &[Crate] = &[
     //
     // `Error` is the crate's error enum (data-carrying variants, not a spec
     // label) — SKIPped, same convention `ssai-runtime`'s own
-    // `tests/label_coverage.rs` documents for its `Error`.
+    // the label guard documents for its `Error`.
     //
     // `EntryKind` (`schedule.rs`) and `BreakEdge` (`scte35.rs`) ARE this
     // crate's own field/token enums (no external wire spec backs them — issue

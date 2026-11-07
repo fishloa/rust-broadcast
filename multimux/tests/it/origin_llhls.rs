@@ -96,7 +96,7 @@ fn first_segment_uri(playlist: &str) -> Option<&str> {
 /// MUTATION VERIFIED: commenting out the `store.set_init(...)` call below
 /// makes `end_to_end_pipeline_serves_valid_llhls` fail:
 /// `assert_eq!(resp.status(), StatusCode::OK)` (the init-segment `GET`) fails
-/// at `multimux/tests/origin_llhls.rs:209`, comparing actual `404` against
+/// at `multimux/tests/it/origin_llhls.rs:209`, comparing actual `404` against
 /// expected `200` — with no init bytes ever set, the route's `init-1.mp4`
 /// route has nothing to serve. Rebuilt and re-ran to confirm this exact
 /// failure, then reverted.

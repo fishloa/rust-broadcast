@@ -1,6 +1,6 @@
 //! RFC 3986 §5.4 reference-resolution vectors and BaseURL-chain behaviour for
 //! `transmux::base_url` (SP3). The two tables moved here verbatim from the
-//! deleted `src/uri.rs`; the `url` crate implements the WHATWG URL algorithm,
+//! deleted `dvb-ci/src/ci_plus/uri.rs`; the `url` crate implements the WHATWG URL algorithm,
 //! which differs from strict RFC 3986 in exactly the rows listed in
 //! `WHATWG_DIFFERENCES`.
 #![cfg(feature = "std")]

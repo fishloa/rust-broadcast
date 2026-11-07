@@ -413,7 +413,7 @@ async fn admin_added_route_starts_its_whep_listener() {
 /// An `"instant"` `Custom` input scheme: announces one program and queues a
 /// handful of synthetic samples in its first `feed`, so the route publishes a
 /// `Trunk` (which every egress, WHEP included, awaits before binding) with no
-/// real network I/O. Mirrors `tests/admin_api.rs`'s identically-named scheme.
+/// real network I/O. Mirrors `multimux/tests/it/admin_api.rs`'s identically-named scheme.
 mod instant {
     use std::collections::VecDeque;
     use std::convert::Infallible;

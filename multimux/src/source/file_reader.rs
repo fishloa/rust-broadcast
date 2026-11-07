@@ -47,7 +47,7 @@
 //! and the wall-clock cadence continues seamlessly because pacing is relative
 //! to the same continuous `(pts + offset)` timeline. This is the property the
 //! loop tests assert (and a mutation hides it; see
-//! `tests/file_reader.rs`'s `loop_preserves_dts_monotonicity_across_boundary`).
+//! `multimux/tests/it/file_reader.rs`'s `loop_preserves_dts_monotonicity_across_boundary`).
 //!
 //! With `loop_file: false`, the reader stops after the first pass and reports
 //! no further samples.

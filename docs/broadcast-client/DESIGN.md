@@ -185,7 +185,7 @@ Scope split: **BC-3a** single media playlist and master playlist with the policy
 - Auth/redirect layers apply to EVERY request exactly as for TS-HTTP: credentials scoped to the session origin (playlist origin) only; segments on other origins (CDN) carry no Authorization; per-request redirects (each request has its own redirect counter).
 - Stall handling: no bytes for `Config::ts_http.stall_*` does NOT apply; a request in flight longer than `Config::request_timeout_us` (default 20 s, playlists) / `segment_timeout_us` (default 60 s) is aborted (`Close`) and counts as a failure.
 
-Tests (BC-3a): named test per bullet, using the real fixtures (fixtures/hls/real/bipbop-ts master + `hls-runtime/fixtures/ts-hls` classic TS segments; cmaf-fmp4 fixture for fMP4; master with the policy; VOD ENDLIST => Ended once; backoff table; 404 main playlist vs segment; auth scoping on a cross-origin segment; per-request redirect; bounded body; request timeout; blocking-reload query in the HttpRequest URL; prefetch concurrency table), plus a chunking-invariance test (1-byte, 1316, 64 KiB body chunks give the identical Event sequence) and an oracle test (the session's Sample sequence equals driving a bare HlsClient with the same bodies).
+Tests (BC-3a): named test per bullet, using the real fixtures (fixtures/hls/real/bipbop-ts master + `fixtures/hls/ts-hls` classic TS segments; cmaf-fmp4 fixture for fMP4; master with the policy; VOD ENDLIST => Ended once; backoff table; 404 main playlist vs segment; auth scoping on a cross-origin segment; per-request redirect; bounded body; request timeout; blocking-reload query in the HttpRequest URL; prefetch concurrency table), plus a chunking-invariance test (1-byte, 1316, 64 KiB body chunks give the identical Event sequence) and an oracle test (the session's Sample sequence equals driving a bare HlsClient with the same bodies).
 
 Automatic feeding inside the session (the host does nothing):
 - `on_chunk(arrival_us, bytes, pcr_27mhz)` once per `on_data` call, arrival = the `now_us` passed to `on_data`, pcr = the LAST `DemuxEvent::ClockReference` ticks (27 MHz) observed during that chunk's demux, `None` if none (taken once: cleared after use).
@@ -221,13 +221,13 @@ A master playlist can reference a separate audio rendition group (`EXT-X-MEDIA T
 - Fatal errors (`Event::Error{fatal: true}`) from either adapter stop the whole session: both adapters are halted and `select_audio_rendition`/`select_variant` start nothing.
 - Known limitations: an audio rendition is a separate `HlsClient`, so audio and video are not synchronised at the transport level (the player aligns them on PTS); the audio adapter treats its URL as a media playlist (a master there yields no audio).
 
-Tests: `broadcast-client/tests/hls_renditions.rs`. The separate audio-only and video-only segments are derived in the test by demuxing the real `ts-hls` fixture and re-muxing each track with `transmux`'s `StreamingTsHlsSegmenter`; the oracle is a bare `HlsClient` per stream, and the real bipbop master covers the URI-less default rendition.
+Tests: `broadcast-client/tests/it/hls_renditions.rs`. The separate audio-only and video-only segments are derived in the test by demuxing the real `ts-hls` fixture and re-muxing each track with `transmux`'s `StreamingTsHlsSegmenter`; the oracle is a bare `HlsClient` per stream, and the real bipbop master covers the URI-less default rendition.
 
 ## BC cookies/headers (#1458)
 
 Binding spec: `private/specs-verified/ietf/broadcast-client/cookies.md` (RFC 6265 verbatim plus the first-slice decisions). Summary of what is built:
 
-- `src/cookies.rs`: jar scoped to the session origin; domain-match and path-match/default-path are `cookie_store`'s pure `CookieDomain`/`CookiePath` (a `Domain` attribute is accepted only if the origin host domain-matches it, otherwise the cookie is refused, and an accepted one is still sent ONLY to the session origin - origin scope is a deliberate security property, since no public-suffix data is shipped; no public-suffix list; no `cookie_store` type that reads the wall clock is used); `Expires` ignored; `Secure` only on https; `Max-Age` relative to the `now_us` of the response (<= 0 deletes, expiry is exclusive: gone at `stored_at + max_age`); same name+path replaces in place; `Cookie` header ordered longest path first, then storage order; at most 50 cookies (oldest evicted) and 4096 bytes of name+value per cookie. `Set-Cookie` lines are parsed with the `cookie` crate; every `Set-Cookie` line of any status (401 and 3xx included) is processed, but only for responses of the session origin.
+- `broadcast-client/tests/it/cookies.rs`: jar scoped to the session origin; domain-match and path-match/default-path are `cookie_store`'s pure `CookieDomain`/`CookiePath` (a `Domain` attribute is accepted only if the origin host domain-matches it, otherwise the cookie is refused, and an accepted one is still sent ONLY to the session origin - origin scope is a deliberate security property, since no public-suffix data is shipped; no public-suffix list; no `cookie_store` type that reads the wall clock is used); `Expires` ignored; `Secure` only on https; `Max-Age` relative to the `now_us` of the response (<= 0 deletes, expiry is exclusive: gone at `stored_at + max_age`); same name+path replaces in place; `Cookie` header ordered longest path first, then storage order; at most 50 cookies (oldest evicted) and 4096 bytes of name+value per cookie. `Set-Cookie` lines are parsed with the `cookie` crate; every `Set-Cookie` line of any status (401 and 3xx included) is processed, but only for responses of the session origin.
 - The jar lives in `AuthState`, the single layer every request passes through (`request_headers(url, now_us)`), so the TS-HTTP and HLS adapters share it: playlists, segments, reconnects and in-origin redirects carry the cookies; requests to another origin carry no cookie (whatever its `Domain`), no extra header and no `Authorization`.
 - `Config::initial_cookies` seed the jar (path `/`); `Session::cookies()` exports the live `(name, value)` pairs for the host to persist. Values are secrets: `Debug` of `Config`, `Session`, `AuthState` never prints them.
 - `Config::extra_headers` are validated in `Session::open` with `http::HeaderName`/`HeaderValue` (`Error::InvalidHeader`), reserved names `Authorization`, `Cookie`, `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Range` are `Error::ReservedHeader`. Order sent: extra headers in the given order, then `Cookie`, then `Authorization`. `initial_cookies` with an invalid name/value are `Error::InvalidHeader`.
@@ -317,7 +317,7 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
   first sample (connect error, bad reply, start timeout, garbage, bad SDP) gives `Status::Reconnecting
   { attempt }` and the backoff `backoff_ms` (2, 4, 8 s) then `backoff_cap_ms` (10 s) forever. `tshttp_runtime`'s
   client demuxes MPEG-TS inside `feed`, so its timer code cannot be driven from RTP; the same transitions are
-  implemented in `source/rtsp.rs` and pinned by `tests/rtsp.rs`. As for TS-HTTP, a played-then-ended reconnect
+  implemented in `source/rtsp.rs` and pinned by `broadcast-client/tests/it/rtsp.rs`. As for TS-HTTP, a played-then-ended reconnect
   emits no `Reconnecting` status.
 - Deadlines: the adapter emits `WakeAt(deadline)` for the earliest of backoff due, start timeout, stall
   notice/reconnect and keepalive, only when no earlier wake is outstanding.
@@ -325,7 +325,7 @@ RTSP client source for SAT>IP tuners and IP cameras, built on `rtsp-runtime`'s s
   receiver reports, UDP RTP, `Content-Base` handling, server-initiated requests, video other than H.264, audio
   other than AAC.
 
-Tests: `broadcast-client/tests/rtsp.rs` with a fake RTSP server in `tests/support/rtsp_host.rs` (parses the
+Tests: `broadcast-client/tests/it/rtsp.rs` with a fake RTSP server in `tests/support/rtsp_host.rs` (parses the
 session's `Send` bytes with `rtsp-types`, answers with SDP built by `sdp-types`, pushes `$`-framed RTP made by
 `transmux`'s packetiser from the real `fixtures/ts/h264-aac.ts` samples; the oracle is the original samples,
 payload bytes and timestamps). Digest responses are verified by `broadcast-auth`'s own `Verifier`.
@@ -339,7 +339,7 @@ Each RTSP track's RTP timestamps start at an unrelated random base (RFC 3550 5.1
 - `AvSync::SenderReport`: the depacketiser has an SR (RFC 3550 6.4.1, NTP time to RTP time) for the anchor and the track. `RtpStreamDepacketiser::sync_start_decode_times` (the only place the NTP arithmetic lives) gives each track's first-sample wall-clock distance from the earliest one; the target `delta` places the track's first sample at the anchor's first pts plus its true wall-clock offset from the anchor's first sample. Every new SR recomputes the target.
 - Switch: forward correction is applied immediately; backward correction is slewed by at most half a sample duration per sample, so per-track pts never go backwards. A correction larger than `SR_SWITCH_TOLERANCE_US` (100 ms, about five AAC frames, near the edge where audio/video offset is read as out of sync) is a real timeline change: `Event::Discontinuity` once, then the new `delta`. The provisional error is the arrival skew, normally a few packet times, so the common case is absorbed silently.
 - Reporting: `Event::AvSync(AvSync)` is per session, emitted before the first sample (`Provisional`, or `SenderReport` when the SRs were already in) and once more when every non-anchor track is on SR timing. A single-track presentation never emits it. The state resets with the connection (a reconnect builds a new depacketiser and new RTP bases).
-- The buffer no longer shifts tracks: the lead is right by construction. `tests/rtsp_clock_offset.rs` guards Start timing against random per-track RTP bases.
+- The buffer no longer shifts tracks: the lead is right by construction. `broadcast-client/tests/it/rtsp_clock_offset.rs` guards Start timing against random per-track RTP bases.
 
 Limits: a track that never gets Sender Reports stays Provisional; the tracks' SR NTP clocks are assumed to share a wall clock (RFC 3550 6.4.1 requires it for lip sync).
 
@@ -360,11 +360,11 @@ Config: `Config::playout: PlayoutConfig { vod_start_lead_us: 1_000_000, live_sta
 
 Behaviour changes versus BC-2/BC-3a: finite TS and HLS now emit Buffer events (BC-2 finite TS and BC-3a HLS emitted none); the controller log (`buffer_input_log`, test seam) stays empty for them.
 
-Tests: `broadcast-client/tests/playout.rs` (HLS through the real HLS session with the classic-TS ts-hls and CMAF fixtures plus a 12 s contiguous stream built from the same fixture samples for live, finite TS from `fixtures/ts/h264-aac.ts` with `Content-Length`). The oracle in the test recomputes the leads from the delivered `Event::Sample`s independently of the gate.
+Tests: `broadcast-client/tests/it/playout.rs` (HLS through the real HLS session with the classic-TS ts-hls and CMAF fixtures plus a 12 s contiguous stream built from the same fixture samples for live, finite TS from `fixtures/ts/h264-aac.ts` with `Content-Length`). The oracle in the test recomputes the leads from the delivered `Event::Sample`s independently of the gate.
 
 ## Pre-release audit fixes (#1484)
 
-Behaviour pinned by `tests/audit_1484.rs`, `tests/audit_1484_sources.rs` and the in-crate unit tests.
+Behaviour pinned by `broadcast-client/tests/it/audit_1484.rs`, `broadcast-client/tests/it/audit_1484_sources.rs` and the in-crate unit tests.
 
 - `Action` has a manual `Debug`: header NAMES only (never values), `Send` prints its length, never the bytes.
 - Every failed connect (403, 3xx without `Location`, redirect over the limit) emits `Close{conn}`. A late
@@ -433,7 +433,7 @@ Deduplication and state scope: every `Event::Discontinuity` (source reconnect, H
 
 Controller semantics worth knowing: `buffering-runtime` answers a `PcrDiscontinuity` while Playing with `Pause` then `Resume`, never a second `StartPlaying`, so after a jump the player sees `Resume` (or `Start` if the controller was still Buffering) positioned on the new timeline's media. The BC-5 gate does fire `Start` again.
 
-Tests: `broadcast-client/tests/timeline_jump.rs` (TS via PES-PTS rewriting of the public `h264-aac.ts` and the real TF1 capture, HLS VOD/live through the real HLS session, RTSP through the fake server with rewritten RTP timestamps, a two-video-track RTSP SDP) and the exact-boundary unit tests in `src/timeline.rs`.
+Tests: `broadcast-client/tests/it/timeline_jump.rs` (TS via PES-PTS rewriting of the public `h264-aac.ts` and the real TF1 capture, HLS VOD/live through the real HLS session, RTSP through the fake server with rewritten RTP timestamps, a two-video-track RTSP SDP) and the exact-boundary unit tests in `src/timeline.rs`.
 
 ## Audit round 4 (#1498)
 
@@ -467,7 +467,7 @@ Tests: `broadcast-client/tests/timeline_jump.rs` (TS via PES-PTS rewriting of th
   reporting the position of the previous pass cannot pause the new pass at once.
 - **Host contract.** poll until `None` and drain after every callback; live TS decides `Buffer`
   events inside `on_playback_position` (never called: no `Start`; called less than every display tick:
-  `Start` later, not never; pinned by `tests/audit_r7_buffer.rs`); `Start.at`/`Resume.at` are the 27 MHz clock the player
+  `Start` later, not never; pinned by `broadcast-client/tests/it/audit_r7_buffer.rs`); `Start.at`/`Resume.at` are the 27 MHz clock the player
   sets; demuxer-level discontinuities are visible only through buffer events; `byte_range` is
   `(offset, length)`; `WakeAt` is "at or after" and past values are dropped.
 
@@ -609,7 +609,7 @@ than at the first sample. A reconnect starts a fresh hold for the new connection
 Consequence for BC-2: the buffering controller learns the tracks and the media ends from the release on (the
 held samples replay in order within one drain), so its first `TrackMedia` and the zero-length join report can
 arrive up to the hold later than before; chunk arrival pacing (`on_chunk`, PCR) is unaffected. The oracle in
-`tests/buffer.rs` models the same hold. RTSP announces all tracks from the SDP before the first sample, so it
+`broadcast-client/tests/it/buffer.rs` models the same hold. RTSP announces all tracks from the SDP before the first sample, so it
 needs no coalescing.
 
 ### multimux check: TS-HTTP bytes without media
@@ -637,7 +637,7 @@ Decisions that change public behaviour (transmux `StreamingTsDemux`, hls-runtime
 
 ### Interaction with the round-5 liveness fixes (#1502)
 
-`tests/audit_r5_liveness.rs` and `tests/audit_r5_discontinuity.rs` assert "no `Event::Error`". F4 deliberately
+`broadcast-client/tests/it/audit_r5_liveness.rs` and `broadcast-client/tests/it/audit_r5_discontinuity.rs` assert "no `Event::Error`". F4 deliberately
 reports each non-muxable HLS-TS track (SCTE-35, ID3, private data present in those captures) as a non-fatal
 `ErrorKind::TrackDropped`, so both files now ignore that one kind when collecting errors (nothing else in them
 changed). The F1 hold interacted with the TS-HTTP liveness test on `crypto/csa2-plain.ts` (declared streams that never
@@ -646,7 +646,7 @@ resolve): the hold had no input-driven bound below 4 MiB / 3 s, so nothing was r
 
 ### Hold transparency and the timeline-jump epoch
 
-`tests/hold_transparency.rs` replays every `.ts` fixture (public and private, 20+ producing samples) paced at its
+`broadcast-client/tests/it/hold_transparency.rs` replays every `.ts` fixture (public and private, 20+ producing samples) paced at its
 PCR bitrate with the hold at 0, 0.3 s, 1 s and 3 s and requires the delivered `Event::Sample` sequence (track, pts,
 dts, sync flag, join decision, data hash) to be identical to the disabled hold. It found one difference: after a
 detected timeline jump the stale set (tracks whose old-timeline samples are dropped until they reach the new
@@ -697,7 +697,7 @@ asked to render. `buffering-runtime` is unchanged, but its `track_silence_timeou
 (every committed capture at its natural skew) never show the placeholder to the controller: their controller
 input log, and so every existing oracle test, is unchanged.
 
-Evidence (`tests/start_gate.rs`, host simulation at real time with a 50 ms tick, captures rai-gulp, rai-news-24,
+Evidence (`broadcast-client/tests/it/start_gate.rs`, host simulation at real time with a 50 ms tick, captures rai-gulp, rai-news-24,
 `ts/h264-aac-40s.ts`, `ts/france2.ts`, hold early / 200 ms backstop / disabled, declared `[1, 2]` and default, the
 audio PES muxed 0 / 500 / 1000 ms later): before, every skewed run with a 1.1 s start lead flapped (`Start`
 0.70 s to 1.25 s, `Pause` 0.15 s to 0.6 s later); after, none flaps and `Start` carries both tracks at at least 90%
@@ -724,7 +724,7 @@ vanished. RTSP does not share the flaw (the track set is rebuilt from each DESCR
 The reported 479/477/478/467 sample counts came from replaying `tf-1-8-mb.ts` at the PCR-estimated bitrate (1.87
 Mbps, wrong for a capture with a PCR jump): the first sample of that capture is 3.9 MB in, so the 15 s start
 timeout expired at a read-quantised byte offset, reconnected, and the demuxer restarted at a different place per
-read size. With clocks that do not trip a timer, `tests/r6_chunk_invariance.rs` replays tf-1, arte, rai-gulp and
+read size. With clocks that do not trip a timer, `broadcast-client/tests/it/r6_chunk_invariance.rs` replays tf-1, arte, rai-gulp and
 five public fixtures at reads of 188, 1316, 4096, 16 KiB, 64 KiB, 256 KiB and three random sequences, under a fixed
 clock, a 40 Mbps clock and a 6 Mbps clock, and asserts the `Sample` sequence and the `Discontinuity` positions
 identical (and the final track set, and that every sample follows an announcement naming its track). The raw
@@ -793,22 +793,22 @@ RFC 8216 §4.4.4.5 (`private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md
 ## Audit round 7 (r7fix)
 
 ### F1: a failed `EXT-X-MAP` init fetch is retried and bounded
-A VOD playlist whose init fetch failed once stalled forever: `fail_purpose` retried a failed init by refetching the playlist, but a VOD reparse does not requeue a `Failed` init slot (`hls-runtime`'s `retry_init()` exists for exactly that and the source never called it), so the session sat in `Reconnecting { attempt: 1 }` with no error. The source now remembers the failure (`init_retry`), and when the shared backoff gate lifts it calls `HlsClient::retry_init()`; the playlist refetch is skipped once `EXT-X-ENDLIST` is seen (it cannot help) and kept for live (it recovers there too). Each failed init fetch (any status including 403, transport error, timeout, oversized body) is counted by the same counter as key failures: one non-fatal `ErrorKind::InitFetchFailed { status }` while retrying, ONE fatal of the same kind after `Config::max_key_failures` consecutive failures with no decoded samples in between (the init analogue of `KeyFetchFailed`; there is no separate cap and segment fetches are bounded by their own `max_segment_failures`, Round 8). `tests/audit_r7_init.rs` covers transient/permanent 404/503, a transport error, live recovery, a failing second init of a multi-MAP VOD and the cap following `max_key_failures`. An init that arrives with a success status but holds no complete `moov` box (`Error::InitUndecodable` from hls-runtime, which also marks the slot `Failed`) takes the same path with `ErrorKind::InitDecodeFailed`: retried, counted with the same cap, one fatal. It used to surface as endless segment-demux failures. The r7 scratch test `r7_never_sent_audio_no_ticks` (F3) did tick during its idle phase; the pinned contract is in `tests/audit_r7_buffer.rs`.
+A VOD playlist whose init fetch failed once stalled forever: `fail_purpose` retried a failed init by refetching the playlist, but a VOD reparse does not requeue a `Failed` init slot (`hls-runtime`'s `retry_init()` exists for exactly that and the source never called it), so the session sat in `Reconnecting { attempt: 1 }` with no error. The source now remembers the failure (`init_retry`), and when the shared backoff gate lifts it calls `HlsClient::retry_init()`; the playlist refetch is skipped once `EXT-X-ENDLIST` is seen (it cannot help) and kept for live (it recovers there too). Each failed init fetch (any status including 403, transport error, timeout, oversized body) is counted by the same counter as key failures: one non-fatal `ErrorKind::InitFetchFailed { status }` while retrying, ONE fatal of the same kind after `Config::max_key_failures` consecutive failures with no decoded samples in between (the init analogue of `KeyFetchFailed`; there is no separate cap and segment fetches are bounded by their own `max_segment_failures`, Round 8). `broadcast-client/tests/it/audit_r7_init.rs` covers transient/permanent 404/503, a transport error, live recovery, a failing second init of a multi-MAP VOD and the cap following `max_key_failures`. An init that arrives with a success status but holds no complete `moov` box (`Error::InitUndecodable` from hls-runtime, which also marks the slot `Failed`) takes the same path with `ErrorKind::InitDecodeFailed`: retried, counted with the same cap, one fatal. It used to surface as endless segment-demux failures. The r7 scratch test `r7_never_sent_audio_no_ticks` (F3) did tick during its idle phase; the pinned contract is in `broadcast-client/tests/it/audit_r7_buffer.rs`.
 
 ### F2: `EXT-X-MAP` identity ignores the query
 `HlsClient::init_for_map` matched on the full resolved URL, so a re-signed map URI created a new init slot per reload (a refetch and a repeated `Tracks`). It now matches on the URL without its query plus the byte range (the rule segment continuity already uses, `without_query`) and keeps the newest URL for later fetches and retries. A different path or byte range is a new init that is fetched and announced.
 
 ### F3: Start needs `on_playback_position`, but not every tick
-The README said live TS gets `Event::Buffer` only if the host ticks every display tick. Measured: with no tick at all there is no `Start`; with ticks only after the data (a captured stream missing a declared audio) `Start` fires at 5.3 s against 1.6 s with a tick per chunk. The contract is now stated that way and pinned by `tests/audit_r7_buffer.rs`.
+The README said live TS gets `Event::Buffer` only if the host ticks every display tick. Measured: with no tick at all there is no `Start`; with ticks only after the data (a captured stream missing a declared audio) `Start` fires at 5.3 s against 1.6 s with a tick per chunk. The contract is now stated that way and pinned by `broadcast-client/tests/it/audit_r7_buffer.rs`.
 
 ### F4: a PMT that changes a PID's kind replaces the expected kind
-`DeclaredStreams` only inserted into its kind map and the source refreshed `expected` only when the map length changed, so a PMT that turned an audio PID into data, video or nothing left the start gate waiting for audio that was no longer declared. The map now follows the latest PMT of each program (a PID that left the PMT or lost its audio/video kind is removed) and `expected` is refreshed on any change. `tests/audit_r7_ts.rs` drives audio to data, video and removal plus the unchanged-kind (AC-3 to AAC) and data-to-audio cases, with the flip landing in a later chunk than the first PMT.
+`DeclaredStreams` only inserted into its kind map and the source refreshed `expected` only when the map length changed, so a PMT that turned an audio PID into data, video or nothing left the start gate waiting for audio that was no longer declared. The map now follows the latest PMT of each program (a PID that left the PMT or lost its audio/video kind is removed) and `expected` is refreshed on any change. `broadcast-client/tests/it/audit_r7_ts.rs` drives audio to data, video and removal plus the unchanged-kind (AC-3 to AAC) and data-to-audio cases, with the flip landing in a later chunk than the first PMT.
 
 ### F5: RTSP dropped-media report follows each DESCRIBE
 `reported_drops` was keyed by media position and never reset, so a re-DESCRIBE with a different SDP did not report a media dropped at an already-reported position. It is now keyed by (position, codec) and replaced by the set of the current DESCRIBE: the same SDP reports nothing again, a different media at the same position is reported, and a media that returns and is dropped again is reported again. `TrackDropped.track_id` for RTSP is the 1-based position of the `m=` line (stable whatever else the SDP holds; it is not the id of an announced track).
 
 ### F6: scenarios the audit could not drive
-`tests/audit_r7_coverage.rs`: byte-range `EXT-X-MAP` (whole-file `200` sliced, `206` with matching and wrong `Content-Range`, live repeated in every window, vanishing from later windows, VOD discontinuity without a new map); CENC/CBCS fMP4 without `EXT-X-KEY` (per-track non-fatal, clear audio plays) and with a `SAMPLE-AES-CTR`/`SAMPLE-AES` key tag (fatal at once); a TS-HLS `EXT-X-DISCONTINUITY` arriving while the buffer holds (`Pause`, then `Resume` at the held position, one `Discontinuity`, `Start` on the new timeline, no sample lost); a 40-stream PMT with a `stream_type` 0x06 audio declared by descriptor that never sends (`Start` is delayed by at most `start_pending_track_wait_us`). Nothing broke; the large PMT needed `tests/support/ts_pmt.rs` to span packets.
+`broadcast-client/tests/it/audit_r7_coverage.rs`: byte-range `EXT-X-MAP` (whole-file `200` sliced, `206` with matching and wrong `Content-Range`, live repeated in every window, vanishing from later windows, VOD discontinuity without a new map); CENC/CBCS fMP4 without `EXT-X-KEY` (per-track non-fatal, clear audio plays) and with a `SAMPLE-AES-CTR`/`SAMPLE-AES` key tag (fatal at once); a TS-HLS `EXT-X-DISCONTINUITY` arriving while the buffer holds (`Pause`, then `Resume` at the held position, one `Discontinuity`, `Start` on the new timeline, no sample lost); a 40-stream PMT with a `stream_type` 0x06 audio declared by descriptor that never sends (`Start` is delayed by at most `start_pending_track_wait_us`). Nothing broke; the large PMT needed `tests/support/ts_pmt.rs` to span packets.
 
 
 ## Audit round 8 (r8fix)
@@ -825,7 +825,7 @@ Every segment failure used to look like attempt 1 because the playlist refetch t
 ### F4: init timeout
 An init fetch used the 60 s segment timeout, so an init with no response took about nine minutes to go fatal. Init fetches use `request_timeout_us` (20 s, the playlist class; key fetches already had `hls_key_timeout_us`), about three minutes with the default 8 failures.
 
-Tests: `broadcast-client/tests/audit_r8_segments.rs` (every fault kind VOD and live, the schedule across playlist reloads, reset on delivery, the cap table, Retry-After table incl. `u64::MAX`, init stall) and `hls-runtime/tests/segment_failure.rs` (core contract). Every assertion was mutation-checked.
+Tests: `broadcast-client/tests/it/audit_r8_segments.rs` (every fault kind VOD and live, the schedule across playlist reloads, reset on delivery, the cap table, Retry-After table incl. `u64::MAX`, init stall) and `hls-runtime/tests/it/segment_failure.rs` (core contract). Every assertion was mutation-checked.
 
 ## Config renames (dash-runtime W-a0, Q1 + Q3)
 
@@ -867,9 +867,9 @@ Decisions made while building it:
 - `DashConfig::validate` rejects a zero `utc_timeout_us`, `utc_wait_us`, `utc_max_rtt_us`, `utc_resync_us`, `early_retry_us`, `min_mpd_refresh_us` and a `utc_wait_us` shorter than `utc_timeout_us` (the ladder would give up before one request can time out). Zero stays valid where it means "none" (`host_clock_uncertainty_us`, `availability_margin_us`, `early_grace_us`, `live_delay_us`); `u64::MAX` is valid everywhere (consumers saturate). The 6.4 table's 2 s `utc_timeout_us` is used, not the 3 s of the 3.3 prose. `max_mpd_bytes` of 4.2 is not a `DashConfig` field: the shared `max_manifest_bytes` bounds the MPD, as 6.4 says.
 - `Config::validate` runs the DASH check for every source kind. `Error::InvalidConfig { field }` carries `"dash.<name>"`; the field strings are a static map in `events.rs`, pinned by a test per field.
 - `Event::ClockSynced` ordering contract (documented on the variant, enforced when the DASH source lands): emitted once when the first anchor appears and again only when its source changes, never for a source that needs no clock, and before the first sample that depends on it. Here only the type exists and a test pins that no current source emits it.
-- The session still reads no clock: `tests/no_handroll_guard.rs` now also bans `Timestamp::now`, `Zoned::now`, `UNIX_EPOCH`, `Utc::now`, `Local::now` and `OffsetDateTime::now` in `src/` outside tests, alongside `SystemTime::now` and `Instant::now`.
+- The session still reads no clock: `workspace-guards/tests/guards/handroll_data.rs` now also bans `Timestamp::now`, `Zoned::now`, `UNIX_EPOCH`, `Utc::now`, `Local::now` and `OffsetDateTime::now` in `src/` outside tests, alongside `SystemTime::now` and `Instant::now`.
 
-Tests: `tests/dash_clock_surface.rs` (anchor edge cases `u64::MAX`, backwards, repeated, after close; the Retry-After matrix through a whole HLS session; `DashConfig` validation per field; labels), `source::fetch::retry` unit tests (past dates, the 60 s clamp, garbage, anchor vs `Date`), `dash-runtime/tests/client_config.rs` and the HTTP-date forms in `dash-runtime/tests/datetime.rs`. The mutation table is `broadcast-client/docs/mutation-table.md`, re-runnable with `broadcast-client/docs/mutants.py`.
+Tests: `broadcast-client/tests/it/dash_clock_surface.rs` (anchor edge cases `u64::MAX`, backwards, repeated, after close; the Retry-After matrix through a whole HLS session; `DashConfig` validation per field; labels), `source::fetch::retry` unit tests (past dates, the 60 s clamp, garbage, anchor vs `Date`), `dash-runtime/tests/it/client_config.rs` and the HTTP-date forms in `dash-runtime/tests/it/datetime.rs`. The mutation table is `broadcast-client/docs/mutation-table.md`, re-runnable with `broadcast-client/docs/mutants.py`.
 
 ## Segment inactivity timeout and Range resume (#1613)
 
@@ -883,7 +883,7 @@ A host networking stack can stop delivering bytes for one in-flight request whil
 - Answers to the resume: a `206` whose `Content-Range` starts exactly at `first+received`, ends where the original range ended and (when it names a validator) names the same one extends the prefix; a `200` (resource changed, or ranges ignored) drops the prefix and takes the whole body under the original request's rules (a ranged request answered `200` is sliced as before); a `416`, any other `206` or any other status to the resume drops the prefix and re-requests the whole resource at once without a second backoff (a `416` is not counted; a refused status is counted as any failure). An original `byte_range` (DASH `indexRange`/`mediaRange`, HLS `BYTERANGE`) is resumed inside itself: `Range` is absolute in the file, `start..=end` of the original `206`.
 - A stall before the head, before any byte, or without a strong validator is `ResumeMode::Full`: the retry is the original request.
 
-Tests: `tests/dash_inactivity.rs` (static fixture, `DashSim`), `tests/segment_inactivity.rs` (HLS fixture segments through a caller-clocked `Session`, one cell per origin behaviour x stall point), the `StallResume` fault in `tests/dash_matrix.rs`, unit tests in `fetch/resume.rs` and `fetch/inactivity.rs`.
+Tests: `broadcast-client/tests/it/dash_inactivity.rs` (static fixture, `DashSim`), `broadcast-client/tests/it/segment_inactivity.rs` (HLS fixture segments through a caller-clocked `Session`, one cell per origin behaviour x stall point), the `StallResume` fault in `broadcast-client/tests/it/dash_matrix.rs`, unit tests in `fetch/resume.rs` and `fetch/inactivity.rs`.
 
 ## BC-7 UDP/RTP, SRT caller and client identity (#1555, #1460 SRT part, #1461)
 

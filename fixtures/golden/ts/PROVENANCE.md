@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: dvb-stream golden README
+## Dvb-stream goldens
 
 Goldens for W1-R-low-a. Generated from `main` at commit 182d03f78bd5 with:
 

@@ -15,7 +15,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # multimux's external-oracle tests (e.g. tests/emsg_mp4box.rs needs Bento4
+  # multimux's external-oracle tests (e.g. multimux/tests/it/emsg_mp4box.rs needs Bento4
   # `mp4dump`) FAIL when their tool is missing unless this is set, so a dev
   # machine can't silently skip them. The Ubuntu runners don't ship Bento4:
   # skip those oracles here explicitly (they print SKIP); run them locally.

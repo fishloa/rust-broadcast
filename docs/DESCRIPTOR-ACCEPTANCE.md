@@ -5,7 +5,7 @@ Every new descriptor, table, or coded enum must satisfy these invariants so it i
 Each item is tagged with how it is enforced:
 
 - **[CI]** — a test fails if violated (automatic; runs in the gate suite).
-- **[AUDIT]** — checked by `tests/convention_audit.rs` (mechanical scan).
+- **[AUDIT]** — checked by `dvb-si/tests/it/convention_audit.rs` (mechanical scan).
 - **[REVIEW]** — human review against the spec (cannot be mechanised).
 
 ## 1. Structure & symmetry

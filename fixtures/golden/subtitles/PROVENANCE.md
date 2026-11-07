@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: ttml-subtitle golden README
+## Ttml-subtitle goldens
 
 # Golden outputs
 

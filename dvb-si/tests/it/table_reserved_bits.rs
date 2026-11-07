@@ -18,7 +18,7 @@
 //! 3. `real_sender_sections_*`: the exact section bytes of the real-capture
 //!    deviations that motivated the change (TDT `0x00` first bytes, NIT
 //!    `0xB0`, PAT `reserved(3)=000`, EIT `reserved(2)=00`, SDT
-//!    `reserved_future_use(6)`), taken from the private real-capture corpus (`private/fixtures/tsduck`) where it
+//!    `reserved_future_use(6)`), taken from the private real-capture corpus (`private/fixtures/suites/tsduck`) where it
 //!    is present.
 #![cfg(feature = "ts")]
 

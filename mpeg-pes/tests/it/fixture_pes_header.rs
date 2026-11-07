@@ -25,7 +25,7 @@
 //! **zero** PES headers setting any of these flags (real broadcast PES headers
 //! carry only PTS/DTS), and the TSDuck "candidates" are mis-stream-typed bytes
 //! that never round-trip byte-identical. These fields are covered by the
-//! build-from-fields round-trip unit tests in `pes/src/packet.rs`.
+//! build-from-fields round-trip unit tests in `mpeg-pes/src/packet.rs`.
 
 use mpeg_pes::{PesPacket, StreamId};
 

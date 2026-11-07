@@ -163,7 +163,7 @@ For a much larger fleet see [`webcam-fleet-40.json`](webcam-fleet-40.json).
 
 ## These values are tested, not illustrative
 
-`multimux/tests/example_configs.rs` deserialises this file as a real `Config` and runs
+`multimux/tests/it/example_configs.rs` deserialises this file as a real `Config` and runs
 `validate()` on it — the same two steps `multimux --config` performs at startup. It also asserts
 the breadth (seven ingest transports, three outputs, egress auth present) and that the admin
 listener is on loopback and not sharing the media port.

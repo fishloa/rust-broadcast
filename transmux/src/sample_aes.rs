@@ -450,13 +450,13 @@ pub fn ac3_decrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]
 /// (`../fixtures/crypto/sample-aes-eac3/`): ffmpeg decodes the reset reference 9/9
 /// audio frames identical to clear but the carried-IV variant only 1/9, and
 /// Bento4's `mp4hls` output is byte-identical to the reset reference. See that
-/// fixture's `README.md` / `proof.log`.
+/// fixture's `PROVENANCE.md` / `bento4/proof.log`.
 ///
 /// The per-*syncframe* reset differs from the "IV is not reset at syncframe
 /// boundaries within an audio frame" reading: every stream ffmpeg or Bento4 can
 /// produce has one independent syncframe per audio frame, so both tools reset
 /// there. IV carried across an independent + dependent syncframe pair has **NO
-/// independent oracle** (see `ORACLES.md` B3) — those dependent syncframes are
+/// independent oracle** (see `fixtures/mp4/PROVENANCE.md` B3) — those dependent syncframes are
 /// treated like independent ones (reset) until an oracle says otherwise.
 ///
 /// # Errors
@@ -513,7 +513,7 @@ fn eac3_transform(
 /// Carrying the IV across an independent syncframe *and its dependent
 /// syncframes* (a 7.1 access unit) has **no independent oracle** — every stream
 /// ffmpeg or Bento4 can produce has one independent syncframe per audio frame,
-/// and both reset there (`ORACLES.md` B3). This implementation resets at every
+/// and both reset there (`fixtures/mp4/PROVENANCE.md` B3). This implementation resets at every
 /// syncframe, including a dependent one; treat that case as unverified.
 ///
 /// # Errors

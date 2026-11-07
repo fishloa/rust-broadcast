@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: README.md
+## Notes
 
 # E-AC-3 HLS Sample-AES oracle (audit r05-W2)
 

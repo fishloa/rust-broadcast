@@ -1,7 +1,7 @@
 # PROVENANCE
 
 
-## Folded note: multimux golden README
+## Multimux goldens
 
 # Golden outputs
 
@@ -48,7 +48,7 @@ set on the wire. The HlsOrigin instance token in the instance-named init URI is 
 `Content-Length` (a process-global counter exposition) is omitted. Regenerate:
 
 ```bash
-GOLDEN_BLESS=multimux/tests/golden cargo test -p multimux --all-features --locked \
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked \
   --lib origin::tests::origin_response_headers_match_golden
 ```
 
@@ -64,7 +64,7 @@ normalised to `{date}`/`{etag}`). Generated from `origin/main` commit `9dd1e31e`
 `CorsLayer`. Regenerate:
 
 ```bash
-GOLDEN_BLESS=multimux/tests/golden cargo test -p multimux --all-features --locked --lib \
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked --lib \
   source::whip::tests::whip_response_headers_match_golden \
   output::whep::tests::whep_response_headers_match_golden
 ```
@@ -87,8 +87,7 @@ is byte-identical to main (main already listed only the selected PT). See the CH
 Regenerate:
 
 ```bash
-cd multimux
-GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked \
   --test it -- whip_whep_sdp:: whep_sdp_golden::
 ```
 
@@ -101,8 +100,7 @@ Byte-for-byte expected DASH (`output::dash::render_mpd_at`) and LL-DASH
 witness that no wire byte changed. Regenerate:
 
 ```bash
-cd multimux
-GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked \
   --lib matches_frozen_now_golden
 ```
 
@@ -148,7 +146,7 @@ asserting.
 
 
 
-## Folded note: rtsp-runtime golden README
+## Rtsp-runtime goldens
 
 Goldens for W1-R-low-a. Generated from `main` at commit 182d03f78bd5 with:
 

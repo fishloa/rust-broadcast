@@ -12,6 +12,6 @@ ffmpeg 8.1.2. Produces a classic MPEG-TS-segment HLS v3 Media Playlist
 (`index.m3u8`) referencing two whole `.ts` segments (`index0.ts`,
 `index1.ts`) — no `EXT-X-MAP` (no init segment: each segment is a
 self-contained PAT/PMT/PES stream starting with the `0x47` sync byte),
-used by `hls-runtime/tests/ts_hls_ingest.rs` (issue #760) to prove the
+used by `hls-runtime/tests/it/ts_hls_ingest.rs` (issue #760) to prove the
 sans-IO client routes classic TS-segment HLS through `transmux::TsDemux`
 instead of blocking on an init fetch that will never come.

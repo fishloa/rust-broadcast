@@ -149,7 +149,7 @@ the single source of truth for the cipher.
   vectors are.
 - Control-word-derived state is zeroed with the `zeroize` crate and compared
   with `subtle` constant-time equality; `Debug` never prints key bytes
-  (`tests/secret_debug_guard.rs`).
+  (`workspace-guards/tests/guards/secret_debug.rs`).
 - `#[non_exhaustive]` enums, `name()` + `Display` labels, structured errors.
 - `no_std`, no `alloc` needed for the scalar path.
 

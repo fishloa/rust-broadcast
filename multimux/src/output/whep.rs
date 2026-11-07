@@ -543,7 +543,7 @@ pub fn whep_router_for_test(
 /// `#[doc(hidden)]` test hook: render a WHEP SDP answer deterministically
 /// (offer, local address, ICE credentials, setup role, codec config,
 /// fingerprint and candidate lines all caller-supplied), so
-/// `tests/whip_whep_sdp.rs` can golden `sdp_types::Session::write`'s line
+/// `multimux/tests/it/whip_whep_sdp.rs` can golden `sdp_types::Session::write`'s line
 /// ordering without the random cert/candidate values.
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]

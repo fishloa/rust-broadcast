@@ -1,6 +1,6 @@
 //! Fragmented CENC/CBCS fixture tests (issue #564).
 //!
-//! Oracle: `fixtures/ts/h264_{cenc,cbcs}.mp4` — real fragmented CMAF
+//! Oracle: `fixtures/mp4/h264-{cenc,cbcs}.mp4` — real fragmented CMAF
 //! files produced by **Bento4's `mp4encrypt`** (an independent, third-party
 //! tool, not this project's own code) against the already-committed real
 //! fixture `fixtures/mp4/h264-aac-frag.mp4`. Full provenance + the exact

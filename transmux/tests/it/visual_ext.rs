@@ -1,7 +1,7 @@
 //! Ungameable gate test for colr / pasp / clap visual sample-entry extension boxes (#434).
 //!
 //! Extracts `colr` + `pasp` from the real ffmpeg-generated `colr-hdr.mp4` fixture,
-//! parses them, asserts oracle values (FMP4-GAPS-ORACLE.md), and byte-exact
+//! parses them, asserts oracle values (fixtures/mp4/PROVENANCE.md), and byte-exact
 //! round-trips each box. Builds a `clap` from a spec vector and round-trips it.
 //!
 //! EXIT CRITERIA:
@@ -14,7 +14,7 @@
 use broadcast_common::{Parse, Serialize};
 use transmux::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
-// Oracle bytes from FMP4-GAPS-ORACLE.md
+// Oracle bytes from fixtures/mp4/PROVENANCE.md
 const COLR_BODY_ORACLE: [u8; 11] = [
     0x6E, 0x63, 0x6C, 0x78, // 'nclx'
     0x00, 0x02, // colour_primaries = 2

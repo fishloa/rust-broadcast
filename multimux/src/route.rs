@@ -277,12 +277,12 @@ broadcast_common::impl_spec_display!(TsHlsIdrStatus);
 ///
 /// Not given a `name()`/`Display` under the workspace's #204 spec/field-enum
 /// label convention: like [`media_plane::EgressResponse`] (whose module doc
-/// gives the same rationale, and whose crate's `tests/label_coverage.rs`
+/// gives the same rationale, and whose crate's `workspace-guards/tests/guards/label.rs`
 /// skip-list names it for exactly this reason), this is a **data-carrying**
 /// control-flow ADT — [`ProgramResolution::Found`] carries the resolved
 /// [`ProgramServing`] bundle itself — not a static token decoded from a cited
 /// spec; a caller already matches the typed variant instead of formatting a
-/// label. `multimux` has no `tests/label_coverage.rs` drift-guard of its own
+/// label. `multimux` has no `workspace-guards/tests/guards/label.rs` drift-guard of its own
 /// yet (unlike every sibling crate) to enforce or record that exemption
 /// mechanically — see this task's own report.
 ///

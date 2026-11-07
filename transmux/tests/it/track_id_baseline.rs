@@ -15,8 +15,8 @@
 //!   swallow that frame; an AC-3-shaped candidate is now judged by its AC-3 CRC
 //!   and rejected. Plain AC-3 PIDs (stream_type 0x81 / AC-3 descriptor) are
 //!   unaffected (`audio_pes_straddle::sintel_plain_ac3_stays_ac3_*`).
-//! - `tsduck-test/input/test-013.ts` `(none)` -> `1x31494` and
-//!   `tsduck-test/reference/test-089/test-089.align-000000.ts` gains a new first track
+//! - `private/fixtures/suites/tsduck/input/test-013.ts` `(none)` -> `1x31494` and
+//!   `private/fixtures/suites/tsduck/reference/test-089/test-089.align-000000.ts` gains a new first track
 //!   (`1x102`, every later id +1) since #1326 (#1579). test-013's PMT declares AVC video
 //!   0x425, audio 0x426 and teletext 0x428; the capture carries data only on 0x428, and
 //!   the absent video head used to hold back every later track until `finish()`, so the
@@ -176,39 +176,15 @@ fn committed_fixture_track_ids_match_pre_typed_golden() {
     bless_or(&got, true);
 }
 
-/// Real-capture corpus. The golden keys predate the private repo and keep
-/// their historic `test-streams/...` spelling: `private/fixtures/ts/X` ->
-/// `test-streams/X`, `.../tsduck/Y` -> `test-streams/tsduck-test/Y`,
-/// `.../mpegh/Z` -> `test-streams/mpegh/Z`; other private entries are new
-/// captures and are not in the golden.
+/// Real-capture corpus under `private/fixtures/`; entries absent from the
+/// golden are new captures, not regressions.
 #[test]
 fn private_corpus_track_ids_match_pre_typed_golden() {
     let Some(private) = test_fixtures::private_root() else {
         return;
     };
     let got = summarize(&private.join(Path::new("fixtures")), |r| {
-        if let Some(x) = r.strip_prefix("ts/") {
-            Some(format!("test-streams/{x}"))
-        } else if let Some(x) = r.strip_prefix("tsduck/") {
-            Some(format!("test-streams/tsduck-test/{x}"))
-        } else {
-            r.strip_prefix("audio/mpegh/")
-                .map(|x| format!("test-streams/mpegh/{x}"))
-        }
-    });
-    bless_or(&got, false);
-}
-
-/// Fetched (pinned tsduck-test clone) legacy directory.
-#[test]
-fn legacy_test_streams_track_ids_match_pre_typed_golden() {
-    let _manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let Some(root) = test_fixtures::private_root() else {
-        eprintln!("SKIPPED - private not available");
-        return;
-    };
-    let got = summarize(&root.join(Path::new("fixtures")), |r| {
-        Some(format!("private/{r}"))
+        Some(format!("private/fixtures/{r}"))
     });
     bless_or(&got, false);
 }
