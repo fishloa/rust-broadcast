@@ -14,50 +14,21 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer shorter than
     /// required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed/serialized.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// `Pa` or `Pb` did not equal the fixed 16-bit-mode sync-word constant
     /// (SMPTE ST 337 Table 6, §7.2.1).
-    #[error(
-        "invalid {word} sync value: expected {expected:#06x}, found {found:#06x} \
-         (SMPTE ST 337 Table 6)"
-    )]
-    InvalidSync {
-        /// Which sync word (`"Pa"` or `"Pb"`).
-        word: &'static str,
-        /// The fixed value Table 6 requires.
-        expected: u16,
-        /// The value actually found.
-        found: u16,
-    },
+    #[error(transparent)]
+    InvalidSync(#[from] broadcast_common::error::InvalidSync),
     /// A field value did not fit its wire bit-width, or a derived count
     /// (`length_code` vs. actual payload length) was inconsistent.
-    #[error("field {field} value {value} invalid: {reason}")]
-    InvalidValue {
-        /// The offending field/derived-count name.
-        field: &'static str,
-        /// The offending value.
-        value: u64,
-        /// Why it is invalid.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
     /// `data_mode` (§7.2.4.3 Table 8) was not `Mode16`. This crate's
     /// byte-stream abstraction only supports the 16-bit data mode — see
     /// `private/specs-verified/smpte/st337/st337.md`'s "Scope decisions" §2 for why 20-/24-bit-wide
@@ -95,23 +66,4 @@ pub enum Error {
         /// Bits of that total contributed by `Pe`/`Pf` (0 or 32).
         extended_offset_bits: u32,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

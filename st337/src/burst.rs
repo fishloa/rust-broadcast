@@ -278,25 +278,25 @@ impl BurstPreamble {
             return Err(Error::UnsupportedDataMode(self.data_mode));
         }
         if self.data_type > MAX_5_BIT_FIELD {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "data_type",
                 value: u64::from(self.data_type),
                 reason: "must be a 5-bit value (0..=31)",
-            });
+            }));
         }
         if self.data_type_dependent > MAX_5_BIT_FIELD {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "data_type_dependent",
                 value: u64::from(self.data_type_dependent),
                 reason: "must be a 5-bit value (0..=31)",
-            });
+            }));
         }
         if self.data_stream_number > MAX_DATA_STREAM_NUMBER {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "data_stream_number",
                 value: u64::from(self.data_stream_number),
                 reason: "must be a 3-bit value (0..=7)",
-            });
+            }));
         }
         let requires_extended = self.data_type == EXTENDED_DATA_TYPE_MARKER;
         if requires_extended != self.extended.is_some() {
@@ -389,19 +389,19 @@ impl<'a> Parse<'a> for Burst<'a> {
         need_in(bytes, FOUR_WORD_PREAMBLE_LEN, "burst_preamble (Pa-Pd)")?;
         let pa = u16::from_le_bytes([bytes[0], bytes[1]]);
         if pa != SYNC_WORD_PA {
-            return Err(Error::InvalidSync {
-                word: "Pa",
-                expected: SYNC_WORD_PA,
-                found: pa,
-            });
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "Pa",
+                expected: u32::from(SYNC_WORD_PA),
+                found: u32::from(pa),
+            }));
         }
         let pb = u16::from_le_bytes([bytes[2], bytes[3]]);
         if pb != SYNC_WORD_PB {
-            return Err(Error::InvalidSync {
-                word: "Pb",
-                expected: SYNC_WORD_PB,
-                found: pb,
-            });
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "Pb",
+                expected: u32::from(SYNC_WORD_PB),
+                found: u32::from(pb),
+            }));
         }
         let pc = u16::from_le_bytes([bytes[4], bytes[5]]);
         let (data_type, data_mode, error_flag, data_type_dependent, data_stream_number) =
@@ -438,11 +438,11 @@ impl<'a> Parse<'a> for Burst<'a> {
         };
         let payload_bits = u32::from(length_code)
             .checked_sub(extended_offset_bits)
-            .ok_or(Error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "length_code",
                 value: u64::from(length_code),
                 reason: "shorter than the six-word preamble's own 32 extended-preamble bits",
-            })?;
+            }))?;
         let payload_len = payload_bits.div_ceil(8) as usize;
 
         let total_len = preamble_len + payload_len;
@@ -482,18 +482,18 @@ impl Serialize for Burst<'_> {
         };
         let payload_bits = u32::from(self.preamble.length_code)
             .checked_sub(extended_offset_bits)
-            .ok_or(Error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "length_code",
                 value: u64::from(self.preamble.length_code),
                 reason: "shorter than the six-word preamble's own 32 extended-preamble bits",
-            })?;
+            }))?;
         let expected_payload_len = payload_bits.div_ceil(8) as usize;
         if self.payload.len() != expected_payload_len {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "length_code",
                 value: u64::from(self.preamble.length_code),
                 reason: "does not match payload.len() (see BurstPreamble::length_code docs)",
-            });
+            }));
         }
 
         buf[0..2].copy_from_slice(&SYNC_WORD_PA.to_le_bytes());
@@ -525,10 +525,12 @@ mod tests {
         let mut out = vec![0u8; need - 1];
         assert_eq!(
             burst.serialize_into(&mut out),
-            Err(Error::OutputBufferTooSmall {
-                need,
-                have: need - 1
-            })
+            Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need,
+                    have: need - 1
+                }
+            ))
         );
     }
 
@@ -597,7 +599,10 @@ mod tests {
         let mut bytes = [0u8; 8];
         bytes[0..2].copy_from_slice(&0x0000u16.to_le_bytes());
         let err = Burst::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::InvalidSync { word: "Pa", .. }));
+        assert!(matches!(
+            err,
+            Error::InvalidSync(broadcast_common::error::InvalidSync { what: "Pa", .. })
+        ));
     }
 
     #[test]
@@ -606,7 +611,10 @@ mod tests {
         bytes[0..2].copy_from_slice(&SYNC_WORD_PA.to_le_bytes());
         bytes[2..4].copy_from_slice(&0x0000u16.to_le_bytes());
         let err = Burst::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::InvalidSync { word: "Pb", .. }));
+        assert!(matches!(
+            err,
+            Error::InvalidSync(broadcast_common::error::InvalidSync { what: "Pb", .. })
+        ));
     }
 
     #[test]
@@ -680,11 +688,11 @@ mod tests {
         let err = Burst::parse(&[0u8; 4]).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: 8,
                 have: 4,
                 ..
-            }
+            })
         ));
     }
 
@@ -695,10 +703,10 @@ mod tests {
         let err = Burst::parse(&bytes[..bytes.len() - 1]).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "burst_payload",
                 ..
-            }
+            })
         ));
     }
 
