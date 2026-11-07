@@ -17,6 +17,7 @@
 //! big-endian-per-word carriage (which this crate has not observed in
 //! practice) fails with [`Error::InvalidSync`].
 
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
@@ -385,13 +386,7 @@ impl<'a> Parse<'a> for Burst<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FOUR_WORD_PREAMBLE_LEN {
-            return Err(Error::BufferTooShort {
-                need: FOUR_WORD_PREAMBLE_LEN,
-                have: bytes.len(),
-                what: "burst_preamble (Pa-Pd)",
-            });
-        }
+        need_in(bytes, FOUR_WORD_PREAMBLE_LEN, "burst_preamble (Pa-Pd)")?;
         let pa = u16::from_le_bytes([bytes[0], bytes[1]]);
         if pa != SYNC_WORD_PA {
             return Err(Error::InvalidSync {
@@ -418,13 +413,11 @@ impl<'a> Parse<'a> for Burst<'a> {
 
         let is_extended = data_type == EXTENDED_DATA_TYPE_MARKER;
         let (extended, preamble_len) = if is_extended {
-            if bytes.len() < SIX_WORD_PREAMBLE_LEN {
-                return Err(Error::BufferTooShort {
-                    need: SIX_WORD_PREAMBLE_LEN,
-                    have: bytes.len(),
-                    what: "burst_preamble (Pa-Pf, six-word form)",
-                });
-            }
+            need_in(
+                bytes,
+                SIX_WORD_PREAMBLE_LEN,
+                "burst_preamble (Pa-Pf, six-word form)",
+            )?;
             let pe = u16::from_le_bytes([bytes[8], bytes[9]]);
             let pf = u16::from_le_bytes([bytes[10], bytes[11]]);
             (
@@ -453,13 +446,7 @@ impl<'a> Parse<'a> for Burst<'a> {
         let payload_len = payload_bits.div_ceil(8) as usize;
 
         let total_len = preamble_len + payload_len;
-        if bytes.len() < total_len {
-            return Err(Error::BufferTooShort {
-                need: total_len,
-                have: bytes.len(),
-                what: "burst_payload",
-            });
-        }
+        need_in(bytes, total_len, "burst_payload")?;
 
         Ok(Self {
             preamble: BurstPreamble {
@@ -485,13 +472,7 @@ impl Serialize for Burst<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "burst serialize output",
-            });
-        }
+        need_in(buf, len, "burst serialize output")?;
         self.preamble.validate()?;
 
         let extended_offset_bits = if self.preamble.extended.is_some() {
