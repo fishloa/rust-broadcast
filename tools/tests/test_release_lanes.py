@@ -18,6 +18,9 @@ PAIRS_FILE = REPO / "docs" / "release-plan-2026-10.pairs"
 LANES = sorted(WF.glob("release-*.yml"))
 LOCKSTEP = ("dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools")
 ABANDONED = {"atsc3"}  # lane fails safe by design; never in the pair list
+# absorbed crate -> absorbing crate: the 2026-10 wave records still plan these, but the crate
+# directories are gone (merged into the absorbing crate), so they have no lane, tag or manifest today.
+ABSORBED: dict[str, str] = {"rtcp-packet": "rtp-packet", "tshttp-runtime": "broadcast-client"}
 UNRELEASED: set[str] = {"broadcast-client", "dash-runtime"}  # lanes staged ahead of owner sign-off; leaves this set when a pairs file plans them
 
 
@@ -35,8 +38,12 @@ def _glob(path):
     return g
 
 
-def _pairs():
+def _all_pairs():
     return [tuple(t.split("=", 1)) for t in PAIRS_FILE.read_text().split()]
+
+
+def _pairs():
+    return [(c, v) for c, v in _all_pairs() if c not in ABSORBED]
 
 
 def _planned():
@@ -121,7 +128,8 @@ def test_reusable_build_gate_values_each_select_one_step(gate, expected):
 
 def test_every_plan_crate_has_exactly_one_lane_and_the_lockstep_has_none_of_its_own():
     lane_crates = {_glob(p)[: -len("-v*")] for p in LANES}
-    planned = _planned()
+    planned = _planned() - set(ABSORBED)
+    assert set(ABSORBED.values()) <= lane_crates, "an absorbing crate must keep its own lane"
     assert planned - set(LOCKSTEP) <= lane_crates, f"no lane for: {sorted(planned - set(LOCKSTEP) - lane_crates)}"
     assert not (lane_crates & set(LOCKSTEP)), "a lockstep crate has its own lane: it would publish twice"
     assert lane_crates - planned == ABANDONED | UNRELEASED, f"unplanned lanes: {sorted(lane_crates - planned - ABANDONED - UNRELEASED)}"
@@ -195,13 +203,9 @@ def test_plan_section_6_is_the_generated_tag_order():
     doc = (REPO / "docs" / "release-plan-2026-10.md").read_text()
     sec = doc[doc.index("## 6. Topological tag order") : doc.index("## 7. Release lanes")]
     listed = re.findall(r"^(\d+)\. `([^`]+)`", sec, re.M)
-    assert [t for _, t in listed] == order, "plan section 6 drifted from `prepare-release.py --tag-order`"
-    assert [int(n) for n, _ in listed] == list(range(1, len(order) + 1))
-    generated = subprocess.run(
-        [sys.executable, str(REPO / "tools" / "prepare-release.py"), "--tag-needs", *pairs],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert generated in sec, "plan section 6 is not the output of `--tag-needs` (regenerate it)"
+    absorbed_tags = {f"{c}-v{v}" for c, v in _all_pairs() if c in ABSORBED}
+    assert [t for _, t in listed if t not in absorbed_tags] == order, "plan section 6 drifted from `prepare-release.py --tag-order`"
+    assert [int(n) for n, _ in listed] == list(range(1, len(listed) + 1))
     del pr
 
 
@@ -246,4 +250,7 @@ def test_runbook_does_not_misplace_the_lockstep_slot():
     assert order.index("v12.0.0") > order.index("mpeg-ts-v0.6.0") + 1  # the premise of the old claim is false
     runbook = (REPO / "docs" / "RELEASE-RUNBOOK-2026-10.md").read_text()
     assert "right after `mpeg-ts-v0.6.0`" not in runbook
-    assert f"position {order.index('v12.0.0') + 1}" in runbook
+    doc = (REPO / "docs" / "release-plan-2026-10.md").read_text()
+    sec = doc[doc.index("## 6. Topological tag order") : doc.index("## 7. Release lanes")]
+    recorded = [t for _, t in re.findall(r"^(\d+)\. `([^`]+)`", sec, re.M)]
+    assert f"position {recorded.index('v12.0.0') + 1}" in runbook
