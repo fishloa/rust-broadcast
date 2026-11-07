@@ -328,7 +328,12 @@ fn huge_timeline_repeat_is_bounded_lazily() {
            </Representation></AdaptationSet></Period>"#,
     );
     let mpd = parse(&xml).unwrap();
-    assert!(plan_representation(&mpd, RepRef::at(0, 0, 0), &PlanOptions::default()).is_err());
+    assert!(matches!(
+        plan_representation(&mpd, RepRef::at(0, 0, 0), &PlanOptions::default()),
+        Err(dash_runtime::address::representation::PlanError::Address(
+            ..
+        ))
+    ));
 }
 
 #[test]

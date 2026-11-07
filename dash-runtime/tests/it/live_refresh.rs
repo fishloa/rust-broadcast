@@ -358,7 +358,10 @@ fn a_304_nobody_asked_for_is_an_error() {
         dash_runtime::client::PullLimits::default(),
     );
     let meta = dash_runtime::client::ResponseMeta::at(0);
-    assert!(c.on_mpd_unchanged(0, &meta).is_err());
+    assert!(matches!(
+        c.on_mpd_unchanged(0, &meta),
+        Err(dash_runtime::client::Error::MpdNotAwaited)
+    ));
 }
 
 #[test]

@@ -58,7 +58,12 @@ fn rejected_table() {
         "2026-02-01T00:00:00 Z",
     ] {
         assert!(
-            parse_xs_datetime(text).is_err(),
+            matches!(
+                parse_xs_datetime(text),
+                Err(dash_runtime::timing::datetime::DateTimeError::Field(..)
+                    | dash_runtime::timing::datetime::DateTimeError::OutOfRange
+                    | dash_runtime::timing::datetime::DateTimeError::Syntax(..))
+            ),
             "{text:?} must be rejected"
         );
     }
@@ -96,7 +101,10 @@ fn http_date_is_whole_seconds() {
         parse_http_date("Mon, 26 Oct 2026 08:39:04 GMT").unwrap(),
         1_793_003_944 * SECOND
     );
-    assert!(parse_http_date("yesterday").is_err());
+    assert!(matches!(
+        parse_http_date("yesterday"),
+        Err(dash_runtime::timing::datetime::DateTimeError::HttpDate)
+    ));
 }
 
 #[test]
@@ -141,7 +149,13 @@ fn http_date_rejects_garbage_and_impossible_dates() {
         "Sun, 06 Nov 1994 25:49:37 GMT",
         "Sun Nov  6 08:49:37",
     ] {
-        assert!(parse_http_date(text).is_err(), "{text:?}");
+        assert!(
+            matches!(
+                parse_http_date(text),
+                Err(dash_runtime::timing::datetime::DateTimeError::HttpDate)
+            ),
+            "{text:?}"
+        );
     }
 }
 
@@ -151,5 +165,8 @@ fn ntp_timestamp_maps_prime_epoch() {
     let mut bytes = unix_epoch_in_ntp_seconds.to_be_bytes().to_vec();
     bytes.extend_from_slice(&0x8000_0000u32.to_be_bytes());
     assert_eq!(parse_ntp_timestamp(&bytes).unwrap(), 500_000);
-    assert!(parse_ntp_timestamp(&bytes[..7]).is_err());
+    assert!(matches!(
+        parse_ntp_timestamp(&bytes[..7]),
+        Err(dash_runtime::timing::datetime::DateTimeError::Ntp)
+    ));
 }
