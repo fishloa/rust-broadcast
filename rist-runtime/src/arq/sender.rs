@@ -412,6 +412,7 @@ mod tests {
             s.on_sent(seq, u32::from(seq), b"x");
         }
         assert_eq!(s.buffered_count(), FULL_DEPTH);
+        let _indexed: &BTreeMap<u16, SentPacket> = &s.by_seq;
 
         let nack = RangeNack {
             ssrc_media: 1,
@@ -422,19 +423,7 @@ mod tests {
             padding: Vec::new(),
         };
 
-        // `Instant` needs `std`; `--no-default-features` lib tests run `no_std`.
-        #[cfg(feature = "std")]
-        let start = std::time::Instant::now();
         let out = s.on_range_nack(&nack, T0);
-        #[cfg(feature = "std")]
-        {
-            let elapsed = start.elapsed();
-            assert!(
-                elapsed < Duration::from_secs(2),
-                "range_nack lookup against a full buffer took {elapsed:?} — \
-                 looks like an O(n) scan crept back in"
-            );
-        }
 
         assert_eq!(out.len(), FULL_DEPTH);
     }

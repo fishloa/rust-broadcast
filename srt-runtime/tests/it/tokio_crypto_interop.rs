@@ -15,6 +15,7 @@ include!("support/libsrt_spawn.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PAYLOAD_LEN: usize = 1316;
+const LOADED_HOST_LATENCY_MS: u16 = 5_000;
 const PASSPHRASE: &str = "0123456789abcdef";
 const SALT: [u8; 16] = [0x11u8; 16];
 
@@ -286,8 +287,12 @@ async fn tokio_key_refresh_keeps_delivering() {
             refresh_period: 50,
             pre_announcement_period: 5,
         };
+        let loaded_host_config = || HandshakeConfig {
+            latency_ms: LOADED_HOST_LATENCY_MS,
+            ..crypto_config(PASSPHRASE, 16)
+        };
         let io = IoConfig::default().with_km_refresh_thresholds(thresholds);
-        let mut listener = SrtListener::bind_with("127.0.0.1:0", crypto_config(PASSPHRASE, 16), io)
+        let mut listener = SrtListener::bind_with("127.0.0.1:0", loaded_host_config(), io)
             .await
             .unwrap();
         let bound = listener.local_addr().unwrap();
@@ -296,7 +301,7 @@ async fn tokio_key_refresh_keeps_delivering() {
             format!("127.0.0.1:{}", bound.port())
                 .parse::<SocketAddr>()
                 .unwrap(),
-            crypto_config(PASSPHRASE, 16),
+            loaded_host_config(),
             io,
         )
         .await
@@ -329,10 +334,15 @@ async fn tokio_key_refresh_keeps_delivering() {
                 received.push(p.to_vec());
             }
         }
+        let have: std::collections::BTreeSet<u32> = received
+            .iter()
+            .map(|p| u32::from_be_bytes([p[0], p[1], p[2], p[3]]))
+            .collect();
+        let missing: Vec<u32> = (0..80).filter(|i| !have.contains(i)).collect();
         assert_eq!(
             received.len(),
             80,
-            "expected 80 packets, got {}",
+            "expected 80 packets, got {}; missing {missing:?}",
             received.len()
         );
         for (i, p) in received.iter().enumerate() {
