@@ -317,6 +317,12 @@ impl T2TimestampPayload {
             && self.utco == UTCO_MAX
     }
 
+    /// Returns `true` if this is a relative timestamp
+    /// (`seconds_since_2000` is 0 and is not null).
+    pub fn is_relative(&self) -> bool {
+        self.seconds_since_2000 == 0 && !self.is_null()
+    }
+
     /// Time elapsed since 2000-01-01T00:00:00 in the timestamp's own time base.
     ///
     /// Returns `None` for a Null timestamp.
@@ -333,11 +339,95 @@ impl T2TimestampPayload {
         let sub_nanos = (total_nanos % 1_000_000_000) as u32;
         Some(core::time::Duration::new(secs, sub_nanos))
     }
+
+    /// Set `seconds_since_2000` and `subseconds` from a [`core::time::Duration`]
+    /// using the current `bw`. Leaves `bw` and `utco` unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReservedBitsViolation`](crate::error::Error::ReservedBitsViolation)
+    /// if the duration exceeds the 40-bit seconds or 27-bit subseconds range.
+    pub fn set_emission_offset(
+        &mut self,
+        offset: core::time::Duration,
+    ) -> Result<(), crate::error::Error> {
+        let secs = offset.as_secs();
+        if secs > SECONDS_SINCE_2000_MAX {
+            return Err(crate::error::Error::ReservedBitsViolation {
+                field: "seconds_since_2000",
+                reason: "exceeds 40 bits",
+            });
+        }
+        let sps = self.bw.subseconds_per_second();
+        let subseconds = (offset.subsec_nanos() as u128 * sps as u128 / 1_000_000_000u128) as u32;
+        if subseconds > SUBSECONDS_MAX {
+            return Err(crate::error::Error::ReservedBitsViolation {
+                field: "subseconds",
+                reason: "exceeds 27 bits",
+            });
+        }
+        self.seconds_since_2000 = secs;
+        self.subseconds = subseconds;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "chrono")]
 #[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
-impl T2TimestampPayload {}
+impl T2TimestampPayload {
+    /// Decode this timestamp to a civil [`chrono::DateTime<chrono::Utc>`],
+    /// applying the `utco` leap-second correction.
+    ///
+    /// Per ETSI TS 102 773 §5.2.7:
+    /// ```text
+    /// civil_utc = epoch_2000 + seconds_since_2000 + subseconds × Tsub − utco
+    /// ```
+    /// where `utco` is the number of leap seconds to subtract.
+    ///
+    /// Returns `None` for a Null timestamp or if the value is out of range.
+    #[must_use]
+    pub fn emission_time_utc(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        let offset = self.emission_offset()?;
+        broadcast_common::time::decode_seconds_since_2000_utc(
+            offset.as_secs(),
+            offset.subsec_nanos(),
+            self.utco,
+        )
+    }
+
+    /// Set `seconds_since_2000`, `subseconds`, and `utco` from a civil UTC
+    /// [`chrono::DateTime<chrono::Utc>`] and a `utco` leap-second offset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReservedBitsViolation`](crate::error::Error::ReservedBitsViolation)
+    /// if the resulting `seconds_since_2000` would not fit in 40 bits (i.e. the
+    /// date is before 2000 or more than ~34657 years in the future).
+    pub fn set_emission_time_utc(
+        &mut self,
+        dt: chrono::DateTime<chrono::Utc>,
+        utco: u16,
+    ) -> Result<(), crate::error::Error> {
+        let (secs, nanos) = broadcast_common::time::encode_seconds_since_2000_utc(dt, utco).ok_or(
+            crate::error::Error::ReservedBitsViolation {
+                field: "seconds_since_2000",
+                reason: "date before 2000 epoch or exceeds 40-bit range",
+            },
+        )?;
+        let sps = self.bw.subseconds_per_second();
+        let subseconds = (u128::from(nanos) * sps as u128 / 1_000_000_000u128) as u32;
+        if subseconds > SUBSECONDS_MAX {
+            return Err(crate::error::Error::ReservedBitsViolation {
+                field: "subseconds",
+                reason: "nanosecond component exceeds 27-bit subseconds range",
+            });
+        }
+        self.seconds_since_2000 = secs;
+        self.subseconds = subseconds;
+        self.utco = utco;
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -490,6 +580,19 @@ mod tests {
     }
 
     #[test]
+    fn set_emission_offset_round_trips() {
+        let mut p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 0,
+            utco: 0,
+        };
+        let dur = core::time::Duration::new(12345, 500_000_000);
+        p.set_emission_offset(dur).unwrap();
+        assert_eq!(p.emission_offset(), Some(dur));
+    }
+
+    #[test]
     fn null_timestamp_offset_is_none() {
         let p = T2TimestampPayload {
             bw: Bandwidth::Mhz8,
@@ -509,6 +612,7 @@ mod tests {
             subseconds: 1000,
             utco: 0,
         };
+        assert!(p.is_relative());
         assert!(!p.is_null());
         assert!(p.emission_offset().is_some());
     }
@@ -575,5 +679,62 @@ mod tests {
         assert_eq!((n, d), (1000, 80));
         let nanos = 80_000u128 * u128::from(n) / u128::from(d);
         assert_eq!(nanos, 1_000_000, "10 MHz: 80_000 ticks should be 1 ms");
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn emission_time_utc_known_value() {
+        use chrono::{Datelike, Timelike};
+        // seconds_since_2000 = 0, subseconds = 0, utco = 0 → 2000-01-01T00:00:00 UTC.
+        let p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 0,
+            utco: 0,
+        };
+        let dt = p.emission_time_utc().expect("should decode");
+        assert_eq!((dt.year(), dt.month(), dt.day()), (2000, 1, 1));
+        assert_eq!((dt.hour(), dt.minute(), dt.second()), (0, 0, 0));
+
+        // utco = 37: epoch_2000 + 0s − 37s = 1999-12-31T23:59:23 UTC.
+        let p2 = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 0,
+            utco: 37,
+        };
+        let dt2 = p2.emission_time_utc().expect("should decode");
+        assert_eq!((dt2.year(), dt2.month(), dt2.day()), (1999, 12, 31));
+        assert_eq!((dt2.hour(), dt2.minute(), dt2.second()), (23, 59, 23));
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn set_emission_time_utc_round_trips() {
+        use chrono::TimeZone;
+        let dt = chrono::Utc
+            .with_ymd_and_hms(2023, 6, 8, 12, 34, 56)
+            .unwrap();
+        let mut p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 0,
+            utco: 0,
+        };
+        p.set_emission_time_utc(dt, 37).unwrap();
+        let decoded = p.emission_time_utc().expect("decodes");
+        assert_eq!(decoded, dt);
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn emission_time_utc_null_returns_none() {
+        let p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: SECONDS_SINCE_2000_MAX,
+            subseconds: SUBSECONDS_MAX,
+            utco: UTCO_MAX,
+        };
+        assert!(p.emission_time_utc().is_none());
     }
 }
