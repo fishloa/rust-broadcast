@@ -36,7 +36,10 @@ pub use carousel::{InitSegments, ObjectCarousel, PresentationManifests, Resource
 #[cfg(feature = "std")]
 pub use component::ServiceComponentIdentifier;
 #[cfg(feature = "std")]
-pub use config::{BaselineNamespace, MulticastGatewayConfiguration, MulticastServerConfiguration};
+pub use config::{
+    BaselineNamespace, MulticastGatewayConfiguration, MulticastServerConfiguration,
+    default_xml_limits,
+};
 pub use error::{Error, Result};
 #[cfg(feature = "std")]
 pub use fec::ForwardErrorCorrectionParameters;

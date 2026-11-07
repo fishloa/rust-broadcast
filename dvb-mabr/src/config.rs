@@ -15,6 +15,7 @@ use alloc::vec::Vec;
 
 use std::io;
 
+use broadcast_common::xml_chars::XmlLimits;
 use quick_xml::events::BytesStart;
 
 use crate::error::{Error, Result};
@@ -23,6 +24,16 @@ use crate::parse::{Events, StartTag, for_each_child, is_baseline_namespace};
 use crate::reporting::MulticastGatewaySessionReporting;
 use crate::serialize::{Out, attr, document, element, num_attr, opt_attr, tag};
 use crate::session::MulticastSession;
+
+/// The input bounds `parse_str` applies: the [`XmlLimits`] defaults (4 MiB,
+/// depth 32, 100 000 elements, 8 KiB per attribute value, 256 attributes per
+/// element). The largest real document in the test corpus, the Annex C.1
+/// server configuration, is 21 785 bytes, so the byte bound has about 190x
+/// headroom.
+#[must_use]
+pub fn default_xml_limits() -> XmlLimits {
+    XmlLimits::default()
+}
 
 const ROOT_SERVER: &str = "MulticastServerConfiguration";
 const ROOT_GATEWAY: &str = "MulticastGatewayConfiguration";
@@ -150,9 +161,10 @@ fn parse_common_root(
 /// precedence over a semantic error found earlier in it.
 fn parse_document<T>(
     xml: &str,
+    limits: XmlLimits,
     parse_root: impl FnOnce(&mut Events<'_>, &StartTag) -> Result<T>,
 ) -> Result<T> {
-    let mut ev = Events::new(xml);
+    let mut ev = Events::new(xml, limits)?;
     let root = ev.root()?;
     match parse_root(&mut ev, &root) {
         Ok(parsed) => {
@@ -222,9 +234,16 @@ pub struct MulticastServerConfiguration {
 }
 
 impl MulticastServerConfiguration {
-    /// Parse a `MulticastServerConfiguration` XML document.
+    /// Parse a `MulticastServerConfiguration` XML document under
+    /// [`default_xml_limits`].
     pub fn parse_str(xml: &str) -> Result<Self> {
-        parse_document(xml, |ev, root| {
+        Self::parse_str_with_limits(xml, default_xml_limits())
+    }
+
+    /// Parse a `MulticastServerConfiguration` XML document under explicit
+    /// input bounds; a document past one fails with [`Error::TooLarge`].
+    pub fn parse_str_with_limits(xml: &str, limits: XmlLimits) -> Result<Self> {
+        parse_document(xml, limits, |ev, root| {
             check_root(root, ROOT_SERVER)?;
             let mut macros = Vec::new();
             let common = parse_common_root(ev, root, ROOT_SERVER, |ev, child| {
@@ -302,9 +321,16 @@ pub struct MulticastGatewayConfiguration {
 }
 
 impl MulticastGatewayConfiguration {
-    /// Parse a `MulticastGatewayConfiguration` XML document.
+    /// Parse a `MulticastGatewayConfiguration` XML document under
+    /// [`default_xml_limits`].
     pub fn parse_str(xml: &str) -> Result<Self> {
-        parse_document(xml, |ev, root| {
+        Self::parse_str_with_limits(xml, default_xml_limits())
+    }
+
+    /// Parse a `MulticastGatewayConfiguration` XML document under explicit
+    /// input bounds; a document past one fails with [`Error::TooLarge`].
+    pub fn parse_str_with_limits(xml: &str, limits: XmlLimits) -> Result<Self> {
+        parse_document(xml, limits, |ev, root| {
             check_root(root, ROOT_GATEWAY)?;
             let common = parse_common_root(ev, root, ROOT_GATEWAY, |_, _| Ok(false))?;
             Ok(MulticastGatewayConfiguration {

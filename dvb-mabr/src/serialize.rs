@@ -16,12 +16,12 @@ use std::io;
 
 use core::fmt::Display;
 
-use quick_xml::Writer;
-use quick_xml::events::{BytesDecl, BytesStart, BytesText, Event};
+use broadcast_common::xml_chars::{XmlWriter, finish_document, new_writer, write_declaration};
+use quick_xml::events::{BytesStart, BytesText, Event};
 
 /// The writer every `write_xml` appends to (an in-memory `Vec`, so no write can
 /// actually fail; the `io::Result`s exist only to let `?` chain).
-pub(crate) type Out = Writer<alloc::vec::Vec<u8>>;
+pub(crate) type Out = XmlWriter;
 
 /// Render a document: the `<?xml version="1.0" encoding="UTF-8"?>` declaration,
 /// whatever `body` writes through the 2-space indenting writer, and a trailing
@@ -31,13 +31,10 @@ pub(crate) fn document<F>(body: F) -> String
 where
     F: FnOnce(&mut Out) -> io::Result<()>,
 {
-    let mut w = Writer::new_with_indent(alloc::vec::Vec::new(), b' ', 2);
-    let _ = w
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
-        .and_then(|()| body(&mut w));
-    let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();
-    out.push('\n');
-    out
+    let mut w = new_writer();
+    write_declaration(&mut w, "UTF-8");
+    let _ = body(&mut w);
+    finish_document(w)
 }
 
 /// A start tag for `name`.

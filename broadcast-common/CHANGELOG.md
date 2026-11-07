@@ -4,6 +4,7 @@
 ### Removed
 - `Timestamp::checked_add_nanos` (deprecated since 9.5.0): use `saturating_add_nanos`.
 ### Added
+- `xml_chars::{XmlWriter, new_writer, write_declaration, start_tag, open_element, empty_element, close_element, write_text, text_element, finish_document}`: the indenting quick-xml writer plumbing `transmux` and `dvb-mabr` each carried a copy of.
 - `xml_chars::{XmlLimits, XmlLimit, LimitExceeded, XmlBudget}` and the `MAX_XML_*` defaults: the shared hostile-input bounds (size, depth, element count, attribute size and count) for the `quick-xml` pull parsers; `dash-runtime` and `transmux` use the same ceilings (#1708).
 - `error` module: the common failure kinds defined once as `Copy` structs that a crate's own error enum wraps with `#[error(transparent)] Kind(#[from] broadcast_common::error::Kind)`: `BufferTooShort`, `OutputBufferTooSmall`, `FieldOverflow` (moved from `len`, which re-exports them, so no path changes), plus new `CrcMismatch { what, computed, expected }`, `InvalidSync { what, expected, found }`, `ReservedBits { field, expected, found }`, `InvalidValue { field, value, reason }`, `InvalidField { field, reason }`, `UnsupportedVersion { what, found }`, `LengthMismatch { what, declared, actual }` (shared-errors E0).
 - `timescale::{MICROS_PER_SECOND, to_micros, from_micros}`: tick/microsecond conversion with an explicit `Rounding`, replacing the private `ticks_to_us` / `us_to_ticks_ceil` wrappers in `broadcast-client`, `multimux`, `dash-runtime` (c6 F7).
