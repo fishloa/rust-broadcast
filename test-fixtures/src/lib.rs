@@ -402,6 +402,43 @@ pub fn corpus(exts: &[&str]) -> Vec<PathBuf> {
     out
 }
 
+/// Serialize-into-a-too-short-buffer check shared by the `OutputBufferTooSmall`
+/// tests.
+///
+/// Calls `serialize` once with a full-length buffer (to learn the length it
+/// writes), then with every shorter buffer `0..len`, and asserts each call
+/// returns the error `too_small` recognises, carrying `have == buffer length`
+/// and `have < need <= len`. Takes closures rather than the `Serialize` trait
+/// so this crate keeps no workspace-sibling dependency.
+///
+/// # Panics
+/// Panics on the first short buffer that succeeds, returns a different error
+/// variant, or reports inconsistent `need`/`have` fields.
+pub fn assert_short_buffers_rejected<E: std::fmt::Debug>(
+    serialized_len: usize,
+    serialize: impl Fn(&mut [u8]) -> Result<usize, E>,
+    too_small: impl Fn(&E) -> Option<(usize, usize)>,
+) {
+    let mut full = vec![0u8; serialized_len];
+    let written = serialize(&mut full).expect("a full-length buffer must serialize");
+    assert_eq!(written, serialized_len, "serialize wrote != serialized_len");
+    for have in 0..serialized_len {
+        let mut short = vec![0u8; have];
+        match serialize(&mut short) {
+            Ok(n) => panic!("a {have}-byte buffer (need {serialized_len}) serialized {n} bytes"),
+            Err(e) => {
+                let (need_field, have_field) = too_small(&e)
+                    .unwrap_or_else(|| panic!("{have}-byte buffer gave {e:?}, not OutputBufferTooSmall"));
+                assert_eq!(have_field, have, "have field for a {have}-byte buffer");
+                assert!(
+                    need_field > have && need_field <= serialized_len,
+                    "need {need_field} must be in ({have}, {serialized_len}] for a {have}-byte buffer"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
