@@ -29,6 +29,7 @@
 //! throughout this workspace (e.g. `st337::BurstPreamble`'s six-word-preamble
 //! detection) so caller state can never disagree with the wire.
 
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
@@ -1085,13 +1086,7 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FIXED_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_HEADER_LEN,
-                have: bytes.len(),
-                what: "HBRMT payload header fixed row",
-            });
-        }
+        need_in(bytes, FIXED_HEADER_LEN, "HBRMT payload header fixed row")?;
 
         let byte0 = bytes[0];
         let ext = byte0 >> EXT_SHIFT;
@@ -1112,13 +1107,7 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
 
         let video_source_format = if f {
             let end = pos + VIDEO_SOURCE_FORMAT_LEN;
-            if bytes.len() < end {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: bytes.len(),
-                    what: "video source format row",
-                });
-            }
+            need_in(bytes, end, "video source format row")?;
             let vsf_word =
                 u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
             pos = end;
@@ -1129,13 +1118,7 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
 
         let video_timestamp = if clock_frequency != ClockFrequency::NoTimestamp {
             let end = pos + VIDEO_TIMESTAMP_LEN;
-            if bytes.len() < end {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: bytes.len(),
-                    what: "video timestamp",
-                });
-            }
+            need_in(bytes, end, "video timestamp")?;
             let ts =
                 u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
             pos = end;
@@ -1147,13 +1130,7 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
         let extension = if ext != 0 {
             let ext_len = usize::from(ext) * EXTENSION_UNIT_LEN;
             let end = pos + ext_len;
-            if bytes.len() < end {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: bytes.len(),
-                    what: "header extension",
-                });
-            }
+            need_in(bytes, end, "header extension")?;
             let data = &bytes[pos..end];
             pos = end;
             // `ext` is a non-zero 4-bit count, so `data` satisfies the
@@ -1194,13 +1171,7 @@ impl Serialize for PayloadHeader<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.validate()?;
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "HBRMT payload header serialize output",
-            });
-        }
+        need_in(buf, len, "HBRMT payload header serialize output")?;
 
         let f_bit = if self.video_source_format.is_some() {
             F_BIT
