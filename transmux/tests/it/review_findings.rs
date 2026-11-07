@@ -2,6 +2,7 @@
 //! FAILS against the code it was written against; it pins a defect, not a
 //! feature. See the PR description for the finding list.
 
+use crate::ts_psi::pid_of;
 use broadcast_common::Unpackage;
 use transmux::ac3::split_eac3_syncframes;
 use transmux::pipeline::CodecConfig;
@@ -11,10 +12,6 @@ const TS_PACKET: usize = 188;
 
 fn private(rel: &str) -> Option<Vec<u8>> {
     test_fixtures::require_bytes(rel, "transmux/tests/it/review_findings.rs")
-}
-
-fn pid_of(p: &[u8]) -> u16 {
-    (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])
 }
 
 fn pusi(p: &[u8]) -> bool {

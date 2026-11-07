@@ -24,8 +24,9 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Command;
 use std::time::Duration;
+use test_bounded::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{SrtListener, SrtSocket};
@@ -46,15 +47,6 @@ const WINDOW: usize = 16;
 const LATENCY_MS: u16 = 1_000;
 /// First byte of a synchronisation datagram (a TS packet starts `0x47`).
 const SYNC_MARKER: u8 = 0x00;
-
-struct KillOnDrop(Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 fn work_dir(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("libsrt_media_{name}"));

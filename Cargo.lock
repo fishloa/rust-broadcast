@@ -470,6 +470,7 @@ dependencies = [
  "transmux",
  "tshttp-runtime",
  "url",
+ "workspace-guards",
  "zeroize",
 ]
 
@@ -1069,6 +1070,7 @@ dependencies = [
  "thiserror 2.0.21",
  "transmux",
  "url",
+ "workspace-guards",
 ]
 
 [[package]]
@@ -2620,6 +2622,7 @@ dependencies = [
  "tshttp-runtime",
  "url",
  "webrtc-runtime",
+ "workspace-guards",
 ]
 
 [[package]]
@@ -3661,6 +3664,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "webpki-roots",
+ "workspace-guards",
 ]
 
 [[package]]
@@ -4104,6 +4108,7 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "subtle",
+ "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
@@ -4644,6 +4649,7 @@ dependencies = [
  "serde_json",
  "subtle",
  "test-alloc",
+ "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",

@@ -55,6 +55,7 @@ tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
 tokio     = { version = "1", features = ["full", "test-util"] }
 sdp-types = { workspace = true }
 test-fixtures = { path = "../test-fixtures" }
+workspace-guards = { path = "../workspace-guards" }
 
 [lints]
 workspace = true

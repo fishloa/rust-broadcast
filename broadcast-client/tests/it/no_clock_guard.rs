@@ -4,11 +4,8 @@
 //!
 //! **Lexical, not a proof**: a renamed import evades it; review is the control.
 
-#[path = "../../../dash-runtime/tests/it/common/scan.rs"]
-#[allow(dead_code)]
-mod scan;
-
-use std::path::{Path, PathBuf};
+use workspace_guards::scan::{non_test_source, out_of_line_test_modules};
+use workspace_guards::src_files;
 
 const NEEDLES: &[&str] = &[
     "SystemTime::now",
@@ -24,58 +21,25 @@ const NEEDLES: &[&str] = &[
     "tokio::time",
 ];
 
-fn crate_src(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(name)
-        .join("src")
-}
-
 fn scanned_files() -> Vec<(String, String)> {
-    let mut files = Vec::new();
-    for name in ["broadcast-client", "dash-runtime"] {
-        scan::rs_files(&crate_src(name), &mut files);
-    }
-    files
-}
-
-fn out_of_line_test_files(files: &[(String, String)]) -> Vec<String> {
-    let mut out = Vec::new();
-    for (path, src) in files {
-        let p = Path::new(path);
-        let dir = if p.file_name().is_some_and(|n| n == "mod.rs") {
-            p.parent().map(Path::to_path_buf)
-        } else {
-            p.parent().zip(p.file_stem()).map(|(d, s)| d.join(s))
-        };
-        let Some(dir) = dir else { continue };
-        let lines: Vec<&str> = src.lines().collect();
-        for (i, line) in lines.iter().enumerate() {
-            if !line.trim_start().starts_with("#[cfg(test)]") {
-                continue;
-            }
-            if let Some(next) = lines.get(i + 1)
-                && let Some(name) = next
-                    .trim()
-                    .trim_start_matches("pub ")
-                    .strip_prefix("mod ")
-                    .and_then(|r| r.strip_suffix(';'))
-            {
-                out.push(dir.join(format!("{name}.rs")).display().to_string());
-            }
-        }
-    }
-    out
+    ["broadcast-client", "dash-runtime"]
+        .into_iter()
+        .flat_map(|name| {
+            src_files(name)
+                .into_iter()
+                .map(move |(rel, text)| (format!("{name}/{rel}"), text))
+        })
+        .collect()
 }
 
 fn hits_in(files: &[(String, String)]) -> Vec<String> {
-    let skipped = out_of_line_test_files(files);
+    let skipped = out_of_line_test_modules(files);
     let mut out = Vec::new();
     for (path, src) in files {
         if skipped.contains(path) {
             continue;
         }
-        for (n, line) in scan::non_test_source(src).lines().enumerate() {
+        for (n, line) in non_test_source(src).lines().enumerate() {
             if line.trim_start().starts_with("//") {
                 continue;
             }

@@ -33,7 +33,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use test_bounded::output_bounded;
+use test_bounded::{free_tcp_port, output_bounded};
 
 /// Hard deadline for a `--version`/`-version` availability probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);
@@ -102,11 +102,6 @@ macro_rules! skip_unless_tools_available {
     };
 }
 
-fn free_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("local addr").port()
-}
-
 /// A running `mediamtx` child process configured with one publish+read user,
 /// on ephemeral ports, RTSP-TCP-only (every other server it can run is
 /// disabled so it never contends for a well-known port with anything else
@@ -124,8 +119,8 @@ impl MediaMtx {
     /// used to name this instance's scratch dir so the two tests' config
     /// files never collide.
     fn start(auth_method: &str, user: &str, pass: &str) -> Self {
-        let rtsp_port = free_port();
-        let api_port = free_port();
+        let rtsp_port = free_tcp_port();
+        let api_port = free_tcp_port();
         let config_dir = scratch_dir(auth_method);
         let config_path = config_dir.join("mediamtx.yml");
         let config = format!(

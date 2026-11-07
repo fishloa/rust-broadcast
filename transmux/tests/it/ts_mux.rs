@@ -10,7 +10,11 @@
 //! Pipeline: `ir = TsDemux(h264-aac.ts)` → `ts2 = TsMux(ir)` →
 //! `ir2 = TsDemux(ts2)`.
 
+use crate::ts_psi::{
+    first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of, split_lp,
+};
 use broadcast_common::{Package, Serialize, Unpackage};
+use test_bounded::tool_available;
 use transmux::TrackId;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
@@ -37,89 +41,6 @@ fn pipeline() -> (Media, Vec<u8>, Media) {
 
 const TS: usize = 188;
 
-/// Read the 13-bit PID from a 188-byte packet.
-fn pid_of(pkt: &[u8]) -> u16 {
-    (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16
-}
-
-/// Payload-unit-start-indicator.
-fn pusi_of(pkt: &[u8]) -> bool {
-    pkt[1] & 0x40 != 0
-}
-
-/// Payload offset in a packet (skips the 4-byte header + any adaptation field).
-fn payload_offset(pkt: &[u8]) -> usize {
-    let afc = (pkt[3] >> 4) & 0x3;
-    let has_af = afc & 0b10 != 0;
-    let has_payload = afc & 0b01 != 0;
-    if !has_payload {
-        return TS; // no payload
-    }
-    if has_af { 4 + 1 + pkt[4] as usize } else { 4 }
-}
-
-/// Reassemble the first complete PSI section carried on `pid` (single-packet
-/// sections, which is all this muxer emits). Returns the section bytes without
-/// the pointer_field, trimmed to `section_length`.
-fn first_section(ts: &[u8], pid: u16) -> Option<Vec<u8>> {
-    for pkt in ts.chunks_exact(TS) {
-        if pid_of(pkt) != pid || !pusi_of(pkt) {
-            continue;
-        }
-        let off = payload_offset(pkt);
-        if off >= TS {
-            continue;
-        }
-        let payload = &pkt[off..];
-        // First payload byte is the pointer_field; the section starts after it.
-        let ptr = payload[0] as usize;
-        let sec_start = 1 + ptr;
-        if sec_start + 3 > payload.len() {
-            continue;
-        }
-        let sec = &payload[sec_start..];
-        let section_length = (((sec[1] & 0x0F) as usize) << 8) | sec[2] as usize;
-        let total = 3 + section_length;
-        if total > sec.len() {
-            continue;
-        }
-        return Some(sec[..total].to_vec());
-    }
-    None
-}
-
-/// Parse a PAT section → list of (program_number, program_map_PID).
-fn parse_pat(sec: &[u8]) -> Vec<(u16, u16)> {
-    // header: table_id(1) + flags/len(2) + tsid(2) + ver(1) + secno(1) + last(1)
-    let body = &sec[8..sec.len() - 4]; // strip 8-byte header + 4-byte CRC
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 4 <= body.len() {
-        let prog = u16::from_be_bytes([body[i], body[i + 1]]);
-        let pmt_pid = (((body[i + 2] & 0x1F) as u16) << 8) | body[i + 3] as u16;
-        out.push((prog, pmt_pid));
-        i += 4;
-    }
-    out
-}
-
-/// Parse a PMT section → list of (stream_type, elementary_PID).
-fn parse_pmt(sec: &[u8]) -> Vec<(u8, u16)> {
-    let body = &sec[8..sec.len() - 4];
-    // reserved/PCR_PID(2) + reserved/program_info_length(2) + program descriptors
-    let program_info_length = (((body[2] & 0x0F) as usize) << 8) | body[3] as usize;
-    let mut i = 4 + program_info_length;
-    let mut out = Vec::new();
-    while i + 5 <= body.len() {
-        let stream_type = body[i];
-        let es_pid = (((body[i + 1] & 0x1F) as u16) << 8) | body[i + 2] as u16;
-        let es_info_len = (((body[i + 3] & 0x0F) as usize) << 8) | body[i + 4] as usize;
-        out.push((stream_type, es_pid));
-        i += 5 + es_info_len;
-    }
-    out
-}
-
 /// Extract the demuxed avcC record body bytes for a track (serialized).
 fn avcc_body(track: &transmux::media::Track) -> Vec<u8> {
     match &track.spec.config {
@@ -131,22 +52,6 @@ fn avcc_body(track: &transmux::media::Track) -> Vec<u8> {
         }
         other => panic!("expected AVC track, got {other:?}"),
     }
-}
-
-/// Split length-prefixed (4-byte) NAL data into its coded NAL payloads.
-fn split_lp(lp: &[u8]) -> Vec<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut off = 0;
-    while off + 4 <= lp.len() {
-        let n = u32::from_be_bytes([lp[off], lp[off + 1], lp[off + 2], lp[off + 3]]) as usize;
-        off += 4;
-        if off + n > lp.len() {
-            break;
-        }
-        out.push(lp[off..off + n].to_vec());
-        off += n;
-    }
-    out
 }
 
 // ── Test 1 — well-formed TS: whole packets, PAT → PMT → 2 ES (0x1B, 0x0F) ─────
@@ -757,14 +662,6 @@ fn too_many_elementary_streams_is_refused() {
 
 // ── Test 10 — independent oracle on the AUD-bearing output (audit fix wave 2) ──
 
-fn have_tool(tool: &str, arg: &str) -> bool {
-    std::process::Command::new(tool)
-        .arg(arg)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// Run `ffprobe -count_frames` and return the video frame count.
 fn ffprobe_video_frames(path: &std::path::Path) -> u64 {
     let out = std::process::Command::new("ffprobe")
@@ -810,7 +707,7 @@ fn ffprobe_aud_frames(path: &std::path::Path) -> usize {
 /// independent judge of both the frame count and the split.
 #[test]
 fn aud_output_matches_source_frame_count_and_delimits_every_au() {
-    if !have_tool("ffprobe", "-version") {
+    if !tool_available("ffprobe", "-version") {
         eprintln!("SKIP ts_mux AUD oracle: ffprobe not on PATH");
         return;
     }
@@ -908,7 +805,7 @@ fn re_muxing_an_aud_bearing_ts_does_not_duplicate_the_aud() {
 /// no PCR repetition/discontinuity errors on the muxed output.
 #[test]
 fn muxed_ts_pcr_passes_tsanalyze() {
-    if !have_tool("tsanalyze", "--version") {
+    if !tool_available("tsanalyze", "--version") {
         eprintln!("SKIP ts_mux PCR oracle: tsanalyze not on PATH");
         return;
     }

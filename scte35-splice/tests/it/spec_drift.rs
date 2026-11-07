@@ -11,73 +11,13 @@ use scte35_splice::descriptors::segmentation_enums::{
 };
 use std::collections::BTreeSet;
 
-// ── tiny TOML parser ─────────────────────────────────────────────────────────
+// ── spec mirror loader ───────────────────────────────────────────────────────
 
-/// Parse the spec_tables TOML format, returning `(value, variant, spec)`.
 fn spec_toml(rel: &str) -> Option<String> {
     test_fixtures::spec_string(
         &format!("scte/scte35-splice/enums/{rel}"),
         "scte35-splice spec_drift",
     )
-}
-
-fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
-    let mut results = Vec::new();
-    let mut cur_value: Option<u8> = None;
-    let mut cur_variant: Option<String> = None;
-    let mut cur_spec: Option<String> = None;
-
-    let flush = |v: &mut Option<u8>,
-                 var: &mut Option<String>,
-                 sp: &mut Option<String>,
-                 out: &mut Vec<(u8, String, String)>| {
-        if let (Some(value), Some(variant), Some(spec)) = (v.take(), var.take(), sp.take()) {
-            out.push((value, variant, spec));
-        }
-    };
-
-    for raw in toml.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line == "[[entry]]" {
-            flush(
-                &mut cur_value,
-                &mut cur_variant,
-                &mut cur_spec,
-                &mut results,
-            );
-            continue;
-        }
-        if let Some(eq) = line.find('=') {
-            let key = line[..eq].trim();
-            let val = line[eq + 1..].trim();
-            match key {
-                "value" => {
-                    let hex = val.trim_start_matches("0x").trim_start_matches("0X");
-                    cur_value = Some(
-                        u8::from_str_radix(hex, 16)
-                            .unwrap_or_else(|_| panic!("bad hex in TOML: {val:?}")),
-                    );
-                }
-                "variant" => {
-                    cur_variant = Some(val.trim_matches('"').replace("\\\"", "\"").to_string());
-                }
-                "spec" => {
-                    cur_spec = Some(val.trim_matches('"').replace("\\\"", "\"").to_string());
-                }
-                _ => {}
-            }
-        }
-    }
-    flush(
-        &mut cur_value,
-        &mut cur_variant,
-        &mut cur_spec,
-        &mut results,
-    );
-    results
 }
 
 // ── test: SegmentationTypeId ──────────────────────────────────────────────────
@@ -88,7 +28,7 @@ fn segmentation_type_id_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -129,7 +69,7 @@ fn device_restrictions_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -167,7 +107,7 @@ fn segmentation_upid_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -208,7 +148,7 @@ fn splice_command_type_toml_matches_dispatch() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()

@@ -4,8 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::net::UdpSocket;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::Duration;
+use test_bounded::{KillOnDrop, free_udp_port};
 
 use crate::support::replay::{SampleRec, replay_paced};
 use crate::support::srt_sim::config_with_seed;
@@ -26,15 +27,6 @@ const PASSPHRASE: &str = "0123456789abcdef";
 const PAYLOAD_PACKETS: usize = 7;
 const LOCAL_SRT_LATENCY_MS: u16 = 120;
 
-struct KillOnDrop(Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 fn libsrt_available(test: &str) -> bool {
     let found = std::env::var_os("PATH").is_some_and(|paths| {
         std::env::split_paths(&paths).any(|dir| dir.join("srt-live-transmit").is_file())
@@ -47,14 +39,6 @@ fn libsrt_available(test: &str) -> bool {
         eprintln!("SKIPPED {test}: srt-live-transmit (libsrt) is not on PATH");
     }
     found
-}
-
-fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 fn baseline(ts: &[u8]) -> Vec<SampleRec> {

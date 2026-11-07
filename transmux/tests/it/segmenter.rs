@@ -9,6 +9,7 @@
 //!  2. A **real-fixture** test remuxes `fixtures/ts/h264-aac.ts` through the
 //!     segmenter and checks every emitted segment parses and preserves the stream.
 
+use crate::hub_fixtures::{audio_track, video_track};
 use broadcast_common::Serialize;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
@@ -22,65 +23,6 @@ use transmux::{
 /// Wire value of a sync (random-access) `sample_flags`, per ISO/IEC 14496-12
 /// §8.8.3.1 (`sample_is_non_sync_sample == 0`, `sample_depends_on == 2`).
 const WIRE_SYNC_FLAGS: u32 = 0x0200_0000;
-
-/// A minimal but structurally-real `avcC` so `build_init_segment` succeeds.
-fn dummy_avc_config() -> AVCConfigurationBox {
-    AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
-        configuration_version: 1,
-        profile_indication: 66,
-        profile_compatibility: 0,
-        level_indication: 30,
-        length_size_minus_one: 3,
-        sps: vec![transmux::AvcSps(vec![0x67, 66, 0, 30, 0x00])],
-        pps: vec![transmux::AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
-        chroma_format: None,
-        bit_depth_luma_minus8: None,
-        bit_depth_chroma_minus8: None,
-        sps_ext: vec![],
-    })
-}
-
-fn dummy_esds() -> EsdsBox {
-    EsdsBox::new(ESDescriptor::new(
-        1,
-        0,
-        Some(DecoderConfigDescriptor::new(
-            0x40,
-            0x05,
-            false,
-            0,
-            0,
-            0,
-            Some(DecoderSpecificInfo::new(vec![0x12, 0x10])),
-        )),
-        Some(SLConfigDescriptor::predefined_two()),
-    ))
-}
-
-fn video_track() -> TrackSpec {
-    TrackSpec::new(
-        TrackId::new(1),
-        90_000,
-        CodecConfig::Avc {
-            config: dummy_avc_config(),
-            width: 320,
-            height: 240,
-        },
-    )
-}
-
-fn audio_track() -> TrackSpec {
-    TrackSpec::new(
-        TrackId::new(2),
-        48_000,
-        CodecConfig::Aac {
-            esds: dummy_esds(),
-            channel_count: 2,
-            sample_rate: 48_000,
-            sample_size: 16,
-        },
-    )
-}
 
 /// Find the first top-level box of `fourcc` in a serialized segment and return
 /// its **body** (bytes after the 8-byte box header).

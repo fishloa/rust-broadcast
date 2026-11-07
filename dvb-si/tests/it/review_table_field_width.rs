@@ -12,7 +12,7 @@
 //! The reserved fields are new public, settable fields in this release
 //! (`SectionBits`, `PatEntry::reserved`, ...), so an over-range value is now
 //! reachable through the public API and is silently truncated. The lexical
-//! `serialize_mask_guard.rs` does not see these because the mask lives in a
+//! `serialize_mask` guard (workspace-guards) does not see these because the mask lives in a
 //! helper, not on `self.field` in a `serialize_into`.
 use broadcast_common::Serialize;
 use dvb_si::tables::pat::{PatEntry, PatSection};

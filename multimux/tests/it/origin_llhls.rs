@@ -17,12 +17,12 @@
 //! `RouteHandle`'s own doc), and this test exists precisely to drive it
 //! directly and publish it.
 
+use crate::support::origin::{body_bytes, body_string, get};
 use std::collections::HashMap;
 use std::sync::Arc;
 use transmux::TrackId;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use tower::ServiceExt;
 
 use multimux::origin::{AppState, router};
@@ -81,27 +81,6 @@ fn first_segment_uri(playlist: &str) -> Option<&str> {
     let rest = &playlist[start..];
     let end = rest.find(".m4s")? + ".m4s".len();
     Some(&rest[..end])
-}
-
-async fn body_string(resp: axum::response::Response) -> String {
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    String::from_utf8(bytes.to_vec()).unwrap()
-}
-
-async fn body_bytes(resp: axum::response::Response) -> Vec<u8> {
-    axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap()
-        .to_vec()
-}
-
-fn get(uri: &str) -> Request<Body> {
-    Request::builder()
-        .uri(uri)
-        .body(Body::empty())
-        .expect("well-formed GET request")
 }
 
 /// Drives `batches` through a real [`LlHlsSegmenter`] into `store` — the

@@ -1,37 +1,36 @@
-//! Regression guard for the serializer "silent `& MASK` / unmasked `<<` wrap"
-//! class (#1129) in `scte35-splice`.
+//! Regression guard for the serializer "silent `& MASK` wrap" class (#1129).
 //!
 //! A serializer that packs a struct field into a bit-field with
-//! `(self.field & MASK) << n` or `(self.field << n)` on a `u8` silently drops
-//! the high bits of an over-range value (a 4-bit field given `0x13` is written
-//! as `3`), emitting a valid-looking but different structure. The fix is
-//! `broadcast_common::len::fit_mask(value, MASK, "field")?`, which returns an
-//! error instead. This is the cheap lexical half of the guard (the behavioural
-//! half is `tests/serialize_field_width*.rs`): it fails CI if the pattern
+//! `(self.field & MASK) << n` silently drops the high bits of an over-range
+//! value (a 4-bit field given `0x13` is written as `3`), emitting a valid-
+//! looking but different descriptor. The fix is
+//! `broadcast_common::len::fit_mask(value, MASK, "field")?`, which returns
+//! `Error::FieldOverflow` instead.
+//!
+//! This is the cheap lexical half of the guard (the behavioural half is each
+//! crate's `serialize_field_width*` test): it fails CI if a single-field `& MASK`
 //! reappears in a serialize-side function under `src/` outside a
-//! `#[cfg(test)]` module, unless allow-listed with a reason. A tripwire is
-//! lexical, not a proof; code review is the real control.
+//! `#[cfg(test)]` module. A tripwire is lexical, not a proof; code review is
+//! the real control.
+//!
+//! What counts as a hit: a ` & ` whose right operand is a mask (a hex literal
+//! other than the byte-extraction `0xFF`, or an ALL_CAPS constant) and whose
+//! left operand is a struct field / enum value (`self.x`, `e.x`, `x.to_u8()`),
+//! in a function that is not on the parse/accessor side, and which is not a
+//! pure boolean flag test (`(x & MASK) != 0`). Splitting an already
+//! range-checked *local* across two bytes (`(lt & 0x0F) << 4`,
+//! `(v >> 8) as u8 & 0x0F`) is not a hit: the whole field is checked up front
+//! and the mask is only a bit-split.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use workspace_guards::src_files;
 
-/// `(file suffix, line substring, reason)` — each exemption is pinned to the
-/// exact source text so a moved/changed line re-opens the question.
-const ALLOW: &[(&str, &str, &str)] = &[(
-    "section.rs",
-    "(self.tier & 0x0F) as u8) << 4",
-    "tier is rejected above TIER_IGNORE (12 bits) at the top of serialize_into; these lines only split its low nibble into byte 11 (all three sites)",
-)];
-
-fn read_rs(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
-    for entry in fs::read_dir(dir).expect("read dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            read_rs(&path, out);
-        } else if path.extension().is_some_and(|x| x == "rs") {
-            out.push((path.clone(), fs::read_to_string(&path).expect("read .rs")));
-        }
-    }
+pub struct Crate {
+    pub name: &'static str,
+    /// Fewest `src/` files the scan must see (catches a wrong path).
+    pub min_files: usize,
+    /// `(file suffix, line substring, reason)`: each exemption is pinned to
+    /// the exact source text so a moved/changed line re-opens the question.
+    pub allow: &'static [(&'static str, &'static str, &'static str)],
 }
 
 /// Function-name prefixes that are on the parse / accessor side: a mask there
@@ -63,7 +62,6 @@ const READ_SIDE: &[&str] = &[
     "cell_",
     "version",
     "consider",
-    "b1",
     "bits",
     "sext",
     "bit_rate",
@@ -73,6 +71,21 @@ fn is_mask_token(tok: &str) -> bool {
     if let Some(hex) = tok.strip_prefix("0x") {
         let digits: String = hex.chars().filter(|c| *c != '_').collect();
         return !digits.is_empty() && !digits.eq_ignore_ascii_case("ff");
+    }
+    // Binary literals (`& 0b111`) and plain decimal literals (`& 1`, `& 15`)
+    // are masks too: the five serializers #1197 claimed to convert (nordig
+    // `& 1`, cp `& 0b111`, supplementary_audio `& 1`, s2x/s2xv2 `& 1`) all
+    // used them and slipped past a hex/ALL_CAPS-only matcher.
+    if let Some(bin) = tok.strip_prefix("0b") {
+        let digits: String = bin.chars().filter(|c| *c != '_').collect();
+        return !digits.is_empty() && digits.chars().all(|c| c == '0' || c == '1');
+    }
+    if tok.chars().all(|c| c.is_ascii_digit() || c == '_')
+        && tok.chars().next().is_some_and(|c| c.is_ascii_digit())
+    {
+        let digits: String = tok.chars().filter(|c| *c != '_').collect();
+        // 0 and 255 are not masks of a packed field (255 = byte extraction).
+        return digits != "0" && digits != "255";
     }
     tok.len() > 2
         && tok
@@ -108,7 +121,17 @@ fn lhs_is_field(lhs: &str) -> bool {
     if operand.contains(">>") || operand.contains("<<") {
         return false;
     }
-    operand.contains("self.")
+    // A bare `reserved*` identifier is a reserved-bit value passed into a
+    // helper (s2x `pack_*(.., reserved_zero_future_use_1, ..)`): the caller's
+    // value is just as unchecked as `self.reserved*`.
+    // Same for a bare `version_number` parameter of a shared header helper
+    // (`b5_of`): the review of the tables batch found `b1_of`/`b5_of`/
+    // `write_pid_r` masking inside `tables/mod.rs` helpers, invisible here
+    // because the helper exempted itself by name (`b1*`) and took the field as a
+    // bare parameter rather than `self.field`.
+    operand.starts_with("reserved")
+        || operand == "version_number"
+        || operand.contains("self.")
         || operand.contains(".to_u8()")
         || operand.contains(".to_u16()")
         || operand.contains(".unwrap_or(")
@@ -116,24 +139,26 @@ fn lhs_is_field(lhs: &str) -> bool {
         || (operand.contains('.') && !operand.contains(".len()"))
 }
 
-/// `(self.field << N)`: a bare struct field shifted into a packed byte with no
-/// range check (a `u8` shift silently drops the high bits).
+/// `(self.field << N)` / `(e.field.to_u8() << N)`: a bare struct field or enum
+/// code shifted into a packed byte with no range check (a `u8` shift silently
+/// drops the high bits).
 fn shifts_bare_field(ctx: &str) -> bool {
     let b = ctx.as_bytes();
     let mut i = 0;
     while i + 1 < b.len() {
         if b[i] == b'<' && b[i + 1] == b'<' && (i == 0 || b[i - 1] != b'<') {
             let lhs = ctx[..i].trim_end();
-            // operand = trailing run of ident / '.' chars
             let start = lhs
-                .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))
+                .rfind(|c: char| {
+                    !(c.is_alphanumeric() || c == '_' || c == '.' || c == '(' || c == ')')
+                })
                 .map_or(0, |p| p + 1);
-            let operand = &lhs[start..];
+            let operand = lhs[start..].trim_start_matches('(');
+            let operand = operand.strip_suffix(".to_u8()").unwrap_or(operand);
             if operand.starts_with("self.")
                 && operand[5..]
                     .chars()
                     .all(|c| c.is_alphanumeric() || c == '_')
-                && !operand.ends_with(".len")
             {
                 return true;
             }
@@ -185,11 +210,14 @@ fn hits_in(body: &str) -> Vec<(usize, String)> {
                 && (i == 0 || bytes[i - 1] != '(')
                 && bytes.get(i + 1) == Some(&' ')
             {
-                let rhs: String = bytes[i + 2..]
+                // A path-qualified constant (`& super::RESERVED_2`) is a mask
+                // too: judge the last path segment, advance by the whole path.
+                let rhs_path: String = bytes[i + 2..]
                     .iter()
-                    .take_while(|c| c.is_alphanumeric() || **c == '_')
+                    .take_while(|c| c.is_alphanumeric() || **c == '_' || **c == ':')
                     .collect();
-                let after: String = bytes[i + 2 + rhs.len()..].iter().collect();
+                let rhs = rhs_path.rsplit("::").next().unwrap_or("").to_string();
+                let after: String = bytes[i + 2 + rhs_path.len()..].iter().collect();
                 let lhs: String = bytes[..i].iter().collect();
                 let is_flag_test = {
                     let a = after.trim_start_matches(')').trim_start();
@@ -209,26 +237,33 @@ fn hits_in(body: &str) -> Vec<(usize, String)> {
     out
 }
 
-#[test]
-fn no_unchecked_field_mask_in_serializers() {
-    let mut files = Vec::new();
-    read_rs(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
-    assert!(files.len() > 5, "scan found too few files under src");
+fn problems_in(c: &Crate, files: &[(String, String)]) -> Vec<String> {
     let mut problems = Vec::new();
-    for (path, body) in &files {
+    for (path, body) in files {
         for (n, line) in hits_in(body) {
-            let p = path.to_string_lossy();
-            if ALLOW
+            if c.allow
                 .iter()
-                .any(|(f, sub, _)| p.ends_with(f) && line.contains(sub))
+                .any(|(f, sub, _)| path.ends_with(f) && line.contains(sub))
             {
                 continue;
             }
-            problems.push(format!("{p}:{n}: {line}"));
+            problems.push(format!("{}: {path}:{n}: {line}", c.name));
         }
+    }
+    problems
+}
+
+#[test]
+fn no_unchecked_field_mask_in_serializers() {
+    let mut problems = Vec::new();
+    for c in crate::serialize_mask_data::TABLE {
+        let files = src_files(c.name);
+        assert!(
+            files.len() >= c.min_files,
+            "{}: scan found too few files under src",
+            c.name
+        );
+        problems.extend(problems_in(c, &files));
     }
     assert!(
         problems.is_empty(),
@@ -237,6 +272,15 @@ fn no_unchecked_field_mask_in_serializers() {
          (or allow-list with a reason):\n{}",
         problems.join("\n")
     );
+}
+
+#[test]
+fn table_names_are_workspace_members() {
+    let names: Vec<&str> = crate::serialize_mask_data::TABLE
+        .iter()
+        .map(|c| c.name)
+        .collect();
+    crate::common::assert_names_are_members("serialize_mask", &names);
 }
 
 /// The scanner must bite: a synthetic serializer containing the bad pattern
@@ -251,6 +295,11 @@ fn scanner_bites_on_the_bad_pattern() {
     assert!(hits_in(ok).is_empty());
     let parse = "fn parse(b: &[u8]) {\n    let r = (self.x & RESERVED_MASK) >> 4;\n}\n";
     assert!(hits_in(parse).is_empty());
+    // The #1197 miss: binary / decimal masks (`& 1`, `& 0b111`).
+    let dec = "fn serialize_into(&self) {\n    let b = (entry.reserved & 1) << 6;\n}\n";
+    assert_eq!(hits_in(dec).len(), 1, "decimal mask must be flagged");
+    let bin = "fn serialize_into(&self) {\n    let b = u16::from(self.rfu & 0b111) << 13;\n}\n";
+    assert_eq!(hits_in(bin).len(), 1, "binary mask must be flagged");
     let split = "fn serialize_into(&self) {\n    let b = (lt & 0x0F) << 4;\n}\n";
     assert!(hits_in(split).is_empty());
     let bare_shift = "fn serialize_into(&self) {\n    buf[0] = (self.version << 4) | 1;\n}\n";
@@ -261,4 +310,30 @@ fn scanner_bites_on_the_bad_pattern() {
     );
     let checked_shift = "fn serialize_into(&self) {\n    buf[0] = (fit_mask(self.version, 0x0F, \"v\")? << 4) | 1;\n}\n";
     assert!(hits_in(checked_shift).is_empty());
+}
+
+/// The helper-level gap found in review: a mask inside a shared header helper
+/// that receives the field as a bare parameter (`b1_of`, `b5_of`,
+/// `write_pid_r`, `write_desc_loop_len_r`) must be flagged, and the checked
+/// forms must not be.
+#[test]
+fn scanner_bites_on_header_helper_bodies() {
+    let b1 = "pub(crate) fn b1_of(ssi: bool, reserved_b1: u8) -> u8 {\n    ((reserved_b1 & RESERVED_2) << 4)\n}\n";
+    assert_eq!(hits_in(b1).len(), 1, "b1_of-style mask must be flagged");
+    let b5 = "pub(crate) fn b5_of(reserved_b5: u8, version_number: u8) -> u8 {\n    ((version_number & B5_VERSION_MASK) << 1)\n}\n";
+    assert_eq!(
+        hits_in(b5).len(),
+        1,
+        "bare version_number mask must be flagged"
+    );
+    let pid = "pub(crate) fn write_pid_r(buf: &mut [u8], reserved: u8) {\n    buf[0] = ((reserved & RESERVED_3) << 5);\n}\n";
+    assert_eq!(
+        hits_in(pid).len(),
+        1,
+        "write_pid_r-style mask must be flagged"
+    );
+    let reserved_field = "fn serialize_into(&self) {\n    buf[5] = ((self.reserved_b5 & super::RESERVED_2) << 6);\n}\n";
+    assert_eq!(hits_in(reserved_field).len(), 1);
+    let checked = "pub(crate) fn b5_of(reserved_b5: u8, version_number: u8) -> Result<u8> {\n    Ok((fit_mask(reserved_b5, RESERVED_2, \"r\")? << 6) | (fit_mask(version_number, B5_VERSION_MASK, \"v\")? << 1))\n}\n";
+    assert!(hits_in(checked).is_empty());
 }

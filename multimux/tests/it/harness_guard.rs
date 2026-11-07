@@ -7,9 +7,10 @@
 //!   TS-UDP config-driven routes consume a caller-bound listener/socket via
 //!   `Config::prebound` (including file-defined routes, via
 //!   `serve_config_file_with_registry_on_admin_prebound`). The remaining
-//!   helpers are LINE-PINNED below (the exact `fn …` line must match): the
-//!   RTMP input (its `rtmp-runtime` server exposes only `bind(addr)`) and an
-//!   external `mediamtx` whose config takes a numeric port. Note this is a
+//!   helper is LINE-PINNED below (the exact `fn …` line must match): the
+//!   RTMP input (its `rtmp-runtime` server exposes only `bind(addr)`). An
+//!   external `mediamtx` whose config takes a numeric port uses
+//!   `test_bounded::free_tcp_port`. Note this is a
 //!   NAME guard, not a behavioural one: it stops a new `reserve_*` helper name
 //!   from appearing, not a rebind written inline.
 //! - **Bare fixed sleeps** in `tests/**` outside the files that predate this
@@ -36,21 +37,14 @@ const PORT_HELPERS: &[&str] = &[
 /// genuinely unobservable without it (W2b-1 Task 4 deviation). LINE-PINNED: the
 /// marker must appear on the same source line, so a NEW reserve helper added to
 /// one of these files still trips the guard.
-const PORT_HELPER_ALLOW: &[(&str, &str, &str)] = &[
-    (
-        "push_rtsp.rs",
-        "fn free_port() -> u16",
-        "external `mediamtx` config takes a numeric port; port 0 is impossible for a third-party process",
-    ),
-    (
-        "dispatch_ingest.rs",
-        "fn reserve_tcp_addr() -> SocketAddr",
-        "`rtmp-runtime`'s `AsyncRtmpServer` exposes only `bind(addr)` (no \
+const PORT_HELPER_ALLOW: &[(&str, &str, &str)] = &[(
+    "dispatch_ingest.rs",
+    "fn reserve_tcp_addr() -> SocketAddr",
+    "`rtmp-runtime`'s `AsyncRtmpServer` exposes only `bind(addr)` (no \
          `from_listener`), so multimux's RTMP route cannot accept a caller-bound \
          listen socket; the RTMP input address is a route-internal bind the test \
          must name. The TsUdp input in this file uses `Config::prebound` instead",
-    ),
-];
+)];
 
 /// Files allowed to contain a bare `tokio::time::sleep(` / `thread::sleep(`.
 /// Each predates the W2b-1 harness work; a NEW file (or a new line in a file

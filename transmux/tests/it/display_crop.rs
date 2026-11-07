@@ -1,53 +1,8 @@
 //! Crop / conformance-window tests (DESIGN.md Phase 5).
 
+use crate::bit_writer::BitWriter;
 use transmux::ir::DisplayInfo;
 use transmux::ir::{AspectRatioIdc, DisplayGeometry, PictureRect};
-
-// --- local bit sink (mirror of sps.rs test helper) ---
-struct BitSink {
-    bytes: Vec<u8>,
-    cur: u8,
-    nbits: u32,
-}
-impl BitSink {
-    fn new() -> Self {
-        Self {
-            bytes: Vec::new(),
-            cur: 0,
-            nbits: 0,
-        }
-    }
-    fn bit(&mut self, b: bool) {
-        if b {
-            self.cur |= 1 << (7 - self.nbits);
-        }
-        self.nbits += 1;
-        if self.nbits == 8 {
-            self.bytes.push(self.cur);
-            self.cur = 0;
-            self.nbits = 0;
-        }
-    }
-    fn bits(&mut self, v: u64, n: u32) {
-        for i in (0..n).rev() {
-            self.bit((v >> i) & 1 == 1);
-        }
-    }
-    fn ue(&mut self, v: u64) {
-        let code = v + 1;
-        let len = 64 - code.leading_zeros();
-        for _ in 0..len - 1 {
-            self.bit(false);
-        }
-        self.bits(code, len);
-    }
-    fn finish(mut self) -> Vec<u8> {
-        if self.nbits > 0 {
-            self.bytes.push(self.cur);
-        }
-        self.bytes
-    }
-}
 
 fn avc_sps_crop(
     chroma_format_idc: u8,
@@ -56,7 +11,7 @@ fn avc_sps_crop(
     crop: (u64, u64, u64, u64), // left,right,top,bottom
 ) -> Vec<u8> {
     let mut nal = vec![0x67u8, 100, 0x00, 30]; // high profile
-    let mut s = BitSink::new();
+    let mut s = BitWriter::new();
     s.ue(0); // seq_parameter_set_id
     // high profile branch
     s.ue(u64::from(chroma_format_idc));
@@ -271,16 +226,16 @@ fn real_fixtures_crop() {
 
 fn hevc_sps_conf(chroma: u8, conf: (u64, u64, u64, u64)) -> Vec<u8> {
     let mut nal = vec![0x42u8, 0x01];
-    let mut s = BitSink::new();
-    s.bits(0, 4);
-    s.bits(0, 3);
+    let mut s = BitWriter::new();
+    s.u(4, 0);
+    s.u(3, 0);
     s.bit(false);
-    s.bits(0, 2);
+    s.u(2, 0);
     s.bit(false);
-    s.bits(1, 5);
-    s.bits(0, 32);
-    s.bits(0xE0_00_00_00_00_00u64, 48);
-    s.bits(93, 8);
+    s.u(5, 1);
+    s.u(32, 0);
+    s.u(48, 0xE0_00_00_00_00_00u64);
+    s.u(8, 93);
     s.ue(0); // sps id
     s.ue(u64::from(chroma));
     if chroma == 3 {
@@ -303,16 +258,16 @@ fn hevc_sps_conf(chroma: u8, conf: (u64, u64, u64, u64)) -> Vec<u8> {
 
 fn hevc_sps_ddw(chroma: u8, conf: (u64, u64, u64, u64), def: (u64, u64, u64, u64)) -> Vec<u8> {
     let mut nal = vec![0x42u8, 0x01];
-    let mut s = BitSink::new();
-    s.bits(0, 4);
-    s.bits(0, 3);
+    let mut s = BitWriter::new();
+    s.u(4, 0);
+    s.u(3, 0);
     s.bit(false);
-    s.bits(0, 2);
+    s.u(2, 0);
     s.bit(false);
-    s.bits(1, 5);
-    s.bits(0, 32);
-    s.bits(0xE0_00_00_00_00_00u64, 48);
-    s.bits(93, 8);
+    s.u(5, 1);
+    s.u(32, 0);
+    s.u(48, 0xE0_00_00_00_00_00u64);
+    s.u(8, 93);
     s.ue(0);
     s.ue(u64::from(chroma));
     if chroma == 3 {

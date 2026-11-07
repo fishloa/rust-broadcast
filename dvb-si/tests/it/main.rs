@@ -34,7 +34,6 @@ mod round_trip;
 mod sat_reserved_runs;
 mod serde_round_trip;
 mod serialize_field_width_guard;
-mod serialize_mask_guard;
 mod serialize_mask_overflow;
 mod serializer_length_truncation;
 mod spec_drift;

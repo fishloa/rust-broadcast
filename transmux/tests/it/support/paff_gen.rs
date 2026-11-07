@@ -26,63 +26,7 @@
 
 #![allow(dead_code, clippy::all)]
 
-// ---------------------------------------------------------------- bit writer
-
-struct Bits {
-    out: Vec<u8>,
-    cur: u8,
-    n: u8,
-}
-
-impl Bits {
-    fn new() -> Self {
-        Bits {
-            out: Vec::new(),
-            cur: 0,
-            n: 0,
-        }
-    }
-    fn u(&mut self, bits: u32, v: u32) {
-        for i in (0..bits).rev() {
-            self.cur = (self.cur << 1) | ((v >> i) & 1) as u8;
-            self.n += 1;
-            if self.n == 8 {
-                self.out.push(self.cur);
-                self.cur = 0;
-                self.n = 0;
-            }
-        }
-    }
-    /// ue(v), §9.1
-    fn ue(&mut self, v: u32) {
-        let x = v + 1;
-        let len = 32 - x.leading_zeros();
-        self.u(len - 1, 0);
-        self.u(len, x);
-    }
-    /// se(v), §9.1.1
-    fn se(&mut self, v: i32) {
-        self.ue(if v > 0 {
-            (2 * v - 1) as u32
-        } else {
-            (-2 * v) as u32
-        });
-    }
-    fn aligned(&self) -> bool {
-        self.n == 0
-    }
-    fn align_zero(&mut self) {
-        while self.n != 0 {
-            self.u(1, 0);
-        }
-    }
-    /// rbsp_trailing_bits(), §7.3.2.11
-    fn trailing(mut self) -> Vec<u8> {
-        self.u(1, 1);
-        self.align_zero();
-        self.out
-    }
-}
+use crate::bit_writer::BitWriter;
 
 /// NAL unit with emulation prevention (§7.3.1, §7.4.1) and a 4-byte start code (Annex B).
 fn nal(ref_idc: u8, nal_type: u8, rbsp: &[u8]) -> Vec<u8> {
@@ -105,17 +49,17 @@ const LOG2_MAX_FRAME_NUM: u32 = 4;
 
 /// seq_parameter_set_rbsp(), §7.3.2.1.1. Main profile (allows interlace), level 3.0.
 fn sps(w: usize, h: usize) -> Vec<u8> {
-    let mut b = Bits::new();
+    let mut b = BitWriter::new();
     b.u(8, 77); // profile_idc = Main
     b.u(8, 0); // constraint_set flags + reserved_zero_2bits
     b.u(8, 30); // level_idc
     b.ue(0); // seq_parameter_set_id
-    b.ue(LOG2_MAX_FRAME_NUM - 4); // log2_max_frame_num_minus4
+    b.ue(u64::from(LOG2_MAX_FRAME_NUM - 4)); // log2_max_frame_num_minus4
     b.ue(2); // pic_order_cnt_type = 2 (output order = decode order)
     b.ue(1); // max_num_ref_frames
     b.u(1, 0); // gaps_in_frame_num_value_allowed_flag
-    b.ue((w / 16 - 1) as u32); // pic_width_in_mbs_minus1
-    b.ue((h / 32 - 1) as u32); // pic_height_in_map_units_minus1 (field MB rows)
+    b.ue((w / 16 - 1) as u64); // pic_width_in_mbs_minus1
+    b.ue((h / 32 - 1) as u64); // pic_height_in_map_units_minus1 (field MB rows)
     b.u(1, 0); // frame_mbs_only_flag = 0 -> field coding allowed
     b.u(1, 0); // mb_adaptive_frame_field_flag = 0 -> PAFF only, no MBAFF
     b.u(1, 1); // direct_8x8_inference_flag (shall be 1 when frame_mbs_only_flag = 0)
@@ -126,7 +70,7 @@ fn sps(w: usize, h: usize) -> Vec<u8> {
 
 /// pic_parameter_set_rbsp(), §7.3.2.2. CAVLC, deblocking control present.
 fn pps() -> Vec<u8> {
-    let mut b = Bits::new();
+    let mut b = BitWriter::new();
     b.ue(0); // pic_parameter_set_id
     b.ue(0); // seq_parameter_set_id
     b.u(1, 0); // entropy_coding_mode_flag = CAVLC
@@ -147,7 +91,7 @@ fn pps() -> Vec<u8> {
 
 /// access_unit_delimiter_rbsp(), §7.3.2.4: primary_pic_type 0 = I slices only.
 fn aud() -> Vec<u8> {
-    let mut b = Bits::new();
+    let mut b = BitWriter::new();
     b.u(3, 0);
     b.trailing()
 }
@@ -155,13 +99,13 @@ fn aud() -> Vec<u8> {
 /// One field picture = one I slice of I_PCM macroblocks (§7.3.3, §7.3.4, §7.3.5).
 /// `field` holds the field's samples: luma w x h/2, then Cb, Cr (w/2 x h/4 each).
 fn slice(idr: bool, frame_num: u32, bottom: bool, w: usize, fh: usize, field: &Field) -> Vec<u8> {
-    let mut b = Bits::new();
+    let mut b = BitWriter::new();
     b.ue(0); // first_mb_in_slice
     b.ue(7); // slice_type = I (all slices of the picture are I)
     b.ue(0); // pic_parameter_set_id
-    b.u(LOG2_MAX_FRAME_NUM, frame_num); // frame_num
+    b.u(LOG2_MAX_FRAME_NUM, u64::from(frame_num)); // frame_num
     b.u(1, 1); // field_pic_flag
-    b.u(1, bottom as u32); // bottom_field_flag
+    b.u(1, u64::from(bottom)); // bottom_field_flag
     if idr {
         b.ue(0); // idr_pic_id
     }
@@ -183,13 +127,13 @@ fn slice(idr: bool, frame_num: u32, bottom: bool, w: usize, fh: usize, field: &F
             assert!(b.aligned());
             for y in 0..16 {
                 for x in 0..16 {
-                    b.u(8, field.y[(my * 16 + y) * w + mx * 16 + x] as u32);
+                    b.u(8, u64::from(field.y[(my * 16 + y) * w + mx * 16 + x]));
                 }
             }
             for plane in [&field.cb, &field.cr] {
                 for y in 0..8 {
                     for x in 0..8 {
-                        b.u(8, plane[(my * 8 + y) * (w / 2) + mx * 8 + x] as u32);
+                        b.u(8, u64::from(plane[(my * 8 + y) * (w / 2) + mx * 8 + x]));
                     }
                 }
             }

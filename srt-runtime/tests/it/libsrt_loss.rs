@@ -24,10 +24,10 @@
 
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
-use std::process::Child;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use test_bounded::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{SrtListener, SrtSocket};
@@ -44,15 +44,6 @@ const PAYLOAD_LEN: usize = 256;
 /// First byte of a synchronisation datagram (never the first byte of a
 /// numbered chunk, whose first four bytes are a big-endian index < 2^24).
 const SYNC_MARKER: u8 = 0xFF;
-
-struct KillOnDrop(Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 fn chunk(index: u32) -> Vec<u8> {
     let mut c: Vec<u8> = (0..PAYLOAD_LEN)

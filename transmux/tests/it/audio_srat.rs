@@ -19,6 +19,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use test_bounded::tool_available;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
@@ -125,16 +126,6 @@ fn temp_path(name: &str) -> PathBuf {
     dir.join(name)
 }
 
-fn tool_available(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 /// `ffprobe -show_entries stream=sample_rate` for the first audio stream.
 fn ffprobe_sample_rate(path: &Path) -> String {
     let out = Command::new("ffprobe")
@@ -189,7 +180,7 @@ fn decoded_md5(path: &Path) -> String {
 /// parse the bytes our writer produced, and ffmpeg decodes them.
 #[test]
 fn our_muxed_192k_output_is_read_back_by_external_tools() {
-    if !tool_available("ffprobe") || !tool_available("ffmpeg") {
+    if !tool_available("ffprobe", "-version") || !tool_available("ffmpeg", "-version") {
         eprintln!(
             "SKIP: ffprobe/ffmpeg not on PATH — cannot run the external-tool oracle \
              (install ffmpeg and re-run)"
@@ -207,7 +198,7 @@ fn our_muxed_192k_output_is_read_back_by_external_tools() {
     // entry it reports 60928, on ours 192000. It is therefore *required* here
     // rather than best-effort.
     assert!(
-        tool_available("MP4Box"),
+        tool_available("MP4Box", "-version"),
         "MP4Box is not on PATH — it is the only local tool that reads the sample          entry's own rate (ffprobe prefers the FLAC STREAMINFO), so this oracle          cannot run"
     );
     let info = mp4box_info(&ours_path);
@@ -238,7 +229,7 @@ fn our_muxed_192k_output_is_read_back_by_external_tools() {
 /// The 96 kHz case, which wraps to 30464 Hz in the 16.16 field.
 #[test]
 fn our_muxed_96k_output_is_read_back_by_external_tools() {
-    if !tool_available("ffprobe") || !tool_available("ffmpeg") {
+    if !tool_available("ffprobe", "-version") || !tool_available("ffmpeg", "-version") {
         eprintln!("SKIP: ffprobe/ffmpeg not on PATH — cannot run the external-tool oracle");
         return;
     }
@@ -256,7 +247,7 @@ fn our_muxed_96k_output_is_read_back_by_external_tools() {
 /// the output is still read correctly by the external tools.
 #[test]
 fn our_muxed_44k_output_stays_v0_and_reads_back_correctly() {
-    if !tool_available("ffprobe") || !tool_available("ffmpeg") {
+    if !tool_available("ffprobe", "-version") || !tool_available("ffmpeg", "-version") {
         eprintln!("SKIP: ffprobe/ffmpeg not on PATH — cannot run the external-tool oracle");
         return;
     }

@@ -16,7 +16,6 @@ pub const EXEMPT: &[&str] = &[
     "dvb-ci-runtime",
     "timed-metadata",
     "ts-fix",
-    "transmux",
     "rtsp-runtime",
     "hls-runtime",
     "dash-runtime",
@@ -211,5 +210,40 @@ pub const TABLE: &[Crate] = &[
     Crate {
         name: "ule",
         allowlist: &[],
+    },
+    Crate {
+        name: "transmux",
+        allowlist: &[
+            (
+                "src/annexb.rs",
+                "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
+                "infallible util over a caller slice; NAL > 4 GiB needs a >4 GiB \
+                     input slice. Every demux path feeding it is capped at 4 MiB \
+                     (ts_demux MAX_PES_BUFFER_BYTES).",
+            ),
+            (
+                "src/klv.rs",
+                "out.push(BER_LONG_FORM_FLAG | (value_bytes.len() as u8));",
+                "value_bytes is the minimal big-endian bytes of a u64: 1..=8 long.",
+            ),
+            (
+                "src/flv.rs",
+                "out.extend_from_slice(&(s.len() as u16).to_be_bytes());",
+                "amf0_string is only ever called with the crate's own static \
+                     property names (`onMetaData`, `duration`, ...), a few bytes each.",
+            ),
+            (
+                "src/flv.rs",
+                "out.extend_from_slice(&(props.len() as u32).to_be_bytes());",
+                "props is the onMetaData property list built from at most 8 \
+                     static entries just above.",
+            ),
+            (
+                "src/rtp.rs",
+                "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
+                "length_prefix_nals: NALs come from RTP depacketisation, bounded by \
+                     the reassembler caps (FU-A / STAP-A), never near 4 GiB.",
+            ),
+        ],
     },
 ];

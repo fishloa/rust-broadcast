@@ -38,76 +38,10 @@ use dvb_si::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-// ── tiny TOML parser ─────────────────────────────────────────────────────────
+// ── spec mirror loader ───────────────────────────────────────────────────────
 
-/// Parse the spec_tables TOML format, returning `(value, variant, spec)`.
-///
-/// Only handles the fixed schema used in this project:
-/// - blank lines and `#`-comment lines are skipped
-/// - `[[entry]]` starts a new record
-/// - `key = 0xNN` / `key = "..."` lines populate the record
 fn spec_toml(rel: &str) -> Option<String> {
     test_fixtures::spec_string(&format!("dvb/dvb-si/enums/{rel}"), "dvb-si spec_drift")
-}
-
-fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
-    let mut results = Vec::new();
-    let mut cur_value: Option<u8> = None;
-    let mut cur_variant: Option<String> = None;
-    let mut cur_spec: Option<String> = None;
-
-    let flush = |v: &mut Option<u8>,
-                 var: &mut Option<String>,
-                 sp: &mut Option<String>,
-                 out: &mut Vec<(u8, String, String)>| {
-        if let (Some(value), Some(variant), Some(spec)) = (v.take(), var.take(), sp.take()) {
-            out.push((value, variant, spec));
-        }
-    };
-
-    for raw in toml.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line == "[[entry]]" {
-            flush(
-                &mut cur_value,
-                &mut cur_variant,
-                &mut cur_spec,
-                &mut results,
-            );
-            continue;
-        }
-        if let Some(eq) = line.find('=') {
-            let key = line[..eq].trim();
-            let val = line[eq + 1..].trim();
-            match key {
-                "value" => {
-                    let hex = val.trim_start_matches("0x").trim_start_matches("0X");
-                    cur_value = Some(
-                        u8::from_str_radix(hex, 16)
-                            .unwrap_or_else(|_| panic!("bad hex in TOML: {val:?}")),
-                    );
-                }
-                "variant" => {
-                    cur_variant = Some(val.trim_matches('"').replace("\\\"", "\"").to_string());
-                }
-                "spec" => {
-                    cur_spec = Some(val.trim_matches('"').replace("\\\"", "\"").to_string());
-                }
-                _ => {} // ignore unknown keys
-            }
-        }
-    }
-    // flush the last record
-    flush(
-        &mut cur_value,
-        &mut cur_variant,
-        &mut cur_spec,
-        &mut results,
-    );
-    results
 }
 
 // ── test: TableId ─────────────────────────────────────────────────────────────
@@ -118,7 +52,7 @@ fn table_id_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
 
     // build set from TOML
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -159,7 +93,7 @@ fn descriptor_tag_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
@@ -198,7 +132,7 @@ fn stream_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
 
     // build TOML set and the value→spec map for the name check
     let mut toml_set: BTreeSet<(u8, String)> = BTreeSet::new();
@@ -256,7 +190,7 @@ fn service_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -294,7 +228,7 @@ fn subtitling_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -332,7 +266,7 @@ fn teletext_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -370,7 +304,7 @@ fn linkage_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -412,7 +346,7 @@ fn audio_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -451,7 +385,7 @@ fn announcement_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -489,7 +423,7 @@ fn alignment_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -527,7 +461,7 @@ fn ac3_service_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -567,7 +501,7 @@ fn ac4_channel_mode_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -605,7 +539,7 @@ fn crid_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -643,7 +577,7 @@ fn control_remote_access_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -682,7 +616,7 @@ fn scrambling_mode_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -720,7 +654,7 @@ fn polarization_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -756,7 +690,7 @@ fn fec_outer_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -796,7 +730,7 @@ fn ts_gs_mode_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -834,7 +768,7 @@ fn s2x_mode_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -872,7 +806,7 @@ fn t2_siso_miso_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -910,7 +844,7 @@ fn sh_diversity_mode_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -948,7 +882,7 @@ fn c2_tuning_frequency_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -986,7 +920,7 @@ fn uri_linkage_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1024,7 +958,7 @@ fn extension_tag_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1086,7 +1020,7 @@ fn running_status_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1125,7 +1059,7 @@ fn int_action_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1163,7 +1097,7 @@ fn unt_action_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1204,7 +1138,7 @@ fn control_code_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1242,7 +1176,7 @@ fn reference_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1281,7 +1215,7 @@ fn crid_authority_policy_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1317,7 +1251,7 @@ fn link_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1356,7 +1290,7 @@ fn descriptor_type_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1400,7 +1334,7 @@ fn tva_running_status_toml_matches_enum() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u8>(toml);
     let toml_set: BTreeSet<(u8, String)> = entries
         .iter()
         .map(|(v, var, _)| (*v, var.clone()))
@@ -1432,66 +1366,6 @@ fn tva_running_status_toml_matches_enum() {
 
 // ── test: BIOP tags (u32 constants) ──────────────────────────────────────────
 
-/// Parse a BIOP tag TOML: entries have a hex string `value = "0xNNNNNNNN"`.
-fn parse_biop_tag_entries(toml: &str) -> Vec<(u32, String, String)> {
-    let mut results = Vec::new();
-    let mut cur_value: Option<u32> = None;
-    let mut cur_variant: Option<String> = None;
-    let mut cur_spec: Option<String> = None;
-
-    let flush = |v: &mut Option<u32>,
-                 var: &mut Option<String>,
-                 sp: &mut Option<String>,
-                 out: &mut Vec<(u32, String, String)>| {
-        if let (Some(value), Some(variant), Some(spec)) = (v.take(), var.take(), sp.take()) {
-            out.push((value, variant, spec));
-        }
-    };
-
-    for raw in toml.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line == "[[entry]]" {
-            flush(
-                &mut cur_value,
-                &mut cur_variant,
-                &mut cur_spec,
-                &mut results,
-            );
-            continue;
-        }
-        if let Some(eq) = line.find('=') {
-            let key = line[..eq].trim();
-            let val = line[eq + 1..].trim().trim_matches('"');
-            match key {
-                "value" => {
-                    let hex = val.trim_start_matches("0x").trim_start_matches("0X");
-                    cur_value = Some(
-                        u32::from_str_radix(hex, 16)
-                            .unwrap_or_else(|_| panic!("bad hex u32 in BIOP tag TOML: {val:?}")),
-                    );
-                }
-                "variant" => {
-                    cur_variant = Some(val.to_string());
-                }
-                "spec" => {
-                    cur_spec = Some(val.to_string());
-                }
-                _ => {}
-            }
-        }
-    }
-    flush(
-        &mut cur_value,
-        &mut cur_variant,
-        &mut cur_spec,
-        &mut results,
-    );
-    results
-}
-
 #[test]
 fn biop_tag_toml_matches_consts() {
     use dvb_si::carousel::biop::{
@@ -1503,7 +1377,7 @@ fn biop_tag_toml_matches_consts() {
         return;
     };
     let toml = toml.as_str();
-    let entries = parse_biop_tag_entries(toml);
+    let entries = test_fixtures::parse_spec_entries::<u32>(toml);
 
     // Build TOML map: variant -> value
     let toml_map: BTreeMap<String, u32> = entries
@@ -1626,7 +1500,7 @@ macro_rules! scoped_enum_drift {
             let Some(toml) = spec_toml($toml) else {
                 return;
             };
-            let entries = parse_entries(&toml);
+            let entries = test_fixtures::parse_spec_entries::<u8>(&toml);
             let toml_set: BTreeSet<(u8, String)> =
                 entries.iter().map(|(v, var, _)| (*v, var.clone())).collect();
             let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();

@@ -30,8 +30,8 @@
 
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
-use std::process::Child;
 use std::time::{Duration, Instant};
+use test_bounded::KillOnDrop;
 
 use srt_runtime::caller::CallerHandshake;
 use srt_runtime::crypto::{SALT_LEN, aes_ctr_apply};
@@ -60,16 +60,6 @@ const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(15);
 const RECV_DEADLINE: Duration = Duration::from_secs(15);
 /// The handshake retransmit period libsrt itself uses (and this test's read timeout).
 const POLL: Duration = Duration::from_millis(250);
-
-/// Kills the wrapped child on drop (panic or early return included).
-struct KillOnDrop(Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 fn payload(index: u32) -> Vec<u8> {
     (0..PAYLOAD_LEN)

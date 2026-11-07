@@ -14,6 +14,7 @@
 //! internal `parse_pmt` — it re-implements the byte-level walk from scratch so
 //! the comparison is a real oracle, not a tautology.
 
+use crate::ts_psi::{payload_offset, pid_of, pusi_of};
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use transmux::TrackId;
@@ -40,26 +41,6 @@ fn fixture_bytes() -> Vec<u8> {
 // ---------------------------------------------------------------------------
 // Independent, from-scratch PAT/PMT walk (byte-level, no crate internals).
 // ---------------------------------------------------------------------------
-
-fn pid_of(pkt: &[u8]) -> u16 {
-    (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16
-}
-
-fn pusi_of(pkt: &[u8]) -> bool {
-    pkt[1] & 0x40 != 0
-}
-
-/// Payload offset in a packet (skips the 4-byte header + any adaptation
-/// field). Returns `TS_PACKET_LEN` (i.e. "no payload") for AF-only packets.
-fn payload_offset(pkt: &[u8]) -> usize {
-    let afc = (pkt[3] >> 4) & 0x3;
-    let has_af = afc & 0b10 != 0;
-    let has_payload = afc & 0b01 != 0;
-    if !has_payload {
-        return TS_PACKET_LEN;
-    }
-    if has_af { 4 + 1 + pkt[4] as usize } else { 4 }
-}
 
 /// Reassemble a PSI section carried on `pid` whose first byte is `table_id`.
 /// Handles sections that continue across multiple TS packets on the same PID

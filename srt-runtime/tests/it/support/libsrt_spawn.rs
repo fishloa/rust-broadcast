@@ -1,10 +1,4 @@
-fn free_udp_port() -> u16 {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .expect("bind free port")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
+use test_bounded::free_udp_port;
 
 const LIBSRT_SPAWN_ATTEMPTS: usize = 3;
 const LIBSRT_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);

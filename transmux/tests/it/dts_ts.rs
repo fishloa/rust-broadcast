@@ -9,6 +9,7 @@
 //! internals), rather than calling `transmux::split_dts_core_frames` — so it
 //! actually bites a splitter that misses or duplicates frames.
 
+use crate::ts_psi::{first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
@@ -37,80 +38,6 @@ fn dts_track(media: &Media) -> &transmux::media::Track {
 // Minimal TS/PSI/PES walking (byte-level, independent of crate internals) —
 // mirrors tests/it/ts_mux.rs / tests/it/dolby.rs.
 // ---------------------------------------------------------------------------
-
-fn pid_of(pkt: &[u8]) -> u16 {
-    (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16
-}
-
-fn pusi_of(pkt: &[u8]) -> bool {
-    pkt[1] & 0x40 != 0
-}
-
-fn payload_offset(pkt: &[u8]) -> usize {
-    let afc = (pkt[3] >> 4) & 0x3;
-    let has_af = afc & 0b10 != 0;
-    let has_payload = afc & 0b01 != 0;
-    if !has_payload {
-        return TS;
-    }
-    if has_af { 4 + 1 + pkt[4] as usize } else { 4 }
-}
-
-/// Reassemble the first complete single-packet PSI section on `pid`.
-fn first_section(ts: &[u8], pid: u16) -> Option<Vec<u8>> {
-    for pkt in ts.chunks_exact(TS) {
-        if pid_of(pkt) != pid || !pusi_of(pkt) {
-            continue;
-        }
-        let off = payload_offset(pkt);
-        if off >= TS {
-            continue;
-        }
-        let payload = &pkt[off..];
-        let ptr = payload[0] as usize;
-        let sec_start = 1 + ptr;
-        if sec_start + 3 > payload.len() {
-            continue;
-        }
-        let sec = &payload[sec_start..];
-        let section_length = (((sec[1] & 0x0F) as usize) << 8) | sec[2] as usize;
-        let total = 3 + section_length;
-        if total > sec.len() {
-            continue;
-        }
-        return Some(sec[..total].to_vec());
-    }
-    None
-}
-
-fn parse_pat(sec: &[u8]) -> Vec<(u16, u16)> {
-    let body = &sec[8..sec.len() - 4];
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 4 <= body.len() {
-        let prog = u16::from_be_bytes([body[i], body[i + 1]]);
-        let pmt_pid = (((body[i + 2] & 0x1F) as u16) << 8) | body[i + 3] as u16;
-        out.push((prog, pmt_pid));
-        i += 4;
-    }
-    out
-}
-
-/// (stream_type, elementary_PID) pairs from a PMT section.
-fn parse_pmt(sec: &[u8]) -> Vec<(u8, u16)> {
-    let body = &sec[8..sec.len() - 4];
-    let program_info_length = (((body[2] & 0x0F) as usize) << 8) | body[3] as usize;
-    let mut i = 4 + program_info_length;
-    let mut out = Vec::new();
-    while i + 5 <= body.len() {
-        let stream_type = body[i];
-        let es_pid = (((body[i + 1] & 0x1F) as u16) << 8) | body[i + 2] as u16;
-        let es_info_len = (((body[i + 3] & 0x0F) as usize) << 8) | body[i + 4] as usize;
-        out.push((stream_type, es_pid));
-        i += 5 + es_info_len;
-    }
-    out
-}
 
 /// Find the DTS elementary PID (stream_type 0x82/0x85/0x8A) via PAT → PMT.
 fn find_dts_pid(ts: &[u8]) -> (u16, u8) {

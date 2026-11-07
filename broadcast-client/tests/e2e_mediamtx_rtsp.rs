@@ -7,11 +7,12 @@
 
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+use test_bounded::free_tcp_port;
 
 use broadcast_client::{Action, AvSync, BufferEvent, Config, Event, Session, Status};
 use broadcast_common::Unpackage;
@@ -73,13 +74,6 @@ fn bail(reason: &str) {
         "{REQUIRE_ENV}=1 and {reason}: a missing tool is a failure here, not a skip"
     );
     eprintln!("SKIP e2e_mediamtx_rtsp: {reason} (set {REQUIRE_ENV}=1 to make this a failure)");
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("a free port")
-        .port()
 }
 
 fn write_config(dir: &Path, rtsp_port: u16) -> PathBuf {
@@ -322,7 +316,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     let dir =
         Scratch(std::env::temp_dir().join(format!("e2e-mediamtx-rtsp-{}", std::process::id())));
     fs::create_dir_all(&dir.0).expect("scratch dir");
-    let port = free_port();
+    let port = free_tcp_port();
     let config = write_config(&dir.0, port);
     let _server = spawn_quiet(Command::new(mediamtx).arg(&config), &dir.0);
     wait_for_port(port);

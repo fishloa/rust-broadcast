@@ -7,6 +7,8 @@ mod audio_srat;
 mod avc_hvc_config;
 mod base64_lenient;
 mod base_url;
+#[path = "support/bit_writer.rs"]
+mod bit_writer;
 mod box_walk_untrusted_sizes;
 mod caption_detect;
 mod captions;
@@ -79,6 +81,8 @@ mod hevc_sps;
 mod hevc_vps_timing;
 mod hls_discontinuity;
 mod hub;
+#[path = "support/hub_fixtures.rs"]
+mod hub_fixtures;
 mod idr_fallback;
 mod init_segment;
 mod init_segment_sweep;
@@ -96,7 +100,6 @@ mod mpeg_legacy;
 mod mpegh;
 mod mpegh_ts;
 mod nal_keyframe;
-mod no_dom_guard;
 mod opengop_anchor;
 mod paff_pairing;
 mod pipeline;
@@ -169,6 +172,8 @@ mod ts_hls_audio_catch_up;
 mod ts_mux;
 mod ts_mux_psi_repeat;
 mod ts_mux_streaming;
+#[path = "support/ts_psi.rs"]
+mod ts_psi;
 mod ts_sync_loss_degraded;
 mod ts_to_cmaf;
 mod uuid_child_roundtrip;

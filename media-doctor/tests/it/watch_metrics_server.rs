@@ -17,22 +17,15 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, UdpSocket};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use test_bounded::KillOnDrop;
 
 const TS_PACKET_SIZE: usize = 188;
 const DATAGRAM_PACKETS: usize = 7;
 
-struct ChildGuard(Child);
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 /// Spawn `watch` on port 0 for both sockets and return the addresses it printed.
-fn spawn_watch(extra: &[&str]) -> (ChildGuard, SocketAddr, SocketAddr) {
+fn spawn_watch(extra: &[&str]) -> (KillOnDrop, SocketAddr, SocketAddr) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_media-doctor"))
         .args([
             "watch",
@@ -47,7 +40,7 @@ fn spawn_watch(extra: &[&str]) -> (ChildGuard, SocketAddr, SocketAddr) {
         .spawn()
         .expect("spawn watch");
     let stderr = child.stderr.take().unwrap();
-    let guard = ChildGuard(child);
+    let guard = KillOnDrop(child);
     let mut line = String::new();
     BufReader::new(stderr)
         .read_line(&mut line)

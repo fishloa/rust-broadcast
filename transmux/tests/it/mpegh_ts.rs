@@ -17,6 +17,7 @@
 //! demuxer actually recovered — so it bites a demuxer that finds the wrong
 //! packet or off-by-one boundary, not just "some non-empty config".
 
+use crate::ts_psi::{first_section, parse_pat, payload_offset, pid_of, pusi_of};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
@@ -58,64 +59,6 @@ fn mpegh_track(media: &Media) -> &transmux::media::Track {
 // Minimal TS/PSI/PES walking (byte-level, independent of crate internals) —
 // mirrors tests/it/dts_ts.rs / tests/it/dolby.rs.
 // ---------------------------------------------------------------------------
-
-fn pid_of(pkt: &[u8]) -> u16 {
-    (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16
-}
-
-fn pusi_of(pkt: &[u8]) -> bool {
-    pkt[1] & 0x40 != 0
-}
-
-fn payload_offset(pkt: &[u8]) -> usize {
-    let afc = (pkt[3] >> 4) & 0x3;
-    let has_af = afc & 0b10 != 0;
-    let has_payload = afc & 0b01 != 0;
-    if !has_payload {
-        return TS;
-    }
-    if has_af { 4 + 1 + pkt[4] as usize } else { 4 }
-}
-
-/// Reassemble the first complete single-packet PSI section on `pid`.
-fn first_section(ts: &[u8], pid: u16) -> Option<Vec<u8>> {
-    for pkt in ts.chunks_exact(TS) {
-        if pid_of(pkt) != pid || !pusi_of(pkt) {
-            continue;
-        }
-        let off = payload_offset(pkt);
-        if off >= TS {
-            continue;
-        }
-        let payload = &pkt[off..];
-        let ptr = payload[0] as usize;
-        let sec_start = 1 + ptr;
-        if sec_start + 3 > payload.len() {
-            continue;
-        }
-        let sec = &payload[sec_start..];
-        let section_length = (((sec[1] & 0x0F) as usize) << 8) | sec[2] as usize;
-        let total = 3 + section_length;
-        if total > sec.len() {
-            continue;
-        }
-        return Some(sec[..total].to_vec());
-    }
-    None
-}
-
-fn parse_pat(sec: &[u8]) -> Vec<(u16, u16)> {
-    let body = &sec[8..sec.len() - 4];
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 4 <= body.len() {
-        let prog = u16::from_be_bytes([body[i], body[i + 1]]);
-        let pmt_pid = (((body[i + 2] & 0x1F) as u16) << 8) | body[i + 3] as u16;
-        out.push((prog, pmt_pid));
-        i += 4;
-    }
-    out
-}
 
 struct PmtEntry {
     stream_type: u8,
