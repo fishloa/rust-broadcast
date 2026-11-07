@@ -13,3 +13,5 @@ workspace = true
 
 [dependencies]
 hex = "0.4"
+wait-timeout = "0.2"
+serde_json = { workspace = true }

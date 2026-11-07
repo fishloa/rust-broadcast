@@ -1,4 +1,4 @@
-//! Proof that [`test_bounded::output_bounded`] enforces its deadline: a child
+//! Proof that [`test_fixtures::process::output_bounded`] enforces its deadline: a child
 //! that OUTLIVES the bound is killed and reported as `TimedOut` rather than
 //! letting the caller hang. Unix-only.
 //!
@@ -33,7 +33,7 @@ fn stub(body: &str) -> Command {
 fn overrunning_child_times_out_instead_of_hanging() {
     let mut tool = stub("exec sleep 30");
     let start = Instant::now();
-    let err = test_bounded::output_bounded(&mut tool, OVERRUN_DEADLINE)
+    let err = test_fixtures::process::output_bounded(&mut tool, OVERRUN_DEADLINE)
         .expect_err("a child outliving the deadline must be killed and reported");
     assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
     assert!(
@@ -58,7 +58,8 @@ fn pipe_holding_grandchild_does_not_block_the_runner() {
         "sleep {GRANDCHILD_SLEEP_SECS} &\necho hello\nexit 0"
     ));
     let start = Instant::now();
-    let out = test_bounded::output_bounded(&mut tool, Duration::from_secs(4)).expect("run");
+    let out =
+        test_fixtures::process::output_bounded(&mut tool, Duration::from_secs(4)).expect("run");
     assert!(out.status.success());
     assert_eq!(out.stdout, b"hello\n");
     assert!(

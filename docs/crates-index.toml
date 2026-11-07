@@ -576,19 +576,11 @@ what = "The single audited copy of the counting and capping allocators used by a
 crates_io = false
 lifecycle = "internal"
 
-[crate.test-bounded]
-domain = "internal"
-summary = "Deadline-bounded external-tool runner for tests."
-standards = "n/a"
-what = "`output_bounded(&mut Command, Duration)`: runs an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test."
-crates_io = false
-lifecycle = "internal"
-
 [crate.test-fixtures]
 domain = "internal"
-summary = "Shared loader for the workspace fixtures/ directory."
+summary = "Shared loader for the workspace fixtures/ directory, plus deadline-bounded external-tool process helpers."
 standards = "n/a"
-what = "Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong."
+what = "Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong. Module `process` holds `output_bounded` (run an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test), `KillOnDrop`, `tool_available`, free-port helpers and the `mediastreamvalidator` runner."
 crates_io = false
 lifecycle = "internal"
 

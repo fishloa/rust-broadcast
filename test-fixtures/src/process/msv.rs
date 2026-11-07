@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::{output_bounded, tool_available};
+use super::{output_bounded, tool_available};
 
 /// `(JSON path, errorRequirementLevel, errorComment)` of one validator message; a rendition
 /// whose parse failed reports level 1.

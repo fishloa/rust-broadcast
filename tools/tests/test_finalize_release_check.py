@@ -240,7 +240,7 @@ def test_package_step_runs_workspace_package_and_checks_every_planned_crate(tree
     st = status(rows)
     assert st["cargo package"] == "PASS", [r for r in rows if r[0] == "cargo package"]
     log = (stub_cargo / "cargo.log").read_text()
-    assert "package --workspace --locked --exclude atsc3 --exclude test-fixtures --exclude test-alloc --exclude test-bounded" in log
+    assert "package --workspace --locked --exclude atsc3 --exclude test-fixtures --exclude test-alloc" in log
     assert "--no-verify" not in log
     fc.run_checks(tree, PAIRS, skip_cargo=False, package="no-verify")
     assert "--no-verify" in (stub_cargo / "cargo.log").read_text()

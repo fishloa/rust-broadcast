@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
-use test_bounded::free_tcp_port;
+use test_fixtures::process::free_tcp_port;
 
 use broadcast_client::{Action, AvSync, BufferEvent, Config, Event, Session, Status};
 use broadcast_common::Unpackage;

@@ -19,7 +19,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use test_bounded::KillOnDrop;
+use test_fixtures::process::KillOnDrop;
 
 const TS_PACKET_SIZE: usize = 188;
 const DATAGRAM_PACKETS: usize = 7;

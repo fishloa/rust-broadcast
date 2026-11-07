@@ -34,7 +34,6 @@ pub const EXEMPT: &[&str] = &[
     "ssai-runtime",
     "playout-runtime",
     "container-probe",
-    "test-bounded",
     "test-alloc",
     "test-fixtures",
 ];

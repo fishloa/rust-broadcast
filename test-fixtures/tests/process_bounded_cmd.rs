@@ -4,7 +4,7 @@
 //! runner returns as soon as the tool itself exits.
 #![cfg(unix)]
 
-use test_bounded::output_bounded;
+use test_fixtures::process::output_bounded;
 
 use std::process::Command;
 use std::time::{Duration, Instant};

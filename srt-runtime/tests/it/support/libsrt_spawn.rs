@@ -1,4 +1,4 @@
-use test_bounded::free_udp_port;
+use test_fixtures::process::free_udp_port;
 
 const LIBSRT_SPAWN_ATTEMPTS: usize = 3;
 const LIBSRT_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);

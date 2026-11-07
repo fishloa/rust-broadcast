@@ -11,7 +11,7 @@ use broadcast_common::mux::Unpackage;
 use broadcast_hls::MediaPlaylist;
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
-use test_bounded::msv;
+use test_fixtures::process::msv;
 use tower::ServiceExt;
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::ts_demux::TsDemux;

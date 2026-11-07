@@ -190,7 +190,7 @@ async fn pdt_validator_clean() {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    if !test_bounded::msv::available() {
+    if !test_fixtures::process::msv::available() {
         eprintln!("SKIP pdt_validator_clean: `mediastreamvalidator` not on PATH ...");
         return;
     }
@@ -272,8 +272,9 @@ async fn pdt_validator_clean() {
         }
     }
 
-    let json = test_bounded::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(35));
-    let findings = test_bounded::msv::findings(&json);
+    let json =
+        test_fixtures::process::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(35));
+    let findings = test_fixtures::process::msv::findings(&json);
     const KNOWN: &[(&str, &str)] = &[
         // Issue #1595: a one-rendition low-latency route has no sibling for the
         // media playlist to report (RFC 8216bis Appendix B.1); a report for the

@@ -9,16 +9,15 @@
 //! `wait_timeout` against a hard deadline (no poll loop, no sleeping), and
 //! kills the child on overrun with a clear error.
 //!
-//! The crate also holds the other process helpers the external-tool tests
+//! This module also holds the other process helpers the external-tool tests
 //! shared as hand-copies: [`KillOnDrop`], [`tool_available`], [`free_udp_port`]
 //! and [`free_tcp_port`].
 //!
 //! This is the ONE copy: `hls-runtime`, `multimux` and `media-doctor` used to
-//! carry byte-identical `test-bounded/tests/it/bounded.rs` copies. They now
-//! dev-depend on this unpublished crate instead (de-hand-roll W3, spec §7
-//! SP7.3). It is `publish = false`
-//! and takes no workspace-sibling deps, so a path-only dev-dependency on it
-//! never appears in a published manifest.
+//! carry byte-identical copies, then a separate `test-bounded` crate held it
+//! (de-hand-roll W3, spec §7 SP7.3); it now lives here, in the unpublished
+//! `test-fixtures` crate, which takes no workspace-sibling deps, so a path-only
+//! dev-dependency on it never appears in a published manifest.
 
 use std::fs::{self, File};
 use std::io;

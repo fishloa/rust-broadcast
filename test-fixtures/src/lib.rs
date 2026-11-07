@@ -21,10 +21,11 @@
 //!
 //! `publish = false` and no workspace-sibling dependencies: a path-only
 //! dev-dependency on it never appears in a published manifest (same pattern as
-//! `test-bounded` / `test-alloc`).
+//! `test-alloc`).
 
 pub mod ffprobe;
 pub mod fuzz;
+pub mod process;
 pub mod psi;
 pub mod vectors;
 

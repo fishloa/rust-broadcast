@@ -93,7 +93,6 @@ cli    = ["dep:clap", "dep:container-probe", "std"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-test-bounded = { path = "../test-bounded" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc = { path = "../test-alloc" }
 # golden_gate.rs (issue #569) shells out to `ffprobe -of json` and parses the

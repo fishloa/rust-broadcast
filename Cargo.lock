@@ -463,7 +463,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "srt-runtime",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
@@ -1757,7 +1756,6 @@ dependencies = [
  "media-plane",
  "reqwest",
  "serde",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
@@ -2392,7 +2390,6 @@ dependencies = [
  "socket2",
  "ssai-runtime",
  "test-alloc",
- "test-bounded",
  "test-fixtures",
  "timed-metadata",
  "tokio",
@@ -2599,7 +2596,6 @@ dependencies = [
  "serde_json",
  "socket2",
  "srt-runtime",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
@@ -4081,7 +4077,6 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "subtle",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
@@ -4238,18 +4233,12 @@ name = "test-alloc"
 version = "0.1.0"
 
 [[package]]
-name = "test-bounded"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wait-timeout",
-]
-
-[[package]]
 name = "test-fixtures"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "serde_json",
+ "wait-timeout",
 ]
 
 [[package]]
@@ -4620,7 +4609,6 @@ dependencies = [
  "serde_json",
  "subtle",
  "test-alloc",
- "test-bounded",
  "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",

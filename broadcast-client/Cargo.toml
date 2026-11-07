@@ -56,7 +56,6 @@ sdp-types = { workspace = true }
 rtsp-types = "0.1"
 url = "2"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
-test-bounded = { path = "../test-bounded" }
 serde_json = { workspace = true }
 workspace-guards = { path = "../workspace-guards" }
 tokio = { version = "1", default-features = false, features = ["rt", "time", "net"] }

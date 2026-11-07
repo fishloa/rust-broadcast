@@ -81,7 +81,7 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**61 workspace members.** 54 are on crates.io; 46 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**60 workspace members.** 54 are on crates.io; 46 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -145,7 +145,6 @@ builds (see the table above against the in-tree versions below).
 | [`atsc3-route`](#atsc3-route) | IP and multicast delivery over broadcast | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/atsc3-route.svg)](https://crates.io/crates/atsc3-route) | yes | 2 | archived, on crates.io |
 | [`broadcast-loudness`](#broadcast-loudness) | Measurement | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) | yes | 1 | on crates.io |
 | [`test-alloc`](#test-alloc) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
-| [`test-bounded`](#test-bounded) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`test-fixtures`](#test-fixtures) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`workspace-guards`](#workspace-guards) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 
@@ -838,19 +837,9 @@ The single audited copy of the counting and capping allocators used by allocatio
 - **Depends on (workspace):** none
 - **Used by (workspace):** none
 
-#### test-bounded
-
-`output_bounded(&mut Command, Duration)`: runs an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test.
-
-- **Standards:** n/a
-- **Cargo description:** Deadline-bounded external-tool runner shared by workspace test suites (unpublished).
-- **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
-- **Depends on (workspace):** none
-- **Used by (workspace):** none
-
 #### test-fixtures
 
-Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong.
+Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get the relative path wrong. Module `process` holds `output_bounded` (run an external tool with stdout/stderr redirected to files and a hard deadline, so a grandchild holding a pipe cannot hang the test), `KillOnDrop`, `tool_available`, free-port helpers and the `mediastreamvalidator` runner.
 
 - **Standards:** n/a
 - **Cargo description:** Workspace fixture loader shared by test suites (unpublished).
@@ -873,7 +862,7 @@ One test binary that walks every crate named in each guard's data table (`non_ex
 Layer 0 has no workspace dependencies; every other crate sits one layer above its deepest workspace dependency. Normal dependencies only (dev-dependencies are excluded, so the test helpers appear at layer 0 with no edges).
 
 ```text
-layer 0: broadcast-auth, broadcast-common, test-alloc, test-bounded, test-fixtures, workspace-guards
+layer 0: broadcast-auth, broadcast-common, test-alloc, test-fixtures, workspace-guards
 layer 1: atsc3, broadcast-hls, broadcast-loudness, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, rtsp-runtime, scte104, scte35-splice, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, ssai-runtime, st291, timed-metadata, webrtc-runtime
 layer 3: caption-convert, dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, transmux

@@ -134,7 +134,7 @@ fn audio_profiles_config_parses_and_rejects_duplicates() {
     assert_eq!(AudioProfile::HeAacV2.to_string(), "he-aac-v2");
 }
 
-async fn validator_findings(app: &Router, tag: &str) -> Vec<test_bounded::msv::Finding> {
+async fn validator_findings(app: &Router, tag: &str) -> Vec<test_fixtures::process::msv::Finding> {
     use std::fs;
     use std::time::Duration;
 
@@ -170,8 +170,9 @@ async fn validator_findings(app: &Router, tag: &str) -> Vec<test_bounded::msv::F
             fs::write(scratch.join(uri), body).expect("write resource");
         }
     }
-    let json = test_bounded::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(60));
-    let findings = test_bounded::msv::findings(&json);
+    let json =
+        test_fixtures::process::msv::run_report(&scratch, "master.m3u8", Duration::from_secs(60));
+    let findings = test_fixtures::process::msv::findings(&json);
     for f in &findings {
         eprintln!("VALIDATOR[{tag}]: {} level={} {}", f.0, f.1, f.2);
     }
@@ -186,7 +187,7 @@ fn names_codec_or_sbr(message: &str) -> bool {
 
 #[tokio::test]
 async fn heaac_override_validator_reports_no_sbr_or_codecs_finding() {
-    if !test_bounded::msv::available() {
+    if !test_fixtures::process::msv::available() {
         eprintln!(
             "SKIP heaac_override_validator_reports_no_sbr_or_codecs_finding: \
              `mediastreamvalidator` not on PATH"

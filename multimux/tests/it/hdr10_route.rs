@@ -11,7 +11,7 @@ use crate::support::hdr_route::{
     Source, contains, dump_route, init_bytes, load, master_text, route_app, route_app_from,
     scratch, validator_comments,
 };
-use test_bounded::{msv, tool_available};
+use test_fixtures::process::{msv, tool_available};
 
 use broadcast_hls::MasterPlaylist;
 

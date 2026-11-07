@@ -292,12 +292,6 @@ rtp-packet       = { path = "../rtp-packet", version = "0.5", default-features =
 # construction). Already a transitive dep via `webrtc-runtime/media` at the
 # locked version, so this adds no new lock entry.
 rtc-dtls         = "0.21"
-# `output_bounded`: the deadline-bounded external-tool runner (SP7.3). The
-# runner itself lives in the shared `test-bounded` crate (one copy across
-# hls-runtime/multimux/media-doctor, not three byte-identical
-# `test-bounded/tests/it/bounded.rs` files); this is a path-only dev-dep, so it never
-# reaches a published manifest.
-test-bounded     = { path = "../test-bounded" }
 # The independent ETSI TR 101 290 monitor `multimux/tests/it/push_ts_stream.rs` runs over
 # the TS a push output actually delivers (#1024). Dev-only; dvb-conformance
 # depends on neither multimux nor transmux, so there is no cycle.
