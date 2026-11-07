@@ -1180,20 +1180,6 @@ pub const TABLE: &[Crate] = &[
     // check enforces the whole convention and catches the one thing the compiler
     // cannot: a brand-new `pub enum` that nobody labelled.
     //
-    // `rtcp-packet` defines three public spec/field enums today —
-    // `RtcpPacketType`, `SdesItemType`, and the `RtcpPacket` dispatch enum —
-    // all three already carry `impl_spec_display!` (carried over unchanged from
-    // the pre-extraction `transmux::rtcp` implementation).
-    Crate {
-        name: "rtcp-packet",
-        scope: Scope::Crate,
-        matcher: Matcher::Loose,
-        // Enums that are intentionally **not** spec/field labels: the structured
-        // error type has no spec label, and any future dispatch wrappers belong here.
-        skip: &["Error"],
-        expected: None,
-        min_enums: None,
-    },
     // Drift-guard for the spec/field-enum label convention (issue #204).
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
@@ -1267,7 +1253,9 @@ pub const TABLE: &[Crate] = &[
         // Enums that are intentionally **not** spec/field labels: the structured
         // error type has no spec label, and dispatch wrappers (like the `rfc8285`
         // feature's `ExtensionElements`, which dispatches on `profile_id` between
-        // the RFC 8285 one-byte/two-byte forms) belong here.
+        // the RFC 8285 one-byte/two-byte forms) belong here. The `rtcp` module's
+        // `RtcpPacketType`, `SdesItemType` and `RtcpPacket` enums all carry
+        // `impl_spec_display!`; its `Error` is skipped by the same name.
         skip: &["Error", "ExtensionElements"],
         expected: None,
         min_enums: None,
@@ -1791,7 +1779,7 @@ pub const TABLE: &[Crate] = &[
     //
     // `media::transport::MediaEvent` (feature `media`) is likewise skipped: it is
     // a data-carrying dispatch enum (some variants hold a whole `DecryptedRtp` or
-    // `rtcp_packet::CompoundPacket`), the same shape as WHIP/WHEP's own `Event` —
+    // `rtp_packet::rtcp::CompoundPacket`), the same shape as WHIP/WHEP's own `Event` —
     // not a spec/field label. `media::transport::SetupRole` is NOT skipped: its
     // three variants are the literal SDP `a=setup` tokens (RFC 8842 §4.1), so it
     // carries `name()` + `impl_spec_display!`.

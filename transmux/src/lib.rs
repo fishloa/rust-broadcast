@@ -215,7 +215,7 @@ pub mod rebase;
 pub mod repackage;
 #[cfg(test)]
 pub(crate) mod test_bits;
-pub use rtcp_packet as rtcp;
+pub use rtp_packet::rtcp;
 pub mod rtmp;
 pub mod rtp;
 pub mod rtp_dts;

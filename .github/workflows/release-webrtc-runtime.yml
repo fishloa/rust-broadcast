@@ -8,9 +8,8 @@ name: Release webrtc-runtime
 #
 # DEPENDENCY ORDER: webrtc-runtime depends on broadcast-common and
 # broadcast-auth (>= 0.2, already live), and — only under its optional
-# `media` feature — rtp-packet (>= 0.3, already live) and rtcp-packet
-# (>= 0.2, already live) plus external `rtc-*`/`sansio` crates (not workspace
-# members). Downstream, `multimux` depends on webrtc-runtime (>= 0.1,
+# `media` feature — rtp-packet (>= 0.3, already live, incl. its `rtcp` module) plus external
+# `rtc-*`/`sansio` crates (not workspace members). Downstream, `multimux` depends on webrtc-runtime (>= 0.1,
 # optional, under its `whip`/`whep` features) and also on hls-runtime — the
 # audit's forced publish order for that wave is:
 #   webrtc-runtime -> hls-runtime -> multimux -> multimux-cli

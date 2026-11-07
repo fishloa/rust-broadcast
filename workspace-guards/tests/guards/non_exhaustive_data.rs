@@ -63,7 +63,6 @@ pub const TABLE: &[Crate] = &[
     plain("rdd29"),
     plain("rist-runtime"),
     plain("rmt-flute"),
-    plain("rtcp-packet"),
     plain("rtmp-runtime"),
     plain("rtp-packet"),
     plain("rtsp-runtime"),

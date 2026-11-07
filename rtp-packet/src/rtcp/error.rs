@@ -3,7 +3,7 @@
 //! Field-by-field semantics are documented in the curated spec oracle,
 //! `private/specs-verified/rtp/rtcp-packet/rtcp.md` (RFC 3550 §6).
 
-/// Result alias for `rtcp-packet` parsing/serialization.
+/// Result alias for `rtp_packet::rtcp` parsing/serialization.
 pub type Result<T> = core::result::Result<T, Error>;
 
 /// A padded RTCP packet whose padding count (RFC 3550 §6.4.1) is zero or
@@ -37,7 +37,7 @@ pub enum Error {
     #[error(transparent)]
     InvalidValue(#[from] broadcast_common::error::InvalidValue),
     /// A caller-supplied argument violated a documented precondition (e.g. an
-    /// empty [`CompoundPacket`](crate::CompoundPacket) or one not starting
+    /// empty [`CompoundPacket`](crate::rtcp::CompoundPacket) or one not starting
     /// with SR/RR per RFC 3550 §6.1).
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),

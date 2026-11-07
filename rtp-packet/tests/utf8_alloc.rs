@@ -3,7 +3,7 @@
 //! allocation of the text's size (it used to `to_vec()` first, then validate).
 
 use broadcast_common::Parse;
-use rtcp_packet::{Bye, SourceDescription};
+use rtp_packet::rtcp::{Bye, SourceDescription};
 use test_alloc::ThreadCounting;
 
 #[global_allocator]
@@ -43,7 +43,7 @@ fn sdes_bytes(text: &[u8]) -> Vec<u8> {
 fn invalid_utf8_bye_reason_allocates_no_text_copy() {
     let bytes = bye_bytes(&[0xFF; TEXT_LEN]);
     let (r, snap) = ThreadCounting::measure(|| Bye::parse(&bytes));
-    assert!(matches!(r, Err(rtcp_packet::Error::InvalidValue(..))));
+    assert!(matches!(r, Err(rtp_packet::rtcp::Error::InvalidValue(..))));
     assert!(snap.bytes < TEXT_LEN, "allocated {} bytes", snap.bytes);
 }
 
@@ -51,7 +51,7 @@ fn invalid_utf8_bye_reason_allocates_no_text_copy() {
 fn invalid_utf8_sdes_text_allocates_no_text_copy() {
     let bytes = sdes_bytes(&[0xFF; TEXT_LEN]);
     let (r, snap) = ThreadCounting::measure(|| SourceDescription::parse(&bytes));
-    assert!(matches!(r, Err(rtcp_packet::Error::InvalidValue(..))));
+    assert!(matches!(r, Err(rtp_packet::rtcp::Error::InvalidValue(..))));
     assert!(snap.bytes < TEXT_LEN, "allocated {} bytes", snap.bytes);
 }
 

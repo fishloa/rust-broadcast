@@ -5,7 +5,7 @@
 
 use broadcast_common::{Parse, Serialize};
 use rist_runtime::{Error, ReportPart, RistReceiverCompound, RistSenderCompound, UnknownPacket};
-use rtcp_packet::{ReceiverReport, SenderReport};
+use rtp_packet::rtcp::{ReceiverReport, SenderReport};
 
 /// Common-header length in bytes (RFC 3550 §6.4.1).
 const RTCP_HEADER_LEN: usize = 4;

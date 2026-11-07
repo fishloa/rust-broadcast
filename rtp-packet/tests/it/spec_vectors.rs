@@ -3,7 +3,7 @@
 //!
 //! ## Provenance
 //!
-//! `rtcp-packet` had no real captured RTCP traffic to draw a fixture from
+//! The `rtcp` module had no real captured RTCP traffic to draw a fixture from
 //! when this file was written: unlike `rtp-packet` (whose
 //! `../fixtures/rtp/rtp-simple.bin` was captured by running this workspace's
 //! own `transmux::RtpPacketiser`), transmux's RTCP module (`transmux::rtcp`,
@@ -23,7 +23,7 @@
 //! `transmux::rtcp` implementation.)
 
 use broadcast_common::{Parse, Serialize};
-use rtcp_packet::{
+use rtp_packet::rtcp::{
     App, Bye, CompoundPacket, Error, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
     PT_SOURCE_DESCRIPTION, ReceiverReport, RtcpPacket, RtcpPacketType, SdesItemType, SenderReport,
     SourceDescription,

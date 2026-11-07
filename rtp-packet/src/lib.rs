@@ -12,6 +12,10 @@
 #![doc = include_str!("../examples/parse_packet.rs")]
 #![doc = "```\n\n### `rfc8285_extensions` (requires `--features rfc8285`)\n\n```rust,ignore"]
 #![doc = include_str!("../examples/rfc8285_extensions.rs")]
+#![doc = "```\n\n### `build_sender_report`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/build_sender_report.rs")]
+#![doc = "```\n\n### `parse_compound_packet`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/parse_compound_packet.rs")]
 #![doc = "```"]
 
 extern crate alloc;
@@ -22,6 +26,7 @@ mod error;
 mod header;
 #[cfg(feature = "rfc8285")]
 pub mod rfc8285;
+pub mod rtcp;
 
 pub use error::{Error, Result};
 pub use header::{

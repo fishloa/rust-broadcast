@@ -95,9 +95,9 @@ pub enum Error {
     #[error("unexpected packet type inside RIST compound: {0}")]
     UnexpectedPacketType(u8),
 
-    /// An error from the underlying `rtcp-packet` crate.
+    /// An error from the underlying `rtp_packet::rtcp` module.
     #[error(transparent)]
-    Rtcp(#[from] rtcp_packet::Error),
+    Rtcp(#[from] rtp_packet::rtcp::Error),
 
     /// A length or count did not fit the wire field it is written to
     /// (#1129): a serializer that narrowed a `usize` with `as u16` (or
@@ -107,8 +107,8 @@ pub enum Error {
     FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
 }
 
-impl From<rtcp_packet::PaddingCountError> for Error {
-    fn from(e: rtcp_packet::PaddingCountError) -> Self {
+impl From<rtp_packet::rtcp::PaddingCountError> for Error {
+    fn from(e: rtp_packet::rtcp::PaddingCountError) -> Self {
         Error::InvalidPaddingCount {
             count: e.count,
             body: e.body,

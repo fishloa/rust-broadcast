@@ -321,17 +321,9 @@ lifecycle = "active"
 
 [crate.rtp-packet]
 domain = "live"
-summary = "RTP fixed header, CSRC list, generic header extension; optional RFC 8285 extensions and AV3A payload."
-standards = "RFC 3550 §5.1 / §5.3.1; RFC 8285 (`rfc8285`); T/AI 109.7-2024 §10.1 AV3A-AATF payload (`av3a`)"
-what = "Spec-complete parse and serialize of the RTP packet header and its extension, with optional one-byte/two-byte extension multiplexing and the AVS3 audio (Audio Vivid) RTP payload."
-crates_io = true
-lifecycle = "active"
-
-[crate.rtcp-packet]
-domain = "live"
-summary = "RTCP SR/RR/SDES/BYE/APP and compound packets."
-standards = "RFC 3550 §6"
-what = "Typed, symmetric parse and serialize for every RFC 3550 RTCP packet type and the compound packet. Feedback messages (NACK) are in `rist-runtime`."
+summary = "RTP fixed header, CSRC list, generic header extension, RTCP SR/RR/SDES/BYE/APP and compound packets; optional RFC 8285 extensions and AV3A payload."
+standards = "RFC 3550 §5.1 / §5.3.1 and §6 (RTCP, `rtcp`); RFC 8285 (`rfc8285`); T/AI 109.7-2024 §10.1 AV3A-AATF payload (`av3a`)"
+what = "Spec-complete parse and serialize of the RTP packet header and its extension and (module `rtcp`) every RFC 3550 RTCP packet type and the compound packet, with optional one-byte/two-byte extension multiplexing and the AVS3 audio (Audio Vivid) RTP payload."
 crates_io = true
 lifecycle = "active"
 
@@ -339,7 +331,7 @@ lifecycle = "active"
 domain = "live"
 summary = "RIST Simple Profile RTCP messages (Generic/Range NACK, RTT Echo, compounds) and a sans-IO ARQ engine."
 standards = "VSF TR-06-1:2020 (RIST Simple Profile); RFC 4585 §6.2.1"
-what = "Wire codecs for the RIST Simple Profile RTCP messages on top of `rtcp-packet`, compound-packet builders that enforce the §5.2.1 structure, and a sans-IO sender/receiver ARQ engine (§5.3). TR-06-1 leaves most ARQ timing to the implementer, so several of the engine's numbers are this crate's own design choice, documented in the `arq` module. No socket adapter."
+what = "Wire codecs for the RIST Simple Profile RTCP messages on top of `rtp-packet`'s `rtcp` module, compound-packet builders that enforce the §5.2.1 structure, and a sans-IO sender/receiver ARQ engine (§5.3). TR-06-1 leaves most ARQ timing to the implementer, so several of the engine's numbers are this crate's own design choice, documented in the `arq` module. No socket adapter."
 crates_io = true
 lifecycle = "active"
 

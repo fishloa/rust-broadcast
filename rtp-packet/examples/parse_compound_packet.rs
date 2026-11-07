@@ -2,10 +2,10 @@
 //! canonical §6.1 "session report" shape), parse it back, and confirm a
 //! byte-exact round trip — RFC 3550 §6.1.
 //!
-//! Run with `cargo run -p rtcp-packet --example parse_compound_packet`.
+//! Run with `cargo run -p rtp-packet --example parse_compound_packet`.
 
 use broadcast_common::{Parse, Serialize};
-use rtcp_packet::{
+use rtp_packet::rtcp::{
     CompoundPacket, ReportBlock, RtcpPacket, SdesChunk, SdesItem, SdesItemType, SenderReport,
     SourceDescription,
 };

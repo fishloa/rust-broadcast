@@ -17,12 +17,12 @@ Typical users: a RIST sender/receiver built on `tokio` UDP, a RIST proxy or moni
 
 | Standard | Edition | Scope | Status | Notes |
 |---|---|---|---|---|
-| VSF TR-06-1 "RIST Protocol Specification, Simple Profile" | 2020 (vendored `vsf_tr-06-1_2020_rist_protocol_simple_profile`) | §5.2 RTCP support (SR/RR/SDES via `rtcp-packet`, §5.2.6 RTT Echo), §5.2.1 compound structure, §5.3.2.1 bitmask NACK, §5.3.2.2 range NACK, §5.3.3 retransmitted packets, §5.3.4 burst control | Full for the wire codecs; Partial for ARQ | The ARQ timing is mostly implementer's choice in the spec (§5.3.4) and follows librist; see the `arq` module docs for which numbers are spec and which are policy |
+| VSF TR-06-1 "RIST Protocol Specification, Simple Profile" | 2020 (vendored `vsf_tr-06-1_2020_rist_protocol_simple_profile`) | §5.2 RTCP support (SR/RR/SDES via `rtp-packet`'s `rtcp` module, §5.2.6 RTT Echo), §5.2.1 compound structure, §5.3.2.1 bitmask NACK, §5.3.2.2 range NACK, §5.3.3 retransmitted packets, §5.3.4 burst control | Full for the wire codecs; Partial for ARQ | The ARQ timing is mostly implementer's choice in the spec (§5.3.4) and follows librist; see the `arq` module docs for which numbers are spec and which are policy |
 | VSF TR-06-1 §5.1 baseline protocol (port pairs, RTP framing) | 2020 | Port assignment, RTP header use | Not implemented | Caller owns sockets and RTP |
 | VSF TR-06-1 §5.4 bonding | 2020 | Multi-path | Not implemented | |
 | VSF TR-06-2 "RIST Main Profile" | 2024 (vendored) | Timing notes only, transcribed to `private/specs-verified/vsf/rist-runtime/tr-06-2-main-profile-timing.md` | Not implemented | Checked only to confirm it adds no ARQ timing formula |
 | IETF RFC 4585 (RTCP feedback) | RFC 4585 | §6.1 common header, §6.2.1 Generic NACK (PT 205, FMT 1) | Full | |
-| IETF RFC 3550 (RTP/RTCP) | RFC 3550 | §6.4.1 padding (P bit) validated and preserved | Full for padding | Packet types themselves come from `rtcp-packet` |
+| IETF RFC 3550 (RTP/RTCP) | RFC 3550 | §6.4.1 padding (P bit) validated and preserved | Full for padding | Packet types themselves come from `rtp-packet`'s `rtcp` module |
 
 ## Features
 
@@ -92,7 +92,7 @@ assert_eq!(seqs, [101, 102]);
 
 ## Related crates
 
-Depends on `broadcast-common` (traits) and `rtcp-packet` (generic RTCP). Pair with `rtp-packet` for media packets. `srt-runtime::arq` is the architectural sibling for SRT.
+Depends on `broadcast-common` (traits) and `rtp-packet` (generic RTCP, via its `rtcp` module; also the media packets). `srt-runtime::arq` is the architectural sibling for SRT.
 
 ## MSRV and licence
 

@@ -192,7 +192,7 @@ fn compound_not_starting_with_report_rejected() {
             name: *b"NOPE",
             data: vec![],
         })]),
-        Err(rtcp_packet::Error::InvalidValue { .. })
+        Err(rtp_packet::rtcp::Error::InvalidValue { .. })
     ));
 
     // Parse rejects it too: serialize a lone BYE and parse as compound.
@@ -204,7 +204,7 @@ fn compound_not_starting_with_report_rejected() {
     .unwrap();
     assert!(matches!(
         CompoundPacket::parse(&bye_bytes),
-        Err(rtcp_packet::Error::InvalidValue { .. })
+        Err(rtp_packet::rtcp::Error::InvalidValue { .. })
     ));
 }
 

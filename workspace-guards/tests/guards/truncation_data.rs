@@ -153,10 +153,6 @@ pub const TABLE: &[Crate] = &[
         allowlist: &[],
     },
     Crate {
-        name: "rtcp-packet",
-        allowlist: &[],
-    },
-    Crate {
         name: "rtmp-runtime",
         allowlist: &[],
     },

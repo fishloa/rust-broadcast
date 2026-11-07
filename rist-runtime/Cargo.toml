@@ -18,18 +18,17 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
-rtcp-packet      = { path = "../rtcp-packet",      version = "0.6", default-features = false }
+rtp-packet        = { path = "../rtp-packet",       version = "0.5", default-features = false }
 thiserror        = { version = "2", default-features = false }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-rtp-packet    = { path = "../rtp-packet", default-features = false }
 
 [features]
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-std = ["broadcast-common/std", "rtcp-packet/std", "thiserror/std"]
+std = ["broadcast-common/std", "rtp-packet/std", "thiserror/std"]
 
 [lints]
 workspace = true

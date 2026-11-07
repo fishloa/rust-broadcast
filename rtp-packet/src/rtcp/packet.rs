@@ -56,7 +56,7 @@ use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::error::{Error, PaddingCountError, Result};
+use super::error::{Error, PaddingCountError, Result};
 
 // ---------------------------------------------------------------------------
 // Named constants (no magic numbers — RFC 3550 §6)
@@ -1819,7 +1819,10 @@ mod tests {
             sources: vec![1],
             reason: None,
         })]);
-        assert!(matches!(&(err), Err(crate::error::Error::InvalidValue(..))));
+        assert!(matches!(
+            &(err),
+            Err(crate::rtcp::error::Error::InvalidValue(..))
+        ));
         // And on parse: hand-build a BYE packet and try to parse as compound.
         let bye = Bye {
             sources: vec![1],
@@ -1828,7 +1831,7 @@ mod tests {
         let bytes = bye.try_to_bytes().unwrap();
         assert!(matches!(
             &(CompoundPacket::parse(&bytes)),
-            Err(crate::error::Error::InvalidValue(..))
+            Err(crate::rtcp::error::Error::InvalidValue(..))
         ));
     }
 
@@ -1877,7 +1880,7 @@ mod tests {
         bytes[0] = 0x40; // V=1
         assert!(matches!(
             &(SenderReport::parse(&bytes)),
-            Err(crate::error::Error::InvalidValue(..))
+            Err(crate::rtcp::error::Error::InvalidValue(..))
         ));
     }
 

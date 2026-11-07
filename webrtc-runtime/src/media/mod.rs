@@ -8,7 +8,7 @@
 //! TURN relay is out of scope for this cut), performs the DTLS handshake and
 //! exports SRTP keying material per [RFC 5764] ("DTLS-SRTP"), and decrypts
 //! inbound SRTP into RTP/RTCP packets typed by this workspace's own
-//! [`rtp_packet`]/[`rtcp_packet`] crates — never `rtc-rtp`/`rtc-rtcp`.
+//! [`rtp_packet`] (including its `rtcp` module) crates — never `rtc-rtp`/`rtc-rtcp`.
 //!
 //! Still sans-IO where the underlying `rtc-ice`/`rtc-dtls` crates are:
 //! [`MediaTransport`] owns no socket. The caller feeds it inbound datagrams

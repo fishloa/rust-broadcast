@@ -2,7 +2,7 @@
 //! Report, a Receiver Report and a compound packet (RFC 3550 §6).
 
 use broadcast_common::{Parse, Serialize};
-use rtcp_packet::{CompoundPacket, Error, ReceiverReport, SenderReport};
+use rtp_packet::rtcp::{CompoundPacket, Error, ReceiverReport, SenderReport};
 
 fn too_small(e: &Error) -> Option<(usize, usize)> {
     match e {
@@ -57,7 +57,7 @@ fn compound_packet_rejects_every_short_buffer() {
 #[test]
 fn an_empty_compound_packet_is_invalid_input() {
     assert_eq!(
-        rtcp_packet::CompoundPacket::new(Vec::new()).unwrap_err(),
-        rtcp_packet::Error::InvalidInput("empty RTCP compound packet")
+        rtp_packet::rtcp::CompoundPacket::new(Vec::new()).unwrap_err(),
+        rtp_packet::rtcp::Error::InvalidInput("empty RTCP compound packet")
     );
 }

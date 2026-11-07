@@ -36,8 +36,8 @@ use ctr::Ctr128BE;
 use hmac::{Hmac, Mac};
 use rtc_srtp::context::Context as SrtpContext;
 use rtc_srtp::protection_profile::ProtectionProfile;
-use rtcp_packet::{CompoundPacket, RtcpPacket, SenderReport};
 use rtp_packet::RtpPacket;
+use rtp_packet::rtcp::{CompoundPacket, RtcpPacket, SenderReport};
 use sha1::Sha1;
 
 // ---------------------------------------------------------------------------

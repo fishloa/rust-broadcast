@@ -168,7 +168,7 @@ Container only, never a codec. Sans-IO pull and push APIs, zero-copy sample fan-
 
 ## Related crates
 
-Depends on `broadcast-common` (`Package`/`Unpackage`), `broadcast-hls`, `mp4-emsg`, `mpeg-ts`, `mpeg-pes`, `mpeg-ps`, `rtp-packet`, `rtcp-packet`, `dvb-si` (typed PMT audio metadata) and optionally `container-probe`. Consumed by `media-plane` (IR and `TrackId`), `hls-runtime`, `rtmp-runtime` (dev), `multimux` and `media-doctor`. Python bindings (`transmux-py`) live outside the workspace.
+Depends on `broadcast-common` (`Package`/`Unpackage`), `broadcast-hls`, `mp4-emsg`, `mpeg-ts`, `mpeg-pes`, `mpeg-ps`, `rtp-packet` (RTP and RTCP), `dvb-si` (typed PMT audio metadata) and optionally `container-probe`. Consumed by `media-plane` (IR and `TrackId`), `hls-runtime`, `rtmp-runtime` (dev), `multimux` and `media-doctor`. Python bindings (`transmux-py`) live outside the workspace.
 
 ## MSRV and licence
 

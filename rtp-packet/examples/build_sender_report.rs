@@ -1,10 +1,10 @@
 //! Build an RTCP Sender Report with two reception report blocks from typed
 //! fields and serialize it to wire bytes — RFC 3550 §6.4.1.
 //!
-//! Run with `cargo run -p rtcp-packet --example build_sender_report`.
+//! Run with `cargo run -p rtp-packet --example build_sender_report`.
 
 use broadcast_common::Serialize;
-use rtcp_packet::{ReportBlock, SenderReport};
+use rtp_packet::rtcp::{ReportBlock, SenderReport};
 
 fn main() {
     let sr = SenderReport::new(

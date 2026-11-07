@@ -13,7 +13,7 @@
 //! reproducing the same misunderstanding of the spec that caused the bug.
 
 use broadcast_common::{Parse, Serialize};
-use rtcp_packet::{CompoundPacket, RtcpPacket};
+use rtp_packet::rtcp::{CompoundPacket, RtcpPacket};
 
 static FIXTURE: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("rtp/chrome-rr-pli-remb.bin"));
