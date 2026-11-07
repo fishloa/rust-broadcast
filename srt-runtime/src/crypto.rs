@@ -588,9 +588,18 @@ mod tests {
             select_sek(EncryptionKeyField::Odd, Some(&even), Some(&odd)).unwrap(),
             &odd[..]
         );
-        assert!(select_sek(EncryptionKeyField::Even, None, Some(&odd)).is_err());
-        assert!(select_sek(EncryptionKeyField::NotEncrypted, Some(&even), Some(&odd)).is_err());
-        assert!(select_sek(EncryptionKeyField::Reserved(0b11), Some(&even), Some(&odd)).is_err());
+        assert!(matches!(
+            select_sek(EncryptionKeyField::Even, None, Some(&odd)),
+            Err(Error::InvalidField { .. })
+        ));
+        assert!(matches!(
+            select_sek(EncryptionKeyField::NotEncrypted, Some(&even), Some(&odd)),
+            Err(Error::InvalidField { what: "KK", .. })
+        ));
+        assert!(matches!(
+            select_sek(EncryptionKeyField::Reserved(0b11), Some(&even), Some(&odd)),
+            Err(Error::InvalidField { what: "KK", .. })
+        ));
     }
 
     #[test]

@@ -2965,8 +2965,14 @@ mod tests {
             b_events.iter().any(|e| matches!(e, MediaEvent::DtlsClosed)),
             "B must report DtlsClosed: {b_events:?}"
         );
-        assert!(pair.b.encrypt_rtp(&rtp_test_packet(1)).is_err());
-        assert!(pair.a.encrypt_rtp(&rtp_test_packet(1)).is_err());
+        assert!(matches!(
+            pair.b.encrypt_rtp(&rtp_test_packet(1)),
+            Err(Error::Media(_))
+        ));
+        assert!(matches!(
+            pair.a.encrypt_rtp(&rtp_test_packet(1)),
+            Err(Error::Media(_))
+        ));
         assert!(
             !a_events
                 .iter()
@@ -3099,8 +3105,14 @@ mod tests {
         );
 
         // Credentials too short for RFC 8445 §5.4 are refused, state intact.
-        assert!(pair.a.restart_ice(now, "x", "y", b_u, b_p).is_err());
-        assert!(pair.a.restart_ice(now, a_u, a_p, "", b_p).is_err());
+        assert!(matches!(
+            pair.a.restart_ice(now, "x", "y", b_u, b_p),
+            Err(Error::Media(_))
+        ));
+        assert!(matches!(
+            pair.a.restart_ice(now, a_u, a_p, "", b_p),
+            Err(Error::Media(_))
+        ));
     }
 
     #[test]

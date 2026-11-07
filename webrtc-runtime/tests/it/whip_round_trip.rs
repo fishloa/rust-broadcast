@@ -109,16 +109,22 @@ fn whip_client_wrong_state_errors() {
 
     // flush_candidates in Idle -> error
     let err = client.flush_candidates(ICE_FRAG.to_vec());
-    assert!(err.is_err());
+    assert!(matches!(err, Err(webrtc_runtime::Error::WrongState { .. })));
     assert!(
         matches!(err.unwrap_err(), Error::WrongState { operation, .. } if operation.contains("established"))
     );
 
     // terminate in Idle -> error
-    assert!(client.terminate().is_err());
+    assert!(matches!(
+        client.terminate(),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
 
     // ice_restart in Idle -> error
-    assert!(client.ice_restart(ICE_FRAG.to_vec()).is_err());
+    assert!(matches!(
+        client.ice_restart(ICE_FRAG.to_vec()),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
 
     // on_response in Idle -> error
     let err = client.on_response(client::HttpResponse::new(StatusCode::OK));
@@ -136,7 +142,10 @@ fn whip_client_wrong_state_errors() {
     ));
 
     // flush_candidates in OfferSent -> error
-    assert!(client.flush_candidates(ICE_FRAG.to_vec()).is_err());
+    assert!(matches!(
+        client.flush_candidates(ICE_FRAG.to_vec()),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
 
     // Advance to Established
     let _ = client
@@ -160,9 +169,18 @@ fn whip_client_wrong_state_errors() {
     assert_eq!(*client.state(), client::State::Closed);
 
     // Everything fails in Closed
-    assert!(client.offer(SDP_OFFER.to_vec()).is_err());
-    assert!(client.flush_candidates(ICE_FRAG.to_vec()).is_err());
-    assert!(client.terminate().is_err());
+    assert!(matches!(
+        client.offer(SDP_OFFER.to_vec()),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
+    assert!(matches!(
+        client.flush_candidates(ICE_FRAG.to_vec()),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
+    assert!(matches!(
+        client.terminate(),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
 }
 
 #[test]
@@ -488,9 +506,18 @@ fn whip_server_wrong_state_errors() {
 
     // Close and try everything -> errors
     let _ = session.on_delete().unwrap();
-    assert!(session.on_post(SDP_OFFER.to_vec()).is_err());
-    assert!(session.on_patch(ICE_FRAG.to_vec(), &trickle_ct()).is_err());
-    assert!(session.on_delete().is_err());
+    assert!(matches!(
+        session.on_post(SDP_OFFER.to_vec()),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
+    assert!(matches!(
+        session.on_patch(ICE_FRAG.to_vec(), &trickle_ct()),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
+    assert!(matches!(
+        session.on_delete(),
+        Err(webrtc_runtime::Error::WrongState { .. })
+    ));
 }
 
 #[test]

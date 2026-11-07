@@ -76,7 +76,10 @@ fn method_none_with_other_attributes_is_rejected() {
         "#EXT-X-KEY:METHOD=NONE,KEYFORMAT=\"identity\"",
     ] {
         let p = MediaPlaylist::parse(&key_playlist(bad)).unwrap();
-        assert!(p.segment_keys().is_err(), "{bad}");
+        assert!(
+            matches!(p.segment_keys(), Err(broadcast_hls::Error::HlsParse { .. })),
+            "{bad}"
+        );
     }
     let p = MediaPlaylist::parse(&key_playlist("#EXT-X-KEY:METHOD=NONE")).unwrap();
     assert_eq!(p.segment_keys().unwrap(), vec![None]);

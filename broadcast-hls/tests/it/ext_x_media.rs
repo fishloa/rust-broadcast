@@ -121,14 +121,26 @@ fn instream_id_boundaries_accepted() {
 fn render_rejects_injection_and_invalid_models() {
     let mut p = MasterPlaylist::parse(MASTER).unwrap();
     p.media[0].name = "a\"b".into();
-    assert!(p.to_m3u8().is_err());
+    assert!(matches!(
+        p.to_m3u8(),
+        Err(broadcast_hls::Error::InvalidUri { .. })
+    ));
     let mut p = MasterPlaylist::parse(MASTER).unwrap();
     p.media[0].uri = Some("x\ny".into());
-    assert!(p.to_m3u8().is_err());
+    assert!(matches!(
+        p.to_m3u8(),
+        Err(broadcast_hls::Error::InvalidUri { .. })
+    ));
     let mut p = MasterPlaylist::parse(MASTER).unwrap();
     p.media[3].uri = Some("x.m3u8".into());
-    assert!(p.to_m3u8().is_err());
+    assert!(matches!(
+        p.to_m3u8(),
+        Err(broadcast_hls::Error::HlsParse { .. })
+    ));
     let mut p = MasterPlaylist::parse(MASTER).unwrap();
     p.media[1].forced = true; // AUDIO
-    assert!(p.to_m3u8().is_err());
+    assert!(matches!(
+        p.to_m3u8(),
+        Err(broadcast_hls::Error::HlsParse { .. })
+    ));
 }

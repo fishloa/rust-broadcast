@@ -200,7 +200,10 @@ mod tests {
             codec.decode(&mut buf),
             Ok(Some(ClientEvent::Response { cseq: 1, .. }))
         ));
-        assert!(codec.decode(&mut buf).is_err(), "then the terminal error");
+        assert!(
+            matches!(codec.decode(&mut buf), Err(Error::MessageParse(_))),
+            "then the terminal error"
+        );
     }
 
     #[test]
