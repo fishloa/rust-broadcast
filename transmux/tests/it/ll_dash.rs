@@ -709,8 +709,7 @@ fn ll_mpd_emits_each_registered_utc_timing_scheme() {
     ];
     for (constant, uri) in schemes {
         assert_eq!(constant, uri);
-        let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
-            .unwrap()
+        let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
             .with_utc_timing(constant, "time.example");
         let xml = pkg.package(&media).expect("LL MPD");
         let root = xml::parse(&xml);
