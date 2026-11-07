@@ -56,17 +56,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/whip.rs",
-        373,
+        374,
         "WHIP signalling server TaskTracker (WhipInfra)",
     ),
     (
         "source/whip.rs",
-        636,
+        637,
         "WHIP run task; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        651,
+        652,
         "WHIP accept pump; owned by the route supervisor handle",
     ),
     (
@@ -76,27 +76,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        962,
+        945,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1016,
+        999,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1054,
+        1037,
         "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        1685,
+        1668,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1707,
+        1690,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
@@ -196,17 +196,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        804,
+        807,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1130,
+        1136,
         "test HTTP server task; aborted at test end",
     ),
     (
         "source/dash_pull/tests.rs",
-        1469,
+        1475,
         "test HTTP server task; aborted at test end",
     ),
 ];
