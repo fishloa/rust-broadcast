@@ -48,6 +48,20 @@ impl MjdBcdTime {
         broadcast_common::time::decode_mjd_bcd_utc(self.0)
     }
 
+    /// Encode a UTC datetime.
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`] if the date is outside the 16-bit MJD range.
+    #[cfg(feature = "chrono")]
+    pub fn from_datetime(dt: chrono::DateTime<chrono::Utc>) -> Result<Self> {
+        broadcast_common::time::encode_mjd_bcd_utc(dt)
+            .map(Self)
+            .ok_or(Error::ValueOutOfRange {
+                field: "MjdBcdTime",
+                reason: "date not representable in 16-bit MJD",
+            })
+    }
+
     /// Read the field from `bytes[off..off + 5]`, or `BufferTooShort` naming
     /// `what`.
     pub(crate) fn read(bytes: &[u8], off: usize, what: &'static str) -> Result<Self> {
@@ -113,5 +127,13 @@ mod tests {
                 what: "t"
             })
         ));
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn datetime_round_trip() {
+        let t = MjdBcdTime::from_raw([0xC0, 0x79, 0x12, 0x45, 0x00]);
+        let dt = t.to_datetime().unwrap();
+        assert_eq!(MjdBcdTime::from_datetime(dt).unwrap(), t);
     }
 }

@@ -54,6 +54,10 @@ pub const BIOP_VERSION_MINOR: u8 = 0x00;
 /// CDR byte-order flag for big-endian (DVB mandatory). TR 101 202 §4.7.3.
 pub const BYTE_ORDER_BIG_ENDIAN: u8 = 0x00;
 
+/// `compressed_module_descriptor` tag in the ModuleInfo `userInfo` loop.
+/// TR 101 202 §4.6.6.10.
+pub const COMPRESSED_MODULE_DESCRIPTOR_TAG: u8 = 0x09;
+
 /// Computes the wire-derived byte range `[pos, pos+len)`, bounded by `end`.
 ///
 /// Every length field this guards (`messageBody_length`, `objectInfo_length`,
@@ -119,5 +123,13 @@ mod tests {
             &(span(usize::MAX - 1, 4, usize::MAX)),
             Err(crate::error::Error::SectionLengthOverflow { .. })
         ));
+    }
+
+    #[test]
+    fn compressed_module_descriptor_tag_is_the_carousel_descriptor_tag() {
+        assert_eq!(
+            super::COMPRESSED_MODULE_DESCRIPTOR_TAG,
+            crate::descriptors::carousel::compressed_module::TAG
+        );
     }
 }

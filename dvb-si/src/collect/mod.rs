@@ -454,6 +454,12 @@ impl<T> CompleteTable<T> {
     pub fn sections(&self) -> &[T] {
         &self.sections
     }
+
+    /// Consume the complete table and return the parsed sections.
+    #[must_use]
+    pub fn into_sections(self) -> Vec<T> {
+        self.sections
+    }
 }
 
 impl CompleteSectionSet {
@@ -512,14 +518,38 @@ impl CompleteSectionSet {
         CompleteBat::parse(self, None)
     }
 
+    /// Build a complete BAT view using a descriptor registry.
+    pub fn bat_with_registry<'a>(
+        &'a self,
+        registry: &'a DescriptorRegistry,
+    ) -> crate::Result<CompleteBat<'a>> {
+        CompleteBat::parse(self, Some(registry))
+    }
+
     /// Build a complete SDT view from this section set.
     pub fn sdt(&self) -> crate::Result<CompleteSdt<'_>> {
         CompleteSdt::parse(self, None)
     }
 
+    /// Build a complete SDT view using a descriptor registry.
+    pub fn sdt_with_registry<'a>(
+        &'a self,
+        registry: &'a DescriptorRegistry,
+    ) -> crate::Result<CompleteSdt<'a>> {
+        CompleteSdt::parse(self, Some(registry))
+    }
+
     /// Build a complete EIT view from this section set.
     pub fn eit(&self) -> crate::Result<CompleteEit<'_>> {
         CompleteEit::parse(self, None)
+    }
+
+    /// Build a complete EIT view using a descriptor registry.
+    pub fn eit_with_registry<'a>(
+        &'a self,
+        registry: &'a DescriptorRegistry,
+    ) -> crate::Result<CompleteEit<'a>> {
+        CompleteEit::parse(self, Some(registry))
     }
 }
 
@@ -685,5 +715,70 @@ mod tests {
             "existing key must NOT be skipped when cap full"
         );
         assert_eq!(c.len(), 1);
+    }
+
+    fn long_section(table_id: u8, ext: u16, payload: &[u8]) -> Vec<u8> {
+        let section_length = (5 + payload.len() + 4) as u16;
+        let mut buf = vec![0u8; 3 + section_length as usize];
+        buf[0] = table_id;
+        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[2] = (section_length & 0xFF) as u8;
+        buf[3..5].copy_from_slice(&ext.to_be_bytes());
+        buf[5] = 0xC1;
+        buf[8..8 + payload.len()].copy_from_slice(payload);
+        let crc_off = buf.len() - 4;
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_off]);
+        buf[crc_off..].copy_from_slice(&crc.to_be_bytes());
+        buf
+    }
+
+    fn complete_set(section: &[u8]) -> CompleteSectionSet {
+        SectionSetCollector::new()
+            .push_section(section)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn bat_with_registry_matches_bat_for_an_empty_registry() {
+        let set = complete_set(&long_section(0x4A, 0x1234, &[0xF0, 0, 0xF0, 0]));
+        let registry = DescriptorRegistry::new();
+        let with = set.bat_with_registry(&registry).unwrap();
+        let plain = set.bat().unwrap();
+        assert_eq!(with.bouquet_id, 0x1234);
+        assert_eq!(with.bouquet_id, plain.bouquet_id);
+        assert_eq!(with.transport_streams.len(), plain.transport_streams.len());
+    }
+
+    #[test]
+    fn sdt_with_registry_matches_sdt_for_an_empty_registry() {
+        let set = complete_set(&long_section(0x42, 7, &[0, 1, 0xFF]));
+        let registry = DescriptorRegistry::new();
+        let with = set.sdt_with_registry(&registry).unwrap();
+        let plain = set.sdt().unwrap();
+        assert_eq!(with.transport_stream_id, 7);
+        assert_eq!(with.original_network_id, 1);
+        assert_eq!(with.services.len(), plain.services.len());
+    }
+
+    #[test]
+    fn eit_with_registry_matches_eit_for_an_empty_registry() {
+        let set = complete_set(&long_section(0x4E, 100, &[0, 1, 0, 2, 0, 0x4E]));
+        let registry = DescriptorRegistry::new();
+        let with = set.eit_with_registry(&registry).unwrap();
+        let plain = set.eit().unwrap();
+        assert_eq!(with.service_id, 100);
+        assert_eq!(with.service_id, plain.service_id);
+        assert_eq!(with.events.len(), plain.events.len());
+    }
+
+    #[test]
+    fn into_sections_returns_every_parsed_section() {
+        let set = complete_set(&long_section(0x4A, 9, &[0xF0, 0, 0xF0, 0]));
+        let table = set.table::<crate::tables::bat::BatSection>().unwrap();
+        assert_eq!(table.sections().len(), 1);
+        let sections = table.into_sections();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].bouquet_id, 9);
     }
 }
