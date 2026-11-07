@@ -114,16 +114,20 @@ impl PrimerPack {
         // #1108/MX-W1: `len` is a 64-bit BER length; a bare `as usize`
         // truncates it on a 32-bit target instead of rejecting an
         // over-range value.
-        let len = usize::try_from(len).map_err(|_| Error::BufferTooShort {
-            need: usize::MAX,
-            have: bytes.len(),
-            what: "Primer Pack value (length exceeds platform usize)",
+        let len = usize::try_from(len).map_err(|_| {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                need: usize::MAX,
+                have: bytes.len(),
+                what: "Primer Pack value (length exceeds platform usize)",
+            })
         })?;
-        let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort {
-            need: usize::MAX,
-            have: bytes.len(),
-            what: "Primer Pack value (length overflow)",
-        })?;
+        let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: usize::MAX,
+                have: bytes.len(),
+                what: "Primer Pack value (length overflow)",
+            },
+        ))?;
         need_in(bytes, value_end, "Primer Pack value")?;
         let v = &bytes[value_start..value_end];
         if v.len() < 8 {
@@ -189,11 +193,13 @@ impl<'a> Parse<'a> for PrimerPack {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (pack, consumed) = Self::parse_prefix(bytes)?;
         if consumed != bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: consumed,
-                have: bytes.len(),
-                what: "Primer Pack (trailing bytes after exact-fit parse)",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: consumed,
+                    have: bytes.len(),
+                    what: "Primer Pack (trailing bytes after exact-fit parse)",
+                },
+            ));
         }
         Ok(pack)
     }

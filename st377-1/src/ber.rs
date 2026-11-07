@@ -64,11 +64,13 @@ impl BerLength {
 /// Returns `(length, bytes_consumed_by_the_length_token_itself)`. Does not
 /// touch the value bytes that follow.
 pub fn decode_ber_length(bytes: &[u8]) -> Result<(u64, usize)> {
-    let first = *bytes.first().ok_or(Error::BufferTooShort {
-        need: 1,
-        have: 0,
-        what: "BER length first byte",
-    })?;
+    let first = *bytes.first().ok_or(Error::BufferTooShort(
+        broadcast_common::error::BufferTooShort {
+            need: 1,
+            have: 0,
+            what: "BER length first byte",
+        },
+    ))?;
 
     if first & BER_LONG_FORM_FLAG == 0 {
         // Short form: value is the byte itself.
@@ -260,7 +262,7 @@ mod tests {
     fn truncated_long_form_rejected() {
         assert!(matches!(
             decode_ber_length(&[0x84, 0, 0]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -268,7 +270,7 @@ mod tests {
     fn empty_buffer_rejected() {
         assert!(matches!(
             decode_ber_length(&[]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 }
