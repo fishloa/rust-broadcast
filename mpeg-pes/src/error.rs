@@ -46,3 +46,13 @@ pub enum Error {
     #[error("forbidden PTS_DTS_flags combination: DTS without PTS")]
     ForbiddenPtsDtsFlags,
 }
+
+impl From<broadcast_common::len::BufferTooShort> for Error {
+    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
+        Self::BufferTooShort {
+            need: e.need,
+            have: e.have,
+            what: e.what,
+        }
+    }
+}
