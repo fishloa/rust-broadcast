@@ -227,6 +227,26 @@ impl<'a> Sndu<'a> {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for Sndu<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        Sndu::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for Sndu<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        Sndu::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        Sndu::serialize_into(self, buf)
+    }
+}
+
 /// `true` if the two bytes at the start of `data` are a ULE End Indicator
 /// (`0xFFFF`: `D = 1`, `Length = 0x7FFF`) — no further SNDUs in this TS packet
 /// (RFC 4326 §4.3).

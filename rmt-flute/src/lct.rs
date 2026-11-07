@@ -318,6 +318,18 @@ impl<'a> LctHeader<'a> {
     }
 }
 
+impl broadcast_common::Serialize for LctHeader<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        LctHeader::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        LctHeader::serialize_into(self, buf)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

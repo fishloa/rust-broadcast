@@ -421,6 +421,18 @@ impl<'a> PayloadChain<'a> {
     }
 }
 
+impl broadcast_common::Serialize for PayloadChain<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        PayloadChain::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        PayloadChain::serialize_into(self, buf)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

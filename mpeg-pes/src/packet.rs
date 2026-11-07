@@ -1065,6 +1065,26 @@ impl<'a> PesPacket<'a> {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for PesPacket<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        PesPacket::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for PesPacket<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        PesPacket::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        PesPacket::serialize_into(self, buf)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

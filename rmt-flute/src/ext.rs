@@ -148,6 +148,18 @@ impl<'a> HeaderExtension<'a> {
     }
 }
 
+impl broadcast_common::Serialize for HeaderExtension<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        HeaderExtension::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        HeaderExtension::serialize_into(self, buf)
+    }
+}
+
 /// Parse a chain of header extensions occupying exactly `data`. Every byte of
 /// `data` must be consumed; a trailing partial extension is an error.
 pub fn parse_chain(mut data: &[u8]) -> Result<Vec<HeaderExtension<'_>>> {

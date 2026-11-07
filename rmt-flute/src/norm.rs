@@ -246,6 +246,26 @@ impl SenderWord {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for SenderWord {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        SenderWord::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for SenderWord {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        SENDER_WORD_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        SenderWord::serialize_into(self, buf)
+    }
+}
+
 /// NORM_INFO fixed header beyond the common header + sender word (RFC 5740
 /// §4.2.2, Figure 8): `flags | fec_id | object_transport_id`.
 ///
@@ -349,6 +369,26 @@ impl<'a> NormInfo<'a> {
         out[off..off + self.payload.len()].copy_from_slice(self.payload);
         off += self.payload.len();
         Ok(off)
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for NormInfo<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        NormInfo::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for NormInfo<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        NormInfo::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        NormInfo::serialize_into(self, buf)
     }
 }
 
@@ -479,6 +519,18 @@ impl<'a> NormData<'a> {
         out[off..off + self.payload.len()].copy_from_slice(self.payload);
         off += self.payload.len();
         Ok(off)
+    }
+}
+
+impl broadcast_common::Serialize for NormData<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        NormData::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        NormData::serialize_into(self, buf)
     }
 }
 
@@ -874,6 +926,18 @@ impl<'a> NormCmd<'a> {
     }
 }
 
+impl broadcast_common::Serialize for NormCmd<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        NormCmd::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        NormCmd::serialize_into(self, buf)
+    }
+}
+
 /// A NORM feedback message — NORM_NACK (type 4) or NORM_ACK (type 5)
 /// (RFC 5740 §4.3): common header, `server_id`, `instance_id`, a 16-bit field
 /// that is `reserved` for NACK / `ack_type|ack_id` for ACK, then
@@ -986,6 +1050,26 @@ impl<'a> NormFeedback<'a> {
         out[off..off + self.payload.len()].copy_from_slice(self.payload);
         off += self.payload.len();
         Ok(off)
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for NormFeedback<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        NormFeedback::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for NormFeedback<'_> {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        NormFeedback::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        NormFeedback::serialize_into(self, buf)
     }
 }
 
@@ -1220,6 +1304,67 @@ mod tests {
         let mut out = vec![0u8; c.serialized_len()];
         c.serialize_into(&mut out).unwrap();
         assert_eq!(out, buf, "byte-identical to the spec-derived CC vector");
+    }
+
+    #[test]
+    fn norm_types_round_trip_through_the_traits() {
+        use broadcast_common::{Parse, Serialize};
+
+        let s = sender();
+        let wire = Serialize::try_to_bytes(&s).unwrap();
+        assert_eq!(wire, [0x00, 0xFF, 0x40, 0xA5]);
+        assert_eq!(<SenderWord as Parse>::parse(&wire).unwrap(), s);
+
+        let info = NormInfo {
+            common: common(NormMessageType::Info),
+            sender: s,
+            flags: NORM_FLAG_FILE,
+            fec_id: 129,
+            object_transport_id: 0x0042,
+            extensions: vec![],
+            payload: &[0xDE, 0xAD],
+        };
+        let wire = Serialize::try_to_bytes(&info).unwrap();
+        assert_eq!(<NormInfo as Parse>::parse(&wire).unwrap(), info);
+
+        let f = NormFeedback {
+            common: common(NormMessageType::Nack),
+            server_id: 0x11223344,
+            instance_id: 0x00FF,
+            ack_or_reserved: 0,
+            grtt_response_sec: 0x55667788,
+            grtt_response_usec: 0x99AABBCC,
+            extensions: vec![],
+            payload: &[0x01, 0x02, 0x00, 0x04],
+        };
+        let wire = Serialize::try_to_bytes(&f).unwrap();
+        assert_eq!(<NormFeedback as Parse>::parse(&wire).unwrap(), f);
+
+        let fpid = [0x00u8, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02];
+        let d = NormData {
+            common: common(NormMessageType::Data),
+            sender: s,
+            flags: NORM_FLAG_FILE,
+            fec_id: 129,
+            object_transport_id: 0x0007,
+            fec_payload_id: &fpid,
+            extensions: vec![],
+            payload: &[0xDE, 0xAD, 0xBE, 0xEF],
+        };
+        let wire = Serialize::try_to_bytes(&d).unwrap();
+        assert_eq!(NormData::parse(&wire, 8).unwrap(), d);
+
+        let c = NormCmd {
+            common: common(NormMessageType::Cmd),
+            sender: s,
+            sub_type: NormCmdType::Eot,
+            body: NormCmdBody::Eot,
+            extensions: vec![],
+            content: &[],
+        };
+        let wire = Serialize::try_to_bytes(&c).unwrap();
+        assert_eq!(wire.len(), c.serialized_len());
+        assert_eq!(NormCmd::parse(&wire, 8).unwrap().body, NormCmdBody::Eot);
     }
 
     #[test]

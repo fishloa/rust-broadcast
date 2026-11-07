@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - `arq::seq::contiguous_runs`: inclusive circular runs of consecutive sequence numbers, shared with `broadcast-client` (dedupe D15).
 - `SrtSocket::connect_from_socket` and `SrtSocket::rendezvous_from_socket`: connect or rendezvous over an already-bound `tokio::net::UdpSocket`, so a caller can hold its local port from bind to use. `connect_from_with` and `rendezvous_with` now bind and delegate to them (#1671).
+- `broadcast_common::Parse` / `Serialize` implemented for the crate's wire types, delegating to the existing inherent methods (which stay); each type is round-trip tested through the traits (c6 C6-06).
 
 ### Changed
 - The rendezvous handshake accepts the peer key material in one `accept_peer_crypto` instead of two pasted blocks, and the three handshake `tick`s share `RetransmitStep::into_outputs` (c4 D5, M5).

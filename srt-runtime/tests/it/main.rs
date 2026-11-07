@@ -25,4 +25,5 @@ mod pacing_throughput;
 mod rendezvous_round_trip;
 mod rfc_vectors;
 mod tokio_crypto_interop;
+mod trait_round_trip;
 mod tsbpd_delivery;
