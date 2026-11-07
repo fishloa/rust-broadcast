@@ -14,7 +14,7 @@ use libfuzzer_sys::fuzz_target;
 // the exact same `Cue` list (mirroring `srt.rs`'s own
 // `write_then_parse_round_trips` unit test, generalised to arbitrary input).
 fuzz_target!(|data: &[u8]| {
-    if data.len() > 256 * 1024 {
+    if data.len() > test_fixtures::fuzz::INPUT_CAP_256K {
         return;
     }
     let Ok(input) = core::str::from_utf8(data) else {

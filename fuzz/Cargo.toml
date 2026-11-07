@@ -59,6 +59,7 @@ webrtc-runtime = { path = "../webrtc-runtime" }
 atsc3-route    = { path = "../atsc3-route" }
 rmt-flute      = { path = "../rmt-flute" }
 dash-runtime   = { path = "../dash-runtime" }
+test-fixtures  = { path = "../test-fixtures" }
 jiff           = { version = "0.2", default-features = false, features = ["std"] }
 ule            = { path = "../ule" }
 caption-convert = { path = "../caption-convert" }

@@ -23,6 +23,8 @@
 //! dev-dependency on it never appears in a published manifest (same pattern as
 //! `test-bounded` / `test-alloc`).
 
+pub mod fuzz;
+
 use std::path::{Path, PathBuf};
 
 /// The workspace `fixtures/` directory (committed, redistributable fixtures).
@@ -424,6 +426,28 @@ pub fn assert_short_buffers_rejected<E: std::fmt::Debug>(
     }
 }
 
+/// Decode a hex literal (ASCII whitespace ignored) into bytes.
+///
+/// # Panics
+/// If `s` is not valid even-length hex; the message carries the offending text.
+#[must_use]
+pub fn hex_bytes(s: &str) -> Vec<u8> {
+    let digits: String = s.split_ascii_whitespace().collect();
+    hex::decode(&digits).unwrap_or_else(|e| panic!("bad hex literal {s:?}: {e}"))
+}
+
+/// Lowercase hex of `bytes`, two digits per byte, no separators.
+#[must_use]
+pub fn hex_lower(bytes: &[u8]) -> String {
+    hex::encode(bytes)
+}
+
+/// Uppercase hex of `bytes`, two digits per byte, no separators.
+#[must_use]
+pub fn hex_upper(bytes: &[u8]) -> String {
+    hex::encode_upper(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,26 +554,4 @@ mod tests {
             "a missing entry in a checkout WITH private/ must panic"
         );
     }
-}
-
-/// Decode a hex literal (ASCII whitespace ignored) into bytes.
-///
-/// # Panics
-/// If `s` is not valid even-length hex; the message carries the offending text.
-#[must_use]
-pub fn hex_bytes(s: &str) -> Vec<u8> {
-    let digits: String = s.split_ascii_whitespace().collect();
-    hex::decode(&digits).unwrap_or_else(|e| panic!("bad hex literal {s:?}: {e}"))
-}
-
-/// Lowercase hex of `bytes`, two digits per byte, no separators.
-#[must_use]
-pub fn hex_lower(bytes: &[u8]) -> String {
-    hex::encode(bytes)
-}
-
-/// Uppercase hex of `bytes`, two digits per byte, no separators.
-#[must_use]
-pub fn hex_upper(bytes: &[u8]) -> String {
-    hex::encode_upper(bytes)
 }

@@ -4,7 +4,7 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     // Cap input to 256 KiB to prevent OOM from deeply nested XML
-    if data.len() > 256 * 1024 {
+    if data.len() > test_fixtures::fuzz::INPUT_CAP_256K {
         return;
     }
     // XML must be valid UTF-8; skip non-UTF-8 input
