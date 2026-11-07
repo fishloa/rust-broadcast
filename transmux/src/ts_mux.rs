@@ -113,6 +113,13 @@ const MAX_SECTION_LENGTH: usize = 0x3FD;
 /// `version_number`(5)=0 | `current_next_indicator`(1)=1, with the two leading
 /// reserved bits set to 1 (`11` per the spec reserved convention) → 0xC1.
 const VERSION_CURRENT_NEXT: u8 = 0xC1;
+/// `version_number` is a 5-bit field (§2.4.4.9), so it increments modulo 32.
+const SECTION_VERSION_MODULUS: u8 = 32;
+/// The two reserved bits (`11`) and `current_next_indicator`(1)=1 around the
+/// 5-bit `version_number`, which sits at bits `[5:1]`.
+const VERSION_FIELD_FIXED_BITS: u8 = 0xC1;
+/// Bit position of `version_number` within the version/cni byte.
+const VERSION_FIELD_SHIFT: u32 = 1;
 /// Reserved 3-bit prefix (all 1s) on the 13-bit `network_PID` / `program_map_PID`
 /// / `PCR_PID` / `elementary_PID` fields (§2.4.4.4 / §2.4.4.9).
 const PID_RESERVED_HI: u8 = 0xE0;
@@ -531,8 +538,8 @@ struct TaggedPacket {
 /// stream at an arbitrary packet-aligned offset finds the programme structure
 /// within one interval (ETSI TR 101 290 indicators 1.3/1.5 require PAT/PMT at
 /// least every 0.5 s). Repeats are always whole sections, placed between PES
-/// packets, with correct per-PID continuity counters; the PMT content (and its
-/// `version_number`) never changes. Use [`TsMux::with_psi_interval_ms`] to tune
+/// packets, with correct per-PID continuity counters; within one `TsMux` run
+/// the PMT content (and its `version_number`) never changes. Use [`TsMux::with_psi_interval_ms`] to tune
 /// the interval, or `None` to write the PSI once only.
 #[derive(Debug, Clone)]
 pub struct TsMux {
@@ -1036,6 +1043,16 @@ impl PsiState {
 pub struct TsContinuity {
     /// Indexed by PID (`0..=0x1FFF`); `None` until the PID's first payload.
     counters: Vec<Option<u8>>,
+    /// The last PMT written through this state, for `version_number` tracking.
+    pmt: Option<PmtRecord>,
+}
+
+/// The PMT most recently emitted: its content built at version 0 (the change
+/// key) and the `version_number` it was written with.
+#[derive(Debug, Clone)]
+struct PmtRecord {
+    pmt_at_v0: Vec<u8>,
+    version: u8,
 }
 
 impl TsContinuity {
@@ -1057,6 +1074,19 @@ impl TsContinuity {
     /// `pid`; the next one takes `cc + 1` modulo 16 (§2.4.3.3).
     fn advance(&mut self, pid: Pid, cc: u8) {
         self.set_next_for(pid, (cc + 1) & 0x0F);
+    }
+
+    /// The PMT `version_number` for a section whose version-0 rendering is
+    /// `pmt_at_v0`: unchanged content keeps the previous version, changed
+    /// content increments it modulo 32 (§2.4.4.9), and the first PMT is 0.
+    fn pmt_version_for(&mut self, pmt_at_v0: Vec<u8>) -> u8 {
+        let version = match &self.pmt {
+            None => 0,
+            Some(prev) if prev.pmt_at_v0 == pmt_at_v0 => prev.version,
+            Some(prev) => (prev.version + 1) % SECTION_VERSION_MODULUS,
+        };
+        self.pmt = Some(PmtRecord { pmt_at_v0, version });
+        version
     }
 
     /// Set the counter the next payload-bearing packet on `pid` must carry.
@@ -1110,7 +1140,13 @@ fn mux_tracks_timed_with_cc(
     // ── 2. Build the PSI (PAT + PMT) and packetise it first (PUSI order) ──
     let mut out: Vec<u8> = Vec::new();
     let pat = build_pat_section(PMT_PID)?;
-    let pmt = build_pmt_section(pcr_pid, &plans)?;
+    let pmt_v0 = build_pmt_section(pcr_pid, &plans, 0)?;
+    let pmt_version = continuity.pmt_version_for(pmt_v0.clone());
+    let pmt = if pmt_version == 0 {
+        pmt_v0
+    } else {
+        build_pmt_section(pcr_pid, &plans, pmt_version)?
+    };
     // A continuing stream (`PsiState::started`) already wrote its leading PSI
     // in an earlier call; only the periodic repeats below apply.
     if !psi.started {
@@ -1675,11 +1711,11 @@ fn build_pat_section(pmt_pid: Pid) -> Result<Vec<u8>> {
 /// descriptor (issue #576) or an audio track's language (issue #775) after a
 /// re-mux. `program_info` stays empty (no program-level descriptors are
 /// modelled).
-fn build_pmt_section(pcr_pid: Pid, plans: &[EsPlan]) -> Result<Vec<u8>> {
+fn build_pmt_section(pcr_pid: Pid, plans: &[EsPlan], version: u8) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     // table_id_extension = program_number, then version/cni + section numbers.
     body.extend_from_slice(&PROGRAM_NUMBER.to_be_bytes());
-    body.push(VERSION_CURRENT_NEXT);
+    body.push(VERSION_FIELD_FIXED_BITS | (version << VERSION_FIELD_SHIFT));
     body.push(0); // section_number
     body.push(0); // last_section_number
     // reserved(3) + PCR_PID(13).
@@ -2069,6 +2105,22 @@ mod tests {
     }
 
     #[test]
+    fn pmt_version_wraps_modulo_32_across_changes() {
+        let mut c = TsContinuity::new();
+        let key = |n: u8| vec![n];
+        assert_eq!(c.pmt_version_for(key(0)), 0, "first PMT is version 0");
+        assert_eq!(c.pmt_version_for(key(0)), 0, "unchanged content keeps it");
+        for n in 1..=SECTION_VERSION_MODULUS {
+            assert_eq!(
+                c.pmt_version_for(key(n)),
+                n % SECTION_VERSION_MODULUS,
+                "change {n}"
+            );
+        }
+        assert_eq!(c.pmt_version_for(key(SECTION_VERSION_MODULUS)), 0);
+    }
+
+    #[test]
     fn pmt_section_crc_is_valid() {
         let plans = alloc::vec![EsPlan {
             pid: ES_PID_BASE,
@@ -2079,7 +2131,7 @@ mod tests {
             hevc_vps_sps_pps: Vec::new(),
             descriptors: Vec::new(),
         }];
-        let pmt = build_pmt_section(ES_PID_BASE, &plans).unwrap();
+        let pmt = build_pmt_section(ES_PID_BASE, &plans, 0).unwrap();
         assert_eq!(crc32_mpeg2::compute(&pmt), 0);
         assert_eq!(pmt[0], TABLE_ID_PMT);
     }
@@ -2101,7 +2153,7 @@ mod tests {
             hevc_vps_sps_pps: Vec::new(),
             descriptors: descriptors.clone(),
         }];
-        let pmt = build_pmt_section(ES_PID_BASE, &plans).unwrap();
+        let pmt = build_pmt_section(ES_PID_BASE, &plans, 0).unwrap();
         assert_eq!(crc32_mpeg2::compute(&pmt), 0);
         // Locate the ES_info bytes: body starts at offset 8 (section header),
         // program_info_length is 0, so the ES loop starts right after the
@@ -2335,7 +2387,7 @@ mod tests {
             hevc_vps_sps_pps: Vec::new(),
             descriptors: alloc::vec![0u8; 1004],
         }];
-        let err = build_pmt_section(ES_PID_BASE, &plans).unwrap_err();
+        let err = build_pmt_section(ES_PID_BASE, &plans, 0).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -2364,7 +2416,7 @@ mod tests {
             hevc_vps_sps_pps: Vec::new(),
             descriptors: alloc::vec![0u8; 1003],
         }];
-        let pmt = build_pmt_section(ES_PID_BASE, &plans).unwrap();
+        let pmt = build_pmt_section(ES_PID_BASE, &plans, 0).unwrap();
         let section_length = (((pmt[1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | pmt[2] as usize;
         assert_eq!(section_length, MAX_SECTION_LENGTH);
         assert_eq!(crc32_mpeg2::compute(&pmt), 0);
