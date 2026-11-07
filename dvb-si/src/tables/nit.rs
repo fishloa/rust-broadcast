@@ -5,6 +5,7 @@
 //! table is split into two variants by table_id: `0x40` for the actual
 //! TS the receiver is tuned to, `0x41` for other TSes in the same network.
 
+use super::ts_loop_section::{self, Labels, MIN_SECTION_LEN, TransportStreamEntry};
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
@@ -17,18 +18,6 @@ pub const TABLE_ID_OTHER: u8 = 0x41;
 /// Well-known PID on which NIT is carried.
 pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0010);
 
-const MIN_HEADER_LEN: usize = 3;
-const EXTENSION_HEADER_LEN: usize = 5;
-/// Bytes after the extension header: reserved_future_use (4 bits) + network_descriptors_length (12 bits) = 2 bytes.
-/// (Previously incorrectly defined as 4 — the parser assumed `network_id`
-/// was duplicated *after* the extension header; spec says it lives IN
-/// the extension header at bytes 3-4 as `table_id_extension`.)
-const POST_EXTENSION_LEN: usize = 2;
-use super::CRC_LEN;
-const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
-/// Per-transport-stream header: ts_id (2) + original_network_id (2) + reserved_future_use (4 bits) + transport_descriptors_length (12 bits).
-const TS_HEADER_LEN: usize = 6;
-
 /// NIT kind — distinguishes `0x40` (actual) from `0x41` (other).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -38,43 +27,6 @@ pub enum NitKind {
     Actual,
     /// NIT describing other transport streams in the same network.
     Other,
-}
-
-/// One transport-stream entry inside the NIT transport_stream_loop.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
-#[non_exhaustive]
-pub struct NitTransportStream<'a> {
-    /// transport_stream_id of the described TS.
-    pub transport_stream_id: u16,
-    /// original_network_id of the described TS.
-    pub original_network_id: u16,
-    /// Raw descriptor bytes for this transport stream.
-    /// Per-TS descriptor loop. Serializes as the typed descriptor sequence;
-    /// `.raw()` yields the wire bytes.
-    pub descriptors: DescriptorLoop<'a>,
-    /// `reserved_future_use(4)` before `transport_descriptors_length`
-    /// (EN 300 468 §5.2.1, `1111`); preserved from the wire.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: u8,
-}
-
-impl<'a> NitTransportStream<'a> {
-    /// Construct a transport-stream entry with the spec `reserved_future_use` fill.
-    #[must_use]
-    pub fn new(
-        transport_stream_id: u16,
-        original_network_id: u16,
-        descriptors: DescriptorLoop<'a>,
-    ) -> Self {
-        Self {
-            transport_stream_id,
-            original_network_id,
-            descriptors,
-            reserved_future_use: super::RESERVED_4,
-        }
-    }
 }
 
 /// Network Information Table.
@@ -100,7 +52,7 @@ pub struct NitSection<'a> {
     /// `.raw()` yields the wire bytes.
     pub network_descriptors: DescriptorLoop<'a>,
     /// Transport-stream loop entries in wire order.
-    pub transport_streams: Vec<NitTransportStream<'a>>,
+    pub transport_streams: Vec<TransportStreamEntry<'a>>,
     /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
     /// [`SectionBits::dvb`](super::SectionBits::dvb)).
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -125,7 +77,7 @@ impl<'a> NitSection<'a> {
         section_number: u8,
         last_section_number: u8,
         network_descriptors: DescriptorLoop<'a>,
-        transport_streams: Vec<NitTransportStream<'a>>,
+        transport_streams: Vec<TransportStreamEntry<'a>>,
     ) -> Self {
         Self {
             kind,
@@ -143,15 +95,22 @@ impl<'a> NitSection<'a> {
     }
 }
 
+const LABELS: Labels = Labels {
+    section: "NitSection",
+    loop_header: "NitSection transport_stream_loop",
+    trailing: "NitSection trailing bytes after transport stream loop",
+    entry: "NitSection transport_stream_entry",
+    extension: "nit",
+};
+
 impl<'a> Parse<'a> for NitSection<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let min_len = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
-        if bytes.len() < min_len {
+        if bytes.len() < MIN_SECTION_LEN {
             return Err(Error::BufferTooShort {
-                need: min_len,
+                need: MIN_SECTION_LEN,
                 have: bytes.len(),
-                what: "NitSection",
+                what: LABELS.section,
             });
         }
         let kind = match bytes[0] {
@@ -160,131 +119,24 @@ impl<'a> Parse<'a> for NitSection<'a> {
             other => {
                 return Err(Error::UnexpectedTableId {
                     table_id: other,
-                    what: "NitSection",
+                    what: LABELS.section,
                     expected: &[TABLE_ID_ACTUAL, TABLE_ID_OTHER],
                 });
             }
         };
-
-        let section_length = super::section_length_of(bytes);
-        let total = super::check_section_length(
-            bytes.len(),
-            MIN_HEADER_LEN,
-            section_length,
-            MIN_SECTION_LEN,
-        )?;
-
-        // Extension header bytes [3..8] per ETSI EN 300 468 §5.2.1:
-        //   bytes[3..5] = table_id_extension = network_id (16 bits)
-        //   bytes[5]    = reserved(2) | version_number(5) | current_next_indicator(1)
-        //   bytes[6]    = section_number
-        //   bytes[7]    = last_section_number
-        let network_id = crate::wire::be_u16(bytes, 3, "nit")?;
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
-
-        // bytes[8..10] = reserved(4) | network_descriptors_length(12)
-        let network_descriptors_length = super::desc_loop_len_of(bytes[8], bytes[9]);
-
-        let network_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
-        let network_desc_end = network_desc_start + network_descriptors_length;
-
-        // Verify network descriptors don't overflow
-        if network_desc_end > total - CRC_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: network_descriptors_length,
-                available: (total - CRC_LEN).saturating_sub(network_desc_start),
-            });
-        }
-
-        let network_descriptors = DescriptorLoop::new(&bytes[network_desc_start..network_desc_end]);
-
-        // Parse transport stream loop starting after network descriptors
-        let ts_loop_start = network_desc_end;
-        let ts_loop_end = total - CRC_LEN;
-
-        // First 2 bytes of the loop are: reserved_future_use (4 bits) + transport_stream_loop_length (12 bits)
-        if ts_loop_end - ts_loop_start < 2 {
-            return Err(Error::BufferTooShort {
-                need: ts_loop_end - ts_loop_start + 2,
-                have: ts_loop_end - ts_loop_start,
-                what: "NitSection transport_stream_loop",
-            });
-        }
-
-        let transport_stream_loop_length =
-            super::desc_loop_len_of(bytes[ts_loop_start], bytes[ts_loop_start + 1]);
-
-        let mut pos = ts_loop_start + 2;
-        let loop_end = ts_loop_start + 2 + transport_stream_loop_length;
-
-        if loop_end > ts_loop_end {
-            return Err(Error::SectionLengthOverflow {
-                declared: transport_stream_loop_length,
-                available: ts_loop_end - (ts_loop_start + 2),
-            });
-        }
-        // The loop is the last field before CRC_32: a shorter declared length
-        // leaves bytes no field owns (dropped on re-serialize), so reject.
-        super::check_loop_reaches_crc(
-            loop_end,
-            ts_loop_end,
-            "NitSection trailing bytes after transport stream loop",
-        )?;
-
-        let mut transport_streams = Vec::new();
-
-        while pos < loop_end {
-            if pos + TS_HEADER_LEN > loop_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + TS_HEADER_LEN,
-                    have: loop_end,
-                    what: "NitSection transport_stream_entry",
-                });
-            }
-
-            let hdr = &bytes[pos..pos + TS_HEADER_LEN];
-            let transport_stream_id = crate::wire::be_u16(hdr, 0, "nit")?;
-            let original_network_id = crate::wire::be_u16(hdr, 2, "nit")?;
-
-            // transport_descriptors_length is 12 bits: high 4 bits reserved, low 12 bits length
-            let transport_descriptors_length =
-                super::desc_loop_len_of(bytes[pos + 4], bytes[pos + 5]);
-
-            let desc_start = pos + TS_HEADER_LEN;
-            let desc_end = desc_start + transport_descriptors_length;
-
-            if desc_end > loop_end {
-                return Err(Error::SectionLengthOverflow {
-                    declared: transport_descriptors_length,
-                    available: loop_end - desc_start,
-                });
-            }
-
-            transport_streams.push(NitTransportStream {
-                transport_stream_id,
-                original_network_id,
-                descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
-                reserved_future_use: super::len_reserved_of(bytes[pos + 4]),
-            });
-
-            pos = desc_end;
-        }
-
+        let p = ts_loop_section::parse(bytes, &LABELS)?;
         Ok(NitSection {
             kind,
-            network_id,
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
-            network_descriptors,
-            transport_streams,
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_network_descriptors_length: super::len_reserved_of(bytes[8]),
-            reserved_transport_stream_loop_length: super::len_reserved_of(bytes[ts_loop_start]),
+            network_id: p.id,
+            version_number: p.version_number,
+            current_next_indicator: p.current_next_indicator,
+            section_number: p.section_number,
+            last_section_number: p.last_section_number,
+            network_descriptors: p.descriptors,
+            transport_streams: p.transport_streams,
+            bits: p.bits,
+            reserved_network_descriptors_length: p.reserved_descriptors_length,
+            reserved_transport_stream_loop_length: p.reserved_transport_stream_loop_length,
         })
     }
 }
@@ -292,99 +144,31 @@ impl<'a> Parse<'a> for NitSection<'a> {
 impl Serialize for NitSection<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        let net_desc_len = self.network_descriptors.len();
-        let ts_bytes: usize = self
-            .transport_streams
-            .iter()
-            .map(|ts| TS_HEADER_LEN + ts.descriptors.len())
-            .sum();
-        MIN_HEADER_LEN
-            + EXTENSION_HEADER_LEN
-            + POST_EXTENSION_LEN
-            + net_desc_len
-            + 2 // transport_stream_loop_length header
-            + ts_bytes
-            + CRC_LEN
+        ts_loop_section::serialized_len(&self.network_descriptors, &self.transport_streams)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
-
-        buf[0] = match self.kind {
+        let table_id = match self.kind {
             NitKind::Actual => TABLE_ID_ACTUAL,
             NitKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = self.bits.b1()?;
-        super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-
-        // Extension header per ETSI EN 300 468 §5.2.1:
-        //   bytes[3..5] = network_id (table_id_extension)
-        //   bytes[5]    = reserved | version | current_next
-        //   bytes[6..8] = section_number + last_section_number
-        buf[3..5].copy_from_slice(&self.network_id.to_be_bytes());
-        buf[5] = self
-            .bits
-            .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
-
-        // bytes[8..10] = reserved(4) | network_descriptors_length(12)
-        let net_dll = broadcast_common::len::fit_bits(
-            self.network_descriptors.len() as u64,
-            12,
-            "network_descriptors_length",
-        )?;
-        super::write_desc_loop_len_r(
-            &mut buf[8..10],
-            net_dll as usize,
-            self.reserved_network_descriptors_length,
-        )?;
-
-        let net_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
-        buf[net_desc_start..net_desc_start + self.network_descriptors.len()]
-            .copy_from_slice(self.network_descriptors.raw());
-
-        let ts_loop_start = net_desc_start + self.network_descriptors.len();
-        let ts_loop_length = broadcast_common::len::fit_bits(
-            (len - ts_loop_start - 2 - CRC_LEN) as u64,
-            12,
-            "transport_stream_loop_length",
-        )?;
-        super::write_desc_loop_len_r(
-            &mut buf[ts_loop_start..ts_loop_start + 2],
-            ts_loop_length as usize,
-            self.reserved_transport_stream_loop_length,
-        )?;
-
-        let mut pos = ts_loop_start + 2;
-        for ts in &self.transport_streams {
-            buf[pos..pos + 2].copy_from_slice(&ts.transport_stream_id.to_be_bytes());
-            buf[pos + 2..pos + 4].copy_from_slice(&ts.original_network_id.to_be_bytes());
-            let ts_dll = broadcast_common::len::fit_bits(
-                ts.descriptors.len() as u64,
-                12,
-                "transport_descriptors_length",
-            )?;
-            super::write_desc_loop_len_r(
-                &mut buf[pos + 4..pos + 6],
-                ts_dll as usize,
-                ts.reserved_future_use,
-            )?;
-            let desc_start = pos + TS_HEADER_LEN;
-            buf[desc_start..desc_start + ts.descriptors.len()]
-                .copy_from_slice(ts.descriptors.raw());
-            pos = desc_start + ts.descriptors.len();
-        }
-
-        let crc_pos = len - CRC_LEN;
-        super::write_crc(buf, crc_pos);
-        Ok(len)
+        ts_loop_section::serialize_into(
+            table_id,
+            &ts_loop_section::View {
+                id: self.network_id,
+                version_number: self.version_number,
+                current_next_indicator: self.current_next_indicator,
+                section_number: self.section_number,
+                last_section_number: self.last_section_number,
+                descriptors: &self.network_descriptors,
+                transport_streams: &self.transport_streams,
+                bits: &self.bits,
+                reserved_descriptors_length: self.reserved_network_descriptors_length,
+                reserved_transport_stream_loop_length: self.reserved_transport_stream_loop_length,
+                descriptors_length_what: "network_descriptors_length",
+            },
+            buf,
+        )
     }
 }
 impl<'a> crate::traits::TableDef<'a> for NitSection<'a> {
@@ -395,6 +179,8 @@ impl<'a> crate::traits::TableDef<'a> for NitSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::CRC_LEN;
+    use crate::tables::ts_loop_section::{EXTENSION_HEADER_LEN, POST_EXTENSION_LEN, TS_HEADER_LEN};
 
     type TestTs = (u16, u16, Vec<u8>);
 
@@ -523,8 +309,8 @@ mod tests {
             0,
             DescriptorLoop::new(&net_desc),
             vec![
-                NitTransportStream::new(0x1234, 0x0020, DescriptorLoop::new(&ts_desc)),
-                NitTransportStream::new(0x5678, 0x0020, DescriptorLoop::new(&[])),
+                TransportStreamEntry::new(0x1234, 0x0020, DescriptorLoop::new(&ts_desc)),
+                TransportStreamEntry::new(0x5678, 0x0020, DescriptorLoop::new(&[])),
             ],
         );
         let mut buf = vec![0u8; nit.serialized_len()];

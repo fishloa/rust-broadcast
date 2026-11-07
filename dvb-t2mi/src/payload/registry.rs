@@ -58,106 +58,16 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use core::any::Any;
 
-// ---------------------------------------------------------------------------
-// PayloadObject trait
-// ---------------------------------------------------------------------------
-
-/// Object-safe face of a runtime-registered payload value.
-///
-/// Registered types must be owned (`'static`) because the `dyn Any` downcast
-/// path requires it.  See the [module docs][self] for details.
-///
-/// Implemented automatically via the blanket impl for any `T` satisfying the
-/// supertraits; you do not need to write this by hand.
-#[cfg(not(feature = "serde"))]
-pub trait PayloadObject: core::fmt::Debug + Any + Send + Sync {
-    /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
-    fn as_any(&self) -> &dyn Any;
-}
-
-/// Object-safe face of a runtime-registered payload value.
-///
-/// Registered types must be owned (`'static`) because the `dyn Any` downcast
-/// path requires it.  See the [module docs][self] for details.
-///
-/// Implemented automatically via the blanket impl for any `T` satisfying the
-/// supertraits; you do not need to write this by hand.
-#[cfg(feature = "serde")]
-pub trait PayloadObject: core::fmt::Debug + Any + Send + Sync + erased_serde::Serialize {
-    /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
-    fn as_any(&self) -> &dyn Any;
-}
-
-// Blanket impl — no-serde arm.
-#[cfg(not(feature = "serde"))]
-impl<T> PayloadObject for T
-where
-    T: core::fmt::Debug + Any + Send + Sync,
-{
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-// Blanket impl — serde arm.
-#[cfg(feature = "serde")]
-impl<T> PayloadObject for T
-where
-    T: core::fmt::Debug + Any + Send + Sync + serde::Serialize,
-{
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-// Downcast helpers ON THE TRAIT OBJECT (not the blanket).
-//
-// These MUST be inherent methods on `dyn PayloadObject` rather than something
-// callable on `Box<dyn PayloadObject>` via the blanket impl. The blanket
-// `impl<T> PayloadObject for T` also covers `Box<dyn PayloadObject>` itself
-// whenever the box satisfies the bounds (it does under `--no-default-features`,
-// where the bound is just `Debug + Any + Send + Sync`). So `the_box.as_any()`
-// resolves to the *box's* impl and reports the box's `TypeId`, not the inner
-// value's — a silent downcast failure. Calling through `dyn PayloadObject`
-// (which `Box` derefs to) always hits the inner value. Always downcast via
-// these methods, never `the_box.as_any()`.
-impl dyn PayloadObject {
-    /// Downcast a registered payload to its concrete type `T`.
+broadcast_common::declare_object_trait! {
+    /// Object-safe face of a runtime-registered payload value.
     ///
-    /// Works for `Box<dyn PayloadObject>` (it derefs to the trait object) under
-    /// every feature configuration.
-    #[must_use]
-    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
-        self.as_any().downcast_ref::<T>()
-    }
-
-    /// `true` if the registered payload's concrete type is `T`.
-    #[must_use]
-    pub fn is<T: Any>(&self) -> bool {
-        self.as_any().is::<T>()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Erased serialisation helper (serde-gated)
-// ---------------------------------------------------------------------------
-
-/// `serialize_with` helper used on [`crate::payload::AnyPayload::Other`]'s `value` field.
-///
-/// Delegates to [`erased_serde::serialize`] so the concrete type's
-/// `serde::Serialize` impl is invoked through the trait object.
-///
-/// The `&Box<T>` is required by serde's `serialize_with` codegen — the field
-/// type is `Box<dyn PayloadObject>` so serde passes `&Box<dyn PayloadObject>`.
-#[cfg(feature = "serde")]
-#[allow(clippy::borrowed_box)]
-pub(crate) fn serialize_erased<S: serde::Serializer>(
-    v: &Box<dyn PayloadObject>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    erased_serde::serialize(&**v, s)
+    /// Registered types must be owned (`'static`) because the `dyn Any` downcast
+    /// path requires it.  See the [module docs][self] for details.
+    ///
+    /// Implemented automatically via the blanket impl for any `T` satisfying the
+    /// supertraits; you do not need to write this by hand.
+    pub trait PayloadObject, "payload"
 }
 
 // ---------------------------------------------------------------------------

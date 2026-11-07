@@ -2,19 +2,7 @@ use crate::descriptors::DescriptorRegistry;
 use crate::tables::nit;
 use alloc::vec::Vec;
 
-use super::{CompleteSectionSet, ParsedDescriptorLoop};
-
-/// Transport-stream entry in a complete NIT.
-#[derive(Debug)]
-#[non_exhaustive]
-pub struct CompleteNitTransportStream<'a> {
-    /// transport_stream_id of the described TS.
-    pub transport_stream_id: u16,
-    /// original_network_id of the described TS.
-    pub original_network_id: u16,
-    /// Typed descriptor loop for this transport stream.
-    pub descriptors: ParsedDescriptorLoop<'a>,
-}
+use super::{CompleteSectionSet, CompleteTransportStream, ParsedDescriptorLoop};
 
 /// Complete logical Network Information Table.
 #[derive(Debug)]
@@ -34,7 +22,7 @@ pub struct CompleteNit<'a> {
     /// not lost).
     pub network_descriptors: ParsedDescriptorLoop<'a>,
     /// Transport-stream loop entries from all sections in wire order.
-    pub transport_streams: Vec<CompleteNitTransportStream<'a>>,
+    pub transport_streams: Vec<CompleteTransportStream<'a>>,
 }
 
 impl<'a> CompleteNit<'a> {
@@ -51,7 +39,7 @@ impl<'a> CompleteNit<'a> {
         let mut transport_streams = Vec::new();
         for section in &sections {
             transport_streams.extend(section.transport_streams.iter().map(|ts| {
-                CompleteNitTransportStream {
+                CompleteTransportStream {
                     transport_stream_id: ts.transport_stream_id,
                     original_network_id: ts.original_network_id,
                     descriptors: ParsedDescriptorLoop::parse(ts.descriptors, registry),

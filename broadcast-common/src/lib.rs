@@ -53,6 +53,7 @@ pub mod bits;
 pub mod cenc;
 pub mod clock33;
 pub mod crc32_mpeg2;
+pub mod erased;
 pub mod hex;
 pub mod len;
 pub mod mux;
@@ -61,6 +62,7 @@ pub mod pusi;
 pub mod seq;
 pub mod stage;
 pub mod time;
+pub mod timescale;
 pub mod traits;
 pub mod ts_dup;
 #[cfg(feature = "xml")]

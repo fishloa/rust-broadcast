@@ -230,33 +230,7 @@ impl<'a> Parse<'a> for CaPmt<'a> {
         let (cmd_id, program_ca_descriptors) =
             parse_cmd_and_descriptors(body, &mut pos, program_info_length, "ca_pmt program_info")?;
 
-        let mut streams = Vec::new();
-        while pos < body.len() {
-            if pos + ES_PREFIX > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + ES_PREFIX,
-                    have: body.len(),
-                    what: "ca_pmt ES prefix",
-                });
-            }
-            let stream_type = body[pos];
-            let reserved_pid = ReservedOnes::from_bits(body[pos + 1] >> 5);
-            let reserved_es_info = ReservedOnes::from_bits(body[pos + 3] >> 4);
-            let elementary_pid =
-                Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
-            let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
-            pos += ES_PREFIX;
-            let (es_cmd, ca_descriptors) =
-                parse_cmd_and_descriptors(body, &mut pos, es_info_length, "ca_pmt ES_info")?;
-            streams.push(CaPmtStream {
-                stream_type,
-                elementary_pid,
-                cmd_id: es_cmd,
-                ca_descriptors,
-                reserved_pid,
-                reserved_es_info,
-            });
-        }
+        let streams = parse_streams(body, pos, "ca_pmt ES prefix", "ca_pmt ES_info")?;
 
         Ok(Self {
             length_form,
@@ -309,13 +283,91 @@ pub(crate) fn info_block_len(cmd_id: Option<CaPmtCmdId>, descriptors: &[u8]) -> 
     }
 }
 
+/// Parse the elementary-stream loop of a `ca_pmt` body starting at `pos`.
+pub(crate) fn parse_streams<'a>(
+    body: &'a [u8],
+    mut pos: usize,
+    prefix_what: &'static str,
+    info_what: &'static str,
+) -> Result<Vec<CaPmtStream<'a>>> {
+    let mut streams = Vec::new();
+    while pos < body.len() {
+        if pos + ES_PREFIX > body.len() {
+            return Err(Error::BufferTooShort {
+                need: pos + ES_PREFIX,
+                have: body.len(),
+                what: prefix_what,
+            });
+        }
+        let stream_type = body[pos];
+        let reserved_pid = ReservedOnes::from_bits(body[pos + 1] >> 5);
+        let reserved_es_info = ReservedOnes::from_bits(body[pos + 3] >> 4);
+        let elementary_pid =
+            Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
+        let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
+        pos += ES_PREFIX;
+        let (cmd_id, ca_descriptors) =
+            parse_cmd_and_descriptors(body, &mut pos, es_info_length, info_what)?;
+        streams.push(CaPmtStream {
+            stream_type,
+            elementary_pid,
+            cmd_id,
+            ca_descriptors,
+            reserved_pid,
+            reserved_es_info,
+        });
+    }
+    Ok(streams)
+}
+
+/// Total wire length of an elementary-stream loop.
+pub(crate) fn streams_len(streams: &[CaPmtStream<'_>]) -> usize {
+    streams
+        .iter()
+        .map(|s| ES_PREFIX + info_block_len(s.cmd_id, s.ca_descriptors))
+        .sum()
+}
+
+/// Range-check every `ES_info_length` and return the loop's wire length.
+pub(crate) fn checked_streams_len(
+    streams: &[CaPmtStream<'_>],
+    length_what: &'static str,
+) -> Result<usize> {
+    for s in streams {
+        super::fit_bits(
+            info_block_len(s.cmd_id, s.ca_descriptors) as u64,
+            12,
+            length_what,
+        )?;
+    }
+    Ok(streams_len(streams))
+}
+
+/// Write an elementary-stream loop at `buf[pos..]`, returning the new position.
+pub(crate) fn write_streams(
+    buf: &mut [u8],
+    mut pos: usize,
+    streams: &[CaPmtStream<'_>],
+) -> Result<usize> {
+    for s in streams {
+        let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
+        buf[pos] = s.stream_type;
+        buf[pos + 1] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
+        buf[pos + 2] = s.elementary_pid.value() as u8;
+        buf[pos + 3] = (s.reserved_es_info.get() << 4) | (es_info_length >> 8) as u8;
+        buf[pos + 4] = es_info_length as u8;
+        pos += ES_PREFIX;
+        pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
+    }
+    Ok(pos)
+}
+
 impl Serialize for CaPmt<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut body = CA_PMT_PREFIX + info_block_len(self.cmd_id, self.program_ca_descriptors);
-        for s in &self.streams {
-            body += ES_PREFIX + info_block_len(s.cmd_id, s.ca_descriptors);
-        }
+        let body = CA_PMT_PREFIX
+            + info_block_len(self.cmd_id, self.program_ca_descriptors)
+            + streams_len(&self.streams);
         super::apdu_len(body, self.length_form)
     }
 
@@ -323,12 +375,9 @@ impl Serialize for CaPmt<'_> {
         super::fit_bits(u64::from(self.version_number), 5, "ca_pmt version_number")?;
         let program_info_length = info_block_len(self.cmd_id, self.program_ca_descriptors);
         super::fit_bits(program_info_length as u64, 12, "ca_pmt program_info_length")?;
-        let mut body = CA_PMT_PREFIX + program_info_length;
-        for s in &self.streams {
-            let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
-            super::fit_bits(es_info_length as u64, 12, "ca_pmt ES_info_length")?;
-            body += ES_PREFIX + es_info_length;
-        }
+        let body = CA_PMT_PREFIX
+            + program_info_length
+            + checked_streams_len(&self.streams, "ca_pmt ES_info_length")?;
         let mut pos = super::write_apdu_header(tag::CA_PMT, body, self.length_form, buf)?;
 
         buf[pos] = self.list_management.to_u8();
@@ -344,19 +393,7 @@ impl Serialize for CaPmt<'_> {
         pos += CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;
 
-        for s in &self.streams {
-            let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
-            buf[pos] = s.stream_type;
-            // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos + 1] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
-            buf[pos + 2] = s.elementary_pid.value() as u8;
-            // reserved(4)='1111', ES_info_length(12). Range-checked above.
-            buf[pos + 3] = (s.reserved_es_info.get() << 4) | (es_info_length >> 8) as u8;
-            buf[pos + 4] = es_info_length as u8;
-            pos += ES_PREFIX;
-            pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
-        }
-        Ok(pos)
+        write_streams(buf, pos, &self.streams)
     }
 }
 

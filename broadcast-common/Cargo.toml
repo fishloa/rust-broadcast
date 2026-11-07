@@ -18,7 +18,7 @@ default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only;
 # the parse/serialize/CRC/BCD/MJD core is fully no_std.
-std = ["chrono?/std", "chrono?/clock", "serde?/std"]
+std = ["chrono?/std", "chrono?/clock", "serde?/std", "erased-serde?/std"]
 # MJD↔calendar conversion for the UTC time codec. Off = the BCD/duration
 # helpers remain available; only the chrono-typed UTC functions are gated.
 chrono = ["dep:chrono"]
@@ -26,7 +26,7 @@ chrono = ["dep:chrono"]
 # `cenc::CencScheme`). Off by default: the parse/serialize core needs no
 # serialization framework, and a consumer that wants one enables it through
 # its own `serde` feature (e.g. `transmux/serde`, `broadcast-hls/serde`).
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:erased-serde"]
 # `xml_chars`: the XML 1.0 character-data core shared by every crate that reads
 # XML through `quick-xml` (dvb-mabr, ttml-subtitle, dash-runtime, transmux).
 # std-only, because quick-xml is.
@@ -44,6 +44,7 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.
 quick-xml = { workspace = true, optional = true }
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+erased-serde = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

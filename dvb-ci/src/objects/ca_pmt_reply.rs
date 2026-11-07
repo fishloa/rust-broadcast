@@ -146,27 +146,7 @@ impl<'a> Parse<'a> for CaPmtReply {
         let current_next_indicator = (body[2] & 0x01) != 0;
         let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[3]);
 
-        let mut pos = REPLY_PREFIX;
-        let mut streams = Vec::new();
-        while pos < body.len() {
-            if pos + ES_LEN > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + ES_LEN,
-                    have: body.len(),
-                    what: "ca_pmt_reply ES",
-                });
-            }
-            let elementary_pid =
-                Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
-            let (es_enable, es_reserved) = decode_enable_byte(body[pos + 2]);
-            streams.push(CaPmtReplyStream {
-                elementary_pid,
-                ca_enable: es_enable,
-                reserved_pid: ReservedOnes::from_bits(body[pos] >> 5),
-                reserved_ca_enable: es_reserved,
-            });
-            pos += ES_LEN;
-        }
+        let streams = parse_reply_streams(body, REPLY_PREFIX, "ca_pmt_reply ES")?;
 
         Ok(Self {
             length_form,
@@ -181,10 +161,61 @@ impl<'a> Parse<'a> for CaPmtReply {
     }
 }
 
+/// Parse the per-ES loop of a `ca_pmt_reply` body starting at `pos`.
+pub(crate) fn parse_reply_streams(
+    body: &[u8],
+    mut pos: usize,
+    what: &'static str,
+) -> Result<Vec<CaPmtReplyStream>> {
+    let mut streams = Vec::new();
+    while pos < body.len() {
+        if pos + ES_LEN > body.len() {
+            return Err(Error::BufferTooShort {
+                need: pos + ES_LEN,
+                have: body.len(),
+                what,
+            });
+        }
+        let elementary_pid = Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
+        let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[pos + 2]);
+        streams.push(CaPmtReplyStream {
+            elementary_pid,
+            ca_enable,
+            reserved_pid: ReservedOnes::from_bits(body[pos] >> 5),
+            reserved_ca_enable,
+        });
+        pos += ES_LEN;
+    }
+    Ok(streams)
+}
+
+/// Wire length of a per-ES `ca_pmt_reply` loop.
+pub(crate) fn reply_streams_len(streams: &[CaPmtReplyStream]) -> usize {
+    streams.len() * ES_LEN
+}
+
+/// Write a per-ES `ca_pmt_reply` loop at `buf[pos..]`, returning the new position.
+pub(crate) fn write_reply_streams(
+    buf: &mut [u8],
+    mut pos: usize,
+    streams: &[CaPmtReplyStream],
+) -> usize {
+    for s in streams {
+        buf[pos] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
+        buf[pos + 1] = s.elementary_pid.value() as u8;
+        buf[pos + 2] = encode_enable_byte(s.ca_enable, s.reserved_ca_enable);
+        pos += ES_LEN;
+    }
+    pos
+}
+
 impl Serialize for CaPmtReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(REPLY_PREFIX + self.streams.len() * ES_LEN, self.length_form)
+        super::apdu_len(
+            REPLY_PREFIX + reply_streams_len(&self.streams),
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         super::fit_bits(
@@ -192,7 +223,7 @@ impl Serialize for CaPmtReply {
             5,
             "ca_pmt_reply version_number",
         )?;
-        let body = REPLY_PREFIX + self.streams.len() * ES_LEN;
+        let body = REPLY_PREFIX + reply_streams_len(&self.streams);
         let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). Range-checked above.
@@ -201,14 +232,7 @@ impl Serialize for CaPmtReply {
             | u8::from(self.current_next_indicator);
         buf[pos + 3] = encode_enable_byte(self.ca_enable, self.reserved_ca_enable);
         pos += REPLY_PREFIX;
-        for s in &self.streams {
-            // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
-            buf[pos + 1] = s.elementary_pid.value() as u8;
-            buf[pos + 2] = encode_enable_byte(s.ca_enable, s.reserved_ca_enable);
-            pos += ES_LEN;
-        }
-        Ok(pos)
+        Ok(write_reply_streams(buf, pos, &self.streams))
     }
 }
 

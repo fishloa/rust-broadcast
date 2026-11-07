@@ -32,6 +32,18 @@ pub use eit::*;
 pub use nit::*;
 pub use sdt::*;
 
+/// Transport-stream entry in a complete NIT or BAT.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct CompleteTransportStream<'a> {
+    /// transport_stream_id of the described TS.
+    pub transport_stream_id: u16,
+    /// original_network_id of the described TS.
+    pub original_network_id: u16,
+    /// Typed descriptor loop for this transport stream.
+    pub descriptors: ParsedDescriptorLoop<'a>,
+}
+
 /// Default cap on the number of logical keys (in-progress AND completed)
 /// retained by [`SectionSetCollector`].
 ///

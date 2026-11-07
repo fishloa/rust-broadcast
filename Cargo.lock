@@ -480,6 +480,7 @@ version = "10.0.0"
 dependencies = [
  "chrono",
  "criterion",
+ "erased-serde",
  "hex",
  "quick-xml",
  "serde",
@@ -1280,7 +1281,6 @@ dependencies = [
  "chrono",
  "criterion",
  "encoding_rs",
- "erased-serde",
  "flate2",
  "hex",
  "libm",
@@ -1345,7 +1345,6 @@ dependencies = [
  "criterion",
  "dvb-bbframe",
  "dvb-si",
- "erased-serde",
  "mpeg-ts",
  "num_enum",
  "serde",

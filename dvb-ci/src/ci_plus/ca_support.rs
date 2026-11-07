@@ -28,9 +28,13 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::objects::ca_pmt::{
-    CaPmtCmdId, CaPmtListManagement, info_block_len, parse_cmd_and_descriptors, write_info_block,
+    CaPmtCmdId, CaPmtListManagement, CaPmtStream, checked_streams_len, info_block_len,
+    parse_cmd_and_descriptors, parse_streams, streams_len, write_info_block, write_streams,
 };
-use crate::objects::ca_pmt_reply::{CaEnable, decode_enable_byte, encode_enable_byte};
+use crate::objects::ca_pmt_reply::{
+    CaEnable, CaPmtReplyStream, decode_enable_byte, encode_enable_byte, parse_reply_streams,
+    reply_streams_len, write_reply_streams,
+};
 use crate::reserved::ReservedOnes;
 use crate::tag::{CA_PMT, CA_PMT_REPLY};
 use alloc::vec::Vec;
@@ -46,29 +50,6 @@ pub use crate::objects::ca_pmt_reply::CaEnable as MsCaEnable;
 // ---------------------------------------------------------------------------
 // ca_pmt (Table 14)
 // ---------------------------------------------------------------------------
-
-/// One elementary-stream entry of a CI Plus multi-stream `ca_pmt` (Table 14).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct MsCaPmtStream<'a> {
-    /// MPEG-2 `stream_type`.
-    pub stream_type: u8,
-    /// 13-bit `elementary_PID`.
-    pub elementary_pid: Pid,
-    /// `ca_pmt_cmd_id` for this ES — present only when `ES_info_length != 0`.
-    pub cmd_id: Option<CaPmtCmdId>,
-    /// ES-level `CA_descriptor()` loop, verbatim wire bytes (no `cmd_id`).
-    #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
-    pub ca_descriptors: &'a [u8],
-    /// The 3-bit `reserved` field as received, preserved so the object
-    /// re-serializes byte-for-byte; all ones when hand-built. (before `elementary_PID`)
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pid: ReservedOnes<3>,
-    /// The 4-bit `reserved` field as received, preserved so the object
-    /// re-serializes byte-for-byte; all ones when hand-built. (before `ES_info_length`)
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_es_info: ReservedOnes<4>,
-}
 
 /// CI Plus multi-stream `ca_pmt()` (Table 14): Host → CICAM. Differs from the
 /// EN 50221 `ca_pmt` by the leading `LTS_id` and the added `PMT_PID`.
@@ -100,7 +81,7 @@ pub struct MsCaPmt<'a> {
     pub program_ca_descriptors: &'a [u8],
     /// Elementary streams in wire order.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub streams: Vec<MsCaPmtStream<'a>>,
+    pub streams: Vec<CaPmtStream<'a>>,
     /// The 3-bit `reserved` field as received, preserved so the object
     /// re-serializes byte-for-byte; all ones when hand-built. (before `PMT_PID`)
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -118,8 +99,6 @@ pub struct MsCaPmt<'a> {
 // LTS_id(1) + list_management(1) + program_number(2) + reserved/PMT_PID(2) +
 // reserved/version/cni(1) + reserved/program_info_length(2).
 const MS_CA_PMT_PREFIX: usize = 1 + 1 + 2 + 2 + 1 + 2;
-// Per-ES: stream_type(1) + reserved/elem_pid(2) + reserved/ES_info_length(2).
-const MS_ES_PREFIX: usize = 5;
 
 impl<'a> Parse<'a> for MsCaPmt<'a> {
     type Error = Error;
@@ -154,33 +133,7 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
             "ms ca_pmt program_info",
         )?;
 
-        let mut streams = Vec::new();
-        while pos < body.len() {
-            if pos + MS_ES_PREFIX > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + MS_ES_PREFIX,
-                    have: body.len(),
-                    what: "ms ca_pmt ES prefix",
-                });
-            }
-            let stream_type = body[pos];
-            let reserved_pid = ReservedOnes::from_bits(body[pos + 1] >> 5);
-            let reserved_es_info = ReservedOnes::from_bits(body[pos + 3] >> 4);
-            let elementary_pid =
-                Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
-            let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
-            pos += MS_ES_PREFIX;
-            let (es_cmd, ca_descriptors) =
-                parse_cmd_and_descriptors(body, &mut pos, es_info_length, "ms ca_pmt ES_info")?;
-            streams.push(MsCaPmtStream {
-                stream_type,
-                elementary_pid,
-                cmd_id: es_cmd,
-                ca_descriptors,
-                reserved_pid,
-                reserved_es_info,
-            });
-        }
+        let streams = parse_streams(body, pos, "ms ca_pmt ES prefix", "ms ca_pmt ES_info")?;
 
         Ok(Self {
             length_form,
@@ -203,10 +156,9 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
 impl Serialize for MsCaPmt<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut body = MS_CA_PMT_PREFIX + info_block_len(self.cmd_id, self.program_ca_descriptors);
-        for s in &self.streams {
-            body += MS_ES_PREFIX + info_block_len(s.cmd_id, s.ca_descriptors);
-        }
+        let body = MS_CA_PMT_PREFIX
+            + info_block_len(self.cmd_id, self.program_ca_descriptors)
+            + streams_len(&self.streams);
         crate::objects::apdu_len(body, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -221,12 +173,9 @@ impl Serialize for MsCaPmt<'_> {
             12,
             "ms ca_pmt program_info_length",
         )?;
-        let mut body = MS_CA_PMT_PREFIX + program_info_length;
-        for s in &self.streams {
-            let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
-            objects::fit_bits(es_info_length as u64, 12, "ms ca_pmt ES_info_length")?;
-            body += MS_ES_PREFIX + es_info_length;
-        }
+        let body = MS_CA_PMT_PREFIX
+            + program_info_length
+            + checked_streams_len(&self.streams, "ms ca_pmt ES_info_length")?;
         let mut pos = crate::objects::write_apdu_header(CA_PMT, body, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.list_management.to_u8();
@@ -244,43 +193,13 @@ impl Serialize for MsCaPmt<'_> {
         pos += MS_CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;
 
-        for s in &self.streams {
-            let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
-            buf[pos] = s.stream_type;
-            // reserved(3), elementary_PID(13). Range-checked above.
-            buf[pos + 1] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
-            buf[pos + 2] = s.elementary_pid.value() as u8;
-            buf[pos + 3] = (s.reserved_es_info.get() << 4) | (es_info_length >> 8) as u8;
-            buf[pos + 4] = es_info_length as u8;
-            pos += MS_ES_PREFIX;
-            pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
-        }
-        Ok(pos)
+        write_streams(buf, pos, &self.streams)
     }
 }
 
 // ---------------------------------------------------------------------------
 // ca_pmt_reply (Table 16)
 // ---------------------------------------------------------------------------
-
-/// One ES entry of a CI Plus multi-stream `ca_pmt_reply` (Table 16).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct MsCaPmtReplyStream {
-    /// 13-bit `elementary_PID`.
-    pub elementary_pid: Pid,
-    /// ES-level `CA_enable` — `Some` iff the `CA_enable_flag` bit was set.
-    pub ca_enable: Option<CaEnable>,
-    /// The 3-bit `reserved` field as received, preserved so the object
-    /// re-serializes byte-for-byte; all ones when hand-built. (before `elementary_PID`)
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pid: ReservedOnes<3>,
-    /// The 7-bit field after `CA_enable_flag` when the flag is clear (`reserved`),
-    /// as received so the object re-serializes byte-for-byte; ignored on
-    /// serialize when `ca_enable` is `Some`. `0b111_1111` when hand-built.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_ca_enable: ReservedOnes<7>,
-}
 
 /// CI Plus multi-stream `ca_pmt_reply()` (Table 16): CICAM → Host. Differs from
 /// the EN 50221 `ca_pmt_reply` by the leading `LTS_id`.
@@ -305,7 +224,7 @@ pub struct MsCaPmtReply {
     /// was set.
     pub ca_enable: Option<CaEnable>,
     /// Per-ES entries in wire order.
-    pub streams: Vec<MsCaPmtReplyStream>,
+    pub streams: Vec<CaPmtReplyStream>,
     /// The 2-bit `reserved` field as received, preserved so the object
     /// re-serializes byte-for-byte; all ones when hand-built. (before `version_number`)
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -319,7 +238,6 @@ pub struct MsCaPmtReply {
 
 // LTS_id(1) + program_number(2) + reserved/version/cni(1) + flag/enable(1).
 const MS_REPLY_PREFIX: usize = 1 + 2 + 1 + 1;
-const MS_REPLY_ES_LEN: usize = 3; // reserved/elem_pid(2) + flag/enable(1)
 
 impl<'a> Parse<'a> for MsCaPmtReply {
     type Error = Error;
@@ -339,27 +257,7 @@ impl<'a> Parse<'a> for MsCaPmtReply {
         let current_next_indicator = (body[3] & 0x01) != 0;
         let (ca_enable, reserved_ca_enable) = decode_enable_byte(body[4]);
 
-        let mut pos = MS_REPLY_PREFIX;
-        let mut streams = Vec::new();
-        while pos < body.len() {
-            if pos + MS_REPLY_ES_LEN > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: pos + MS_REPLY_ES_LEN,
-                    have: body.len(),
-                    what: "ms ca_pmt_reply ES",
-                });
-            }
-            let elementary_pid =
-                Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
-            let (es_enable, es_reserved) = decode_enable_byte(body[pos + 2]);
-            streams.push(MsCaPmtReplyStream {
-                elementary_pid,
-                ca_enable: es_enable,
-                reserved_pid: ReservedOnes::from_bits(body[pos] >> 5),
-                reserved_ca_enable: es_reserved,
-            });
-            pos += MS_REPLY_ES_LEN;
-        }
+        let streams = parse_reply_streams(body, MS_REPLY_PREFIX, "ms ca_pmt_reply ES")?;
 
         Ok(Self {
             length_form,
@@ -379,7 +277,7 @@ impl Serialize for MsCaPmtReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         crate::objects::apdu_len(
-            MS_REPLY_PREFIX + self.streams.len() * MS_REPLY_ES_LEN,
+            MS_REPLY_PREFIX + reply_streams_len(&self.streams),
             self.length_form,
         )
     }
@@ -389,7 +287,7 @@ impl Serialize for MsCaPmtReply {
             5,
             "ms ca_pmt_reply version_number",
         )?;
-        let body = MS_REPLY_PREFIX + self.streams.len() * MS_REPLY_ES_LEN;
+        let body = MS_REPLY_PREFIX + reply_streams_len(&self.streams);
         let mut pos = crate::objects::write_apdu_header(CA_PMT_REPLY, body, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
@@ -399,14 +297,7 @@ impl Serialize for MsCaPmtReply {
             | u8::from(self.current_next_indicator);
         buf[pos + 4] = encode_enable_byte(self.ca_enable, self.reserved_ca_enable);
         pos += MS_REPLY_PREFIX;
-        for s in &self.streams {
-            // reserved(3), elementary_PID(13). Range-checked above.
-            buf[pos] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
-            buf[pos + 1] = s.elementary_pid.value() as u8;
-            buf[pos + 2] = encode_enable_byte(s.ca_enable, s.reserved_ca_enable);
-            pos += MS_REPLY_ES_LEN;
-        }
-        Ok(pos)
+        Ok(write_reply_streams(buf, pos, &self.streams))
     }
 }
 
@@ -465,7 +356,7 @@ mod tests {
             current_next_indicator: true,
             cmd_id: Some(CaPmtCmdId::OkDescrambling),
             program_ca_descriptors: &prog,
-            streams: alloc::vec![MsCaPmtStream {
+            streams: alloc::vec![CaPmtStream {
                 reserved_es_info: Default::default(),
                 reserved_pid: Default::default(),
                 stream_type: 0x02,
@@ -547,13 +438,13 @@ mod tests {
             current_next_indicator: true,
             ca_enable: Some(CaEnable::Possible),
             streams: alloc::vec![
-                MsCaPmtReplyStream {
+                CaPmtReplyStream {
                     reserved_ca_enable: Default::default(),
                     reserved_pid: Default::default(),
                     elementary_pid: Pid::new(0x0200),
                     ca_enable: Some(CaEnable::Possible),
                 },
-                MsCaPmtReplyStream {
+                CaPmtReplyStream {
                     reserved_ca_enable: Default::default(),
                     reserved_pid: Default::default(),
                     elementary_pid: Pid::new(0x0201),

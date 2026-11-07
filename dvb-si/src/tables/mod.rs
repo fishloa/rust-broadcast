@@ -627,6 +627,12 @@ pub use any::AnyTableSection;
 pub mod registry;
 pub use registry::{TableObject, TableRegistry};
 
+/// Shared wire core of the descriptor-only CAT and TSDT sections.
+mod descriptor_section;
+
+mod ts_loop_section;
+pub use ts_loop_section::TransportStreamEntry;
+
 /// Shared `real_time_parameters(32)` bit codec used by MPE-FEC and MPE-IFEC
 /// (r02-W22); the public field-named structs stay in each table's module.
 mod real_time_parameters;

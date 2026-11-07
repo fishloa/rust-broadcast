@@ -21,11 +21,6 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0001);
 /// The 16 reserved bits in place of `table_id_extension` (all ones).
 const RESERVED_EXTENSION: u16 = 0xFFFF;
 
-const MIN_HEADER_LEN: usize = 3;
-const EXTENSION_HEADER_LEN: usize = 5;
-use super::CRC_LEN;
-const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
-
 /// One CA descriptor entry from the CAT, in owned form so it
 /// outlives the source section bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,50 +130,15 @@ impl<'a> Parse<'a> for CatSection<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN {
-            return Err(Error::BufferTooShort {
-                need: MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN,
-                have: bytes.len(),
-                what: "CatSection",
-            });
-        }
-
-        if bytes[0] != TABLE_ID {
-            return Err(Error::UnexpectedTableId {
-                table_id: bytes[0],
-                what: "CatSection",
-                expected: &[TABLE_ID],
-            });
-        }
-
-        let section_length = super::section_length_of(bytes);
-        let total = super::check_section_length(
-            bytes.len(),
-            MIN_HEADER_LEN,
-            section_length,
-            MIN_SECTION_LEN,
-        )?;
-
-        // Skip the 2-byte reserved + extension (bytes 3-4), read version+cni at 5,
-        // section/last_section at 6,7. CAT's "table_id_extension" (bytes 3-4) is
-        // reserved per spec — we don't expose it.
-        let version_number = super::version_number_of(bytes[5]);
-        let current_next_indicator = super::current_next_of(bytes[5]);
-        let section_number = bytes[6];
-        let last_section_number = bytes[7];
-
-        // Descriptor loop runs from byte 8 up to (but not including) the 4-byte
-        // CRC. Kept raw — see the field doc; typed CA view via ca_descriptors().
-        let descriptors_end = total - CRC_LEN;
-
+        let p = super::descriptor_section::parse(bytes, &[TABLE_ID], "CatSection", "cat")?;
         Ok(CatSection {
-            version_number,
-            current_next_indicator,
-            section_number,
-            last_section_number,
-            descriptors: DescriptorLoop::new(&bytes[8..descriptors_end]),
-            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_extension: crate::wire::be_u16(bytes, 3, "cat")?,
+            version_number: p.version_number,
+            current_next_indicator: p.current_next_indicator,
+            section_number: p.section_number,
+            last_section_number: p.last_section_number,
+            descriptors: p.descriptors,
+            bits: p.bits,
+            reserved_extension: p.table_id_extension,
         })
     }
 }
@@ -187,33 +147,23 @@ impl Serialize for CatSection<'_> {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        MIN_HEADER_LEN + EXTENSION_HEADER_LEN + self.descriptors.len() + CRC_LEN
+        super::descriptor_section::serialized_len(&self.descriptors)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
-        let section_length = len - MIN_HEADER_LEN;
-        buf[0] = TABLE_ID;
-        buf[1] = self.bits.b1()?;
-        super::write_section_length(buf, section_length)?;
-        buf[3..5].copy_from_slice(&self.reserved_extension.to_be_bytes());
-        buf[5] = self
-            .bits
-            .b5(self.version_number, self.current_next_indicator)?;
-        buf[6] = self.section_number;
-        buf[7] = self.last_section_number;
-        let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[desc_start..desc_start + self.descriptors.len()]
-            .copy_from_slice(self.descriptors.raw());
-        let crc_pos = len - CRC_LEN;
-        super::write_crc(buf, crc_pos);
-        Ok(len)
+        super::descriptor_section::serialize_into(
+            TABLE_ID,
+            &super::descriptor_section::View {
+                table_id_extension: self.reserved_extension,
+                version_number: self.version_number,
+                current_next_indicator: self.current_next_indicator,
+                section_number: self.section_number,
+                last_section_number: self.last_section_number,
+                descriptors: &self.descriptors,
+                bits: &self.bits,
+            },
+            buf,
+        )
     }
 }
 impl<'a> crate::traits::TableDef<'a> for CatSection<'a> {
@@ -224,6 +174,9 @@ impl<'a> crate::traits::TableDef<'a> for CatSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::CRC_LEN;
+
+    const EXTENSION_HEADER_LEN: usize = 5;
 
     /// Build a CAT section with the given CA descriptors and placeholder CRC.
     fn build_cat(version: u8, descriptors: &[u8]) -> Vec<u8> {
