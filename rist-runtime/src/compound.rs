@@ -20,6 +20,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, UnsupportedVersion};
 use broadcast_common::len::need_out;
 
 use broadcast_common::{Parse, Serialize};
@@ -63,32 +64,38 @@ const PT_OFFSET: usize = 1;
 /// `(length + 1) * 4`.
 fn peek_total_len(bytes: &[u8]) -> Result<usize> {
     if bytes.len() < RTCP_HEADER_LEN {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: RTCP_HEADER_LEN,
             have: bytes.len(),
-        });
+            what: "RTCP common header",
+        }));
     }
     let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
     let total = length_field
         .checked_add(1)
         .and_then(|words| words.checked_mul(WORD_LEN))
-        .ok_or(Error::BufferTooShort {
+        .ok_or(Error::BufferTooShort(BufferTooShort {
             need: usize::MAX,
             have: bytes.len(),
-        })?;
+            what: "RTCP sub-packet",
+        }))?;
     // `bytes` is the *rest of the compound* when walking, so a sub-packet is
     // valid as long as the compound has at least its minimum content (the
     // 4-byte common header); the exact fit is enforced per-type afterwards
     // (typed parsers require their own full length).
     if bytes.len() < total {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: total,
             have: bytes.len(),
-        });
+            what: "RTCP sub-packet",
+        }));
     }
     let version = bytes[0] >> 6;
     if version != RTCP_VERSION {
-        return Err(Error::InvalidVersion(version));
+        return Err(Error::UnsupportedVersion(UnsupportedVersion {
+            what: "RTCP",
+            found: version,
+        }));
     }
     Ok(total)
 }
@@ -748,10 +755,11 @@ fn next_sub_packet(
 /// §5.2.6 permits at most one per compound packet).
 fn walk(bytes: &[u8], receiver: bool) -> Result<CompoundParts> {
     if bytes.len() < RTCP_HEADER_LEN {
-        return Err(Error::BufferTooShort {
+        return Err(Error::BufferTooShort(BufferTooShort {
             need: RTCP_HEADER_LEN,
             have: bytes.len(),
-        });
+            what: "RTCP common header",
+        }));
     }
     let head = Head::parse(bytes)?;
     let (report, report_padding) = ReportPart::parse(bytes, head)?;

@@ -2,11 +2,12 @@
 //! RTCP message type.
 
 use broadcast_common::Serialize;
+use broadcast_common::error::OutputBufferTooSmall;
 use rist_runtime::{Error, GenericNack, NackFci, PacketRange, RangeNack, RttEcho, RttEchoKind};
 
 fn too_small(e: &Error) -> Option<(usize, usize)> {
     match e {
-        Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+        Error::OutputBufferTooSmall(OutputBufferTooSmall { need, have }) => Some((*need, *have)),
         _ => None,
     }
 }

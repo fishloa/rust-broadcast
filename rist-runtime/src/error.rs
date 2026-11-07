@@ -11,27 +11,17 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input (on parse) or output buffer (on serialize) shorter than required.
-    #[error("buffer too short: need {need}, have {have}")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Output buffer passed to `serialize_into` was smaller than
     /// `serialized_len()`.
-    #[error("serialize: output buffer too small — need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// The RTCP version field was not 2 (RFC 3550 §6.4.1).
-    #[error("invalid version: expected 2, got {0}")]
-    InvalidVersion(u8),
+    #[error(transparent)]
+    UnsupportedVersion(#[from] broadcast_common::error::UnsupportedVersion),
 
     /// The RIST APP name field was not `0x52495354` ("RIST").
     #[error("invalid RIST APP name: expected 0x52495354, got 0x{0:08X}")]
@@ -114,16 +104,7 @@ pub enum Error {
     /// similar) would have silently wrapped and emitted a misframed packet;
     /// this is returned instead.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
+    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
 }
 
 impl From<rtcp_packet::PaddingCountError> for Error {

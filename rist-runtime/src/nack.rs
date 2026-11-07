@@ -12,6 +12,7 @@
 //!   TR-06-1 §5.3.2.2 limits each packet to at most 16 range entries.
 
 use alloc::vec::Vec;
+use broadcast_common::error::{BufferTooShort, UnsupportedVersion};
 use broadcast_common::len::need_out;
 
 use broadcast_common::{Parse, Serialize};
@@ -201,15 +202,19 @@ impl<'a> Parse<'a> for GenericNack {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         if bytes.len() < RTCP_HEADER_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: RTCP_HEADER_LEN,
                 have: bytes.len(),
-            });
+                what: "RTCP common header",
+            }));
         }
 
         let version = bytes[0] >> 6;
         if version != RTCP_VERSION {
-            return Err(Error::InvalidVersion(version));
+            return Err(Error::UnsupportedVersion(UnsupportedVersion {
+                what: "RTCP",
+                found: version,
+            }));
         }
 
         let fmt = bytes[0] & RTCP_COUNT_MASK;
@@ -231,17 +236,19 @@ impl<'a> Parse<'a> for GenericNack {
         let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: total_len,
                 have: bytes.len(),
-            });
+                what: "Generic NACK",
+            }));
         }
 
         if total_len < GENERIC_NACK_MIN_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: GENERIC_NACK_MIN_LEN,
                 have: total_len,
-            });
+                what: "Generic NACK",
+            }));
         }
 
         let ssrc_sender = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
@@ -249,10 +256,11 @@ impl<'a> Parse<'a> for GenericNack {
 
         let end = unpadded_end(bytes, total_len)?;
         if end < GENERIC_NACK_MIN_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: GENERIC_NACK_MIN_LEN,
                 have: end,
-            });
+                what: "Generic NACK",
+            }));
         }
         let fci_bytes = end - GENERIC_NACK_MIN_LEN;
         let fci_count = fci_bytes / NACK_FCI_LEN;
@@ -382,15 +390,19 @@ impl<'a> Parse<'a> for RangeNack {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         if bytes.len() < RTCP_HEADER_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: RTCP_HEADER_LEN,
                 have: bytes.len(),
-            });
+                what: "RTCP common header",
+            }));
         }
 
         let version = bytes[0] >> 6;
         if version != RTCP_VERSION {
-            return Err(Error::InvalidVersion(version));
+            return Err(Error::UnsupportedVersion(UnsupportedVersion {
+                what: "RTCP",
+                found: version,
+            }));
         }
 
         let subtype = bytes[0] & RTCP_COUNT_MASK;
@@ -409,17 +421,19 @@ impl<'a> Parse<'a> for RangeNack {
         let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: total_len,
                 have: bytes.len(),
-            });
+                what: "Range NACK",
+            }));
         }
 
         if total_len < RANGE_NACK_MIN_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: RANGE_NACK_MIN_LEN,
                 have: total_len,
-            });
+                what: "Range NACK",
+            }));
         }
 
         // SSRC of media source.
@@ -432,10 +446,11 @@ impl<'a> Parse<'a> for RangeNack {
 
         let end = unpadded_end(bytes, total_len)?;
         if end < RANGE_NACK_MIN_LEN {
-            return Err(Error::BufferTooShort {
+            return Err(Error::BufferTooShort(BufferTooShort {
                 need: RANGE_NACK_MIN_LEN,
                 have: end,
-            });
+                what: "Range NACK",
+            }));
         }
         let data_bytes = end - RANGE_NACK_MIN_LEN;
         let range_count = data_bytes / RANGE_ENTRY_LEN;
