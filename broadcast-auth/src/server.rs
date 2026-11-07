@@ -316,8 +316,10 @@ fn pair_key(nonce: &str, cnonce: &str) -> PairKey {
 
 impl DigestNonces {
     fn new() -> Self {
+        let mut secret = [0u8; NONCE_SECRET_LEN];
+        getrandom::fill(&mut secret).expect("OS random source unavailable");
         DigestNonces {
-            secret: rand::random(),
+            secret,
             seen: Mutex::new(NcTable {
                 entries: LruCache::unbounded(),
                 capacity: DIGEST_NC_TRACK_CAP,

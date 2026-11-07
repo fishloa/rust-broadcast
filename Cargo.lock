@@ -416,6 +416,7 @@ version = "0.5.1"
 dependencies = [
  "base64 0.23.1",
  "form_urlencoded",
+ "getrandom 0.4.3",
  "headers",
  "hex",
  "hmac 0.13.0",
@@ -423,7 +424,6 @@ dependencies = [
  "lru",
  "md-5 0.11.0",
  "percent-encoding",
- "rand 0.10.3",
  "sha2 0.11.1",
  "subtle",
  "test-fixtures",
@@ -3636,7 +3636,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "http-auth",
- "log",
  "memchr",
  "rtsp-types",
  "rustls",

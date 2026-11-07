@@ -21,7 +21,6 @@ rtsp-types = "0.1"
 broadcast-auth = { path = "../broadcast-auth", version = "0.5" }
 thiserror  = "2"
 memchr     = "2"
-log        = "0.4"
 serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
 # `tokio` adapter (real sockets) — feature-gated; the sans-IO core needs none of it.
