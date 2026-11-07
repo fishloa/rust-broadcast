@@ -529,13 +529,72 @@ fn dynamic_mpd_omits_absent_live_attributes() {
     let mut pkg = DashPackager {
         dynamic: true,
         availability_start_time: Some("2024-01-01T00:00:00Z".to_string()),
+        publish_time: Some("2024-01-01T00:00:00Z".to_string()),
         ..DashPackager::default()
     };
     let xml = pkg.package(&media).expect("package dynamic MPD");
     let root = parse_xml(&xml);
-    assert!(!root.has_attr("publishTime"));
+    assert!(root.has_attr("publishTime"));
     assert!(!root.has_attr("timeShiftBufferDepth"));
     assert!(!root.has_attr("suggestedPresentationDelay"));
+}
+
+#[test]
+fn dynamic_mpd_without_publish_time_is_rejected() {
+    let media = demux_media();
+    let mut pkg = DashPackager {
+        dynamic: true,
+        availability_start_time: Some("2024-01-01T00:00:00Z".to_string()),
+        ..DashPackager::default()
+    };
+    let err = pkg.package(&media).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            transmux::Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "MPD@publishTime",
+                ..
+            })
+        ),
+        "{err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "invalid field MPD@publishTime: shall be present for MPD@type='dynamic' (ISO/IEC 23009-1 §5.3.1.2 Table 3)"
+    );
+}
+
+#[test]
+fn static_mpd_needs_no_publish_time() {
+    let media = demux_media();
+    let xml = DashPackager::default().package(&media).expect("static MPD");
+    assert!(!parse_xml(&xml).has_attr("publishTime"));
+}
+
+#[test]
+fn ll_dash_without_publish_time_is_rejected() {
+    let media = demux_media();
+    let err = transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2024-01-01T00:00:00Z")
+        .expect("packager")
+        .package(&media)
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "invalid field MPD@publishTime: shall be present for MPD@type='dynamic' (ISO/IEC 23009-1 §5.3.1.2 Table 3)"
+    );
+}
+
+#[test]
+fn ll_dash_with_publish_time_carries_it() {
+    let media = demux_media();
+    let mut pkg = transmux::ll_dash::LlDashPackager::new(2.0, 0.5, 3000, "2024-01-01T00:00:00Z")
+        .expect("packager");
+    pkg.base.publish_time = Some("2024-01-01T00:05:00Z".to_string());
+    let xml = pkg.package(&media).expect("LL-DASH MPD");
+    assert_eq!(
+        parse_xml(&xml).attr("publishTime"),
+        Some("2024-01-01T00:05:00Z")
+    );
 }
 
 // ---------------------------------------------------------------------------

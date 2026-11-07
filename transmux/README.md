@@ -88,7 +88,7 @@ Header parse and the container box only; no encode or decode.
 | Feature | Default | Description |
 |---|---|---|
 | `std` | yes | `std::error::Error` impls and every XML path (DASH and LL-DASH MPD generate and parse, Smooth, PlayReady WRMHEADER on `quick-xml`), SDP generation (`sdp-types`), `base_url` (`url`), `jiff` durations. Without it the crate is `no_std` + `alloc`. |
-| `serde` | yes | `Serialize` on box types and IR types. |
+| `serde` | no | `Serialize` on box types and IR types. |
 | `cenc` | yes | CENC and CBCS crypto (`aes`, `ctr`, `cbc`, with `zeroize` and constant-time key compare). DRM signalling does not need it. |
 | `sample-aes` | no | HLS Sample-AES and whole-segment AES-128; implies `cenc`. |
 | `cli` | no | The `transmux` binary (`clap`, `container-probe`; implies `std`). |

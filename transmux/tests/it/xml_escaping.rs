@@ -9,7 +9,7 @@ use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::Event;
 use transmux::dash::DashPackager;
-use transmux::ll_dash::{LlDashPackager, UTCTIMING_HTTP_HEAD_2014};
+use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::ts_demux::TsDemux;
 use transmux::{Mpd, playready_wrmheader};
 
@@ -78,6 +78,7 @@ fn dash_mpd_escapes_caller_strings_and_round_trips() {
     let mut pkg = DashPackager {
         profiles: SPECIALS.to_string(),
         availability_start_time: Some(SPECIALS.to_string()),
+        publish_time: Some(SPECIALS.to_string()),
         dynamic: true,
         ..DashPackager::default()
     };
@@ -100,9 +101,8 @@ fn dash_mpd_escapes_caller_strings_and_round_trips() {
 #[test]
 fn ll_dash_utc_timing_escapes_scheme_and_value() {
     let media = demux_media();
-    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
-        .expect("packager")
-        .with_utc_timing(SPECIALS, SPECIALS);
+    let mut pkg =
+        crate::ll_packager::ll_packager(2.0, 0.5, 3000).with_utc_timing(SPECIALS, SPECIALS);
     let xml = pkg.package(&media).expect("LL MPD");
 
     assert!(
@@ -120,8 +120,7 @@ fn ll_dash_utc_timing_escapes_scheme_and_value() {
         Some(SPECIALS)
     );
     // The registered scheme still round-trips untouched.
-    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z")
-        .expect("packager")
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
         .with_utc_timing(UTCTIMING_HTTP_HEAD_2014, "https://t.example/x?a=1&b=2");
     let xml = pkg.package(&media).expect("LL MPD");
     assert_eq!(
@@ -135,7 +134,7 @@ fn ll_dash_rewrite_preserves_base_mpd_attribute_escaping() {
     // The LL rewrite re-reads the base MPD: an escaped `profiles` must come out
     // exactly as the base writer produced it (no double escaping).
     let media = demux_media();
-    let mut pkg = LlDashPackager::new(2.0, 0.5, 3000, "2026-01-01T00:00:00Z").expect("packager");
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
     pkg.base.profiles = SPECIALS.to_string();
     let xml = pkg.package(&media).expect("LL MPD");
     assert!(

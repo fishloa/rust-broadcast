@@ -102,6 +102,8 @@ mod largesize_truncation;
 mod live_join_fixtures;
 mod ll_dash;
 mod ll_hls;
+#[path = "support/ll_packager.rs"]
+mod ll_packager;
 mod mkv_mux;
 mod mpeg_legacy;
 mod mpegh;

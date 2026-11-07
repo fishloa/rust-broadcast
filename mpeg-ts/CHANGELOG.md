@@ -9,6 +9,7 @@
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
+- BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what` and its message becomes "<what> CRC-32 mismatch: ..."); `InvalidSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`. The hand-written `From` impls are gone (`#[from]` replaces them); error values are otherwise unchanged.
 

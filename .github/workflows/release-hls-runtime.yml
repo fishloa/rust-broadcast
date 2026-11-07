@@ -12,11 +12,6 @@ name: Release hls-runtime
 # `tokio` feature — broadcast-auth (>= 0.2, already live). No new crate needs
 # to land before this one. Downstream, multimux depends on hls-runtime — this
 # must land before that.
-#
-# Renamed from `ll-hls-runtime` (issue #868, a clean break — no deprecated
-# alias, no re-export shim). `ll-hls-runtime`'s last published versions stay
-# live on crates.io untouched; this workflow replaces
-# `release-ll-hls-runtime.yml`.
 
 on:
   push:
