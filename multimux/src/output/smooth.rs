@@ -38,11 +38,12 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::xml_chars::{
+    close_element, empty_element, finish_document, new_writer, open_element, write_declaration,
+};
 use broadcast_common::{Timestamp, Unpackage};
 use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
-use quick_xml::Writer;
-use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use transmux::CodecConfig;
 use transmux::smooth::SMOOTH_TIMESCALE;
 use transmux::{Fmp4Demux, SmoothPackager, SmoothStreamType};
@@ -709,21 +710,23 @@ fn render_manifest(layout: &WindowLayout) -> String {
         .max()
         .unwrap_or(0);
 
-    // Every attribute value goes through quick-xml's escaping. Writing to an
-    // in-memory `Vec` cannot fail, so the write results are discarded.
-    let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
-    let _ = writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)));
-    let mut root = BytesStart::new("SmoothStreamingMedia");
-    root.push_attribute(("MajorVersion", MAJOR_VERSION.to_string().as_str()));
-    root.push_attribute(("MinorVersion", MINOR_VERSION.to_string().as_str()));
-    root.push_attribute(("Duration", total_duration.to_string().as_str()));
-    root.push_attribute(("TimeScale", SMOOTH_TIMESCALE.to_string().as_str()));
-    root.push_attribute(("IsLive", "true"));
-    root.push_attribute(("LookAheadFragmentCount", "0"));
-    root.push_attribute(("DVRWindowLength", total_duration.to_string().as_str()));
-    let _ = writer.write_event(Event::Start(root));
+    let mut w = new_writer();
+    write_declaration(&mut w, "UTF-8");
+    open_element(
+        &mut w,
+        "SmoothStreamingMedia",
+        &[
+            ("MajorVersion", MAJOR_VERSION.to_string()),
+            ("MinorVersion", MINOR_VERSION.to_string()),
+            ("Duration", total_duration.to_string()),
+            ("TimeScale", SMOOTH_TIMESCALE.to_string()),
+            ("IsLive", "true".to_string()),
+            ("LookAheadFragmentCount", "0".to_string()),
+            ("DVRWindowLength", total_duration.to_string()),
+        ],
+    );
 
-    for (quality_index, bitrate, params, chunks) in &layout.tracks {
+    for (_, bitrate, params, chunks) in &layout.tracks {
         let url = format!(
             "QualityLevels({{bitrate}})/Fragments({}={{start time}})",
             params.stream_type
@@ -731,60 +734,61 @@ fn render_manifest(layout: &WindowLayout) -> String {
         // `Bitrate` is the real advertised value (see `advertised_bitrate`),
         // not the quality ordinal — a client uses it for ABR, and it is the
         // value the fragment URL's `QualityLevels(N)` carries back.
-        let mut stream = BytesStart::new("StreamIndex");
-        stream.push_attribute(("Type", params.stream_type.to_string().as_str()));
-        stream.push_attribute(("Subtype", ""));
-        stream.push_attribute(("Chunks", chunks.chunks.len().to_string().as_str()));
-        stream.push_attribute(("QualityLevels", "1"));
-        stream.push_attribute(("Url", url.as_str()));
-        let _ = writer.write_event(Event::Start(stream));
+        open_element(
+            &mut w,
+            "StreamIndex",
+            &[
+                ("Type", params.stream_type.to_string()),
+                ("Subtype", String::new()),
+                ("Chunks", chunks.chunks.len().to_string()),
+                ("QualityLevels", "1".to_string()),
+                ("Url", url),
+            ],
+        );
 
-        let mut level = BytesStart::new("QualityLevel");
-        level.push_attribute(("Index", "0"));
-        level.push_attribute(("Bitrate", bitrate.to_string().as_str()));
-        level.push_attribute(("FourCC", params.fourcc.to_string().as_str()));
-        if let Some(w) = params.max_width {
-            level.push_attribute(("MaxWidth", w.to_string().as_str()));
+        let mut level = vec![
+            ("Index", "0".to_string()),
+            ("Bitrate", bitrate.to_string()),
+            ("FourCC", params.fourcc.to_string()),
+        ];
+        if let Some(width) = params.max_width {
+            level.push(("MaxWidth", width.to_string()));
         }
-        if let Some(h) = params.max_height {
-            level.push_attribute(("MaxHeight", h.to_string().as_str()));
+        if let Some(height) = params.max_height {
+            level.push(("MaxHeight", height.to_string()));
         }
-        if let Some(sr) = params.sampling_rate {
-            level.push_attribute(("SamplingRate", sr.to_string().as_str()));
+        if let Some(rate) = params.sampling_rate {
+            level.push(("SamplingRate", rate.to_string()));
         }
-        if let Some(ch) = params.channels {
-            level.push_attribute(("Channels", ch.to_string().as_str()));
+        if let Some(channels) = params.channels {
+            level.push(("Channels", channels.to_string()));
         }
         if params.stream_type == "audio" {
-            level.push_attribute(("BitsPerSample", "16"));
-            level.push_attribute(("AudioTag", "255"));
+            level.push(("BitsPerSample", "16".to_string()));
+            level.push(("AudioTag", "255".to_string()));
         }
-        level.push_attribute((
-            "CodecPrivateData",
-            params.codec_private_data.to_string().as_str(),
-        ));
-        let _ = writer.write_event(Event::Empty(level));
+        level.push(("CodecPrivateData", params.codec_private_data.to_string()));
+        empty_element(&mut w, "QualityLevel", &level);
 
         // One `c` per chunk: every `t` explicit (absolute, track timeline),
         // `d` the chunk's own duration, `n` the ordinal.
         for (i, c) in chunks.chunks.iter().enumerate() {
-            let mut chunk = BytesStart::new("c");
-            chunk.push_attribute(("n", i.to_string().as_str()));
-            chunk.push_attribute(("t", c.start_ticks.to_string().as_str()));
-            chunk.push_attribute(("d", c.duration_ticks.to_string().as_str()));
-            let _ = writer.write_event(Event::Empty(chunk));
+            empty_element(
+                &mut w,
+                "c",
+                &[
+                    ("n", i.to_string()),
+                    ("t", c.start_ticks.to_string()),
+                    ("d", c.duration_ticks.to_string()),
+                ],
+            );
         }
-        // `quality_index` is used only for the fragment URL selection; the
-        // ordinal is not advertised as a bitrate.
-        let _ = quality_index;
 
-        let _ = writer.write_event(Event::End(BytesEnd::new("StreamIndex")));
+        close_element(&mut w, "StreamIndex");
     }
 
-    let _ = writer.write_event(Event::End(BytesEnd::new("SmoothStreamingMedia")));
-    let mut xml = String::from_utf8_lossy(&writer.into_inner()).into_owned();
-    xml.push('\n');
-    xml
+    close_element(&mut w, "SmoothStreamingMedia");
+    finish_document(w)
 }
 
 /// A real `QualityLevel@Bitrate` for `params`, in bits per second, from the
@@ -981,9 +985,10 @@ mod tests {
     /// re-parse to the original string.
     #[test]
     fn render_manifest_escapes_attribute_values_and_round_trips() {
-        use quick_xml::Reader;
+        use quick_xml::NsReader;
         use quick_xml::XmlVersion;
         use quick_xml::events::Event;
+        use quick_xml::name::ResolveResult;
 
         const SPECIALS: &str = "a&b<c>d\"e'f";
         let layout = WindowLayout {
@@ -1019,11 +1024,13 @@ mod tests {
             "{xml}"
         );
 
-        let mut reader = Reader::from_str(&xml);
+        let mut reader = NsReader::from_str(&xml);
         let mut seen = None;
         loop {
-            match reader.read_event().expect("well-formed manifest") {
-                Event::Empty(e) if e.name().as_ref() == "QualityLevel" => {
+            match reader.read_resolved_event().expect("well-formed manifest") {
+                (ResolveResult::Unbound, Event::Empty(e))
+                    if e.local_name().as_ref() == "QualityLevel" =>
+                {
                     for a in e.attributes() {
                         let a = a.expect("attribute");
                         if a.key.as_ref() == "CodecPrivateData" {
@@ -1035,7 +1042,7 @@ mod tests {
                         }
                     }
                 }
-                Event::Eof => break,
+                (_, Event::Eof) => break,
                 _ => {}
             }
         }

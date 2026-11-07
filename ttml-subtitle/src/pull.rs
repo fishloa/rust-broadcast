@@ -215,11 +215,7 @@ impl<'a> Pull<'a> {
             &self.reader,
             e,
             |m| self.fail(m),
-            |count, value| {
-                self.budget
-                    .admit_attribute(count, value)
-                    .map_err(exceeded)
-            },
+            |count, value| self.budget.admit_attribute(count, value).map_err(exceeded),
         )?;
         let consumed = core::cell::RefCell::new(alloc::vec![false; attributes.len()]);
         let prefix = e.name().prefix().map(|p| String::from(p.into_inner()));

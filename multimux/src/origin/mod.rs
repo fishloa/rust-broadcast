@@ -2756,23 +2756,29 @@ mod tests {
             .to_vec()
     }
 
-    /// Well-formedness check on a real `quick-xml` pull loop: every opening
-    /// tag matches its closing tag (the reader's end-name check), entity
-    /// references resolve, there is exactly one root element, and nothing is
-    /// left open at the end. Genuinely biting: a mismatched/unclosed tag or a
-    /// stray `&` panics.
+    /// Well-formedness check on a namespace-aware `quick-xml` pull loop: every
+    /// opening tag matches its closing tag (the reader's end-name check),
+    /// entity references resolve, every prefix is declared, there is exactly
+    /// one root element, and nothing is left open at the end. Genuinely
+    /// biting: a mismatched/unclosed tag, an undeclared prefix or a stray `&`
+    /// panics.
     fn assert_well_formed_xml(xml: &str) {
-        use quick_xml::Reader;
+        use quick_xml::NsReader;
         use quick_xml::events::Event;
+        use quick_xml::name::ResolveResult;
 
-        let mut reader = Reader::from_str(xml);
+        let mut reader = NsReader::from_str(xml);
         let mut depth = 0usize;
         let mut roots = 0usize;
         loop {
-            match reader
-                .read_event()
-                .unwrap_or_else(|e| panic!("not well-formed XML: {e}"))
-            {
+            let (ns, event) = reader
+                .read_resolved_event()
+                .unwrap_or_else(|e| panic!("not well-formed XML: {e}"));
+            assert!(
+                !matches!(ns, ResolveResult::Unknown(_)),
+                "undeclared namespace prefix"
+            );
+            match event {
                 Event::Start(_) => {
                     if depth == 0 {
                         roots += 1;

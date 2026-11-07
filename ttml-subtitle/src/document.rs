@@ -18,8 +18,8 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
-use broadcast_common::xml_chars::XmlLimits;
 use crate::foreign::{ForeignAttribute, UnknownElement, UnknownNode};
+use broadcast_common::xml_chars::XmlLimits;
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 

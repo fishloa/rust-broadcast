@@ -330,11 +330,14 @@ pub(crate) fn required_attr_parse<T: FromStr, E: XmlWalkError>(
 /// Instantiates the walker's generic helpers for one parser's error type, so
 /// call sites keep inferring the error through `?`.
 macro_rules! xml_walk_fns {
-    ($err:ty, $accepted:expr, $limits:expr) => {
+    ($err:ty, $accepted:expr) => {
         use $crate::xml_walk::{Tag, XmlReader, attr, attr_owned};
 
-        fn new_reader(xml: &str) -> XmlReader<'_> {
-            $crate::xml_walk::new_reader(xml, $accepted, $limits)
+        fn new_reader_with(
+            xml: &str,
+            limits: broadcast_common::xml_chars::XmlLimits,
+        ) -> XmlReader<'_> {
+            $crate::xml_walk::new_reader(xml, $accepted, limits)
         }
 
         fn next_tag(reader: &mut XmlReader<'_>) -> Result<Option<Tag>> {

@@ -253,9 +253,8 @@ mod limits {
 
     #[test]
     fn defaults_admit_a_feature_length_document() {
-        let mut xml = String::from(
-            r#"<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body><div>"#,
-        );
+        let mut xml =
+            String::from(r#"<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body><div>"#);
         for i in 0..4_000 {
             xml.push_str(&format!(
                 r#"<p begin="{i}s" end="{}s"><span>cue {i} line one</span><br/><span>line two</span></p>"#,

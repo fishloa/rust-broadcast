@@ -329,6 +329,9 @@ pub fn write_declaration(w: &mut XmlWriter, encoding: &str) {
     let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some(encoding), None)));
 }
 
+/// The attribute list of an element with none.
+pub const NO_ATTRS: &[(&str, &str)] = &[];
+
 /// A start tag for `name` carrying `attrs` in order (values escaped when
 /// written).
 #[must_use]
@@ -362,7 +365,7 @@ pub fn write_text(w: &mut XmlWriter, text: &str) {
 
 /// A leaf element with escaped text content on one line (`<name>text</name>`).
 pub fn text_element(w: &mut XmlWriter, name: &str, text: &str) {
-    open_element::<&str>(w, name, &[]);
+    open_element(w, name, NO_ATTRS);
     write_text(w, text);
     close_element(w, name);
 }

@@ -180,11 +180,7 @@ impl<'a> Events<'a> {
             &self.reader,
             e,
             |m| self.fail(m),
-            |count, value| {
-                self.budget
-                    .admit_attribute(count, value)
-                    .map_err(exceeded)
-            },
+            |count, value| self.budget.admit_attribute(count, value).map_err(exceeded),
         )?;
         Ok(StartTag {
             namespace,

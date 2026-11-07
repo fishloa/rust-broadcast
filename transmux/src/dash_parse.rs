@@ -291,7 +291,17 @@ impl crate::xml_walk::XmlWalkError for DashParseError {
     }
 }
 
-crate::xml_walk::xml_walk_fns!(DashParseError, Some(NS_MPD), XmlLimits::default());
+crate::xml_walk::xml_walk_fns!(DashParseError, Some(NS_MPD));
+
+/// The input bounds [`Mpd::parse`] applies: the shared [`XmlLimits`] defaults
+/// (4 MiB, depth 32, 100 000 elements, 8 KiB per attribute value, 256
+/// attributes per element). The largest MPD in the test corpus is under 3 KiB,
+/// and a long live `SegmentTimeline` of 100 000 `S` entries fits the byte and
+/// element ceilings.
+#[must_use]
+pub fn default_xml_limits() -> XmlLimits {
+    XmlLimits::default()
+}
 
 /// The character data of an already-open element `name` (entity and character
 /// references resolved by quick-xml, CDATA included), consuming its end tag.
@@ -1301,8 +1311,14 @@ impl Mpd {
     /// `@presentationTimeOffset`, §5.3.9.4.4 `@startNumber`), and a
     /// `SegmentTimeline` is taken from the lowest level that carries one.
     pub fn parse(xml: &str) -> Result<Mpd> {
+        Self::parse_with_limits(xml, default_xml_limits())
+    }
+
+    /// [`Mpd::parse`] under caller-chosen input bounds; a document past one
+    /// fails with [`DashParseError::TooLarge`].
+    pub fn parse_with_limits(xml: &str, limits: XmlLimits) -> Result<Mpd> {
         const EL: &str = "MPD";
-        let mut xml_reader = new_reader(xml);
+        let mut xml_reader = new_reader_with(xml, limits);
         let reader = &mut xml_reader;
 
         let (mpd_attrs, mpd_self_closing) = match next_tag(reader)? {
@@ -1870,6 +1886,10 @@ fn parse_segment_timeline(
 mod tests {
     use super::*;
     use alloc::vec;
+
+    fn new_reader(xml: &str) -> XmlReader<'_> {
+        new_reader_with(xml, default_xml_limits())
+    }
 
     // -- quick-xml pull plumbing ---------------------------------------------
 

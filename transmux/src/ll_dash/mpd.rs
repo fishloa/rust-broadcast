@@ -5,13 +5,14 @@
 
 use alloc::string::{String, ToString};
 
-use quick_xml::Reader;
+use quick_xml::NsReader;
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 
 use broadcast_common::Package;
+use broadcast_common::xml_chars::namespace_of;
 
-use crate::dash::DashPackager;
+use crate::dash::{DashPackager, MPD_NAMESPACE};
 use crate::error::{Error, Result};
 use crate::media::Media;
 
@@ -172,7 +173,7 @@ impl LlDashPackager {
     fn inject_ll(&self, xml: &str) -> Result<String> {
         let ato_str = format_secs(self.availability_time_offset());
 
-        let mut reader = Reader::from_str(xml);
+        let mut reader = NsReader::from_str(xml);
         // Whitespace-only text between elements is dropped (the indenting writer
         // re-lays it out); a text run split by a reference loses its edge spaces,
         // which is harmless because the base writer only emits base64 text.
@@ -182,26 +183,30 @@ impl LlDashPackager {
         // intentionally discarded.
         let mut utc_written = false;
         loop {
-            let event = reader
-                .read_event()
+            let (resolved, event) = reader
+                .read_resolved_event()
                 .map_err(|_| Error::InvalidInput(BASE_MPD_NOT_WELL_FORMED))?;
+            let in_mpd = matches!(
+                namespace_of(resolved),
+                Ok(Some(ref ns)) if ns == MPD_NAMESPACE
+            );
             match event {
                 Event::Eof => break,
                 // 1. availabilityTimeComplete + availabilityTimeOffset on every SegmentTemplate
-                Event::Start(e) if e.name().as_ref() == SEGMENT_TEMPLATE => {
+                Event::Start(e) if in_mpd && e.local_name().as_ref() == SEGMENT_TEMPLATE => {
                     let _ = writer.write_event(Event::Start(self.ll_template(&e, &ato_str)));
                 }
-                Event::Empty(e) if e.name().as_ref() == SEGMENT_TEMPLATE => {
+                Event::Empty(e) if in_mpd && e.local_name().as_ref() == SEGMENT_TEMPLATE => {
                     let _ = writer.write_event(Event::Empty(self.ll_template(&e, &ato_str)));
                 }
                 // 2. Insert <ServiceDescription> immediately after the <MPD ...> open tag.
-                Event::Start(e) if e.name().as_ref() == MPD_ELEMENT => {
+                Event::Start(e) if in_mpd && e.local_name().as_ref() == MPD_ELEMENT => {
                     let _ = writer.write_event(Event::Start(e));
                     self.write_service_description(&mut writer);
                 }
                 // 3. <UTCTiming> is a direct child of <MPD> but the schema places it
                 //    after <Period>, so emit it once the Period closes.
-                Event::End(e) if e.name().as_ref() == "Period" && !utc_written => {
+                Event::End(e) if in_mpd && e.local_name().as_ref() == "Period" && !utc_written => {
                     let _ = writer.write_event(Event::End(e));
                     if let Some((scheme, value)) = &self.utc_timing {
                         let mut timing = BytesStart::new("UTCTiming");
@@ -262,4 +267,50 @@ fn format_secs(v: f64) -> String {
         f.pop();
     }
     format!("{whole}.{f}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
+
+    fn packager() -> LlDashPackager {
+        LlDashPackager::new(4.0, 1.0, 3000, "2026-01-01T00:00:00Z").unwrap()
+    }
+
+    #[test]
+    fn foreign_namespace_look_alikes_are_passed_through_untouched() {
+        let xml = format!(
+            r#"<MPD xmlns="{NS}" xmlns:x="urn:x"><x:MPD/><Period><x:SegmentTemplate/><SegmentTemplate/></Period><x:Period/></MPD>"#
+        );
+        let out = packager().inject_ll(&xml).unwrap();
+        assert_eq!(out.matches("availabilityTimeOffset").count(), 1, "{out}");
+        assert!(out.contains("<x:SegmentTemplate/>"), "{out}");
+        assert_eq!(out.matches("<ServiceDescription").count(), 1, "{out}");
+    }
+
+    #[test]
+    fn a_foreign_mpd_root_gets_no_service_description() {
+        let xml = r#"<MPD xmlns="urn:other"><Period><SegmentTemplate/></Period></MPD>"#;
+        let out = packager().inject_ll(xml).unwrap();
+        assert!(!out.contains("ServiceDescription"), "{out}");
+        assert!(!out.contains("availabilityTimeOffset"), "{out}");
+    }
+
+    #[test]
+    fn utc_timing_follows_only_a_period_in_the_mpd_namespace() {
+        let xml = format!(
+            r#"<MPD xmlns="{NS}" xmlns:x="urn:x"><x:Period></x:Period><Period><SegmentTemplate/></Period></MPD>"#
+        );
+        let out = packager()
+            .with_utc_timing(UTCTIMING_DIRECT_2014, "2026-01-01T00:00:00Z")
+            .inject_ll(&xml)
+            .unwrap();
+        let timing = out.find("<UTCTiming").unwrap();
+        let foreign = out.find("</x:Period>").unwrap();
+        let own = out.rfind("<Period").unwrap();
+        assert!(foreign < own && own < timing, "{out}");
+        assert_eq!(out.matches("<UTCTiming").count(), 1, "{out}");
+    }
 }

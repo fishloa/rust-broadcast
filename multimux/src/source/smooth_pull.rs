@@ -1771,10 +1771,13 @@ mod tests {
         assert!(!manifest_declares_protection(
             "<SmoothStreamingMedia></SmoothStreamingMedia>"
         ));
-        // A namespace-prefixed element counts; a comment or an attribute value
-        // that merely mentions the tag does not.
-        assert!(manifest_declares_protection(
+        // A look-alike in a foreign namespace, a comment, or an attribute value
+        // that merely mentions the tag does not count.
+        assert!(!manifest_declares_protection(
             "<SmoothStreamingMedia xmlns:ms=\"urn:x\"><ms:Protection/></SmoothStreamingMedia>"
+        ));
+        assert!(!manifest_declares_protection(
+            "<SmoothStreamingMedia><Protection xmlns=\"urn:x\"/></SmoothStreamingMedia>"
         ));
         assert!(!manifest_declares_protection(
             "<SmoothStreamingMedia><!-- <Protection> --></SmoothStreamingMedia>"
