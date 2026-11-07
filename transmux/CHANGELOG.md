@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The `stco`, `co64`, `stss` parse and all six flat FullBox table serializers (`stco`, `co64`, `stss`, `stts`, `ctts`, `elst`) go through one `parse_flat_table` / `serialize_flat_table`; `stts`/`ctts`/`elst` keep their own `parse_body` (they report a truncated entry as an error, the others a count check) (c3 d:ST1).
 - The in-crate test bit writers of `slice_header` and `display_track`, and the `hdr10plus` integration test, use one `BitWriter` (`test_bits.rs`, `tests/it/support/bit_writer.rs`) (c3 d:L2).
+- `splice` uses `CodecConfig::is_video` and compares codec families by enum discriminant instead of its private string table; the AVC, HEVC and VVC length-size check shares one `VALID_LENGTH_SIZES` (c4 D2, D3, M3).
 - `pipeline::build_trak` takes its sample entry, media kind and `tkhd` size from one per-codec function (`pipeline/stsd.rs`, `MediaKind` owning the handler and media-header boxes) instead of a 700-line tuple-returning `match` (c3 t:S2); the seven `init_segment` container boxes (`dinf`, `minf`, `mdia`, `edts`, `trak`, `mvex`, `moov`) serialize through one `serialize_container` (c3 d:C1).
 - `TimelineOrigin`, the progressive-MP4 movie-timescale conversions, the LL-HLS ceil rescale and the tick comparisons use `broadcast_common::timescale`; a zero timescale counts as 1 uniformly (c3 L1).
 - Timescale rescaling goes through `broadcast_common::timescale` with the rounding each site already used; a zero timescale counts as 1 instead of returning the input unchanged (RTP, repackage windows) or panicking (c2 H6).
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `vvcC` writer no longer indexes the output buffer directly: a short buffer or a short `general_constraint_info` is a typed `BufferTooShort` instead of a panic (c2 M4).
 
 ### Added
+- `CodecConfig::name()`: one label per codec family (c4 D3); `flv` and `mkv_mux` unsupported-codec errors use it, so MPEG-H, MPEG-2 video and MPEG audio read `MPEG-H 3D Audio`, `MPEG-2 Video`, `MPEG-1/2 Audio` and a subtitle track `Subtitle` in both.
 - `box_types::clamped_boxes` / `ClampedBox`: a tolerant top-level box walk that clamps a truncated tail to the buffer end; `frag_offsets::mdat_ranges` and the hls-runtime iframe helpers use it instead of three private copies (c3 d:B1).
 
 

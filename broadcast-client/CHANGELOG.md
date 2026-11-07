@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- The DASH and HLS sources share the response head routing (redirect and auth replay), body accumulation with oversize reporting, refusal capture and the stalled-request resume decision in `source::fetch::inflight` (c4 D7).
 - The DASH and HLS sources share one in-flight request table (`source::fetch::inflight`: request records, per-class timeouts, deadline/inactivity bookkeeping, `start`) instead of two copies that had drifted (c3 d:S2).
 - `raw_27mhz` and the TS-over-HTTP `to_27mhz` rescale through `broadcast_common::timescale`; a zero timescale now counts as 1 instead of yielding 0 / the unscaled value (c3 L1).
 - `raw_27mhz` and the TS-over-HTTP `to_27mhz` rescale through `broadcast_common::timescale`; `to_27mhz` with a zero clock now counts it as 1 instead of returning the ticks unscaled, `raw_27mhz` keeps its explicit zero-timescale-is-no-mapping rule (pinned by `pts_to_27mhz_clamps_instead_of_truncating`) (c3 L1).

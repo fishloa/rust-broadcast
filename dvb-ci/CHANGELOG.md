@@ -11,6 +11,7 @@ versioning.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Changed
+- The seven fixed-length SPDUs parse through one `parse_spdu_fixed`; a wrong value length now reports `value length is fixed by the object definition` (c4 M2).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 
 

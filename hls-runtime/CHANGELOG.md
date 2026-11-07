@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Changed
+- `server::engine` calls `transmux::CodecConfig::is_video` instead of a private copy of its variant list (c4 D2).
 - `server::Generation` is now `media_plane::ids::Generation` re-exported at the same path; the private copy of the `id_newtype!` macro is gone (c2 L5).
 ### Removed
 - `client::Error::UriResolve` (never constructed: URI resolution falls back to the unresolved URI, documented on `resolve`) (c2 TH3).
