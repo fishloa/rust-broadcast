@@ -2,6 +2,7 @@
 //! the curated spec transcription this module implements field-for-field.
 
 use broadcast_common::bcd::bcd_to_decimal;
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
@@ -332,13 +333,7 @@ impl<'a> Parse<'a> for LtcFrame {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FRAME_LEN {
-            return Err(Error::BufferTooShort {
-                need: FRAME_LEN,
-                have: bytes.len(),
-                what: "LTC codeword",
-            });
-        }
+        need_in(bytes, FRAME_LEN, "LTC codeword")?;
 
         if [bytes[8], bytes[9]] != SYNC_WORD {
             return Err(Error::SyncWordMismatch {
@@ -412,13 +407,7 @@ impl Serialize for LtcFrame {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < FRAME_LEN {
-            return Err(Error::BufferTooShort {
-                need: FRAME_LEN,
-                have: buf.len(),
-                what: "LTC codeword serialize output",
-            });
-        }
+        need_in(buf, FRAME_LEN, "LTC codeword serialize output")?;
         self.validate()?;
 
         let frame_units = self.frames % 10;
