@@ -6,7 +6,7 @@
 //!
 //! `st12-1` has no real captured LTC bitstream to draw a fixture from: this
 //! workspace has no LTC producer/consumer today (unlike, say, `rtp-packet`'s
-//! `tests/fixtures/rtp-simple.bin`, captured from this workspace's own
+//! `fixtures/rtp/rtp-simple.bin`, captured from this workspace's own
 //! `transmux::RtpPacketiser`), and LTC is normally carried as a
 //! biphase-mark-encoded analog audio signal — out of this crate's scope (see
 //! `private/specs-verified/smpte/st12-1/st12-1.md`'s "Scope" section) — so there is no in-repo bitstream to

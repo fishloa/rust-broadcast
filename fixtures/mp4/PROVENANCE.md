@@ -181,7 +181,7 @@ ffmpeg -y -f lavfi -i testsrc2=size=320x240:rate=25 -t 0.4 -c:v libvpx-vp9 -f mp
 ```
 
 Extract a config-box body: find the fourcc, read the big-endian `u32` size 4 bytes
-before it, slice `[i-4 .. i-4+size]`, body = `[8..]`. See `FMP4-GAPS-ORACLE.md`.
+before it, slice `[i-4 .. i-4+size]`, body = `[8..]`. See the "Folded note: FMP4-GAPS-ORACLE.md" section above.
 
 # #1010 (C9) sidx — real MP4Box -dash onDemand-profile output
 ffmpeg -y -f lavfi -i testsrc2=duration=2:size=160x120:rate=25 -preset ultrafast -crf 40 \

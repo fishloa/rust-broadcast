@@ -1,4 +1,4 @@
-//! Real-ish fixture test: parse the committed `tests/fixtures/anc.bin` (a
+//! Real-ish fixture test: parse the committed `fixtures/rtp/anc.bin` (a
 //! 2-ANC-packet ANC data PES hand-constructed from ST 2038 Table 2), assert the
 //! decoded fields against independently-known expected values, and verify a
 //! byte-exact round-trip.

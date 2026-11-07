@@ -7,7 +7,7 @@
 //! byte-exact round-tripped. A mutation-proof per box asserts that changing a
 //! field changes the serialized bytes (no raw passthrough).
 //!
-//! Fixtures: `fixtures/mp4/{av1,opus,flac,vp9}.mp4`, `fixtures/ts/heaac/heaac_v{1,2}.mp4`.
+//! Fixtures: `fixtures/mp4/{av1,opus,flac,vp9}.mp4`, `fixtures/ts/heaac/heaac-v{1,2}.mp4`.
 //! Oracle refs: `fixtures/mp4/PROVENANCE.md`, `fixtures/ts/ac4/dac4-oracle.md`.
 
 use broadcast_common::{Parse, Serialize};
@@ -318,7 +318,7 @@ fn dac4_mutation_changes_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// HE-AAC ASC SBR/PS signaling — fixtures/ts/heaac/heaac_v{1,2}.mp4 (#432)
+// HE-AAC ASC SBR/PS signaling — fixtures/ts/heaac/heaac-v{1,2}.mp4 (#432)
 // ---------------------------------------------------------------------------
 
 /// Extract the AudioSpecificConfig (DecoderSpecificInfo) bytes from an esds box.
@@ -422,7 +422,7 @@ fn heaac_v2_ps_signaling_and_esds_round_trip() {
 /// profile 0 (AAC **Main**) instead of the actual core codec.
 ///
 /// No local tool emits this exact wire form: macOS AudioToolbox (`aac_at`,
-/// used for `fixtures/ts/heaac/heaac_v{1,2}.mp4` above) only ever writes the
+/// used for `fixtures/ts/heaac/heaac-v{1,2}.mp4` above) only ever writes the
 /// backward-compatible (trailing sync-extension) form, and `libfdk_aac` isn't
 /// built into this ffmpeg. Per the workspace fixture-first rule, these bytes
 /// are hand-built directly from the cited spec table's field order/widths

@@ -2,7 +2,7 @@
 //! (issue #1428, Apple HLS authoring rule: HE-AAC in fMP4 MUST use explicit
 //! signalling).
 //!
-//! Real artifacts: `fixtures/ts/heaac/heaac_v{1,2}_adts.ts` (macOS AudioToolbox
+//! Real artifacts: `fixtures/ts/heaac/heaac-v{1,2}-adts.ts` (macOS AudioToolbox
 //! HE-AAC / HE-AAC v2, core rate 22050 Hz, output rate 44100 Hz; commands in
 //! `fixtures/ts/PROVENANCE.md`) and `fixtures/ts/h264-aac.ts` (plain AAC-LC).
 //! The ASC layout is `private/specs-verified/mpeg/transmux/codec/heaac-asc.md`

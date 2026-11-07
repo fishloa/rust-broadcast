@@ -1,13 +1,13 @@
 # `container-probe` fixtures — provenance
 
-Fixtures for the `container-probe` crate
+Fixtures for the `container-probe` crate (files filed by topic: `fixtures/ts/`, `fixtures/audio/`, `fixtures/candidates/`)
 ([design spec](../../docs/superpowers/specs/2026-08-11-container-probe-design.md)).
 
 Every file here is either **real encoder/muxer output** (ffmpeg 8.1.2, own work)
 or **derived from a fixture already in this repo**, except one clearly-marked
 synthetic. All are MIT OR Apache-2.0, no copyleft, no third-party redistribution.
 
-Regenerate with [`GENERATE.md`](GENERATE.md).
+Regenerate with the "Folded note: GENERATE.md" section below.
 
 ## Real muxer/encoder output
 
@@ -47,7 +47,7 @@ Recorded rather than left silent, per the design spec's testing rules:
 - **208-byte stride** — supported by the prober's stride set, with no fixture of
   any kind. Untested.
 - **Matroska vs WebM DocType discrimination** — covered by the existing
-  `fixtures/mkv/` and `fixtures/mkv/` corpora rather than by files here.
+  `fixtures/mkv/` corpus rather than by files here.
 
 ## Formats covered from the existing corpus
 
@@ -55,10 +55,10 @@ These need no new fixture; the prober's tests reference the corpus in place:
 
 | Format | Existing fixtures |
 |---|---|
-| MPEG-2 TS (188, phase 0) | `fixtures/ts/` (36 real captures), `fixtures/ts/` |
+| MPEG-2 TS (188, phase 0) | `fixtures/ts/` (36 real captures) |
 | ISOBMFF | `fixtures/mp4/` (12 files: h264, hevc, av1, vp9, opus, flac, cenc, …) |
-| Matroska | `fixtures/mkv/` (h264_aac, vp9_opus, hevc_aac) |
-| WebM | `fixtures/mkv/` (vp8_opus, vp9_opus, vorbis) |
+| Matroska | `fixtures/mkv/` (h264-aac, vp9-opus, hevc-aac) |
+| WebM | `fixtures/mkv/` (vp8-opus, vp9-opus, vorbis) |
 | FLV | `fixtures/flv/av.flv` |
 | MPEG-PS | `fixtures/ps/h264-ac3.ps` |
 | MXF | `fixtures/mxf/op1a-mpeg2-pcm.mxf`, `fixtures/mxf/smpte-st377/` |
@@ -76,44 +76,42 @@ Licence and per-file rationale: [`PROVENANCE.md`](PROVENANCE.md).
 ## Real muxer/encoder output
 
 ```bash
-OUT=fixtures/container-probe
-
 # M2TS / BDAV — 192-byte stride, 4-byte TP_extra_header prefix per packet.
 # The headline case today's detect_container fails.
 ffmpeg -y -hide_banner -loglevel error \
   -f lavfi -i "testsrc2=size=320x240:rate=25" \
   -f lavfi -i "sine=frequency=1000:sample_rate=48000" \
   -frames:v 25 -c:v libx264 -profile:v main -pix_fmt yuv420p \
-  -c:a aac -shortest -f mpegts -mpegts_m2ts_mode 1 "$OUT/m2ts-192.m2ts"
+  -c:a aac -shortest -f mpegts -mpegts_m2ts_mode 1 "fixtures/ts/m2ts-192.m2ts"
 
 # RIFF/WAVE
 ffmpeg -y -hide_banner -loglevel error \
   -f lavfi -i "sine=frequency=1000:sample_rate=48000" -t 1 \
-  -c:a pcm_s16le -f wav "$OUT/pcm-s16le.wav"
+  -c:a pcm_s16le -f wav "fixtures/audio/pcm-s16le.wav"
 
 # Ogg (Opus payload — libvorbis absent from this build; same OggS magic)
 ffmpeg -y -hide_banner -loglevel error \
   -f lavfi -i "sine=frequency=1000:sample_rate=48000" -t 1 \
-  -c:a libopus -f ogg "$OUT/opus.ogg"
+  -c:a libopus -f ogg "fixtures/audio/opus.ogg"
 
 # ASF
 ffmpeg -y -hide_banner -loglevel error \
   -f lavfi -i "testsrc2=size=320x240:rate=25" \
-  -frames:v 15 -c:v msmpeg4v3 -f asf "$OUT/video.asf"
+  -frames:v 15 -c:v msmpeg4v3 -f asf "fixtures/candidates/video.asf"
 
 # Elementary streams
 ffmpeg -y -hide_banner -loglevel error \
   -f lavfi -i "sine=frequency=1000:sample_rate=48000" -t 1 \
-  -c:a aac -f adts "$OUT/aac.adts"
+  -c:a aac -f adts "fixtures/audio/aac.adts"
 
 ffmpeg -y -hide_banner -loglevel error \
   -f lavfi -i "sine=frequency=1000:sample_rate=48000" -t 1 \
-  -c:a libmp3lame -f mp3 "$OUT/audio.mp3"
+  -c:a libmp3lame -f mp3 "fixtures/audio/audio.mp3"
 
 ffmpeg -y -hide_banner -loglevel error \
   -f lavfi -i "testsrc2=size=320x240:rate=25" \
   -frames:v 15 -c:v libx264 -profile:v main -pix_fmt yuv420p \
-  -bsf:v h264_mp4toannexb -f h264 "$OUT/h264.annexb"
+  -bsf:v h264_mp4toannexb -f h264 "fixtures/candidates/h264.annexb"
 ```
 
 ## Derived — mid-packet TS (real data, shifted start offset)

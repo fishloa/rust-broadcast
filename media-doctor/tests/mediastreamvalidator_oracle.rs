@@ -340,14 +340,14 @@ fn assert_zero_errors(findings: &[Finding], context: &str) {
 /// Findings this harness treats as **explained artifacts of validating a
 /// single spec-example file standalone**, not real conformance defects.
 /// Every one of these is discussed in the module doc / `fixtures/hls/
-/// MANIFEST.md`; anything NOT matched here fails `spec_fixtures_calibrate`
+/// PROVENANCE.md`; anything NOT matched here fails `spec_fixtures_calibrate`
 /// loudly, on the assumption that an unexplained MUST-level finding against
 /// an RFC-authored example means the *invocation* is wrong.
 fn is_known_standalone_artifact(f: &Finding) -> bool {
     match f.comment.as_str() {
         // 9.4/9.5/9.6/9.7/9.12 (Multivariant Playlists) reference sibling
         // Media Playlists that were never committed — issue #869's fixture
-        // set is deliberately playlist-text-only (see MANIFEST.md). Even
+        // set is deliberately playlist-text-only (see fixtures/hls/PROVENANCE.md). Even
         // under `--parse-playlist-only`, the validator still tries to open
         // every referenced Playlist (it walks the whole Playlist *tree*, not
         // just the entry file) and reports this when one doesn't exist. A
@@ -360,7 +360,7 @@ fn is_known_standalone_artifact(f: &Finding) -> bool {
         // in this fixture set, so it resolves to nothing.
         "Zero length steering manifest" | "Illegal MIME type" => true,
         // 9.6/9.7 use `CODECS="..."` — the RFC's own editorial elision
-        // marker (the same artifact `MANIFEST.md` documents for the bare
+        // marker (the same artifact `fixtures/hls/PROVENANCE.md` documents for the bare
         // `...` lines in 9.10/9.11), reused here *inline* as a placeholder
         // attribute value rather than a real RFC 6381 codec string.
         "Unrecognized codec" if f.detail.as_deref() == Some("Codec: ...") => true,

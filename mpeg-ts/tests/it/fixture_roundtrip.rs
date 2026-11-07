@@ -1,6 +1,6 @@
 //! Real-fixture integration test for `mpeg-ts` framing.
 //!
-//! Walks `tests/fixtures/m6-single.ts` with `iter_packets`, validates the
+//! Walks `fixtures/ts/m6-single.ts` with `iter_packets`, validates the
 //! header round-trip, exercises typed accessors on real broadcast bytes, and
 //! feeds the PAT PID through `SectionReassembler` to verify the CRC.
 

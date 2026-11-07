@@ -57,6 +57,6 @@ one real unencrypted track alongside it, matching a genuine mixed-protection mul
   default_Per_Sample_IV_Size=16, default_KID matching the key above) in `trak`, and
   `saiz`/`saio`/`senc` in each `traf`.
 - `mp4dump fixtures/mp4/h264-cbcs.mp4` shows the same tree with `schm` scheme_type=cbcs.
-- `mp4decrypt --key <key>:<iv> fixtures/ts/h264_{cenc,cbcs}.mp4 <out>.mp4` round-trips
+- `mp4decrypt --key <key>:<iv> fixtures/mp4/h264-{cenc,cbcs}.mp4 <out>.mp4` round-trips
   cleanly (exit 0) for both — confirming the fixtures are genuinely decryptable, not just
   structurally plausible.

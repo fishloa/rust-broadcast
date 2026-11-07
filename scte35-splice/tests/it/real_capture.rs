@@ -9,7 +9,7 @@
 //! reassembling PSI on every PID and keeping those that start with
 //! `table_id` 0xFC and carry a valid CRC_32.
 //!
-//! * Committed fixtures (`fixtures/ts/scte35-*.ts`, `fixtures/scte35-ssai`)
+//! * Committed fixtures (`fixtures/ts/scte35-*.ts`, `fixtures/scte35/dash/`)
 //!   always run.
 //! * The TSDuck BSD-2 test corpus files are mirrored in the private fixtures
 //!   repo (`private/fixtures/suites/tsduck/`, resolved by `test_fixtures::tsduck`);

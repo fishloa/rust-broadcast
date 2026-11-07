@@ -1,8 +1,8 @@
 //! Oracle consumer: CENC fragmented-MP4 addressing (audit r05-W7,
 //! ISO/IEC 14496-12 §8.8.7 / §8.8.8).
 //!
-//! Consumes `../fixtures/mp4/cenc-layouts/` — see its `README.md` and
-//! `ORACLES.md`. Nine encrypted files cover every combination of the three base
+//! Consumes `../fixtures/mp4/cenc-layouts/` — see its `PROVENANCE.md` and
+//! `fixtures/mp4/PROVENANCE.md`. Nine encrypted files cover every combination of the three base
 //! rules (`base_data_offset` present / `default-base-is-moof` / neither) and two
 //! trun addressing modes (explicit `data_offset` / implicit, continuing after
 //! the previous run). Our decryptor must reproduce `clear.mp4`'s samples
@@ -17,7 +17,7 @@ use broadcast_common::{Decrypt, Unpackage};
 use transmux::cenc_decrypt::{CencDecryptor, KeyMap};
 use transmux::{Fmp4Demux, Media};
 
-/// The fixture's KID/KEY (`cenc_frag_layouts/README.md`).
+/// The fixture's KID/KEY (`fixtures/mp4/cenc-layouts/PROVENANCE.md`).
 const KID: [u8; 16] = [
     0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
 ];

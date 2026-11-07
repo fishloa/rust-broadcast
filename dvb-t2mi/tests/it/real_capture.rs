@@ -1,6 +1,6 @@
 //! Real-capture validation against a conformant T2-MI stream.
 //!
-//! Fixture: `tests/fixtures/colombia-capital-t2mi.ts` — a small slice (PAT +
+//! Fixture: `fixtures/t2mi/colombia-capital-t2mi.ts` — a small slice (PAT +
 //! PMT + T2-MI PID 0x0040, stuffing removed, packet-capped) of the Capital TV
 //! Colombia stream from <https://tsduck.io/streams/colombia-capital-t2mi/>,
 //! described there as a fully conformant embedded T2-MI signalisation.

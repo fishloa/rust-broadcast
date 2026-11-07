@@ -447,13 +447,13 @@ Neither was available within this task's scope, so target 2 stops here.
 
 # RTP/SDP oracle fixtures
 
-Produced locally with ffmpeg 8.1 (no packet is sent; `-f rtp` only writes the
+Produced locally with ffmpeg 8.1, run from `fixtures/rtp/` (no packet is sent; `-f rtp` only writes the
 SDP when a `sdp_file` is given):
 
 ```
-ffmpeg -y -i ../../../../fixtures/ts/h264/high.ts     -c copy -f rtp \
+ffmpeg -y -i ../ts/h264/high.ts     -c copy -f rtp \
        -sdp_file high-ffmpeg.sdp      rtp://127.0.0.1:5999
-ffmpeg -y -i ../../../../fixtures/ts/h264/baseline.ts -c copy -f rtp \
+ffmpeg -y -i ../ts/h264/baseline.ts -c copy -f rtp \
        -sdp_file baseline-ffmpeg.sdp  rtp://127.0.0.1:5998
 ```
 

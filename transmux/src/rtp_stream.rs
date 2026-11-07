@@ -6,7 +6,7 @@
 //! from IDR detection) carrying the real [`CodecConfig`] supplied at
 //! construction (e.g. from [`crate::rtp_sdp`]).
 //!
-//! See [`private/specs-verified/mpeg/transmux/rtp/rtp-payload-formats.md`](../README.md)
+//! See `private/specs-verified/mpeg/transmux/rtp/rtp-payload-formats.md`
 //! for the RFC background and timing-model specification.
 //!
 //! # Timing model

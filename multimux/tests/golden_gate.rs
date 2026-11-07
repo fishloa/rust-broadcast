@@ -223,7 +223,7 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init segment builds"));
 
-    // h264-aac.ts is a real 25 fps capture (CODEC-ORACLE.md) -> 40ms/frame.
+    // h264-aac.ts is a real 25 fps capture (fixtures/ts/PROVENANCE.md) -> 40ms/frame.
     let frame_interval = Duration::from_millis(40);
     for sample in samples {
         seg.push(track_id, sample).expect("push succeeds");

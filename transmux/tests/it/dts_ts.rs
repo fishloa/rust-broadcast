@@ -2,7 +2,7 @@
 //!
 //! Fixture: `fixtures/ts/dts/dts-core.ts` — a real ffmpeg `dca` encode (DTS
 //! core substream, sync `0x7FFE8001`), stream_type `0x82`, 48 kHz stereo, 1170
-//! whole 188-byte TS packets (see the fixture's `GENERATE.md`).
+//! whole 188-byte TS packets (see `fixtures/ts/dts/PROVENANCE.md`).
 //!
 //! Gate 2 below is an **independent oracle**: it reassembles the DTS PID's PES
 //! payloads and counts `0x7FFE8001` sync words itself (byte-level, no crate

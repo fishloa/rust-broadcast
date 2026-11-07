@@ -1,8 +1,8 @@
 //! Oracle consumer: H.264 HLS Sample-AES CBC chaining (audit r05-W1).
 //!
 //! Consumes the committed, independently-generated fixtures under
-//! `../fixtures/crypto/sample-aes-h264/` — see that directory's `README.md` and
-//! `ORACLES.md`. The claim they pin:
+//! `../fixtures/crypto/sample-aes-h264/` — see that directory's `PROVENANCE.md` and
+//! `fixtures/mp4/PROVENANCE.md`. The claim they pin:
 //!
 //! * AES-128-CBC **chains across the encrypted 16-byte blocks within one NAL**;
 //!   the IV is reset only at the start of each NAL;
@@ -175,7 +175,7 @@ fn slice_nals(annexb: &[u8]) -> Vec<Vec<u8>> {
 /// A5 — `epclear_*`: EP bytes planted inside the CLEAR regions of a slice.
 ///
 /// NO independent oracle: Bento4 double-escapes and ffmpeg emits unescaped
-/// NALs, so neither can arbitrate (see `ORACLES.md`). This asserts the
+/// NALs, so neither can arbitrate (see `fixtures/mp4/PROVENANCE.md`). This asserts the
 /// spec-derived rule only (unescape before encrypt, re-escape after) by
 /// round-tripping through our own code.
 #[test]

@@ -1,6 +1,6 @@
 # Provenance of the DASH fixtures
 
-Everything under `fixtures/dash/` other than the original `manifest.mpd` family (see `README.md`) was produced in P0 of
+Everything under `fixtures/dash/` other than the original `manifest.mpd` family (see "Folded note: README.md" below) was produced in P0 of
 `docs/dash-runtime/DESIGN.md` by an **external muxer** from a fixture this workspace already owns. No media byte was
 written by hand; the only hand-written documents are the Annex G example MPDs (our own text) and one derived MPD
 (`multiperiod-continuous/`, below).

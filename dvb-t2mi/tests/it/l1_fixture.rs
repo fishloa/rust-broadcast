@@ -1,6 +1,6 @@
 //! Fixture oracle: validate L1-pre / L1-post decoding against real broadcast bytes.
 //!
-//! Fixture: `tests/fixtures/colombia-capital-t2mi.ts` — the same conformant T2-MI
+//! Fixture: `fixtures/t2mi/colombia-capital-t2mi.ts` — the same conformant T2-MI
 //! capture used by `real_capture.rs`. We pump it, find the first L1-current payload,
 //! and assert ground-truth decoded field values verified from the wire bytes.
 #![cfg(feature = "ts")]

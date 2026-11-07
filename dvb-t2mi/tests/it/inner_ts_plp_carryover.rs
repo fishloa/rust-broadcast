@@ -11,7 +11,7 @@
 //! interleaved in between the split halves.
 //!
 //! No committed real capture exercises this: the only real T2-MI fixture
-//! (`tests/fixtures/colombia-capital-t2mi.ts`) carries a single PLP (102), and
+//! (`fixtures/t2mi/colombia-capital-t2mi.ts`) carries a single PLP (102), and
 //! no local tool (TSDuck/ffmpeg/GPAC) generates a multi-PLP T2-MI stream. Per
 //! the W4 fixture-first fallback, this test instead builds the T2-MI/BBFrame
 //! framing directly from EN 302 755 §5.1.8 / TS 102 773's own byte layout,

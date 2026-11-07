@@ -68,8 +68,8 @@ CORPORA: dict[str, tuple[str, ...]] = {
 WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
     "dash_mpd_parse": (
         "fixtures/dash/**/*.mpd",
-        "transmux/tests/golden/*.mpd",
-        "multimux/tests/golden/dash_mpd*.golden",
+        "fixtures/golden/dash/*.mpd",
+        "fixtures/golden/dash/dash-mpd*.golden",
         "fixtures/golden/dash/ll-dash-mpd.golden",
     ),
     "dash_address": ("fixtures/dash/**/*.mpd",),
