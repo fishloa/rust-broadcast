@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::string::String;
+use broadcast_common::xml_chars::XmlLimit;
 use thiserror::Error;
 
 /// Result type alias for ttml-subtitle operations.
@@ -15,6 +16,17 @@ pub enum Error {
     /// XML parsing failed (syntax error, not well-formed).
     #[error("XML parse error: {0}")]
     XmlParse(String),
+
+    /// The document exceeded an input bound
+    /// ([`XmlLimits`](broadcast_common::xml_chars::XmlLimits)); raise it with
+    /// [`Document::parse_str_with_limits`](crate::Document::parse_str_with_limits).
+    #[error("document exceeds the {limit} limit of {max}")]
+    TooLarge {
+        /// The bound that tripped.
+        limit: XmlLimit,
+        /// Its ceiling.
+        max: usize,
+    },
 
     /// The root element is not `<tt>` in the TTML namespace.
     #[error("expected root element <tt> in namespace http://www.w3.org/ns/ttml, got {0}")]

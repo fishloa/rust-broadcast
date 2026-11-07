@@ -138,16 +138,12 @@ fn deeply_nested_document_does_not_overflow_the_stack() {
         "<span>".repeat(depth),
         "</span>".repeat(depth)
     );
-    // Nested spans are bounded by MAX_NESTING_DEPTH: a structured constraint
-    // error (or quick-xml's own nesting limit), never a stack overflow.
-    let result = Document::parse_str(&xml);
-    assert!(
-        matches!(
-            result,
-            Err(Error::ConstraintViolation { .. }) | Err(Error::XmlParse(_))
-        ),
-        "unexpected result: {:?}",
-        result.map(|_| ())
+    assert_eq!(
+        Document::parse_str(&xml).map(|_| ()).unwrap_err(),
+        Error::TooLarge {
+            limit: broadcast_common::xml_chars::XmlLimit::Depth,
+            max: ttml_subtitle::MAX_TTML_DEPTH
+        }
     );
 }
 
@@ -195,5 +191,85 @@ fn invalid_character_data_in_skipped_content_is_rejected() {
         assert_xml_parse_error(&chunk, &format!("chunk nested {bad:?}"));
         let wrapper = format!(r#"<w><tt xmlns="{NS}"/><other>{bad}</other></w>"#);
         assert_xml_parse_error(&wrapper, &format!("wrapper sibling {bad:?}"));
+    }
+}
+
+mod limits {
+    use broadcast_common::xml_chars::{XmlLimit, XmlLimits};
+    use ttml_subtitle::{Document, Error, default_xml_limits};
+
+    const DOC: &str = r#"<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body><div><p begin="0s" end="1s">hi</p></div></body></tt>"#;
+
+    fn tight(change: impl FnOnce(&mut XmlLimits)) -> XmlLimits {
+        let mut limits = default_xml_limits();
+        change(&mut limits);
+        limits
+    }
+
+    fn limit_hit(xml: &str, limits: XmlLimits) -> XmlLimit {
+        match Document::parse_str_with_limits(xml, limits) {
+            Err(Error::TooLarge { limit, .. }) => limit,
+            other => panic!("expected TooLarge, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[test]
+    fn each_input_limit_is_enforced() {
+        assert_eq!(
+            limit_hit(DOC, tight(|l| l.max_bytes = DOC.len() - 1)),
+            XmlLimit::InputBytes
+        );
+        assert_eq!(limit_hit(DOC, tight(|l| l.max_depth = 3)), XmlLimit::Depth);
+        assert_eq!(
+            limit_hit(DOC, tight(|l| l.max_elements = 3)),
+            XmlLimit::Elements
+        );
+        assert_eq!(
+            limit_hit(DOC, tight(|l| l.max_attribute_bytes = 1)),
+            XmlLimit::AttributeBytes
+        );
+        assert_eq!(
+            limit_hit(DOC, tight(|l| l.max_attributes = 1)),
+            XmlLimit::Attributes
+        );
+    }
+
+    #[test]
+    fn a_skipped_foreign_subtree_counts_against_the_limits() {
+        let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:x="urn:x"><head><x:f><x:g/><x:g/><x:g/></x:f></head></tt>"#;
+        assert_eq!(
+            limit_hit(xml, tight(|l| l.max_elements = 4)),
+            XmlLimit::Elements
+        );
+    }
+
+    #[test]
+    fn custom_limits_override_the_defaults() {
+        let tiny = tight(|l| l.max_bytes = DOC.len() - 1);
+        assert!(Document::parse_str_with_limits(DOC, tiny).is_err());
+        let roomy = tight(|l| l.max_bytes = DOC.len());
+        assert!(Document::parse_str_with_limits(DOC, roomy).is_ok());
+    }
+
+    #[test]
+    fn defaults_admit_a_feature_length_document() {
+        let mut xml = String::from(
+            r#"<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body><div>"#,
+        );
+        for i in 0..4_000 {
+            xml.push_str(&format!(
+                r#"<p begin="{i}s" end="{}s"><span>cue {i} line one</span><br/><span>line two</span></p>"#,
+                i + 1
+            ));
+        }
+        xml.push_str("</div></body></tt>");
+        assert!(xml.len() > 300_000);
+        assert!(Document::parse_str(&xml).is_ok());
+    }
+
+    #[test]
+    fn largest_real_fixture_parses_with_the_defaults() {
+        let xml = test_fixtures::read_to_string("subtitles/imsc1-backgroundcolor-rgba-001.ttml");
+        assert!(Document::parse_str(&xml).is_ok());
     }
 }

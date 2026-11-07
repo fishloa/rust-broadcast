@@ -23,6 +23,10 @@ pub use document::{
     ResourcesElement, SetElement, SourceElement, SpanElement, StyleAttributes, StyleElement,
     StylingElement, TtElement, XmlDeclaration,
 };
+#[cfg(feature = "std")]
+pub use document::{
+    MAX_TTML_ATTRIBUTE_BYTES, MAX_TTML_BYTES, MAX_TTML_DEPTH, MAX_TTML_ELEMENTS, default_xml_limits,
+};
 pub use error::{Error, Result};
 #[cfg(feature = "std")]
 pub use foreign::{ForeignAttribute, UnknownElement, UnknownNode};
