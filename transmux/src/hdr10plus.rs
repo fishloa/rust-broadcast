@@ -32,6 +32,7 @@ use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// SEI `payloadType` of `user_data_registered_itu_t_t35` (H.265 D.2.6).
@@ -684,13 +685,7 @@ impl<'a> Parse<'a> for Hdr10PlusMetadata {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < T35_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: T35_HEADER_LEN,
-                have: bytes.len(),
-                what: "HDR10+ T.35 header",
-            });
-        }
+        need_in(bytes, T35_HEADER_LEN, "HDR10+ T.35 header")?;
         if bytes[..T35_HEADER_LEN - 2] != T35_HEADER_V1[..T35_HEADER_LEN - 2] {
             return Err(Error::InvalidValue {
                 field: "itu_t_t35 header",
@@ -810,12 +805,7 @@ impl Serialize for Hdr10PlusMetadata {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         if self.application_version > APPLICATION_VERSION_MAX {
             return Err(Error::InvalidValue {
                 field: "application_version",

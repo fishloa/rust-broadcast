@@ -13,6 +13,7 @@
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the VP9 config box.
@@ -88,13 +89,7 @@ impl Vp9ConfigurationBox {
 impl<'a> Parse<'a> for Vp9ConfigurationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FULL_HDR + VPCC_RECORD_FIXED {
-            return Err(Error::BufferTooShort {
-                need: FULL_HDR + VPCC_RECORD_FIXED,
-                have: bytes.len(),
-                what: "vpcC body",
-            });
-        }
+        need_in(bytes, FULL_HDR + VPCC_RECORD_FIXED, "vpcC body")?;
         let version = bytes[0];
         // Only version 1 is defined by the binding; version 0 is deprecated with
         // no published syntax, so guessing at a layout for it would be
@@ -131,13 +126,7 @@ impl<'a> Parse<'a> for Vp9ConfigurationBox {
                 have: bytes.len(),
                 what: "codecInitializationDataSize overflows the offset",
             })?;
-        if init_end > bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: init_end,
-                have: bytes.len(),
-                what: "codecInitializationData",
-            });
-        }
+        need_in(bytes, init_end, "codecInitializationData")?;
         let codec_initialization_data = bytes[init_start..init_end].to_vec();
         Ok(Self {
             version,
@@ -171,12 +160,7 @@ impl Serialize for Vp9ConfigurationBox {
             });
         }
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[1..4].copy_from_slice(&fb[1..]);
@@ -260,12 +244,7 @@ impl Serialize for Vp9SampleEntry {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, &VP09_FOURCC, need)?;
         c += self.visual.serialize_body_into(&mut buf[c..])?;

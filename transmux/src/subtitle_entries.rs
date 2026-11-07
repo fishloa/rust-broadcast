@@ -23,6 +23,7 @@
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 const BOX_HDR: usize = 8;
@@ -165,12 +166,7 @@ impl Serialize for XmlSubtitleSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         // box header: size(32) + fourcc(32)
         c += crate::box_types::write_box_header(buf, b"stpp", need)?;
@@ -235,13 +231,7 @@ macro_rules! utf8_text_box {
 
             /// Parse from full box bytes (including 8-byte header).
             pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-                if bytes.len() < BOX_HDR {
-                    return Err(Error::BufferTooShort {
-                        need: BOX_HDR,
-                        have: bytes.len(),
-                        what: $fourcc,
-                    });
-                }
+                need_in(bytes, BOX_HDR, $fourcc)?;
                 let body = &bytes[crate::box_types::box_header_len(bytes)?..];
                 let text = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
                     field: concat!($fourcc, " ", stringify!($field)),
@@ -270,12 +260,7 @@ macro_rules! utf8_text_box {
 
             fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
                 let need = self.serialized_len();
-                if buf.len() < need {
-                    return Err(Error::OutputBufferTooSmall {
-                        need,
-                        have: buf.len(),
-                    });
-                }
+                need_out(buf, need)?;
                 let mut c = 0usize;
                 c += crate::box_types::write_box_header(buf, $cc, need)?;
                 buf[c..c + self.$field.len()].copy_from_slice(self.$field.as_bytes());
@@ -393,13 +378,7 @@ impl VttCueBox {
 
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "vttc",
-            });
-        }
+        need_in(bytes, BOX_HDR, "vttc")?;
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let mut payload: Option<CuePayloadBox> = None;
         let mut settings: Option<CueSettingsBox> = None;
@@ -530,12 +509,7 @@ impl Serialize for VttCueBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"vttc", need)?;
         for child in self.write_order() {
@@ -574,13 +548,7 @@ pub struct VttEmptyCueBox;
 impl VttEmptyCueBox {
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "vtte",
-            });
-        }
+        need_in(bytes, BOX_HDR, "vtte")?;
         Ok(Self)
     }
 }
@@ -601,12 +569,7 @@ impl Serialize for VttEmptyCueBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = BOX_HDR;
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[..4].copy_from_slice(&(BOX_HDR as u32).to_be_bytes());
         buf[4..8].copy_from_slice(b"vtte");
         Ok(BOX_HDR)
@@ -644,13 +607,7 @@ pub fn parse_wvtt_sample(sample: &[u8]) -> Result<Vec<WvttSampleBox>> {
     let mut pos = 0usize;
     while pos < sample.len() {
         let rest = &sample[pos..];
-        if rest.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: rest.len(),
-                what: "wvtt sample box header",
-            });
-        }
+        need_in(rest, BOX_HDR, "wvtt sample box header")?;
         let size = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
         if size < BOX_HDR || size > rest.len() {
             return Err(Error::InvalidValue {
@@ -697,12 +654,7 @@ impl Serialize for WvttSampleBox {
             WvttSampleBox::AdditionalText(b) => b.serialize_into(buf),
             WvttSampleBox::Other(b) => {
                 let need = BOX_HDR + b.data.len();
-                if buf.len() < need {
-                    return Err(Error::OutputBufferTooSmall {
-                        need,
-                        have: buf.len(),
-                    });
-                }
+                need_out(buf, need)?;
                 let mut c = crate::box_types::write_box_header(buf, &b.box_type, need)?;
                 buf[c..c + b.data.len()].copy_from_slice(&b.data);
                 c += b.data.len();
@@ -754,13 +706,7 @@ impl WvttSampleEntry {
     /// Parse from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         // Minimum: box header (8) + SampleEntry reserved+dri (8) + vttC header (8) = 24
-        if bytes.len() < 24 {
-            return Err(Error::BufferTooShort {
-                need: 24,
-                have: bytes.len(),
-                what: "wvtt",
-            });
-        }
+        need_in(bytes, 24, "wvtt")?;
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
 
@@ -826,12 +772,7 @@ impl Serialize for WvttSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"wvtt", need)?;
         // SampleEntry: reserved(6) zeros + data_reference_index(16). Written

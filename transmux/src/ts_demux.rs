@@ -229,6 +229,7 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 use mpeg_ts::pid::Pid;
 
@@ -1253,13 +1254,7 @@ fn parse_pmt_section_header(section: &[u8]) -> Result<PmtSectionHeader> {
             reason: "not a PMT section",
         });
     }
-    if section.len() < SECTION_HEADER_LEN {
-        return Err(Error::BufferTooShort {
-            need: SECTION_HEADER_LEN,
-            have: section.len(),
-            what: "PMT section header",
-        });
-    }
+    need_in(section, SECTION_HEADER_LEN, "PMT section header")?;
     Ok(PmtSectionHeader {
         program_number: u16::from_be_bytes([section[3], section[4]]),
         version: (section[5] >> 1) & VERSION_NUMBER_MASK,
@@ -1287,13 +1282,7 @@ fn parse_pmt(section: &[u8]) -> Result<Vec<(Pid, Codec, Vec<u8>)>> {
     let body = section_body(section, "PMT")?;
     // PMT body prefix: reserved(3)+PCR_PID(13) = 2 bytes, then
     // reserved(4)+program_info_length(12) = 2 bytes, then the descriptor loop.
-    if body.len() < 4 {
-        return Err(Error::BufferTooShort {
-            need: 4,
-            have: body.len(),
-            what: "PMT program-info prefix",
-        });
-    }
+    need_in(body, 4, "PMT program-info prefix")?;
     let program_info_length = (((body[2] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[3] as usize;
     let mut off = 4 + program_info_length;
     let mut out = Vec::new();

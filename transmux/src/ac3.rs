@@ -27,6 +27,7 @@
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 // AC-3 syncword (big-endian).
@@ -174,13 +175,7 @@ impl Ac3SyncframeInfo {
     pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
         // syncword(16) + crc1(16) + fscod(2) + frmsizecod(6) = 40 bits = 5 bytes
         let need = off + 5;
-        if data.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: data.len(),
-                what: "AC-3 syncinfo",
-            });
-        }
+        need_in(data, need, "AC-3 syncinfo")?;
         // Use BitReader on the raw syncframe bytes (no emulation-prevention
         // in AC-3 — it's a raw bitstream).
         let es = &data[off..];
@@ -367,13 +362,7 @@ impl Ec3SyncframeInfo {
         // acmod(3) + lfeon(1) + bsid(5)
         // = 16 + 2 + 3 + 11 + 2 + 2 + 3 + 1 + 5 = 45 bits minimum → 6 bytes
         let need = off + 6;
-        if data.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: data.len(),
-                what: "E-AC-3 syncframe",
-            });
-        }
+        need_in(data, need, "E-AC-3 syncframe")?;
         // An AC-3 syncframe (bsid <= 8) is a valid independent substream 0 of an
         // E-AC-3 bit stream: ETSI TS 102 366 §E.1.3.1.2 "If an AC-3 bit stream is
         // present in the Enhanced AC-3 bit stream, then the AC-3 bit stream shall
@@ -837,13 +826,7 @@ impl<'a> Parse<'a> for Ac3SpecificBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // Box body is 3 bytes
-        if bytes.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "dac3 body",
-            });
-        }
+        need_in(bytes, 3, "dac3 body")?;
         let mut bit_pos = 0usize;
         let fscod = read_bits(bytes, &mut bit_pos, 2, "fscod")? as u8;
         let bsid = read_bits(bytes, &mut bit_pos, 5, "bsid")? as u8;
@@ -869,12 +852,7 @@ impl Serialize for Ac3SpecificBox {
         3
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < 3 {
-            return Err(Error::OutputBufferTooSmall {
-                need: 3,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, 3)?;
         let mut bit_pos = 0usize;
         write_bits(buf, &mut bit_pos, 2, self.fscod as u64);
         write_bits(buf, &mut bit_pos, 5, self.bsid as u64);
@@ -1160,13 +1138,7 @@ fn ec3_substream_serialized_len(sub: &Ec3Substream) -> usize {
 impl<'a> Parse<'a> for Ec3SpecificBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: bytes.len(),
-                what: "dec3 body",
-            });
-        }
+        need_in(bytes, 2, "dec3 body")?;
         let mut bit_pos = 0usize;
         let data_rate = read_bits(bytes, &mut bit_pos, 13, "data_rate")? as u16;
         let num_ind_sub = read_bits(bytes, &mut bit_pos, 3, "num_ind_sub")? as u8;
@@ -1183,13 +1155,7 @@ impl<'a> Parse<'a> for Ec3SpecificBox {
                 num_dep_sub: 0,
                 chan_loc: None,
             });
-        if bytes.len() < need_bytes {
-            return Err(Error::BufferTooShort {
-                need: need_bytes,
-                have: bytes.len(),
-                what: "dec3 substreams",
-            });
-        }
+        need_in(bytes, need_bytes, "dec3 substreams")?;
 
         let mut substreams = Vec::with_capacity(num_sub);
         for _ in 0..num_sub {
@@ -1261,12 +1227,7 @@ impl Serialize for Ec3SpecificBox {
             });
         }
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut bit_pos = 0usize;
         write_bits(buf, &mut bit_pos, 13, self.data_rate as u64);
         write_bits(buf, &mut bit_pos, 3, self.num_ind_sub as u64);

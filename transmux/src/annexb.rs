@@ -13,6 +13,7 @@
 //! canonical and the length→Annex B→length round-trip byte-identical.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use crate::error::{Error, Result};
 
@@ -175,13 +176,7 @@ pub fn iter_length_prefixed_nals_with(lp: &[u8], length_size: usize) -> Result<V
             have: lp.len(),
             what: "NAL length prefix",
         })?;
-        if prefix_end > lp.len() {
-            return Err(Error::BufferTooShort {
-                need: prefix_end,
-                have: lp.len(),
-                what: "NAL length prefix",
-            });
-        }
+        need_in(lp, prefix_end, "NAL length prefix")?;
         let mut len: usize = 0;
         for &byte in &lp[off..prefix_end] {
             len = (len << 8) | usize::from(byte);
@@ -194,13 +189,7 @@ pub fn iter_length_prefixed_nals_with(lp: &[u8], length_size: usize) -> Result<V
             have: lp.len(),
             what: "NAL length prefix overflows the buffer offset",
         })?;
-        if end > lp.len() {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: lp.len(),
-                what: "NAL payload",
-            });
-        }
+        need_in(lp, end, "NAL payload")?;
         nals.push(&lp[start..end]);
         off = end;
     }

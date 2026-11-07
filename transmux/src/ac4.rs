@@ -8,6 +8,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the AC-4 config box.
@@ -54,12 +55,7 @@ impl Serialize for Ac4SpecificBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[..need].copy_from_slice(&self.ac4_dsi);
         Ok(need)
     }

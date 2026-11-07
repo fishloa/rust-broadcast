@@ -27,6 +27,7 @@
 //! they enable "unlikely to be useful"), and no `rand`-style dependency is
 //! pulled in to generate them.
 
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
@@ -56,13 +57,7 @@ impl<'a> Parse<'a> for Version {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < VERSION_LEN {
-            return Err(RtmpError::BufferTooShort {
-                need: VERSION_LEN,
-                have: bytes.len(),
-                what: "C0/S0 version",
-            });
-        }
+        need_in(bytes, VERSION_LEN, "C0/S0 version")?;
         Ok(Version(bytes[0]))
     }
 }
@@ -75,13 +70,7 @@ impl Serialize for Version {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < VERSION_LEN {
-            return Err(RtmpError::BufferTooShort {
-                need: VERSION_LEN,
-                have: buf.len(),
-                what: "C0/S0 version output",
-            });
-        }
+        need_in(buf, VERSION_LEN, "C0/S0 version output")?;
         buf[0] = self.0;
         Ok(VERSION_LEN)
     }
@@ -105,13 +94,7 @@ impl<'a> Parse<'a> for HandshakePacket {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HANDSHAKE_PACKET_LEN {
-            return Err(RtmpError::BufferTooShort {
-                need: HANDSHAKE_PACKET_LEN,
-                have: bytes.len(),
-                what: "C1/S1",
-            });
-        }
+        need_in(bytes, HANDSHAKE_PACKET_LEN, "C1/S1")?;
         let time = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let zero = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let mut random = [0u8; RANDOM_LEN];
@@ -128,13 +111,7 @@ impl Serialize for HandshakePacket {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < HANDSHAKE_PACKET_LEN {
-            return Err(RtmpError::BufferTooShort {
-                need: HANDSHAKE_PACKET_LEN,
-                have: buf.len(),
-                what: "C1/S1 output",
-            });
-        }
+        need_in(buf, HANDSHAKE_PACKET_LEN, "C1/S1 output")?;
         buf[0..FIELD_LEN].copy_from_slice(&self.time.to_be_bytes());
         buf[FIELD_LEN..2 * FIELD_LEN].copy_from_slice(&self.zero.to_be_bytes());
         buf[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random);
@@ -161,13 +138,7 @@ impl<'a> Parse<'a> for EchoPacket {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HANDSHAKE_PACKET_LEN {
-            return Err(RtmpError::BufferTooShort {
-                need: HANDSHAKE_PACKET_LEN,
-                have: bytes.len(),
-                what: "C2/S2",
-            });
-        }
+        need_in(bytes, HANDSHAKE_PACKET_LEN, "C2/S2")?;
         let time = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let time2 = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let mut random_echo = [0u8; RANDOM_LEN];
@@ -188,13 +159,7 @@ impl Serialize for EchoPacket {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < HANDSHAKE_PACKET_LEN {
-            return Err(RtmpError::BufferTooShort {
-                need: HANDSHAKE_PACKET_LEN,
-                have: buf.len(),
-                what: "C2/S2 output",
-            });
-        }
+        need_in(buf, HANDSHAKE_PACKET_LEN, "C2/S2 output")?;
         buf[0..FIELD_LEN].copy_from_slice(&self.time.to_be_bytes());
         buf[FIELD_LEN..2 * FIELD_LEN].copy_from_slice(&self.time2.to_be_bytes());
         buf[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random_echo);
@@ -310,13 +275,7 @@ impl Handshake {
         match self.state {
             HandshakeState::WaitC0C1 => {
                 let need = VERSION_LEN + HANDSHAKE_PACKET_LEN;
-                if input.len() < need {
-                    return Err(RtmpError::BufferTooShort {
-                        need,
-                        have: input.len(),
-                        what: "C0+C1",
-                    });
-                }
+                need_in(input, need, "C0+C1")?;
                 let c0 = Version::parse(&input[..VERSION_LEN])?;
                 // #1108/RTMP-W11: the C0 version byte was parsed and
                 // discarded, so an RTMPE client (C0 = 6) or garbage was
@@ -349,13 +308,7 @@ impl Handshake {
                 Ok((reply, need, false))
             }
             HandshakeState::WaitC2 => {
-                if input.len() < HANDSHAKE_PACKET_LEN {
-                    return Err(RtmpError::BufferTooShort {
-                        need: HANDSHAKE_PACKET_LEN,
-                        have: input.len(),
-                        what: "C2",
-                    });
-                }
+                need_in(input, HANDSHAKE_PACKET_LEN, "C2")?;
                 let _c2 = EchoPacket::parse(&input[..HANDSHAKE_PACKET_LEN])?;
                 self.state = HandshakeState::Done;
                 Ok((Vec::new(), HANDSHAKE_PACKET_LEN, true))

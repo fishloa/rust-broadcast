@@ -43,6 +43,7 @@ use crate::error::{Error, Result};
 use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt, VALID_LENGTH_SIZES};
 use crate::wire_cursor::{read_nalu_16, read_u8};
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
@@ -254,12 +255,7 @@ impl Serialize for AVCDecoderConfigurationRecord {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         let mut cursor = 0usize;
 
@@ -398,12 +394,7 @@ impl Serialize for AVCConfigurationBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         cursor += crate::box_types::write_box_header(buf, b"avcC", need)?;
         cursor += self.config.serialize_into(&mut buf[cursor..])?;

@@ -117,6 +117,15 @@ pub enum Error {
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }
 
+impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
+    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall {
+            need: e.need,
+            have: e.have,
+        }
+    }
+}
+
 impl From<rtcp_packet::PaddingCountError> for Error {
     fn from(e: rtcp_packet::PaddingCountError) -> Self {
         Error::InvalidPaddingCount {

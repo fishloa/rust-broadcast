@@ -37,6 +37,7 @@
 use crate::box_types::BoxHeader;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
@@ -197,12 +198,7 @@ fn write_varint_width(
             reason: "value does not fit the recorded varint width",
         });
     }
-    if *cursor + width > buf.len() {
-        return Err(Error::OutputBufferTooSmall {
-            need: *cursor + width,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, *cursor + width)?;
     for i in 0..width {
         let shift = 7 * (width - 1 - i);
         let mut b = ((value >> shift) & 0x7F) as u8;
@@ -249,12 +245,7 @@ impl UnknownDescriptor {
     /// Serialize tag + width-preserved size varint + body.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         buf[cursor] = self.tag;
         cursor += 1;
@@ -395,12 +386,7 @@ impl Serialize for DecoderSpecificInfo {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         buf[cursor] = Self::TAG;
         cursor += 1;
@@ -466,12 +452,7 @@ impl Serialize for SLConfigDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         buf[cursor] = Self::TAG;
         cursor += 1;
@@ -652,12 +633,7 @@ impl Serialize for DecoderConfigDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         buf[cursor] = Self::TAG;
         cursor += 1;
@@ -824,13 +800,7 @@ impl<'a> Parse<'a> for ESDescriptor {
         let mut unknown_descriptors = Vec::new();
 
         // ES_ID (16)
-        if cursor + 2 > body.len() {
-            return Err(Error::BufferTooShort {
-                need: cursor + 2,
-                have: body.len(),
-                what: "ES_ID",
-            });
-        }
+        need_in(body, cursor + 2, "ES_ID")?;
         let es_id = u16::from_be_bytes([body[cursor], body[cursor + 1]]);
         cursor += 2;
 
@@ -851,13 +821,7 @@ impl<'a> Parse<'a> for ESDescriptor {
 
         // Optional: dependsOn_ES_ID
         let depends_on_es_id = if stream_dependence_flag {
-            if cursor + 2 > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 2,
-                    have: body.len(),
-                    what: "dependsOn_ES_ID",
-                });
-            }
+            need_in(body, cursor + 2, "dependsOn_ES_ID")?;
             let v = u16::from_be_bytes([body[cursor], body[cursor + 1]]);
             cursor += 2;
             Some(v)
@@ -876,13 +840,7 @@ impl<'a> Parse<'a> for ESDescriptor {
             }
             let url_len = body[cursor] as usize;
             cursor += 1;
-            if cursor + url_len > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: cursor + url_len,
-                    have: body.len(),
-                    what: "URLstring",
-                });
-            }
+            need_in(body, cursor + url_len, "URLstring")?;
             // ISO/IEC 14496-1 §7.2.6.5: URLstring is UTF-8 (ISO/IEC 10646-1),
             // so invalid bytes are a structured error — a lossy decode would
             // silently break the byte-identical round trip (#1148 E).
@@ -901,13 +859,7 @@ impl<'a> Parse<'a> for ESDescriptor {
 
         // Optional: OCR_ES_Id
         let ocr_es_id = if ocr_stream_flag {
-            if cursor + 2 > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: cursor + 2,
-                    have: body.len(),
-                    what: "OCR_ES_Id",
-                });
-            }
+            need_in(body, cursor + 2, "OCR_ES_Id")?;
             let v = u16::from_be_bytes([body[cursor], body[cursor + 1]]);
             cursor += 2;
             Some(v)
@@ -924,13 +876,7 @@ impl<'a> Parse<'a> for ESDescriptor {
             let sub_tag = body[cursor];
             cursor += 1;
             let (sub_size, sub_width) = parse_varint(body, &mut cursor)?;
-            if cursor + sub_size > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: cursor + sub_size,
-                    have: body.len(),
-                    what: "ES_Descriptor sub-descriptor body",
-                });
-            }
+            need_in(body, cursor + sub_size, "ES_Descriptor sub-descriptor body")?;
             let sub_body = &body[cursor..cursor + sub_size];
 
             match sub_tag {
@@ -1002,12 +948,7 @@ impl Serialize for ESDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         buf[cursor] = Self::TAG;
         cursor += 1;
@@ -1202,13 +1143,7 @@ impl EsdsBox {
     /// Parse from the box body bytes (after the BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         // FullBox header: version(1) + flags(3)
-        if body.len() < FULLBOX_EXTRA {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA,
-                have: body.len(),
-                what: "esds FullBox header",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA, "esds FullBox header")?;
         let payload = &body[FULLBOX_EXTRA..];
 
         // The payload is a single ES_Descriptor: tag + expandable size + body.
@@ -1237,12 +1172,7 @@ impl Serialize for EsdsBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         // Box header
         cursor += crate::box_types::write_box_header(buf, b"esds", need)?;

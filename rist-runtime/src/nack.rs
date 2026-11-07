@@ -12,6 +12,7 @@
 //!   TR-06-1 §5.3.2.2 limits each packet to at most 16 range entries.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -87,12 +88,7 @@ fn serialize_padded(
     write_body: impl FnOnce(&mut [u8]) -> Result<usize>,
 ) -> Result<usize> {
     let len = padded_len(body_len, padding);
-    if buf.len() < len {
-        return Err(Error::OutputBufferTooSmall {
-            need: len,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, len)?;
     let written = write_body(buf)?;
     let pad = padding_total(padding, written - RTCP_HEADER_LEN)?;
     if pad > 0 {
@@ -304,12 +300,7 @@ impl GenericNack {
     /// Serialize the unpadded packet (`P = 0`); returns its length.
     pub(crate) fn write_body(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.body_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         // Header: V=2, P=0, FMT=1.
         let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
@@ -496,12 +487,7 @@ impl RangeNack {
     /// Serialize the unpadded packet (`P = 0`); returns its length.
     pub(crate) fn write_body(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.body_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.ranges.len() > MAX_RANGE_ENTRIES {
             return Err(Error::TooManyRanges {
                 max: MAX_RANGE_ENTRIES,

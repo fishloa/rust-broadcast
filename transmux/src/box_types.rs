@@ -32,6 +32,7 @@
 //! See ISO/IEC 14496-12:2015 §4.2 (fulltext L1254–L1304).
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
@@ -342,12 +343,7 @@ pub(crate) fn encode_box_header(fourcc: &[u8; 4], total: u64) -> ([u8; 16], usiz
 /// (#1147).
 pub(crate) fn write_box_header(buf: &mut [u8], fourcc: &[u8; 4], need: usize) -> Result<usize> {
     let (hdr, len) = encode_box_header(fourcc, need as u64);
-    if buf.len() < len {
-        return Err(Error::OutputBufferTooSmall {
-            need: len,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, len)?;
     buf[..len].copy_from_slice(&hdr[..len]);
     Ok(len)
 }
@@ -363,12 +359,7 @@ pub(crate) fn write_compact_box_header(
     need: usize,
 ) -> Result<usize> {
     let size = broadcast_common::len::fit_u32(need, "box size")?;
-    if buf.len() < BOX_HEADER_MIN_SIZE {
-        return Err(Error::OutputBufferTooSmall {
-            need: BOX_HEADER_MIN_SIZE,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, BOX_HEADER_MIN_SIZE)?;
     buf[0..4].copy_from_slice(&size.to_be_bytes());
     buf[4..8].copy_from_slice(fourcc);
     Ok(BOX_HEADER_MIN_SIZE)
@@ -454,13 +445,7 @@ pub(crate) fn child_extent_in(region: &[u8]) -> Option<usize> {
 /// `largesize` form (see [`write_box_header`]) parses back (#1147). The usual
 /// `uuid` `usertype` is left to the callers that handle `uuid` boxes.
 pub(crate) fn box_header_len(bytes: &[u8]) -> Result<usize> {
-    if bytes.len() < BOX_HEADER_MIN_SIZE {
-        return Err(Error::BufferTooShort {
-            need: BOX_HEADER_MIN_SIZE,
-            have: bytes.len(),
-            what: "box header",
-        });
-    }
+    need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
     let size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     if size == SIZE_INDICATES_LARGESIZE {
         let need = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
@@ -484,13 +469,7 @@ impl<'a> Parse<'a> for BoxHeader {
     /// Returns the header and the number of bytes consumed. The caller should
     /// verify `header.size` against the full buffer.
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_MIN_SIZE {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_MIN_SIZE,
-                have: bytes.len(),
-                what: "BoxHeader",
-            });
-        }
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "BoxHeader")?;
 
         let raw_size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let box_type = BoxType::from_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
@@ -563,12 +542,7 @@ impl Serialize for BoxHeader {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.header_size();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         // Write size in the form the header was parsed/constructed with, never
         // re-derived from `size`: a header that came off the wire as
@@ -663,13 +637,7 @@ impl<'a> Parse<'a> for FullBoxHeader {
         let box_header = BoxHeader::parse(bytes)?;
         let hdr_sz = box_header.header_size();
 
-        if bytes.len() < hdr_sz + FULLBOX_EXTRA_SIZE {
-            return Err(Error::BufferTooShort {
-                need: hdr_sz + FULLBOX_EXTRA_SIZE,
-                have: bytes.len(),
-                what: "FullBoxHeader",
-            });
-        }
+        need_in(bytes, hdr_sz + FULLBOX_EXTRA_SIZE, "FullBoxHeader")?;
 
         let version = bytes[hdr_sz];
         let flags =
@@ -693,12 +661,7 @@ impl Serialize for FullBoxHeader {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let base_len = self.box_header.serialized_len();
         let need = base_len + FULLBOX_EXTRA_SIZE;
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         let cursor = self.box_header.serialize_into(buf)?;
         buf[cursor] = self.version;
@@ -751,13 +714,7 @@ pub fn parse_box<'a>(bytes: &'a [u8]) -> Result<(BoxRef<'a>, usize)> {
                 header_size: hdr_sz,
             });
         }
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "BoxRef body",
-            });
-        }
+        need_in(bytes, total, "BoxRef body")?;
         &bytes[hdr_sz..total]
     };
 

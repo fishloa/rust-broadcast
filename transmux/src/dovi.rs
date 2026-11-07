@@ -25,6 +25,7 @@
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the Dolby Vision configuration box for `dv_profile <= 7`.
@@ -309,13 +310,7 @@ impl<'a> Parse<'a> for DoviDecoderConfigurationRecord {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < DOVI_RECORD_LEN {
-            return Err(Error::BufferTooShort {
-                need: DOVI_RECORD_LEN,
-                have: bytes.len(),
-                what: "DOVIDecoderConfigurationRecord",
-            });
-        }
+        need_in(bytes, DOVI_RECORD_LEN, "DOVIDecoderConfigurationRecord")?;
         if bytes.len() > DOVI_RECORD_LEN {
             return Err(invalid(
                 "DOVIDecoderConfigurationRecord",
@@ -345,12 +340,7 @@ impl Serialize for DoviDecoderConfigurationRecord {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < DOVI_RECORD_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: DOVI_RECORD_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, DOVI_RECORD_LEN)?;
         if self.profile >= 1 << (16 - PROFILE_SHIFT) {
             return Err(invalid(
                 "dv_profile",
@@ -413,37 +403,27 @@ impl<'a> Parse<'a> for DoviVideoStreamDescriptor {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < TS_DESCRIPTOR_BASE_LEN {
-            return Err(Error::BufferTooShort {
-                need: TS_DESCRIPTOR_BASE_LEN,
-                have: bytes.len(),
-                what: "DOVI_video_stream_descriptor",
-            });
-        }
+        need_in(
+            bytes,
+            TS_DESCRIPTOR_BASE_LEN,
+            "DOVI_video_stream_descriptor",
+        )?;
         let word = u16::from_be_bytes([bytes[2], bytes[3]]);
         let bl_present = word & BL_FLAG != 0;
         let mut dependency_reserved = 0u8;
         let (dependency_pid, tail) = if bl_present {
             (None, 4)
         } else {
-            if bytes.len() < TS_DESCRIPTOR_BASE_LEN + TS_DESCRIPTOR_DEPENDENCY_LEN {
-                return Err(Error::BufferTooShort {
-                    need: TS_DESCRIPTOR_BASE_LEN + TS_DESCRIPTOR_DEPENDENCY_LEN,
-                    have: bytes.len(),
-                    what: "DOVI_video_stream_descriptor dependency_pid",
-                });
-            }
+            need_in(
+                bytes,
+                TS_DESCRIPTOR_BASE_LEN + TS_DESCRIPTOR_DEPENDENCY_LEN,
+                "DOVI_video_stream_descriptor dependency_pid",
+            )?;
             let raw = u16::from_be_bytes([bytes[4], bytes[5]]);
             dependency_reserved = (raw & ((1 << PID_SHIFT) - 1)) as u8;
             (Some(raw >> PID_SHIFT), 6)
         };
-        if bytes.len() < tail + 1 {
-            return Err(Error::BufferTooShort {
-                need: tail + 1,
-                have: bytes.len(),
-                what: "DOVI_video_stream_descriptor",
-            });
-        }
+        need_in(bytes, tail + 1, "DOVI_video_stream_descriptor")?;
         Ok(Self {
             record: unpack_config_word(
                 bytes[0],
@@ -475,12 +455,7 @@ impl Serialize for DoviVideoStreamDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let ccid = self.record.bl_signal_compatibility_id.code();
         if ccid > CCID_MASK || self.record.level > LEVEL_MASK as u8 || self.record.profile >= 1 << 7
         {

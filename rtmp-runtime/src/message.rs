@@ -10,6 +10,7 @@
 //! protocol control messages ([`ProtocolControl`], §4/§5.4), and the
 //! streaming-layer user control events ([`UserControl`], §5.3/§6.2/§6.7).
 
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
@@ -257,13 +258,11 @@ impl ProtocolControl {
                 Ok(Some(ProtocolControl::WindowAckSize(window)))
             }
             msg_type::SET_PEER_BANDWIDTH => {
-                if payload.len() < SET_PEER_BANDWIDTH_LEN {
-                    return Err(RtmpError::BufferTooShort {
-                        need: SET_PEER_BANDWIDTH_LEN,
-                        have: payload.len(),
-                        what: "set peer bandwidth payload",
-                    });
-                }
+                need_in(
+                    payload,
+                    SET_PEER_BANDWIDTH_LEN,
+                    "set peer bandwidth payload",
+                )?;
                 let ack_window_size = read_u32_be(&payload[0..U32_LEN]);
                 let limit_type = LimitType::from_u8(payload[U32_LEN])?;
                 Ok(Some(ProtocolControl::SetPeerBandwidth {
@@ -334,13 +333,7 @@ impl Serialize for ProtocolControl {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let written = self.serialized_len();
-        if buf.len() < written {
-            return Err(RtmpError::BufferTooShort {
-                need: written,
-                have: buf.len(),
-                what: "protocol control payload output",
-            });
-        }
+        need_in(buf, written, "protocol control payload output")?;
         match *self {
             ProtocolControl::SetChunkSize(size) => {
                 if size == 0 || size & SET_CHUNK_SIZE_RESERVED_MASK != 0 {
@@ -482,13 +475,7 @@ impl<'a> Parse<'a> for UserControl {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < EVENT_TYPE_LEN {
-            return Err(RtmpError::BufferTooShort {
-                need: EVENT_TYPE_LEN,
-                have: bytes.len(),
-                what: "user control event type",
-            });
-        }
+        need_in(bytes, EVENT_TYPE_LEN, "user control event type")?;
         let event = u16::from_be_bytes([bytes[0], bytes[1]]);
         let data = &bytes[EVENT_TYPE_LEN..];
         match event {
@@ -505,13 +492,7 @@ impl<'a> Parse<'a> for UserControl {
                 "stream dry event data",
             )?)),
             event_type::SET_BUFFER_LENGTH => {
-                if data.len() < 2 * U32_LEN {
-                    return Err(RtmpError::BufferTooShort {
-                        need: 2 * U32_LEN,
-                        have: data.len(),
-                        what: "set buffer length event data",
-                    });
-                }
+                need_in(data, 2 * U32_LEN, "set buffer length event data")?;
                 Ok(UserControl::SetBufferLength {
                     stream_id: read_u32_be(&data[0..U32_LEN]),
                     buffer_ms: read_u32_be(&data[U32_LEN..2 * U32_LEN]),
@@ -549,13 +530,7 @@ impl Serialize for UserControl {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let written = self.serialized_len();
-        if buf.len() < written {
-            return Err(RtmpError::BufferTooShort {
-                need: written,
-                have: buf.len(),
-                what: "user control event output",
-            });
-        }
+        need_in(buf, written, "user control event output")?;
         buf[0..EVENT_TYPE_LEN].copy_from_slice(&self.event_type().to_be_bytes());
         let data = &mut buf[EVENT_TYPE_LEN..written];
         match *self {

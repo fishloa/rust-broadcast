@@ -23,6 +23,7 @@
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// ADTS fixed + variable header length without CRC (ISO/IEC 13818-7 §6.2, Tables 8/9: 28 + 28 bits).
@@ -586,26 +587,14 @@ fn detect_heaac_core(bytes: &[u8]) -> Option<(u8, bool, bool)> {
 impl Parse<'_> for AudioSpecificConfig {
     type Error = Error;
     fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: bytes.len(),
-                what: "ASC header",
-            });
-        }
+        need_in(bytes, 2, "ASC header")?;
         let b0 = bytes[0];
         let b1 = bytes[1];
         let aot = AudioObjectType::from(b0 >> 3);
         let sfi_raw = ((b0 & 7) << 1) | (b1 >> 7);
         let sfi = SamplingFrequencyIndex::from(sfi_raw);
         let sf = if sfi_raw == 0x0F {
-            if bytes.len() < 5 {
-                return Err(Error::BufferTooShort {
-                    need: 5,
-                    have: bytes.len(),
-                    what: "ASC escape",
-                });
-            }
+            need_in(bytes, 5, "ASC escape")?;
             Some(
                 ((b1 as u32 & 0x7F) << 17)
                     | (bytes[2] as u32) << 9
@@ -616,13 +605,7 @@ impl Parse<'_> for AudioSpecificConfig {
             None
         };
         let cc = if sfi_raw == 0x0F {
-            if bytes.len() < 5 {
-                return Err(Error::BufferTooShort {
-                    need: 5,
-                    have: bytes.len(),
-                    what: "ASC cc esc",
-                });
-            }
+            need_in(bytes, 5, "ASC cc esc")?;
             ChannelConfiguration::from((bytes[4] >> 3) & 0x0F)
         } else {
             ChannelConfiguration::from((b1 >> 3) & 0x0F)
@@ -667,12 +650,7 @@ impl Serialize for AudioSpecificConfig {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         // Only the region this config occupies: the `Serialize` contract lets a
         // caller serialize into a larger shared buffer, and a whole-buffer
         // `fill(0)` would zero their bytes past `need` (r04-W9).
@@ -739,13 +717,7 @@ pub fn build_adts_header(profile: u8, sfi: u8, cc: u8, frame_len: u16) -> [u8; A
 }
 
 pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
-    if bytes.len() < ADTS_HEADER_SIZE {
-        return Err(Error::BufferTooShort {
-            need: ADTS_HEADER_SIZE,
-            have: bytes.len(),
-            what: "ADTS",
-        });
-    }
+    need_in(bytes, ADTS_HEADER_SIZE, "ADTS")?;
     if bytes[0] != 0xFF || (bytes[1] & 0xF0) != 0xF0 {
         return Err(Error::InvalidValue {
             field: "adts_syncword",

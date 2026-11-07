@@ -37,6 +37,7 @@ pub use misc::{
 pub use nak::{LossListEntry, NakPacket};
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 
 /// Length in bytes of the fixed SRT header shared by data and control packets
 /// (`draft-sharabayko-srt-01` §3, Figure 2): 4 header words = 16 bytes, before
@@ -90,13 +91,7 @@ impl<'a> SrtPacket<'a> {
     /// datagram carrying SRT traffic. Dispatches on the `F` bit of the first
     /// header word (§3, Figure 2).
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < SRT_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: SRT_HEADER_LEN,
-                have: bytes.len(),
-                what: "SRT header",
-            });
-        }
+        need_in(bytes, SRT_HEADER_LEN, "SRT header")?;
         let word0 = be32(bytes, 0);
         if word0 & F_BIT != 0 {
             Ok(SrtPacket::Control(ControlPacket::parse(bytes)?))

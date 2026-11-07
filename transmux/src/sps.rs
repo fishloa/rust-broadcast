@@ -27,6 +27,7 @@ use crate::ir::{
 };
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 // ---------------------------------------------------------------------------
 // H.264 helpers
@@ -309,13 +310,7 @@ fn decode_avc_sps_inner(
     Option<AvcVuiTiming>,
     AvcReorderDepth,
 )> {
-    if sps_bytes.len() < 4 {
-        return Err(Error::BufferTooShort {
-            need: 4,
-            have: sps_bytes.len(),
-            what: "H.264 SPS header",
-        });
-    }
+    need_in(sps_bytes, 4, "H.264 SPS header")?;
 
     // Byte 0 is the NAL header (nal_ref_idc + nal_unit_type).
     // Byte 1 is profile_idc.
@@ -914,13 +909,7 @@ pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>>
 /// `vps_timing_info_present_flag` is 0 or either value is 0. Returns `Err` on
 /// truncated / hostile input (never panics).
 pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
-    if vps_nal.len() < 2 {
-        return Err(Error::BufferTooShort {
-            need: 2,
-            have: vps_nal.len(),
-            what: "HEVC VPS header",
-        });
-    }
+    need_in(vps_nal, 2, "HEVC VPS header")?;
     let mut r = BitReader::with_unescape(&vps_nal[2..], "HEVC VPS")?;
 
     // vps_video_parameter_set_id u(4)
@@ -1000,13 +989,7 @@ const PTL_INTERLACED_SOURCE_BIT: u64 = 1 << 46;
 fn decode_hevc_sps_inner(
     sps_bytes: &[u8],
 ) -> Result<(HevcSpsInfo, HevcInterlaceSps, DisplayFacts, Option<u32>)> {
-    if sps_bytes.len() < 2 {
-        return Err(Error::BufferTooShort {
-            need: 2,
-            have: sps_bytes.len(),
-            what: "HEVC SPS header",
-        });
-    }
+    need_in(sps_bytes, 2, "HEVC SPS header")?;
 
     let mut r = BitReader::with_unescape(&sps_bytes[2..], "HEVC SPS")?;
 
@@ -1643,13 +1626,7 @@ pub struct VvcSpsInfo {
 /// are not needed for the dimensions, but the block is longer than one byte so
 /// it must be skipped exactly, not merely aligned).
 pub fn decode_vvc_sps(sps_bytes: &[u8]) -> Result<VvcSpsInfo> {
-    if sps_bytes.len() < 2 {
-        return Err(Error::BufferTooShort {
-            need: 2,
-            have: sps_bytes.len(),
-            what: "VVC SPS header",
-        });
-    }
+    need_in(sps_bytes, 2, "VVC SPS header")?;
 
     let mut r = BitReader::with_unescape(&sps_bytes[2..], "VVC SPS")?;
 

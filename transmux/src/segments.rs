@@ -13,6 +13,7 @@
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
+use broadcast_common::len::{need_in, need_out};
 
 /// Four-CC of the File Type Box.
 pub const FTYP: [u8; 4] = *b"ftyp";
@@ -40,13 +41,7 @@ impl BrandBox {
     }
 
     fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: body.len(),
-                what: "ftyp/styp body",
-            });
-        }
+        need_in(body, 8, "ftyp/styp body")?;
         let major_brand = [body[0], body[1], body[2], body[3]];
         let minor_version = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
         let mut compatible_brands = Vec::new();
@@ -64,12 +59,7 @@ impl BrandBox {
 
     fn serialize_into(&self, four_cc: &[u8; 4], buf: &mut [u8]) -> Result<usize> {
         let need = 8 + self.body_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         // `ftyp`/`styp` are brand lists and their reader takes the compact
         // form only; a size past 32 bits is a typed error, never a wrap
         // (#1147).
@@ -197,25 +187,13 @@ impl MediaDataBox {
     /// Parse a whole `mdat` box (including the header), handling both the
     /// compact 32-bit and the 64-bit `largesize` forms.
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "mdat",
-            });
-        }
+        need_in(bytes, 8, "mdat")?;
         if bytes[4..8] != MDAT {
             return Err(Error::UnexpectedBox { expected: "mdat" });
         }
         let size32 = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let (size, hdr) = if size32 == 1 {
-            if bytes.len() < 16 {
-                return Err(Error::BufferTooShort {
-                    need: 16,
-                    have: bytes.len(),
-                    what: "mdat largesize",
-                });
-            }
+            need_in(bytes, 16, "mdat largesize")?;
             (
                 // A `largesize` beyond `usize` can never fit `bytes`: saturate so
                 // the size check below rejects it instead of truncating.
@@ -255,12 +233,7 @@ impl Serialize for MediaDataBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let hdr = if self.needs_large() {
             buf[0..4].copy_from_slice(&1u32.to_be_bytes());
             buf[4..8].copy_from_slice(&MDAT);
@@ -280,13 +253,7 @@ impl Serialize for MediaDataBox {
 /// header). Only the compact 32-bit size form is supported here (`ftyp`/`styp`
 /// are always small).
 fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; 4]) -> Result<&'a [u8]> {
-    if bytes.len() < 8 {
-        return Err(Error::BufferTooShort {
-            need: 8,
-            have: bytes.len(),
-            what: "box header",
-        });
-    }
+    need_in(bytes, 8, "box header")?;
     if bytes[4..8] != *four_cc {
         return Err(Error::UnexpectedBox {
             expected: "ftyp/styp",

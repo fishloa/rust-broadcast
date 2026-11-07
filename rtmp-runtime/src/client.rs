@@ -8,6 +8,7 @@
 //! automatically emits `createStream`, and a successful `createStream`
 //! `_result` emits `publish`.
 
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
@@ -226,13 +227,7 @@ impl ClientHandshake {
             ClientHandshakeState::SendC0C1 => Ok((Vec::new(), 0, false)),
             ClientHandshakeState::WaitS0S1S2 => {
                 let need = VERSION_LEN + HANDSHAKE_PACKET_LEN + HANDSHAKE_PACKET_LEN;
-                if input.len() < need {
-                    return Err(RtmpError::BufferTooShort {
-                        need,
-                        have: input.len(),
-                        what: "S0+S1+S2",
-                    });
-                }
+                need_in(input, need, "S0+S1+S2")?;
                 let s0 = Version::parse(&input[..VERSION_LEN])?;
                 // #1108/RTMP-W11: see handshake.rs's identical C0 check.
                 if s0.0 != RTMP_VERSION {

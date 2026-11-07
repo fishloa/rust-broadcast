@@ -9,6 +9,7 @@
 //! ```
 
 use super::{Error, Result, SEQ_NUMBER_MASK, SRT_HEADER_LEN, be32, put_be32};
+use broadcast_common::len::{need_in, need_out};
 
 /// Bit width of the Message Number field (§3.1).
 const MESSAGE_NUMBER_BITS: u32 = 26;
@@ -205,13 +206,7 @@ impl<'a> DataPacket<'a> {
     /// [`Error::WrongPacketKind`] if the `F` bit is set (this is a control
     /// packet).
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < SRT_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: SRT_HEADER_LEN,
-                have: bytes.len(),
-                what: "SRT data packet header",
-            });
-        }
+        need_in(bytes, SRT_HEADER_LEN, "SRT data packet header")?;
         let word0 = be32(bytes, 0);
         if word0 & super::F_BIT != 0 {
             return Err(Error::WrongPacketKind {
@@ -249,12 +244,7 @@ impl<'a> DataPacket<'a> {
     /// Serialize this data packet into `buf`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if self.seq_number > SEQ_NUMBER_MASK {
             return Err(Error::FieldTooWide {
                 what: "Packet Sequence Number",

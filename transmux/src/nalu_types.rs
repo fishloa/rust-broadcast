@@ -10,6 +10,7 @@ use crate::sps::{
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
+use broadcast_common::len::need_out;
 
 /// `lengthSizeMinusOne` of an AVC/HEVC/VVC decoder configuration record must be 0, 1, or 3
 /// (value 2 is invalid).
@@ -110,12 +111,7 @@ impl Serialize for HevcNalUnit {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let len = broadcast_common::len::fit_u16(self.0.len(), "nalUnitLength")?;
         buf[..2].copy_from_slice(&len.to_be_bytes());
         buf[2..need].copy_from_slice(&self.0);
@@ -159,12 +155,7 @@ impl Serialize for HevcNalArray {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         let mut cursor = 0usize;
         // First byte: [array_completeness(1), reserved(1)=0, NAL_unit_type(6)]

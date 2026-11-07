@@ -30,6 +30,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -120,13 +121,11 @@ impl<'a> Parse<'a> for MHADecoderConfigurationRecord {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MHAC_RECORD_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: MHAC_RECORD_FIXED_LEN,
-                have: bytes.len(),
-                what: "MHADecoderConfigurationRecord",
-            });
-        }
+        need_in(
+            bytes,
+            MHAC_RECORD_FIXED_LEN,
+            "MHADecoderConfigurationRecord",
+        )?;
         let configuration_version = bytes[0];
         if configuration_version != MHAC_CONFIGURATION_VERSION {
             return Err(Error::InvalidValue {
@@ -139,13 +138,7 @@ impl<'a> Parse<'a> for MHADecoderConfigurationRecord {
         let reference_channel_layout = bytes[2];
         let config_len = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
         let need = MHAC_RECORD_FIXED_LEN + config_len;
-        if bytes.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: bytes.len(),
-                what: "MHADecoderConfigurationRecord.mpegh3daConfig",
-            });
-        }
+        need_in(bytes, need, "MHADecoderConfigurationRecord.mpegh3daConfig")?;
         let mpegh3da_config = bytes[MHAC_RECORD_FIXED_LEN..need].to_vec();
         Ok(Self {
             configuration_version,
@@ -165,12 +158,7 @@ impl Serialize for MHADecoderConfigurationRecord {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = self.configuration_version;
         buf[1] = self.mpegh3da_profile_level_indication;
         buf[2] = self.reference_channel_layout;

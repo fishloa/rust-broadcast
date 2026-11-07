@@ -75,6 +75,7 @@
 //! This module is gated on the `cenc` feature.
 
 use crate::TrackId;
+use broadcast_common::len::need_in;
 use core::fmt;
 
 use alloc::collections::BTreeMap;
@@ -573,13 +574,7 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
 /// Parse a full `senc` box (header + FullBox + body) into its typed form,
 /// given the track's `tenc.default_per_sample_iv_size`.
 fn parse_senc_box(senc: &[u8], per_sample_iv_size: u8) -> Result<crate::cenc::SampleEncryptionBox> {
-    if senc.len() < BOX_HEADER_MIN_SIZE + FULL_HDR {
-        return Err(Error::BufferTooShort {
-            need: BOX_HEADER_MIN_SIZE + FULL_HDR,
-            have: senc.len(),
-            what: "senc header",
-        });
-    }
+    need_in(senc, BOX_HEADER_MIN_SIZE + FULL_HDR, "senc header")?;
     let version = senc[BOX_HEADER_MIN_SIZE];
     let flags = u32::from_be_bytes([
         0,
@@ -629,13 +624,7 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
             let Some(tfhd) = find_child_box(traf, b"tfhd") else {
                 continue;
             };
-            if tfhd.len() < BOX_HEADER_MIN_SIZE + FULL_HDR {
-                return Err(Error::BufferTooShort {
-                    need: BOX_HEADER_MIN_SIZE + FULL_HDR,
-                    have: tfhd.len(),
-                    what: "tfhd header",
-                });
-            }
+            need_in(tfhd, BOX_HEADER_MIN_SIZE + FULL_HDR, "tfhd header")?;
             let tfhd_parsed = TrackFragmentHeaderBox::parse_body(
                 &tfhd[crate::box_types::box_header_len(tfhd)?..],
             )?;
@@ -692,13 +681,7 @@ fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
     for trun in
         box_slices(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..]).filter(|b| &b[4..8] == b"trun")
     {
-        if trun.len() < BOX_HEADER_MIN_SIZE {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_MIN_SIZE,
-                have: trun.len(),
-                what: "trun header",
-            });
-        }
+        need_in(trun, BOX_HEADER_MIN_SIZE, "trun header")?;
         let parsed =
             TrackFragmentRunBox::parse_body(&trun[crate::box_types::box_header_len(trun)?..])?;
         total += parsed.samples.len();
@@ -842,13 +825,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
                 let end = offset
                     .checked_add(size)
                     .ok_or(Error::InvalidInput("sample offset + size overflow"))?;
-                if end > file.len() {
-                    return Err(Error::BufferTooShort {
-                        need: end,
-                        have: file.len(),
-                        what: "protected sample data",
-                    });
-                }
+                need_in(file, end, "protected sample data")?;
                 samples.push(Sample {
                     data: file.slice(offset..end),
                     // Progressive (non-fragmented) protected-sample recovery

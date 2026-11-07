@@ -16,6 +16,7 @@
 use crate::error::{Error, Result};
 use crate::sample_entries::VisualSampleEntryFields;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the AV1 config box.
@@ -100,13 +101,7 @@ impl Av1ConfigurationBox {
 impl<'a> Parse<'a> for Av1ConfigurationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < AV1C_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: AV1C_FIXED_LEN,
-                have: bytes.len(),
-                what: "av1C body",
-            });
-        }
+        need_in(bytes, AV1C_FIXED_LEN, "av1C body")?;
         let b0 = bytes[0];
         if (b0 & MARKER_BIT) == 0 {
             return Err(Error::InvalidValue {
@@ -155,12 +150,7 @@ impl Serialize for Av1ConfigurationBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = MARKER_BIT | (self.version & 0x7F);
         buf[1] = (self.seq_profile << 5) | (self.seq_level_idx_0 & 0x1F);
         buf[2] = ((self.seq_tier_0 as u8) << 7)
@@ -229,12 +219,7 @@ impl Serialize for Av1SampleEntry {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, &AV01_FOURCC, need)?;
         c += self.visual.serialize_body_into(&mut buf[c..])?;

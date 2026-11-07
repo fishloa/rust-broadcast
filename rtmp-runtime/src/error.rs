@@ -63,3 +63,13 @@ pub enum RtmpError {
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 }
+
+impl From<broadcast_common::len::BufferTooShort> for RtmpError {
+    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
+        Self::BufferTooShort {
+            need: e.need,
+            have: e.have,
+            what: e.what,
+        }
+    }
+}

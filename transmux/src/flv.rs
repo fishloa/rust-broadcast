@@ -43,6 +43,7 @@
 use crate::TrackId;
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use core::fmt;
 use core::marker::PhantomData;
 
@@ -431,13 +432,7 @@ fn resync_tag(input: &[u8], from: usize) -> Option<usize> {
 /// [`FlvError::TagOverrun`] — the caller gets a diagnosis rather than a bare
 /// `NoSupportedTrack`.
 fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
-    if input.len() < FLV_HEADER_LEN + PREV_TAG_SIZE_LEN {
-        return Err(Error::BufferTooShort {
-            need: FLV_HEADER_LEN + PREV_TAG_SIZE_LEN,
-            have: input.len(),
-            what: "FLV header",
-        });
-    }
+    need_in(input, FLV_HEADER_LEN + PREV_TAG_SIZE_LEN, "FLV header")?;
     // DataOffset (bytes [5:9]) points past the header to the first PreviousTagSize0.
     let data_offset = u32::from_be_bytes([input[5], input[6], input[7], input[8]]) as usize;
     let mut off = data_offset.max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;

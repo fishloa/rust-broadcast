@@ -16,6 +16,7 @@
 use crate::error::{Error, Result};
 use crate::init_segment::{bounded_entry_count, flat_table_len, serialize_flat_table};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -61,13 +62,7 @@ pub struct TimeToSampleBox {
 impl TimeToSampleBox {
     /// Parse the body of an stts box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4,
-                have: body.len(),
-                what: "stts body",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA_SIZE + 4, "stts body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let entry_count = u32::from_be_bytes([body[4], body[5], body[6], body[7]]) as usize;
@@ -78,13 +73,7 @@ impl TimeToSampleBox {
             entry_count,
         ));
         for _ in 0..entry_count {
-            if body.len() < c + 8 {
-                return Err(Error::BufferTooShort {
-                    need: c + 8,
-                    have: body.len(),
-                    what: "stts entry",
-                });
-            }
+            need_in(body, c + 8, "stts entry")?;
             let sample_count = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             let sample_delta =
                 u32::from_be_bytes([body[c + 4], body[c + 5], body[c + 6], body[c + 7]]);
@@ -105,13 +94,7 @@ impl TimeToSampleBox {
 impl<'a> Parse<'a> for TimeToSampleBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4,
-                have: bytes.len(),
-                what: "stts box",
-            });
-        }
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "stts box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != STTS_TYPE {
             return Err(Error::InvalidValue {
@@ -183,13 +166,7 @@ pub struct CompositionOffsetBox {
 impl CompositionOffsetBox {
     /// Parse the body of a ctts box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4,
-                have: body.len(),
-                what: "ctts body",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA_SIZE + 4, "ctts body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let entry_count = u32::from_be_bytes([body[4], body[5], body[6], body[7]]) as usize;
@@ -201,13 +178,7 @@ impl CompositionOffsetBox {
             entry_count,
         ));
         for _ in 0..entry_count {
-            if body.len() < c + entry_size {
-                return Err(Error::BufferTooShort {
-                    need: c + entry_size,
-                    have: body.len(),
-                    what: "ctts entry",
-                });
-            }
+            need_in(body, c + entry_size, "ctts entry")?;
             let sample_count = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             let raw_offset =
                 u32::from_be_bytes([body[c + 4], body[c + 5], body[c + 6], body[c + 7]]);
@@ -229,13 +200,7 @@ impl CompositionOffsetBox {
 impl<'a> Parse<'a> for CompositionOffsetBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4,
-                have: bytes.len(),
-                what: "ctts box",
-            });
-        }
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "ctts box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != CTTS_TYPE {
             return Err(Error::InvalidValue {
@@ -293,13 +258,7 @@ pub struct CompositionToDecodeBox {
 impl CompositionToDecodeBox {
     /// Parse the body of a cslg box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4,
-                have: body.len(),
-                what: "cslg body",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA_SIZE + 4, "cslg body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let payload = &body[FULLBOX_EXTRA_SIZE..];
@@ -356,13 +315,7 @@ impl CompositionToDecodeBox {
 impl<'a> Parse<'a> for CompositionToDecodeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4,
-                have: bytes.len(),
-                what: "cslg box",
-            });
-        }
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "cslg box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != CSLG_TYPE {
             return Err(Error::InvalidValue {
@@ -383,12 +336,7 @@ impl Serialize for CompositionToDecodeBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0;
         c += crate::box_types::write_compact_box_header(buf, b"cslg", need)?;
         buf[c] = self.version;
@@ -453,13 +401,7 @@ pub struct EditListBox {
 impl EditListBox {
     /// Parse the body of an elst box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4,
-                have: body.len(),
-                what: "elst body",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA_SIZE + 4, "elst body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let entry_count = u32::from_be_bytes([body[4], body[5], body[6], body[7]]) as usize;
@@ -471,13 +413,7 @@ impl EditListBox {
             entry_count,
         ));
         for _ in 0..entry_count {
-            if body.len() < c + entry_size {
-                return Err(Error::BufferTooShort {
-                    need: c + entry_size,
-                    have: body.len(),
-                    what: "elst entry",
-                });
-            }
+            need_in(body, c + entry_size, "elst entry")?;
             let (segment_duration, media_time) = if version == 0 {
                 let sd =
                     u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]) as u64;
@@ -531,13 +467,7 @@ impl EditListBox {
 impl<'a> Parse<'a> for EditListBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4,
-                have: bytes.len(),
-                what: "elst box",
-            });
-        }
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "elst box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != ELST_TYPE {
             return Err(Error::InvalidValue {
@@ -651,13 +581,7 @@ pub struct SegmentIndexBox {
 impl SegmentIndexBox {
     /// Parse the body of a sidx box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 + 4 + 4 + 4 {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4 + 4 + 4 + 4,
-                have: body.len(),
-                what: "sidx body",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA_SIZE + 4 + 4 + 4 + 4, "sidx body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let mut c = FULLBOX_EXTRA_SIZE; // skip past version/flags to payload
@@ -696,13 +620,7 @@ impl SegmentIndexBox {
             c += 8;
             (ept, fo)
         };
-        if body.len() < c + 4 {
-            return Err(Error::BufferTooShort {
-                need: c + 4,
-                have: body.len(),
-                what: "sidx reserved+count",
-            });
-        }
+        need_in(body, c + 4, "sidx reserved+count")?;
         // ISO/IEC 14496-12 §8.16.3.2 (Table): `reserved(16) = 0` comes BEFORE
         // `reference_count(16)`, not folded into it — before this fix, parse
         // read `reference_count` from the `reserved` field's own 2 bytes,
@@ -718,13 +636,7 @@ impl SegmentIndexBox {
             reference_count,
         ));
         for _ in 0..reference_count {
-            if body.len() < c + 12 {
-                return Err(Error::BufferTooShort {
-                    need: c + 12,
-                    have: body.len(),
-                    what: "sidx reference entry",
-                });
-            }
+            need_in(body, c + 12, "sidx reference entry")?;
             // reference_type(1) + referenced_size(31)
             let raw_ref = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             let reference_type = ((raw_ref >> 31) & 1) as u8;
@@ -763,13 +675,7 @@ impl SegmentIndexBox {
 impl<'a> Parse<'a> for SegmentIndexBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4,
-                have: bytes.len(),
-                what: "sidx box",
-            });
-        }
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "sidx box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != SIDX_TYPE {
             return Err(Error::InvalidValue {
@@ -797,12 +703,7 @@ impl Serialize for SegmentIndexBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0;
         c += crate::box_types::write_compact_box_header(buf, b"sidx", need)?;
         buf[c] = self.version;

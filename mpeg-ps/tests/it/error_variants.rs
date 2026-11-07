@@ -1,7 +1,7 @@
 //! Error variants of the pack header, system header and program stream map,
 //! each produced from the real ffmpeg fixture (or its serialized PSM) with the
 //! smallest mutation that triggers it, asserting the exact variant and fields.
-//! Serialize into a short buffer reports `BufferTooShort` in this crate.
+//! Serialize into a short buffer reports `OutputBufferTooSmall`.
 
 use broadcast_common::{Parse, Serialize};
 use mpeg_ps::program_stream;
@@ -143,12 +143,12 @@ fn a_truncated_program_stream_map_reports_the_minimum_length() {
 }
 
 #[test]
-fn serializing_into_a_short_buffer_reports_buffer_too_short_with_the_needed_length() {
+fn serializing_into_a_short_buffer_reports_output_buffer_too_small_with_the_needed_length() {
     let (pack, system_header) = first_pack_and_system_header_bytes(&fixture());
     let ph = PackHeader::parse(&pack).unwrap();
     let sh = SystemHeader::parse(&system_header).unwrap();
     let to_short = |e: &Error| match e {
-        Error::BufferTooShort { need, have, .. } => Some((*need, *have)),
+        Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
         _ => None,
     };
     test_fixtures::assert_short_buffers_rejected(
@@ -159,6 +159,13 @@ fn serializing_into_a_short_buffer_reports_buffer_too_short_with_the_needed_leng
     test_fixtures::assert_short_buffers_rejected(
         sh.serialized_len(),
         |buf| sh.serialize_into(buf),
+        to_short,
+    );
+    let psm_wire = psm_bytes();
+    let psm = ProgramStreamMap::parse(&psm_wire).unwrap();
+    test_fixtures::assert_short_buffers_rejected(
+        psm.serialized_len(),
+        |buf| psm.serialize_into(buf),
         to_short,
     );
 }

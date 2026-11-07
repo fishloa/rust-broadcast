@@ -24,6 +24,7 @@
 //! (see the crate root docs).
 
 use super::{Error, Result, be32, put_be32};
+use broadcast_common::len::{need_in, need_out};
 
 const S_FIXED: u8 = 0;
 const V_FIXED: u8 = 1;
@@ -324,13 +325,7 @@ impl<'a> KeyMaterial<'a> {
     /// either a handshake extension's contents or a User-Defined control
     /// packet's CIF).
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "key material fixed header",
-            });
-        }
+        need_in(bytes, 16, "key material fixed header")?;
         let word0 = be32(bytes, 0);
         let s = (word0 >> 31) as u8;
         let v = ((word0 >> 28) & 0b111) as u8;
@@ -475,12 +470,7 @@ impl<'a> KeyMaterial<'a> {
     /// Serialize this Key Material message into `buf`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         if !self.salt.len().is_multiple_of(4) {
             return Err(Error::InvalidKeyMaterial {
                 field: "Salt",

@@ -30,6 +30,7 @@
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -509,13 +510,7 @@ impl<'a> Parse<'a> for DtsSpecificBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < DDTS_BODY_LEN {
-            return Err(Error::BufferTooShort {
-                need: DDTS_BODY_LEN,
-                have: bytes.len(),
-                what: "ddts",
-            });
-        }
+        need_in(bytes, DDTS_BODY_LEN, "ddts")?;
         let dts_sampling_frequency = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let max_bitrate = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let avg_bitrate = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
@@ -565,12 +560,7 @@ impl Serialize for DtsSpecificBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = DDTS_BODY_LEN;
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0..4].copy_from_slice(&self.dts_sampling_frequency.to_be_bytes());
         buf[4..8].copy_from_slice(&self.max_bitrate.to_be_bytes());
         buf[8..12].copy_from_slice(&self.avg_bitrate.to_be_bytes());
