@@ -4,7 +4,7 @@
 
 use std::fs;
 
-use ttml_subtitle::{Document, XmlDeclaration};
+use ttml_subtitle::{Document, Error, XmlDeclaration};
 
 const TT: &str = r#"<tt xmlns="http://www.w3.org/ns/ttml"><body/></tt>"#;
 const DEFAULT_DECL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>"#;
@@ -86,7 +86,13 @@ fn non_utf8_encoding_is_not_echoed_into_utf8_output() {
 
 #[test]
 fn bad_standalone_is_rejected() {
-    assert!(
-        Document::parse_str(&format!(r#"<?xml version="1.0" standalone="maybe"?>{TT}"#)).is_err()
-    );
+    match Document::parse_str(&format!(r#"<?xml version="1.0" standalone="maybe"?>{TT}"#)) {
+        Err(Error::XmlParse(msg)) => {
+            assert!(
+                msg.starts_with("standalone must be \"yes\" or \"no\""),
+                "{msg}"
+            );
+        }
+        other => panic!("expected XmlParse, got {:?}", other.err()),
+    }
 }
