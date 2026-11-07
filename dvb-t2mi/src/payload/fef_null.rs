@@ -2,6 +2,7 @@
 //!
 //! Null FEF part — modulator generates P1 preamble per S1/S2, zeros for remainder.
 
+use broadcast_common::len::{need_in, need_out};
 use core::fmt;
 
 use num_enum::TryFromPrimitive;
@@ -183,13 +184,7 @@ impl<'a> Parse<'a> for FefNullPayload {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < FEF_NULL_LEN {
-            return Err(crate::Error::BufferTooShort {
-                need: FEF_NULL_LEN,
-                have: bytes.len(),
-                what: "FefNullPayload",
-            });
-        }
+        need_in(bytes, FEF_NULL_LEN, "FefNullPayload")?;
         // Layout (Figure 12): fef_idx(8) | rfu(9) | s1_field(3) | s2_field(4).
         // rfu spans all of byte 1 plus the top bit of byte 2.
         if bytes[1] != 0 || bytes[2] & 0x80 != 0 {
@@ -220,12 +215,7 @@ impl Serialize for FefNullPayload {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
         if self.s2_field > 0x0F {
             return Err(crate::Error::ReservedBitsViolation {
                 field: "s2_field",

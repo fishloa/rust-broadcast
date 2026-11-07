@@ -3,6 +3,7 @@
 //! Carries composition information for FEF parts. The actual sub-parts
 //! are delivered via type 0x33 packets.
 
+use broadcast_common::len::need_out;
 use core::fmt;
 
 use broadcast_common::{Parse, Serialize};
@@ -97,12 +98,7 @@ impl Serialize for FefCompositePayload {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         if self.s2_field > 0x0F {
             return Err(crate::Error::ReservedBitsViolation {

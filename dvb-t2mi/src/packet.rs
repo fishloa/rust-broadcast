@@ -1,5 +1,6 @@
 //! T2-MI packet header and type parsing — ETSI TS 102 773 §5.1, Table 1.
 
+use broadcast_common::len::need_out;
 use num_enum::TryFromPrimitive;
 
 /// T2-MI packet header size (ETSI TS 102 773 §5.1).
@@ -238,12 +239,7 @@ impl broadcast_common::Serialize for Header {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
         use super::error::Error;
 
-        if buf.len() < HEADER_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: HEADER_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, HEADER_LEN)?;
 
         if self.t2mi_stream_id > T2MI_STREAM_ID_MASK {
             return Err(Error::ReservedBitsViolation {

@@ -35,6 +35,7 @@
 //! - **Null timestamp**: all 80 data bits (seconds + subseconds + utco) are 1.
 //! - **Relative timestamp**: `seconds_since_2000 == 0` (and not null).
 
+use broadcast_common::len::{need_in, need_out};
 use num_enum::TryFromPrimitive;
 
 use broadcast_common::{Parse, Serialize};
@@ -208,13 +209,7 @@ impl<'a> Parse<'a> for T2TimestampPayload {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < TIMESTAMP_HEADER_LEN {
-            return Err(crate::Error::BufferTooShort {
-                need: TIMESTAMP_HEADER_LEN,
-                have: bytes.len(),
-                what: "T2TimestampPayload header",
-            });
-        }
+        need_in(bytes, TIMESTAMP_HEADER_LEN, "T2TimestampPayload header")?;
 
         // byte 0 [7:4] = rfu
         if bytes[0] & 0xF0 != 0 {
@@ -266,12 +261,7 @@ impl Serialize for T2TimestampPayload {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         if self.seconds_since_2000 > 0xFF_FFFF_FFFF {
             return Err(crate::Error::ReservedBitsViolation {

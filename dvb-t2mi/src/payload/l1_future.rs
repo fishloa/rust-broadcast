@@ -4,6 +4,7 @@
 //! signalling data. Per §5.5, this is always the **last** T2-MI packet
 //! for a given `frame_idx` (if used in current frame).
 
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use super::l1::L1PostDynamic;
@@ -56,13 +57,7 @@ impl L1FuturePayload<'_> {
             return Ok(None);
         }
         let len_bytes = len_bits.div_ceil(8);
-        if data.len() < 2 + len_bytes {
-            return Err(crate::Error::BufferTooShort {
-                need: 2 + len_bytes,
-                have: data.len(),
-                what: "L1DYN_NEXT",
-            });
-        }
+        need_in(data, 2 + len_bytes, "L1DYN_NEXT")?;
         Ok(Some(L1PostDynamic::parse(
             &data[2..2 + len_bytes],
             num_plp,
@@ -75,13 +70,7 @@ impl<'a> Parse<'a> for L1FuturePayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < L1_FUTURE_HEADER_LEN {
-            return Err(crate::Error::BufferTooShort {
-                need: L1_FUTURE_HEADER_LEN,
-                have: bytes.len(),
-                what: "L1FuturePayload header",
-            });
-        }
+        need_in(bytes, L1_FUTURE_HEADER_LEN, "L1FuturePayload header")?;
 
         if bytes[1] != 0 {
             return Err(crate::Error::ReservedBitsViolation {
@@ -110,12 +99,7 @@ impl Serialize for L1FuturePayload<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         buf[0] = self.frame_idx;
         buf[1] = 0; // RFU

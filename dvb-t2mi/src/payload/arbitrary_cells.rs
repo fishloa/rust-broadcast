@@ -1,5 +1,6 @@
 //! T2-MI payload type 0x02: Arbitrary cell insertion — §5.2.3.
 
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// Arbitrary cell insertion payload (type 0x02) per ETSI TS 102 773 §5.2.3.
@@ -77,12 +78,7 @@ impl Serialize for ArbitraryCellsPayload<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         if self.start_cell_address > CELL_ADDR_MASK {
             return Err(crate::Error::ReservedBitsViolation {

@@ -1,5 +1,6 @@
 //! T2-MI payload type 0x12: P2 bias balancing cells — §5.2.6.
 
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// P2 bias balancing payload (type 0x12), ETSI TS 102 773 §5.2.6 Figure 9.
@@ -21,13 +22,7 @@ impl<'a> Parse<'a> for P2BiasPayload {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < P2_BIAS_HEADER_LEN {
-            return Err(crate::Error::BufferTooShort {
-                need: P2_BIAS_HEADER_LEN,
-                have: bytes.len(),
-                what: "P2BiasPayload header",
-            });
-        }
+        need_in(bytes, P2_BIAS_HEADER_LEN, "P2BiasPayload header")?;
 
         // rfu is 17 bits: all of bytes[1], bytes[2], and the top bit of bytes[3].
         if bytes[1] != 0 || bytes[2] != 0 || (bytes[3] & 0x80) != 0 {
@@ -60,12 +55,7 @@ impl Serialize for P2BiasPayload {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         if self.num_active_bias_cells_per_p2 > 0x7FFF {
             return Err(crate::Error::ReservedBitsViolation {

@@ -8,6 +8,7 @@
 //! - 0x0003: TX-SIG FEF (reserved 32 bits)
 //! - 0x0004..0xFFFF: Reserved for future use
 
+use broadcast_common::len::need_out;
 use core::fmt;
 
 use num_enum::TryFromPrimitive;
@@ -181,12 +182,7 @@ impl Serialize for FefSubPartPayload<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
-        if buf.len() < self.serialized_len() {
-            return Err(crate::Error::OutputBufferTooSmall {
-                need: self.serialized_len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.serialized_len())?;
 
         if self.subpart_length > SUBPART_LENGTH_MASK {
             return Err(crate::Error::ReservedBitsViolation {
