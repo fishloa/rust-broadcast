@@ -37,8 +37,7 @@ pub use carousel::{InitSegments, ObjectCarousel, PresentationManifests, Resource
 pub use component::ServiceComponentIdentifier;
 #[cfg(feature = "std")]
 pub use config::{
-    BaselineNamespace, MulticastGatewayConfiguration, MulticastServerConfiguration,
-    default_xml_limits,
+    BaselineNamespace, MulticastGatewayConfiguration, MulticastServerConfiguration, default_limits,
 };
 pub use error::{Error, Result};
 #[cfg(feature = "std")]

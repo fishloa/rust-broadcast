@@ -196,12 +196,12 @@ fn invalid_character_data_in_skipped_content_is_rejected() {
 
 mod limits {
     use broadcast_common::xml_chars::{XmlLimit, XmlLimits};
-    use ttml_subtitle::{Document, Error, default_xml_limits};
+    use ttml_subtitle::{Document, Error, default_limits};
 
     const DOC: &str = r#"<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="en"><body><div><p begin="0s" end="1s">hi</p></div></body></tt>"#;
 
     fn tight(change: impl FnOnce(&mut XmlLimits)) -> XmlLimits {
-        let mut limits = default_xml_limits();
+        let mut limits = default_limits();
         change(&mut limits);
         limits
     }

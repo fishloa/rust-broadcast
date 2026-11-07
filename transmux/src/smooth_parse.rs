@@ -305,7 +305,7 @@ crate::xml_walk::xml_walk_fns!(SmoothParseError, None);
 /// manifests are a few KiB; the 4 MiB byte bound covers a multi-hour live
 /// manifest with 100 000 chunk entries.
 #[must_use]
-pub fn default_xml_limits() -> XmlLimits {
+pub fn default_limits() -> XmlLimits {
     let mut limits = XmlLimits::default();
     limits.max_attribute_bytes = 2 * MAX_CODEC_PRIVATE_DATA_HEX_LEN;
     limits
@@ -551,7 +551,7 @@ impl SmoothManifest {
     /// the inverse of [`crate::smooth::SmoothPackager`]'s rendered XML
     /// output.
     pub fn parse(xml: &str) -> Result<SmoothManifest> {
-        Self::parse_with_limits(xml, default_xml_limits())
+        Self::parse_with_limits(xml, default_limits())
     }
 
     /// [`SmoothManifest::parse`] under caller-chosen input bounds; a document

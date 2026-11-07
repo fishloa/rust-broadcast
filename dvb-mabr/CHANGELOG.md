@@ -4,7 +4,7 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 ### Added
-- `MulticastServerConfiguration::parse_str_with_limits` and `MulticastGatewayConfiguration::parse_str_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `default_xml_limits()` is what `parse_str` applies; `Error::TooLarge { limit, max }` reports a tripped bound.
+- `MulticastServerConfiguration::parse_str_with_limits` and `MulticastGatewayConfiguration::parse_str_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `default_limits()` is what `parse_str` applies; `Error::TooLarge { limit, max }` reports a tripped bound.
 
 ### Fixed
 - A hostile document could use unbounded memory and time: input size, element depth and count, and attribute size and count are now bounded (including inside skipped extension subtrees). Nesting past 32 levels is now `Error::TooLarge` instead of a clean parse.

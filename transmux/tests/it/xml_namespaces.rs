@@ -6,9 +6,9 @@
 use broadcast_common::xml_chars::{XmlLimit, XmlLimits};
 use transmux::Mpd;
 use transmux::dash_parse::DashParseError;
-use transmux::dash_parse::default_xml_limits as dash_defaults;
+use transmux::dash_parse::default_limits as dash_defaults;
 use transmux::smooth_fragment::manifest_declares_protection;
-use transmux::smooth_parse::default_xml_limits as smooth_defaults;
+use transmux::smooth_parse::default_limits as smooth_defaults;
 use transmux::smooth_parse::{SmoothManifest, SmoothParseError};
 
 const DASH: &str = "urn:mpeg:dash:schema:mpd:2011";

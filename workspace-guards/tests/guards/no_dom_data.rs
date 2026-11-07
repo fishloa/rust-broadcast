@@ -44,10 +44,6 @@ pub const TABLE: &[Crate] = &[
                 "private alias of quick_xml::Reader, not a tree",
             ),
             (
-                "XmlWriter",
-                "private alias of quick_xml::Writer<Vec<u8>>, not a tree",
-            ),
-            (
                 "XmlSubtitleSampleEntry",
                 "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
             ),

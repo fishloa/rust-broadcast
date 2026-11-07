@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-- `Mpd::parse_with_limits` and `SmoothManifest::parse_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `dash_parse::default_xml_limits()` and `smooth_parse::default_xml_limits()` are what `parse` applies.
+- `Mpd::parse_with_limits` and `SmoothManifest::parse_with_limits` take a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `dash_parse::default_limits()` and `smooth_parse::default_limits()` are what `parse` applies.
 ### Changed
 - The DASH and Smooth manifest writers use the shared `broadcast_common::xml_chars` writer helpers (output byte-identical).
 ### Fixed

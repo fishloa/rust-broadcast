@@ -299,7 +299,7 @@ crate::xml_walk::xml_walk_fns!(DashParseError, Some(NS_MPD));
 /// and a long live `SegmentTimeline` of 100 000 `S` entries fits the byte and
 /// element ceilings.
 #[must_use]
-pub fn default_xml_limits() -> XmlLimits {
+pub fn default_limits() -> XmlLimits {
     XmlLimits::default()
 }
 
@@ -1311,7 +1311,7 @@ impl Mpd {
     /// `@presentationTimeOffset`, §5.3.9.4.4 `@startNumber`), and a
     /// `SegmentTimeline` is taken from the lowest level that carries one.
     pub fn parse(xml: &str) -> Result<Mpd> {
-        Self::parse_with_limits(xml, default_xml_limits())
+        Self::parse_with_limits(xml, default_limits())
     }
 
     /// [`Mpd::parse`] under caller-chosen input bounds; a document past one
@@ -1888,7 +1888,7 @@ mod tests {
     use alloc::vec;
 
     fn new_reader(xml: &str) -> XmlReader<'_> {
-        new_reader_with(xml, default_xml_limits())
+        new_reader_with(xml, default_limits())
     }
 
     // -- quick-xml pull plumbing ---------------------------------------------

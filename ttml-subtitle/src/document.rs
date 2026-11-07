@@ -179,7 +179,7 @@ pub const MAX_TTML_ATTRIBUTE_BYTES: usize = 64 * 1024;
 /// The input bounds [`Document::parse_str`] applies: the TTML ceilings above
 /// and the shared attribute-count default.
 #[must_use]
-pub fn default_xml_limits() -> XmlLimits {
+pub fn default_limits() -> XmlLimits {
     let mut limits = XmlLimits::default();
     limits.max_bytes = MAX_TTML_BYTES;
     limits.max_depth = MAX_TTML_DEPTH;
@@ -201,9 +201,9 @@ impl Document {
         }
     }
 
-    /// Parse a TTML document from an XML string under [`default_xml_limits`].
+    /// Parse a TTML document from an XML string under [`default_limits`].
     pub fn parse_str(xml: &str) -> Result<Self> {
-        Self::parse_str_with_limits(xml, default_xml_limits())
+        Self::parse_str_with_limits(xml, default_limits())
     }
 
     /// Parse a TTML document from an XML string under explicit input bounds;

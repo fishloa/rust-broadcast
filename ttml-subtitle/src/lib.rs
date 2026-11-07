@@ -25,7 +25,7 @@ pub use document::{
 };
 #[cfg(feature = "std")]
 pub use document::{
-    MAX_TTML_ATTRIBUTE_BYTES, MAX_TTML_BYTES, MAX_TTML_DEPTH, MAX_TTML_ELEMENTS, default_xml_limits,
+    MAX_TTML_ATTRIBUTE_BYTES, MAX_TTML_BYTES, MAX_TTML_DEPTH, MAX_TTML_ELEMENTS, default_limits,
 };
 pub use error::{Error, Result};
 #[cfg(feature = "std")]

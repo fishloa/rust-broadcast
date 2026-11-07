@@ -23,7 +23,7 @@ use crate::box_types::{box_iter, parse_box};
 use crate::error::{Error, Result};
 use crate::movie_fragment::MovieFragmentBox;
 use crate::smooth::{TFXD_UUID, TfxdBox};
-use crate::smooth_parse::default_xml_limits;
+use crate::smooth_parse::default_limits;
 
 const PROTECTION_ELEMENT: &str = "Protection";
 const BOX_MOOF: [u8; 4] = *b"moof";
@@ -80,7 +80,7 @@ broadcast_common::impl_spec_display!(FragmentState);
 /// error, so nothing unreadable is ever played.
 #[must_use]
 pub fn manifest_declares_protection(xml: &str) -> bool {
-    let mut budget = XmlBudget::new(default_xml_limits());
+    let mut budget = XmlBudget::new(default_limits());
     if budget.check_input(xml.len()).is_err() {
         return false;
     }

@@ -31,7 +31,7 @@ use crate::session::MulticastSession;
 /// server configuration, is 21 785 bytes, so the byte bound has about 190x
 /// headroom.
 #[must_use]
-pub fn default_xml_limits() -> XmlLimits {
+pub fn default_limits() -> XmlLimits {
     XmlLimits::default()
 }
 
@@ -235,9 +235,9 @@ pub struct MulticastServerConfiguration {
 
 impl MulticastServerConfiguration {
     /// Parse a `MulticastServerConfiguration` XML document under
-    /// [`default_xml_limits`].
+    /// [`default_limits`].
     pub fn parse_str(xml: &str) -> Result<Self> {
-        Self::parse_str_with_limits(xml, default_xml_limits())
+        Self::parse_str_with_limits(xml, default_limits())
     }
 
     /// Parse a `MulticastServerConfiguration` XML document under explicit
@@ -322,9 +322,9 @@ pub struct MulticastGatewayConfiguration {
 
 impl MulticastGatewayConfiguration {
     /// Parse a `MulticastGatewayConfiguration` XML document under
-    /// [`default_xml_limits`].
+    /// [`default_limits`].
     pub fn parse_str(xml: &str) -> Result<Self> {
-        Self::parse_str_with_limits(xml, default_xml_limits())
+        Self::parse_str_with_limits(xml, default_limits())
     }
 
     /// Parse a `MulticastGatewayConfiguration` XML document under explicit
