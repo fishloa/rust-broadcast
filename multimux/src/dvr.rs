@@ -1030,7 +1030,6 @@ impl DvrRecorder {
 
         self.write_offset = file.metadata().map(|m| m.len()).unwrap_or(0);
 
-        // Write init at the head of a new fMP4 period file.
         self.init_len = 0;
         if let Some(init) = init_bytes
             && self.ext == ".m4s"

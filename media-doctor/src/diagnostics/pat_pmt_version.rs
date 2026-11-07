@@ -189,7 +189,6 @@ impl Diagnostic for PatPmtVersionCheck {
                 continue;
             };
 
-            // Feed payload into section reassembler.
             let pusi = pkt.header.pusi;
             reassemblers.get_mut(&pid).unwrap().feed(payload, pusi);
 
@@ -197,7 +196,6 @@ impl Diagnostic for PatPmtVersionCheck {
             // `reassemblers` mutably while iterating over sections.
             let mut new_pmt_pids: Vec<Pid> = Vec::new();
 
-            // Drain completed sections.
             while let Some(section) = reassemblers.get_mut(&pid).unwrap().pop_section() {
                 let section_data = &section[..];
                 self.process_section(i, pid, section_data, &mut versions, report);
@@ -218,7 +216,6 @@ impl Diagnostic for PatPmtVersionCheck {
                 }
             }
 
-            // Register new PMT PIDs after draining sections.
             for pmt_pid in new_pmt_pids {
                 reassemblers.entry(pmt_pid).or_default();
             }

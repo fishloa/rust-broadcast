@@ -183,13 +183,11 @@ impl<'a> Parse<'a> for GenericNack {
             });
         }
 
-        // Validate V=2.
         let version = bytes[0] >> 6;
         if version != RTCP_VERSION {
             return Err(Error::InvalidVersion(version));
         }
 
-        // Validate FMT=1 (low 5 bits of byte 0).
         let fmt = bytes[0] & RTCP_COUNT_MASK;
         if fmt != FMT_GENERIC_NACK {
             return Err(Error::InvalidFmt {
@@ -198,7 +196,6 @@ impl<'a> Parse<'a> for GenericNack {
             });
         }
 
-        // Validate PT=205.
         let pt = bytes[1];
         if pt != PT_RTPFB {
             return Err(Error::InvalidPacketType {
@@ -207,7 +204,6 @@ impl<'a> Parse<'a> for GenericNack {
             });
         }
 
-        // Total length from header.
         let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
@@ -227,7 +223,6 @@ impl<'a> Parse<'a> for GenericNack {
         let ssrc_sender = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let ssrc_media = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
 
-        // Parse FCI entries.
         let end = unpadded_end(bytes, total_len)?;
         if end < GENERIC_NACK_MIN_LEN {
             return Err(Error::BufferTooShort {
@@ -391,19 +386,16 @@ impl<'a> Parse<'a> for RangeNack {
             });
         }
 
-        // Validate V=2.
         let version = bytes[0] >> 6;
         if version != RTCP_VERSION {
             return Err(Error::InvalidVersion(version));
         }
 
-        // Validate Subtype=0 (low 5 bits of byte 0).
         let subtype = bytes[0] & RTCP_COUNT_MASK;
         if subtype != SUBTYPE_RANGE_NACK {
             return Err(Error::InvalidSubtype(subtype));
         }
 
-        // Validate PT=204.
         let pt = bytes[1];
         if pt != PT_APP {
             return Err(Error::InvalidPacketType {
@@ -412,7 +404,6 @@ impl<'a> Parse<'a> for RangeNack {
             });
         }
 
-        // Total length from header.
         let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
@@ -432,13 +423,11 @@ impl<'a> Parse<'a> for RangeNack {
         // SSRC of media source.
         let ssrc_media = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
 
-        // Validate APP name = "RIST".
         let name = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
         if name != RIST_APP_NAME_U32 {
             return Err(Error::InvalidAppName(name));
         }
 
-        // Parse range entries.
         let end = unpadded_end(bytes, total_len)?;
         if end < RANGE_NACK_MIN_LEN {
             return Err(Error::BufferTooShort {

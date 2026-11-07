@@ -1121,7 +1121,6 @@ pub(crate) mod tests {
         let mut d = Driver::new(MockCaDevice::new([]));
         d.init().unwrap();
         feed(&mut d, vec![tags::C_T_C_REPLY, 0x01, 0x01]);
-        // Open RM, then the module enquires the host profile.
         feed(
             &mut d,
             r_data(
@@ -1554,7 +1553,6 @@ pub(crate) mod tests {
             "must not poll after only 1ms of real elapsed time, regardless of the 1s `timeout` argument"
         );
 
-        // Now really cross the poll interval.
         clock.advance(Duration::from_millis(100));
         assert!(!d.pump(Duration::from_secs(1)).unwrap());
         let last = d.device().ops.last().unwrap();

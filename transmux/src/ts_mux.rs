@@ -1144,7 +1144,6 @@ fn mux_tracks_timed_with_cc(
         })
         .sum();
     let mut tagged: Vec<TaggedPacket> = Vec::with_capacity(packet_hint);
-    // Sort keys of the packets that already carry a PCR, ascending.
     let mut pcr_stamps: Vec<u64> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
         let track = &tracks[track_idx];

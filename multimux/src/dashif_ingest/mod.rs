@@ -455,7 +455,6 @@ impl IngestState {
             SegmentDisposition::Accepted
         };
 
-        // Update last seen.
         if let Some(n) = number {
             self.last_number.insert(id.to_string(), n);
         }

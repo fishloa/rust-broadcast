@@ -137,7 +137,6 @@ impl<'a> Parse<'a> for RttEcho {
             });
         }
 
-        // Validate V=2.
         let version = bytes[0] >> 6;
         if version != RTCP_VERSION {
             return Err(Error::InvalidVersion(version));
@@ -153,7 +152,6 @@ impl<'a> Parse<'a> for RttEcho {
         let subtype = bytes[0] & RTCP_COUNT_MASK;
         let kind = RttEchoKind::from_subtype(subtype)?;
 
-        // Validate PT=204.
         let pt = bytes[1];
         if pt != PT_APP {
             return Err(Error::InvalidPacketType {
@@ -162,7 +160,6 @@ impl<'a> Parse<'a> for RttEcho {
             });
         }
 
-        // Total length from header.
         let length_field = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
         let total_len = (length_field + 1) * WORD_LEN;
         if bytes.len() < total_len {
@@ -182,7 +179,6 @@ impl<'a> Parse<'a> for RttEcho {
         // SSRC of media source.
         let ssrc_media = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
 
-        // Validate APP name = "RIST".
         let name = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
         if name != RIST_APP_NAME_U32 {
             return Err(Error::InvalidAppName(name));

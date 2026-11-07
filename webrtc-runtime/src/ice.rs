@@ -208,12 +208,10 @@ fn split_link_entries(header: &str) -> Vec<&str> {
 
 /// Parse a single link-value (e.g. `<url>; rel="ice-server"; username="u"`).
 fn parse_single_link(entry: &str) -> Option<IceServer> {
-    // Extract the URI from < >.
     let uri_start = entry.find('<')? + 1;
     let uri_end = entry[uri_start..].find('>')? + uri_start;
     let url = entry[uri_start..uri_end].trim();
 
-    // Parse the parameters after `>`.
     let params_str = &entry[uri_end + 1..];
     let params = parse_params(params_str);
 

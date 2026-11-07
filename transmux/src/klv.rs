@@ -149,7 +149,6 @@ pub fn encode_ber_oid(tag: u32) -> Vec<u8> {
     if tag < BER_OID_CONTINUATION as u32 {
         return alloc::vec![tag as u8];
     }
-    // Collect base-128 digits, most-significant first.
     let mut digits: Vec<u8> = Vec::new();
     let mut v = tag;
     while v > 0 {

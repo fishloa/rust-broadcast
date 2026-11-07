@@ -915,7 +915,6 @@ impl<'a> Parse<'a> for ESDescriptor {
             None
         };
 
-        // Walk sub-descriptors
         let mut decoder_config = None;
         let mut sl_config = None;
         while cursor < body.len() {
@@ -1043,7 +1042,6 @@ impl Serialize for ESDescriptor {
             });
         }
 
-        // Compute body size (everything after tag+varint)
         let mut body_size = 2 + 1; // ES_ID + flags
         if self.depends_on_es_id.is_some() {
             body_size += 2;

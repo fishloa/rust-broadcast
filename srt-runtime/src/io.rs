@@ -596,7 +596,6 @@ impl SrtSocket {
         config.initial_seq_number = random_isn()?;
         let mut hs = CallerHandshake::new(own_socket_id, config.clone());
 
-        // Send INDUCTION.
         let induction = hs.start().map_err(|e| handshake_err("caller start", e))?;
         send_bounded(&socket, &induction, peer, io.write, "send induction").await?;
 

@@ -725,7 +725,6 @@ fn unlace(payload: &[u8], flags: u8) -> Result<Vec<Vec<u8>>> {
         ));
     }
 
-    // Decode the per-frame sizes, leaving `body` at the first frame's bytes.
     let mut sizes: Vec<usize> = Vec::with_capacity(frame_count);
     let mut body = rest;
     match mode {
@@ -1281,7 +1280,6 @@ fn vorbis_id_header(cp: &[u8]) -> Result<&[u8]> {
             reason: "expected numPackets-1 == 2 (three Xiph-laced Vorbis headers)",
         });
     }
-    // Read the laced lengths of the first two headers.
     let mut pos = 1usize;
     let mut lengths = [0usize; 2];
     for len in lengths.iter_mut() {

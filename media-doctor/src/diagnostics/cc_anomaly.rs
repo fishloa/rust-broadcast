@@ -104,7 +104,6 @@ impl Diagnostic for CcAnomalyCheck {
                 continue;
             }
 
-            // Check discontinuity indicator.
             let has_discontinuity = if hdr.has_adaptation {
                 let af_len = raw[4] as usize;
                 af_len > 0 && (raw[5] & 0x80) != 0

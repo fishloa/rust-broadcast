@@ -364,7 +364,6 @@ impl<S: SegmentSink> RetentionDriver<S> {
                         None => entry.sequence_number,
                     });
                     self.in_flight = Some(entry);
-                    // Loop back around to attempt hand-off immediately.
                 }
                 Some(SegmentCursorItem::Gap { .. }) | Some(SegmentCursorItem::Lagged { .. }) => {
                     // Nothing to hand off. These sequence numbers simply

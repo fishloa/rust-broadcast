@@ -448,7 +448,6 @@ fn decode_avc_sps_inner(
         (0, 0, 0, 0)
     };
 
-    // Compute coded dimensions
     let pic_width_in_mbs = pic_width_in_mbs_minus1 + 1;
     let pic_height_in_map_units = pic_height_in_map_units_minus1 + 1;
     let frame_height_in_mbs = (2 - frame_mbs_only as u64) * pic_height_in_map_units;
@@ -1067,7 +1066,6 @@ fn decode_hevc_sps_inner(
         "bit_depth_chroma_minus8",
     )?;
 
-    // Compute cropped dimensions.
     let sub_width_c = match chroma_format_idc {
         1 | 2 => 2u64,
         3 => 1u64,

@@ -1067,7 +1067,6 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
         let (mh, ts24, mn) = MessageHeader::parse_fields(bh.fmt, &input[off..])?;
         off += mn;
 
-        // Resolve the inherited context for this csid.
         let idx = ctx.iter().position(|(c, _)| *c == bh.csid);
         // The context is *moved* out for this chunk (its `partial` buffer taken,
         // the rest — a handful of integers — copied), not cloned: cloning the

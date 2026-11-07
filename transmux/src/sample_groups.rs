@@ -510,7 +510,6 @@ impl<'a> Parse<'a> for SampleGroupDescriptionBox {
 impl Serialize for SampleGroupDescriptionBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        // Compute whether we will use a uniform default_length.
         let (use_default_len, per_entry_prefix) = self.effective_default_length();
         let entry_overhead = if per_entry_prefix { 4 } else { 0 };
         let entries_size: usize = self

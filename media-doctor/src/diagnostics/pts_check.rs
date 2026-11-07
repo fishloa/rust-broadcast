@@ -112,7 +112,6 @@ impl Diagnostic for PtsCheck {
                 pid_states.remove(&pid);
             }
 
-            // Get the TS payload for PES reassembly.
             let payload = match pkt.payload {
                 Some(p) => p,
                 None => continue,
@@ -131,7 +130,6 @@ impl Diagnostic for PtsCheck {
             }
         }
 
-        // Flush any remaining PES packets at end of stream.
         for (&pid, state) in pid_states.iter_mut() {
             if let Some(pes_bytes) = state.assembler.flush() {
                 check_pes(

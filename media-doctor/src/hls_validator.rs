@@ -328,7 +328,6 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
         }
     }
 
-    // Collect TARGETDURATION and EXTINF
     let mut has_targetduration = false;
     let mut targetduration_val: u64 = 0;
     let mut extinf_line_nums: Vec<usize> = Vec::new();

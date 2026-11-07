@@ -1697,7 +1697,6 @@ pub async fn run_whep_on_probed(
         }
     }
     sessions.close();
-    // Drain in-flight sessions; each ends on its own `cancel`.
     sessions.wait().await;
     // Join the signalling server so its bound port is released before we
     // return.

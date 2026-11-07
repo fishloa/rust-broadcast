@@ -315,7 +315,6 @@ fn h264_transform_pattern(
             // Trailing partial block (`< 16`): left clear.
             break;
         }
-        // Skip up to 144 clear bytes before the next encrypted block.
         offset += H264_SKIP_LEN.min(nal.len().saturating_sub(offset));
     }
 }

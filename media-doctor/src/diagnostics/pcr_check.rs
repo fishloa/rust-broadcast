@@ -220,7 +220,6 @@ impl Diagnostic for PcrCheck {
                 ));
             }
 
-            // Update state.
             state.last_pcr = pcr;
         }
     }

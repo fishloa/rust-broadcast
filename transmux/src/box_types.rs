@@ -499,7 +499,6 @@ impl<'a> Parse<'a> for BoxHeader {
 
         let mut cursor = BOX_HEADER_MIN_SIZE;
 
-        // Decode the effective size.
         let size: u64 = if raw_size == SIZE_INDICATES_LARGESIZE {
             if bytes.len() < cursor + LARGESIZE_SIZE {
                 return Err(Error::LargesizeBufferTooShort {
@@ -523,7 +522,6 @@ impl<'a> Parse<'a> for BoxHeader {
             raw_size as u64
         };
 
-        // Validate that size >= number of bytes we've consumed so far.
         if size != 0 && size < cursor as u64 {
             return Err(Error::BoxSizeUnderflow {
                 size,

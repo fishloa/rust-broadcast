@@ -122,7 +122,6 @@ impl<'a> Iterator for AnnexBNalIter<'a> {
             while let Some((&0, rest)) = slice.split_last() {
                 slice = rest;
             }
-            // Skip degenerate empty NALs (e.g. consecutive start codes).
             if slice.is_empty() {
                 continue;
             }

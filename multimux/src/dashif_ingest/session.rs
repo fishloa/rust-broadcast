@@ -403,7 +403,6 @@ impl DashifIngestSession {
     }
 
     pub fn finish_segment(&mut self, mut handle: SegmentHandle) -> Result<(), SessionError> {
-        // Process any remaining complete groups first.
         let push_res = self.push_segment_bytes(&mut handle, &[]);
         let rep_id = handle.rep_id.clone();
         if let Err(e) = push_res {

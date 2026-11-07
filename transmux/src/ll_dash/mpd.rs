@@ -232,14 +232,12 @@ impl LlDashPackager {
 /// zeros trimmed (e.g. `1.5`, `2`, `0.033`). Integer math only — no `std` float
 /// formatting intrinsic beyond core `Display`.
 fn format_secs(v: f64) -> String {
-    // Round to milliseconds.
     let millis = (v * 1000.0 + 0.5) as u64;
     let whole = millis / 1000;
     let frac = millis % 1000;
     if frac == 0 {
         return whole.to_string();
     }
-    // Trim trailing zeros from the 3-digit fraction.
     let mut f = format!("{frac:03}");
     while f.ends_with('0') {
         f.pop();
