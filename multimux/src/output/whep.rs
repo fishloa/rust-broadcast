@@ -117,8 +117,7 @@ use webrtc_runtime::media::{
 use webrtc_runtime::whep::server::{Event as WhepEvent, WhepSession};
 
 use crate::webrtc_session::{
-    Resource, ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr,
-    single_video_media,
+    ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr, single_video_media,
 };
 
 use crate::error::{MultimuxError, Result};
@@ -506,7 +505,7 @@ fn whep_router_with_cap(
             let auth = output_auth.clone();
             async move { whep_auth_middleware(auth, req, next).await }
         }))
-        .layer(axum::middleware::from_fn(add_whep_cors))
+        .layer(axum::middleware::from_fn(crate::webrtc_session::add_cors))
         // A test harness driving the router with `oneshot` has no accepted
         // stream, so `ConnectInfo` is absent; the peer only picks the
         // unspecified bind family, so a v4 default is harmless.
@@ -588,38 +587,7 @@ async fn whep_auth_middleware(
     }
 }
 
-/// Add the permissive CORS headers the WHEP signalling endpoint needs to
-/// every response, including the auth middleware's `401`.
-async fn add_whep_cors(
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::http::{HeaderValue, header};
-    let mut resp = next.run(req).await;
-    let headers = resp.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("POST, PATCH, DELETE, OPTIONS"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Authorization, Content-Type, If-Match"),
-    );
-    // `Location` on the 201 lets a cross-origin browser DELETE by it; `ETag`
-    // (neither is CORS-safelisted) is what its conditional `PATCH`es need
-    // (RFC 9725 section 4.3.1).
-    headers.insert(
-        header::ACCESS_CONTROL_EXPOSE_HEADERS,
-        HeaderValue::from_static("Location, ETag"),
-    );
-    resp
-}
-
-/// `OPTIONS /whep`: 204; `add_whep_cors` supplies the `Access-Control-*`.
+/// `OPTIONS /whep`: 204; `crate::webrtc_session::add_cors` supplies the `Access-Control-*`.
 async fn whep_options() -> axum::http::StatusCode {
     axum::http::StatusCode::NO_CONTENT
 }
@@ -746,18 +714,12 @@ async fn whep_post_inner(
         return Ok(crate::webrtc_session::to_axum(response));
     }
 
-    let control = SessionControl::new();
-    // Registered before the 201 is written (a client may `DELETE` the instant
-    // it reads it); the guard rides in `AdmittedWhep`, so a failed hand-off
-    // below unregisters it again.
-    let resource = state.resources.insert(
+    let (control, resource) = crate::webrtc_session::register_session(
+        &state.resources,
         resource_id,
-        Resource {
-            machine: parking_lot::Mutex::new(machine),
-            control: Arc::clone(&control),
-            remote_ufrag: parking_lot::Mutex::new(parsed.remote_ufrag.clone()),
-            local_candidates,
-        },
+        machine,
+        parsed.remote_ufrag.clone(),
+        local_candidates,
     );
 
     let admitted = AdmittedWhep {
@@ -804,43 +766,12 @@ async fn whep_delete(
     crate::webrtc_session::delete_resource(&state.resources, &id)
 }
 
-impl crate::webrtc_session::SignallingMachine for WhepSession {
-    const LABEL: &'static str = "whep";
-    const TRICKLE_ICE: &'static str = webrtc_runtime::whep::content_type::TRICKLE_ICE;
-
-    fn patch(
-        &mut self,
-        body: Vec<u8>,
-        headers: &axum::http::HeaderMap,
-    ) -> std::result::Result<crate::webrtc_session::PatchEvent, webrtc_runtime::Error> {
-        use crate::webrtc_session::PatchEvent;
-        Ok(match self.on_patch(body, headers)? {
-            WhepEvent::TrickleIce { sdp_fragment, .. } => PatchEvent::TrickleIce(sdp_fragment),
-            WhepEvent::IceRestart { sdp_fragment } => PatchEvent::IceRestart(sdp_fragment),
-            _ => PatchEvent::Other,
-        })
-    }
-
-    fn ack_trickle(&self) -> webrtc_runtime::whip::server::HttpResponse {
-        WhepSession::ack_trickle(self)
-    }
-
-    fn ack_restart(
-        &mut self,
-        answer: Vec<u8>,
-        etag: String,
-    ) -> webrtc_runtime::whip::server::HttpResponse {
-        WhepSession::ack_restart(self, answer, etag)
-    }
-
-    fn delete(
-        &mut self,
-    ) -> std::result::Result<webrtc_runtime::whip::server::HttpResponse, webrtc_runtime::Error>
-    {
-        self.on_delete()?;
-        Ok(self.ack_delete())
-    }
-}
+crate::webrtc_session::impl_signalling_machine!(
+    WhepSession,
+    WhepEvent,
+    "whep",
+    webrtc_runtime::whep::content_type::TRICKLE_ICE
+);
 
 /// The local IP to advertise as this session's ICE host candidate: the
 /// signalling connection's own peer is the client, so this side's address on
@@ -1652,6 +1583,7 @@ pub async fn run_whep_on_probed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webrtc_session::Resource;
     use tokio::io::AsyncWriteExt as _;
     use tokio::net::TcpStream;
 

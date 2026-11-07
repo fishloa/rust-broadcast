@@ -705,6 +705,108 @@ pub(crate) enum PatchEvent {
     Other,
 }
 
+/// Adds the permissive CORS headers the WHIP/WHEP signalling endpoints need to
+/// every response, including the auth middleware's `401`.
+pub(crate) async fn add_cors(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, header};
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("POST, PATCH, DELETE, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("Authorization, Content-Type, If-Match"),
+    );
+    // `Location` on the 201 lets a cross-origin browser DELETE by it; `ETag`
+    // (neither is CORS-safelisted) is what its conditional `PATCH`es need
+    // (RFC 9725 section 4.3.1).
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("Location, ETag"),
+    );
+    resp
+}
+
+/// Registers a freshly accepted session under `resource_id` before its `201`
+/// is written (a client may `DELETE` the instant it reads it); the guard
+/// unregisters it again if the media hand-off fails.
+pub(crate) fn register_session<M>(
+    resources: &std::sync::Arc<ResourceTable<M>>,
+    resource_id: String,
+    machine: M,
+    remote_ufrag: String,
+    local_candidates: Vec<String>,
+) -> (std::sync::Arc<SessionControl>, ResourceGuard<M>) {
+    let control = SessionControl::new();
+    let guard = resources.insert(
+        resource_id,
+        Resource {
+            machine: parking_lot::Mutex::new(machine),
+            control: std::sync::Arc::clone(&control),
+            remote_ufrag: parking_lot::Mutex::new(remote_ufrag),
+            local_candidates,
+        },
+    );
+    (control, guard)
+}
+
+/// Implements [`SignallingMachine`] for a `webrtc-runtime` server session type.
+macro_rules! impl_signalling_machine {
+    ($session:ty, $event:path, $label:literal, $trickle:path) => {
+        impl $crate::webrtc_session::SignallingMachine for $session {
+            const LABEL: &'static str = $label;
+            const TRICKLE_ICE: &'static str = $trickle;
+
+            fn patch(
+                &mut self,
+                body: Vec<u8>,
+                headers: &axum::http::HeaderMap,
+            ) -> std::result::Result<$crate::webrtc_session::PatchEvent, webrtc_runtime::Error>
+            {
+                use $crate::webrtc_session::PatchEvent;
+                type Event = $event;
+                Ok(match self.on_patch(body, headers)? {
+                    Event::TrickleIce { sdp_fragment, .. } => PatchEvent::TrickleIce(sdp_fragment),
+                    Event::IceRestart { sdp_fragment } => PatchEvent::IceRestart(sdp_fragment),
+                    _ => PatchEvent::Other,
+                })
+            }
+
+            fn ack_trickle(&self) -> webrtc_runtime::whip::server::HttpResponse {
+                <$session>::ack_trickle(self)
+            }
+
+            fn ack_restart(
+                &mut self,
+                answer: Vec<u8>,
+                etag: String,
+            ) -> webrtc_runtime::whip::server::HttpResponse {
+                <$session>::ack_restart(self, answer, etag)
+            }
+
+            fn delete(
+                &mut self,
+            ) -> std::result::Result<
+                webrtc_runtime::whip::server::HttpResponse,
+                webrtc_runtime::Error,
+            > {
+                self.on_delete()?;
+                Ok(self.ack_delete())
+            }
+        }
+    };
+}
+pub(crate) use impl_signalling_machine;
+
 /// The slice of a `webrtc-runtime` WHIP/WHEP server state machine that the
 /// `PATCH`/`DELETE` handlers drive.
 pub(crate) trait SignallingMachine {
