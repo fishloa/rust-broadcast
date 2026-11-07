@@ -118,6 +118,8 @@ Second-order effects the script handles but a human should know about (from the 
 
 ## 6. Topological tag order
 
+> Note (2026-11-07): `rtcp-packet` was merged into `rtp-packet` after this wave shipped, so its pair and row are removed from the list below to keep it reproducible from the tree; the rest of this document keeps the counts of the wave as planned.
+
 > This list is GENERATED: `python3 tools/prepare-release.py --tag-needs $(cat docs/release-plan-2026-10.pairs)` prints it, and `tools/tests/test_release_lanes.py` fails if it drifts from `--tag-order`.
 
 Computed from `cargo metadata` over normal + build edges **and versioned dev-dependency edges** (a versioned dev-dependency must resolve on the index at `cargo publish` time; path-only ones are ignored), with the lockstep five collapsed into one slot. No cycle exists. Every crate lists what must already be live on crates.io. **One tag at a time** (trap a): a push of more than three tags fires no workflows (#933), and each lane stops at the `crates-io` environment approval gate, so the loop is push -> approve -> wait for the index -> next.
@@ -146,82 +148,80 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
    needs live first: `broadcast-common`
 12. `rmt-flute-v0.7.0`  
    needs live first: `broadcast-common`
-13. `rtcp-packet-v0.6.0`  
+13. `rtp-packet-v0.5.0`  
    needs live first: `broadcast-common`
-14. `rtp-packet-v0.5.0`  
-   needs live first: `broadcast-common`
-15. `rtsp-runtime-v0.8.0`  
+14. `rtsp-runtime-v0.8.0`  
    needs live first: `broadcast-auth`
-16. `scte104-v0.6.0`  
+15. `scte104-v0.6.0`  
    needs live first: `broadcast-common`
-17. `srt-runtime-v0.6.0`  
+16. `srt-runtime-v0.6.0`  
    needs live first: `broadcast-common`
-18. `st12-1-v0.4.0`  
+17. `st12-1-v0.4.0`  
    needs live first: `broadcast-common`
-19. `st2022-v0.2.0`  
+18. `st2022-v0.2.0`  
    needs live first: `broadcast-common`
-20. `st337-v0.4.0`  
+19. `st337-v0.4.0`  
    needs live first: `broadcast-common`
-21. `st377-1-v0.5.0`  
+20. `st377-1-v0.5.0`  
    needs live first: `broadcast-common`
-22. `ttml-subtitle-v0.4.0`  
+21. `ttml-subtitle-v0.4.0`  
    needs live first: `broadcast-common`
-23. `ule-v0.5.0`  
+22. `ule-v0.5.0`  
    needs live first: `broadcast-common`
-24. `atsc3-route-v0.3.0`  
+23. `atsc3-route-v0.3.0`  
    needs live first: `broadcast-common`, `rmt-flute`
-25. `dvb-subtitle-v0.6.0`  
+24. `dvb-subtitle-v0.6.0`  
    needs live first: `broadcast-common`, `mpeg-pes`
-26. `mpeg-ps-v0.6.0`  
+25. `mpeg-ps-v0.6.0`  
    needs live first: `broadcast-common`, `mpeg-pes`
-27. `mpeg-ts-v0.6.0`  
+26. `mpeg-ts-v0.6.0`  
    needs live first: `broadcast-common`, `mp4-emsg`
-28. `rist-runtime-v0.4.0`  
-   needs live first: `broadcast-common`, `rtcp-packet`
-29. `st291-v0.5.0`  
+27. `rist-runtime-v0.4.0`  
    needs live first: `broadcast-common`, `rtp-packet`
-30. `webrtc-runtime-v0.4.0`  
-   needs live first: `broadcast-common`, `rtcp-packet`, `rtp-packet`
-31. `container-probe-v0.2.0`  
+28. `st291-v0.5.0`  
+   needs live first: `broadcast-common`, `rtp-packet`
+29. `webrtc-runtime-v0.4.0`  
+   needs live first: `broadcast-common`, `rtp-packet`
+30. `container-probe-v0.2.0`  
    needs live first: `broadcast-common`, `mpeg-ps`, `mpeg-ts`, `st377-1`
-32. `dvb-csa-v0.4.0`  
+31. `dvb-csa-v0.4.0`  
    needs live first: `mpeg-ts`
-33. `scte35-splice-v4.0.0`  
+32. `scte35-splice-v4.0.0`  
    needs live first: `broadcast-common`, `mpeg-ts`
-34. `v12.0.0`  
+33. `v12.0.0`  
    needs live first: `broadcast-common`, `mpeg-ts`  
    five crates in one lane, publishes bbframe -> si -> conformance -> t2mi -> tools; **push by hand** (`push-release-tags.sh` refuses `v*` in explicit-tag mode; `--plan` stops here, exit 2)
-35. `dvb-ci-v0.10.0`  
+34. `dvb-ci-v0.10.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `mpeg-ts`
-36. `dvb-stream-v0.7.0`  
+35. `dvb-stream-v0.7.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `mpeg-ts`, `rtp-packet`
-37. `ssai-runtime-v0.3.0`  
+36. `ssai-runtime-v0.3.0`  
    needs live first: `broadcast-common`, `broadcast-hls`, `mp4-emsg`, `scte35-splice`
-38. `timed-metadata-v0.7.0`  
+37. `timed-metadata-v0.7.0`  
    needs live first: `broadcast-common`, `broadcast-hls`, `cc-data`, `dvb-vbi`, `mp4-emsg`, `scte35-splice`
-39. `transmux-v0.27.0`  
-   needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `cc-data`, `container-probe`, `mp4-emsg`, `mpeg-pes`, `mpeg-ps`, `mpeg-ts`, `rtcp-packet`, `rtp-packet`, `scte35-splice`
-40. `ts-fix-v0.7.0`  
+38. `transmux-v0.27.0`  
+   needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `cc-data`, `container-probe`, `mp4-emsg`, `mpeg-pes`, `mpeg-ps`, `mpeg-ts`, `rtp-packet`, `scte35-splice`
+39. `ts-fix-v0.7.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`
-41. `caption-convert-v0.3.0`  
+40. `caption-convert-v0.3.0`  
    needs live first: `broadcast-common`, `cc-data`, `dvb-vbi`, `timed-metadata`
-42. `dvb-ci-runtime-v0.18.0`  
+41. `dvb-ci-runtime-v0.18.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `dvb-ci`, `mpeg-ts`
-43. `media-doctor-v0.11.0`  
+42. `media-doctor-v0.11.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `broadcast-hls`, `container-probe`, `mpeg-pes`, `mpeg-ts`, `scte35-splice`, `timed-metadata`, `transmux`
-44. `media-plane-v0.7.0`  
+43. `media-plane-v0.7.0`  
    needs live first: `broadcast-common`, `scte35-splice`, `timed-metadata`, `transmux`
-45. `playout-runtime-v0.3.0`  
+44. `playout-runtime-v0.3.0`  
    needs live first: `broadcast-common`, `mp4-emsg`, `scte35-splice`, `ssai-runtime`
-46. `rtmp-runtime-v0.8.0`  
+45. `rtmp-runtime-v0.8.0`  
    needs live first: `broadcast-common`, `transmux`
-47. `compliance-probe-v0.4.0`  
+46. `compliance-probe-v0.4.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `media-doctor`, `media-plane`, `mpeg-ts`, `scte35-splice`, `timed-metadata`
-48. `hls-runtime-v0.9.0`  
+47. `hls-runtime-v0.9.0`  
    needs live first: `broadcast-auth`, `broadcast-common`, `broadcast-hls`, `container-probe`, `media-plane`, `timed-metadata`, `transmux`
-49. `multimux-v0.13.0`  
+48. `multimux-v0.13.0`  
    needs live first: `v12.0.0`, `broadcast-auth`, `broadcast-common`, `broadcast-hls`, `caption-convert`, `container-probe`, `hls-runtime`, `media-doctor`, `media-plane`, `mpeg-ts`, `rtmp-runtime`, `rtp-packet`, `rtsp-runtime`, `scte35-splice`, `srt-runtime`, `timed-metadata`, `transmux`, `webrtc-runtime`
-50. `multimux-cli-v0.11.0`  
+49. `multimux-cli-v0.11.0`  
    needs live first: `multimux`
 
 Equivalent grouped view (everything inside a group is independent of its own group, pushed still one by one): `broadcast-common` first; then the leaf tier that needs only it (`mp4-emsg`, `mpeg-pes`, `rtp-packet`, `rtcp-packet`, `dvb-vbi`, `cc-data`, `rmt-flute`, `st377-1`, ...); then `mpeg-ts` (gated by its dev-dependency on `mp4-emsg`) and the rest of that batch (`rist-runtime`, `st291`, `webrtc-runtime`, `container-probe`, `dvb-csa`, `scte35-splice`); then the lockstep tag (`v12.0.0`, position 34); then `transmux`; then the `transmux`/`dvb-si` dependents (`media-plane`, `hls-runtime`, `dvb-stream`, `ts-fix`, `dvb-ci`, `media-doctor`, ...); then `multimux`; `multimux-cli` last.

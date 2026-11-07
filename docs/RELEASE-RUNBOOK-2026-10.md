@@ -256,7 +256,7 @@ tools/push-release-tags.sh --dry-run --plan $PAIRS
 
 Check it against section 6 of the release plan (generated from the same script, so they
 agree): `broadcast-common-v10.0.0` first, `mp4-emsg` before `mpeg-ts`, the lockstep slot
-(position 34 of 50, after `scte35-splice`, not right after `mpeg-ts`) marked `MANUAL`.
+(position 33 of 49, after `scte35-splice`, not right after `mpeg-ts`) marked `MANUAL`.
 
 A real run (no `--dry-run`) preflights every tag against the TAGGED tree before pushing
 anything: the local tag must point at `HEAD` (a pinned release commit that is not `HEAD` is
@@ -312,7 +312,7 @@ workflow is named `Release`; `release-stream.yml` is `Release dvb-stream`. The w
 
 ### 5b. The lockstep tag, by hand
 
-The plan reaches `v12.0.0` at position 34 of 50 (after `mpeg-ts-v0.6.0` and the rest of its
+The plan reaches `v12.0.0` at position 33 of 49 (after `mpeg-ts-v0.6.0` and the rest of its
 ready batch, up to `scte35-splice-v4.0.0`: the order is alphabetical within a ready batch);
 the script stops there with exit 2 (`broadcast-common-v10.0.0` and `mpeg-ts-v0.6.0` must be
 live first, and they are by then; it checks all five crates' external dependencies and says

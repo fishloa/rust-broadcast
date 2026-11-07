@@ -48,7 +48,7 @@ def _planned():
 
 
 def test_lane_set_is_not_vacuous():
-    assert len(LANES) == 54, [p.name for p in LANES]
+    assert len(LANES) == 52, [p.name for p in LANES]
 
 
 REUSABLE = WF / "publish-crate.yml"
@@ -139,7 +139,7 @@ def test_every_planned_tag_matches_exactly_one_lane_glob():
         capture_output=True, text=True, check=True,
     ).stdout.split()
     globs = [_glob(p) for p in LANES] + [_glob(WF / "release.yml")]
-    assert len(tags) == 50
+    assert len(tags) == 49
     for t in tags:
         hits = [g for g in globs if fnmatch.fnmatchcase(t, g)]
         assert len(hits) == 1, f"tag {t} matches {hits}"

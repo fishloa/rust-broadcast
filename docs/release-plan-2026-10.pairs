@@ -33,7 +33,6 @@ playout-runtime=0.3.0
 rdd29=0.5.0
 rist-runtime=0.4.0
 rmt-flute=0.7.0
-rtcp-packet=0.6.0
 rtmp-runtime=0.8.0
 rtp-packet=0.5.0
 rtsp-runtime=0.8.0
