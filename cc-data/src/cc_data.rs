@@ -158,12 +158,11 @@ impl<'a> Parse<'a> for CcData {
             let flags = b[pos];
             // one_bit(1) | reserved(4, set to "1111") | cc_valid(1) | cc_type(2)
             if flags & TRIPLET_FIXED_MASK != TRIPLET_FIXED_MASK {
-                return Err(Error::InvalidFixedBits {
-                    what: "one_bit/reserved",
-                    got: flags & TRIPLET_FIXED_MASK,
-                    expected: TRIPLET_FIXED_MASK,
-                    mask: TRIPLET_FIXED_MASK,
-                });
+                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    field: "one_bit/reserved",
+                    expected: u64::from(TRIPLET_FIXED_MASK),
+                    found: u64::from(flags & TRIPLET_FIXED_MASK),
+                }));
             }
             triplets.push(CcTriplet {
                 cc_valid: (flags >> 2) & 0x01 != 0,
@@ -174,12 +173,11 @@ impl<'a> Parse<'a> for CcData {
             pos += 3;
         }
         if b[pos] != FF {
-            return Err(Error::InvalidFixedBits {
-                what: "marker_bits",
-                got: b[pos],
-                expected: FF,
-                mask: FF,
-            });
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "marker_bits",
+                expected: u64::from(FF),
+                found: u64::from(b[pos]),
+            }));
         }
         Ok(CcData {
             process_em_data_flag,
@@ -349,10 +347,10 @@ mod tests {
         bytes[2] &= !0x80; // clear the triplet's "one_bit=1"
         assert!(matches!(
             CcData::parse(&bytes),
-            Err(Error::InvalidFixedBits {
-                what: "one_bit/reserved",
+            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "one_bit/reserved",
                 ..
-            })
+            }))
         ));
     }
 
@@ -363,10 +361,10 @@ mod tests {
         bytes[last] = 0x00;
         assert!(matches!(
             CcData::parse(&bytes),
-            Err(Error::InvalidFixedBits {
-                what: "marker_bits",
+            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "marker_bits",
                 ..
-            })
+            }))
         ));
     }
 

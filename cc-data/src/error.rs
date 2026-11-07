@@ -8,58 +8,15 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
     /// Output buffer too small for serialization.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
     /// More than 31 triplets — cc_count is a 5-bit field.
     #[error("too many cc triplets: {0} (cc_count is 5-bit, max 31)")]
     TooManyTriplets(usize),
     /// A bit Table B.9 fixes to a constant value didn't have that value.
-    #[error(
-        "invalid fixed bits in {what}: got 0x{got:02X}, expected 0x{expected:02X} (mask 0x{mask:02X})"
-    )]
-    InvalidFixedBits {
-        /// Which fixed field failed (`"one_bit/reserved"`,
-        /// `"marker_bits"`).
-        what: &'static str,
-        /// The masked bits as received.
-        got: u8,
-        /// The masked bits Table B.9 requires.
-        expected: u8,
-        /// The mask applied before comparing.
-        mask: u8,
-    },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
+    #[error(transparent)]
+    ReservedBits(#[from] broadcast_common::error::ReservedBits),
 }

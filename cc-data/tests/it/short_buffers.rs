@@ -30,7 +30,10 @@ fn cc_data_rejects_every_short_buffer() {
         cc.serialized_len(),
         |buf| cc.serialize_into(buf),
         |e| match e {
-            Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+                need,
+                have,
+            }) => Some((*need, *have)),
             _ => None,
         },
     );
