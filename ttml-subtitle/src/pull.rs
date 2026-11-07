@@ -21,25 +21,13 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use broadcast_common::xml_chars::TagAttribute;
 use quick_xml::NsReader;
-use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::name::{PrefixDeclaration, QName};
+use quick_xml::name::PrefixDeclaration;
 
 use crate::document::XmlDeclaration;
 use crate::error::{Error, Result};
-
-/// One attribute of a start tag (namespace declarations excluded).
-#[derive(Debug)]
-pub(crate) struct TagAttribute {
-    /// Resolved namespace URI; `None` for an unprefixed attribute (which is
-    /// never in the default namespace).
-    pub(crate) namespace: Option<String>,
-    /// Local name.
-    pub(crate) name: String,
-    /// Normalized, unescaped value.
-    pub(crate) value: String,
-}
 
 /// The start tag of the element currently being parsed.
 #[derive(Debug)]
@@ -148,18 +136,15 @@ impl<'a> Pull<'a> {
     }
 
     fn fail(&self, message: &str) -> Error {
-        Error::XmlParse(alloc::format!(
-            "{message} at byte {}",
-            self.reader.buffer_position()
+        Error::XmlParse(broadcast_common::xml_chars::message_at(
+            &self.reader,
+            message,
         ))
     }
 
     /// The next event with its (owned) element-namespace resolution.
     fn read(&mut self) -> Result<(core::result::Result<Option<String>, String>, Event<'a>)> {
-        match self.reader.read_resolved_event() {
-            Ok((ns, event)) => Ok((broadcast_common::xml_chars::namespace_of(ns), event)),
-            Err(e) => Err(self.fail(&e.to_string())),
-        }
+        broadcast_common::xml_chars::read_event(&mut self.reader).map_err(|m| self.fail(&m))
     }
 
     /// The named namespace bindings in scope right now, innermost first.
@@ -187,33 +172,8 @@ impl<'a> Pull<'a> {
         empty: bool,
     ) -> Result<StartTag> {
         let namespace = ns.map_err(|m| self.fail(&m))?;
-        let resolver = self.reader.resolver();
-        let mut attributes = Vec::new();
-        for attr in e.attributes() {
-            let attr = attr.map_err(|e| self.fail(&e.to_string()))?;
-            let key: QName<'_> = attr.key;
-            let is_declaration = match key.prefix() {
-                None => key.as_ref() == "xmlns",
-                Some(p) => p.is_xmlns(),
-            };
-            if is_declaration {
-                continue;
-            }
-            let value = attr
-                .normalized_value(XmlVersion::Implicit1_0)
-                .map_err(|e| self.fail(&e.to_string()))?
-                .into_owned();
-            if !value.chars().all(broadcast_common::xml_chars::is_xml_char) {
-                return Err(self.fail(broadcast_common::xml_chars::BAD_CHAR));
-            }
-            let (attr_ns, attr_local) = resolver.resolve_attribute(key);
-            attributes.push(TagAttribute {
-                namespace: broadcast_common::xml_chars::namespace_of(attr_ns)
-                    .map_err(|m| self.fail(&m))?,
-                name: attr_local.into_inner().to_string(),
-                value,
-            });
-        }
+        let attributes =
+            broadcast_common::xml_chars::read_attributes(&self.reader, e, |m| self.fail(m))?;
         let consumed = core::cell::RefCell::new(alloc::vec![false; attributes.len()]);
         let prefix = e.name().prefix().map(|p| String::from(p.into_inner()));
         Ok(StartTag {

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- `xml_chars::{TagAttribute, read_attributes, read_attributes_checked, read_event, message_at}`: the start-tag attribute loop (xmlns skipping, normalization, `Char` validation, namespace resolution) and the event-read / error-position helpers that `dvb-mabr`, `ttml-subtitle` and `dash-runtime` each carried a copy of (c2 H8).
 - `timescale` module: `rescale`, `rescale_i64`, `rescale_u64` with an explicit `Rounding` (`Floor`, `Nearest`, `TowardZero`), saturating arithmetic and one zero-timescale rule (0 counts as 1); replaces about fifteen divergent private copies in `transmux`, `multimux`, `dash-runtime` and `broadcast-client` (c2 H6).
 - `erased::declare_object_trait!`: the type-erased registry object trait, blanket impl, `downcast_ref`/`is` helpers and `serialize_erased` shared by the `dvb-si` and `dvb-t2mi` registries; the `serde` feature now owns the `erased-serde` dependency (c2 H1).
 - `xml` feature (implies `std`, pulls `quick-xml`) and `xml_chars` module: `is_xml_char`, `char_data`, `namespace_of`, `BAD_CHAR` - the XML 1.0 character-data core previously copied into four crates (dedupe D5).

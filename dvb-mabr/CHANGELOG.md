@@ -4,6 +4,7 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 ### Changed
+- The pull parser reads attributes and events through `broadcast_common::xml_chars` instead of a private copy (c2 H8).
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
 
 ## [0.3.0] - 2026-10-17
