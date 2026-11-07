@@ -352,6 +352,41 @@ mod tests {
         );
     }
 
+    /// EN 50221 §8.4.3.4 Table 25: the `ca_pmt` carries the PMT's own
+    /// `version_number` / `current_next_indicator`, so the APDU follows every
+    /// PMT version change (5 bits, modulo 32) and repeats it while unchanged.
+    #[test]
+    fn ca_pmt_version_follows_the_pmt_version_through_the_wrap() {
+        const VERSION_BYTE: usize = 7;
+        const VERSION_SHIFT: u32 = 1;
+        const VERSION_MASK: u8 = 0x1F;
+        let wire_version = |version: u8| {
+            let pmt = PmtSection::new(
+                1,
+                version,
+                true,
+                0,
+                0,
+                Pid::new(0x0100),
+                DescriptorLoop::new(&[]),
+                Vec::new(),
+            );
+            let bytes = build_ca_pmt(
+                &pmt,
+                CaPmtListManagement::Update,
+                CaPmtCmdId::OkDescrambling,
+            )
+            .to_bytes();
+            assert_eq!(bytes[VERSION_BYTE] & 1, 1, "current_next_indicator");
+            (bytes[VERSION_BYTE] >> VERSION_SHIFT) & VERSION_MASK
+        };
+        for v in 0..=31u8 {
+            assert_eq!(wire_version(v), v);
+            assert_eq!(wire_version(v), wire_version(v));
+        }
+        assert_eq!(wire_version((31 + 1) % 32), 0);
+    }
+
     // --- helper: assemble a small but realistic PMT with CA descriptors ---
 
     fn ca_descriptor(ca_system_id: u16, pid: u16) -> [u8; 6] {
