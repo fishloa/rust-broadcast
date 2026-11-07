@@ -102,7 +102,7 @@ Examples: `cargo run -p dvb-stream --example count_sections` and
 
 | Item | Purpose |
 |---|---|
-| `SectionStream<R>` (`new`, `with_builder`, `with_demux`, `stats`, `resync_stats`, `take_io_error`) | `AsyncRead` to `SectionEvent` stream |
+| `SectionStream<R>` (`new`, `with_demux`, `stats`, `resync_stats`, `take_io_error`) | `AsyncRead` to `SectionEvent` stream |
 | `T2miEventStream<R>` (`new(reader, pid: Pid)`, `with_pump`, `stats`, `resync_stats`, `take_io_error`) | `AsyncRead` to `T2miEvent` stream |
 | `UdpSectionStream`, `UdpT2miStream` (`from_socket`, `bind_multicast`, `bind(&MulticastConfig)`, `stats`, `resync_stats`, `take_io_error`) | UDP/multicast sources (`udp` feature) |
 | `udp::MulticastConfig` (`new`, `with_interface`, `with_recv_buffer_size`, `with_reuse_address`, `bind`) | `socket2` socket options; `#[non_exhaustive]` |

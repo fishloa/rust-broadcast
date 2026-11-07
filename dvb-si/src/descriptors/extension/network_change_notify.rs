@@ -157,12 +157,13 @@ impl NetworkChange {
         broadcast_common::time::decode_mjd_bcd_utc([raw[3], raw[4], raw[5], raw[6], raw[7]])
     }
 
-    /// `change_duration` (24-bit BCD `HHMMSS`) as a [`core::time::Duration`];
-    /// `None` if a BCD nibble is not a decimal digit or a field is out of range.
+    /// `change_duration` (24-bit BCD `HHMMSS`) in seconds; `None` if a BCD
+    /// nibble is not a decimal digit or a field is out of range.
     #[must_use]
-    pub fn change_duration(&self) -> Option<core::time::Duration> {
+    pub fn change_duration_secs(&self) -> Option<u32> {
         let raw = self.change_duration.to_be_bytes();
         broadcast_common::time::decode_bcd_duration([raw[1], raw[2], raw[3]])
+            .and_then(|d| u32::try_from(d.as_secs()).ok())
     }
 }
 
@@ -471,10 +472,7 @@ mod tests {
                 assert_eq!(ch1.network_change_version, 0x67);
                 assert_eq!(ch1.start_time_of_change, 0xE5E2023456);
                 assert_eq!(ch1.change_duration, 0x113245);
-                assert_eq!(
-                    ch1.change_duration(),
-                    Some(core::time::Duration::from_secs(11 * 3600 + 32 * 60 + 45))
-                );
+                assert_eq!(ch1.change_duration_secs(), Some(11 * 3600 + 32 * 60 + 45));
                 #[cfg(feature = "chrono")]
                 {
                     use chrono::{Datelike, Timelike};
@@ -513,11 +511,8 @@ mod tests {
             message_id: 0,
             invariant_ts: None,
         };
-        assert_eq!(
-            change(0x013045).change_duration(),
-            Some(core::time::Duration::from_secs(5445))
-        );
-        assert_eq!(change(0x01_1A_00).change_duration(), None);
+        assert_eq!(change(0x013045).change_duration_secs(), Some(5445));
+        assert_eq!(change(0x01_1A_00).change_duration_secs(), None);
     }
 
     #[test]

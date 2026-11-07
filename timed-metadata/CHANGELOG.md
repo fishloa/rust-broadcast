@@ -4,7 +4,6 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `set_anchor`.
 - The `chrono` feature (on by default) and the `chrono` dependency: nothing in the crate used them.
 - `webvtt::teletext::decode_odd_parity` and `encode_odd_parity` (one-line forwards). Use `broadcast_common::parity::strip_parity` and `broadcast_common::parity::set_odd_parity` (dedupe R3).
 ### Changed

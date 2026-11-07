@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `ENCODING_NAME`, `is_dynamic_payload_type`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `is_dynamic_payload_type`.
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed

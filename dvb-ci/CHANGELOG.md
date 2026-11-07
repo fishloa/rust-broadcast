@@ -6,7 +6,7 @@ versioning.
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `ci_plus::uri::PROTOCOL_VERSION_V3`, `from_u24`, `is_minimal`, `retain_caids`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `is_minimal`, `retain_caids`.
 - `ci_plus::ca_support::MsCaPmtStream` and `MsCaPmtReplyStream`: the multi-stream `MsCaPmt` and `MsCaPmtReply` now hold `objects::ca_pmt::CaPmtStream` and `objects::ca_pmt_reply::CaPmtReplyStream` (identical fields).
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).

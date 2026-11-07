@@ -5,7 +5,6 @@ All notable changes to this crate will be documented in this file.
 ## [Unreleased]
 ### Removed
 - `Error::TrailingData`, never constructed: TR-06-1 §5.2 does not fix a closed sub-packet list, and unmatched sub-packets are kept in `unknown` (c2 TH3).
-- Unused public `Receiver::rtt_estimate` (c2 TH1).
 ### Changed
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_common::error::{BufferTooShort, OutputBufferTooSmall}`; `BufferTooShort` gains the shared `what` field ("RTCP common header", "Generic NACK", "Range NACK", "RTT Echo", "RTCP sub-packet"); `InvalidVersion(u8)` is replaced by `UnsupportedVersion(broadcast_common::error::UnsupportedVersion)` (`what: "RTCP"`, `found`).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).

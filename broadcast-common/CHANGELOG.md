@@ -3,7 +3,6 @@
 ## [Unreleased]
 ### Removed
 - `Timestamp::checked_add_nanos` (deprecated since 9.5.0): use `saturating_add_nanos`.
-- `CencScheme::to_four_cc`: no use in the workspace.
 ### Added
 - `error` module: the common failure kinds defined once as `Copy` structs that a crate's own error enum wraps with `#[error(transparent)] Kind(#[from] broadcast_common::error::Kind)`: `BufferTooShort`, `OutputBufferTooSmall`, `FieldOverflow` (moved from `len`, which re-exports them, so no path changes), plus new `CrcMismatch { what, computed, expected }`, `InvalidSync { what, expected, found }`, `ReservedBits { field, expected, found }`, `InvalidValue { field, value, reason }`, `InvalidField { field, reason }`, `UnsupportedVersion { what, found }`, `LengthMismatch { what, declared, actual }` (shared-errors E0).
 - `timescale::{MICROS_PER_SECOND, to_micros, from_micros}`: tick/microsecond conversion with an explicit `Rounding`, replacing the private `ticks_to_us` / `us_to_ticks_ceil` wrappers in `broadcast-client`, `multimux`, `dash-runtime` (c6 F7).

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `is_mandatory`, `is_next_header`, `mandatory_h_type`, `optional_h_type`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `is_mandatory`, `is_next_header`.
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).

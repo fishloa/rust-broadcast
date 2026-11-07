@@ -2,9 +2,11 @@
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `COMPRESSED_MODULE_DESCRIPTOR_TAG`, `USE_DVB_RESERVED_DEFAULT`, `application_type_name`, `bat_with_registry`, `bit_rate_kbits`, `bit_rate_name`, `cell_extent_of_latitude_deg`, `cell_extent_of_longitude_deg`, `cell_latitude_deg`, `cell_longitude_deg`, `change_duration_secs`, `eit_with_registry`, `extended_surround_name`, `from_datetime`, `into_sections`, `is_valid_pid`, `nit_pid`, `peid`, `phy_stream`, `prepend_string`, `receiver_broadcast`, `receiver_dsng`, `receiver_interactive`, `receiver_professional`, `receiver_vl_snr`, `sample_rate_name`, `sdt_with_registry`, `serialize_into_at`, `set_start_time_decoded`, `start_time_of_change_utc`, `subcell_extent_of_latitude_deg`, `subcell_extent_of_longitude_deg`, `subcell_latitude_deg`, `subcell_longitude_deg`, `surround_mode_name`, `table_section_with`, `tdm`, `usage_type_name`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `COMPRESSED_MODULE_DESCRIPTOR_TAG`, `application_type_name`, `bit_rate_kbits`, `bit_rate_name`, `extended_surround_name`, `is_valid_pid`, `peid`, `phy_stream`, `sample_rate_name`, `serialize_into_at`, `surround_mode_name`, `table_section_with`, `tdm`, `usage_type_name`.
 - `tables::nit::NitTransportStream` and `tables::bat::BatTransportStream`: use `tables::TransportStreamEntry` (same fields and `new`).
 - `collect::CompleteNitTransportStream` and `collect::CompleteBatTransportStream`: use `collect::CompleteTransportStream`.
+### Added
+- `descriptors::dts::DtsDescriptor::bit_rate_bps`: Table G.3 `bit_rate_code` in bit/s (exact for 1 411,2 kbit/s), replacing the removed `bit_rate_kbits`.
 ### Changed
 - `CompleteNit` and `CompleteBat` flatten their transport-stream loops through one `CompleteTransportStream::collect` (c4 M6).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).

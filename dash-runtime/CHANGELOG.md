@@ -13,7 +13,7 @@ All notable changes to dash-runtime will be documented in this file.
 - `timing::ticks_to_us` rescales through `broadcast_common::timescale` (same floor rounding) (c2 H6).
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
 ### Removed
-- Unused public items `mpd::is_unsupported_urlparam`, `mpd::url_query_info`, `SCHEME_MP4_PROTECTION` and `SCHEME_URLPARAM_2016` (c2 TH1).
+- Unused public items `mpd::is_unsupported_urlparam` and `mpd::url_query_info` (c2 TH1).
 
 
 ## [0.2.0] - 2026-11-03

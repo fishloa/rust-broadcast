@@ -64,7 +64,7 @@ pub const USE_NO_SELECTOR: u16 = 0x0001;
 /// `use == 0x0100`: the DVB default (ETSI TR 101 202 §4.7.7.2) — the
 /// associated PID may or may not broadcast a DSI message. DVB reserves
 /// `0x0101`–`0x01FF` for future use.
-pub const USE_DVB_DEFAULT: u16 = 0x0100;
+pub const USE_DVB_RESERVED_DEFAULT: u16 = 0x0100;
 /// Selector length (bytes) mandated when `use == 0x0000`: `transaction_id` (4)
 /// + `timeout` (4).
 const DSI_SELECTOR_LEN: usize = 8;
@@ -458,7 +458,7 @@ mod tests {
     fn dvb_default_use_value_parses_without_a_selector() {
         let bytes = [0x14, 0x05, 0x00, 0x01, 0x01, 0x00, 0x00];
         let d = AssociationTagDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.usage, USE_DVB_DEFAULT);
+        assert_eq!(d.usage, USE_DVB_RESERVED_DEFAULT);
         assert_eq!(d.usage, 0x0100);
         assert!(d.selector.is_empty());
         let mut out = vec![0u8; d.serialized_len()];
