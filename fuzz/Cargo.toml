@@ -63,6 +63,14 @@ jiff           = { version = "0.2", default-features = false, features = ["std"]
 ule            = { path = "../ule" }
 caption-convert = { path = "../caption-convert" }
 container-probe = { path = "../container-probe" }
+srt-runtime    = { path = "../srt-runtime" }
+dvb-simulcrypt = { path = "../dvb-simulcrypt" }
+dvb-vbi        = { path = "../dvb-vbi" }
+mp4-emsg       = { path = "../mp4-emsg" }
+timed-metadata = { path = "../timed-metadata" }
+ts-fix         = { path = "../ts-fix" }
+hls-runtime    = { path = "../hls-runtime" }
+dvb-ci-runtime = { path = "../dvb-ci-runtime" }
 bytes         = "1"
 libfuzzer-sys = "0.4"
 
@@ -476,5 +484,65 @@ doc  = false
 [[bin]]
 name = "dash_session"
 path = "fuzz_targets/dash_session.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "srt_packet"
+path = "fuzz_targets/srt_packet.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "simulcrypt_message"
+path = "fuzz_targets/simulcrypt_message.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "vbi_data_field"
+path = "fuzz_targets/vbi_data_field.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "emsg"
+path = "fuzz_targets/emsg.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "timed_metadata_convert"
+path = "fuzz_targets/timed_metadata_convert.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "transmux_webm_demux"
+path = "fuzz_targets/transmux_webm_demux.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "transmux_progressive_demux"
+path = "fuzz_targets/transmux_progressive_demux.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "ts_fix"
+path = "fuzz_targets/ts_fix.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "hls_client_feed"
+path = "fuzz_targets/hls_client_feed.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "ci_runtime_transport"
+path = "fuzz_targets/ci_runtime_transport.rs"
 test = false
 doc  = false
