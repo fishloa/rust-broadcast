@@ -35,7 +35,7 @@ Typical users: an SRT ingest or contribution endpoint (`multimux` builds its SRT
 | `std` | yes | Links the standard library. Without it the crate is `#![no_std]` and needs only `alloc`; the packet codecs and sans-IO engines are fully `no_std`. |
 | `serde` | no | `Serialize` on the public wire types. |
 | `crypto` | no | `crypto` (AES-CTR, RFC 3394 key wrap, PBKDF2/HMAC-SHA1), `handshake_sm::CryptoConfig` key exchange in the handshake, `km_refresh::KmRefreshDriver` (§6.1.6). Std-only dependencies; secrets are wiped on drop and compared in constant time. |
-| `tokio` | no | `io::SrtSocket` and `io::SrtListener` over UDP (implies `std`): each connection sleeps until its own next deadline, datagrams are `bytes::Bytes`, `io::IoConfig` sets timeouts and `max_datagram`, rendezvous via `SrtSocket::rendezvous_with`. Randomised ISN and socket id. |
+| `tokio` | no | `io::SrtSocket` and `io::SrtListener` over UDP (implies `std`): each connection sleeps until its own next deadline, datagrams are `bytes::Bytes`, `io::IoConfig` sets timeouts and `max_datagram`, rendezvous via `SrtSocket::rendezvous`. Randomised ISN and socket id. |
 
 ## Quick start
 
