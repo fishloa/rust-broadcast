@@ -26,7 +26,7 @@ use crate::bitreader::write_bits_checked;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::fit_u16;
+use broadcast_common::len::{fit_u16, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the Audio Vivid decoder configuration box.
@@ -410,12 +410,7 @@ impl Serialize for Ca3SpecificBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         if let Ca3Config::Other {
             body,
             audio_codec_id,

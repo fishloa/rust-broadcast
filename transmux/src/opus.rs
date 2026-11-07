@@ -8,6 +8,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the Opus config box.
@@ -65,13 +66,7 @@ impl OpusSpecificBox {
 impl<'a> Parse<'a> for OpusSpecificBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < DOPS_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: DOPS_FIXED_LEN,
-                have: bytes.len(),
-                what: "dOps body",
-            });
-        }
+        need_in(bytes, DOPS_FIXED_LEN, "dOps body")?;
         let version = bytes[0];
         let output_channel_count = bytes[1];
         let pre_skip = u16::from_be_bytes([bytes[2], bytes[3]]);
@@ -79,13 +74,7 @@ impl<'a> Parse<'a> for OpusSpecificBox {
         let output_gain = i16::from_be_bytes([bytes[8], bytes[9]]);
         let channel_mapping_family = bytes[10];
         let channel_mapping = if channel_mapping_family != 0 {
-            if bytes.len() < DOPS_FIXED_LEN + 2 {
-                return Err(Error::BufferTooShort {
-                    need: DOPS_FIXED_LEN + 2,
-                    have: bytes.len(),
-                    what: "dOps channel mapping",
-                });
-            }
+            need_in(bytes, DOPS_FIXED_LEN + 2, "dOps channel mapping")?;
             let stream_count = bytes[11];
             let coupled_count = bytes[12];
             let map_start = DOPS_FIXED_LEN + 2;
@@ -94,13 +83,7 @@ impl<'a> Parse<'a> for OpusSpecificBox {
             // tail is truncated input — accepting it would parse a shorter map
             // than the box declares and re-serialize a different box.
             let map_end = map_start + output_channel_count as usize;
-            if bytes.len() < map_end {
-                return Err(Error::BufferTooShort {
-                    need: map_end,
-                    have: bytes.len(),
-                    what: "dOps ChannelMapping",
-                });
-            }
+            need_in(bytes, map_end, "dOps ChannelMapping")?;
             Some(ChannelMappingTable {
                 stream_count,
                 coupled_count,
@@ -132,12 +115,7 @@ impl Serialize for OpusSpecificBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = self.version;
         buf[1] = self.output_channel_count;
         buf[2..4].copy_from_slice(&self.pre_skip.to_be_bytes());

@@ -15,6 +15,7 @@ use crate::TrackId;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
+use broadcast_common::len::{need_in, need_out};
 
 const BOX_HEADER_SIZE: usize = 8;
 
@@ -136,13 +137,7 @@ pub(crate) fn media_fragment_run(
 
 /// Read version(8) and flags(24) from the body bytes (first 4 bytes of a FullBox payload).
 fn read_ver_flags(body: &[u8]) -> Result<(u8, u32)> {
-    if body.len() < 4 {
-        return Err(Error::BufferTooShort {
-            need: 4,
-            have: body.len(),
-            what: "FullBox version/flags",
-        });
-    }
+    need_in(body, 4, "FullBox version/flags")?;
     let ver = body[0];
     let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
     Ok((ver, flags))
@@ -161,13 +156,7 @@ impl MovieFragmentHeaderBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         let (_ver, _flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
-        if payload.len() < 4 {
-            return Err(Error::BufferTooShort {
-                need: 4,
-                have: payload.len(),
-                what: "mfhd.seq",
-            });
-        }
+        need_in(payload, 4, "mfhd.seq")?;
         Ok(Self {
             sequence_number: u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]),
         })
@@ -181,12 +170,7 @@ impl Serialize for MovieFragmentHeaderBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0;
         c += crate::box_types::write_compact_box_header(buf, b"mfhd", need)?;
         buf[c..c + 4].copy_from_slice(&[0, 0, 0, 0]);
@@ -212,24 +196,12 @@ impl TrackFragmentHeaderBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         let (_ver, flags) = read_ver_flags(body)?;
         let mut c = FULLBOX_EXTRA_SIZE;
-        if body.len() < c + 4 {
-            return Err(Error::BufferTooShort {
-                need: c + 4,
-                have: body.len(),
-                what: "tfhd.track_id",
-            });
-        }
+        need_in(body, c + 4, "tfhd.track_id")?;
         let tid = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
         c += 4;
 
         let v_bdo = if flags & TFHD_BASE_DATA_OFFSET_PRESENT != 0 {
-            if body.len() < c + 8 {
-                return Err(Error::BufferTooShort {
-                    need: c + 8,
-                    have: body.len(),
-                    what: "tfhd.bdo",
-                });
-            }
+            need_in(body, c + 8, "tfhd.bdo")?;
             let v = u64::from_be_bytes([
                 body[c],
                 body[c + 1],
@@ -246,13 +218,7 @@ impl TrackFragmentHeaderBox {
             None
         };
         let v_sdi = if flags & TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT != 0 {
-            if body.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: body.len(),
-                    what: "tfhd.sdi",
-                });
-            }
+            need_in(body, c + 4, "tfhd.sdi")?;
             let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
             Some(v)
@@ -260,13 +226,7 @@ impl TrackFragmentHeaderBox {
             None
         };
         let v_dsd = if flags & TFHD_DEFAULT_SAMPLE_DURATION_PRESENT != 0 {
-            if body.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: body.len(),
-                    what: "tfhd.dsd",
-                });
-            }
+            need_in(body, c + 4, "tfhd.dsd")?;
             let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
             Some(v)
@@ -274,13 +234,7 @@ impl TrackFragmentHeaderBox {
             None
         };
         let v_dss = if flags & TFHD_DEFAULT_SAMPLE_SIZE_PRESENT != 0 {
-            if body.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: body.len(),
-                    what: "tfhd.dss",
-                });
-            }
+            need_in(body, c + 4, "tfhd.dss")?;
             let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
             Some(v)
@@ -288,13 +242,7 @@ impl TrackFragmentHeaderBox {
             None
         };
         let v_dsf = if flags & TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT != 0 {
-            if body.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: body.len(),
-                    what: "tfhd.dsf",
-                });
-            }
+            need_in(body, c + 4, "tfhd.dsf")?;
             let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             // last tfhd field — no further cursor use
             Some(v)
@@ -384,12 +332,7 @@ impl Serialize for TrackFragmentHeaderBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let flags = self.effective_flags();
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let len = broadcast_common::len::fit_u32(need, "tfhd size")?;
         let mut c = 0;
         buf[c..c + 4].copy_from_slice(&len.to_be_bytes());
@@ -462,13 +405,7 @@ impl TrackFragmentBaseMediaDecodeTimeBox {
         let (ver, _flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
         if ver == 0 {
-            if payload.len() < 4 {
-                return Err(Error::BufferTooShort {
-                    need: 4,
-                    have: payload.len(),
-                    what: "tfdt.v0",
-                });
-            }
+            need_in(payload, 4, "tfdt.v0")?;
             let v = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
             Ok(Self {
                 version: ver,
@@ -476,13 +413,7 @@ impl TrackFragmentBaseMediaDecodeTimeBox {
                 v1: v as u64,
             })
         } else {
-            if payload.len() < 8 {
-                return Err(Error::BufferTooShort {
-                    need: 8,
-                    have: payload.len(),
-                    what: "tfdt.v1",
-                });
-            }
+            need_in(payload, 8, "tfdt.v1")?;
             let v = u64::from_be_bytes([
                 payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
                 payload[7],
@@ -509,12 +440,7 @@ impl Serialize for TrackFragmentBaseMediaDecodeTimeBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0;
         c += crate::box_types::write_compact_box_header(buf, b"tfdt", need)?;
         buf[c] = self.version;
@@ -586,25 +512,13 @@ impl TrackFragmentRunBox {
     pub(crate) fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
         let (ver, tr_flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
-        if payload.len() < 4 {
-            return Err(Error::BufferTooShort {
-                need: 4,
-                have: payload.len(),
-                what: "trun.sc",
-            });
-        }
+        need_in(payload, 4, "trun.sc")?;
         let mut c = 0usize;
         let sc = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
         c += 4;
 
         let data_offset = if tr_flags & TRUN_DATA_OFFSET_PRESENT != 0 {
-            if payload.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: payload.len(),
-                    what: "trun.do",
-                });
-            }
+            need_in(payload, c + 4, "trun.do")?;
             let v =
                 i32::from_be_bytes([payload[c], payload[c + 1], payload[c + 2], payload[c + 3]]);
             c += 4;
@@ -613,13 +527,7 @@ impl TrackFragmentRunBox {
             None
         };
         let fsf = if tr_flags & TRUN_FIRST_SAMPLE_FLAGS_PRESENT != 0 {
-            if payload.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: payload.len(),
-                    what: "trun.fsf",
-                });
-            }
+            need_in(payload, c + 4, "trun.fsf")?;
             let v =
                 u32::from_be_bytes([payload[c], payload[c + 1], payload[c + 2], payload[c + 3]]);
             c += 4;
@@ -665,13 +573,7 @@ impl TrackFragmentRunBox {
         for _ in 0..sc {
             let mut s = TrunSample::new();
             if has_dur {
-                if payload.len() < c + 4 {
-                    return Err(Error::BufferTooShort {
-                        need: c + 4,
-                        have: payload.len(),
-                        what: "trun.dur",
-                    });
-                }
+                need_in(payload, c + 4, "trun.dur")?;
                 s.sample_duration = Some(u32::from_be_bytes([
                     payload[c],
                     payload[c + 1],
@@ -681,13 +583,7 @@ impl TrackFragmentRunBox {
                 c += 4;
             }
             if has_sz {
-                if payload.len() < c + 4 {
-                    return Err(Error::BufferTooShort {
-                        need: c + 4,
-                        have: payload.len(),
-                        what: "trun.sz",
-                    });
-                }
+                need_in(payload, c + 4, "trun.sz")?;
                 s.sample_size = Some(u32::from_be_bytes([
                     payload[c],
                     payload[c + 1],
@@ -697,13 +593,7 @@ impl TrackFragmentRunBox {
                 c += 4;
             }
             if has_flg {
-                if payload.len() < c + 4 {
-                    return Err(Error::BufferTooShort {
-                        need: c + 4,
-                        have: payload.len(),
-                        what: "trun.flg",
-                    });
-                }
+                need_in(payload, c + 4, "trun.flg")?;
                 s.sample_flags = Some(u32::from_be_bytes([
                     payload[c],
                     payload[c + 1],
@@ -713,13 +603,7 @@ impl TrackFragmentRunBox {
                 c += 4;
             }
             if has_cto {
-                if payload.len() < c + 4 {
-                    return Err(Error::BufferTooShort {
-                        need: c + 4,
-                        have: payload.len(),
-                        what: "trun.cto",
-                    });
-                }
+                need_in(payload, c + 4, "trun.cto")?;
                 if ver == 1 {
                     s.sample_composition_time_offset = Some(i64::from(i32::from_be_bytes([
                         payload[c],
@@ -882,12 +766,7 @@ impl Serialize for TrackFragmentRunBox {
         let flags = self.effective_flags();
         self.check_sample_fields(flags)?;
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = crate::box_types::write_box_header(buf, b"trun", need)?;
         // §8.8.8.2: version 1 makes `sample_composition_time_offset` *signed*.
         // Writing version 0 with a negative offset would reinterpret it as a
@@ -1026,12 +905,7 @@ impl OpaqueChild {
     /// it.
     pub(crate) fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         // See `init_segment::OpaqueBox`: the header is written here, not
         // through `BoxHeader`, because the payload already carries a `uuid`'s
         // usertype.
@@ -1247,12 +1121,7 @@ impl Serialize for TrackFragmentBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let hdr_len = crate::box_types::write_box_header(buf, b"traf", need)?;
         let mut c = hdr_len;
         let order = self.child_order();
@@ -1379,12 +1248,7 @@ impl Serialize for MovieFragmentBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let hdr_len = crate::box_types::write_box_header(buf, b"moof", need)?;
         let mut c = hdr_len;
         let order = self.child_order();

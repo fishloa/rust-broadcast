@@ -8,6 +8,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the FLAC config box.
@@ -63,13 +64,7 @@ impl FlacSpecificBox {
 impl<'a> Parse<'a> for FlacSpecificBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FULL_HDR {
-            return Err(Error::BufferTooShort {
-                need: FULL_HDR,
-                have: bytes.len(),
-                what: "dfLa body",
-            });
-        }
+        need_in(bytes, FULL_HDR, "dfLa body")?;
         let version = bytes[0];
         let flags = u32::from_be_bytes([0, bytes[1], bytes[2], bytes[3]]);
         let mut blocks = Vec::new();
@@ -135,12 +130,7 @@ impl Serialize for FlacSpecificBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[1..4].copy_from_slice(&fb[1..]);

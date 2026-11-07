@@ -23,7 +23,7 @@
 use crate::error::{Error, Result};
 use crate::sample_entries::{SampleEntryChild, VisualSampleEntryFields};
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, fit_u16};
+use broadcast_common::len::{fit_bits, fit_u16, need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the AVS3 configuration box.
@@ -284,12 +284,7 @@ impl Serialize for Avs3ConfigurationBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let len = fit_u16(self.sequence_header.len(), "sequence_header_length")?;
         let reserved = fit_bits(u64::from(self.reserved), 6, "reserved")? as u8;
         buf[0] = self.configuration_version;
@@ -379,22 +374,10 @@ impl LAvsConfigurationBox {
 impl<'a> Parse<'a> for LAvsConfigurationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: bytes.len(),
-                what: "lavc/la2c body",
-            });
-        }
+        need_in(bytes, 2, "lavc/la2c body")?;
         let n = usize::from(bytes[1]);
         let need = 2 + n * LAYER_LEN;
-        if bytes.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: bytes.len(),
-                what: "lavc/la2c layers",
-            });
-        }
+        need_in(bytes, need, "lavc/la2c layers")?;
         reject_trailing(bytes.len() - need, "lavc/la2c")?;
         let layers = bytes[2..need]
             .chunks_exact(LAYER_LEN)
@@ -424,12 +407,7 @@ impl Serialize for LAvsConfigurationBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = self.configuration_version;
         buf[1] = broadcast_common::len::fit_u8(self.layers.len(), "num_temporal_layers")?;
         let mut i = 2;
@@ -564,13 +542,7 @@ pub struct AvsVideoSampleEntry {
 impl AvsVideoSampleEntry {
     /// Parse a full sample-entry box (including the 8-byte header).
     pub fn parse_entry(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "AVS sample entry",
-            });
-        }
+        need_in(bytes, BOX_HDR, "AVS sample entry")?;
         let fourcc = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let kind = AvsVideoEntryKind::from_entry_fourcc(fourcc).ok_or(Error::UnexpectedBox {
             expected: "avs3/lav3/avst/lav2",
@@ -649,12 +621,7 @@ impl Serialize for AvsVideoSampleEntry {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, &self.kind.entry_fourcc(), need)?;
         c += self.visual.serialize_body_into(&mut buf[c..])?;
@@ -779,13 +746,7 @@ impl<'a> Parse<'a> for VisualLrapEntry {
         })?;
         let n = usize::from((b0 >> 2) & 0x07);
         let need = 1 + n * 2;
-        if bytes.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: bytes.len(),
-                what: "lrap library samples",
-            });
-        }
+        need_in(bytes, need, "lrap library samples")?;
         let library_samples = bytes[1..need]
             .chunks_exact(2)
             .map(|c| {
@@ -811,12 +772,7 @@ impl Serialize for VisualLrapEntry {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let t = fit_bits(u64::from(self.lrap_type), 3, "LRAP_type")? as u8;
         let n = fit_bits(self.library_samples.len() as u64, 3, "entry_count")? as u8;
         let r = fit_bits(u64::from(self.reserved), 2, "reserved")? as u8;

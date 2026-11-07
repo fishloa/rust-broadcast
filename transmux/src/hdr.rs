@@ -19,6 +19,7 @@
 use crate::error::{Error, Result};
 use crate::hevc_config::HEVCDecoderConfigurationRecord;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// H.265 `PREFIX_SEI_NUT` (Table 7-1).
@@ -100,12 +101,7 @@ fn check_exact(bytes: &[u8], need: usize, what: &'static str) -> Result<()> {
 }
 
 fn check_out(buf: &[u8], need: usize) -> Result<()> {
-    if buf.len() < need {
-        return Err(Error::OutputBufferTooSmall {
-            need,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, need)?;
     Ok(())
 }
 

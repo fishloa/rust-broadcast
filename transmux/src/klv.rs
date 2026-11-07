@@ -35,6 +35,7 @@
 //! `no_std` + `alloc`.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -125,13 +126,7 @@ pub fn ber_length(bytes: &[u8]) -> Result<(usize, usize)> {
             reason: "BER long-form length exceeds usize width",
         });
     }
-    if bytes.len() < 1 + n {
-        return Err(Error::BufferTooShort {
-            need: 1 + n,
-            have: bytes.len(),
-            what: "BER long-form length bytes",
-        });
-    }
+    need_in(bytes, 1 + n, "BER long-form length bytes")?;
     let mut value: usize = 0;
     for &b in &bytes[1..1 + n] {
         value = (value << 8) | b as usize;
@@ -220,13 +215,7 @@ impl<'a> Parse<'a> for KlvItem {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < UNIVERSAL_LABEL_LEN {
-            return Err(Error::BufferTooShort {
-                need: UNIVERSAL_LABEL_LEN,
-                have: bytes.len(),
-                what: "KLV Universal Label key",
-            });
-        }
+        need_in(bytes, UNIVERSAL_LABEL_LEN, "KLV Universal Label key")?;
         let mut key: UniversalLabel = [0u8; UNIVERSAL_LABEL_LEN];
         key.copy_from_slice(&bytes[..UNIVERSAL_LABEL_LEN]);
         let (len, consumed) = ber_length(&bytes[UNIVERSAL_LABEL_LEN..])?;
@@ -257,12 +246,7 @@ impl Serialize for KlvItem {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut off = 0;
         buf[off..off + UNIVERSAL_LABEL_LEN].copy_from_slice(&self.key);
         off += UNIVERSAL_LABEL_LEN;
@@ -440,13 +424,11 @@ impl UasLocalSet {
     /// field*, so the 2 checksum value bytes are the only exclusion — the UL
     /// key, the BER packet length and every item are all summed.
     pub fn verify_checksum(packet: &[u8]) -> Result<bool> {
-        if packet.len() < UNIVERSAL_LABEL_LEN + 1 + CHECKSUM_LEN {
-            return Err(Error::BufferTooShort {
-                need: UNIVERSAL_LABEL_LEN + 1 + CHECKSUM_LEN,
-                have: packet.len(),
-                what: "UAS Local Set checksum",
-            });
-        }
+        need_in(
+            packet,
+            UNIVERSAL_LABEL_LEN + 1 + CHECKSUM_LEN,
+            "UAS Local Set checksum",
+        )?;
         let split = packet.len() - CHECKSUM_LEN;
         let expected = checksum_bcc16(&packet[..split]);
         let actual = u16::from_be_bytes([packet[split], packet[split + 1]]);
@@ -496,12 +478,7 @@ impl Serialize for UasLocalSet {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let bytes = self.serialize_with_checksum();
-        if buf.len() < bytes.len() {
-            return Err(Error::OutputBufferTooSmall {
-                need: bytes.len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, bytes.len())?;
         buf[..bytes.len()].copy_from_slice(&bytes);
         Ok(bytes.len())
     }

@@ -20,6 +20,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use broadcast_common::{Parse, Serialize};
 use rtcp_packet::{
@@ -157,12 +158,7 @@ fn write_header(
     packet_type: u8,
     padding: usize,
 ) -> Result<usize> {
-    if buf.len() < total {
-        return Err(Error::OutputBufferTooSmall {
-            need: total,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, total)?;
     let length_words =
         broadcast_common::len::fit_u16(total / WORD_LEN - 1, "rtcp common-header length field")?;
     let p_bit = if padding > 0 { RTCP_PADDING_MASK } else { 0 };
@@ -406,12 +402,7 @@ impl RistPadding {
     /// Write the preserved region (the count byte itself is written by
     /// [`write_header`] as the packet's last byte).
     fn write_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < self.bytes.len() {
-            return Err(Error::OutputBufferTooSmall {
-                need: self.bytes.len(),
-                have: buf.len(),
-            });
-        }
+        need_out(buf, self.bytes.len())?;
         buf[..self.bytes.len()].copy_from_slice(&self.bytes);
         Ok(self.bytes.len())
     }
@@ -892,12 +883,7 @@ impl Serialize for RistSenderCompound {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         let mut off = 0;
         off += self
@@ -1046,12 +1032,7 @@ impl Serialize for RistReceiverCompound {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
 
         let mut off = 0;
         off += self

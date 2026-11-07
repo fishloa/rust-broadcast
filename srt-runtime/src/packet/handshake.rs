@@ -25,6 +25,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use super::key_material::KeyMaterial;
 use super::{Error, Result, be16, be32, put_be16, put_be32};
@@ -703,13 +704,7 @@ pub struct HandshakePacket<'a> {
 
 impl<'a> HandshakePacket<'a> {
     pub(crate) fn parse_cif(timestamp: u32, dest_socket_id: u32, cif: &'a [u8]) -> Result<Self> {
-        if cif.len() < HANDSHAKE_CIF_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: HANDSHAKE_CIF_FIXED_LEN,
-                have: cif.len(),
-                what: "handshake CIF",
-            });
-        }
+        need_in(cif, HANDSHAKE_CIF_FIXED_LEN, "handshake CIF")?;
         let version = be32(cif, 0);
         let word1 = be32(cif, 4);
         let encryption_field = EncryptionField::from_bits((word1 >> 16) as u16);

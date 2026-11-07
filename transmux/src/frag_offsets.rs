@@ -37,6 +37,7 @@
 
 use crate::TrackId;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use crate::box_types::clamped_boxes;
 use crate::error::{Error, Result};
@@ -195,13 +196,7 @@ pub fn sample_ranges_in(
                             "fragment sample data exceeds the file length (overlapping runs?)",
                         ));
                     }
-                    if end > file.len() {
-                        return Err(Error::BufferTooShort {
-                            need: end,
-                            have: file.len(),
-                            what: "fragment sample data",
-                        });
-                    }
+                    need_in(file, end, "fragment sample data")?;
                     if !inside_mdat(mdats, start, end) {
                         return Err(Error::InvalidInput(
                             "fragment sample range is outside every mdat payload",

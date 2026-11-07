@@ -20,6 +20,7 @@ use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
+use broadcast_common::len::{need_in, need_out};
 
 /// Length of the VisualSampleEntry fixed fields (ISO/IEC 14496-12:2015 §12.1.3).
 /// 6+2(data_ref_index)+8+2(width)+2(height)+4(horiz)+4(vert)+4(reserved)+2(frame_count)+
@@ -122,12 +123,7 @@ impl VisualSampleEntryFields {
 
     /// Serialize the fixed fields into a buffer.
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < VISUAL_SAMPLE_ENTRY_SIZE {
-            return Err(Error::OutputBufferTooSmall {
-                need: VISUAL_SAMPLE_ENTRY_SIZE,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, VISUAL_SAMPLE_ENTRY_SIZE)?;
         let mut cursor = 0usize;
 
         // 6 bytes reserved (zero) — SampleEntry part. Written explicitly rather
@@ -188,12 +184,7 @@ impl OpaqueBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         // This opaque child is compact-form only (its reader is too): a size
         // past 32 bits is a typed error, never a wrap (#1147).
         let size = broadcast_common::len::fit_u32(need, "opaque child size")?;
@@ -338,13 +329,7 @@ impl AVCSampleEntry {
     /// Parse an AVC sample entry from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         use crate::avc_config::AVCConfigurationBox;
-        if bytes.len() < BARE_ENTRY_MIN_LEN {
-            return Err(Error::BufferTooShort {
-                need: BARE_ENTRY_MIN_LEN,
-                have: bytes.len(),
-                what: "avc1 bare",
-            });
-        }
+        need_in(bytes, BARE_ENTRY_MIN_LEN, "avc1 bare")?;
         let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let visual = VisualSampleEntryFields::parse_body(bytes, "avc1 bare")?;
@@ -419,12 +404,7 @@ impl Serialize for AVCSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         cursor += crate::box_types::write_box_header(buf, &self.codec_type, need)?;
         cursor += self.visual.serialize_into(&mut buf[cursor..])?;
@@ -490,12 +470,7 @@ impl Serialize for Mp4vSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         cursor += crate::box_types::write_box_header(buf, &Self::FOURCC, need)?;
         cursor += self.visual.serialize_into(&mut buf[cursor..])?;
@@ -606,13 +581,7 @@ impl HEVCSampleEntry {
     /// Parse an HEVC sample entry from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         use crate::hevc_config::HEVCConfigurationBox;
-        if bytes.len() < BARE_ENTRY_MIN_LEN {
-            return Err(Error::BufferTooShort {
-                need: BARE_ENTRY_MIN_LEN,
-                have: bytes.len(),
-                what: "hvc1 bare",
-            });
-        }
+        need_in(bytes, BARE_ENTRY_MIN_LEN, "hvc1 bare")?;
         let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let visual = VisualSampleEntryFields::parse_body(bytes, "hvc1 bare")?;
@@ -686,12 +655,7 @@ impl Serialize for HEVCSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         cursor += crate::box_types::write_box_header(buf, &self.codec_type, need)?;
         cursor += self.visual.serialize_into(&mut buf[cursor..])?;
@@ -801,12 +765,7 @@ impl Serialize for VVCSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         cursor += crate::box_types::write_box_header(buf, &self.codec_type, need)?;
         cursor += self.visual.serialize_into(&mut buf[cursor..])?;

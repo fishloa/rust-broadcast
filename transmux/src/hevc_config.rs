@@ -40,6 +40,7 @@ use crate::init_segment::bounded_entry_count;
 use crate::nalu_types::{HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES};
 use crate::wire_cursor::{read_u8, read_u16, read_u32, read_u48};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
@@ -225,13 +226,7 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
             for _ in 0..num_nalus {
                 // nalUnitLength (16)
                 let nal_unit_len = read_u16(bytes, &mut cursor, "nalUnitLength")? as usize;
-                if cursor + nal_unit_len > bytes.len() {
-                    return Err(Error::BufferTooShort {
-                        need: cursor + nal_unit_len,
-                        have: bytes.len(),
-                        what: "HEVC nalUnit",
-                    });
-                }
+                need_in(bytes, cursor + nal_unit_len, "HEVC nalUnit")?;
                 let nalu_data = bytes[cursor..cursor + nal_unit_len].to_vec();
                 cursor += nal_unit_len;
                 nalus.push(HevcNalUnit(nalu_data));
@@ -296,12 +291,7 @@ impl Serialize for HEVCDecoderConfigurationRecord {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
 
         let mut cursor = 0usize;
 
@@ -448,12 +438,7 @@ impl Serialize for HEVCConfigurationBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         cursor += crate::box_types::write_box_header(buf, b"hvcC", need)?;
         cursor += self.config.serialize_into(&mut buf[cursor..])?;

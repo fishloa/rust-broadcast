@@ -15,6 +15,7 @@
 //! `no_std` + `alloc`.
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
@@ -38,13 +39,7 @@ impl<'a> Parse<'a> for PixelAspectRatioBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "pasp body",
-            });
-        }
+        need_in(bytes, 8, "pasp body")?;
         let h_spacing = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let v_spacing = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         Ok(Self {
@@ -62,12 +57,7 @@ impl Serialize for PixelAspectRatioBox {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < 8 {
-            return Err(Error::OutputBufferTooSmall {
-                need: 8,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, 8)?;
         buf[..4].copy_from_slice(&self.h_spacing.to_be_bytes());
         buf[4..8].copy_from_slice(&self.v_spacing.to_be_bytes());
         Ok(8)
@@ -100,13 +90,7 @@ impl<'a> Parse<'a> for CleanApertureBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 32 {
-            return Err(Error::BufferTooShort {
-                need: 32,
-                have: bytes.len(),
-                what: "clap body",
-            });
-        }
+        need_in(bytes, 32, "clap body")?;
         let clean_aperture_width_n = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let clean_aperture_width_d = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let clean_aperture_height_n =
@@ -138,12 +122,7 @@ impl Serialize for CleanApertureBox {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < 32 {
-            return Err(Error::OutputBufferTooSmall {
-                need: 32,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, 32)?;
         let mut c = 0usize;
         buf[c..c + 4].copy_from_slice(&self.clean_aperture_width_n.to_be_bytes());
         c += 4;
@@ -255,25 +234,13 @@ impl<'a> Parse<'a> for ColourInformationBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 4 {
-            return Err(Error::BufferTooShort {
-                need: 4,
-                have: bytes.len(),
-                what: "colr body",
-            });
-        }
+        need_in(bytes, 4, "colr body")?;
         let colour_type = [bytes[0], bytes[1], bytes[2], bytes[3]];
         let rest = &bytes[4..];
 
         match &colour_type {
             b"nclx" => {
-                if rest.len() < NCLX_PARAMS_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: NCLX_PARAMS_LEN,
-                        have: rest.len(),
-                        what: "colr nclx params",
-                    });
-                }
+                need_in(rest, NCLX_PARAMS_LEN, "colr nclx params")?;
                 let colour_primaries = u16::from_be_bytes([rest[0], rest[1]]);
                 let transfer_characteristics = u16::from_be_bytes([rest[2], rest[3]]);
                 let matrix_coefficients = u16::from_be_bytes([rest[4], rest[5]]);
@@ -322,12 +289,7 @@ impl Serialize for ColourInformationBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         buf[c..c + 4].copy_from_slice(&self.colour_type);
         c += 4;

@@ -25,6 +25,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 const BOX_HDR: usize = 8;
@@ -77,13 +78,7 @@ impl TrackEncryptionBox {
         // one byte, so a 19-byte body passed it and then panicked on the KID
         // slice at offset 4..20 (audit finding #1).
         let min = 1 + 1 + 1 + 1 + 16;
-        if bytes.len() < min {
-            return Err(Error::BufferTooShort {
-                need: min,
-                have: bytes.len(),
-                what: "tenc body",
-            });
-        }
+        need_in(bytes, min, "tenc body")?;
         let mut offset = 0usize;
         let _reserved = bytes[offset];
         offset += 1;
@@ -105,22 +100,10 @@ impl TrackEncryptionBox {
         offset += 16;
 
         let constant_iv = if is_protected == 1 && iv_size == 0 {
-            if bytes.len() < offset + 1 {
-                return Err(Error::BufferTooShort {
-                    need: offset + 1,
-                    have: bytes.len(),
-                    what: "tenc constant_IV_size",
-                });
-            }
+            need_in(bytes, offset + 1, "tenc constant_IV_size")?;
             let iv_len = bytes[offset] as usize;
             offset += 1;
-            if bytes.len() < offset + iv_len {
-                return Err(Error::BufferTooShort {
-                    need: offset + iv_len,
-                    have: bytes.len(),
-                    what: "tenc constant_IV",
-                });
-            }
+            need_in(bytes, offset + iv_len, "tenc constant_IV")?;
             let iv = bytes[offset..offset + iv_len].to_vec();
             Some(iv)
         } else {
@@ -139,13 +122,7 @@ impl TrackEncryptionBox {
 
     /// Parse a `tenc` box from a full box buffer (includes 8-byte box header + FullBox).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR + FULL_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR + FULL_HDR,
-                have: bytes.len(),
-                what: "tenc header",
-            });
-        }
+        need_in(bytes, BOX_HDR + FULL_HDR, "tenc header")?;
         let version = bytes[8];
         let _flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         Self::parse_body(&bytes[BOX_HDR + FULL_HDR..], version)
@@ -165,12 +142,7 @@ impl Serialize for TrackEncryptionBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_compact_box_header(buf, b"tenc", need)?;
         buf[c] = self.version;
@@ -308,13 +280,7 @@ impl SampleEncryptionBox {
                  metadata this crate decrypts with",
             ));
         }
-        if bytes.len() < SENC_SAMPLE_COUNT_LEN {
-            return Err(Error::BufferTooShort {
-                need: SENC_SAMPLE_COUNT_LEN,
-                have: bytes.len(),
-                what: "senc sample_count",
-            });
-        }
+        need_in(bytes, SENC_SAMPLE_COUNT_LEN, "senc sample_count")?;
         let sample_count = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         let mut offset = SENC_SAMPLE_COUNT_LEN;
         let iv_sz = per_sample_iv_size as usize;
@@ -341,45 +307,25 @@ impl SampleEncryptionBox {
                 .checked_mul(min_entry_len)
                 .and_then(|n| n.checked_add(offset))
                 .ok_or(Error::InvalidInput("senc sample_count overflows the body"))?;
-            if need > bytes.len() {
-                return Err(Error::BufferTooShort {
-                    need,
-                    have: bytes.len(),
-                    what: "senc entries (sample_count exceeds what the box can hold)",
-                });
-            }
+            need_in(
+                bytes,
+                need,
+                "senc entries (sample_count exceeds what the box can hold)",
+            )?;
         }
 
         let mut entries = Vec::with_capacity(sample_count);
         for _ in 0..sample_count {
-            if bytes.len() < offset + iv_sz {
-                return Err(Error::BufferTooShort {
-                    need: offset + iv_sz,
-                    have: bytes.len(),
-                    what: "senc IV",
-                });
-            }
+            need_in(bytes, offset + iv_sz, "senc IV")?;
             let iv = bytes[offset..offset + iv_sz].to_vec();
             offset += iv_sz;
             let mut subsamples = Vec::new();
             if use_subs {
-                if bytes.len() < offset + 2 {
-                    return Err(Error::BufferTooShort {
-                        need: offset + 2,
-                        have: bytes.len(),
-                        what: "senc subsample_count",
-                    });
-                }
+                need_in(bytes, offset + 2, "senc subsample_count")?;
                 let sub_count = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]) as usize;
                 offset += 2;
                 for _ in 0..sub_count {
-                    if bytes.len() < offset + 6 {
-                        return Err(Error::BufferTooShort {
-                            need: offset + 6,
-                            have: bytes.len(),
-                            what: "senc subsample",
-                        });
-                    }
+                    need_in(bytes, offset + 6, "senc subsample")?;
                     let bytes_clear = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
                     offset += 2;
                     let bytes_protected = u32::from_be_bytes([
@@ -426,12 +372,7 @@ impl Serialize for SampleEncryptionBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"senc", need)?;
         buf[c] = self.version;
@@ -482,13 +423,7 @@ impl ProtectionSystemSpecificHeaderBox {
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < BOX_HDR + FULL_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR + FULL_HDR,
-                have: bytes.len(),
-                what: "pssh header",
-            });
-        }
+        need_in(bytes, BOX_HDR + FULL_HDR, "pssh header")?;
         let version = bytes[8];
         Self::parse_body(&bytes[BOX_HDR + FULL_HDR..], version)
     }
@@ -504,25 +439,13 @@ impl ProtectionSystemSpecificHeaderBox {
 
     /// Parse a `pssh` box from FullBox body bytes.
     pub fn parse_body(bytes: &[u8], version: u8) -> Result<Self> {
-        if bytes.len() < 16 + 4 {
-            return Err(Error::BufferTooShort {
-                need: 16 + 4,
-                have: bytes.len(),
-                what: "pssh SystemID+DataSize",
-            });
-        }
+        need_in(bytes, 16 + 4, "pssh SystemID+DataSize")?;
         let mut system_id = [0u8; 16];
         system_id.copy_from_slice(&bytes[0..16]);
         let mut offset = 16usize;
         let mut kids = Vec::new();
         if version > 0 {
-            if bytes.len() < offset + 4 {
-                return Err(Error::BufferTooShort {
-                    need: offset + 4,
-                    have: bytes.len(),
-                    what: "pssh KID_count",
-                });
-            }
+            need_in(bytes, offset + 4, "pssh KID_count")?;
             let kid_count = u32::from_be_bytes([
                 bytes[offset],
                 bytes[offset + 1],
@@ -538,13 +461,7 @@ impl ProtectionSystemSpecificHeaderBox {
             let kid_end = offset
                 .checked_add(kid_needed)
                 .ok_or(Error::InvalidInput("pssh KID_count overflows the body"))?;
-            if bytes.len() < kid_end {
-                return Err(Error::BufferTooShort {
-                    need: kid_end,
-                    have: bytes.len(),
-                    what: "pssh KIDs",
-                });
-            }
+            need_in(bytes, kid_end, "pssh KIDs")?;
             for i in 0..kid_count {
                 let mut kid = [0u8; 16];
                 kid.copy_from_slice(&bytes[offset + i * 16..offset + (i + 1) * 16]);
@@ -554,13 +471,7 @@ impl ProtectionSystemSpecificHeaderBox {
         }
         // A v1 body can end right after the KID table, leaving no DataSize
         // field to read (r05-C3).
-        if bytes.len() < offset + 4 {
-            return Err(Error::BufferTooShort {
-                need: offset + 4,
-                have: bytes.len(),
-                what: "pssh DataSize",
-            });
-        }
+        need_in(bytes, offset + 4, "pssh DataSize")?;
         let data_size = u32::from_be_bytes([
             bytes[offset],
             bytes[offset + 1],
@@ -571,13 +482,7 @@ impl ProtectionSystemSpecificHeaderBox {
         let data_end = offset
             .checked_add(data_size)
             .ok_or(Error::InvalidInput("pssh DataSize overflows the body"))?;
-        if bytes.len() < data_end {
-            return Err(Error::BufferTooShort {
-                need: data_end,
-                have: bytes.len(),
-                what: "pssh Data",
-            });
-        }
+        need_in(bytes, data_end, "pssh Data")?;
         let data = bytes[offset..data_end].to_vec();
         Ok(Self {
             version,
@@ -601,12 +506,7 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"pssh", need)?;
         buf[c] = self.version;
@@ -666,13 +566,7 @@ impl SampleAuxInfoSizesBox {
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < BOX_HDR + FULL_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR + FULL_HDR,
-                have: bytes.len(),
-                what: "saiz header",
-            });
-        }
+        need_in(bytes, BOX_HDR + FULL_HDR, "saiz header")?;
         let version = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         Self::parse_body(&bytes[BOX_HDR + FULL_HDR..], version, flags)
@@ -682,13 +576,7 @@ impl SampleAuxInfoSizesBox {
     pub fn parse_body(bytes: &[u8], version: u8, flags: u32) -> Result<Self> {
         let mut offset = 0usize;
         let (aux_info_type, aux_info_type_parameter) = if (flags & 0x01) != 0 {
-            if bytes.len() < 8 {
-                return Err(Error::BufferTooShort {
-                    need: 8,
-                    have: bytes.len(),
-                    what: "saiz aux_info_type",
-                });
-            }
+            need_in(bytes, 8, "saiz aux_info_type")?;
             let ty = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             let param = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
             offset = 8;
@@ -714,13 +602,7 @@ impl SampleAuxInfoSizesBox {
         offset += 4;
         let sample_info_sizes = if default_size == 0 {
             let sample_count = sample_count_wire as usize;
-            if bytes.len() < offset + sample_count {
-                return Err(Error::BufferTooShort {
-                    need: offset + sample_count,
-                    have: bytes.len(),
-                    what: "saiz sample_info_size",
-                });
-            }
+            need_in(bytes, offset + sample_count, "saiz sample_info_size")?;
             bytes[offset..offset + sample_count].to_vec()
         } else {
             Vec::new()
@@ -754,12 +636,7 @@ impl Serialize for SampleAuxInfoSizesBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"saiz", need)?;
         buf[c] = self.version;
@@ -814,13 +691,7 @@ impl SampleAuxInfoOffsetsBox {
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < BOX_HDR + FULL_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR + FULL_HDR,
-                have: bytes.len(),
-                what: "saio header",
-            });
-        }
+        need_in(bytes, BOX_HDR + FULL_HDR, "saio header")?;
         let version = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         Self::parse_body(&bytes[BOX_HDR + FULL_HDR..], version, flags)
@@ -830,13 +701,7 @@ impl SampleAuxInfoOffsetsBox {
     pub fn parse_body(bytes: &[u8], version: u8, flags: u32) -> Result<Self> {
         let mut offset = 0usize;
         let (aux_info_type, aux_info_type_parameter) = if (flags & 0x01) != 0 {
-            if bytes.len() < 8 {
-                return Err(Error::BufferTooShort {
-                    need: 8,
-                    have: bytes.len(),
-                    what: "saio aux_info_type",
-                });
-            }
+            need_in(bytes, 8, "saio aux_info_type")?;
             let ty = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             let param = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
             offset = 8;
@@ -844,13 +709,7 @@ impl SampleAuxInfoOffsetsBox {
         } else {
             (None, None)
         };
-        if bytes.len() < offset + 4 {
-            return Err(Error::BufferTooShort {
-                need: offset + 4,
-                have: bytes.len(),
-                what: "saio entry_count",
-            });
-        }
+        need_in(bytes, offset + 4, "saio entry_count")?;
         let entry_count = u32::from_be_bytes([
             bytes[offset],
             bytes[offset + 1],
@@ -865,13 +724,7 @@ impl SampleAuxInfoOffsetsBox {
         let offsets_needed = entry_count
             .checked_mul(offset_sz)
             .ok_or(Error::InvalidInput("saio entry_count overflows the body"))?;
-        if bytes.len() < offset + offsets_needed {
-            return Err(Error::BufferTooShort {
-                need: offset + offsets_needed,
-                have: bytes.len(),
-                what: "saio offsets",
-            });
-        }
+        need_in(bytes, offset + offsets_needed, "saio offsets")?;
         let mut offsets = Vec::with_capacity(entry_count);
         for i in 0..entry_count {
             let o = if version == 0 {
@@ -920,12 +773,7 @@ impl Serialize for SampleAuxInfoOffsetsBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"saio", need)?;
         buf[c] = self.version;
@@ -977,13 +825,7 @@ pub struct OriginalFormatBox {
 impl<'a> Parse<'a> for OriginalFormatBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR + 4,
-                have: bytes.len(),
-                what: "frma",
-            });
-        }
+        need_in(bytes, BOX_HDR + 4, "frma")?;
         let mut df = [0u8; 4];
         df.copy_from_slice(&bytes[BOX_HDR..BOX_HDR + 4]);
         Ok(Self { data_format: df })
@@ -997,12 +839,7 @@ impl Serialize for OriginalFormatBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[..4].copy_from_slice(&(need as u32).to_be_bytes());
         buf[4..8].copy_from_slice(b"frma");
         buf[8..12].copy_from_slice(&self.data_format);
@@ -1030,13 +867,7 @@ pub struct SchemeTypeBox {
 impl SchemeTypeBox {
     /// Parse a `schm` box from FullBox body bytes.
     pub fn parse_body(bytes: &[u8], _version: u8, flags: u32) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "schm body",
-            });
-        }
+        need_in(bytes, 8, "schm body")?;
         let mut scheme_type = [0u8; 4];
         scheme_type.copy_from_slice(&bytes[0..4]);
         let scheme_version = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
@@ -1066,12 +897,7 @@ impl Serialize for SchemeTypeBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"schm", need)?;
         buf[c] = self.version;
@@ -1108,13 +934,7 @@ pub struct SchemeInformationBox {
 impl<'a> Parse<'a> for SchemeInformationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "schi",
-            });
-        }
+        need_in(bytes, BOX_HDR, "schi")?;
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let mut tenc = None;
         let mut extra_boxes = Vec::new();
@@ -1157,12 +977,7 @@ impl Serialize for SchemeInformationBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"schi", need)?;
         if let Some(ref t) = self.tenc {
@@ -1192,13 +1007,7 @@ pub struct ProtectionSchemeInfoBox {
 impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "sinf",
-            });
-        }
+        need_in(bytes, BOX_HDR, "sinf")?;
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         if body.len() < 8 + 4 {
             return Err(Error::BufferTooShort {
@@ -1295,12 +1104,7 @@ impl Serialize for ProtectionSchemeInfoBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"sinf", need)?;
         c += self.original_format.serialize_into(&mut buf[c..])?;

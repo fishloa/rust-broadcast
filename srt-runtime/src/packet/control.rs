@@ -25,6 +25,7 @@ use super::misc::{
 };
 use super::nak::NakPacket;
 use super::{Error, Result, SRT_HEADER_LEN, be32, put_be32};
+use broadcast_common::len::{need_in, need_out};
 
 /// `Control Type` wire values (`draft-sharabayko-srt-01` §3.2, Table 1).
 pub const CONTROL_TYPE_HANDSHAKE: u16 = 0x0000;
@@ -254,13 +255,7 @@ impl<'a> ControlPacket<'a> {
     /// [`Error::WrongPacketKind`] if the `F` bit is clear (this is a data
     /// packet); type-specific errors from the dispatched CIF parser.
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < SRT_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: SRT_HEADER_LEN,
-                have: bytes.len(),
-                what: "SRT control packet header",
-            });
-        }
+        need_in(bytes, SRT_HEADER_LEN, "SRT control packet header")?;
         let word0 = be32(bytes, 0);
         if word0 & super::F_BIT == 0 {
             return Err(Error::WrongPacketKind {
@@ -495,12 +490,7 @@ impl<'a> ControlPacket<'a> {
     /// Serialize this control packet into `buf`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, len)?;
         let control_type_bits = self.control_type().to_bits();
         if control_type_bits > 0x7FFF {
             return Err(Error::FieldTooWide {

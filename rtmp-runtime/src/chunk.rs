@@ -13,6 +13,7 @@
 //! splits a [`Message`] into `fmt` 0 + 3 chunks at the configured chunk
 //! size).
 
+use broadcast_common::len::need_in;
 use std::collections::HashMap;
 
 use broadcast_common::{Parse, Serialize};
@@ -247,36 +248,18 @@ impl<'a> Parse<'a> for BasicHeader {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(RtmpError::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "chunk basic header",
-            });
-        }
+        need_in(bytes, 1, "chunk basic header")?;
         let byte0 = bytes[0];
         let fmt = Fmt::from_bits((byte0 >> BASIC_HEADER_FMT_SHIFT) & 0x03)?;
         let marker = byte0 & BASIC_HEADER_MARKER_MASK;
 
         let chunk_stream_id = match marker {
             BASIC_HEADER_2BYTE_MARKER => {
-                if bytes.len() < 2 {
-                    return Err(RtmpError::BufferTooShort {
-                        need: 2,
-                        have: bytes.len(),
-                        what: "chunk basic header (2-byte form)",
-                    });
-                }
+                need_in(bytes, 2, "chunk basic header (2-byte form)")?;
                 u32::from(bytes[1]) + BASIC_HEADER_CSID_OFFSET
             }
             BASIC_HEADER_3BYTE_MARKER => {
-                if bytes.len() < 3 {
-                    return Err(RtmpError::BufferTooShort {
-                        need: 3,
-                        have: bytes.len(),
-                        what: "chunk basic header (3-byte form)",
-                    });
-                }
+                need_in(bytes, 3, "chunk basic header (3-byte form)")?;
                 // §5.3.1.1: csid = (byte2 * 256) + byte1 + 64 — byte 1 is
                 // the low byte, byte 2 the high byte (little-endian).
                 u32::from(bytes[1]) + u32::from(bytes[2]) * 256 + BASIC_HEADER_CSID_OFFSET
@@ -311,36 +294,18 @@ impl Serialize for BasicHeader {
 
         match form {
             BasicHeaderForm::One => {
-                if buf.is_empty() {
-                    return Err(RtmpError::BufferTooShort {
-                        need: 1,
-                        have: 0,
-                        what: "chunk basic header output (1-byte form)",
-                    });
-                }
+                need_in(buf, 1, "chunk basic header output (1-byte form)")?;
                 buf[0] = fmt_bits | (self.chunk_stream_id as u8);
                 Ok(1)
             }
             BasicHeaderForm::Two => {
-                if buf.len() < 2 {
-                    return Err(RtmpError::BufferTooShort {
-                        need: 2,
-                        have: buf.len(),
-                        what: "chunk basic header output (2-byte form)",
-                    });
-                }
+                need_in(buf, 2, "chunk basic header output (2-byte form)")?;
                 buf[0] = fmt_bits | BASIC_HEADER_2BYTE_MARKER;
                 buf[1] = (self.chunk_stream_id - BASIC_HEADER_CSID_OFFSET) as u8;
                 Ok(2)
             }
             BasicHeaderForm::Three => {
-                if buf.len() < 3 {
-                    return Err(RtmpError::BufferTooShort {
-                        need: 3,
-                        have: buf.len(),
-                        what: "chunk basic header output (3-byte form)",
-                    });
-                }
+                need_in(buf, 3, "chunk basic header output (3-byte form)")?;
                 buf[0] = fmt_bits | BASIC_HEADER_3BYTE_MARKER;
                 let rel = self.chunk_stream_id - BASIC_HEADER_CSID_OFFSET;
                 buf[1] = rel as u8;
@@ -429,13 +394,7 @@ impl MessageHeader {
     pub fn parse(fmt: Fmt, bytes: &[u8]) -> Result<(Self, usize)> {
         match fmt {
             Fmt::Type0 => {
-                if bytes.len() < TYPE0_LEN {
-                    return Err(RtmpError::BufferTooShort {
-                        need: TYPE0_LEN,
-                        have: bytes.len(),
-                        what: "type 0 message header",
-                    });
-                }
+                need_in(bytes, TYPE0_LEN, "type 0 message header")?;
                 let raw_timestamp = read_u24_be(&bytes[0..U24_LEN]);
                 let message_length = read_u24_be(&bytes[U24_LEN..2 * U24_LEN]);
                 let message_type_id = bytes[2 * U24_LEN];
@@ -455,13 +414,7 @@ impl MessageHeader {
                 ))
             }
             Fmt::Type1 => {
-                if bytes.len() < TYPE1_LEN {
-                    return Err(RtmpError::BufferTooShort {
-                        need: TYPE1_LEN,
-                        have: bytes.len(),
-                        what: "type 1 message header",
-                    });
-                }
+                need_in(bytes, TYPE1_LEN, "type 1 message header")?;
                 let raw_delta = read_u24_be(&bytes[0..U24_LEN]);
                 let message_length = read_u24_be(&bytes[U24_LEN..2 * U24_LEN]);
                 let message_type_id = bytes[2 * U24_LEN];
@@ -478,13 +431,7 @@ impl MessageHeader {
                 ))
             }
             Fmt::Type2 => {
-                if bytes.len() < TYPE2_LEN {
-                    return Err(RtmpError::BufferTooShort {
-                        need: TYPE2_LEN,
-                        have: bytes.len(),
-                        what: "type 2 message header",
-                    });
-                }
+                need_in(bytes, TYPE2_LEN, "type 2 message header")?;
                 let raw_delta = read_u24_be(&bytes[0..U24_LEN]);
                 let (timestamp_delta, consumed) = resolve_extended(raw_delta, bytes, TYPE2_LEN)?;
 
@@ -502,13 +449,7 @@ impl MessageHeader {
 fn resolve_extended(raw: u32, bytes: &[u8], fixed_len: usize) -> Result<(u32, usize)> {
     if raw == EXTENDED_TIMESTAMP_MARKER {
         let need = fixed_len + EXTENDED_TIMESTAMP_LEN;
-        if bytes.len() < need {
-            return Err(RtmpError::BufferTooShort {
-                need,
-                have: bytes.len(),
-                what: "extended timestamp",
-            });
-        }
+        need_in(bytes, need, "extended timestamp")?;
         let ext = u32::from_be_bytes([
             bytes[fixed_len],
             bytes[fixed_len + 1],
@@ -545,13 +486,7 @@ impl Serialize for MessageHeader {
             } => {
                 let extended = needs_extended_timestamp(timestamp);
                 let written = TYPE0_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
-                if buf.len() < written {
-                    return Err(RtmpError::BufferTooShort {
-                        need: written,
-                        have: buf.len(),
-                        what: "type 0 message header output",
-                    });
-                }
+                need_in(buf, written, "type 0 message header output")?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {
@@ -577,13 +512,7 @@ impl Serialize for MessageHeader {
             } => {
                 let extended = needs_extended_timestamp(timestamp_delta);
                 let written = TYPE1_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
-                if buf.len() < written {
-                    return Err(RtmpError::BufferTooShort {
-                        need: written,
-                        have: buf.len(),
-                        what: "type 1 message header output",
-                    });
-                }
+                need_in(buf, written, "type 1 message header output")?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {
@@ -604,13 +533,7 @@ impl Serialize for MessageHeader {
             MessageHeader::Type2 { timestamp_delta } => {
                 let extended = needs_extended_timestamp(timestamp_delta);
                 let written = TYPE2_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
-                if buf.len() < written {
-                    return Err(RtmpError::BufferTooShort {
-                        need: written,
-                        have: buf.len(),
-                        what: "type 2 message header output",
-                    });
-                }
+                need_in(buf, written, "type 2 message header output")?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {

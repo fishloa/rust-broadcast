@@ -40,6 +40,7 @@ use crate::TrackId;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::timescale::{Rounding, rescale_i64, rescale_u64};
 use broadcast_common::{Parse, Serialize};
@@ -170,13 +171,7 @@ impl TfxdBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         // version(1) + flags(3) + AbsoluteTime(8) + Duration(8)
         let need = 4 + Self::PAYLOAD_LEN;
-        if body.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: body.len(),
-                what: "tfxd body",
-            });
-        }
+        need_in(body, need, "tfxd body")?;
         let p = &body[4..];
         let fragment_absolute_time =
             u64::from_be_bytes([p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]]);
@@ -200,12 +195,7 @@ impl Serialize for TfxdBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         // uuid box header (size, "uuid", usertype = TFXD_UUID).
         let hdr = BoxHeader::new(need as u64, BoxType::from_bytes(*b"uuid"), Some(TFXD_UUID));
         let mut c = hdr.serialize_into(buf)?;

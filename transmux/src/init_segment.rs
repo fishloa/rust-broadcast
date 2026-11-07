@@ -16,6 +16,7 @@ use crate::media::TrackEncryption;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 const BOX_HDR: usize = 8;
@@ -120,12 +121,7 @@ pub(crate) fn serialize_flat_table<E>(
     mut write: impl FnMut(&E, &mut [u8]) -> Result<usize>,
 ) -> Result<usize> {
     let need = flat_table_len(entries.len(), entry_len);
-    if buf.len() < need {
-        return Err(Error::OutputBufferTooSmall {
-            need,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, need)?;
     let mut c = crate::box_types::write_box_header(buf, fourcc, need)?;
     buf[c] = version;
     buf[c + 1..c + 4].copy_from_slice(&flags.to_be_bytes()[1..]);
@@ -424,12 +420,7 @@ fn serialize_container(
     opaque: &[OpaqueBox],
     buf: &mut [u8],
 ) -> Result<usize> {
-    if buf.len() < need {
-        return Err(Error::OutputBufferTooSmall {
-            need,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, need)?;
     let mut c = crate::box_types::write_box_header(buf, fourcc, need)?;
     let typed = typed_child_bytes(typed_children)?;
     serialize_children(order, &typed, opaque, buf, &mut c)?;
@@ -546,12 +537,7 @@ impl OpaqueBox {
     /// the container's last child (see [`OpaqueBox::declared_size`]).
     fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let size = self.declared_size(is_last)?;
         // The header is written here, not through `BoxHeader`'s own
         // `Serialize`: that impl requires `usertype` to be present for a
@@ -603,24 +589,12 @@ pub struct MovieHeaderBox {
 impl<'a> Parse<'a> for MovieHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 12 {
-            return Err(Error::BufferTooShort {
-                need: 12,
-                have: bytes.len(),
-                what: "mvhd",
-            });
-        }
+        need_in(bytes, 12, "mvhd")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         if ver == 0 {
             let need = 108;
-            if bytes.len() < need {
-                return Err(Error::BufferTooShort {
-                    need,
-                    have: bytes.len(),
-                    what: "mvhd v0",
-                });
-            }
+            need_in(bytes, need, "mvhd v0")?;
             Ok(Self {
                 version: 0,
                 flags,
@@ -654,13 +628,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
             // so `next_track_id` sits at `116..120` and the whole box is
             // **120** bytes, not 124 (issue #1015).
             let need = 120;
-            if bytes.len() < need {
-                return Err(Error::BufferTooShort {
-                    need,
-                    have: bytes.len(),
-                    what: "mvhd v1",
-                });
-            }
+            need_in(bytes, need, "mvhd v1")?;
             Ok(Self {
                 version: 1,
                 flags,
@@ -706,12 +674,7 @@ impl Serialize for MovieHeaderBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_compact_box_header(buf, b"mvhd", need)?;
         buf[c] = self.version;
@@ -794,24 +757,12 @@ pub struct TrackHeaderBox {
 impl<'a> Parse<'a> for TrackHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 12 {
-            return Err(Error::BufferTooShort {
-                need: 12,
-                have: bytes.len(),
-                what: "tkhd",
-            });
-        }
+        need_in(bytes, 12, "tkhd")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         if ver == 0 {
             let need = 92;
-            if bytes.len() < need {
-                return Err(Error::BufferTooShort {
-                    need,
-                    have: bytes.len(),
-                    what: "tkhd v0",
-                });
-            }
+            need_in(bytes, need, "tkhd v0")?;
             let ct = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as u64;
             let mt = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as u64;
             let tid = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
@@ -832,13 +783,7 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             })
         } else {
             let need = 104;
-            if bytes.len() < need {
-                return Err(Error::BufferTooShort {
-                    need,
-                    have: bytes.len(),
-                    what: "tkhd v1",
-                });
-            }
+            need_in(bytes, need, "tkhd v1")?;
             // v1 body (ISO/IEC 14496-12 §8.3.2): track_ID(32) + a single
             // 32-bit `reserved` (not 8) sit between modification_time and
             // duration, so duration starts at byte 36, not 40 — every field
@@ -881,12 +826,7 @@ impl Serialize for TrackHeaderBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_compact_box_header(buf, b"tkhd", need)?;
         buf[c] = self.version;
@@ -984,23 +924,11 @@ pub struct MediaHeaderBox {
 impl<'a> Parse<'a> for MediaHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 12 {
-            return Err(Error::BufferTooShort {
-                need: 12,
-                have: bytes.len(),
-                what: "mdhd",
-            });
-        }
+        need_in(bytes, 12, "mdhd")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         if ver == 0 {
-            if bytes.len() < 32 {
-                return Err(Error::BufferTooShort {
-                    need: 32,
-                    have: bytes.len(),
-                    what: "mdhd v0",
-                });
-            }
+            need_in(bytes, 32, "mdhd v0")?;
             Ok(Self {
                 version: 0,
                 flags,
@@ -1013,13 +941,7 @@ impl<'a> Parse<'a> for MediaHeaderBox {
                 language: u16::from_be_bytes([bytes[28], bytes[29]]),
             })
         } else {
-            if bytes.len() < 44 {
-                return Err(Error::BufferTooShort {
-                    need: 44,
-                    have: bytes.len(),
-                    what: "mdhd v1",
-                });
-            }
+            need_in(bytes, 44, "mdhd v1")?;
             Ok(Self {
                 version: 1,
                 flags,
@@ -1040,12 +962,7 @@ impl Serialize for MediaHeaderBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_compact_box_header(buf, b"mdhd", need)?;
         buf[c] = self.version;
@@ -1117,13 +1034,7 @@ impl<'a> Parse<'a> for HandlerBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < 24 {
-            return Err(Error::BufferTooShort {
-                need: 24,
-                have: bytes.len(),
-                what: "hdlr",
-            });
-        }
+        need_in(bytes, 24, "hdlr")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let handler_type = [bytes[16], bytes[17], bytes[18], bytes[19]];
@@ -1148,12 +1059,7 @@ impl Serialize for HandlerBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"hdlr", need)?;
         buf[c] = self.version;
@@ -1193,13 +1099,7 @@ pub struct VideoMediaHeaderBox {
 impl<'a> Parse<'a> for VideoMediaHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 20 {
-            return Err(Error::BufferTooShort {
-                need: 20,
-                have: bytes.len(),
-                what: "vmhd",
-            });
-        }
+        need_in(bytes, 20, "vmhd")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         Ok(Self {
@@ -1222,12 +1122,7 @@ impl Serialize for VideoMediaHeaderBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_compact_box_header(buf, b"vmhd", need)?;
         buf[c] = self.version;
@@ -1262,13 +1157,7 @@ pub struct SoundMediaHeaderBox {
 impl<'a> Parse<'a> for SoundMediaHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "smhd",
-            });
-        }
+        need_in(bytes, 16, "smhd")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         Ok(Self {
@@ -1286,12 +1175,7 @@ impl Serialize for SoundMediaHeaderBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_compact_box_header(buf, b"smhd", need)?;
         buf[c] = self.version;
@@ -1327,13 +1211,7 @@ impl<'a> Parse<'a> for DataReferenceBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "dref",
-            });
-        }
+        need_in(bytes, 16, "dref")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
@@ -1374,12 +1252,7 @@ impl Serialize for DataReferenceBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"dref", need)?;
         buf[c] = self.version;
@@ -1416,13 +1289,7 @@ impl<'a> Parse<'a> for DataEntryUrlBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < 12 {
-            return Err(Error::BufferTooShort {
-                need: 12,
-                have: bytes.len(),
-                what: "url",
-            });
-        }
+        need_in(bytes, 12, "url")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let location = if bytes.len() > 12 {
@@ -1445,12 +1312,7 @@ impl Serialize for DataEntryUrlBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"url ", need)?;
         buf[c] = self.version;
@@ -1493,13 +1355,7 @@ impl<'a> Parse<'a> for SampleToChunkBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "stsc",
-            });
-        }
+        need_in(bytes, 16, "stsc")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
@@ -1556,12 +1412,7 @@ impl Serialize for SampleToChunkBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"stsc", need)?;
         buf[c] = self.version;
@@ -1610,13 +1461,7 @@ impl<'a> Parse<'a> for SampleSizeBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < 20 {
-            return Err(Error::BufferTooShort {
-                need: 20,
-                have: bytes.len(),
-                what: "stsz",
-            });
-        }
+        need_in(bytes, 20, "stsz")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let sample_size = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
@@ -1681,12 +1526,7 @@ impl Serialize for SampleSizeBox {
             ));
         }
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"stsz", need)?;
         buf[c] = self.version;
@@ -1954,12 +1794,7 @@ impl Serialize for SamplingRateBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = Self::SIZE;
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0..4].copy_from_slice(&(need as u32).to_be_bytes());
         buf[4..8].copy_from_slice(&Self::FOURCC);
         buf[8] = self.version;
@@ -1973,13 +1808,7 @@ impl Serialize for SamplingRateBox {
 impl<'a> Parse<'a> for SamplingRateBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < Self::SIZE {
-            return Err(Error::BufferTooShort {
-                need: Self::SIZE,
-                have: bytes.len(),
-                what: "srat",
-            });
-        }
+        need_in(bytes, Self::SIZE, "srat")?;
         // The four-CC is validated, not assumed: this parser is also reached
         // from a raw child-box walk, where the bytes preceding it may belong to
         // any box at all (a wrong box parsed as an `srat` would silently supply
@@ -2467,13 +2296,7 @@ impl<'a> Parse<'a> for DtsSampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "DtsSampleEntry",
-            });
-        }
+        need_in(bytes, 8, "DtsSampleEntry")?;
         let mut codec_type = [0u8; 4];
         codec_type.copy_from_slice(&bytes[4..8]);
         let e = parse_audio_sample_entry(bytes, "DtsSampleEntry")?;
@@ -2558,13 +2381,7 @@ impl<'a> Parse<'a> for MhaSampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < 8 {
-            return Err(Error::BufferTooShort {
-                need: 8,
-                have: bytes.len(),
-                what: "MhaSampleEntry",
-            });
-        }
+        need_in(bytes, 8, "MhaSampleEntry")?;
         let mut codec_type = [0u8; 4];
         codec_type.copy_from_slice(&bytes[4..8]);
         let e = parse_audio_sample_entry(bytes, "MhaSampleEntry")?;
@@ -2711,12 +2528,7 @@ struct AudioSampleEntryFields<'a> {
 fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -> Result<usize> {
     let config_boxes = f.config_boxes;
     let need = audio_sample_entry_serialized_len(config_boxes);
-    if buf.len() < need {
-        return Err(Error::OutputBufferTooSmall {
-            need,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, need)?;
     let mut c = 0usize;
     c += crate::box_types::write_box_header(buf, f.fourcc, need)?;
     // SampleEntry: reserved(6) zeros + data_reference_index(2). Written, not
@@ -2760,13 +2572,7 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         // bytes is a full box with 8-byte header; fields start at bytes[8]
-        if bytes.len() < 8 + 28 {
-            return Err(Error::BufferTooShort {
-                need: 8 + 28,
-                have: bytes.len(),
-                what: "mp4a",
-            });
-        }
+        need_in(bytes, 8 + 28, "mp4a")?;
         let mut codec_type = [0u8; 4];
         codec_type.copy_from_slice(&bytes[4..8]);
         let e = parse_audio_sample_entry(bytes, "mp4a")?;
@@ -2791,12 +2597,7 @@ impl Serialize for Mp4aSampleEntry {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         serialize_audio_sample_entry(
             buf,
             AudioSampleEntryFields {
@@ -2937,13 +2738,7 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "stsd",
-            });
-        }
+        need_in(bytes, 16, "stsd")?;
         let ver = bytes[8];
         let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
@@ -3039,12 +2834,7 @@ impl Serialize for SampleDescriptionBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"stsd", need)?;
         buf[c] = self.version;
@@ -3220,12 +3010,7 @@ impl Serialize for SampleTableBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"stbl", need)?;
         serialize_stbl_children(&self.children, buf, &mut c)?;
@@ -3950,12 +3735,7 @@ impl Serialize for TrackExtendsBox {
         32
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < 32 {
-            return Err(Error::OutputBufferTooSmall {
-                need: 32,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, 32)?;
         buf[0..4].copy_from_slice(&32u32.to_be_bytes());
         buf[4..8].copy_from_slice(b"trex");
         buf[8] = self.version;
@@ -4292,13 +4072,7 @@ pub fn protect_sample_entry(
     };
 
     let original_bytes = sample_entry_bytes(original)?;
-    if original_bytes.len() < BOX_HDR {
-        return Err(Error::BufferTooShort {
-            need: BOX_HDR,
-            have: original_bytes.len(),
-            what: "sample entry",
-        });
-    }
+    need_in(&original_bytes, BOX_HDR, "sample entry")?;
     let mut original_format = [0u8; 4];
     original_format.copy_from_slice(&original_bytes[4..8]);
 

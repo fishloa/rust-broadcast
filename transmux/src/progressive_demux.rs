@@ -34,6 +34,7 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 
 use broadcast_common::{Demand, Parse, Stage, Timestamp, Unpackage};
@@ -459,13 +460,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
         let end = start
             .checked_add(size)
             .ok_or(Error::InvalidInput("sample byte range overflow"))?;
-        if end > file.len() {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: file.len(),
-                what: "progressive sample data",
-            });
-        }
+        need_in(file, end, "progressive sample data")?;
         let dts = next_dts;
         samples.push(Sample::new(
             file[start..end].to_vec(),

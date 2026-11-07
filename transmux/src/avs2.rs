@@ -18,7 +18,7 @@
 use crate::avs3::parse_sequence_header_record;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::fit_u16;
+use broadcast_common::len::{fit_u16, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the AVS2 configuration box.
@@ -71,12 +71,7 @@ impl Serialize for Avs2ConfigurationBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let len = fit_u16(self.sequence_header.len(), "sequence_header_length")?;
         buf[0] = self.configuration_version;
         buf[1..3].copy_from_slice(&len.to_be_bytes());

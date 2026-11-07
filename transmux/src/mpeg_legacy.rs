@@ -23,6 +23,7 @@
 
 use crate::annexb::find_start_code_prefix;
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 
 // ── MPEG-2 video sequence header — ISO/IEC 13818-2 §6.2.2.1 ─────────────────
 
@@ -61,13 +62,11 @@ impl Mpeg2SeqHeader {
         ))?;
         // Fields begin immediately after the 4-byte start code.
         let fields_at = start + SEQUENCE_HEADER_CODE.len();
-        if fields_at + SEQ_SIZE_FIELD_BYTES > es.len() {
-            return Err(Error::BufferTooShort {
-                need: fields_at + SEQ_SIZE_FIELD_BYTES,
-                have: es.len(),
-                what: "MPEG-2 sequence_header size fields",
-            });
-        }
+        need_in(
+            es,
+            fields_at + SEQ_SIZE_FIELD_BYTES,
+            "MPEG-2 sequence_header size fields",
+        )?;
         let b = &es[fields_at..fields_at + SEQ_SIZE_FIELD_BYTES];
         // horizontal_size_value = b[0] << 4 | b[1] >> 4 (12 bits)
         // vertical_size_value   = (b[1] & 0x0F) << 8 | b[2] (12 bits)
@@ -213,13 +212,7 @@ impl MpegAudioFrameHeader {
     /// [`Error::InvalidInput`] (so a false sync in the middle of a payload does
     /// not masquerade as a frame boundary).
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() < 4 {
-            return Err(Error::BufferTooShort {
-                need: 4,
-                have: data.len(),
-                what: "MPEG audio frame header",
-            });
-        }
+        need_in(data, 4, "MPEG audio frame header")?;
         let h = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
 
         let syncword = ((h >> 21) & 0x07FF) as u16;

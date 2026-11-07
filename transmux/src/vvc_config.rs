@@ -73,6 +73,7 @@ use crate::sps::rfc6381_vvc1;
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::bits::BitWriter;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
@@ -484,12 +485,7 @@ impl Serialize for VvcDecoderConfigurationRecord {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.validate()?;
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut w = VvcBitWriter::new(buf);
 
         // reserved(5)='11111' + LengthSizeMinusOne(2) + ptl_present_flag(1)
@@ -584,13 +580,7 @@ impl VvcConfigurationBox {
     /// Parse a `vvcC` box from its body bytes (after the 8-byte box header) —
     /// the body is the 4-byte FullBox version+flags followed by the record.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < 4 {
-            return Err(Error::BufferTooShort {
-                need: 4,
-                have: body.len(),
-                what: "vvcC FullBox header",
-            });
-        }
+        need_in(body, 4, "vvcC FullBox header")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let config = VvcDecoderConfigurationRecord::parse(&body[4..])?;
@@ -622,12 +612,7 @@ impl Serialize for VvcConfigurationBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.config.validate()?;
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut cursor = 0usize;
         cursor += crate::box_types::write_box_header(buf, b"vvcC", need)?;
         // FullBox version + flags.

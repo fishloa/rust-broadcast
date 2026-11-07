@@ -50,6 +50,7 @@
 use crate::TrackId;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 
 use broadcast_common::{Parse, Unpackage};
@@ -631,13 +632,7 @@ fn parse_block(
         "webm block: truncated track-number VINT",
     ))?;
     // int16 big-endian relative timestamp + 1 flags byte.
-    if data.len() < off + 3 {
-        return Err(Error::BufferTooShort {
-            need: off + 3,
-            have: data.len(),
-            what: "webm block header (rel-ts + flags)",
-        });
-    }
+    need_in(data, off + 3, "webm block header (rel-ts + flags)")?;
     let rel_ts = i16::from_be_bytes([data[off], data[off + 1]]) as i64;
     let flags = data[off + 2];
     off += 3;
@@ -810,13 +805,7 @@ fn unlace(payload: &[u8], flags: u8) -> Result<Vec<Vec<u8>>> {
 
     let mut frames = Vec::with_capacity(frame_count);
     for size in &sizes {
-        if body.len() < *size {
-            return Err(Error::BufferTooShort {
-                need: *size,
-                have: body.len(),
-                what: "webm laced frame",
-            });
-        }
+        need_in(body, *size, "webm laced frame")?;
         let (frame, tail) = body.split_at(*size);
         frames.push(frame.to_vec());
         body = tail;
@@ -1187,13 +1176,7 @@ fn hevc_config(info: &TrackInfo) -> Result<(CodecConfig, Option<usize>)> {
 /// two bits are the horizontal/vertical scale). See
 /// `private/specs-verified/mpeg/transmux/codec/vp8-vorbis-webm.md`.
 fn vp8_config(first_frame: &[u8]) -> Result<CodecConfig> {
-    if first_frame.len() < VP8_KEYFRAME_HEADER_LEN {
-        return Err(Error::BufferTooShort {
-            need: VP8_KEYFRAME_HEADER_LEN,
-            have: first_frame.len(),
-            what: "VP8 key-frame header",
-        });
-    }
+    need_in(first_frame, VP8_KEYFRAME_HEADER_LEN, "VP8 key-frame header")?;
     // Frame tag is 24-bit little-endian; bit [0] of byte 0 is `key_frame`.
     if first_frame[0] & VP8_KEYFRAME_TAG_BIT != 0 {
         return Err(Error::InvalidValue {
@@ -1228,13 +1211,7 @@ fn vorbis_config(info: &TrackInfo) -> Result<CodecConfig> {
     let id = vorbis_id_header(cp)?;
 
     // Identification header: packet-type(1) + "vorbis"(6) signature.
-    if id.len() < VORBIS_ID_MIN_LEN {
-        return Err(Error::BufferTooShort {
-            need: VORBIS_ID_MIN_LEN,
-            have: id.len(),
-            what: "Vorbis identification header",
-        });
-    }
+    need_in(id, VORBIS_ID_MIN_LEN, "Vorbis identification header")?;
     if id[0] != VORBIS_ID_HEADER_TYPE {
         return Err(Error::InvalidValue {
             field: "Vorbis header packet type",
@@ -1270,13 +1247,7 @@ fn vorbis_config(info: &TrackInfo) -> Result<CodecConfig> {
 /// is the first packet, so its length is the first laced length and it starts
 /// right after the lacing table.
 fn vorbis_id_header(cp: &[u8]) -> Result<&[u8]> {
-    if cp.is_empty() {
-        return Err(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "Vorbis CodecPrivate (Xiph lacing count)",
-        });
-    }
+    need_in(cp, 1, "Vorbis CodecPrivate (Xiph lacing count)")?;
     if cp[0] != VORBIS_LACE_COUNT {
         return Err(Error::InvalidValue {
             field: "Vorbis CodecPrivate lacing count",
@@ -1348,13 +1319,7 @@ fn vp9_config(info: &TrackInfo) -> CodecConfig {
 /// header is a hard error, not a silent default.
 fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
     let cp = &info.codec_private;
-    if cp.len() < OPUS_HEAD_MIN_LEN {
-        return Err(Error::BufferTooShort {
-            need: OPUS_HEAD_MIN_LEN,
-            have: cp.len(),
-            what: "Opus CodecPrivate (OpusHead)",
-        });
-    }
+    need_in(cp, OPUS_HEAD_MIN_LEN, "Opus CodecPrivate (OpusHead)")?;
     if &cp[0..8] != OPUS_HEAD_MAGIC {
         return Err(Error::InvalidValue {
             field: "OpusHead magic",
@@ -1375,13 +1340,7 @@ fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
     let channel_mapping = if channel_mapping_family != 0 {
         // Channel-mapping table: StreamCount(1) CoupledCount(1) ChannelMapping[Nch].
         let need = OPUS_HEAD_MIN_LEN + 2 + output_channel_count as usize;
-        if cp.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: cp.len(),
-                what: "OpusHead channel-mapping table",
-            });
-        }
+        need_in(cp, need, "OpusHead channel-mapping table")?;
         let stream_count = cp[19];
         let coupled_count = cp[20];
         let map_start = 21;
@@ -1469,13 +1428,7 @@ impl<'a> EbmlReader<'a> {
                 .ok()
                 .and_then(|len| body_start.checked_add(len))
                 .unwrap_or(usize::MAX);
-            if end > self.buf.len() {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: self.buf.len(),
-                    what: "webm element body",
-                });
-            }
+            need_in(self.buf, end, "webm element body")?;
             end
         };
         let body = &self.buf[body_start..body_end];

@@ -32,6 +32,7 @@ use crate::pipeline::CodecConfig;
 use crate::rtp::{base64_decode, hex_decode};
 use alloc::vec::Vec;
 use broadcast_common::Parse;
+use broadcast_common::len::need_in;
 
 /// Length prefix size transmux uses for coded NALs (4-byte).
 const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
@@ -170,13 +171,7 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
     let first_sps = sps
         .first()
         .ok_or(Error::InvalidInput("no SPS NAL unit supplied"))?;
-    if first_sps.0.len() < 4 {
-        return Err(Error::BufferTooShort {
-            need: 4,
-            have: first_sps.0.len(),
-            what: "SPS profile/level bytes",
-        });
-    }
+    need_in(&first_sps.0, 4, "SPS profile/level bytes")?;
     let profile_indication = first_sps.0[1];
     // Gate on the serializer's own emission set (the ISO/IEC 14496-15
     // §5.3.3.1.2 condition for `profile_idc` 100/110/122/244), reached through

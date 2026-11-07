@@ -31,6 +31,7 @@ use crate::TrackId;
 use crate::error::{Error, Result};
 use crate::init_segment::bounded_entry_count;
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
@@ -103,13 +104,7 @@ impl ProducerReferenceTimeBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         // version(1) + flags(3) + ref_track_id(4) + ntp(8) = 16 minimum
         let min = FULLBOX_EXTRA_SIZE + 4 + 8;
-        if body.len() < min {
-            return Err(Error::BufferTooShort {
-                need: min,
-                have: body.len(),
-                what: "prft body",
-            });
-        }
+        need_in(body, min, "prft body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let mut c = FULLBOX_EXTRA_SIZE;
@@ -132,22 +127,10 @@ impl ProducerReferenceTimeBox {
         ]);
         c += 8;
         let media_time = if version == 0 {
-            if body.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: body.len(),
-                    what: "prft media_time v0",
-                });
-            }
+            need_in(body, c + 4, "prft media_time v0")?;
             u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]) as u64
         } else {
-            if body.len() < c + 8 {
-                return Err(Error::BufferTooShort {
-                    need: c + 8,
-                    have: body.len(),
-                    what: "prft media_time v1",
-                });
-            }
+            need_in(body, c + 8, "prft media_time v1")?;
             u64::from_be_bytes([
                 body[c],
                 body[c + 1],
@@ -172,13 +155,11 @@ impl ProducerReferenceTimeBox {
 impl<'a> Parse<'a> for ProducerReferenceTimeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + 8 + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + 8 + 4,
-                have: bytes.len(),
-                what: "prft box",
-            });
-        }
+        need_in(
+            bytes,
+            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + 8 + 4,
+            "prft box",
+        )?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != PRFT_TYPE {
             return Err(Error::InvalidValue {
@@ -199,12 +180,7 @@ impl Serialize for ProducerReferenceTimeBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0;
         c += crate::box_types::write_compact_box_header(buf, b"prft", need)?;
         buf[c] = self.version;
@@ -313,13 +289,7 @@ pub struct SampleGroupDescriptionBox {
 impl SampleGroupDescriptionBox {
     /// Parse the body of an `sgpd` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 + 4 {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4 + 4,
-                have: body.len(),
-                what: "sgpd body",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA_SIZE + 4 + 4, "sgpd body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let mut c = FULLBOX_EXTRA_SIZE;
@@ -328,13 +298,7 @@ impl SampleGroupDescriptionBox {
         let mut default_sample_description_index = None;
 
         let default_length = if version == 1 {
-            if body.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: body.len(),
-                    what: "sgpd default_length",
-                });
-            }
+            need_in(body, c + 4, "sgpd default_length")?;
             let dl = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
             dl
@@ -346,13 +310,7 @@ impl SampleGroupDescriptionBox {
             // v2 `sgpd` re-serialized 4 bytes short of its own declared syntax
             // and every reader took `entry_count` from the wrong offset
             // (audit r05-W15).
-            if body.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: body.len(),
-                    what: "sgpd default_sample_description_index",
-                });
-            }
+            need_in(body, c + 4, "sgpd default_sample_description_index")?;
             let idx = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
             default_sample_description_index = Some(idx);
@@ -361,13 +319,7 @@ impl SampleGroupDescriptionBox {
             0 // version 0: no default_length field
         };
 
-        if body.len() < c + 4 {
-            return Err(Error::BufferTooShort {
-                need: c + 4,
-                have: body.len(),
-                what: "sgpd entry_count",
-            });
-        }
+        need_in(body, c + 4, "sgpd entry_count")?;
         let entry_count =
             u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]) as usize;
         c += 4;
@@ -411,13 +363,7 @@ impl SampleGroupDescriptionBox {
         for _ in 0..entry_count {
             // Determine entry length
             let entry_len: usize = if version == 1 && default_length == 0 {
-                if body.len() < c + 4 {
-                    return Err(Error::BufferTooShort {
-                        need: c + 4,
-                        have: body.len(),
-                        what: "sgpd description_length",
-                    });
-                }
+                need_in(body, c + 4, "sgpd description_length")?;
                 let dl =
                     u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]) as usize;
                 c += 4;
@@ -449,13 +395,7 @@ impl SampleGroupDescriptionBox {
                     rest
                 }
             };
-            if body.len() < c + entry_len {
-                return Err(Error::BufferTooShort {
-                    need: c + entry_len,
-                    have: body.len(),
-                    what: "sgpd entry body",
-                });
-            }
+            need_in(body, c + entry_len, "sgpd entry body")?;
             let entry_bytes = &body[c..c + entry_len];
             // A `roll` description is exactly the 2-byte `roll_distance`
             // (§10.6.1). A box whose v1 `default_length` or per-entry
@@ -488,13 +428,7 @@ impl SampleGroupDescriptionBox {
 impl<'a> Parse<'a> for SampleGroupDescriptionBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4,
-                have: bytes.len(),
-                what: "sgpd box",
-            });
-        }
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "sgpd box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != SGPD_TYPE {
             return Err(Error::InvalidValue {
@@ -530,12 +464,7 @@ impl Serialize for SampleGroupDescriptionBox {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let (effective_dl, per_entry_prefix) = self.effective_default_length();
         let mut c = 0;
         c += crate::box_types::write_box_header(buf, b"sgpd", need)?;
@@ -648,39 +577,21 @@ pub struct SampleToGroupBox {
 impl SampleToGroupBox {
     /// Parse the body of an `sbgp` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 + 4 {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4 + 4,
-                have: body.len(),
-                what: "sbgp body",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA_SIZE + 4 + 4, "sbgp body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let mut c = FULLBOX_EXTRA_SIZE;
         let grouping_type = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
         c += 4;
         let grouping_type_parameter = if version == 1 {
-            if body.len() < c + 4 {
-                return Err(Error::BufferTooShort {
-                    need: c + 4,
-                    have: body.len(),
-                    what: "sbgp grouping_type_parameter",
-                });
-            }
+            need_in(body, c + 4, "sbgp grouping_type_parameter")?;
             let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
             Some(v)
         } else {
             None
         };
-        if body.len() < c + 4 {
-            return Err(Error::BufferTooShort {
-                need: c + 4,
-                have: body.len(),
-                what: "sbgp entry_count",
-            });
-        }
+        need_in(body, c + 4, "sbgp entry_count")?;
         let entry_count =
             u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]) as usize;
         c += 4;
@@ -691,13 +602,7 @@ impl SampleToGroupBox {
             entry_count,
         ));
         for _ in 0..entry_count {
-            if body.len() < c + 8 {
-                return Err(Error::BufferTooShort {
-                    need: c + 8,
-                    have: body.len(),
-                    what: "sbgp entry",
-                });
-            }
+            need_in(body, c + 8, "sbgp entry")?;
             let sample_count = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             let group_description_index =
                 u32::from_be_bytes([body[c + 4], body[c + 5], body[c + 6], body[c + 7]]);
@@ -720,13 +625,7 @@ impl SampleToGroupBox {
 impl<'a> Parse<'a> for SampleToGroupBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4,
-                have: bytes.len(),
-                what: "sbgp box",
-            });
-        }
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "sbgp box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != SBGP_TYPE {
             return Err(Error::InvalidValue {
@@ -749,12 +648,7 @@ impl Serialize for SampleToGroupBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0;
         c += crate::box_types::write_box_header(buf, b"sbgp", need)?;
         buf[c] = self.version;
@@ -856,13 +750,7 @@ pub struct SubSampleInformationBox {
 impl SubSampleInformationBox {
     /// Parse the body of a `subs` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() < FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: FULLBOX_EXTRA_SIZE + 4,
-                have: body.len(),
-                what: "subs body",
-            });
-        }
+        need_in(body, FULLBOX_EXTRA_SIZE + 4, "subs body")?;
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let mut c = FULLBOX_EXTRA_SIZE;
@@ -897,13 +785,7 @@ impl SubSampleInformationBox {
                 subsample_count,
             ));
             for _ in 0..subsample_count {
-                if body.len() < c + ss_wire {
-                    return Err(Error::BufferTooShort {
-                        need: c + ss_wire,
-                        have: body.len(),
-                        what: "subs subsample",
-                    });
-                }
+                need_in(body, c + ss_wire, "subs subsample")?;
                 let subsample_size = if version == 1 {
                     let v = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
                     c += 4;
@@ -942,13 +824,7 @@ impl SubSampleInformationBox {
 impl<'a> Parse<'a> for SubSampleInformationBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 {
-            return Err(Error::BufferTooShort {
-                need: BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4,
-                have: bytes.len(),
-                what: "subs box",
-            });
-        }
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "subs box")?;
         let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if ty != SUBS_TYPE {
             return Err(Error::InvalidValue {
@@ -969,12 +845,7 @@ impl Serialize for SubSampleInformationBox {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let mut c = 0;
         c += crate::box_types::write_box_header(buf, b"subs", need)?;
         buf[c] = self.version;
