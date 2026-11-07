@@ -392,11 +392,13 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert_eq!(
             T2TimestampPayload::parse(&[0x00; 10]).err(),
-            Some(crate::Error::BufferTooShort {
-                need: 11,
-                have: 10,
-                what: "T2TimestampPayload header"
-            })
+            Some(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 11,
+                    have: 10,
+                    what: "T2TimestampPayload header"
+                }
+            ))
         );
     }
 

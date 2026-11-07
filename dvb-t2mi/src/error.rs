@@ -13,15 +13,8 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
-    #[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]
-    BufferTooShort {
-        /// Bytes required to proceed.
-        need: usize,
-        /// Bytes actually available.
-        have: usize,
-        /// Human-readable name of the type or field being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// `packet_type` byte is not in Table 1 (0x00..=0x02, 0x10..=0x12, 0x20..=0x21, 0x30..=0x33).
     #[error("invalid T2-MI packet_type {found:#04x} — reserved per ETSI TS 102 773 Table 1")]
@@ -65,13 +58,8 @@ pub enum Error {
     },
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
-    #[error("serialize: output buffer too small — need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Required size.
-        need: usize,
-        /// Actual size.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// Payload length declared more bits than remaining bytes.
     #[error(
@@ -85,34 +73,10 @@ pub enum Error {
     },
 
     /// CRC-32 validation failed.
-    #[error("CRC-32 mismatch: computed {computed:#010x}, expected {expected:#010x}")]
-    CrcMismatch {
-        /// CRC we calculated over the payload bytes.
-        computed: u32,
-        /// CRC carried at the end of the packet.
-        expected: u32,
-    },
+    #[error(transparent)]
+    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
 
     /// A bit-field error from [`broadcast_common::bits::BitReader`] / [`broadcast_common::bits::BitWriter`].
     #[error("L1 bit-field error: {0}")]
     L1Bits(#[from] broadcast_common::bits::BitError),
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

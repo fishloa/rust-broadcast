@@ -34,11 +34,11 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
         let (hdr, rest) = bytes.split_first_chunk::<ARB_CELLS_HEADER_LEN>().ok_or(
-            crate::Error::BufferTooShort {
+            crate::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: ARB_CELLS_HEADER_LEN,
                 have: bytes.len(),
                 what: "ArbitraryCellsPayload header",
-            },
+            }),
         )?;
 
         let frame_idx = hdr[0];
@@ -128,7 +128,7 @@ mod tests {
         let buf = [0x00u8; 7];
         assert!(matches!(
             &(ArbitraryCellsPayload::parse(&buf)),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -191,7 +191,7 @@ mod tests {
         let mut buf = [0u8; 7];
         assert!(matches!(
             &(payload.serialize_into(&mut buf)),
-            Err(crate::error::Error::OutputBufferTooSmall { .. })
+            Err(crate::error::Error::OutputBufferTooSmall(..))
         ));
     }
 }

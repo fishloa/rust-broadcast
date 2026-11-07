@@ -414,11 +414,13 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert_eq!(
             L1Pre::parse(&[0u8; 20]).err(),
-            Some(crate::Error::BufferTooShort {
-                need: 21,
-                have: 20,
-                what: "L1Pre"
-            })
+            Some(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 21,
+                    have: 20,
+                    what: "L1Pre"
+                }
+            ))
         );
     }
 

@@ -6,6 +6,7 @@
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - `PayloadObject` comes from `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what` = "T2-MI packet", message "<what> CRC-32 mismatch: ..."). Hand-written `From` impls removed. `ReservedBitsViolation` stays crate-specific (free-text reason).
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 

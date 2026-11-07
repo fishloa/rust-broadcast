@@ -47,11 +47,13 @@ impl L1FuturePayload<'_> {
         let data = self.l1_future_data;
         let (b, _) = data
             .split_first_chunk::<2>()
-            .ok_or(crate::Error::BufferTooShort {
-                need: 2,
-                have: data.len(),
-                what: "L1DYN_NEXT_LEN",
-            })?;
+            .ok_or(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 2,
+                    have: data.len(),
+                    what: "L1DYN_NEXT_LEN",
+                },
+            ))?;
         let len_bits = u16::from_be_bytes(*b) as usize;
         if len_bits == 0 {
             return Ok(None);
@@ -138,7 +140,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             &(L1FuturePayload::parse(&[0x00])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 

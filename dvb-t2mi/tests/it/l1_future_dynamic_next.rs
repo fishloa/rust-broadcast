@@ -46,19 +46,23 @@ fn the_block_is_decoded_and_trailing_bytes_are_left_alone() {
 fn a_missing_length_field_is_reported() {
     assert_eq!(
         payload(&[0x00]).l1_dynamic_next(0, 0),
-        Err(Error::BufferTooShort {
-            need: 2,
-            have: 1,
-            what: "L1DYN_NEXT_LEN",
-        })
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 2,
+                have: 1,
+                what: "L1DYN_NEXT_LEN",
+            }
+        ))
     );
     assert_eq!(
         payload(&[]).l1_dynamic_next(0, 0),
-        Err(Error::BufferTooShort {
-            need: 2,
-            have: 0,
-            what: "L1DYN_NEXT_LEN",
-        })
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 2,
+                have: 0,
+                what: "L1DYN_NEXT_LEN",
+            }
+        ))
     );
 }
 
@@ -68,11 +72,13 @@ fn a_block_shorter_than_its_declared_bits_is_reported() {
     data.extend_from_slice(&dynamic_body()[..DYNAMIC_BYTES_NO_PLP_NO_AUX - 1]);
     assert_eq!(
         payload(&data).l1_dynamic_next(0, 0),
-        Err(Error::BufferTooShort {
-            need: 2 + DYNAMIC_BYTES_NO_PLP_NO_AUX,
-            have: data.len(),
-            what: "L1DYN_NEXT",
-        })
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 2 + DYNAMIC_BYTES_NO_PLP_NO_AUX,
+                have: data.len(),
+                what: "L1DYN_NEXT",
+            }
+        ))
     );
 }
 
@@ -82,10 +88,12 @@ fn the_declared_bit_length_rounds_up_to_whole_bytes() {
     data.push(0xFF);
     assert_eq!(
         payload(&data).l1_dynamic_next(0, 0),
-        Err(Error::BufferTooShort {
-            need: 4,
-            have: 3,
-            what: "L1DYN_NEXT",
-        })
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 4,
+                have: 3,
+                what: "L1DYN_NEXT",
+            }
+        ))
     );
 }

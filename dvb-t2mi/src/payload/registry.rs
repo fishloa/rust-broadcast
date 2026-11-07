@@ -30,9 +30,9 @@
 //!     type Error = dvb_t2mi::Error;
 //!     fn parse(bytes: &'a [u8]) -> dvb_t2mi::Result<Self> {
 //!         if bytes.is_empty() {
-//!             return Err(dvb_t2mi::Error::BufferTooShort {
+//!             return Err(dvb_t2mi::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
 //!                 need: 1, have: 0, what: "MyPrivate",
-//!             });
+//!             }));
 //!         }
 //!         Ok(Self { x: bytes[0] })
 //!     }
@@ -170,11 +170,13 @@ mod tests {
 
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.is_empty() {
-                return Err(crate::Error::BufferTooShort {
-                    need: 1,
-                    have: 0,
-                    what: "TestPayload",
-                });
+                return Err(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 1,
+                        have: 0,
+                        what: "TestPayload",
+                    },
+                ));
             }
             Ok(Self { val: bytes[0] })
         }

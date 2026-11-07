@@ -1134,11 +1134,13 @@ mod tests {
             type Error = crate::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.is_empty() {
-                    return Err(crate::Error::BufferTooShort {
-                        need: 1,
-                        have: 0,
-                        what: "TestPrivatePayload",
-                    });
+                    return Err(crate::Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: 1,
+                            have: 0,
+                            what: "TestPrivatePayload",
+                        },
+                    ));
                 }
                 Ok(Self { val: bytes[0] })
             }
@@ -1198,11 +1200,13 @@ mod tests {
             type Error = crate::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.is_empty() {
-                    return Err(crate::Error::BufferTooShort {
-                        need: 1,
-                        have: 0,
-                        what: "PrivatePayload",
-                    });
+                    return Err(crate::Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: 1,
+                            have: 0,
+                            what: "PrivatePayload",
+                        },
+                    ));
                 }
                 Ok(Self { val: bytes[0] })
             }

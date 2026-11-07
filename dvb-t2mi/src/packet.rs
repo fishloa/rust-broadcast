@@ -120,11 +120,13 @@ impl<'a> broadcast_common::Parse<'a> for Header {
 
         let (hdr, _) = bytes
             .split_first_chunk::<HEADER_LEN>()
-            .ok_or(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "T2MI Header",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN,
+                    have: bytes.len(),
+                    what: "T2MI Header",
+                },
+            ))?;
 
         let packet_type = PacketType::try_from(hdr[0])?;
         let packet_count = hdr[1];
@@ -192,13 +194,16 @@ impl Header {
     /// Returns [`Error::PayloadLengthMismatch`](crate::error::Error::PayloadLengthMismatch)
     /// if the buffer is too short for the declared `payload_len_bits`.
     pub fn raw_payload_bytes(packet: &[u8]) -> Result<&[u8], crate::error::Error> {
-        let (hdr, _) = packet.split_first_chunk::<HEADER_LEN>().ok_or(
-            crate::error::Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: packet.len(),
-                what: "T2MI Header",
-            },
-        )?;
+        let (hdr, _) =
+            packet
+                .split_first_chunk::<HEADER_LEN>()
+                .ok_or(crate::error::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: HEADER_LEN,
+                        have: packet.len(),
+                        what: "T2MI Header",
+                    },
+                ))?;
         let payload_len_bits = u16::from_be_bytes([hdr[4], hdr[5]]);
         let payload_len_bytes = (payload_len_bits as usize).div_ceil(8);
         let end = HEADER_LEN + payload_len_bytes;
@@ -319,7 +324,12 @@ mod tests {
         let buf = [0x00u8; 5];
         let result = Header::parse(&buf);
         let err = result.unwrap_err();
-        if let crate::Error::BufferTooShort { need, have, what } = err {
+        if let crate::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            need,
+            have,
+            what,
+        }) = err
+        {
             assert_eq!(need, HEADER_LEN);
             assert_eq!(have, 5);
             assert_eq!(what, "T2MI Header");
@@ -491,7 +501,7 @@ mod tests {
         let result = hdr.serialize_into(&mut buf);
         assert!(matches!(
             &(result),
-            Err(crate::error::Error::OutputBufferTooSmall { .. })
+            Err(crate::error::Error::OutputBufferTooSmall(..))
         ));
     }
 

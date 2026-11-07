@@ -55,11 +55,13 @@ impl<'a> Parse<'a> for FefCompositePayload {
         let (hdr, _) =
             bytes
                 .split_first_chunk::<FEF_COMPOSITE_LEN>()
-                .ok_or(crate::Error::BufferTooShort {
-                    need: FEF_COMPOSITE_LEN,
-                    have: bytes.len(),
-                    what: "FefCompositePayload header",
-                })?;
+                .ok_or(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: FEF_COMPOSITE_LEN,
+                        have: bytes.len(),
+                        what: "FefCompositePayload header",
+                    },
+                ))?;
 
         // byte 1 [7]: rfu1 — must be 0
         if hdr[1] & 0x80 != 0 {
@@ -172,7 +174,7 @@ mod tests {
         let buf = [0x00u8; 7];
         assert!(matches!(
             &(FefCompositePayload::parse(&buf)),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -201,7 +203,9 @@ mod tests {
         let mut buf = [0u8; 7];
         assert_eq!(
             payload.serialize_into(&mut buf).err(),
-            Some(crate::Error::OutputBufferTooSmall { need: 8, have: 7 })
+            Some(crate::Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall { need: 8, have: 7 }
+            ))
         );
     }
 
