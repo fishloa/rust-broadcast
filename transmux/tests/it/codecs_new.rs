@@ -470,7 +470,10 @@ fn heaac_hierarchical_with_unrepresentable_core_aot_is_rejected() {
     // aot(5)=5 sfi(4)=3 cv(4)=2 ext_sfi(4)=6 core_aot(5)=23(ER AAC LD) GASpecificConfig(3)=0
     let bytes: [u8; 4] = [0x29, 0x93, 0x5c, 0x00];
     let asc = AudioSpecificConfig::parse(&bytes).unwrap();
-    assert!(asc.to_adts_header(200).is_err());
+    assert!(matches!(
+        asc.to_adts_header(200),
+        Err(transmux::error::Error::InvalidValue { .. })
+    ));
 }
 
 /// C2 (#1008): `sampling_frequency_index == Escape` is a 24-bit explicit

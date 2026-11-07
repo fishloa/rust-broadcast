@@ -7,6 +7,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 ### Added
 - `credentials_from_url` / `strip_userinfo` (and `Error::InvalidUserinfo` / `Error::UserinfoNotRemovable`): decode a URL's percent-encoded userinfo into `Credentials` and remove it, shared by `multimux` instead of three private copies (dedupe D7).
+- Public `constant_time_eq`, the single constant-time comparison used by the Basic/Digest/Bearer verifiers, credentials and signed URLs (c2 L1).
 
 ## [0.5.1] - 2026-11-01
 ### Changed

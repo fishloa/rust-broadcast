@@ -181,7 +181,13 @@ fn handshake_byte_layout() {
     assert_eq!(c0b[0], 3, "version byte is 3");
     assert_eq!(Handshake0::parse(&c0b).unwrap(), c0);
     // A non-3 version is rejected.
-    assert!(Handshake0::parse(&[6]).is_err(), "bad version rejected");
+    assert!(
+        matches!(
+            Handshake0::parse(&[6]),
+            Err(transmux::rtmp::RtmpError::BadVersion(..))
+        ),
+        "bad version rejected"
+    );
 
     // C1/S1 is 1536 bytes: time(4) + zero(4) + random(1528).
     let random: Vec<u8> = (0..1528u32).map(|i| (i % 251) as u8).collect();

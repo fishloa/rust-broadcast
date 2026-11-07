@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Removed
+- Unused `resync::aligned_packets`; the `resync` module doc no longer claims to wrap `mpeg_ts::resync::TsResync` (c2 H7).
+- Unused `SectionStream::with_builder` and `MulticastConfig::with_interface` (c2 TH1).
 
 ## [0.7.0] - 2026-10-17
 ### Documentation

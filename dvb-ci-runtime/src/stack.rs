@@ -135,7 +135,6 @@ impl CiStack {
             Event::Tick { elapsed } => {
                 let out = self.transport.tick(elapsed);
                 let mut actions = self.emit_transport(out);
-                // Advance each open resource's timers (e.g. date_time resend).
                 for (session_nb, resource) in self.session.sessions() {
                     if let Some(i) = self.handler_index(resource) {
                         match self.resources[i].tick(elapsed) {

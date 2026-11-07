@@ -185,7 +185,10 @@ fn unknown_x_attribute_quoting_round_trips_byte_exact() {
 fn quoted_rejects_each_forbidden_character() {
     for bad in ["has\"quote", "has\rcr", "has\nlf", "a\"\r\nb"] {
         assert!(
-            AttrValue::quoted(bad).is_err(),
+            matches!(
+                AttrValue::quoted(bad),
+                Err(broadcast_hls::Error::InvalidAttrValue { .. })
+            ),
             "AttrValue::quoted must reject {bad:?}"
         );
     }
@@ -199,7 +202,10 @@ fn quoted_rejects_each_forbidden_character() {
 fn bare_rejects_each_forbidden_character() {
     for bad in ["has,comma", "has\"quote", "has\rcr", "has\nlf", "has space"] {
         assert!(
-            AttrValue::bare(bad).is_err(),
+            matches!(
+                AttrValue::bare(bad),
+                Err(broadcast_hls::Error::InvalidAttrValue { .. })
+            ),
             "AttrValue::bare must reject {bad:?}"
         );
     }
@@ -219,11 +225,17 @@ fn bare_rejects_each_forbidden_character() {
 fn injection_attempt_is_rejected_at_construction_not_rendered() {
     let malicious = "cc\"\r\n#EXT-X-ENDLIST\r\n";
     assert!(
-        AttrValue::quoted(malicious).is_err(),
+        matches!(
+            AttrValue::quoted(malicious),
+            Err(broadcast_hls::Error::InvalidAttrValue { .. })
+        ),
         "a value containing '\"'/CR/LF must be rejected, not rendered"
     );
     assert!(
-        AttrValue::for_attr("X-INJECT", malicious).is_err(),
+        matches!(
+            AttrValue::for_attr("X-INJECT", malicious),
+            Err(broadcast_hls::Error::InvalidAttrValue { .. })
+        ),
         "for_attr must propagate the same rejection"
     );
 }
@@ -298,5 +310,8 @@ fn public_tokenizer_and_renderer_round_trip_quoted_and_bare_values() {
 /// rejected before `render_attribute_list` ever sees it.
 #[test]
 fn public_renderer_cannot_be_fed_an_injected_value() {
-    assert!(AttrValue::quoted("a1\"\r\n#EXT-X-ENDLIST").is_err());
+    assert!(matches!(
+        AttrValue::quoted("a1\"\r\n#EXT-X-ENDLIST"),
+        Err(broadcast_hls::Error::InvalidAttrValue { .. })
+    ));
 }

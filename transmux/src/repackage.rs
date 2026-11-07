@@ -244,7 +244,6 @@ impl Media {
             let mut kept = Vec::new();
             if let Some(start_idx) = start_idx {
                 for (s, &p) in track.samples[start_idx..].iter().zip(&pts[start_idx..]) {
-                    // Stop once presentation time reaches the window's upper edge.
                     if p >= hi {
                         break;
                     }

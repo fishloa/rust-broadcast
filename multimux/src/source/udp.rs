@@ -204,11 +204,10 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_unparsable_addr() {
-        assert!(
-            bind_udp("not-an-addr", None, UdpBindOptions::default())
-                .await
-                .is_err()
-        );
+        assert!(matches!(
+            bind_udp("not-an-addr", None, UdpBindOptions::default()).await,
+            Err(crate::error::MultimuxError::Connect { .. })
+        ));
     }
 
     #[tokio::test]

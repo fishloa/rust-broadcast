@@ -3116,14 +3116,6 @@ impl Serialize for SampleDescriptionBox {
 // stbl children that we preserve as opaque (stss, sgpd, sbgp)
 // ---------------------------------------------------------------------------
 
-/// Opaque stbl child box (stss, sgpd, sbgp, etc.)
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct StblOpaque {
-    /// The full box bytes including 8-byte header.
-    pub data: Vec<u8>,
-}
-
 // ---------------------------------------------------------------------------
 // Helper: parse a list of child boxes from container body and return typed
 // variants via an enum.  Used by the container types below.

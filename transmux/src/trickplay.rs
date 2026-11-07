@@ -107,7 +107,6 @@ use crate::pipeline::Sample;
 /// Sync samples correspond to ISO/IEC 14496-12 §8.6.2 (`stss`). Each sample
 /// in the returned track is a random-access point (i.e. would appear in `stss`).
 pub fn derive_iframe_track(src: &Track) -> Result<Track> {
-    // Collect the indices of all sync samples in decode order.
     let sync_indices: Vec<usize> = src
         .samples
         .iter()
@@ -134,7 +133,6 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
             total
         };
 
-        // Sum the durations of all source samples in [idx, span_end).
         let folded_duration: u32 = src.samples[idx..span_end]
             .iter()
             .map(|s| s.duration.unwrap_or(0))

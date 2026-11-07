@@ -79,18 +79,6 @@ pub enum Error {
     #[error("media initialization section holds no complete moov box")]
     InitUndecodable,
 
-    /// A playlist URI (segment/part/map/rendition-report) could not be
-    /// resolved against the playlist's own URL.
-    #[error("could not resolve URI {uri:?} against base {base:?}: {reason}")]
-    UriResolve {
-        /// The (possibly relative) URI from the playlist.
-        uri: String,
-        /// The base URL it was resolved against.
-        base: String,
-        /// Human-readable explanation.
-        reason: &'static str,
-    },
-
     /// An `EXT-X-BYTERANGE` (or `EXT-X-PRELOAD-HINT` byte range,
     /// RFC 8216bis §4.4.4.9/§4.4.5.3) `offset + length` overflowed `u64`.
     /// Both values come straight from the remote origin's playlist text —

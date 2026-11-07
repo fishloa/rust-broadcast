@@ -105,7 +105,10 @@ fn date_header_gets_the_half_second() {
     .unwrap();
     assert_eq!(s.utc_us, 1_793_003_944 * 1_000_000 + 500_000);
     assert_eq!(s.uncertainty_us, 50 + 500_000);
-    assert!(sample_from_date_header("garbage", Exchange::new(0, 1), MAX_RTT).is_err());
+    assert!(matches!(
+        sample_from_date_header("garbage", Exchange::new(0, 1), MAX_RTT),
+        Err(dash_runtime::timing::TimingError::DateTime(..))
+    ));
 }
 
 #[test]

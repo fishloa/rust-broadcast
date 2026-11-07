@@ -81,7 +81,10 @@ fn rfc3394_unwrap_wrong_kek_fails_integrity_check() {
     let mut wrong_kek = RFC3394_KEK;
     wrong_kek[15] ^= 0x01;
     assert!(
-        unwrap_sek(&wrong_kek, &icv, wrapped).is_err(),
+        matches!(
+            unwrap_sek(&wrong_kek, &icv, wrapped),
+            Err(srt_runtime::error::Error::InvalidField { .. })
+        ),
         "unwrap with the wrong KEK must fail its integrity check, not silently succeed"
     );
 }

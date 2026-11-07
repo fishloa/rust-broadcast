@@ -7,7 +7,7 @@ use http::StatusCode;
 
 use crate::Error;
 use crate::http_util;
-use crate::session_common::{Established, Origin, PendingRequest, classify_established};
+use crate::session_common::{Established, SessionCore};
 
 /// State of a WHEP player session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,26 +58,14 @@ pub enum Event {
 
 /// Sans-IO WHEP player state machine.
 pub struct WhepPlayer {
-    endpoint_url: String,
-    bearer_token: Option<String>,
+    core: SessionCore,
     state: State,
-    /// The request awaiting a response while [`State::Established`], if any
-    /// — see [`PendingRequest`].
-    pending: Option<PendingRequest>,
 }
 
 /// Manual `Debug`: the bearer token never renders (issue #1142).
 impl core::fmt::Debug for WhepPlayer {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("WhepPlayer")
-            .field("endpoint_url", &self.endpoint_url)
-            .field(
-                "bearer_token",
-                &self.bearer_token.as_ref().map(|_| "<redacted>"),
-            )
-            .field("state", &self.state)
-            .field("pending", &self.pending)
-            .finish()
+        self.core.debug(f, "WhepPlayer", &self.state)
     }
 }
 
@@ -86,10 +74,8 @@ impl WhepPlayer {
     /// every request with `bearer_token`.
     pub fn new(endpoint_url: String, bearer_token: Option<String>) -> Self {
         Self {
-            endpoint_url,
-            bearer_token,
+            core: SessionCore::new(endpoint_url, bearer_token),
             state: State::Idle,
-            pending: None,
         }
     }
 
@@ -106,12 +92,7 @@ impl WhepPlayer {
                 state: state_name(&self.state),
             });
         }
-        let req = self.origin().request(
-            Method::POST,
-            self.endpoint_url.clone(),
-            Some(super::content_type::SDP),
-            sdp_offer,
-        )?;
+        let req = self.core.post_offer(sdp_offer)?;
         self.state = State::OfferSent;
         Ok(req)
     }
@@ -121,7 +102,7 @@ impl WhepPlayer {
         match &self.state {
             State::CounterOffered { session_url } => {
                 let url = session_url.clone();
-                self.origin().request(
+                self.core.origin().request(
                     Method::PATCH,
                     url,
                     Some(super::content_type::SDP),
@@ -138,25 +119,19 @@ impl WhepPlayer {
     /// Generate Trickle ICE PATCH.
     pub fn trickle_ice(&mut self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, etag) = self.established_fields()?;
-        let req = self.origin().trickle(session_url, etag, sdp_fragment)?;
-        self.pending = Some(PendingRequest::Trickle);
-        Ok(req)
+        self.core.trickle(session_url, etag, sdp_fragment)
     }
 
     /// Generate ICE restart PATCH.
     pub fn ice_restart(&mut self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
-        let req = self.origin().ice_restart(session_url, sdp_fragment)?;
-        self.pending = Some(PendingRequest::IceRestart);
-        Ok(req)
+        self.core.ice_restart(session_url, sdp_fragment)
     }
 
     /// Generate DELETE request.
     pub fn terminate(&mut self) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
-        let req = self.origin().delete(session_url)?;
-        self.pending = Some(PendingRequest::Delete);
-        Ok(req)
+        self.core.delete(session_url)
     }
 
     /// Feed an HTTP response back into the state machine.
@@ -227,7 +202,7 @@ impl WhepPlayer {
                 state: state_name(&self.state),
             });
         };
-        match classify_established(self.pending.take(), resp, etag)? {
+        match self.core.classify(resp, etag)? {
             Established::Terminated => {
                 self.state = State::Closed;
                 Ok(Some(Event::Terminated))
@@ -250,13 +225,6 @@ impl WhepPlayer {
                 operation: "requires established session",
                 state: state_name(&self.state),
             }),
-        }
-    }
-
-    fn origin(&self) -> Origin<'_> {
-        Origin {
-            endpoint_url: &self.endpoint_url,
-            bearer_token: self.bearer_token.as_deref(),
         }
     }
 }

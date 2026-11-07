@@ -99,7 +99,10 @@ fn gate2_illegal_method_in_state_bites() {
     // play() in Init is rejected before any bytes are produced.
     let mut c = ClientSession::new();
     assert!(
-        c.play("rtsp://h/s").is_err(),
+        matches!(
+            c.play("rtsp://h/s"),
+            Err(rtsp_runtime::error::Error::MethodNotValidInState { .. })
+        ),
         "PLAY in Init must be rejected"
     );
 
@@ -112,7 +115,10 @@ fn gate2_illegal_method_in_state_bites() {
     .unwrap();
     assert_eq!(c.state(), SessionState::Ready);
     assert!(
-        c.pause("rtsp://h/s").is_err(),
+        matches!(
+            c.pause("rtsp://h/s"),
+            Err(rtsp_runtime::error::Error::MethodNotValidInState { .. })
+        ),
         "PAUSE in Ready must be rejected"
     );
 

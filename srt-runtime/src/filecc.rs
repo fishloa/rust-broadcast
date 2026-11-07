@@ -393,17 +393,6 @@ impl FileCc {
         self.pkt_snd_period_us
     }
 
-    /// The current `PKT_SND_PERIOD` as a [`Duration`], for a sender to
-    /// consult before transmitting the next packet (same role as
-    /// [`crate::livecc::LiveCC::on_ack_received`]'s return value).
-    ///
-    /// Truncates the microsecond value toward zero (consistent with this
-    /// crate's existing integer-truncation convention, e.g. LiveCC's
-    /// `PKT_SND_PERIOD`).
-    pub fn pkt_snd_period(&self) -> Duration {
-        Duration::from_micros(self.pkt_snd_period_us as u64)
-    }
-
     /// The current `MAX_CWND_SIZE` (rule 8), in packets.
     pub fn max_cwnd_size(&self) -> f64 {
         self.max_cwnd_size
@@ -422,7 +411,8 @@ impl FileCc {
 
     /// Reconfigure `MAX_BW` (rule 15: `MAXBW_SET` mode only applies to file
     /// transfer; there is no default, `None` is unbounded).
-    pub fn set_max_bw_bytes_per_sec(&mut self, max_bw: Option<u64>) {
+    #[cfg(test)]
+    pub(crate) fn set_max_bw_bytes_per_sec(&mut self, max_bw: Option<u64>) {
         self.max_bw_bytes_per_sec = max_bw;
     }
 

@@ -119,6 +119,7 @@ use webrtc_runtime::whep::server::{Event as WhepEvent, WhepSession};
 
 use crate::webrtc_session::{
     Resource, ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr,
+    single_video_media,
 };
 
 use crate::error::{MultimuxError, Result};
@@ -266,26 +267,8 @@ struct ParsedWhepOffer {
 /// `m=video` section naming at least one H.264 payload type — see the
 /// module doc's "Scope" section.
 fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
-    let session = sdp_types::Session::parse(offer.as_bytes()).map_err(|e| MultimuxError::Sdp {
-        reason: format!("whep: parse offer: {e}"),
-    })?;
-    let video_medias: Vec<_> = session
-        .medias
-        .iter()
-        .filter(|m| m.media == "video")
-        .collect();
-    if session.medias.len() != video_medias.len() || video_medias.len() != 1 {
-        return Err(MultimuxError::Sdp {
-            reason: format!(
-                "whep: this route accepts exactly one m=video section and nothing else \
-                 (Opus audio has no RTP packetiser in this workspace yet); offer had {} \
-                 total section(s), {} of them video",
-                session.medias.len(),
-                video_medias.len()
-            ),
-        });
-    }
-    let media = video_medias[0];
+    let (session, media_index) = single_video_media(offer, "whep", "packetiser")?;
+    let media = &session.medias[media_index];
 
     let remote_ufrag = ice_attr(&session, media, "ice-ufrag")
         .ok_or_else(|| MultimuxError::Sdp {
@@ -1714,7 +1697,6 @@ pub async fn run_whep_on_probed(
         }
     }
     sessions.close();
-    // Drain in-flight sessions; each ends on its own `cancel`.
     sessions.wait().await;
     // Join the signalling server so its bound port is released before we
     // return.
@@ -1782,20 +1764,29 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff\r\n",
             "",
         );
-        assert!(parse_whep_offer(&offer).is_err());
+        assert!(matches!(
+            parse_whep_offer(&offer),
+            Err(crate::error::MultimuxError::Sdp { .. })
+        ));
     }
 
     #[test]
     fn rejects_offer_with_no_video() {
         let offer = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n\
 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxxxxxxxx\r\n";
-        assert!(parse_whep_offer(offer).is_err());
+        assert!(matches!(
+            parse_whep_offer(offer),
+            Err(crate::error::MultimuxError::Sdp { .. })
+        ));
     }
 
     #[test]
     fn rejects_offer_with_audio_and_video() {
         let offer = OFFER.replace("m=video 9", "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=video 9");
-        assert!(parse_whep_offer(&offer).is_err());
+        assert!(matches!(
+            parse_whep_offer(&offer),
+            Err(crate::error::MultimuxError::Sdp { .. })
+        ));
     }
 
     /// MUTATION-CHECKED: swapping the two match arms below (`"active" =>
@@ -2470,15 +2461,17 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let username = b"localuf01:remoteuf01";
 
         assert!(
-            media
-                .handle_datagram(Instant::now(), from, &stun_binding_request(username, false))
-                .is_err(),
+            matches!(
+                media.handle_datagram(Instant::now(), from, &stun_binding_request(username, false)),
+                Err(webrtc_runtime::error::Error::Media(..))
+            ),
             "a Binding Request missing MESSAGE-INTEGRITY entirely must be Err"
         );
         assert!(
-            media
-                .handle_datagram(Instant::now(), from, &stun_binding_request(username, true))
-                .is_err(),
+            matches!(
+                media.handle_datagram(Instant::now(), from, &stun_binding_request(username, true)),
+                Err(webrtc_runtime::error::Error::Media(..))
+            ),
             "a Binding Request with a wrong MESSAGE-INTEGRITY must be Err"
         );
     }

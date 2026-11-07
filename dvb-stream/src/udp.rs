@@ -45,13 +45,6 @@ impl MulticastConfig {
         }
     }
 
-    /// Join the group on `interface` instead of the bind address.
-    #[must_use]
-    pub fn with_interface(mut self, interface: Ipv4Addr) -> Self {
-        self.interface = interface;
-        self
-    }
-
     /// Request an `SO_RCVBUF` of `bytes` (the kernel may round or clamp it).
     #[must_use]
     pub fn with_recv_buffer_size(mut self, bytes: usize) -> Self {

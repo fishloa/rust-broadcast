@@ -12,8 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One `ADTS_HEADER_SIZE` constant shared by `aac_asc`, `ts_demux` and `sample_aes` (dedupe C1; the 7/9-byte `sample_aes::adts_header_len` is left as the Apple SAMPLE-AES rule, distinct from the raw-data-block offset in `ts_demux`).
 - The four segmenters build `Stage::demand` with `Demand::saturated_if` (dedupe C3).
 - `ac3` and `dts` import `bitreader::read_bits_checked` instead of declaring forwarding `read_bits` wrappers (dedupe R5).
+- The `rtcp` module file is replaced by `pub use rtcp_packet as rtcp`; paths unchanged (c2 TH8).
+- One `build_chunk` builds the CMAF segment, event segment, LL-DASH chunk and LL-HLS part; `trun` `data_offset` is now range-checked instead of cast (c2 H5).
+- VVC reader/writer, AVS3-audio and HDR10+ serializers share `bitreader::{read_bits_checked, write_bits_checked}`; an AVS3-audio `dca3` write overrun is now `BufferTooShort` (was `InvalidInput`) (c2 M4).
+- The DASH MPD and Smooth manifest parsers share one quick-xml walker (`xml_walk`: tags, attribute decoding, subtree skipping, attribute helpers) over a small error trait (c2 H2).
+- The TS muxer uses `mpeg_pes::PACKET_START_CODE_PREFIX` instead of a private copy (c2 L3).
+
 ### Removed
 - `rtp::hex_decode`, `smooth_parse::hex_decode` and the `smooth_hex_decode` re-export are now crate-private; both only wrapped the `hex` crate with this crate's own error type. Use `hex::decode` (dedupe R6).
+- Unused public items `UUID_TYPE_BYTES`, `DashPackager::with_profiles`, `TELG_FOURCC`/`LRAP_FOURCC`/`A3LG_FOURCC`, `StblOpaque`, the RTMP `CSID_CONTROL`/`SOFT` constants, `new_vvi1`, `video_stream_descriptor_bytes`, `MhaCBox`, `user_data::{MIN_BAR_DATA_LEN, picture_user_data, carriage_for}`, `TrackSpec::with_hdr`/`with_dovi`, `SkippedTrack::with_track_id`, the `track_abandoned`/`display_changed` event constructors, `ir::sample::NON_SYNC` and the five `ll_dash` `UTCTIMING_*_2014` constants; `new_avc3`, `new_hev1`, `HdrStaticMetadata::hevc_sei_nal_carries_hdr` and `SENC_OVERRIDE_FIELDS_LEN` are now test-only; the AVS2 FourCC constants are now what `AvsVideoEntryKind` returns (c2 TH1).
+
+### Fixed
+- The `vvcC` writer no longer indexes the output buffer directly: a short buffer or a short `general_constraint_info` is a typed `BufferTooShort` instead of a panic (c2 M4).
 
 ## [0.29.1] - 2026-11-03
 ### Fixed

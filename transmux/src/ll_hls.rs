@@ -43,7 +43,7 @@ use alloc::vec::Vec;
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
-use crate::ll_dash::build_chunk;
+use crate::pipeline::build_chunk;
 use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_init_segment};
 use crate::segmenter::{
     MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
@@ -846,7 +846,7 @@ impl LlHlsSegmenter {
                 samples: &t.pending[t.part_start..e],
             })
             .collect();
-        let bytes = build_chunk(self.next_seq, &frags, false)?;
+        let bytes = build_chunk(self.next_seq, &frags, false, &[])?;
         self.next_seq += 1;
         let independent = frags
             .first()
@@ -1015,7 +1015,7 @@ impl LlHlsSegmenter {
             let Some(first) = frags.first() else {
                 continue;
             };
-            let bytes = build_chunk(self.next_seq, &frags, false)?;
+            let bytes = build_chunk(self.next_seq, &frags, false, &[])?;
             self.next_seq += 1;
             let first_ti = self
                 .tracks
@@ -1426,7 +1426,7 @@ impl LlHlsSegmenter {
                 })
                 .collect();
             // A part is a bare moof+mdat (no styp): with_styp = false.
-            build_chunk(seq, &frags, false)?
+            build_chunk(seq, &frags, false, &[])?
         };
         self.next_seq += 1;
 

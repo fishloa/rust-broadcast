@@ -24,7 +24,7 @@ pub use jitter::{DeliveryJitter, JitterEstimate, SampleOutcome};
 pub use stall_memory::StallMemorySnapshot;
 pub use tracks::{COALESCE_US, DEFAULT_TRACK, MAX_TRACKS};
 
-use broadcast_common::clock33::{PCR_EXT_MODULUS, PCR_WRAP_27MHZ, WRAP_33BIT};
+use broadcast_common::clock33::{PCR_EXT_MODULUS, WRAP_33BIT};
 
 /// C-ABI revision of the plain-data surface ([`EventRecord`], the `u32`
 /// codes of [`State`]/[`Reason`]/[`Hint`], the event [`kind`] codes). Bumped
@@ -39,7 +39,3 @@ pub const ABI_VERSION: u32 = 2;
 pub fn pts90k_to_27mhz(pts: u64) -> Ticks27 {
     (pts % WRAP_33BIT) * PCR_EXT_MODULUS
 }
-
-/// The 27 MHz wrap modulus of the PCR / playback domain, re-exported so a
-/// caller shifting positions by a constant offset stays wrap-correct.
-pub const WRAP_27MHZ: u64 = PCR_WRAP_27MHZ;

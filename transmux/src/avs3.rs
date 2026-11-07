@@ -34,13 +34,6 @@ pub const LAVC_FOURCC: [u8; 4] = *b"lavc";
 pub const AVS3_FOURCC: [u8; 4] = *b"avs3";
 /// FourCC of the LAVS3 sample entry.
 pub const LAV3_FOURCC: [u8; 4] = *b"lav3";
-/// FourCC of the temporal-level sample group.
-pub const TELG_FOURCC: [u8; 4] = *b"telg";
-/// FourCC of the library random access point sample group.
-pub const LRAP_FOURCC: [u8; 4] = *b"lrap";
-/// FourCC of the library picture sample group.
-pub const A3LG_FOURCC: [u8; 4] = *b"a3lg";
-
 const BOX_HDR: usize = 8;
 const CONFIGURATION_VERSION: u8 = 1;
 const RESERVED6_ONES: u8 = 0x3F;
@@ -485,8 +478,8 @@ impl AvsVideoEntryKind {
         match self {
             Self::Avs3 => AVS3_FOURCC,
             Self::LAvs3 => LAV3_FOURCC,
-            Self::Avs2 => *b"avst",
-            Self::LAvs2 => *b"lav2",
+            Self::Avs2 => crate::avs2::AVST_FOURCC,
+            Self::LAvs2 => crate::avs2::LAV2_FOURCC,
         }
     }
 
@@ -496,8 +489,8 @@ impl AvsVideoEntryKind {
         match self {
             Self::Avs3 => AV3C_FOURCC,
             Self::LAvs3 => LAVC_FOURCC,
-            Self::Avs2 => *b"av2c",
-            Self::LAvs2 => *b"la2c",
+            Self::Avs2 => crate::avs2::AV2C_FOURCC,
+            Self::LAvs2 => crate::avs2::LA2C_FOURCC,
         }
     }
 
@@ -900,15 +893,30 @@ mod tests {
 
     #[test]
     fn av3c_rejects_truncation_and_overlong_header() {
-        assert!(Avs3ConfigurationBox::parse(&[1, 0]).is_err());
-        assert!(Avs3ConfigurationBox::parse(&[1, 0, 4, 0, 0, 1]).is_err());
+        assert!(matches!(
+            Avs3ConfigurationBox::parse(&[1, 0]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            Avs3ConfigurationBox::parse(&[1, 0, 4, 0, 0, 1]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let mut c = Avs3ConfigurationBox::new(vec![0; 70_000], LibraryDependencyIdc::Library);
         let mut out = vec![0u8; c.serialized_len()];
-        assert!(c.serialize_into(&mut out).is_err(), "length overflows u16");
+        assert!(
+            matches!(
+                c.serialize_into(&mut out),
+                Err(crate::error::Error::FieldOverflow(..))
+            ),
+            "length overflows u16"
+        );
         c.sequence_header.clear();
         c.reserved = 0x40;
         assert!(
-            c.serialize_into(&mut out).is_err(),
+            matches!(
+                c.serialize_into(&mut out),
+                Err(crate::error::Error::FieldOverflow(..))
+            ),
             "reserved wider than 6 bits"
         );
     }
@@ -943,8 +951,14 @@ mod tests {
 
     #[test]
     fn lavc_rejects_truncation_and_overwide() {
-        assert!(LAvsConfigurationBox::parse(&[1]).is_err());
-        assert!(LAvsConfigurationBox::parse(&[1, 2, 0, 0, 0, 0, 0]).is_err());
+        assert!(matches!(
+            LAvsConfigurationBox::parse(&[1]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
+        assert!(matches!(
+            LAvsConfigurationBox::parse(&[1, 2, 0, 0, 0, 0, 0]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let mut l = LAvsConfigurationBox::new(vec![TemporalLayerInfo::new(
             8,
             AvsFrameRateCode::Fps25,
@@ -953,12 +967,21 @@ mod tests {
         )]);
         let mut out = vec![0u8; l.serialized_len()];
         assert!(
-            l.serialize_into(&mut out).is_err(),
+            matches!(
+                l.serialize_into(&mut out),
+                Err(crate::error::Error::FieldOverflow(..))
+            ),
             "temporal_layer_id > 3 bits"
         );
         l.layers[0].temporal_layer_id = 0;
         l.layers[0].temporal_bit_rate_lower = 1 << 18;
-        assert!(l.serialize_into(&mut out).is_err(), "lower > 18 bits");
+        assert!(
+            matches!(
+                l.serialize_into(&mut out),
+                Err(crate::error::Error::FieldOverflow(..))
+            ),
+            "lower > 18 bits"
+        );
     }
 
     #[test]
@@ -980,9 +1003,15 @@ mod tests {
         assert_eq!(l.lrap_type, 2);
         assert_eq!(l.library_samples, vec![LibrarySampleRef::new(0x0A5)]);
         let _: LibrarySampleGroupEntry = round_trip(&[]);
-        assert!(VisualLrapEntry::parse(&[0x44]).is_err());
+        assert!(matches!(
+            VisualLrapEntry::parse(&[0x44]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let bad = VisualLrapEntry::new(8, vec![]);
-        assert!(bad.serialize_into(&mut [0u8; 4]).is_err());
+        assert!(matches!(
+            bad.serialize_into(&mut [0u8; 4]),
+            Err(crate::error::Error::FieldOverflow(..))
+        ));
     }
 
     fn visual() -> VisualSampleEntryFields {
@@ -1054,6 +1083,9 @@ mod tests {
         let back = AvsVideoSampleEntry::parse_entry(&buf).unwrap();
         assert_eq!(back, entry);
         assert!(back.secondary_layer_config().is_none());
-        assert!(AvsVideoSampleEntry::parse_entry(&[0, 0, 0, 8, b'a', b'v', b'c', b'1']).is_err());
+        assert!(matches!(
+            AvsVideoSampleEntry::parse_entry(&[0, 0, 0, 8, b'a', b'v', b'c', b'1']),
+            Err(crate::error::Error::UnexpectedBox { .. })
+        ));
     }
 }

@@ -1304,8 +1304,17 @@ mod tests {
         }
 
         // Nothing complete, or not an index at all.
-        assert!(parse_index(b"[{\"seq\":1,\"sta").is_err());
-        assert!(parse_index(b"").is_err());
-        assert!(parse_index(b"not json }").is_err());
+        assert!(matches!(
+            parse_index(b"[{\"seq\":1,\"sta"),
+            Err(e) if e.is_eof()
+        ));
+        assert!(matches!(
+            parse_index(b""),
+            Err(e) if e.is_eof()
+        ));
+        assert!(matches!(
+            parse_index(b"not json }"),
+            Err(e) if e.is_syntax()
+        ));
     }
 }

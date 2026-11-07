@@ -290,11 +290,26 @@ mod tests {
         for v in ["PLAY", "a b", "a,b", "q\"x", "back\\slash", "", " lead"] {
             assert_eq!(unquote(&emit_value(v).unwrap()).unwrap().0, v, "{v:?}");
         }
-        assert!(unquote("\"open").is_err());
-        assert!(emit_value("a\r\nb").is_err());
-        assert!(emit_value_quoted("a\nb").is_err());
-        assert!(unquote("\"a\r\nb\"").is_err());
-        assert!(unquote("\"a\"junk").is_err());
+        assert!(matches!(
+            unquote("\"open"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
+        assert!(matches!(
+            emit_value("a\r\nb"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
+        assert!(matches!(
+            emit_value_quoted("a\nb"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
+        assert!(matches!(
+            unquote("\"a\r\nb\""),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
+        assert!(matches!(
+            unquote("\"a\"junk"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
         assert_eq!(unquote("  tok ").unwrap(), ("tok".into(), false));
     }
 
@@ -308,10 +323,25 @@ mod tests {
     fn ranges_check_digits_and_bounds() {
         assert_eq!(range("1-2", 5, 65535, "port").unwrap(), (1, 2));
         assert_eq!(range(" 7 ", 3, 255, "ch").unwrap(), (7, 7));
-        assert!(range("65536", 5, 65535, "port").is_err());
-        assert!(range("123456", 5, 65535, "port").is_err());
-        assert!(range("1-2-3", 5, 65535, "port").is_err());
-        assert!(range("a", 5, 65535, "port").is_err());
-        assert!(range("-3", 5, 65535, "port").is_err());
+        assert!(matches!(
+            range("65536", 5, 65535, "port"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
+        assert!(matches!(
+            range("123456", 5, 65535, "port"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
+        assert!(matches!(
+            range("1-2-3", 5, 65535, "port"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
+        assert!(matches!(
+            range("a", 5, 65535, "port"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
+        assert!(matches!(
+            range("-3", 5, 65535, "port"),
+            Err(crate::rfc2326_lex::LexError(..))
+        ));
     }
 }

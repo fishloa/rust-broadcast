@@ -7,6 +7,11 @@
 - URL userinfo decoding and stripping (RTSP source, HTTP pulls, RTSP push) use `broadcast_auth::{credentials_from_url, strip_userinfo}` instead of four private copies (dedupe D7).
 - WHIP source and WHEP output share `webrtc_session::{ensure_connect_info, ice_attr}` (dedupe D14).
 - hls-pull, smooth-pull and dash-pull share one `source::driver::terminal_result` (dedupe D13).
+- WHIP and WHEP offer parsing share `webrtc_session::single_video_media` (c2 M6).
+- The five pull routes (`RtspRoute`, `HlsPullRoute`, `SmoothPullRoute`, `TsHttpRoute`, `DashPullRoute`) share a crate-private `PullTarget` (name, URL, timeouts, credentials, redacting `Debug`); public constructors unchanged (c2 M1).
+- DASH-pull fetch retries use the shared `ReconnectSchedule` (500 ms to 4 s, equal-jittered) instead of a private jitter-free doubling (c2 L2).
+### Removed
+- Unused `origin::limit::RETRY_AFTER_SECS` (c2 TH1).
 
 ## [0.15.0] - 2026-11-03
 ### Fixed

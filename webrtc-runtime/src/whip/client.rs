@@ -7,7 +7,7 @@ use http::StatusCode;
 
 use crate::Error;
 use crate::http_util;
-use crate::session_common::{Established, Origin, PendingRequest, classify_established};
+use crate::session_common::{Established, SessionCore};
 
 /// State of a WHIP client session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,29 +55,14 @@ pub enum Event {
 /// 2. Feeding HTTP responses back via `on_response`
 /// 3. Handling emitted `Event`s
 pub struct WhipClient {
-    /// WHIP endpoint URL the initial offer is POSTed to.
-    endpoint_url: String,
-    /// Bearer token sent as `Authorization` on every request, if configured.
-    bearer_token: Option<String>,
-    /// Current client-side session state.
+    core: SessionCore,
     state: State,
-    /// The request awaiting a response while [`State::Established`], if any
-    /// — see [`PendingRequest`].
-    pending: Option<PendingRequest>,
 }
 
 /// Manual `Debug`: the bearer token never renders (issue #1142).
 impl core::fmt::Debug for WhipClient {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("WhipClient")
-            .field("endpoint_url", &self.endpoint_url)
-            .field(
-                "bearer_token",
-                &self.bearer_token.as_ref().map(|_| "<redacted>"),
-            )
-            .field("state", &self.state)
-            .field("pending", &self.pending)
-            .finish()
+        self.core.debug(f, "WhipClient", &self.state)
     }
 }
 
@@ -86,10 +71,8 @@ impl WhipClient {
     /// every request with `bearer_token`.
     pub fn new(endpoint_url: String, bearer_token: Option<String>) -> Self {
         Self {
-            endpoint_url,
-            bearer_token,
+            core: SessionCore::new(endpoint_url, bearer_token),
             state: State::Idle,
-            pending: None,
         }
     }
 
@@ -106,12 +89,7 @@ impl WhipClient {
                 state: state_name(&self.state),
             });
         }
-        let req = self.origin().request(
-            Method::POST,
-            self.endpoint_url.clone(),
-            Some(super::content_type::SDP),
-            sdp_offer,
-        )?;
+        let req = self.core.post_offer(sdp_offer)?;
         self.state = State::OfferSent;
         Ok(req)
     }
@@ -120,27 +98,19 @@ impl WhipClient {
     /// candidate fragment.
     pub fn flush_candidates(&mut self, aggregated_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, etag) = self.established_fields()?;
-        let req = self
-            .origin()
-            .trickle(session_url, etag, aggregated_fragment)?;
-        self.pending = Some(PendingRequest::Trickle);
-        Ok(req)
+        self.core.trickle(session_url, etag, aggregated_fragment)
     }
 
     /// Generate ICE restart PATCH request.
     pub fn ice_restart(&mut self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
-        let req = self.origin().ice_restart(session_url, sdp_fragment)?;
-        self.pending = Some(PendingRequest::IceRestart);
-        Ok(req)
+        self.core.ice_restart(session_url, sdp_fragment)
     }
 
     /// Generate DELETE request to terminate the session.
     pub fn terminate(&mut self) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
-        let req = self.origin().delete(session_url)?;
-        self.pending = Some(PendingRequest::Delete);
-        Ok(req)
+        self.core.delete(session_url)
     }
 
     /// Feed an HTTP response back into the state machine.
@@ -182,7 +152,7 @@ impl WhipClient {
                 state: state_name(&self.state),
             });
         };
-        match classify_established(self.pending.take(), resp, etag)? {
+        match self.core.classify(resp, etag)? {
             Established::Terminated => {
                 self.state = State::Closed;
                 Ok(Some(Event::Terminated))
@@ -205,13 +175,6 @@ impl WhipClient {
                 operation: "requires established session",
                 state: state_name(&self.state),
             }),
-        }
-    }
-
-    fn origin(&self) -> Origin<'_> {
-        Origin {
-            endpoint_url: &self.endpoint_url,
-            bearer_token: self.bearer_token.as_deref(),
         }
     }
 }

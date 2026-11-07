@@ -66,10 +66,12 @@
 //! predates the final H.266 assignments; the values here follow the published
 //! ITU-T H.266 Table 5 and are validated against the committed real fixture.)
 
+use crate::bitreader::{bit_error, read_bits_checked, write_bits_checked};
 use crate::error::{Error, Result};
 use crate::sps::rfc6381_vvc1;
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_common::bits::BitWriter;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
@@ -493,39 +495,39 @@ impl Serialize for VvcDecoderConfigurationRecord {
         let mut w = VvcBitWriter::new(buf);
 
         // reserved(5)='11111' + LengthSizeMinusOne(2) + ptl_present_flag(1)
-        w.bits(0x1F, 5);
-        w.bits(self.length_size_minus_one as u64 & 0x3, 2);
-        w.flag(self.ptl_present);
+        w.bits(0x1F, 5)?;
+        w.bits(self.length_size_minus_one as u64 & 0x3, 2)?;
+        w.flag(self.ptl_present)?;
 
         if self.ptl_present {
-            w.bits(self.ols_idx as u64 & 0x1FF, 9);
-            w.bits(self.num_sublayers as u64 & 0x7, 3);
-            w.bits(self.constant_frame_rate as u64 & 0x3, 2);
-            w.bits(self.chroma_format_idc as u64 & 0x3, 2);
-            w.bits(self.bit_depth_minus8 as u64 & 0x7, 3);
-            w.bits(0x1F, 5); // reserved '11111'
+            w.bits(self.ols_idx as u64 & 0x1FF, 9)?;
+            w.bits(self.num_sublayers as u64 & 0x7, 3)?;
+            w.bits(self.constant_frame_rate as u64 & 0x3, 2)?;
+            w.bits(self.chroma_format_idc as u64 & 0x3, 2)?;
+            w.bits(self.bit_depth_minus8 as u64 & 0x7, 3)?;
+            w.bits(0x1F, 5)?; // reserved '11111'
 
             if let Some(ptl) = &self.ptl {
-                write_ptl(&mut w, ptl);
+                write_ptl(&mut w, ptl)?;
             }
 
-            w.bits(self.max_picture_width as u64, 16);
-            w.bits(self.max_picture_height as u64, 16);
-            w.bits(self.avg_frame_rate as u64, 16);
+            w.bits(self.max_picture_width as u64, 16)?;
+            w.bits(self.max_picture_height as u64, 16)?;
+            w.bits(self.avg_frame_rate as u64, 16)?;
         }
 
-        w.bits(self.arrays.len() as u64 & 0xFF, 8);
+        w.bits(self.arrays.len() as u64 & 0xFF, 8)?;
         for arr in &self.arrays {
-            w.flag(arr.array_completeness);
-            w.bits(0, 2); // reserved
-            w.bits(arr.nal_unit_type as u64 & 0x1F, 5);
+            w.flag(arr.array_completeness)?;
+            w.bits(0, 2)?; // reserved
+            w.bits(arr.nal_unit_type as u64 & 0x1F, 5)?;
             let kind = arr.kind();
             if kind.has_num_nalus_field() {
-                w.bits(arr.nalus.len() as u64 & 0xFFFF, 16);
+                w.bits(arr.nalus.len() as u64 & 0xFFFF, 16)?;
             }
             for nalu in &arr.nalus {
-                w.bits(nalu.len() as u64 & 0xFFFF, 16);
-                w.bytes(nalu);
+                w.bits(nalu.len() as u64 & 0xFFFF, 16)?;
+                w.bytes(nalu)?;
             }
         }
 
@@ -704,39 +706,40 @@ fn parse_ptl(r: &mut VvcBitReader, num_sublayers: u8) -> Result<VvcPtlRecord> {
     })
 }
 
-fn write_ptl(w: &mut VvcBitWriter, ptl: &VvcPtlRecord) {
-    w.bits(0, 2); // reserved
-    w.bits(ptl.num_bytes_constraint_info as u64 & 0x3F, 6);
-    w.bits(ptl.general_profile_idc as u64 & 0x7F, 7);
-    w.flag(ptl.general_tier_flag);
-    w.bits(ptl.general_level_idc as u64, 8);
-    w.flag(ptl.ptl_frame_only_constraint_flag);
-    w.flag(ptl.ptl_multilayer_enabled_flag);
+fn write_ptl(w: &mut VvcBitWriter, ptl: &VvcPtlRecord) -> Result<()> {
+    w.bits(0, 2)?; // reserved
+    w.bits(ptl.num_bytes_constraint_info as u64 & 0x3F, 6)?;
+    w.bits(ptl.general_profile_idc as u64 & 0x7F, 7)?;
+    w.flag(ptl.general_tier_flag)?;
+    w.bits(ptl.general_level_idc as u64, 8)?;
+    w.flag(ptl.ptl_frame_only_constraint_flag)?;
+    w.flag(ptl.ptl_multilayer_enabled_flag)?;
 
     if ptl.num_bytes_constraint_info > 0 {
         let bits = (ptl.num_bytes_constraint_info as usize) * 8 - 2;
-        w.bits_from_bytes(&ptl.general_constraint_info, bits);
+        w.bits_from_bytes(&ptl.general_constraint_info, bits)?;
     } else {
-        w.bits(0, 6); // reserved
+        w.bits(0, 6)?; // reserved
     }
 
     if !ptl.sublayer_level_present.is_empty() {
         for &present in &ptl.sublayer_level_present {
-            w.flag(present);
+            w.flag(present)?;
         }
-        w.align(); // ptl_reserved_zero_bit
+        w.align()?; // ptl_reserved_zero_bit
         let mut idc = ptl.sublayer_level_idc.iter();
         for &present in &ptl.sublayer_level_present {
             if present && let Some(&v) = idc.next() {
-                w.bits(v as u64, 8);
+                w.bits(v as u64, 8)?;
             }
         }
     }
 
-    w.bits(ptl.sub_profile_idc.len() as u64 & 0xFF, 8);
+    w.bits(ptl.sub_profile_idc.len() as u64 & 0xFF, 8)?;
     for &sp in &ptl.sub_profile_idc {
-        w.bits(sp as u64, 32);
+        w.bits(sp as u64, 32)?;
     }
+    Ok(())
 }
 
 /// Serialized length of a [`VvcPtlRecord`] in bytes. The record is byte-aligned
@@ -777,26 +780,8 @@ impl<'a> VvcBitReader<'a> {
         Self { data, bit_pos: 0 }
     }
 
-    // Bounds are checked here exactly as before; the bit extraction itself
-    // delegates to `broadcast_common::bits::BitReader` (shared with
-    // `dvb-t2mi`/`rdd29`/`st291`) so a bit-order/overrun fix there reaches
-    // this reader too.
     fn bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
-        if n > 64 || self.bit_pos + n > self.data.len() * 8 {
-            return Err(Error::BufferTooShort {
-                need: (self.bit_pos + n).div_ceil(8),
-                have: self.data.len(),
-                what,
-            });
-        }
-        let mut br = broadcast_common::bits::BitReader::new(self.data);
-        br.skip_bits(self.bit_pos)
-            .expect("bounds already validated above");
-        let val = br
-            .read_bits(n as u32)
-            .expect("bounds already validated above");
-        self.bit_pos += n;
-        Ok(val)
+        read_bits_checked(self.data, &mut self.bit_pos, n, what)
     }
 
     fn flag(&mut self, what: &'static str) -> Result<bool> {
@@ -819,8 +804,9 @@ impl<'a> VvcBitReader<'a> {
 
     /// Consume padding bits up to the next byte boundary.
     fn align(&mut self, what: &'static str) -> Result<()> {
-        while !self.bit_pos.is_multiple_of(8) {
-            let _ = self.bits(1, what)?;
+        let rem = self.bit_pos % 8;
+        if rem != 0 {
+            self.bits(8 - rem, what)?;
         }
         Ok(())
     }
@@ -842,34 +828,26 @@ impl<'a> VvcBitReader<'a> {
     }
 }
 
-/// MSB-first bit writer over a caller-provided buffer.
+/// MSB-first bit writer over a caller-provided buffer: the shared
+/// [`BitWriter`] (which clears every bit it writes, so a dirty buffer cannot
+/// leave stale bits in a written zero, r04-W45) with this crate's typed errors.
 struct VvcBitWriter<'a> {
-    buf: &'a mut [u8],
-    bit_pos: usize,
+    inner: BitWriter<'a>,
 }
 
 impl<'a> VvcBitWriter<'a> {
     fn new(buf: &'a mut [u8]) -> Self {
-        Self { buf, bit_pos: 0 }
-    }
-
-    /// Write the low `n` bits of `val`, MSB-first. Each bit is *cleared then
-    /// set* from `val` rather than only OR-ed in, so a reused/dirty caller
-    /// buffer cannot leave stale bits in a written zero (r04-W45) — the
-    /// `Serialize` contract accepts any `&mut [u8]`.
-    fn bits(&mut self, val: u64, n: usize) {
-        for i in (0..n).rev() {
-            let bit = ((val >> i) & 1) as u8;
-            let byte_idx = self.bit_pos / 8;
-            let bit_in_byte = 7 - (self.bit_pos % 8);
-            let mask = 1u8 << bit_in_byte;
-            self.buf[byte_idx] = (self.buf[byte_idx] & !mask) | (bit * mask);
-            self.bit_pos += 1;
+        Self {
+            inner: BitWriter::new(buf),
         }
     }
 
-    fn flag(&mut self, v: bool) {
-        self.bits(v as u64, 1);
+    fn bits(&mut self, val: u64, n: u32) -> Result<()> {
+        write_bits_checked(&mut self.inner, val, n, "vvcC field")
+    }
+
+    fn flag(&mut self, v: bool) -> Result<()> {
+        self.bits(u64::from(v), 1)
     }
 
     /// Write the first `n` bits of an MSB-first, left-aligned byte vector
@@ -877,38 +855,38 @@ impl<'a> VvcBitWriter<'a> {
     /// [`VvcBitReader::bits_bytes`]. The trailing padding bits of the last
     /// byte are ignored, so a vector round-tripped through
     /// `bits_bytes` writes back identically.
-    fn bits_from_bytes(&mut self, data: &[u8], n: usize) {
+    fn bits_from_bytes(&mut self, data: &[u8], n: usize) -> Result<()> {
         for i in 0..n {
-            let bit = (data[i / 8] >> (7 - (i % 8))) & 1;
-            let byte_idx = self.bit_pos / 8;
-            let bit_in_byte = 7 - (self.bit_pos % 8);
-            let mask = 1u8 << bit_in_byte;
-            self.buf[byte_idx] = (self.buf[byte_idx] & !mask) | (bit * mask);
-            self.bit_pos += 1;
+            let byte = data.get(i / 8).ok_or(Error::BufferTooShort {
+                need: n.div_ceil(8),
+                have: data.len(),
+                what: "general_constraint_info",
+            })?;
+            self.bits(u64::from((byte >> (7 - (i % 8))) & 1), 1)?;
         }
+        Ok(())
     }
 
-    /// Advance to the next byte boundary. The skipped bits are zeroed, not
-    /// merely left alone, so a dirty caller buffer cannot leave garbage in a
-    /// reserved/padding field (r04-W45).
-    fn align(&mut self) {
-        while !self.bit_pos.is_multiple_of(8) {
-            let byte_idx = self.bit_pos / 8;
-            let bit_in_byte = 7 - (self.bit_pos % 8);
-            self.buf[byte_idx] &= !(1u8 << bit_in_byte);
-            self.bit_pos += 1;
-        }
+    /// Advance to the next byte boundary, writing zero padding bits.
+    fn align(&mut self) -> Result<()> {
+        self.inner
+            .align_to_byte()
+            .map_err(|e| bit_error("vvcC padding", e))
     }
 
-    fn bytes(&mut self, data: &[u8]) {
-        debug_assert_eq!(self.bit_pos % 8, 0, "bytes() requires byte alignment");
-        let start = self.bit_pos / 8;
-        self.buf[start..start + data.len()].copy_from_slice(data);
-        self.bit_pos += data.len() * 8;
+    fn bytes(&mut self, data: &[u8]) -> Result<()> {
+        debug_assert!(
+            self.inner.is_byte_aligned(),
+            "bytes() requires byte alignment"
+        );
+        for &b in data {
+            self.bits(u64::from(b), 8)?;
+        }
+        Ok(())
     }
 
     fn finish(&self) -> usize {
-        self.bit_pos.div_ceil(8)
+        self.inner.bits_written().div_ceil(8)
     }
 }
 
@@ -1025,7 +1003,7 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         let mut buf = alloc::vec![0u8; len];
         {
             let mut w = VvcBitWriter::new(&mut buf);
-            write_ptl(&mut w, ptl);
+            write_ptl(&mut w, ptl).unwrap();
             assert_eq!(w.finish(), len, "declared and written length must agree");
         }
         let mut r = VvcBitReader::new(&buf);
@@ -1161,12 +1139,12 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         let mut clean = alloc::vec![0u8; len];
         {
             let mut w = VvcBitWriter::new(&mut clean);
-            write_ptl(&mut w, &ptl);
+            write_ptl(&mut w, &ptl).unwrap();
         }
         let mut dirty = alloc::vec![0xFFu8; len];
         {
             let mut w = VvcBitWriter::new(&mut dirty);
-            write_ptl(&mut w, &ptl);
+            write_ptl(&mut w, &ptl).unwrap();
         }
         assert_eq!(
             dirty, clean,
@@ -1177,5 +1155,40 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         let parsed = parse_ptl(&mut r, 4).expect("parse dirty-written PTL");
         assert_eq!(parsed.sub_profile_idc, ptl.sub_profile_idc);
         assert_eq!(parsed.sublayer_level_present, ptl.sublayer_level_present);
+    }
+
+    /// A buffer shorter than the record is a typed error, not an index panic.
+    #[test]
+    fn ptl_written_into_a_short_buffer_is_an_error_not_a_panic() {
+        let ptl = base_ptl();
+        let len = ptl_serialized_len(&ptl);
+        for short in 0..len {
+            let mut buf = alloc::vec![0u8; short];
+            let mut w = VvcBitWriter::new(&mut buf);
+            assert!(
+                matches!(write_ptl(&mut w, &ptl), Err(Error::BufferTooShort { .. })),
+                "{short}-byte buffer for a {len}-byte PTL"
+            );
+        }
+    }
+
+    /// `general_constraint_info` shorter than `num_bytes_constraint_info`
+    /// claims is rejected by the writer itself, not only by `validate`.
+    #[test]
+    fn short_constraint_info_is_an_error_not_a_panic() {
+        let ptl = VvcPtlRecord {
+            num_bytes_constraint_info: 2,
+            general_constraint_info: alloc::vec![0xAA],
+            ..base_ptl()
+        };
+        let mut buf = alloc::vec![0u8; 64];
+        let mut w = VvcBitWriter::new(&mut buf);
+        assert!(matches!(
+            write_ptl(&mut w, &ptl),
+            Err(Error::BufferTooShort {
+                what: "general_constraint_info",
+                ..
+            })
+        ));
     }
 }

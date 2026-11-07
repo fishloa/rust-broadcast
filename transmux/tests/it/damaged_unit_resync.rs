@@ -82,7 +82,10 @@ fn ps_damaged_pack_header_in_the_middle_is_skipped_and_reported() {
 
 #[test]
 fn ps_with_no_recoverable_pack_is_still_an_error() {
-    assert!(PsDemux::new().unpackage(&[0xAB; 64][..]).is_err());
+    assert!(matches!(
+        PsDemux::new().unpackage(&[0xAB; 64][..]),
+        Err(transmux::error::Error::Ps(..))
+    ));
 }
 
 fn packetised() -> (Media, transmux::RtpOutput) {

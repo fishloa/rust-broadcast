@@ -419,7 +419,10 @@ fn kind_is_unaffected_by_rtsp_url_with_forced_ts_http() {
         new_config.kind = SourceKind::TsHttp;
         new_config
     };
-    assert!(Session::open(RTSP_URL, config, 0).is_err());
+    assert!(matches!(
+        Session::open(RTSP_URL, config, 0),
+        Err(broadcast_client::error::Error::UnsupportedScheme(..))
+    ));
 }
 
 fn rtsp_wake_only_next(host: &RtspHost) -> Option<u64> {

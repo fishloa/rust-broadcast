@@ -6,6 +6,11 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- `server::Generation` is now `media_plane::ids::Generation` re-exported at the same path; the private copy of the `id_newtype!` macro is gone (c2 L5).
+### Removed
+- `client::Error::UriResolve` (never constructed: URI resolution falls back to the unresolved URI, documented on `resolve`) (c2 TH3).
+- Unused `TokioClientConfig::with_connect_timeout`/`with_max_body_bytes` and `ClosedSegment::with_init_generation` (c2 TH1).
 
 ## [0.11.0] - 2026-11-03
 ### Added

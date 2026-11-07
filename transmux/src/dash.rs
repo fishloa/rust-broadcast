@@ -580,14 +580,6 @@ pub fn rfc6381_track_codec_string(spec: &TrackSpec) -> Result<String> {
 }
 
 impl DashPackager {
-    /// Build a packager with a specific `profiles` attribute.
-    pub fn with_profiles(profiles: impl Into<String>) -> Self {
-        Self {
-            profiles: profiles.into(),
-            ..Self::default()
-        }
-    }
-
     /// Resolve the RFC 6381 codec string for a track (via the crate's own
     /// builders — never a hardcoded literal).
     fn codec_string(config: &CodecConfig) -> Result<String> {

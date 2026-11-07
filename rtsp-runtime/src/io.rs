@@ -678,15 +678,6 @@ impl AsyncRtspServer<TcpStream> {
     pub fn accept_with(stream: TcpStream, session: ServerSession) -> Self {
         Self::with_stream(stream, session)
     }
-
-    /// Like [`accept_with`](Self::accept_with), with explicit [`RtspTimeouts`].
-    pub fn accept_with_timeouts(
-        stream: TcpStream,
-        session: ServerSession,
-        timeouts: RtspTimeouts,
-    ) -> Self {
-        Self::with_stream_timeouts(stream, session, timeouts)
-    }
 }
 
 #[cfg(feature = "tls")]

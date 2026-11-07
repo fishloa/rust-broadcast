@@ -440,7 +440,6 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
     }
     // DataOffset (bytes [5:9]) points past the header to the first PreviousTagSize0.
     let data_offset = u32::from_be_bytes([input[5], input[6], input[7], input[8]]) as usize;
-    // Skip the header and the first PreviousTagSize0 (4 bytes).
     let mut off = data_offset.max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
 
     let mut tags = Vec::new();

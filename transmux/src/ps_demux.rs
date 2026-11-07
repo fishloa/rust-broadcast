@@ -1045,7 +1045,6 @@ fn interpolate_dts(units: &[AccessUnit]) -> Vec<i128> {
     let dur = stamped_frame_duration(units);
     let n = units.len();
     let mut dts = alloc::vec![0i128; n];
-    // Find the first stamped anchor to seed the whole run.
     let anchor = units
         .iter()
         .enumerate()

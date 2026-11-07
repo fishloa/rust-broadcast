@@ -98,11 +98,6 @@ impl TsHttpSource {
         &self.url
     }
 
-    /// Set request URL.
-    pub fn set_url(&mut self, url: Url) {
-        self.url = url;
-    }
-
     /// Last PCR (27 MHz) observed during the current chunk's demux.
     pub fn take_last_pcr(&mut self) -> Option<u64> {
         self.last_pcr_27mhz.take()

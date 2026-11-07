@@ -66,7 +66,7 @@ async fn an_accepted_connection_outlives_the_listener_handle_and_then_releases_t
         "routing pump must keep serving accepted connections"
     );
     assert!(
-        UdpSocket::bind(addr).is_err(),
+        matches!(UdpSocket::bind(addr), Err(e) if e.kind() == std::io::ErrorKind::AddrInUse),
         "port is still in use while a connection is alive"
     );
     drop(accepted);

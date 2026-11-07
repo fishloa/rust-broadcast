@@ -585,7 +585,10 @@ async fn random_bytes_yield_a_probe_error_never_panic() {
     let trunk = trunk();
     let result = reader(random, false, false, None, trunk).run().await;
     assert!(
-        result.is_err(),
+        matches!(
+            result,
+            Err(multimux::source::file_reader::FileReaderError::FileTooShortToIdentify { .. })
+        ),
         "random bytes must fail, and must never panic"
     );
 }

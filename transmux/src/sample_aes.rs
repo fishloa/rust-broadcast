@@ -315,7 +315,6 @@ fn h264_transform_pattern(
             // Trailing partial block (`< 16`): left clear.
             break;
         }
-        // Skip up to 144 clear bytes before the next encrypted block.
         offset += H264_SKIP_LEN.min(nal.len().saturating_sub(offset));
     }
 }
@@ -720,8 +719,14 @@ mod tests {
         );
 
         // Malformed ciphertext length is rejected, not panicked.
-        assert!(aes128_decrypt_segment(&NIST_KEY, &NIST_IV, &[0u8; 15]).is_err());
-        assert!(aes128_decrypt_segment(&NIST_KEY, &NIST_IV, &[]).is_err());
+        assert!(matches!(
+            aes128_decrypt_segment(&NIST_KEY, &NIST_IV, &[0u8; 15]),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
+        assert!(matches!(
+            aes128_decrypt_segment(&NIST_KEY, &NIST_IV, &[]),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]
@@ -870,7 +875,10 @@ mod tests {
         // byte1 bit0 = 0 → 9-byte header (CRC present).
         let frame = vec![0xFF, 0xF0, 0, 0, 0, 0, 0, 0, 0];
         assert_eq!(adts_header_len(&frame).unwrap(), ADTS_HEADER_LEN_WITH_CRC);
-        assert!(adts_header_len(&[0xFF]).is_err());
+        assert!(matches!(
+            adts_header_len(&[0xFF]),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]
@@ -947,8 +955,14 @@ mod tests {
     fn eac3_unwalkable_payload_is_err() {
         // Not a syncframe at all.
         let garbage = alloc::vec![0x00u8; 64];
-        assert!(eac3_encrypt_frame(&NIST_KEY, &NIST_IV, &garbage).is_err());
-        assert!(eac3_decrypt_frame(&NIST_KEY, &NIST_IV, &garbage).is_err());
+        assert!(matches!(
+            eac3_encrypt_frame(&NIST_KEY, &NIST_IV, &garbage),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
+        assert!(matches!(
+            eac3_decrypt_frame(&NIST_KEY, &NIST_IV, &garbage),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
 
         // A truncated trailing syncframe must also be rejected, not left clear.
         let Ok(clear) = std::fs::read(test_fixtures::path("crypto/sample-aes-eac3/clear.ec3"))
@@ -961,7 +975,10 @@ mod tests {
         // Chop 100 bytes off the end: the last syncframe no longer completes.
         let truncated = &clear[..clear.len() - 100];
         assert!(
-            eac3_encrypt_frame(&NIST_KEY, &NIST_IV, truncated).is_err(),
+            matches!(
+                eac3_encrypt_frame(&NIST_KEY, &NIST_IV, truncated),
+                Err(crate::error::Error::InvalidInput(..))
+            ),
             "a truncated trailing syncframe must be an error, not silently left clear"
         );
 
@@ -971,11 +988,17 @@ mod tests {
         let mut with_junk = clear.clone();
         with_junk.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11]);
         assert!(
-            eac3_encrypt_frame(&NIST_KEY, &NIST_IV, &with_junk).is_err(),
+            matches!(
+                eac3_encrypt_frame(&NIST_KEY, &NIST_IV, &with_junk),
+                Err(crate::error::Error::InvalidInput(..))
+            ),
             "trailing junk after the last syncframe must be an error"
         );
         assert!(
-            eac3_decrypt_frame(&NIST_KEY, &NIST_IV, &with_junk).is_err(),
+            matches!(
+                eac3_decrypt_frame(&NIST_KEY, &NIST_IV, &with_junk),
+                Err(crate::error::Error::InvalidInput(..))
+            ),
             "trailing junk must also be rejected on decrypt"
         );
     }
@@ -1028,7 +1051,10 @@ mod tests {
     #[test]
     fn to_tag_rejects_injection_in_uri() {
         let key = ExtXKey::fairplay_sample_aes("skd://asset\"\r\n#EXT-X-ENDLIST");
-        assert!(key.to_tag().is_err());
+        assert!(matches!(
+            key.to_tag(),
+            Err(crate::error::Error::HlsAttrValue(..))
+        ));
     }
 
     #[test]

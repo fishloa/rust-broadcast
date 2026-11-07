@@ -2766,7 +2766,10 @@ mod tests {
             );
             let cfg: Config = serde_json::from_str(&json).unwrap();
             assert!(
-                cfg.validate().is_err(),
+                matches!(
+                    cfg.validate(),
+                    Err(crate::error::MultimuxError::ConfigInvalid { .. })
+                ),
                 "route name {bad:?} must be rejected"
             );
         }
@@ -2796,7 +2799,10 @@ mod tests {
             );
             let cfg: Config = serde_json::from_str(&json).unwrap();
             assert!(
-                cfg.validate().is_err(),
+                matches!(
+                    cfg.validate(),
+                    Err(crate::error::MultimuxError::ConfigInvalid { .. })
+                ),
                 "route name {bad:?} must be rejected"
             );
         }
@@ -3174,7 +3180,13 @@ mod tests {
                 request_timeout_secs: bad,
                 ..Config::default()
             };
-            assert!(cfg.validate().is_err(), "{bad} must be rejected");
+            assert!(
+                matches!(
+                    cfg.validate(),
+                    Err(crate::error::MultimuxError::ConfigInvalid { .. })
+                ),
+                "{bad} must be rejected"
+            );
         }
     }
 
@@ -3201,7 +3213,10 @@ mod tests {
             max_concurrent_requests: 0,
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -3227,7 +3242,10 @@ mod tests {
             max_request_body_bytes: 0,
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     /// The limit fields parse from JSON when given explicitly.
@@ -3276,10 +3294,25 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(mk("srt://").validate().is_err(), "empty host");
-        assert!(mk("srt://h:notaport").validate().is_err(), "bad port");
         assert!(
-            mk("srt://h:9000?passphrase=x").validate().is_err(),
+            matches!(
+                mk("srt://").validate(),
+                Err(crate::error::MultimuxError::ConfigInvalid { .. })
+            ),
+            "empty host"
+        );
+        assert!(
+            matches!(
+                mk("srt://h:notaport").validate(),
+                Err(crate::error::MultimuxError::ConfigInvalid { .. })
+            ),
+            "bad port"
+        );
+        assert!(
+            matches!(
+                mk("srt://h:9000?passphrase=x").validate(),
+                Err(crate::error::MultimuxError::ConfigInvalid { .. })
+            ),
             "passphrase"
         );
         assert!(mk("srt://h:9000").validate().is_ok(), "a valid URL passes");
@@ -3576,7 +3609,10 @@ mod tests {
             ]
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     /// An unknown `outputs` token (e.g. a typo'd `"lldash"`, not yet
@@ -3593,7 +3629,10 @@ mod tests {
             ]
         }"#;
         let result: std::result::Result<Config, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "unknown output kind must be rejected");
+        assert!(
+            matches!(result, Err(e) if e.is_data()),
+            "unknown output kind must be rejected"
+        );
     }
 
     /// Issue #887: `"ts_hls"` is mutually exclusive with `"llhls"` (and with
@@ -3806,7 +3845,10 @@ mod tests {
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert!(
-            cfg.validate().is_err(),
+            matches!(
+                cfg.validate(),
+                Err(crate::error::MultimuxError::ConfigInvalid { .. })
+            ),
             "a zero SO_RCVBUF request is rejected"
         );
     }
@@ -4182,7 +4224,10 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4207,7 +4252,10 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4232,7 +4280,10 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     /// Biting test: an `InputSpec::TsHttp`/`HlsPull`'s credential must never
@@ -4312,7 +4363,10 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4338,7 +4392,10 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4392,7 +4449,10 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4419,7 +4479,10 @@ mod tests {
             }],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4492,12 +4555,18 @@ mod tests {
             ],
             ..Config::default()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
     fn validate_rejects_no_routes() {
-        assert!(Config::default().validate().is_err());
+        assert!(matches!(
+            Config::default().validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4514,7 +4583,7 @@ mod tests {
         }"#;
         let result: std::result::Result<Config, _> = serde_json::from_str(json);
         assert!(
-            result.is_err(),
+            matches!(result, Err(e) if e.is_data()),
             "unknown key must be rejected, not silently ignored"
         );
     }
@@ -4530,7 +4599,10 @@ mod tests {
             ]
         }"#;
         let result: std::result::Result<Config, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "unknown input type must be rejected");
+        assert!(
+            matches!(result, Err(e) if e.is_data()),
+            "unknown input type must be rejected"
+        );
     }
 
     /// Biting test: an `InputSpec::Rtsp`'s credential must never appear in
@@ -4756,7 +4828,10 @@ mod tests {
             playlist_name: String::new(),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4765,7 +4840,10 @@ mod tests {
             playlist_name: "media.mpd".into(),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4774,7 +4852,10 @@ mod tests {
             playlist_name: "sub/media.m3u8".into(),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4783,7 +4864,10 @@ mod tests {
             playlist_name: "master.m3u8".into(),
             ..cfg_with_one_route()
         };
-        assert!(cfg.validate().is_err());
+        assert!(matches!(
+            cfg.validate(),
+            Err(crate::error::MultimuxError::ConfigInvalid { .. })
+        ));
     }
 
     #[test]
@@ -4984,7 +5068,7 @@ mod tests {
         }"#;
         let result: std::result::Result<Config, _> = serde_json::from_str(json);
         assert!(
-            result.is_err(),
+            matches!(result, Err(e) if e.is_data()),
             "unknown output_auth scheme must be rejected"
         );
     }

@@ -398,7 +398,6 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
     }
     let init = route.init_bytes(crate::route::SPTS_PROGRAM_ID)?;
     let ll_hls = serving.ll_hls();
-    // Resolve each window segment's muxed bytes once.
     let mut segments: std::collections::HashMap<media_plane::ids::SegmentSeq, bytes::Bytes> =
         std::collections::HashMap::with_capacity(window.len());
     for seg in &window {
@@ -658,7 +657,6 @@ fn parse_smooth_fragment_request(full_path: &str) -> Option<SmoothFragmentReques
     let close_paren = after_ql.find(')')?;
     let quality_bitrate = after_ql[..close_paren].parse().ok()?;
     let after_close = &after_ql[close_paren + 1..];
-    // Now we need "/Fragments(TYPE=START_TIME)"
     let frag_open = after_close.find("/Fragments(")?;
     let inside = &after_close[frag_open + "/Fragments(".len()..];
     let eq_pos = inside.find('=')?;

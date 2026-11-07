@@ -244,7 +244,8 @@ impl HdrStaticMetadata {
     }
 
     /// Whether a prefix SEI NAL unit carries either HDR static message.
-    pub fn hevc_sei_nal_carries_hdr(nal: &[u8]) -> bool {
+    #[cfg(test)]
+    pub(crate) fn hevc_sei_nal_carries_hdr(nal: &[u8]) -> bool {
         let mut m = Self::default();
         m.absorb_hevc_sei_nal(nal);
         !m.is_empty()
@@ -331,11 +332,20 @@ mod tests {
 
     #[test]
     fn wrong_lengths_are_rejected() {
-        assert!(MasteringDisplayColourVolume::parse(&MDCV_BODY[..23]).is_err());
+        assert!(matches!(
+            MasteringDisplayColourVolume::parse(&MDCV_BODY[..23]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         let mut long = MDCV_BODY.to_vec();
         long.push(0);
-        assert!(MasteringDisplayColourVolume::parse(&long).is_err());
-        assert!(ContentLightLevel::parse(&CLLI_BODY[..3]).is_err());
+        assert!(matches!(
+            MasteringDisplayColourVolume::parse(&long),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            ContentLightLevel::parse(&CLLI_BODY[..3]),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     #[test]

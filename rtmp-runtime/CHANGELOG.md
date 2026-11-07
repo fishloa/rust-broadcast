@@ -5,6 +5,10 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Dropped the unused `log` dependency (c2 TH4).
+### Removed
+- Unused `ServerConfig::with_window_ack_size` and `with_peer_bandwidth` (c2 TH1).
 
 ## [0.8.1] - 2026-11-03
 ### Added

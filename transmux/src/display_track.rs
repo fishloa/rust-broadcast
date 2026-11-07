@@ -519,7 +519,6 @@ impl SpsTracker {
             TrackCodec::Avc => UserDataCarriage::AvcSei,
             TrackCodec::Hevc => UserDataCarriage::HevcPrefixSei,
         };
-        // Compute active format applying persistence.
         let previous_active = self.state.as_ref().and_then(|s| s.active_format.clone());
         let mut new_active = previous_active.clone();
         if activation.afd_present {
@@ -544,7 +543,6 @@ impl SpsTracker {
                 }
             }
         }
-        // Reset at random access under policy.
         if !activation.afd_present
             && self.afd_persistence == AfdPersistence::ResetAtRandomAccess
             && activation.random_access

@@ -284,17 +284,29 @@ fn whep_player_wrong_state_errors() {
     let mut player = WhepPlayer::new(ENDPOINT.into(), None);
 
     // answer_counter_offer in Idle -> error
-    assert!(player.answer_counter_offer(SDP_ANSWER.to_vec()).is_err());
+    assert!(matches!(
+        player.answer_counter_offer(SDP_ANSWER.to_vec()),
+        Err(webrtc_runtime::error::Error::WrongState { .. })
+    ));
 
     // trickle_ice in Idle -> error
-    assert!(player.trickle_ice(ICE_FRAG.to_vec()).is_err());
+    assert!(matches!(
+        player.trickle_ice(ICE_FRAG.to_vec()),
+        Err(webrtc_runtime::error::Error::WrongState { .. })
+    ));
 
     // terminate in Idle -> error
-    assert!(player.terminate().is_err());
+    assert!(matches!(
+        player.terminate(),
+        Err(webrtc_runtime::error::Error::WrongState { .. })
+    ));
 
     // offer twice -> error
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
-    assert!(player.offer(SDP_OFFER.to_vec()).is_err());
+    assert!(matches!(
+        player.offer(SDP_OFFER.to_vec()),
+        Err(webrtc_runtime::error::Error::WrongState { .. })
+    ));
 }
 
 #[test]

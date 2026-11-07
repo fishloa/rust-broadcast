@@ -364,7 +364,6 @@ impl<S: SegmentSink> RetentionDriver<S> {
                         None => entry.sequence_number,
                     });
                     self.in_flight = Some(entry);
-                    // Loop back around to attempt hand-off immediately.
                 }
                 Some(SegmentCursorItem::Gap { .. }) | Some(SegmentCursorItem::Lagged { .. }) => {
                     // Nothing to hand off. These sequence numbers simply
@@ -391,13 +390,6 @@ impl<S: SegmentSink> RetentionDriver<S> {
     /// construction — see [`RetentionDriver::drive`]'s doc.
     pub fn pending_len(&self) -> usize {
         usize::from(self.in_flight.is_some())
-    }
-
-    /// Segments currently in the cold ledger (handed off and still inside
-    /// `cold_window`) — a diagnostic, not a capacity: see
-    /// [Bounding the cold tier](self#bounding-the-cold-tier-by-time-not-by-a-second-count-knob).
-    pub fn cold_len(&self) -> usize {
-        self.cold.len()
     }
 
     /// Resolve where segment `sequence_number` currently is. See

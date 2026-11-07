@@ -375,7 +375,10 @@ fn generic_nack_rejects_wrong_version() {
     let mut bytes = nack.try_to_bytes().unwrap();
     // Set V=1 instead of V=2.
     bytes[0] = 0x41; // V=1, FMT=1
-    assert!(GenericNack::parse(&bytes).is_err());
+    assert!(matches!(
+        GenericNack::parse(&bytes),
+        Err(rist_runtime::error::Error::InvalidVersion(..))
+    ));
 }
 
 #[test]
@@ -391,5 +394,8 @@ fn range_nack_rejects_wrong_subtype() {
     let mut bytes = rn.try_to_bytes().unwrap();
     // Change subtype from 0 to 5.
     bytes[0] = (2 << 6) | 5;
-    assert!(RangeNack::parse(&bytes).is_err());
+    assert!(matches!(
+        RangeNack::parse(&bytes),
+        Err(rist_runtime::error::Error::InvalidSubtype(..))
+    ));
 }

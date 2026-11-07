@@ -19,7 +19,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "10.0", default-features = false }
 thiserror = "2"
-log       = "0.4"
 # Constant-time stream-key comparison (issue #1142).
 subtle    = { version = "2", default-features = false }
 serde     = { version = "1", optional = true, features = ["derive"] }

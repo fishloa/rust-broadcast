@@ -199,14 +199,14 @@ fn audio_profiles_config_parses_and_rejects_duplicates() {
             },
         ]
     );
-    assert!(
+    assert!(matches!(
         config(
             r#"[{"track":{"index":0},"audio_profile":"he-aac"},
                 {"track":{"index":0},"audio_profile":"he-aac-v2"}]"#
         )
-        .validate()
-        .is_err()
-    );
+        .validate(),
+        Err(multimux::error::MultimuxError::ConfigInvalid { .. })
+    ));
     let none = serde_json::from_str::<Config>(
         r#"{"routes":[{"name":"cam","input":{"type":"rtsp","url":"rtsp://host/s1"}}]}"#,
     )

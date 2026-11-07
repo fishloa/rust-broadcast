@@ -219,5 +219,11 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
 fn empty_media_rejected() {
     let media = Media::new(vec![], 1000);
     let mut mux = CmafMux::default();
-    assert!(mux.package(&media).is_err(), "empty Media must not package");
+    assert!(
+        matches!(
+            mux.package(&media),
+            Err(transmux::error::Error::InvalidInput(..))
+        ),
+        "empty Media must not package"
+    );
 }

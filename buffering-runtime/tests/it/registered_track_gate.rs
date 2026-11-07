@@ -13,14 +13,13 @@
 //! own decision. Wall clock is far from 0 (`T0` = 50 s) as in a real client.
 
 use broadcast_common::clock33::PCR_HZ;
-use buffering_runtime::{
-    BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27, WRAP_27MHZ,
-};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27};
 
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = WRAP_27MHZ - 5 * PCR_HZ;
+const BASE: Ticks27 = PCR_WRAP_27MHZ - 5 * PCR_HZ;
 const T0: Micros = 50_000_000;
 const TICK_US: Micros = 10_000;
 /// Audio is muxed this long behind video: first audio report at `T0 + AUDIO_LAG`.
@@ -28,7 +27,7 @@ const AUDIO_LAG_US: Micros = 1_000_000;
 const AUDIO_STEP_US: Micros = 300_000;
 
 fn at(offset_us: u64) -> Ticks27 {
-    (BASE + offset_us * TICKS_PER_US) % WRAP_27MHZ
+    (BASE + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ
 }
 
 fn cfg() -> ControllerConfig {
@@ -80,7 +79,7 @@ fn run(registration: &[u32], audio_delivers: bool, secs: u64) -> Out {
             next_chunk += 100_000;
         }
         let pos = if running {
-            (clock + (t - t_set) * TICKS_PER_US) % WRAP_27MHZ
+            (clock + (t - t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ
         } else {
             clock
         };

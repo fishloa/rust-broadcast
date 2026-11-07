@@ -497,14 +497,20 @@ mod tests {
         // Only a PPS (type 8) present → no SPS → error.
         let pps = alloc::vec![0x68u8, 0xCE];
         let sprop = base64_encode(&pps);
-        assert!(avc_config_from_sprop(&sprop).is_err());
+        assert!(matches!(
+            avc_config_from_sprop(&sprop),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]
     fn sprop_rejects_invalid_base64() {
         // Invalid base64 token → returns Err, not panic.
         let sprop = "not-valid-base64!!!";
-        assert!(avc_config_from_sprop(sprop).is_err());
+        assert!(matches!(
+            avc_config_from_sprop(sprop),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
     }
 
     #[test]
@@ -528,7 +534,7 @@ mod tests {
         let sei = alloc::vec![0x06u8, 0x00]; // type 6 (SEI), not SPS or PPS
         let sprop = base64_encode(&sei);
         let result = avc_config_from_sprop(&sprop);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(crate::error::Error::InvalidInput(..))));
     }
 
     #[test]
@@ -555,7 +561,10 @@ mod tests {
 
     #[test]
     fn avc_config_from_sps_pps_rejects_no_sps() {
-        assert!(avc_config_from_sps_pps(Vec::new(), Vec::new()).is_err());
+        assert!(matches!(
+            avc_config_from_sps_pps(Vec::new(), Vec::new()),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]
@@ -694,13 +703,19 @@ mod tests {
     #[test]
     fn aac_config_from_fmtp_missing_config_errors() {
         let fmtp = "97 streamtype=5; mode=AAC-hbr";
-        assert!(aac_config_from_fmtp(fmtp).is_err());
+        assert!(matches!(
+            aac_config_from_fmtp(fmtp),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]
     fn avc_config_from_fmtp_missing_sprop_errors() {
         let fmtp = "96 packetization-mode=1";
-        assert!(avc_config_from_fmtp(fmtp).is_err());
+        assert!(matches!(
+            avc_config_from_fmtp(fmtp),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]

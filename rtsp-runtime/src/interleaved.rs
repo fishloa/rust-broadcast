@@ -186,7 +186,10 @@ mod tests {
     #[test]
     fn slice_to_bytes_rejects_an_over_long_payload() {
         let too_long = vec![0u8; usize::from(u16::MAX) + 1];
-        assert!(InterleavedFrame::slice_to_bytes(0, &too_long).is_err());
+        assert!(matches!(
+            InterleavedFrame::slice_to_bytes(0, &too_long),
+            Err(crate::error::Error::InterleavedFrame(..))
+        ));
     }
 
     #[test]
@@ -232,6 +235,9 @@ mod tests {
     #[test]
     fn wrong_magic_bites() {
         let buf = [b'R', 0, 0, 1, 9];
-        assert!(InterleavedFrame::parse(&buf).is_err());
+        assert!(matches!(
+            InterleavedFrame::parse(&buf),
+            Err(crate::error::Error::InterleavedFrame(..))
+        ));
     }
 }

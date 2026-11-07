@@ -5,6 +5,11 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Session-id comparison uses `broadcast_auth::constant_time_eq`; the direct `subtle` dependency is gone (c2 L1).
+### Removed
+- `Error::UnknownCSeq`, `Error::MissingSession` and `Error::MissingRequestUri`, never constructed: RFC 2326 puts the Session id (§10.4) and the CSeq echo on the server, and the client deliberately skips an uncorrelatable response (c2 TH3).
+- Unused `AsyncRtspServer::accept_with_timeouts`; `ClientSession::session_warning_count` is now test-only (c2 TH1).
 
 ## [0.8.1] - 2026-11-01
 ### Added

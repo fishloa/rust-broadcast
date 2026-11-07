@@ -50,11 +50,6 @@ fn es() -> Option<Vec<u8>> {
     local("the-great-wall-7.1.eac3")
 }
 
-/// The CRC gpac prints per packet: its `gf_crc_32`, the MPEG-2 CRC-32.
-fn crc32_gpac(data: &[u8]) -> u32 {
-    broadcast_common::crc32_mpeg2::compute(data)
-}
-
 /// `dec3` box body (after the 8-byte header) of the first `ec-3` entry, found by
 /// a plain byte search - independent of transmux's box parser.
 fn dec3_body(mp4: &[u8]) -> Vec<u8> {
@@ -133,7 +128,7 @@ fn access_units_equal_gpacs_own_samples_of_mp4boxs_file() {
         );
         assert_eq!(
             u32::from_str_radix(field("crc32").trim_start_matches("0x"), 16).unwrap(),
-            crc32_gpac(&u.data),
+            broadcast_common::crc32_mpeg2::compute(&u.data),
             "AU {i} bytes"
         );
         assert_eq!(

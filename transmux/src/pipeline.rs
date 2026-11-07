@@ -22,7 +22,7 @@ use broadcast_common::Serialize;
 use crate::ac4::DAC4_FOURCC;
 use crate::av1::Av1SampleEntry;
 use crate::dts::DDTS_FOURCC;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::flac::DFLA_FOURCC;
 use crate::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
@@ -1350,14 +1350,34 @@ pub fn build_media_segment_with_events(
     tracks: &[FragmentTrackData<'_>],
     emsgs: &[EmsgBox<'_>],
 ) -> Result<Vec<u8>> {
-    let styp = SegmentTypeBox {
-        major_brand: *b"msdh",
-        minor_version: 0,
-        compatible_brands: vec![*b"msdh", *b"msix"],
-    };
+    build_chunk(sequence_number, tracks, true, emsgs)
+}
 
-    // Build each traf with a placeholder data_offset (size is offset-value
-    // independent, so the moof size is stable once structured).
+/// `styp` major brand of a CMAF segment or low-latency chunk (ISO/IEC 14496-12
+/// §8.16.4); one brand set so chunk concatenation equals the whole segment.
+const STYP_MAJOR_BRAND: [u8; 4] = *b"msdh";
+const STYP_COMPATIBLE_BRANDS: [[u8; 4]; 2] = [*b"msdh", *b"msix"];
+
+/// Build one CMAF fragment (`[styp] [emsg]* moof mdat`) over a run of samples.
+///
+/// The single builder behind [`build_media_segment_with_events`] and the LL-DASH
+/// and LL-HLS chunk/part builders: same `trun` flags and `default-base-is-moof`
+/// offset resolution everywhere, so a segment's chunks concatenate to the
+/// whole-segment coded-sample stream. `with_styp` gates the leading `styp`
+/// (first chunk of a segment only); `emsgs` follow it and precede the `moof`
+/// (ISO/IEC 14496-12 §8.8, DASH-IF IOP Part 10 §6.1).
+pub(crate) fn build_chunk(
+    sequence_number: u32,
+    tracks: &[FragmentTrackData<'_>],
+    with_styp: bool,
+    emsgs: &[EmsgBox<'_>],
+) -> Result<Vec<u8>> {
+    let styp = with_styp.then(|| SegmentTypeBox {
+        major_brand: STYP_MAJOR_BRAND,
+        minor_version: 0,
+        compatible_brands: STYP_COMPATIBLE_BRANDS.to_vec(),
+    });
+
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
         let (tfhd, trun) = media_fragment_run(
@@ -1375,37 +1395,36 @@ pub fn build_media_segment_with_events(
 
     let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(sequence_number), traf_boxes);
 
-    // With default-base-is-moof, data_offset is measured from the moof start.
-    // The mdat payload begins at moof_size + 8 (the mdat header).
     let moof_size = moof.serialized_len();
-    let mut cursor = moof_size + 8;
+    let mut cursor = moof_size + crate::box_types::BOX_HEADER_MIN_SIZE;
     let mut mdat_data = Vec::new();
     for (i, ft) in tracks.iter().enumerate() {
-        moof.traf[i].trun[0].data_offset = Some(cursor as i32);
+        moof.traf[i].trun[0].data_offset =
+            Some(i32::try_from(cursor).map_err(|_| Error::InvalidValue {
+                field: "trun data_offset",
+                value: cursor as u64,
+                reason: "fragment too large for the signed 32-bit trun data_offset",
+            })?);
         for s in ft.samples {
             mdat_data.extend_from_slice(&s.data);
             cursor += s.data.len();
         }
     }
-
     let mdat = MediaDataBox { data: mdat_data };
 
-    // Serialize each emsg box to an owned Vec so we know its exact size before
-    // allocating the output buffer.  The `?` coerces `mp4_emsg::Error` to
-    // `crate::error::Error` via the `From` impl in `error.rs`.
     let emsg_vecs: Vec<Vec<u8>> = emsgs
         .iter()
         .map(|e| Ok(e.to_vec()?))
         .collect::<Result<_>>()?;
     let emsg_total: usize = emsg_vecs.iter().map(|v| v.len()).sum();
 
-    let total = styp.serialized_len() + emsg_total + moof.serialized_len() + mdat.serialized_len();
+    let styp_len = styp.as_ref().map_or(0, |s| s.serialized_len());
+    let total = styp_len + emsg_total + moof.serialized_len() + mdat.serialized_len();
     let mut out = vec![0u8; total];
     let mut c = 0usize;
-    c += styp.serialize_into(&mut out[c..])?;
-    // ISO/IEC 14496-12 §8.8 + DASH-IF IOP Part 10 §6.1: each `emsg` box
-    // follows `styp` and precedes `moof` so DASH clients can process events
-    // before media decoding begins.
+    if let Some(styp) = &styp {
+        c += styp.serialize_into(&mut out[c..])?;
+    }
     for ev in &emsg_vecs {
         out[c..c + ev.len()].copy_from_slice(ev);
         c += ev.len();

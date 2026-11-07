@@ -40,7 +40,6 @@ container-probe  = { path = "../container-probe", version = "0.2", optional = tr
 clap             = { workspace = true, optional = true, features = ["derive"] }
 serde            = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 serde_json       = { version = "1.0", default-features = false, features = ["alloc"], optional = true }
-thiserror        = { version = "2", optional = true }
 # Prometheus exposition for `watch` (de-hand-roll W1-P, SP2.3): the exporter's
 # recorder + `PrometheusHandle::render()` do the text format (HELP/TYPE,
 # label escaping). `default-features = false`: no listener, no push gateway —
@@ -67,7 +66,7 @@ serde   = ["dep:serde", "dep:serde_json"]
 # endpoint) and `cli` (clap binary) all imply `std`.
 metrics = ["std", "dep:metrics", "dep:metrics-exporter-prometheus"]
 net     = ["metrics", "dep:tokio", "dep:tokio-util", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:socket2"]
-cli     = ["dep:clap", "dep:thiserror", "dep:container-probe", "std", "net"]
+cli     = ["dep:clap", "dep:container-probe", "std", "net"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

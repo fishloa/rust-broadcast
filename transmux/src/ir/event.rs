@@ -552,20 +552,6 @@ impl DemuxEvent {
         }
     }
 
-    /// Construct a [`DemuxEvent::TrackAbandoned`] — see
-    /// [`Self::clock_reference`] for why this variant needs a constructor.
-    pub fn track_abandoned(
-        track_id: Option<TrackId>,
-        reason: AbandonReason,
-        provenance: EventProvenance,
-    ) -> Self {
-        DemuxEvent::TrackAbandoned {
-            track_id,
-            reason,
-            provenance,
-        }
-    }
-
     /// Construct a [`DemuxEvent::Sample`] — see [`Self::clock_reference`] for
     /// why this variant needs a constructor.
     pub fn sample(track_id: TrackId, sample: Sample) -> Self {
@@ -590,27 +576,5 @@ impl DemuxEvent {
     /// [`Self::clock_reference`] for why this variant needs a constructor.
     pub fn tracks_resolved(generation: u32) -> Self {
         DemuxEvent::TracksResolved { generation }
-    }
-
-    /// Construct a [`DemuxEvent::DisplayChanged`] — see
-    /// [`Self::clock_reference`] for why this variant needs a constructor.
-    pub fn display_changed(
-        track_id: TrackId,
-        display: Arc<DisplayInfo>,
-        changed: DisplayChangeSet,
-        dts: Option<i64>,
-        pts: Option<i64>,
-        random_access: bool,
-        provenance: EventProvenance,
-    ) -> Self {
-        DemuxEvent::DisplayChanged {
-            track_id,
-            display,
-            changed,
-            dts,
-            pts,
-            random_access,
-            provenance,
-        }
     }
 }

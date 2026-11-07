@@ -28,7 +28,8 @@ use alloc::vec::Vec;
 use crate::error::{Error, Result};
 use crate::handshake_sm::{
     self, HANDSHAKE_VERSION_4, HANDSHAKE_VERSION_5, HandshakeConfig, HandshakeOutput,
-    INDUCTION_LEGACY_SOCKET_TYPE, NegotiatedParams, RejectionReason, SRT_MAGIC_CODE,
+    INDUCTION_LEGACY_SOCKET_TYPE, NegotiatedParams, RejectionReason, Retransmit, RetransmitStep,
+    SRT_MAGIC_CODE,
 };
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags, HandshakeExtensions,
@@ -82,9 +83,7 @@ pub struct CallerHandshake {
     state: CallerHandshakeState,
     peer_socket_id: u32,
     syn_cookie: u32,
-    last_sent: Option<Vec<u8>>,
-    ticks_since_send: u32,
-    retries: u32,
+    retransmit: Retransmit,
     negotiated: Option<NegotiatedParams>,
 }
 
@@ -97,9 +96,7 @@ impl CallerHandshake {
             state: CallerHandshakeState::Idle,
             peer_socket_id: 0,
             syn_cookie: 0,
-            last_sent: None,
-            ticks_since_send: 0,
-            retries: 0,
+            retransmit: Retransmit::default(),
             negotiated: None,
         }
     }
@@ -142,8 +139,7 @@ impl CallerHandshake {
             extensions: HandshakeExtensions(&[]),
         };
         let bytes = handshake_sm::build_bytes(hp)?;
-        self.last_sent = Some(bytes.clone());
-        self.ticks_since_send = 0;
+        self.retransmit.arm(&bytes);
         self.state = CallerHandshakeState::AwaitingInductionResponse;
         Ok(bytes)
     }
@@ -208,19 +204,13 @@ impl CallerHandshake {
         ) {
             return Vec::new();
         }
-        self.ticks_since_send += 1;
-        if self.ticks_since_send < self.config.retransmit_after_ticks {
-            return Vec::new();
-        }
-        self.ticks_since_send = 0;
-        self.retries += 1;
-        if self.retries > self.config.max_retries {
-            self.state = CallerHandshakeState::TimedOut;
-            return vec![HandshakeOutput::TimedOut];
-        }
-        match self.last_sent.clone() {
-            Some(bytes) => vec![HandshakeOutput::Send(bytes)],
-            None => Vec::new(),
+        match self.retransmit.tick(&self.config) {
+            RetransmitStep::Idle => Vec::new(),
+            RetransmitStep::Resend(bytes) => vec![HandshakeOutput::Send(bytes)],
+            RetransmitStep::TimedOut => {
+                self.state = CallerHandshakeState::TimedOut;
+                vec![HandshakeOutput::TimedOut]
+            }
         }
     }
 
@@ -291,9 +281,7 @@ impl CallerHandshake {
             extensions: HandshakeExtensions(&ext_bytes),
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
-        self.last_sent = Some(bytes.clone());
-        self.ticks_since_send = 0;
-        self.retries = 0;
+        self.retransmit.arm_fresh(&bytes);
         self.state = CallerHandshakeState::AwaitingConclusionResponse;
         Ok(vec![HandshakeOutput::Send(bytes)])
     }
@@ -396,7 +384,10 @@ mod tests {
     fn start_is_idempotent_guard() {
         let mut c = CallerHandshake::new(1, HandshakeConfig::default());
         assert!(c.start().is_ok());
-        assert!(c.start().is_err());
+        assert!(matches!(
+            c.start(),
+            Err(crate::error::Error::HandshakeOutOfSequence { .. })
+        ));
     }
 
     /// `peer_socket_id` must come from the CONCLUSION response, not a stale INDUCTION one (draft §4.3.1).

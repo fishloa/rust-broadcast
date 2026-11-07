@@ -531,6 +531,61 @@ pub enum HandshakeOutput {
     TimedOut,
 }
 
+/// What a retransmit tick asks of the handshake machine that owns it.
+pub(crate) enum RetransmitStep {
+    Idle,
+    Resend(Vec<u8>),
+    TimedOut,
+}
+
+/// The retransmit bookkeeping every handshake machine (caller, listener,
+/// rendezvous) shares: the last packet sent, ticks since it was sent, and the
+/// retransmissions spent on it.
+#[derive(Debug, Default)]
+pub(crate) struct Retransmit {
+    last_sent: Option<Vec<u8>>,
+    ticks_since_send: u32,
+    retries: u32,
+}
+
+impl Retransmit {
+    pub(crate) fn remember(&mut self, bytes: &[u8]) {
+        self.last_sent = Some(bytes.to_vec());
+    }
+
+    pub(crate) fn arm(&mut self, bytes: &[u8]) {
+        self.remember(bytes);
+        self.ticks_since_send = 0;
+    }
+
+    pub(crate) fn arm_fresh(&mut self, bytes: &[u8]) {
+        self.arm(bytes);
+        self.retries = 0;
+    }
+
+    pub(crate) fn last_sent(&self) -> Option<&[u8]> {
+        self.last_sent.as_deref()
+    }
+
+    /// One caller-defined tick: after [`HandshakeConfig::retransmit_after_ticks`]
+    /// ticks the last packet is resent, and once
+    /// [`HandshakeConfig::max_retries`] resends are spent the handshake times out.
+    pub(crate) fn tick(&mut self, config: &HandshakeConfig) -> RetransmitStep {
+        self.ticks_since_send += 1;
+        if self.ticks_since_send < config.retransmit_after_ticks {
+            return RetransmitStep::Idle;
+        }
+        self.ticks_since_send = 0;
+        self.retries += 1;
+        if self.retries > config.max_retries {
+            return RetransmitStep::TimedOut;
+        }
+        self.last_sent
+            .clone()
+            .map_or(RetransmitStep::Idle, RetransmitStep::Resend)
+    }
+}
+
 /// Serializes one [`HandshakePacket`] using the existing [`ControlPacket`]
 /// codec — never hand-rolled.
 pub(crate) fn build_bytes(hp: HandshakePacket<'_>) -> Result<Vec<u8>> {

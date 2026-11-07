@@ -80,8 +80,8 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
-use subtle::ConstantTimeEq;
 
+use crate::constant_time_eq;
 use crate::error::{Error, Result};
 use crate::request::RequestContext;
 
@@ -285,7 +285,7 @@ pub(crate) fn verify(ctx: &RequestContext<'_>, keys: &SignedUrlKeySet) -> bool {
     };
 
     let expected = hmac_sha256(secret, &canonical_string(path, exp, ip));
-    let sig_ok = bool::from(decoded_sig.as_slice().ct_eq(expected.as_slice()));
+    let sig_ok = constant_time_eq(decoded_sig.as_slice(), expected.as_slice());
     let not_expired = current_unix_time() <= exp;
     let ip_ok = match ip {
         Some(bound_ip) => ctx.peer_addr.map(|p| p.ip()) == Some(bound_ip),

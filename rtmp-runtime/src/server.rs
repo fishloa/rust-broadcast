@@ -190,20 +190,6 @@ impl ServerConfig {
         self
     }
 
-    /// Set [`ServerConfig::window_ack_size`].
-    #[must_use]
-    pub fn with_window_ack_size(mut self, window_ack_size: u32) -> Self {
-        self.window_ack_size = window_ack_size;
-        self
-    }
-
-    /// Set [`ServerConfig::peer_bandwidth`].
-    #[must_use]
-    pub fn with_peer_bandwidth(mut self, peer_bandwidth: u32) -> Self {
-        self.peer_bandwidth = peer_bandwidth;
-        self
-    }
-
     /// Set [`ServerConfig::max_in_progress_bytes`].
     #[must_use]
     pub fn with_max_in_progress_bytes(mut self, max_in_progress_bytes: usize) -> Self {

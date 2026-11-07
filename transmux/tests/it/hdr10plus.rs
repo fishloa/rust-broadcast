@@ -367,23 +367,44 @@ fn malformed_payloads_are_rejected() {
     };
     let good = meta.try_to_bytes().unwrap();
     for cut in 0..good.len() {
-        assert!(Hdr10PlusMetadata::parse(&good[..cut]).is_err(), "cut {cut}");
+        assert!(
+            matches!(
+                Hdr10PlusMetadata::parse(&good[..cut]),
+                Err(transmux::error::Error::BufferTooShort { .. })
+            ),
+            "cut {cut}"
+        );
     }
     let mut extra = good.clone();
     extra.push(0);
-    assert!(Hdr10PlusMetadata::parse(&extra).is_err());
+    assert!(matches!(
+        Hdr10PlusMetadata::parse(&extra),
+        Err(transmux::error::Error::InvalidValue { .. })
+    ));
     let mut zero_windows = good.clone();
     zero_windows[7] &= 0b0011_1111;
-    assert!(Hdr10PlusMetadata::parse(&zero_windows).is_err());
+    assert!(matches!(
+        Hdr10PlusMetadata::parse(&zero_windows),
+        Err(transmux::error::Error::InvalidValue { .. })
+    ));
     let mut wrong_provider = good.clone();
     wrong_provider[2] = 0x3D;
-    assert!(Hdr10PlusMetadata::parse(&wrong_provider).is_err());
+    assert!(matches!(
+        Hdr10PlusMetadata::parse(&wrong_provider),
+        Err(transmux::error::Error::InvalidValue { .. })
+    ));
     let mut wrong_app = good.clone();
     wrong_app[5] = 5;
-    assert!(Hdr10PlusMetadata::parse(&wrong_app).is_err());
+    assert!(matches!(
+        Hdr10PlusMetadata::parse(&wrong_app),
+        Err(transmux::error::Error::InvalidValue { .. })
+    ));
     let mut wrong_version = good;
     wrong_version[6] = 2;
-    assert!(Hdr10PlusMetadata::parse(&wrong_version).is_err());
+    assert!(matches!(
+        Hdr10PlusMetadata::parse(&wrong_version),
+        Err(transmux::error::Error::InvalidValue { .. })
+    ));
 }
 
 #[test]

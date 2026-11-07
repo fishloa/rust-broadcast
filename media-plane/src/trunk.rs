@@ -1737,7 +1737,8 @@ impl Trunk {
 
     /// Diagnostic: entries currently resident in the `Sparse` ring. Never
     /// exceeds [`TrunkConfig::sparse_capacity`].
-    pub fn sparse_len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn sparse_len(&self) -> usize {
         self.lock_state().sparse.entries.len()
     }
 
@@ -1931,7 +1932,8 @@ impl Trunk {
 
     /// Diagnostic: entries currently resident in the event log. Never
     /// exceeds [`TrunkConfig::event_capacity`].
-    pub fn event_len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn event_len(&self) -> usize {
         self.lock_state().events.entries.len()
     }
 
@@ -4089,7 +4091,10 @@ mod tests {
 
         wait_until_stalled(&trunk, 1);
         assert!(
-            done_rx.try_recv().is_err(),
+            matches!(
+                done_rx.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ),
             "publish_segment must block: the pin has not consumed seq 1 yet"
         );
 

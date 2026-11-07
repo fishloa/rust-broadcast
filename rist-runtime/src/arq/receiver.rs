@@ -210,12 +210,6 @@ impl Receiver {
         self.missing.len()
     }
 
-    /// The current smoothed RTT estimate, if any real sample has been
-    /// folded in via [`Self::on_rtt_sample`] yet.
-    pub fn rtt_estimate(&self) -> Option<Duration> {
-        self.rtt.smoothed()
-    }
-
     /// Fold a fresh RTT sample (e.g. from [`super::rtt::rtt_sample`]) into
     /// this receiver's smoothed RTT estimate, used to schedule
     /// retransmission-request retries (see the `arq` module doc's

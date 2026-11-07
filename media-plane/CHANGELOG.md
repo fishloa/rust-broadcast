@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `ids::Generation`, the init-segment generation newtype, next to `SegmentSeq`/`PartIndex` (c2 L5).
+### Removed
+- Unused public `retention` `cold_len`; `Trunk::sparse_len` and `Trunk::event_len` are now test-only (c2 TH1).
 
 ## [0.9.0] - 2026-11-03
 

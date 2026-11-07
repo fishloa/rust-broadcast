@@ -137,7 +137,10 @@ fn aes128_full_segment_padded_round_trip() {
     let pt = aes128_decrypt_segment(&KEY, &IV, &ct).unwrap();
     assert_eq!(pt, segment, "full-segment round-trip mismatch");
     // Malformed length rejected (no panic).
-    assert!(aes128_decrypt_segment(&KEY, &IV, &[0u8; 17]).is_err());
+    assert!(matches!(
+        aes128_decrypt_segment(&KEY, &IV, &[0u8; 17]),
+        Err(transmux::error::Error::InvalidInput(..))
+    ));
 }
 
 /// Test 5 — EXT-X-KEY exact tag strings + IV-from-sequence-number formatting.

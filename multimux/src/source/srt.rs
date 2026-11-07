@@ -726,7 +726,7 @@ mod tests {
         .await
         .expect("run_srt_caller must not exceed the assertion window");
         assert!(
-            outcome.is_err(),
+            matches!(outcome, Err(crate::error::MultimuxError::Connect { .. })),
             "an idle-but-open publisher must surface a read-timeout error"
         );
         server.abort();
@@ -763,7 +763,10 @@ mod tests {
         let outcome = tokio::time::timeout(Duration::from_secs(60), connect_caller(&route))
             .await
             .expect("connect_caller must not hang");
-        assert!(outcome.is_err(), "a blackholed remote must fail the dial");
+        assert!(
+            matches!(outcome, Err(crate::error::MultimuxError::Connect { .. })),
+            "a blackholed remote must fail the dial"
+        );
         assert!(
             started.elapsed() < CONNECT_TIMEOUT * 4,
             "the dial must be bounded by the CONFIGURED connect timeout, not \

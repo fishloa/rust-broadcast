@@ -1214,7 +1214,10 @@ mod tests {
             full_box(b"stsc", &[], 0),
             full_box(b"stco", &[], 0),
         ]);
-        assert!(progressive_sample_layout(&stbl, 64).is_err());
+        assert!(matches!(
+            progressive_sample_layout(&stbl, 64),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     use crate::media::Track;

@@ -60,27 +60,15 @@
 
 use crate::TrackId;
 use alloc::collections::VecDeque;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
 use crate::media::Media;
-use crate::movie_fragment::{
-    MediaRunSample, MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
-    TrackFragmentBox, media_fragment_run,
-};
-use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_init_segment};
+use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_chunk, build_init_segment};
 use crate::segmenter::{MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor};
-use crate::segments::{MediaDataBox, SegmentTypeBox};
-use broadcast_common::{Package, Serialize};
-
-/// `styp` major brand for a low-latency CMAF chunk (§8.16.4). Matches the brand
-/// `build_media_segment` writes so chunk concat == whole segment.
-const STYP_MAJOR_BRAND: [u8; 4] = *b"msdh";
-/// `styp` compatible brands.
-const STYP_COMPATIBLE_BRANDS: [[u8; 4]; 2] = [*b"msdh", *b"msix"];
+use broadcast_common::Package;
 
 // ===========================================================================
 // LlSegmenter — chunked-CMAF output packager
@@ -446,7 +434,7 @@ impl LlSegmenter {
                     samples: &t.pending[..n],
                 })
                 .collect();
-            build_chunk(seq, &frags, is_start)?
+            build_chunk(seq, &frags, is_start, &[])?
         };
 
         // Advance decode times and drop the drained samples. The drained
@@ -640,70 +628,6 @@ impl Package for LlSegmenter {
         self.flush()?;
         Ok(self.take_ready())
     }
-}
-
-/// Build one CMAF **chunk** (`[styp] moof mdat`) over a sub-run of samples,
-/// mirroring [`crate::build_media_segment`] exactly (same `trun` flags, same
-/// `default-base-is-moof` offset resolution) so a segment's chunks concatenate to
-/// the whole-segment coded-sample stream. `with_styp` gates the leading `styp`
-/// (present on the first chunk of a segment only).
-///
-/// Shared with the LL-HLS **partial-segment** builder
-/// ([`crate::ll_hls`]): an LL-HLS part is exactly this fragment structure scoped
-/// to a sub-duration, so both layers emit byte-compatible `moof`+`mdat`.
-pub(crate) fn build_chunk(
-    sequence_number: u32,
-    tracks: &[FragmentTrackData<'_>],
-    with_styp: bool,
-) -> Result<Vec<u8>> {
-    let styp = with_styp.then(|| SegmentTypeBox {
-        major_brand: STYP_MAJOR_BRAND,
-        minor_version: 0,
-        compatible_brands: STYP_COMPATIBLE_BRANDS.to_vec(),
-    });
-
-    let mut traf_boxes = Vec::with_capacity(tracks.len());
-    for ft in tracks {
-        let (tfhd, trun) = media_fragment_run(
-            ft.track_id,
-            ft.samples.iter().map(|s| MediaRunSample {
-                duration: s.duration.unwrap_or(0),
-                size: s.data.len(),
-                is_sync: s.flags.is_sync,
-                composition_offset: s.composition_offset(),
-            }),
-        )?;
-        let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_media_decode_time);
-        traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));
-    }
-
-    let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(sequence_number), traf_boxes);
-
-    // default-base-is-moof: data_offset measured from the moof start; the mdat
-    // payload begins at moof_size + 8 (the mdat header).
-    let moof_size = moof.serialized_len();
-    let mut cursor = moof_size + 8;
-    let mut mdat_data = Vec::new();
-    for (i, ft) in tracks.iter().enumerate() {
-        moof.traf[i].trun[0].data_offset = Some(cursor as i32);
-        for s in ft.samples {
-            mdat_data.extend_from_slice(&s.data);
-            cursor += s.data.len();
-        }
-    }
-    let mdat = MediaDataBox { data: mdat_data };
-
-    let styp_len = styp.as_ref().map_or(0, |s| s.serialized_len());
-    let total = styp_len + moof.serialized_len() + mdat.serialized_len();
-    let mut out = vec![0u8; total];
-    let mut c = 0usize;
-    if let Some(styp) = &styp {
-        c += styp.serialize_into(&mut out[c..])?;
-    }
-    c += moof.serialize_into(&mut out[c..])?;
-    c += mdat.serialize_into(&mut out[c..])?;
-    out.truncate(c);
-    Ok(out)
 }
 
 // The LL-DASH MPD packager renders and rewrites XML (quick-xml), so it is

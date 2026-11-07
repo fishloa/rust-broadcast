@@ -242,8 +242,6 @@ const MAX_AUDIO_STREAMS: u8 = STREAM_ID_AUDIO_LIMIT - STREAM_ID_AUDIO_BASE;
 /// `private_stream_1` — the default `stream_id` for a PES-carried opaque
 /// [`CodecConfig::Data`] elementary stream (issue #576), Table 2-22.
 const STREAM_ID_PRIVATE_1: u8 = 0xBD;
-/// PES `packet_start_code_prefix` (§2.4.3.6).
-const PES_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
 /// Fixed bytes preceding the PES optional-header payload: 3 (marker/flags(1) +
 /// PTS_DTS flags(1) + PES_header_data_length(1)). ISO/IEC 13818-1 §2.4.3.7.
 const HEADER_FIXED: usize = 3;
@@ -1146,7 +1144,6 @@ fn mux_tracks_timed_with_cc(
         })
         .sum();
     let mut tagged: Vec<TaggedPacket> = Vec::with_capacity(packet_hint);
-    // Sort keys of the packets that already carry a PCR, ascending.
     let mut pcr_stamps: Vec<u64> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
         let track = &tracks[track_idx];
@@ -1969,7 +1966,7 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
     };
 
     let mut out = Vec::with_capacity(MIN_LEN + HEADER_FIXED + opt_content + es_payload.len());
-    out.extend_from_slice(&PES_START_CODE);
+    out.extend_from_slice(&mpeg_pes::PACKET_START_CODE_PREFIX);
     out.push(plan.stream_id.0);
     out.extend_from_slice(&pes_packet_length.to_be_bytes());
     // Fixed optional-header bytes (§2.4.3.7): '10' marker + flags, then PTS_DTS

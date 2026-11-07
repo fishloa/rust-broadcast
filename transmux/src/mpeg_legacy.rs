@@ -339,7 +339,10 @@ mod tests {
 
     #[test]
     fn seq_header_missing() {
-        assert!(Mpeg2SeqHeader::find(&[0x00, 0x00, 0x01, 0xB8]).is_err());
+        assert!(matches!(
+            Mpeg2SeqHeader::find(&[0x00, 0x00, 0x01, 0xB8]),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]
@@ -365,7 +368,10 @@ mod tests {
 
     #[test]
     fn bad_syncword_rejected() {
-        assert!(MpegAudioFrameHeader::parse(&[0x00, 0x00, 0x00, 0x00]).is_err());
+        assert!(matches!(
+            MpegAudioFrameHeader::parse(&[0x00, 0x00, 0x00, 0x00]),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 
     #[test]

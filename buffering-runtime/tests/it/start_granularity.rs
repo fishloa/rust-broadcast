@@ -11,19 +11,18 @@
 //! like rai-3's 0.3-0.4 s bursts).
 
 use broadcast_common::clock33::PCR_HZ;
-use buffering_runtime::{
-    BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27, WRAP_27MHZ,
-};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27};
 
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = WRAP_27MHZ - 5 * PCR_HZ;
+const BASE: Ticks27 = PCR_WRAP_27MHZ - 5 * PCR_HZ;
 const T0: Micros = 1_000_000;
 const TICK_US: Micros = 10_000;
 
 fn at(offset_us: u64) -> Ticks27 {
-    (BASE + offset_us * TICKS_PER_US) % WRAP_27MHZ
+    (BASE + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ
 }
 
 fn cfg(initial_us: Micros) -> ControllerConfig {
@@ -75,7 +74,7 @@ fn run(initial_us: Micros, gaps: &[Micros], register: bool, secs: u64) -> Out {
             next_audio += gaps[gi % gaps.len()];
         }
         let pos = if running {
-            (clock + (t - t_set) * TICKS_PER_US) % WRAP_27MHZ
+            (clock + (t - t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ
         } else {
             clock
         };

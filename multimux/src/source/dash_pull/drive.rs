@@ -22,6 +22,7 @@ use super::session::{DashIngestSession, DashInput, FetchTarget, RetryTarget};
 use super::{DashPullDialer, DashPullRoute, build_client};
 use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
+use crate::reconnect::ReconnectSchedule;
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::{ScopedCredentials, authenticated_get_with};
 use crate::source::pull::{FetchOutcome, FetchResult, PendingFetch, PullScheduler};
@@ -32,10 +33,11 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// The least the loop waits for a core wake that is already due, so a wake the
 /// core cannot satisfy yet never becomes a spin.
 const MIN_WAKE_STEP: Duration = Duration::from_millis(1);
-/// First retry delay after a failed fetch; doubles per consecutive failure.
+/// First retry delay after a failed fetch; doubles per consecutive failure, equal-jittered.
 const RETRY_BASE: Duration = Duration::from_millis(500);
 /// Longest retry delay.
 const RETRY_CAP: Duration = Duration::from_secs(4);
+const RETRY_FACTOR: f64 = 2.0;
 /// The most the loop reads of a `UTCTiming` answer.
 const UTC_BODY_LIMIT: usize = 4 * 1024;
 const NANOS_PER_MICRO: u64 = 1_000;
@@ -348,8 +350,8 @@ pub(super) fn spawn_fetch(net: &Net, req: Request) -> PendingFetch<DashFetch> {
 }
 
 pub(super) fn backoff(attempt: u32) -> Duration {
-    let doublings = attempt.saturating_sub(1).min(8);
-    RETRY_BASE.saturating_mul(1u32 << doublings).min(RETRY_CAP)
+    ReconnectSchedule::from_parts(RETRY_BASE, RETRY_CAP, RETRY_FACTOR)
+        .delay_for_attempt(attempt.saturating_sub(1))
 }
 
 fn stamp(now_us: u64) -> Timestamp {
@@ -380,7 +382,7 @@ pub(super) async fn run<S: RouteSink>(
         http,
         credentials,
         clock: Arc::clone(&clock),
-        read_timeout: route.timeouts.read,
+        read_timeout: route.target.timeouts.read,
         utc_timeout: Duration::from_micros(dash.utc_timeout_us),
         mpd_cap: limits.limits.max_bytes,
         segment_cap: limits.max_segment_bytes,

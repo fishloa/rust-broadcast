@@ -177,7 +177,10 @@ fn corrupted_fingerprint_byte_fails_ipv4_response() {
     bytes[last] ^= 0x01; // flip one bit of the FINGERPRINT CRC-32
     let msg = parse(&bytes);
     assert!(
-        FingerprintAttr.check(&msg).is_err(),
+        matches!(
+            FingerprintAttr.check(&msg),
+            Err(rtc_shared::error::Error::ErrFingerprintMismatch)
+        ),
         "corrupted FINGERPRINT byte must fail verification"
     );
 
@@ -206,8 +209,10 @@ fn corrupted_message_integrity_byte_fails_request() {
     bytes[tag_start] ^= 0x01;
     let mut msg = parse(&bytes);
     assert!(
-        MessageIntegrity::check(&mut msg, SHORT_TERM_PASSWORD.as_bytes(), crypto().crypto())
-            .is_err(),
+        matches!(
+            MessageIntegrity::check(&mut msg, SHORT_TERM_PASSWORD.as_bytes(), crypto().crypto()),
+            Err(rtc_shared::error::Error::ErrIntegrityMismatch)
+        ),
         "corrupted MESSAGE-INTEGRITY byte must fail verification"
     );
 

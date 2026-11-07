@@ -105,6 +105,12 @@ id_newtype! {
     PartIndex
 }
 
+id_newtype! {
+    /// An init-segment generation: the version counter in
+    /// `init-{track}-{instance}-{generation}.mp4`, starting at `1`.
+    Generation
+}
+
 #[cfg(test)]
 mod tests {
     extern crate alloc;

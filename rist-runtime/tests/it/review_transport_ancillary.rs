@@ -59,11 +59,17 @@ fn padded_standalone_range_nack_round_trips_byte_identically() {
 #[test]
 fn padding_leaving_a_partial_fci_entry_is_rejected() {
     assert!(
-        GenericNack::parse(&padded_generic_nack(2)).is_err(),
+        matches!(
+            GenericNack::parse(&padded_generic_nack(2)),
+            Err(rist_runtime::error::Error::InvalidPaddingCount { .. })
+        ),
         "2 orphan FCI bytes silently dropped"
     );
     assert!(
-        RangeNack::parse(&padded_range_nack(2)).is_err(),
+        matches!(
+            RangeNack::parse(&padded_range_nack(2)),
+            Err(rist_runtime::error::Error::InvalidPaddingCount { .. })
+        ),
         "2 orphan range-entry bytes silently dropped"
     );
 }

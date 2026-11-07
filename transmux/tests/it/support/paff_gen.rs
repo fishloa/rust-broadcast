@@ -189,11 +189,6 @@ fn weave(top: &Field, bot: &Field, w: usize, h: usize, out: &mut Vec<u8>) {
 pub const PID_PMT: u16 = 0x1000;
 const PID_VIDEO: u16 = 0x0100;
 
-/// CRC-32/MPEG-2 (ISO/IEC 13818-1 Annex A) - the workspace's one implementation.
-fn crc32_mpeg2(d: &[u8]) -> u32 {
-    broadcast_common::crc32_mpeg2::compute(d)
-}
-
 /// Wrap a complete PSI section (with CRC) in one TS packet (pointer_field 0).
 pub fn psi_packet(pid: u16, cc: &mut u8, section: &[u8]) -> [u8; 188] {
     let mut p = [0xFFu8; 188];
@@ -220,7 +215,7 @@ fn section(table_id: u8, ext_id: u16, body: &[u8]) -> Vec<u8> {
         0,    // last_section_number
     ];
     s.extend_from_slice(body);
-    let crc = crc32_mpeg2(&s);
+    let crc = broadcast_common::crc32_mpeg2::compute(&s);
     s.extend_from_slice(&crc.to_be_bytes());
     s
 }

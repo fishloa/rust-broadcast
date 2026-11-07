@@ -1816,7 +1816,7 @@ mod tests {
              DD:EE:FF:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D",
         ] {
             assert!(
-                parse_fingerprint_value(bad).is_err(),
+                matches!(parse_fingerprint_value(bad), Err(msg) if msg.contains("remote_fingerprint")),
                 "{bad:?} must be rejected"
             );
         }
@@ -1896,7 +1896,10 @@ mod tests {
             [0xAB; 32]
         );
         assert!(
-            parse_fingerprint_value(&format!("sha-256 {}", "AB".repeat(31))).is_err(),
+            matches!(
+                parse_fingerprint_value(&format!("sha-256 {}", "AB".repeat(31))),
+                Err(msg) if msg.contains("exactly 32 bytes")
+            ),
             "31 bytes"
         );
     }

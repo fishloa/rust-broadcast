@@ -248,7 +248,8 @@ pub const SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION: u32 = 0x000001;
 /// The fixed size of the `senc` override triple
 /// ([`SENC_FLAG_OVERRIDE_TRACK_ENCRYPTION`]): `AlgorithmID(24) + IV_size(8) +
 /// KID(128)` = 20 bytes.
-pub const SENC_OVERRIDE_FIELDS_LEN: usize = 20;
+#[cfg(test)]
+pub(crate) const SENC_OVERRIDE_FIELDS_LEN: usize = 20;
 
 /// Sample Encryption Box (`senc`) — ISO/IEC 23001-7 §12.3.
 #[derive(Debug, Clone, PartialEq, Eq)]

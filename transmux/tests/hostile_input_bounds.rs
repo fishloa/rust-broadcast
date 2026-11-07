@@ -184,7 +184,10 @@ fn hostile_stco_entry_count_is_rejected() {
     let file = patch_fixture(CENC_MP4, b"stco", STCO_ENTRY_COUNT_OFFSET, u32::MAX);
     let dec = CencDecryptor::from_fmp4(&file).expect("harvest does not read stco");
     assert!(
-        dec.demux().is_err(),
+        matches!(
+            dec.demux(),
+            Err(transmux::error::Error::BufferTooShort { .. })
+        ),
         "a stco declaring 0xFFFFFFFF chunk offsets must be Err"
     );
 }
@@ -216,7 +219,7 @@ fn hostile_sgpd_zero_length_entries_are_rejected() {
 
     let res = SampleGroupDescriptionBox::parse(&bytes);
     assert!(
-        res.is_err(),
+        matches!(res, Err(transmux::error::Error::BufferTooShort { .. })),
         "a 20-byte v0 sgpd declaring 0xFFFFFFFF entries must be Err, got {res:?}"
     );
 }

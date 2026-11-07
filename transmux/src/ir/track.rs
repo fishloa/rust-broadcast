@@ -103,21 +103,9 @@ impl TrackSpec {
         }
     }
 
-    /// Replace the auto-derived [`hdr`](Self::hdr).
-    pub fn with_hdr(mut self, hdr: Option<HdrStaticMetadata>) -> Self {
-        self.hdr = hdr;
-        self
-    }
-
     /// Set whether the track carries HDR10+ dynamic metadata.
     pub fn with_hdr10plus(mut self, hdr10plus: bool) -> Self {
         self.hdr10plus = hdr10plus;
-        self
-    }
-
-    /// Set the Dolby Vision configuration.
-    pub fn with_dovi(mut self, dovi: Option<DoviDecoderConfigurationRecord>) -> Self {
-        self.dovi = dovi;
         self
     }
 

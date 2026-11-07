@@ -113,9 +113,9 @@ use lru::LruCache;
 use md5::{Digest as _, Md5};
 use percent_encoding::percent_decode_str;
 use sha2::Sha256;
-use subtle::ConstantTimeEq;
 use url::{Position, Url};
 
+use crate::constant_time_eq;
 use crate::credentials::Credentials;
 use crate::request::RequestContext;
 use crate::signed_url::{self, SignedUrlKeySet};
@@ -974,13 +974,6 @@ fn md5_hex(input: String) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Byte-equality in constant time via [`subtle::ConstantTimeEq`] (the same
-/// primitive `signed_url` uses) — only the *length* check short-circuits (an
-/// equal-length requirement is not itself the secret being protected).
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && bool::from(a.ct_eq(b))
-}
-
 /// Decodes exactly `N` bytes of hex, or `None`.
 fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
     let mut out = [0u8; N];
@@ -1541,14 +1534,6 @@ mod tests {
             !debug.contains(std::str::from_utf8(&secret).unwrap()),
             "debug: {debug}"
         );
-    }
-
-    #[test]
-    fn constant_time_eq_matches_naive_equality() {
-        assert!(constant_time_eq(b"same", b"same"));
-        assert!(!constant_time_eq(b"same", b"diff"));
-        assert!(!constant_time_eq(b"short", b"longer-string"));
-        assert!(constant_time_eq(b"", b""));
     }
 
     // Regression: an oversized Digest `Authorization` header (way more

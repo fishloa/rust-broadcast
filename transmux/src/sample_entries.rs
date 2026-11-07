@@ -348,7 +348,6 @@ impl AVCSampleEntry {
         let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let visual = VisualSampleEntryFields::parse_body(bytes, "avc1 bare")?;
-        // Find avcC in the config region (after the fixed VisualSampleEntry fields)
         let config_region = &body[VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(avcc) = find_config_box(config_region, b"avcC") {
             // avcc is the full box (header+body); parse_body expects only the body
@@ -399,7 +398,8 @@ impl AVCSampleEntry {
     }
 
     /// Create a new avc3 sample entry.
-    pub fn new_avc3(config: AVCDecoderConfigurationRecord) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new_avc3(config: AVCDecoderConfigurationRecord) -> Self {
         let mut s = Self::new_avc1(config);
         s.codec_type = *b"avc3";
         s
@@ -665,7 +665,8 @@ impl HEVCSampleEntry {
     }
 
     /// Create a new hev1 sample entry.
-    pub fn new_hev1(config: HEVCDecoderConfigurationRecord) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new_hev1(config: HEVCDecoderConfigurationRecord) -> Self {
         let mut s = Self::new_hvc1(config);
         s.codec_type = *b"hev1";
         s
@@ -784,13 +785,6 @@ impl VVCSampleEntry {
             config,
             extra_boxes: Vec::new(),
         }
-    }
-
-    /// Create a new `vvi1` sample entry (in-band parameter sets).
-    pub fn new_vvi1(config: crate::vvc_config::VvcConfigurationBox) -> Self {
-        let mut s = Self::new_vvc1(config);
-        s.codec_type = *b"vvi1";
-        s
     }
 }
 

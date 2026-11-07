@@ -87,12 +87,6 @@ use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264, SMOOTH_TIMESCALE};
 use crate::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
-use broadcast_common::xml_chars::{char_data, is_xml_char};
-use quick_xml::Reader;
-use quick_xml::XmlVersion;
-use quick_xml::errors::IllFormedError;
-use quick_xml::events::{BytesStart, Event};
-use quick_xml::name::QName;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -256,144 +250,35 @@ impl std::error::Error for SmoothParseError {}
 /// Crate-local result alias for this module.
 type Result<T> = core::result::Result<T, SmoothParseError>;
 
-// ---------------------------------------------------------------------------
-// quick-xml pull plumbing
-// ---------------------------------------------------------------------------
-
-/// A `quick-xml` reader over the manifest text.
-type XmlReader<'a> = Reader<&'a [u8]>;
-
-/// What a parse loop sees: the start of an element (with its decoded
-/// attributes) or the end of one. Text, comments, processing instructions, the
-/// XML declaration and DOCTYPE are consumed by [`next_tag`] and never surface.
-enum Tag {
-    /// `<Name a="b">` or the self-closing `<Name a="b"/>`; `name` is the local
-    /// name (namespace prefix stripped), attribute names keep any prefix.
-    Open {
-        name: String,
-        attrs: Vec<(String, String)>,
-        self_closing: bool,
-    },
-    /// `</Name>`.
-    Close { name: String },
-}
-
-fn new_reader(xml: &str) -> XmlReader<'_> {
-    Reader::from_str(xml)
-}
-
-/// Map a quick-xml error at the reader's current position.
-fn xml_error(reader: &XmlReader<'_>, err: &quick_xml::Error) -> SmoothParseError {
-    use quick_xml::Error as E;
-    let pos = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
-    match err {
-        E::Syntax(_) => SmoothParseError::UnterminatedTag { pos },
-        E::IllFormed(IllFormedError::MismatchedEndTag { expected, found }) => {
-            SmoothParseError::MismatchedEndTag {
-                expected: local_part(expected),
-                found: local_part(found),
-            }
-        }
-        _ => SmoothParseError::Xml {
-            pos,
-            message: err.to_string(),
-        },
+impl crate::xml_walk::XmlWalkError for SmoothParseError {
+    fn unterminated_tag(pos: usize) -> Self {
+        Self::UnterminatedTag { pos }
     }
-}
-
-/// A well-formedness error described by `message` at the reader's position.
-fn xml_message(reader: &XmlReader<'_>, message: String) -> SmoothParseError {
-    SmoothParseError::Xml {
-        pos: usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX),
-        message,
+    fn mismatched_end_tag(expected: String, found: String) -> Self {
+        Self::MismatchedEndTag { expected, found }
     }
-}
-
-/// The local part of a (possibly prefixed) qualified name.
-fn local_part(qname: &str) -> String {
-    QName(qname).local_name().into_inner().to_string()
-}
-
-fn read_event<'a>(reader: &mut XmlReader<'a>) -> Result<Event<'a>> {
-    match reader.read_event() {
-        Ok(event) => Ok(event),
-        Err(e) => Err(xml_error(reader, &e)),
+    fn ill_formed(pos: usize, message: String) -> Self {
+        Self::Xml { pos, message }
     }
-}
-
-/// Decode a start tag's attributes (values unescaped and normalized by
-/// quick-xml).
-fn read_attrs(reader: &XmlReader<'_>, e: &BytesStart<'_>) -> Result<Vec<(String, String)>> {
-    let pos = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
-    let mut attrs = Vec::new();
-    for attr in e.attributes() {
-        let attr = attr.map_err(|_| SmoothParseError::MalformedAttribute { pos })?;
-        let value = attr
-            .normalized_value(XmlVersion::Implicit1_0)
-            .map_err(|_| SmoothParseError::MalformedAttribute { pos })?;
-        if !value.chars().all(is_xml_char) {
-            return Err(SmoothParseError::MalformedAttribute { pos });
-        }
-        attrs.push((attr.key.as_ref().to_string(), value.into_owned()));
+    fn malformed_attribute(pos: usize) -> Self {
+        Self::MalformedAttribute { pos }
     }
-    Ok(attrs)
-}
-
-/// The next element start/end, or `Ok(None)` at end of input.
-fn next_tag(reader: &mut XmlReader<'_>) -> Result<Option<Tag>> {
-    loop {
-        let event = read_event(reader)?;
-        // Character data between elements (and inside skipped subtrees) is
-        // validated exactly like the modelled path.
-        if char_data(&event)
-            .map_err(|message| xml_message(reader, message))?
-            .is_some()
-        {
-            continue;
-        }
-        match event {
-            Event::Start(e) => {
-                return Ok(Some(Tag::Open {
-                    name: e.local_name().into_inner().to_string(),
-                    attrs: read_attrs(reader, &e)?,
-                    self_closing: false,
-                }));
-            }
-            Event::Empty(e) => {
-                return Ok(Some(Tag::Open {
-                    name: e.local_name().into_inner().to_string(),
-                    attrs: read_attrs(reader, &e)?,
-                    self_closing: true,
-                }));
-            }
-            Event::End(e) => {
-                return Ok(Some(Tag::Close {
-                    name: e.local_name().into_inner().to_string(),
-                }));
-            }
-            Event::Eof => return Ok(None),
-            _ => {}
+    fn unexpected_eof() -> Self {
+        Self::UnexpectedEof
+    }
+    fn missing_attribute(element: &'static str, attr: &'static str) -> Self {
+        Self::MissingAttribute { element, attr }
+    }
+    fn invalid_attribute_value(element: &'static str, attr: &'static str, value: String) -> Self {
+        Self::InvalidAttributeValue {
+            element,
+            attr,
+            value,
         }
     }
 }
 
-/// Skip an already-open element's subtree, up to and including its matching
-/// end tag.
-fn skip_element(reader: &mut XmlReader<'_>) -> Result<()> {
-    let mut depth: usize = 1;
-    while depth > 0 {
-        match next_tag(reader)? {
-            Some(Tag::Open { self_closing, .. }) => {
-                if !self_closing {
-                    depth += 1;
-                }
-            }
-            Some(Tag::Close { .. }) => depth -= 1,
-            None => return Err(SmoothParseError::UnexpectedEof),
-        }
-    }
-    Ok(())
-}
+crate::xml_walk::xml_walk_fns!(SmoothParseError);
 
 // ---------------------------------------------------------------------------
 // Unbounded-input caps (remote alloc-DoS defense)
@@ -625,62 +510,6 @@ pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
 // ---------------------------------------------------------------------------
 // Attribute helpers (XML parsing is in the `xml` module)
 // ---------------------------------------------------------------------------
-
-fn attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    attrs
-        .iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v.as_str())
-}
-
-fn attr_owned(attrs: &[(String, String)], key: &str) -> Option<String> {
-    attr(attrs, key).map(String::from)
-}
-
-fn required_attr_owned(
-    attrs: &[(String, String)],
-    key: &'static str,
-    element: &'static str,
-) -> Result<String> {
-    attr(attrs, key)
-        .map(String::from)
-        .ok_or(SmoothParseError::MissingAttribute { element, attr: key })
-}
-
-fn parse_attr<T: FromStr>(
-    attrs: &[(String, String)],
-    key: &'static str,
-    element: &'static str,
-) -> Result<Option<T>> {
-    match attr(attrs, key) {
-        Some(v) => {
-            v.trim()
-                .parse::<T>()
-                .map(Some)
-                .map_err(|_| SmoothParseError::InvalidAttributeValue {
-                    element,
-                    attr: key,
-                    value: v.to_string(),
-                })
-        }
-        None => Ok(None),
-    }
-}
-
-fn required_attr_parse<T: FromStr>(
-    attrs: &[(String, String)],
-    key: &'static str,
-    element: &'static str,
-) -> Result<T> {
-    let v = attr(attrs, key).ok_or(SmoothParseError::MissingAttribute { element, attr: key })?;
-    v.trim()
-        .parse::<T>()
-        .map_err(|_| SmoothParseError::InvalidAttributeValue {
-            element,
-            attr: key,
-            value: v.to_string(),
-        })
-}
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -1179,11 +1008,23 @@ mod tests {
             let skipped = format!(
                 "<SmoothStreamingMedia><Protection><ProtectionHeader>{bad}</ProtectionHeader></Protection></SmoothStreamingMedia>"
             );
-            assert!(SmoothManifest::parse(&skipped).is_err(), "skipped {bad:?}");
+            assert!(
+                matches!(
+                    SmoothManifest::parse(&skipped),
+                    Err(crate::smooth_parse::SmoothParseError::Xml { .. })
+                ),
+                "skipped {bad:?}"
+            );
             let between = format!(
                 "<SmoothStreamingMedia>{bad}<StreamIndex Type=\"video\"/></SmoothStreamingMedia>"
             );
-            assert!(SmoothManifest::parse(&between).is_err(), "between {bad:?}");
+            assert!(
+                matches!(
+                    SmoothManifest::parse(&between),
+                    Err(crate::smooth_parse::SmoothParseError::Xml { .. })
+                ),
+                "between {bad:?}"
+            );
         }
     }
 
@@ -1372,12 +1213,18 @@ mod tests {
 
     #[test]
     fn hex_decode_rejects_odd_length() {
-        assert!(hex_decode("ABC").is_err());
+        assert!(matches!(
+            hex_decode("ABC"),
+            Err(crate::smooth_parse::SmoothParseError::InvalidHex { .. })
+        ));
     }
 
     #[test]
     fn hex_decode_rejects_non_hex() {
-        assert!(hex_decode("ZZ").is_err());
+        assert!(matches!(
+            hex_decode("ZZ"),
+            Err(crate::smooth_parse::SmoothParseError::InvalidHex { .. })
+        ));
     }
 
     #[test]
@@ -1939,10 +1786,10 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        assert!(
-            track_spec_from_quality_level(TrackId::new(3), 1000, StreamType::Text, &quality)
-                .is_err()
-        );
+        assert!(matches!(
+            track_spec_from_quality_level(TrackId::new(3), 1000, StreamType::Text, &quality),
+            Err(crate::error::Error::UnsupportedCodec { .. })
+        ));
     }
 
     #[test]
@@ -1960,9 +1807,9 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        assert!(
-            track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality)
-                .is_err()
-        );
+        assert!(matches!(
+            track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
     }
 }

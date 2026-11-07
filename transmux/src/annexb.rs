@@ -122,7 +122,6 @@ impl<'a> Iterator for AnnexBNalIter<'a> {
             while let Some((&0, rest)) = slice.split_last() {
                 slice = rest;
             }
-            // Skip degenerate empty NALs (e.g. consecutive start codes).
             if slice.is_empty() {
                 continue;
             }
@@ -372,7 +371,10 @@ mod tests {
     fn length_prefixed_rejects_overrun() {
         // Declares a 99-byte NAL in a 6-byte buffer.
         let lp = [0x00, 0x00, 0x00, 0x63, 0xAA, 0xBB];
-        assert!(iter_length_prefixed_nals(&lp).is_err());
+        assert!(matches!(
+            iter_length_prefixed_nals(&lp),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     /// A maximal (`0xFFFFFFFF`) declared NAL length must be rejected cleanly,
@@ -399,7 +401,10 @@ mod tests {
             0x00, 0x00, 0x00, 0x01, 0x67, // one 1-byte NAL
             0xFF, 0xFF, 0xFF, 0xFF, 0xAA, // then a maximal length prefix
         ];
-        assert!(iter_length_prefixed_nals(&lp).is_err());
+        assert!(matches!(
+            iter_length_prefixed_nals(&lp),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
     }
 
     /// r04-W4: a long run of back-to-back start codes (all empty NALs) must be
@@ -485,12 +490,24 @@ mod tests {
     /// declared length past the buffer are each `Err`, never a panic.
     #[test]
     fn normalise_rejects_hostile_input() {
-        assert!(normalise_nal_length_size(&[0x00], 0).is_err());
-        assert!(normalise_nal_length_size(&[0x00], 5).is_err());
+        assert!(matches!(
+            normalise_nal_length_size(&[0x00], 0),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            normalise_nal_length_size(&[0x00], 5),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         // Truncated 2-byte prefix (a lone byte).
-        assert!(normalise_nal_length_size(&[0x00], 2).is_err());
+        assert!(matches!(
+            normalise_nal_length_size(&[0x00], 2),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         // Declared length 0xFFFF far past the buffer.
-        assert!(normalise_nal_length_size(&[0xFF, 0xFF, 0xAA], 2).is_err());
+        assert!(matches!(
+            normalise_nal_length_size(&[0xFF, 0xFF, 0xAA], 2),
+            Err(crate::error::Error::BufferTooShort { .. })
+        ));
         // A zero-length NAL is legal framing (an empty NAL), not an error.
         let out = normalise_nal_length_size(&[0x00, 0x00], 2).unwrap();
         assert_eq!(out, [0x00, 0x00, 0x00, 0x00]);
@@ -500,9 +517,18 @@ mod tests {
     /// by §5.3.3).
     #[test]
     fn iter_length_prefixed_with_rejects_bad_size() {
-        assert!(iter_length_prefixed_nals_with(&[0x00], 0).is_err());
-        assert!(iter_length_prefixed_nals_with(&[0x00], 3).is_err());
-        assert!(iter_length_prefixed_nals_with(&[0x00], 5).is_err());
+        assert!(matches!(
+            iter_length_prefixed_nals_with(&[0x00], 0),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            iter_length_prefixed_nals_with(&[0x00], 3),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            iter_length_prefixed_nals_with(&[0x00], 5),
+            Err(crate::error::Error::InvalidValue { .. })
+        ));
         // The three defined sizes are all accepted.
         for size in VALID_NAL_LENGTH_SIZES {
             assert!(iter_length_prefixed_nals_with(&[], size).is_ok());

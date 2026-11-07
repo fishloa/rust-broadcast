@@ -114,7 +114,6 @@ impl XmlSubtitleSampleEntry {
         let (schema_location, pos) = parse_cstring(body, pos)?;
         let (auxiliary_mime_types, mut pos) = parse_cstring(body, pos)?;
 
-        // Collect optional trailing boxes verbatim
         let mut extra_boxes = Vec::new();
         while pos + BOX_HDR <= body.len() {
             let sz = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]])
@@ -765,7 +764,6 @@ impl WvttSampleEntry {
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
 
-        // Walk child boxes in body[8..]
         let mut pos = 8usize;
         let mut config: Option<WebVttConfigurationBox> = None;
         let mut extra_boxes: Vec<crate::init_segment::OpaqueBox> = Vec::new();

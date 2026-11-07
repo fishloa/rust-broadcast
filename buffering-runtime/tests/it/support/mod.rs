@@ -7,9 +7,8 @@
 //! is the PCR minus a constant `offset_ticks` (the traces carry PCR only).
 #![allow(dead_code)]
 
-use buffering_runtime::{
-    BufferController, ControllerConfig, Event, Hint, State, WRAP_27MHZ, pts90k_to_27mhz,
-};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, State, pts90k_to_27mhz};
 use std::path::Path;
 
 pub const TICKS_PER_US: u64 = 27;
@@ -47,9 +46,9 @@ pub fn load_trace(path: &Path) -> Vec<Chunk> {
     v
 }
 
-/// `(a + delta) mod WRAP_27MHZ` for a signed delta.
+/// `(a + delta) mod PCR_WRAP_27MHZ` for a signed delta.
 pub fn shift27(a: u64, delta: i64) -> u64 {
-    (i128::from(a) + i128::from(delta)).rem_euclid(i128::from(WRAP_27MHZ)) as u64
+    (i128::from(a) + i128::from(delta)).rem_euclid(i128::from(PCR_WRAP_27MHZ)) as u64
 }
 
 #[derive(Clone)]
@@ -130,7 +129,7 @@ struct Renderer {
 impl Renderer {
     fn pos(&self, now: u64) -> u64 {
         if self.running {
-            (self.clock + (now - self.t_set) * TICKS_PER_US) % WRAP_27MHZ
+            (self.clock + (now - self.t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ
         } else {
             self.clock
         }

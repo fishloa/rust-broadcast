@@ -786,7 +786,6 @@ fn fragment_fu_a(
         }
         // Marker set only on the last fragment of the AU's last NAL.
         let marker = is_end && au_is_last_nal;
-        // Build the RTP + FU header (14 bytes, small and owned).
         let rtp_hdr = rtp_header(pt, marker, seq.next(), timestamp, ssrc);
         let mut header_buf = bytes::BytesMut::with_capacity(rtp_hdr.len() + 2);
         header_buf.extend_from_slice(&rtp_hdr);

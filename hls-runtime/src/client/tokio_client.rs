@@ -228,20 +228,6 @@ impl TokioClientConfig {
         self
     }
 
-    /// Set [`Self::connect_timeout`].
-    #[must_use]
-    pub fn with_connect_timeout(mut self, d: Duration) -> Self {
-        self.connect_timeout = d;
-        self
-    }
-
-    /// Set [`Self::max_body_bytes`].
-    #[must_use]
-    pub fn with_max_body_bytes(mut self, limit: usize) -> Self {
-        self.max_body_bytes = limit;
-        self
-    }
-
     /// Set [`Self::jitter`].
     #[must_use]
     pub fn with_jitter(mut self, on: bool) -> Self {

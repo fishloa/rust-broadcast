@@ -10,7 +10,8 @@
 //! cargo run -p buffering-runtime --example live_loop
 //! ```
 
-use buffering_runtime::{BufferController, ControllerConfig, Event, WRAP_27MHZ, pts90k_to_27mhz};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use buffering_runtime::{BufferController, ControllerConfig, Event, pts90k_to_27mhz};
 
 const TICK_US: u64 = 50_000; // recommended tick period
 const CHUNK_US: u64 = 35_000; // one PCR chunk every 35 ms
@@ -28,7 +29,7 @@ struct MockRenderer {
 impl MockRenderer {
     fn position(&self, now: u64) -> u64 {
         if self.running {
-            (self.clock + (now - self.set_at) * TICKS_PER_US) % WRAP_27MHZ
+            (self.clock + (now - self.set_at) * TICKS_PER_US) % PCR_WRAP_27MHZ
         } else {
             self.clock
         }
@@ -89,7 +90,7 @@ fn main() {
             }
             next_tick += TICK_US;
         }
-        let pcr = (media_us * TICKS_PER_US + 27_000_000) % WRAP_27MHZ;
+        let pcr = (media_us * TICKS_PER_US + 27_000_000) % PCR_WRAP_27MHZ;
         let pts = (media_us * 90 / 1000).saturating_sub(pts_offset_90k) + 90_000;
         c.on_chunk(arrival, 1316, Some(pcr));
         c.on_media(arrival, pts90k_to_27mhz(pts));

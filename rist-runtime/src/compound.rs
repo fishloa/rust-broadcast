@@ -78,9 +78,7 @@ fn peek_total_len(bytes: &[u8]) -> Result<usize> {
     // `bytes` is the *rest of the compound* when walking, so a sub-packet is
     // valid as long as the compound has at least its minimum content (the
     // 4-byte common header); the exact fit is enforced per-type afterwards
-    // (typed parsers require their own full length, and the walk's final
-    // `TrailingData`/`MissingCname` checks reject malformed compounds whose
-    // lengths do not add up).
+    // (typed parsers require their own full length).
     if bytes.len() < total {
         return Err(Error::BufferTooShort {
             need: total,

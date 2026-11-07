@@ -465,16 +465,28 @@ mod tests {
     /// A `tfdt` above `i64::MAX` is rejected, not wrapped.
     #[test]
     fn hostile_tfdt_is_rejected() {
-        assert!(tfdt_as_i64(u64::MAX).is_err());
+        assert!(matches!(
+            tfdt_as_i64(u64::MAX),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
         assert_eq!(tfdt_as_i64(5).unwrap(), 5);
     }
 
     /// Decode-time arithmetic is checked, not wrapping.
     #[test]
     fn dts_arithmetic_is_checked() {
-        assert!(add_duration(i64::MAX, 1).is_err());
-        assert!(add_offset(i64::MAX, 1).is_err());
-        assert!(add_offset(i64::MIN, -1).is_err());
+        assert!(matches!(
+            add_duration(i64::MAX, 1),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
+        assert!(matches!(
+            add_offset(i64::MAX, 1),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
+        assert!(matches!(
+            add_offset(i64::MIN, -1),
+            Err(crate::error::Error::InvalidInput(..))
+        ));
         assert_eq!(add_duration(10, 3).unwrap(), 13);
         assert_eq!(add_offset(10, -3).unwrap(), 7);
     }

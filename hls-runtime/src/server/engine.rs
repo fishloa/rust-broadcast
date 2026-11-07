@@ -70,8 +70,7 @@
 //! `Trunk`'s four rings. [`HlsOrigin::set_init`] is the (small, honest) side
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
-use super::ids::Generation;
-use media_plane::ids::{PartIndex, SegmentSeq};
+use media_plane::ids::{Generation, PartIndex, SegmentSeq};
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -441,13 +440,6 @@ pub struct ClosedSegment {
 }
 
 impl ClosedSegment {
-    /// The same segment, cut against init generation `generation`.
-    #[must_use]
-    pub fn with_init_generation(mut self, generation: Generation) -> Self {
-        self.init_generation = generation;
-        self
-    }
-
     /// Construct a [`ClosedSegment`] — needed because the type is
     /// `#[non_exhaustive]` (a struct-literal outside this crate does not
     /// typecheck), for a caller building test fixtures over the shape

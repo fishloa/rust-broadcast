@@ -213,7 +213,7 @@ pub mod progressive_demux;
 pub mod ps_demux;
 pub mod rebase;
 pub mod repackage;
-pub mod rtcp;
+pub use rtcp_packet as rtcp;
 pub mod rtmp;
 pub mod rtp;
 pub mod rtp_dts;
@@ -248,6 +248,8 @@ pub mod vp9;
 pub mod vvc_config;
 pub mod webm_demux;
 mod wire_cursor;
+#[cfg(feature = "std")]
+mod xml_walk;
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,

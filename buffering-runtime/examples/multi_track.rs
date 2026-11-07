@@ -6,7 +6,8 @@
 //! (`on_media`, the old behaviour), the other gets both tracks
 //! (`on_track_media`). Run: `cargo run -p buffering-runtime --example multi_track`.
 
-use buffering_runtime::{BufferController, ControllerConfig, Event, WRAP_27MHZ};
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+use buffering_runtime::{BufferController, ControllerConfig, Event};
 
 const STEP_US: u64 = 35_000;
 const VIDEO_AHEAD_US: u64 = 900_000;
@@ -15,7 +16,7 @@ const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 
 fn pos(us: u64) -> u64 {
-    (us * TICKS_PER_US) % WRAP_27MHZ
+    (us * TICKS_PER_US) % PCR_WRAP_27MHZ
 }
 
 fn started(c: &mut BufferController) -> bool {

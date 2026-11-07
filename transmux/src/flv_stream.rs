@@ -919,7 +919,10 @@ mod tests {
         write_tag(&mut out, tag_type::VIDEO, 0, &body);
 
         let mut demux = StreamingFlvDemux::new();
-        assert!(feed_and_drain(&mut demux, &out).is_err());
+        assert!(matches!(
+            feed_and_drain(&mut demux, &out),
+            Err(crate::flv::FlvError::Codec(..))
+        ));
     }
 
     /// Collect every `Sample` for the (single) video track across all

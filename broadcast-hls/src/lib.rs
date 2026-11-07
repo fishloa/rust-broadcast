@@ -5402,7 +5402,10 @@ mod tests {
         for bad in ["nan", "inf", "-inf", "infinity", "1e10", "+3", "-5", ""] {
             let pl = format!("#EXTM3U\n#EXTINF:{bad},\nmain.ts\n");
             assert!(
-                MediaPlaylist::parse(&pl).is_err(),
+                matches!(
+                    MediaPlaylist::parse(&pl),
+                    Err(crate::error::Error::HlsParse { .. })
+                ),
                 "EXTINF:{bad} must be rejected"
             );
         }
@@ -5410,7 +5413,10 @@ mod tests {
         for bad in ["nan", "inf", "1e5"] {
             let pl = format!("#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-START:TIME-OFFSET={bad}\n");
             assert!(
-                MediaPlaylist::parse(&pl).is_err(),
+                matches!(
+                    MediaPlaylist::parse(&pl),
+                    Err(crate::error::Error::HlsParse { .. })
+                ),
                 "TIME-OFFSET={bad} must be rejected"
             );
         }
@@ -5431,7 +5437,10 @@ mod tests {
     fn decimal_seconds_rejects_non_finite_and_negative() {
         for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0] {
             assert!(
-                DecimalSeconds::new(bad).is_err(),
+                matches!(
+                    DecimalSeconds::new(bad),
+                    Err(crate::error::Error::InvalidDecimalSeconds(..))
+                ),
                 "DecimalSeconds::new({bad}) must be rejected"
             );
         }
@@ -5445,7 +5454,10 @@ mod tests {
     fn signed_decimal_seconds_rejects_non_finite_but_allows_negative() {
         for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             assert!(
-                SignedDecimalSeconds::new(bad).is_err(),
+                matches!(
+                    SignedDecimalSeconds::new(bad),
+                    Err(crate::error::Error::InvalidSignedDecimalSeconds(..))
+                ),
                 "SignedDecimalSeconds::new({bad}) must be rejected"
             );
         }

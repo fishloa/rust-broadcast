@@ -77,13 +77,6 @@ impl SkippedTrack {
             track_id: None,
         }
     }
-
-    /// Name the skipped `trak` by its `tkhd.track_ID`.
-    #[must_use]
-    pub fn with_track_id(mut self, track_id: TrackId) -> Self {
-        self.track_id = Some(track_id);
-        self
-    }
 }
 
 /// The media intermediate representation: a set of elementary [`Track`]s.

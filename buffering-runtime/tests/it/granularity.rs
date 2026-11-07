@@ -11,19 +11,20 @@
 //! `burst_us`. Each scenario is mutation-checked (see the comments).
 
 use broadcast_common::clock33::PCR_HZ;
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use buffering_runtime::{
     BufferController, ConfigField, ControllerConfig, Error, Event, Micros, PolicyConfig, State,
-    Ticks27, WRAP_27MHZ,
+    Ticks27,
 };
 
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = WRAP_27MHZ - 5 * PCR_HZ;
+const BASE: Ticks27 = PCR_WRAP_27MHZ - 5 * PCR_HZ;
 const STEP_US: u64 = 10_000;
 
 fn at(offset_us: u64) -> Ticks27 {
-    (BASE + offset_us * TICKS_PER_US) % WRAP_27MHZ
+    (BASE + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ
 }
 
 /// The rai-3 config: start at the 300 ms floor so the cadence starves it.
@@ -76,7 +77,7 @@ impl Sim {
     }
     fn pos(&self) -> Ticks27 {
         if self.running {
-            (self.clock + (self.t - self.t_set) * TICKS_PER_US) % WRAP_27MHZ
+            (self.clock + (self.t - self.t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ
         } else {
             self.clock
         }

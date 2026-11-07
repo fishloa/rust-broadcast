@@ -295,7 +295,10 @@ fn ll_hls_and_master_durations_reject_non_conformant_decimals() {
                 tmpl.replace("%s", bad)
             );
             assert!(
-                MediaPlaylist::parse(&src).is_err(),
+                matches!(
+                    MediaPlaylist::parse(&src),
+                    Err(broadcast_hls::Error::HlsParse { .. })
+                ),
                 "{} must be rejected",
                 tmpl.replace("%s", bad)
             );
@@ -307,7 +310,10 @@ fn ll_hls_and_master_durations_reject_non_conformant_decimals() {
             "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PART:DURATION={bad},URI=\"p.m4s\"\n#EXTINF:4,\nseg.m4s\n"
         );
         assert!(
-            MediaPlaylist::parse(&src).is_err(),
+            matches!(
+                MediaPlaylist::parse(&src),
+                Err(broadcast_hls::Error::HlsParse { .. })
+            ),
             "EXT-X-PART DURATION={bad} must be rejected"
         );
     }
@@ -315,7 +321,10 @@ fn ll_hls_and_master_durations_reject_non_conformant_decimals() {
     for bad in ["nan", "1e10", "+7", "-7", "1.5"] {
         let src = format!("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={bad}\nv.m3u8\n");
         assert!(
-            MasterPlaylist::parse(&src).is_err(),
+            matches!(
+                MasterPlaylist::parse(&src),
+                Err(broadcast_hls::Error::HlsParse { .. })
+            ),
             "BANDWIDTH={bad} must be rejected"
         );
     }

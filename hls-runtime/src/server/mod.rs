@@ -49,7 +49,6 @@
 //! [`crate::client`] but not `server`.
 
 mod engine;
-mod ids;
 
 pub use engine::{
     AudioRenditionDecl, BlockingQuery, CLOSED_CAPTIONS_GROUP_ID, ClosedCaptionDecl, ClosedSegment,
@@ -59,5 +58,4 @@ pub use engine::{
     validate_audio_renditions, validate_audio_renditions_relaxed,
     validate_closed_caption_overrides, validate_subtitle_renditions,
 };
-pub use ids::Generation;
-pub use media_plane::ids::{PartIndex, SegmentSeq};
+pub use media_plane::ids::{Generation, PartIndex, SegmentSeq};
