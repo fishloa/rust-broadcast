@@ -660,4 +660,85 @@ mod tests {
         h.serialize_into(&mut out).unwrap();
         assert_eq!(&out[..], &bytes[..]);
     }
+
+    fn ext_entry_header(entry: [u8; 6]) -> Vec<u8> {
+        let mut bytes = vec![
+            0x00, 0x00, 0x01, 0xBB, 0x00, 0x0C, 0x80, 0x00, 0x01, 0x04, 0x20, 0xFF,
+        ];
+        bytes.extend_from_slice(&entry);
+        bytes
+    }
+
+    #[test]
+    fn a_bad_stream_id_extension_prefix_is_reported_with_the_offending_byte() {
+        assert_eq!(
+            SystemHeader::parse(&ext_entry_header([0xB7, 0x00, 0x00, 0xB6, 0xC0, 0x00])),
+            Err(Error::BadStreamIdExtensionPrefix(0x00))
+        );
+        assert_eq!(
+            SystemHeader::parse(&ext_entry_header([0xB7, 0xC0, 0x00, 0x11, 0xC0, 0x00])),
+            Err(Error::BadStreamIdExtensionPrefix(0x11))
+        );
+    }
+
+    fn bare_header() -> SystemHeader {
+        let bytes = vec![
+            0x00, 0x00, 0x01, 0xBB, 0x00, 0x06, 0x80, 0x00, 0x01, 0x04, 0x20, 0xFF,
+        ];
+        SystemHeader::parse(&bytes).unwrap()
+    }
+
+    fn serialize_error(h: &SystemHeader) -> Error {
+        let mut out = vec![0u8; h.serialized_len()];
+        h.serialize_into(&mut out).unwrap_err()
+    }
+
+    fn invalid(field: &'static str, reason: &'static str) -> Error {
+        Error::InvalidField(broadcast_common::error::InvalidField { field, reason })
+    }
+
+    #[test]
+    fn a_stream_loop_that_would_not_read_back_is_an_invalid_field() {
+        let bound = |stream_id, stream_id_extension| StdBufferBound {
+            stream_id,
+            stream_id_extension,
+            buffer_bound_scale: false,
+            buffer_size_bound: 1,
+        };
+        let mut h = bare_header();
+        h.std_buffer_bounds = vec![bound(0x7F, None)];
+        assert_eq!(
+            serialize_error(&h),
+            invalid(
+                "system_header.stream_id",
+                "stream_id MSB is 0, so the entry would end the stream loop on parse"
+            )
+        );
+        h.std_buffer_bounds = vec![bound(0xE0, Some(1))];
+        assert_eq!(
+            serialize_error(&h),
+            invalid(
+                "system_header.stream_id_extension",
+                "stream_id_extension requires stream_id 0xB7"
+            )
+        );
+        h.std_buffer_bounds = vec![bound(0xB7, None)];
+        assert_eq!(
+            serialize_error(&h),
+            invalid(
+                "system_header.stream_id",
+                "stream_id 0xB7 requires stream_id_extension"
+            )
+        );
+        h.std_buffer_bounds = Vec::new();
+        h.trailing_reserved = vec![0x80];
+        assert_eq!(
+            serialize_error(&h),
+            invalid(
+                "system_header.trailing_reserved",
+                "first byte has its MSB set, so it would be re-read as a stream-bound entry"
+            )
+        );
+    }
+
 }

@@ -431,4 +431,16 @@ mod tests {
         // Must not panic — result is either Ok or Err.
         let _ = parse_pack(crashing);
     }
+
+    #[test]
+    fn a_truncated_pes_packet_inside_a_pack_is_a_pes_error() {
+        let mut b: Vec<u8> = vec![
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x43, 0x36, 0x3B, 0xF8,
+        ];
+        let pes = [0x00, 0x00, 0x01, 0xE0, 0x00, 0x0A, 0x80];
+        b.extend_from_slice(&pes);
+        let expected = mpeg_pes::PesPacket::parse(&pes).unwrap_err();
+        assert_eq!(parse_pack(&b).unwrap_err(), crate::Error::Pes(expected));
+    }
+
 }
