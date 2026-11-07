@@ -226,7 +226,6 @@ impl ManifestGrouping {
             return Err(IngestError::MpdBaseUrlPresent);
         }
 
-        // Collect effective templates per representation.
         // An AdaptationSet may carry the template on itself (inherited by reps).
         let mut templates: Vec<(String /*rep id*/, SegmentTemplate)> = Vec::new();
         let mut switching_sets: Vec<Vec<String>> = Vec::new();

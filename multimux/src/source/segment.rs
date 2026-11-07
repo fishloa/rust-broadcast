@@ -1286,9 +1286,7 @@ impl ProgramSegmenter {
             "mid-stream track-set change detected — admitting into segmenter"
         );
 
-        // Collect new track specs not yet in the segmenter.
-        // For TS: try add_track on each new track individually.
-        // For fMP4: rebuild below with the complete set.
+        // TS adds each new track individually; fMP4 rebuilds below with the complete set.
         let is_ts = matches!(route_handle.container(), Container::MpegTs);
         let new_specs: Vec<TrackSpec> = if is_ts {
             new_tracks

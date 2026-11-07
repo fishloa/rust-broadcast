@@ -625,9 +625,7 @@ impl CarryOverExtractor {
         pkt[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
         pkt[1..].copy_from_slice(&self.buf[1..NM_UP_SIZE]);
 
-        // Set TEI (Transport Error Indicator, byte 1 bit 7) if CRC-8 check failed
-        // (ISO/IEC 13818-1 §2.4.3.2). This signals to downstream receivers that
-        // this packet is corrupted.
+        // transport_error_indicator (ISO/IEC 13818-1 §2.4.3.2).
         if crc_failed {
             pkt[1] |= TS_TEI_BIT; // Set bit 7 (TEI)
         }
