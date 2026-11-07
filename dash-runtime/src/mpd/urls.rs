@@ -225,10 +225,11 @@ mod urlparam_2016_tests {
 
     #[test]
     fn only_the_2016_urlparam_scheme_is_unsupported() {
-        let mut d = Descriptor::default();
-        d.scheme_id_uri = SCHEME_URLPARAM_2016.into();
-        assert!(is_unsupported_urlparam(&d));
-        d.scheme_id_uri = SCHEME_URLPARAM.into();
-        assert!(!is_unsupported_urlparam(&d));
+        let descriptor = |scheme: &str| Descriptor {
+            scheme_id_uri: scheme.into(),
+            ..Descriptor::default()
+        };
+        assert!(is_unsupported_urlparam(&descriptor(SCHEME_URLPARAM_2016)));
+        assert!(!is_unsupported_urlparam(&descriptor(SCHEME_URLPARAM)));
     }
 }
