@@ -184,3 +184,8 @@ mod vvc;
 mod webm_demux;
 mod webm_demux_unknown_cluster;
 mod xml_escaping;
+mod webm_timestamp_scale;
+mod user_data_t35;
+mod smooth_fragment_inspect;
+mod ac3_syncframe_ranges;
+mod classify_nals;
