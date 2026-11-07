@@ -32,15 +32,8 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
 
-    if region.len() < FLV_HEADER_LEN {
-        // Shorter than the 9-byte header the field checks need -> undecided.
-        if !crate::prefix_agrees(region, 0, &FLV_SIGNATURE) {
-            return Outcome::None;
-        }
-        return Outcome::Insufficient(FLV_HEADER_LEN);
-    }
-    if region[..FLV_SIGNATURE.len()] != FLV_SIGNATURE {
-        return Outcome::None;
+    if let Some(outcome) = crate::signature_gate(region, &FLV_SIGNATURE, FLV_HEADER_LEN) {
+        return outcome;
     }
 
     // Reserved bits in TypeFlags must be clear.

@@ -14,17 +14,10 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     debug_assert!(limit <= data.len(), "harness caps limit at data.len()");
     let region = &data[..limit];
 
-    if region.len() < OGG_CAPTURE_PATTERN.len() {
-        // Shorter than the 4-byte `"OggS"` capture pattern: a truncated Ogg
-        // read a few bytes at a time ("Ogg") is undecided (`Insufficient`),
-        // not `Unknown`.
-        if !crate::prefix_agrees(region, 0, &OGG_CAPTURE_PATTERN) {
-            return Outcome::None;
-        }
-        return Outcome::Insufficient(OGG_CAPTURE_PATTERN.len());
-    }
-    if region[..OGG_CAPTURE_PATTERN.len()] != OGG_CAPTURE_PATTERN {
-        return Outcome::None;
+    if let Some(outcome) =
+        crate::signature_gate(region, &OGG_CAPTURE_PATTERN, OGG_CAPTURE_PATTERN.len())
+    {
+        return outcome;
     }
 
     Outcome::Match(Evidence {
