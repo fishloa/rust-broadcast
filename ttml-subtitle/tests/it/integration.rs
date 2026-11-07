@@ -1101,3 +1101,35 @@ fn resources_font_and_source_round_trip() {
     let out = doc.to_xml();
     assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }
+
+#[test]
+fn validate_to_result_is_ok_for_a_valid_document_and_names_violations_otherwise() {
+    let xml = load_fixture("imsc1-document-example-822.ttml");
+    let doc = Document::parse_str(&xml).unwrap();
+    let text = validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_0);
+    text.validate_to_result(&doc).unwrap();
+
+    let bad = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xml:lang="en" xmlns="http://www.w3.org/ns/ttml"
+   xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+   xmlns:tts="http://www.w3.org/ns/ttml#styling"
+   ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text">
+  <head>
+    <layout>
+      <region xml:id="r1" tts:extent="10% 10%" tts:origin="0% 0%"/>
+      <region xml:id="r2" tts:extent="10% 10%" tts:origin="20% 0%"/>
+      <region xml:id="r3" tts:extent="10% 10%" tts:origin="40% 0%"/>
+      <region xml:id="r4" tts:extent="10% 10%" tts:origin="60% 0%"/>
+      <region xml:id="r5" tts:extent="10% 10%" tts:origin="80% 0%"/>
+    </layout>
+  </head>
+  <body><div><p region="r1" begin="0s" end="1s">R1</p></div></body>
+</tt>"#;
+    let doc = Document::parse_str(bad).unwrap();
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    match validator.validate_to_result(&doc) {
+        Err(Error::Validation(msg)) => assert!(msg.contains("7.12.1.3"), "{msg}"),
+        other => panic!("expected Error::Validation, got {other:?}"),
+    }
+}

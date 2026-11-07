@@ -7,7 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `validate_to_result`.
 - `Error::UnexpectedElement`, `Error::ProhibitedElement`, `Error::ProhibitedAttribute` and `Error::Serialize`: never constructed. Foreign elements are preserved and profile violations are reported as validation findings, not errors.
 - The `serde` feature and the `serde` dependency: nothing in the crate used them.
 ### Changed

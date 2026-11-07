@@ -46,6 +46,7 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::document::{self, *};
+use crate::error::Error;
 
 /// Which IMSC profile version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +136,22 @@ impl Validator {
         ValidationResult {
             valid: self.errors.is_empty(),
             errors: self.errors,
+        }
+    }
+
+    /// Convenience: validate and return `Result<(), Error>` with all violations
+    /// concatenated into one error if any exist.
+    pub fn validate_to_result(self, doc: &Document) -> Result<(), Error> {
+        let result = self.validate(doc);
+        if result.valid {
+            Ok(())
+        } else {
+            let messages: Vec<String> = result
+                .errors
+                .iter()
+                .map(|e| format!("{}: {}", e.constraint, e.detail))
+                .collect();
+            Err(Error::Validation(messages.join("; ")))
         }
     }
 
