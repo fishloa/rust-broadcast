@@ -255,7 +255,8 @@ impl TsbpdScheduler {
 
     /// The current `TsbpdTimeBase` in microseconds (rule 12; moved by the
     /// drift tracer past [`DRIFT_MAX_US`]).
-    pub fn time_base_us(&self) -> i64 {
+    #[cfg(test)]
+    pub(crate) fn time_base_us(&self) -> i64 {
         self.tsbpd_time_base
     }
 

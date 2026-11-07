@@ -123,7 +123,8 @@ impl AdBreakDecision {
     }
 
     /// Build a decision for an asset-list (`X-ASSET-LIST`) interstitial.
-    pub fn asset_list(id: impl Into<String>, list_uri: impl Into<String>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn asset_list(id: impl Into<String>, list_uri: impl Into<String>) -> Self {
         AdBreakDecision {
             id: id.into(),
             asset: AssetSource::List(list_uri.into()),

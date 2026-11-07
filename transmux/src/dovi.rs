@@ -557,24 +557,6 @@ fn descriptor_bodies(es_info: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {
     })
 }
 
-/// Build the ES_info bytes for a descriptor (tag + length + body).
-pub fn video_stream_descriptor_bytes(d: &DoviVideoStreamDescriptor) -> Result<Vec<u8>> {
-    let body = d.try_to_bytes()?;
-    let mut out = Vec::with_capacity(2 + body.len());
-    out.push(DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
-    out.push(
-        broadcast_common::len::fit_u8(body.len(), "descriptor_length").map_err(|_| {
-            invalid(
-                "descriptor_length",
-                body.len() as u64,
-                "does not fit 8 bits",
-            )
-        })?,
-    );
-    out.extend_from_slice(&body);
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

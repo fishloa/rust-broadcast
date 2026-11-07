@@ -186,12 +186,6 @@ impl Serialize for MHADecoderConfigurationRecord {
 // MhaC box (MHAConfigurationBox body — record only, without the box header)
 // ---------------------------------------------------------------------------
 
-/// The body of an `mhaC` box (`MHAConfigurationBox`) — ISO/IEC 23008-3 §20.
-///
-/// Serialises/parses only the record bytes; the 8-byte box header (`size` +
-/// `'mhaC'`) is added by the caller via [`crate::init_segment::OpaqueBox`].
-pub type MhaCBox = MHADecoderConfigurationRecord;
-
 // ---------------------------------------------------------------------------
 // MHAS packet framing (MPEG-2 TS carriage — issue #579)
 // ---------------------------------------------------------------------------

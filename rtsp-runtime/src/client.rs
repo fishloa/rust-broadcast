@@ -277,7 +277,8 @@ impl ClientSession {
 
     /// Total number of `Session` warnings recorded, including ones that have
     /// since been dropped from [`session_warnings`](Self::session_warnings).
-    pub fn session_warning_count(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn session_warning_count(&self) -> usize {
         self.session_warning_total
     }
 

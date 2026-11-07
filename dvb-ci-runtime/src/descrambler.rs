@@ -299,11 +299,6 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
     pub fn ci(&self) -> &C {
         &self.ci
     }
-
-    /// Mutably borrow the data-plane [`CiDataDevice`].
-    pub fn ci_mut(&mut self) -> &mut C {
-        &mut self.ci
-    }
 }
 
 #[cfg(test)]

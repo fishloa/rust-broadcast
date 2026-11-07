@@ -2,10 +2,7 @@
 //! wrapped by H.264/H.265 T.35 SEI payloads and by MPEG-2 picture
 //! `user_data()` (ETSI TS 101 154 Annex B, SMPTE ST 2016-1).
 
-use crate::ir::{ActiveFormatDescription, BarData, UserDataCarriage};
-use crate::nal::NalCodec;
-use crate::nal::sei_messages;
-use alloc::vec::Vec;
+use crate::ir::{ActiveFormatDescription, BarData};
 
 /// `user_identifier` of `afd_data()` (TS 101 154 Table B.1).
 pub const DTG1_USER_IDENTIFIER: u32 = 0x4454_4731;
@@ -25,9 +22,6 @@ pub const AFD_CODE_MASK: u8 = 0x0F;
 pub const T35_HEADER_LEN: usize = 7;
 /// Bytes of a `user_identifier`.
 pub const USER_IDENTIFIER_LEN: usize = 4;
-/// Shortest a `bar_data()` message tail can be: `user_data_type_code` (1) +
-/// the flags byte (1). Bar values follow when a flag is set.
-pub const MIN_BAR_DATA_LEN: usize = 2;
 /// A bar value is a 14-bit line / pixel number (TS 101 154 Table B.7:
 /// `marker_bits` `'11'` then `u(14)`).
 const BAR_VALUE_MASK: u16 = 0x3FFF;
@@ -148,73 +142,4 @@ pub fn bar_data_from_ga94_payload(payload: &[u8]) -> Option<BarData> {
         bd.right_bar_start_pixel = value(&mut pos);
     }
     Some(bd)
-}
-
-/// Parse all T.35 SEI messages in an Annex B access unit.
-pub fn picture_user_data(codec: NalCodec, au: &[u8]) -> PictureUserData {
-    let mut out = PictureUserData::default();
-    let mut afd_seen = false;
-    let mut bar_seen = false;
-    let nals: Vec<&[u8]> = crate::annexb::iter_annexb_nals(au).collect();
-    // If no Annex B start codes, treat whole input as one NAL.
-    let nals = if nals.is_empty() {
-        alloc::vec![au]
-    } else {
-        nals
-    };
-    for nal in nals {
-        let sei_nal = match codec {
-            NalCodec::Avc => crate::nal::nal_unit_type(codec, nal) == Some(6),
-            NalCodec::Hevc => {
-                let t = crate::nal::nal_unit_type(codec, nal);
-                t == Some(39) // prefix only
-            }
-            _ => false,
-        };
-        if !sei_nal {
-            continue;
-        }
-        let body = match codec {
-            NalCodec::Avc => &nal[1..],
-            NalCodec::Hevc => &nal[2..],
-            _ => continue,
-        };
-        for (pt, payload) in sei_messages(body) {
-            if pt != SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35 {
-                continue;
-            }
-            if !afd_seen && let Some(afd) = afd_from_t35_payload(&payload) {
-                out.afd_present = true;
-                out.afd = afd;
-                afd_seen = true;
-            }
-            if !bar_seen && let Some(bd) = bar_data_from_t35_payload(&payload) {
-                // bar message present even if all flags zero; mark present
-                out.bar_present = true;
-                out.bar_data = Some(bd);
-                bar_seen = true;
-            }
-        }
-    }
-    // If bar message had all-zero flags, we still marked present with all None.
-    // Normalize: bar_present should reflect whether a bar_data message was seen.
-    // (already set)
-    if out.bar_present && out.bar_data.is_none() {
-        out.bar_data = Some(BarData {
-            top_bar_end_line: None,
-            bottom_bar_start_line: None,
-            left_bar_end_pixel: None,
-            right_bar_start_pixel: None,
-        });
-    }
-    out
-}
-
-/// Carriage for a codec.
-pub fn carriage_for(codec: NalCodec) -> UserDataCarriage {
-    match codec {
-        NalCodec::Avc => UserDataCarriage::AvcSei,
-        NalCodec::Hevc => UserDataCarriage::HevcPrefixSei,
-        _ => UserDataCarriage::Mpeg2PictureUserData,
-    }
 }

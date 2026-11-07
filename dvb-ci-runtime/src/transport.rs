@@ -188,14 +188,6 @@ impl Transport {
         }
     }
 
-    /// Override the poll interval / reply timeout.
-    #[must_use]
-    pub fn with_timing(mut self, poll: Duration, reply: Duration) -> Self {
-        self.poll_interval = poll;
-        self.reply_timeout = reply;
-        self
-    }
-
     /// Current connection state.
     #[must_use]
     pub fn state(&self) -> TcState {

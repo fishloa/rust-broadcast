@@ -45,9 +45,6 @@ pub const SIZE_INDICATES_LARGESIZE: u32 = 1;
 /// The special size value `0` indicating the box runs to the end of the file (§4.2).
 pub const SIZE_TO_EOF: u32 = 0;
 
-/// The four-CC value for extended-type (`uuid`) boxes (§4.2).
-pub const UUID_TYPE_BYTES: [u8; 4] = *b"uuid";
-
 /// Size of the fixed-size Box header fields: `size`(32) + `type`(32) = 8 bytes.
 pub const BOX_HEADER_MIN_SIZE: usize = 8;
 

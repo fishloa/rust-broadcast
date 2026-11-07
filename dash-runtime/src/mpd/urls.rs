@@ -9,7 +9,7 @@
 
 use url::Url;
 
-use super::descriptors::{SCHEME_URLPARAM, SCHEME_URLPARAM_2016};
+use super::descriptors::SCHEME_URLPARAM;
 use super::model::{AdaptationSet, BaseUrl, Descriptor, Mpd, Period, Representation, UrlQueryInfo};
 use crate::limits::MAX_BASE_CANDIDATES;
 
@@ -211,10 +211,4 @@ pub fn append_query(url: &str, query: &str) -> String {
         out.push_str(f);
     }
     out
-}
-
-/// Whether `descriptor` is the 2016 urlparam scheme (never understood).
-#[must_use]
-pub fn is_unsupported_urlparam(descriptor: &Descriptor) -> bool {
-    descriptor.scheme_id_uri == SCHEME_URLPARAM_2016
 }

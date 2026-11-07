@@ -58,10 +58,6 @@ pub const DEFAULT_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 /// requests want.
 pub const DEFAULT_BLOCKING_RELOAD_DIVISOR: usize = 4;
 
-/// `Retry-After` (RFC 9110 §10.2.3) sent with a shed `503`, in seconds. One
-/// second: retry soon, but not immediately, or the shed becomes a hot loop.
-pub const RETRY_AFTER_SECS: u32 = 1;
-
 /// The `Retry-After` value as a static header value.
 const RETRY_AFTER: axum::http::HeaderValue = axum::http::HeaderValue::from_static("1");
 

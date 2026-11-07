@@ -34,13 +34,6 @@ pub const LAVC_FOURCC: [u8; 4] = *b"lavc";
 pub const AVS3_FOURCC: [u8; 4] = *b"avs3";
 /// FourCC of the LAVS3 sample entry.
 pub const LAV3_FOURCC: [u8; 4] = *b"lav3";
-/// FourCC of the temporal-level sample group.
-pub const TELG_FOURCC: [u8; 4] = *b"telg";
-/// FourCC of the library random access point sample group.
-pub const LRAP_FOURCC: [u8; 4] = *b"lrap";
-/// FourCC of the library picture sample group.
-pub const A3LG_FOURCC: [u8; 4] = *b"a3lg";
-
 const BOX_HDR: usize = 8;
 const CONFIGURATION_VERSION: u8 = 1;
 const RESERVED6_ONES: u8 = 0x3F;
@@ -485,8 +478,8 @@ impl AvsVideoEntryKind {
         match self {
             Self::Avs3 => AVS3_FOURCC,
             Self::LAvs3 => LAV3_FOURCC,
-            Self::Avs2 => *b"avst",
-            Self::LAvs2 => *b"lav2",
+            Self::Avs2 => crate::avs2::AVST_FOURCC,
+            Self::LAvs2 => crate::avs2::LAV2_FOURCC,
         }
     }
 
@@ -496,8 +489,8 @@ impl AvsVideoEntryKind {
         match self {
             Self::Avs3 => AV3C_FOURCC,
             Self::LAvs3 => LAVC_FOURCC,
-            Self::Avs2 => *b"av2c",
-            Self::LAvs2 => *b"la2c",
+            Self::Avs2 => crate::avs2::AV2C_FOURCC,
+            Self::LAvs2 => crate::avs2::LA2C_FOURCC,
         }
     }
 

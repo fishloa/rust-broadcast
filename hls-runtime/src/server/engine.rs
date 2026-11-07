@@ -440,13 +440,6 @@ pub struct ClosedSegment {
 }
 
 impl ClosedSegment {
-    /// The same segment, cut against init generation `generation`.
-    #[must_use]
-    pub fn with_init_generation(mut self, generation: Generation) -> Self {
-        self.init_generation = generation;
-        self
-    }
-
     /// Construct a [`ClosedSegment`] — needed because the type is
     /// `#[non_exhaustive]` (a struct-literal outside this crate does not
     /// typecheck), for a caller building test fixtures over the shape

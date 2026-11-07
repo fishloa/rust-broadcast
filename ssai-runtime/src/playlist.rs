@@ -309,7 +309,8 @@ impl SessionPlaylistBase {
     }
 
     /// The viewer-independent playlist text (no break).
-    pub fn render_plain(&self) -> String {
+    #[cfg(test)]
+    pub(crate) fn render_plain(&self) -> String {
         let mut out = String::with_capacity(self.head.len() + self.tail.len());
         out.push_str(&self.head);
         out.push_str(&self.tail);

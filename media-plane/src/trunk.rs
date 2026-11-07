@@ -1737,7 +1737,8 @@ impl Trunk {
 
     /// Diagnostic: entries currently resident in the `Sparse` ring. Never
     /// exceeds [`TrunkConfig::sparse_capacity`].
-    pub fn sparse_len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn sparse_len(&self) -> usize {
         self.lock_state().sparse.entries.len()
     }
 
@@ -1931,7 +1932,8 @@ impl Trunk {
 
     /// Diagnostic: entries currently resident in the event log. Never
     /// exceeds [`TrunkConfig::event_capacity`].
-    pub fn event_len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn event_len(&self) -> usize {
         self.lock_state().events.entries.len()
     }
 

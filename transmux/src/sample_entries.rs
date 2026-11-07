@@ -399,7 +399,8 @@ impl AVCSampleEntry {
     }
 
     /// Create a new avc3 sample entry.
-    pub fn new_avc3(config: AVCDecoderConfigurationRecord) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new_avc3(config: AVCDecoderConfigurationRecord) -> Self {
         let mut s = Self::new_avc1(config);
         s.codec_type = *b"avc3";
         s
@@ -665,7 +666,8 @@ impl HEVCSampleEntry {
     }
 
     /// Create a new hev1 sample entry.
-    pub fn new_hev1(config: HEVCDecoderConfigurationRecord) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new_hev1(config: HEVCDecoderConfigurationRecord) -> Self {
         let mut s = Self::new_hvc1(config);
         s.codec_type = *b"hev1";
         s
@@ -784,13 +786,6 @@ impl VVCSampleEntry {
             config,
             extra_boxes: Vec::new(),
         }
-    }
-
-    /// Create a new `vvi1` sample entry (in-band parameter sets).
-    pub fn new_vvi1(config: crate::vvc_config::VvcConfigurationBox) -> Self {
-        let mut s = Self::new_vvc1(config);
-        s.codec_type = *b"vvi1";
-        s
     }
 }
 

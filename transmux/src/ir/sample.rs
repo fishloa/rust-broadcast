@@ -41,9 +41,6 @@ pub struct SampleFlags {
 impl SampleFlags {
     /// A sync sample (random-access point / keyframe).
     pub const SYNC: SampleFlags = SampleFlags { is_sync: true };
-    /// A non-sync sample.
-    pub const NON_SYNC: SampleFlags = SampleFlags { is_sync: false };
-
     /// `SampleFlags` for the given sync-sample state.
     pub fn new(is_sync: bool) -> Self {
         Self { is_sync }

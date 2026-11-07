@@ -244,7 +244,8 @@ impl HdrStaticMetadata {
     }
 
     /// Whether a prefix SEI NAL unit carries either HDR static message.
-    pub fn hevc_sei_nal_carries_hdr(nal: &[u8]) -> bool {
+    #[cfg(test)]
+    pub(crate) fn hevc_sei_nal_carries_hdr(nal: &[u8]) -> bool {
         let mut m = Self::default();
         m.absorb_hevc_sei_nal(nal);
         !m.is_empty()

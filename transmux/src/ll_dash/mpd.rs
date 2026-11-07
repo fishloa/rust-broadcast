@@ -59,22 +59,6 @@ pub struct LlDashPackager {
 /// `urn:mpeg:dash:utc:http-head:2014` (ISO/IEC 23009-1 §5.8.4.11, Table 30): the
 /// `@value` is an HTTP(S) URL whose response `Date:` header carries the time.
 pub const UTCTIMING_HTTP_HEAD_2014: &str = "urn:mpeg:dash:utc:http-head:2014";
-/// `urn:mpeg:dash:utc:http-xsdate:2014` (§5.8.4.11): the `@value` URL returns
-/// an XSdate (`YYYY-MM-DDThh:mm:ss[Z]`) body.
-pub const UTCTIMING_HTTP_XSDATE_2014: &str = "urn:mpeg:dash:utc:http-xsdate:2014";
-/// `urn:mpeg:dash:utc:http-iso:2014` (§5.8.4.11): the `@value` URL returns an
-/// ISO 8601 body.
-pub const UTCTIMING_HTTP_ISO_2014: &str = "urn:mpeg:dash:utc:http-iso:2014";
-/// `urn:mpeg:dash:utc:ntp:2014` (§5.8.4.11): the `@value` is one or more NTP
-/// server addresses (space-separated).
-pub const UTCTIMING_NTP_2014: &str = "urn:mpeg:dash:utc:ntp:2014";
-/// `urn:mpeg:dash:utc:http-ntp:2014` (§5.8.4.11): the `@value` URL returns an
-/// NTP timestamp in its body.
-pub const UTCTIMING_HTTP_NTP_2014: &str = "urn:mpeg:dash:utc:http-ntp:2014";
-/// `urn:mpeg:dash:utc:direct:2014` (§5.8.4.11): the `@value` *is* the UTC time,
-/// as an XSdate — used when the MPD was generated from a known-good clock.
-pub const UTCTIMING_DIRECT_2014: &str = "urn:mpeg:dash:utc:direct:2014";
-
 impl LlDashPackager {
     /// Build an LL-DASH packager. `availability_start_time` is the wall-clock
     /// `MPD@availabilityStartTime` (ISO-8601 UTC). The `availabilityTimeOffset`

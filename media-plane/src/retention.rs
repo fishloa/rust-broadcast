@@ -393,13 +393,6 @@ impl<S: SegmentSink> RetentionDriver<S> {
         usize::from(self.in_flight.is_some())
     }
 
-    /// Segments currently in the cold ledger (handed off and still inside
-    /// `cold_window`) — a diagnostic, not a capacity: see
-    /// [Bounding the cold tier](self#bounding-the-cold-tier-by-time-not-by-a-second-count-knob).
-    pub fn cold_len(&self) -> usize {
-        self.cold.len()
-    }
-
     /// Resolve where segment `sequence_number` currently is. See
     /// [the module docs](self#does-a-cold-segment-stay-addressable-yes--cold-ask-the-sink)
     /// for the design story; this is the decision table:

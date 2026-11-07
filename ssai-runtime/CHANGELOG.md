@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Changed
+- `AdBreakDecision::asset_list` and `SessionPlaylistBase::render_plain` are now test-only: nothing outside the unit tests used them (c2 TH1).
 
 ## [0.4.0] - 2026-11-01
 
