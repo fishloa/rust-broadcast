@@ -3,6 +3,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::{Rounding, rescale};
 use buffering_runtime::{
     BufferController, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
 };
@@ -92,10 +93,12 @@ const TICKS_PER_SEC_27MHZ: u64 = 27_000_000;
 const PENDING_TRACK_KEY: u32 = u32::MAX;
 
 pub(crate) fn raw_27mhz(pts: i64, timescale: u32) -> i128 {
-    if timescale == 0 {
-        return 0;
-    }
-    i128::from(pts) * i128::from(TICKS_PER_SEC_27MHZ) / i128::from(timescale)
+    rescale(
+        i128::from(pts),
+        timescale,
+        TICKS_PER_SEC_27MHZ,
+        Rounding::TowardZero,
+    )
 }
 
 pub(crate) fn negative_origin(raw: i128) -> i128 {

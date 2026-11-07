@@ -24,6 +24,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use broadcast_common::Timestamp;
+use broadcast_common::timescale::cmp_ticks;
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk};
 use transmux::SegmentMeta;
@@ -260,7 +261,7 @@ impl AudioFollower {
     fn precedes_origin(&self, sample: &Sample) -> bool {
         match (self.origin, sample.dts) {
             (Some((origin, origin_ts)), Some(dts)) => {
-                cmp_time(dts, self.timescale, origin, origin_ts).is_lt()
+                cmp_ticks(dts, self.timescale, origin, origin_ts).is_lt()
             }
             _ => false,
         }
@@ -283,7 +284,7 @@ impl AudioFollower {
 
     fn caught_up(&self, cut: &PartCutReady) -> bool {
         self.newest_dts
-            .is_some_and(|d| cmp_time(d, self.timescale, cut.start_dts, cut.timescale).is_ge())
+            .is_some_and(|d| cmp_ticks(d, self.timescale, cut.start_dts, cut.timescale).is_ge())
     }
 
     /// Applies queued leader boundaries once the audio has reached them, so a
@@ -321,7 +322,7 @@ impl AudioFollower {
         if first {
             for sample in std::mem::take(&mut self.held) {
                 let at_or_after = sample.dts.is_some_and(|d| {
-                    cmp_time(d, self.timescale, cut.start_dts, cut.timescale).is_ge()
+                    cmp_ticks(d, self.timescale, cut.start_dts, cut.timescale).is_ge()
                 });
                 if at_or_after {
                     self.push_now(sample);
@@ -411,10 +412,6 @@ impl AudioFollower {
     fn drain(&mut self) {
         drain_publish_queue(&mut self.writer, &mut self.pending, &mut self.pending_since);
     }
-}
-
-fn cmp_time(a: i64, a_ts: u32, b: i64, b_ts: u32) -> std::cmp::Ordering {
-    (i128::from(a) * i128::from(b_ts)).cmp(&(i128::from(b) * i128::from(a_ts)))
 }
 
 #[cfg(test)]

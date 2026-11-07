@@ -19,6 +19,8 @@ pub enum Rounding {
     Floor,
     /// To the nearest tick, halves away from zero.
     Nearest,
+    /// Toward positive infinity.
+    Ceil,
     /// Toward zero (plain integer division).
     TowardZero,
 }
@@ -28,6 +30,7 @@ impl Rounding {
     pub fn name(&self) -> &'static str {
         match self {
             Rounding::Floor => "floor",
+            Rounding::Ceil => "ceil",
             Rounding::Nearest => "nearest",
             Rounding::TowardZero => "toward zero",
         }
@@ -43,6 +46,14 @@ pub fn rescale(ticks: i128, from: impl Into<u64>, to: impl Into<u64>, rounding: 
     let num = ticks.saturating_mul(i128::from(to.into().max(1)));
     match rounding {
         Rounding::Floor => num.div_euclid(den),
+        Rounding::Ceil => {
+            let floor = num.div_euclid(den);
+            if num.rem_euclid(den) == 0 {
+                floor
+            } else {
+                floor.saturating_add(1)
+            }
+        }
         Rounding::TowardZero => num / den,
         Rounding::Nearest => {
             let half = den / 2;
@@ -53,6 +64,20 @@ pub fn rescale(ticks: i128, from: impl Into<u64>, to: impl Into<u64>, rounding: 
             }
         }
     }
+}
+
+/// Exact comparison of `a / a_ts` with `b / b_ts` seconds, without rounding.
+/// A timescale of `0` counts as `1`, as in [`rescale`].
+#[must_use]
+pub fn cmp_ticks(
+    a: i64,
+    a_ts: impl Into<u64>,
+    b: i64,
+    b_ts: impl Into<u64>,
+) -> core::cmp::Ordering {
+    let a_ts = i128::from(a_ts.into().max(1));
+    let b_ts = i128::from(b_ts.into().max(1));
+    (i128::from(a) * b_ts).cmp(&(i128::from(b) * a_ts))
 }
 
 /// [`rescale`] on `i64` ticks, saturating to the `i64` range.
@@ -135,7 +160,30 @@ mod tests {
     }
 
     #[test]
+    fn ceil_rounds_toward_positive_infinity() {
+        assert_eq!(rescale(3, 2u32, 1u32, Rounding::Ceil), 2);
+        assert_eq!(rescale(4, 2u32, 1u32, Rounding::Ceil), 2);
+        assert_eq!(rescale(-3, 2u32, 1u32, Rounding::Ceil), -1);
+        assert_eq!(rescale(-4, 2u32, 1u32, Rounding::Ceil), -2);
+        assert_eq!(rescale(5, 0u32, 1u32, Rounding::Ceil), 5);
+        assert_eq!(
+            rescale_i64(i64::MAX, 1u32, u32::MAX, Rounding::Ceil),
+            i64::MAX
+        );
+    }
+
+    #[test]
+    fn cmp_ticks_is_exact_across_timescales() {
+        use core::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(cmp_ticks(90_000, 90_000u32, 48_000, 48_000u32), Equal);
+        assert_eq!(cmp_ticks(1, 3u32, 1, 2u32), Less);
+        assert_eq!(cmp_ticks(i64::MAX, 1u32, i64::MAX, 2u32), Greater);
+        assert_eq!(cmp_ticks(5, 0u32, 5, 1u32), Equal);
+    }
+
+    #[test]
     fn labels() {
+        assert_eq!(Rounding::Ceil.to_string(), "ceil");
         assert_eq!(Rounding::Nearest.name(), "nearest");
         assert_eq!(Rounding::TowardZero.to_string(), "toward zero");
     }

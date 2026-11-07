@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use url::Url;
 
 use broadcast_common::clock33::PCR_HZ;
+use broadcast_common::timescale::{Rounding, rescale_u64};
 use transmux::{DemuxEvent, TrackId, TrackSpec};
 use tshttp_runtime::{Config as TsConfig, TsHttpClient};
 
@@ -31,10 +32,7 @@ struct HoldState {
 }
 
 fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
-    if clock_hz == 0 {
-        return ticks;
-    }
-    u64::try_from(u128::from(ticks) * u128::from(PCR_HZ) / u128::from(clock_hz)).unwrap_or(u64::MAX)
+    rescale_u64(ticks, clock_hz, PCR_HZ, Rounding::TowardZero)
 }
 
 /// Adapter around the TS-over-HTTP client.
