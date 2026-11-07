@@ -1349,8 +1349,7 @@ impl ConformanceMonitor {
         };
 
         // validate_crc returns Ok for short-form sections (no CRC to check).
-        if let Err(mpeg_ts::error::Error::CrcMismatch { .. }) = section.validate_crc(section_bytes)
-        {
+        if let Err(mpeg_ts::error::Error::CrcMismatch(..)) = section.validate_crc(section_bytes) {
             self.emit(
                 Indicator::CrcError,
                 Some(pid),
