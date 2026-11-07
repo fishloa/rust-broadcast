@@ -37,19 +37,9 @@ pub enum Error {
         state: SessionState,
     },
 
-    /// A response arrived carrying a `CSeq` that does not match any outstanding
-    /// request.
-    #[error("no pending request for CSeq {0}")]
-    UnknownCSeq(u32),
-
     /// A response arrived with no parseable `CSeq` header.
     #[error("response is missing a CSeq header")]
     MissingCSeq,
-
-    /// An operation required an established session id but none was negotiated
-    /// (no SETUP response has been processed yet).
-    #[error("no session established (SETUP not completed)")]
-    MissingSession,
 
     /// The `Transport` header value could not be parsed per RFC 2326 §12.39.
     #[error("invalid Transport header: {0}")]
@@ -72,10 +62,6 @@ pub enum Error {
     /// could not be parsed, or the digest computation failed (RFC 2326 §14).
     #[error("authentication failure: {0}")]
     Auth(String),
-
-    /// The request required a request URI but none was set.
-    #[error("request URI required but not set")]
-    MissingRequestUri,
 
     /// A socket IO operation failed in the async adapter (feature `tokio`).
     #[error("socket IO error: {0}")]

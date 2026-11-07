@@ -105,11 +105,6 @@ pub enum Error {
     #[error("unexpected packet type inside RIST compound: {0}")]
     UnexpectedPacketType(u8),
 
-    /// A RIST compound packet had bytes left over after its final expected
-    /// sub-packet (TR-06-1:2020 §5.2.1 fixes the compound structure).
-    #[error("unexpected trailing data in RIST compound: {0} byte(s)")]
-    TrailingData(usize),
-
     /// An error from the underlying `rtcp-packet` crate.
     #[error(transparent)]
     Rtcp(#[from] rtcp_packet::Error),
