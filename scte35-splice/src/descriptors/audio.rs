@@ -4,6 +4,7 @@
 //! of per-component language + ATSC A/52 audio attributes.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
@@ -100,12 +101,7 @@ impl Serialize for AudioDescriptor {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         if self.components.len() > 15 {
             return Err(Error::InvalidValue {
                 field: "audio_descriptor.audio_count",

@@ -17,6 +17,7 @@
 use crate::descriptors::header::{self, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for `DVB_DAS_descriptor()` (§5.3.5.16). Shall be
@@ -279,12 +280,7 @@ impl DvbDasDescriptor<'_> {
         order: DasNibbleOrder,
     ) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let body_len = FIXED_BODY_LEN + self.upid.len();
         // `descriptor_length` is a u8 covering `identifier(4) + body_len`.
         // Max allowed body_len = 255 − 4 = 251; a longer upid would make

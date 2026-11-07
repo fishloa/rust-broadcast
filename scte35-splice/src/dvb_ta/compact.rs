@@ -33,6 +33,7 @@
 //! built from the spec table's own widths rather than a third-party oracle.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use crate::dvb_ta::das_descriptor::{DasNibbleOrder, EquivalentSegmentationType};
 use crate::error::{Error, Result};
@@ -145,12 +146,7 @@ impl Serialize for CompactScte35 {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = self.message_type();
         let written = match self {
             Self::TimeSignal(t) => t.serialize_into(&mut buf[1..])?,
@@ -256,12 +252,7 @@ impl Serialize for CompactTimeSignal {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         const WHAT: &str = "compact_time_signal";
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let upid_len = broadcast_common::len::fit_u8(
             self.segmentation_upid.len(),
             "compact_time_signal.segmentation_upid_length",
@@ -516,12 +507,7 @@ impl CompactSpliceInsert {
     ) -> Result<usize> {
         const WHAT: &str = "compact_splice_insert";
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let desc_len = match &self.das {
             Some(das) => Some(broadcast_common::len::fit_u8(
                 3 + das.upid.len(),

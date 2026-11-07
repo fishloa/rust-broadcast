@@ -7,6 +7,7 @@
 //! pattern), so callers never re-derive the 90 kHz scaling by hand.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// One second of the program clock in 90 kHz ticks.
@@ -101,13 +102,7 @@ impl<'a> Parse<'a> for SpliceTime {
         }
         let time_specified = bytes[0] & 0x80 != 0;
         if time_specified {
-            if bytes.len() < Self::LEN_WITH_TIME {
-                return Err(Error::BufferTooShort {
-                    need: Self::LEN_WITH_TIME,
-                    have: bytes.len(),
-                    what: "splice_time pts_time",
-                });
-            }
+            need_in(bytes, Self::LEN_WITH_TIME, "splice_time pts_time")?;
             // 1 bit flag, 6 reserved, then 33 bits of pts_time.
             let pts = ((u64::from(bytes[0] & 0x01)) << 32)
                 | (u64::from(bytes[1]) << 24)
@@ -134,12 +129,7 @@ impl Serialize for SpliceTime {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         match self.pts_time {
             Some(pts) => {
                 if pts > PTS_MAX {
@@ -184,13 +174,7 @@ impl BreakDuration {
 impl<'a> Parse<'a> for BreakDuration {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < Self::LEN {
-            return Err(Error::BufferTooShort {
-                need: Self::LEN,
-                have: bytes.len(),
-                what: "break_duration",
-            });
-        }
+        need_in(bytes, Self::LEN, "break_duration")?;
         let auto_return = bytes[0] & 0x80 != 0;
         let duration = ((u64::from(bytes[0] & 0x01)) << 32)
             | (u64::from(bytes[1]) << 24)
@@ -211,12 +195,7 @@ impl Serialize for BreakDuration {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < Self::LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: Self::LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, Self::LEN)?;
         if self.duration > PTS_MAX {
             return Err(Error::InvalidValue {
                 field: "break_duration.duration",

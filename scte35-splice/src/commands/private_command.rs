@@ -8,6 +8,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::CommandDef;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `splice_command_type` for private_command (§9.6.1, Table 7).
@@ -52,12 +53,7 @@ impl Serialize for PrivateCommand<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0..IDENTIFIER_LEN].copy_from_slice(&self.identifier.to_be_bytes());
         buf[IDENTIFIER_LEN..need].copy_from_slice(self.private_bytes);
         Ok(need)

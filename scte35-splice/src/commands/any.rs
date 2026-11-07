@@ -12,6 +12,7 @@
 //! so a section round-trips byte-for-byte.
 
 use crate::error::Result;
+use broadcast_common::len::need_out;
 
 /// Declares [`AnyCommand`] + its dispatcher from one command-type list.
 macro_rules! declare_commands {
@@ -116,12 +117,7 @@ macro_rules! declare_commands {
                         Self::$variant(c) => c.serialize_into(buf),
                     )+
                     Self::Unknown { body, .. } => {
-                        if buf.len() < body.len() {
-                            return Err(crate::error::Error::OutputBufferTooSmall {
-                                need: body.len(),
-                                have: buf.len(),
-                            });
-                        }
+                        need_out(buf, body.len())?;
                         buf[..body.len()].copy_from_slice(body);
                         Ok(body.len())
                     }

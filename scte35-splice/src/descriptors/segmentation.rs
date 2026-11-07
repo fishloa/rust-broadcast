@@ -18,6 +18,7 @@
 //!   Access via [`SegmentationDescriptor::mid`].
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use super::header::{self, CUEI, HEADER_LEN};
 use super::segmentation_enums::{DeviceRestrictions, SegmentationTypeId, SegmentationUpidType};
@@ -401,12 +402,7 @@ impl Serialize for SegmentationDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         let body_len = self.body_len();
         if body_len + 4 > u8::MAX as usize {
             return Err(Error::InvalidValue {
