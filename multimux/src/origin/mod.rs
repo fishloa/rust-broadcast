@@ -4835,10 +4835,11 @@ mod tests {
         let wait = |secs| Duration::from_secs(secs);
 
         // Nothing published yet: nothing started.
-        assert!(matches!(
-            tokio::time::timeout(Duration::from_millis(100), started_rx.recv()).await,
-            Err(_)
-        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), started_rx.recv())
+                .await
+                .is_err()
+        );
 
         let first = route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         let bound = tokio::time::timeout(wait(10), started_rx.recv())
