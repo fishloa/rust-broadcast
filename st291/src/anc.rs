@@ -512,7 +512,7 @@ fn read_pts(b: &[u8]) -> Result<u64> {
 ///
 /// [`Error::FieldOverflow`] if `pts` exceeds the 33-bit field.
 fn write_pts(pts: u64) -> Result<[u8; 5]> {
-    broadcast_common::len::fit_bits(pts as u64, 33, "PTS")?;
+    broadcast_common::len::fit_bits(pts, 33, "PTS")?;
     Ok(broadcast_common::clock33::pack_marked(pts, PTS_PREFIX))
 }
 
