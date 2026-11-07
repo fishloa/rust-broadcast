@@ -5,6 +5,7 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - BREAKING: error variant `RtmpError::BufferTooShort` now wraps `broadcast_common::error::BufferTooShort` (same `need`/`have`/`what`; the message text is the shared one).
@@ -12,7 +13,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Server and client connection adapters share one private `Driver` and `SessionCodec` over an `RtmpSession` trait; no public API change (c3 R1).
 - Dropped the unused `log` dependency (c2 TH4).
 ### Removed
-- Unused `ServerConfig::with_window_ack_size` and `with_peer_bandwidth` (c2 TH1).
+- BREAKING: Unused `ServerConfig::with_window_ack_size` and `with_peer_bandwidth` (c2 TH1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.8.1] - 2026-11-03
 ### Added

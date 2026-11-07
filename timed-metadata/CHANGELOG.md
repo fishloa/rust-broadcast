@@ -3,14 +3,16 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
 ### Removed
-- The `chrono` feature (on by default) and the `chrono` dependency: nothing in the crate used them.
-- `webvtt::teletext::decode_odd_parity` and `encode_odd_parity` (one-line forwards). Use `broadcast_common::parity::strip_parity` and `broadcast_common::parity::set_odd_parity` (dedupe R3).
+- BREAKING: The `chrono` feature (on by default) and the `chrono` dependency: nothing in the crate used them.
+- BREAKING: `webvtt::teletext::decode_odd_parity` and `encode_odd_parity` (one-line forwards). Use `broadcast_common::parity::strip_parity` and `broadcast_common::parity::set_odd_parity` (dedupe R3).
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `broadcast-hls` 0.5 -> 0.6, `cc-data` 0.7 -> 0.8, `dvb-vbi` 0.5 -> 0.6, `mp4-emsg` 0.5 -> 0.6, `scte35-splice` 4 -> 5. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.8.0] - 2026-11-01
 

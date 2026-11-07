@@ -29,7 +29,7 @@ code. To change a description, edit `crates-index.toml` (or the crate's
 | Parse or write an `.m3u8` playlist | [`broadcast-hls`](#broadcast-hls) | |
 | Encrypt or decrypt CENC/CBCS content | [`transmux`](#transmux) (`cenc` feature) | |
 | Run a live origin: ingest RTSP/SRT/RTMP/TS/HLS and serve LL-HLS/DASH | [`multimux`](#multimux) or the [`multimux-cli`](#multimux-cli) binary | [`media-plane`](#media-plane) if you are building your own |
-| Speak RTSP as a client or server | [`rtsp-runtime`](#rtsp-runtime) | [`rtp-packet`](#rtp-packet), [`rtcp-packet`](#rtcp-packet) |
+| Speak RTSP as a client or server | [`rtsp-runtime`](#rtsp-runtime) | [`rtp-packet`](#rtp-packet) (RTP and its `rtcp` module) |
 | Accept an RTMP publish | [`rtmp-runtime`](#rtmp-runtime) | |
 | Send or receive SRT | [`srt-runtime`](#srt-runtime) | |
 | Pull LL-HLS, or serve it from your own server | [`hls-runtime`](#hls-runtime) | |

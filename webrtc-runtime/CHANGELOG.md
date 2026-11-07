@@ -3,11 +3,14 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
 ### Changed
 - The `media` feature builds on `rtp-packet`'s `rtcp` module instead of the absorbed `rtcp-packet` crate; the types are unchanged.
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The WHIP client and WHEP player share one private `session_common` (request building with origin-bound bearer, trickle/restart/delete PATCH and DELETE, established-response classification); public API unchanged (dedupe D1). The WHIP/WHEP servers differ in state machine and `If-Match` policy and are left separate.
 - The WHIP client and WHEP player share a `SessionCore` (endpoint, bearer token, pending request, request builders, redacting `Debug`) (c2 M3).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `rtp-packet` 0.5 -> 0.6. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.4.1] - 2026-11-01
 ### Added

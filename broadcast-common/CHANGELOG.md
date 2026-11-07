@@ -1,8 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Removed
-- `Timestamp::checked_add_nanos` (deprecated since 9.5.0): use `saturating_add_nanos`.
+- BREAKING: `Timestamp::checked_add_nanos` (deprecated since 9.5.0): use `saturating_add_nanos`.
 ### Added
 - `xml_chars::{XmlWriter, new_writer, write_declaration, start_tag, open_element, empty_element, close_element, write_text, text_element, finish_document}`: the indenting quick-xml writer plumbing `transmux` and `dvb-mabr` each carried a copy of.
 - `xml_chars::{XmlLimits, XmlLimit, LimitExceeded, XmlBudget}` and the `MAX_XML_*` defaults: the shared hostile-input bounds (size, depth, element count, attribute size and count) for the `quick-xml` pull parsers; `dash-runtime` and `transmux` use the same ceilings (#1708).
@@ -18,7 +19,6 @@
 
 ### Changed
 - `Stage::next_deadline`, `Stage::on_deadline` and `Stage::demand` have default bodies (no deadline, nothing to do, `Demand::default()`), so a stage that only reacts to `feed`/`finish` omits them; the trivial overrides in `transmux` are gone (c3 d:G1).
-
 
 ## [10.0.0] - 2026-10-17
 ### Documentation

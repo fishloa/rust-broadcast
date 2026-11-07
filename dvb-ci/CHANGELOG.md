@@ -5,9 +5,10 @@ All notable changes to `dvb-ci` are documented here. The format follows
 versioning.
 
 ## [Unreleased]
+
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `is_minimal`, `retain_caids`.
-- `ci_plus::ca_support::MsCaPmtStream` and `MsCaPmtReplyStream`: the multi-stream `MsCaPmt` and `MsCaPmtReply` now hold `objects::ca_pmt::CaPmtStream` and `objects::ca_pmt_reply::CaPmtReplyStream` (identical fields).
+- BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `is_minimal`, `retain_caids`.
+- BREAKING: `ci_plus::ca_support::MsCaPmtStream` and `MsCaPmtReplyStream`: the multi-stream `MsCaPmt` and `MsCaPmtReply` now hold `objects::ca_pmt::CaPmtStream` and `objects::ca_pmt_reply::CaPmtReplyStream` (identical fields).
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Changed
@@ -18,6 +19,8 @@ versioning.
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `LengthMismatch` now wrap `broadcast_common::error` types (tuple variants; `LengthMismatch` message is now "length mismatch for <what>: declared N, actual M"). Hand-written `From` impls removed.
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `dvb-si` 12 -> 13, `mpeg-ts` 0.6 -> 0.7. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.10.0] - 2026-10-17
 ### Documentation

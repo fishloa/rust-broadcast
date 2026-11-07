@@ -6,17 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Fixed
 - Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `from_ul`.
-- `Error::InvalidKeyLength`: never constructed; a short buffer is reported as `BufferTooShort`.
+- BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `from_ul`.
+- BREAKING: `Error::InvalidKeyLength`: never constructed; a short buffer is reported as `BufferTooShort`.
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_common::error` types (tuple variants). Hand-written `From` impls removed; messages follow the common wording.
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.5.0] - 2026-10-17
 ### Documentation

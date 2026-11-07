@@ -3,18 +3,20 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
 ### Removed
-- `Error::TrailingData`, never constructed: TR-06-1 §5.2 does not fix a closed sub-packet list, and unmatched sub-packets are kept in `unknown` (c2 TH3).
+- BREAKING: `Error::TrailingData`, never constructed: TR-06-1 §5.2 does not fix a closed sub-packet list, and unmatched sub-packets are kept in `unknown` (c2 TH3).
 ### Changed
 - Depends on `rtp-packet` (its `rtcp` module) instead of the absorbed `rtcp-packet` crate; the types are unchanged, but `Error::Rtcp` now wraps `rtp_packet::rtcp::Error`.
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_common::error::{BufferTooShort, OutputBufferTooSmall}`; `BufferTooShort` gains the shared `what` field ("RTCP common header", "Generic NACK", "Range NACK", "RTT Echo", "RTCP sub-packet"); `InvalidVersion(u8)` is replaced by `UnsupportedVersion(broadcast_common::error::UnsupportedVersion)` (`what: "RTCP"`, `found`).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
-- `GenericNack` and `RangeNack` share one padded-serialize helper, and the three RFC 3550 §6.4.1 padding-count checks use `rtcp_packet::padding_count` (c3 N1). A padded sub-packet with an empty body is now `InvalidPaddingCount` instead of reading the length byte as the count.
+- `GenericNack` and `RangeNack` share one padded-serialize helper, and the three RFC 3550 §6.4.1 padding-count checks use `rtp_packet::rtcp::padding_count` (c3 N1). A padded sub-packet with an empty body is now `InvalidPaddingCount` instead of reading the length byte as the count.
 
 
 ### Changed
 - New `librist_capture` test: every datagram of the librist 0.2.18 Simple Profile capture parses as RTP (PT 33, contiguous sequence, 1316-byte TS payload) and re-serializes byte-exactly; adds a dev-dependency on `rtp-packet` (c3 t:S4).
-
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `rtp-packet` 0.5 -> 0.6. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.4.0] - 2026-10-17
 ### Documentation

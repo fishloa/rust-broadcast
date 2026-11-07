@@ -5,6 +5,7 @@ All notable changes to dash-runtime will be documented in this file.
 ## [Unreleased]
 ### Added
 - `Limits::xml_limits()`: the XML-level bounds as the shared `broadcast_common::xml_chars::XmlLimits`; `From<XmlLimit> for Limit`.
+
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed
@@ -16,8 +17,9 @@ All notable changes to dash-runtime will be documented in this file.
 - `timing::ticks_to_us` rescales through `broadcast_common::timescale` (same floor rounding) (c2 H6).
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
 ### Removed
-- Unused public items `mpd::is_unsupported_urlparam` and `mpd::url_query_info` (c2 TH1).
-
+- BREAKING: Unused public items `mpd::is_unsupported_urlparam` and `mpd::url_query_info` (c2 TH1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `container-probe` 0.2 -> 0.3, `transmux` 0.29 -> 0.30. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.2.0] - 2026-11-03
 

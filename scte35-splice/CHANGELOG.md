@@ -1,8 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `duration_value`, `pts_adjustment_duration`, `pts_time_duration`, `set_duration_value`, `set_pts_adjustment_duration`, `set_pts_time_duration`.
+- BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `duration_value`, `pts_adjustment_duration`, `pts_time_duration`, `set_duration_value`, `set_pts_adjustment_duration`, `set_pts_time_duration`.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Changed
@@ -14,6 +15,8 @@
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what` = "splice_info_section", message "<what> CRC-32 mismatch: ..."). Hand-written `From` impls removed. `InvalidValue` stays crate-specific (carries no offending value).
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [4.0.0] - 2026-10-17
 ### Documentation

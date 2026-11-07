@@ -6,8 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `integrated_lu`.
+- BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `integrated_lu`.
 ### Added
 - `MAX_SAMPLE_RATE` (768 kHz).
 - EBU Tech 3341 Table 1 true-peak cases 20-23 verified against the EBU reference WAVs (private fixtures; measured -0.15, -0.08, -0.20, -0.08 dBTP, all within 0.0 +0.2/-0.4), #1635.
@@ -16,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.5.0] - 2026-10-17
 ### Documentation

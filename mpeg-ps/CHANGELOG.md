@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Fixed
 - `PackHeader`, `SystemHeader` and `ProgramStreamMap` `serialize_into` returned `Error::BufferTooShort` for a too-small OUTPUT buffer; they now return the new `Error::OutputBufferTooSmall { need, have }` (c3 S1).
 ### Added
@@ -14,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidField` now wrap `broadcast_common::error` types (tuple variants); `BadCrc { computed, stored }` is replaced by `CrcMismatch(broadcast_common::error::CrcMismatch)` (`what` = "PSM"). The hand-written `From` impls are gone; messages follow the common wording.
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `mpeg-pes` 0.6 -> 0.7. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.6.0] - 2026-10-17
 ### Documentation

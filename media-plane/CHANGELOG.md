@@ -6,10 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Added
 - `ids::Generation`, the init-segment generation newtype, next to `SegmentSeq`/`PartIndex` (c2 L5).
 ### Removed
-- `Trunk::sparse_len` and `Trunk::event_len` are now test-only (c2 TH1).
+- BREAKING: `Trunk::sparse_len` and `Trunk::event_len` are now test-only (c2 TH1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `timed-metadata` 0.8 -> 0.9, `transmux` 0.29 -> 0.30. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.9.0] - 2026-11-03
 

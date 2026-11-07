@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Fixed
 - Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Changed
@@ -22,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `LengthMismatch` now wrap `broadcast_common::error` types (tuple variants; `LengthMismatch` gains `what`, `computed` is now `actual`); `BadStartCode(u32)` is replaced by `InvalidSync`, `BadFixedBits(&str)` and `ReservedNotZero { what, value }` by one `ReservedBits(broadcast_common::error::ReservedBits)` carrying the expected and found values, `FieldTooWide { what, value: u32, bits }` by `FieldOverflow(broadcast_common::error::FieldOverflow)` (values are no longer truncated to `u32`). Hand-written `From` impls removed.
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `rtp-packet` 0.5 -> 0.6. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.5.0] - 2026-10-17
 ### Added

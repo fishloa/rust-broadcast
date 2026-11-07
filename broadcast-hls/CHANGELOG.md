@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- README and crate-root documentation corrections; no behaviour change.
+### Changed
+- The `serde_json` dev-dependency is dropped and the unit tests assert the exact error variant instead of `is_err()`; no public API change.
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
+
 ## [0.5.0] - 2026-11-01
 ### Added
 - Test pinning `SUPPLEMENTAL-CODECS` (carried in `extra_attrs`) as a quoted string through render and parse.

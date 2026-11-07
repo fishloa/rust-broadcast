@@ -93,6 +93,12 @@ Header parse and the container box only; no encode or decode.
 | `sample-aes` | no | HLS Sample-AES and whole-segment AES-128; implies `cenc`. |
 | `cli` | no | The `transmux` binary (`clap`, `container-probe`; implies `std`). |
 
+`serde` is opt-in and off by default; enable it explicitly:
+
+```toml
+transmux = { version = "0.29", features = ["serde"] }
+```
+
 ## Quick start
 
 Demux a real H.264 plus AAC broadcast capture once, then mux the same IR to CMAF, a DASH manifest and back to TS:

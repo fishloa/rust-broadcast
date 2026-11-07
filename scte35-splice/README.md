@@ -73,6 +73,12 @@ pinned by `tests/it/das_nibble_order.rs`. Independent-oracle compact vectors:
 | `std` | on | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
 | `serde` | off | Serialize-only (`serde::Serialize`) on all types; no Deserialize. |
 
+`serde` is opt-in and off by default; enable it explicitly:
+
+```toml
+scte35-splice = { version = "4", features = ["serde"] }
+```
+
 ## Quick start
 
 ```rust

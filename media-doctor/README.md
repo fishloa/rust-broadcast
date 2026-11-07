@@ -49,6 +49,12 @@ in the private repo: `private/specs` set (ISO/IEC 14496-12/-15 and 23009-1) the 
 | `net` | no | `metrics_server` (`hyper` http1 `GET /metrics`) and `udp` (`socket2` bind); implies `metrics` |
 | `cli` | yes | The `media-doctor` binary (`clap`), including `watch`; implies `std`, `net` and `serde`, and pulls in `container-probe` |
 
+`serde` is opt-in and off by default; enable it explicitly:
+
+```toml
+media-doctor = { version = "0.13", features = ["serde"] }
+```
+
 Without `std` the library is `no_std` + `alloc`.
 
 ```toml

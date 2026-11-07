@@ -6,8 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Removed
-- `Probe::feed_scte35_section` (an unused-`self` passthrough). Call `compliance_probe::scte35::check_section` directly (dedupe R2).
+- BREAKING: `Probe::feed_scte35_section` (an unused-`self` passthrough). Call `compliance_probe::scte35::check_section` directly (dedupe R2).
+### Dependencies
+- Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `dvb-conformance` 12 -> 13, `media-doctor` 0.13 -> 0.14, `media-plane` 0.9 -> 0.10, `mpeg-ts` 0.6 -> 0.7, `scte35-splice` 4 -> 5, `timed-metadata` 0.8 -> 0.9. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
 ## [0.6.0] - 2026-11-03
 

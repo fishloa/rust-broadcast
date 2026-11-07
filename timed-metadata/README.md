@@ -64,6 +64,12 @@ below); for SRT/TTML conversion use `caption-convert`, which wraps these extract
 | `cc-data` | off | CEA-608/708 to WebVTT cue extraction (`webvtt::Cea608CueExtractor`, `Cea708CueExtractor`). |
 | `teletext` | off | EBU Teletext (EN 300 706) to WebVTT cue extraction (`webvtt::TeletextCueExtractor`, `webvtt::teletext`). |
 
+`serde` is opt-in and off by default; enable it explicitly:
+
+```toml
+timed-metadata = { version = "0.8", features = ["serde"] }
+```
+
 ## Quick start
 
 ```rust
