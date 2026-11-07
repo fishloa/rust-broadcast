@@ -367,7 +367,10 @@ fn srtp_corrupted_ciphertext_byte_fails_auth() {
     )
     .unwrap();
     assert!(
-        dec_ctx.decrypt_rtp(&protected).is_err(),
+        matches!(
+            dec_ctx.decrypt_rtp(&protected),
+            Err(rtc_shared::error::Error::RtpFailedToVerifyAuthTag)
+        ),
         "corrupted ciphertext byte must fail SRTP auth-tag verification"
     );
 
@@ -520,7 +523,10 @@ fn srtcp_corrupted_auth_tag_byte_fails() {
     )
     .unwrap();
     assert!(
-        dec_ctx.decrypt_rtcp(&protected).is_err(),
+        matches!(
+            dec_ctx.decrypt_rtcp(&protected),
+            Err(rtc_shared::error::Error::RtcpFailedToVerifyAuthTag)
+        ),
         "corrupted SRTCP auth-tag byte must fail verification"
     );
 

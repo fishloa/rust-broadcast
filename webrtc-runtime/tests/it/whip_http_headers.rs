@@ -172,7 +172,10 @@ fn whep_counter_offer_answer_accepts_media_type_parameters_and_rejects_others() 
     let mut s = WhepSession::new(SESSION.into());
     let _ = s.counter_offer(b"o".to_vec(), None);
     let bad = s.on_patch(b"x".to_vec(), &h(header::CONTENT_TYPE, "text/plain"));
-    assert!(bad.is_err());
+    assert!(matches!(
+        bad,
+        Err(webrtc_runtime::error::Error::WrongState { .. })
+    ));
 }
 
 /// A `Content-Type` sent twice is ambiguous: it is rejected, not resolved by
@@ -186,7 +189,10 @@ fn a_duplicated_content_type_is_rejected() {
         HeaderValue::from_static("application/trickle-ice-sdpfrag"),
     );
     m.append(header::CONTENT_TYPE, HeaderValue::from_static("text/plain"));
-    assert!(s.on_patch(b"f".to_vec(), &m).is_err());
+    assert!(matches!(
+        s.on_patch(b"f".to_vec(), &m),
+        Err(webrtc_runtime::error::Error::InvalidSdpFragment { .. })
+    ));
 }
 
 #[test]
