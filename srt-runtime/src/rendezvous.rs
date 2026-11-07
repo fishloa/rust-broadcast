@@ -963,7 +963,10 @@ mod tests {
     fn start_is_idempotent_guard() {
         let mut r = RendezvousHandshake::new(1, 500, HandshakeConfig::default());
         assert!(r.start().is_ok());
-        assert!(r.start().is_err());
+        assert!(matches!(
+            r.start(),
+            Err(crate::error::Error::HandshakeOutOfSequence { .. })
+        ));
     }
 
     #[test]

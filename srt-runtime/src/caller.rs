@@ -384,7 +384,10 @@ mod tests {
     fn start_is_idempotent_guard() {
         let mut c = CallerHandshake::new(1, HandshakeConfig::default());
         assert!(c.start().is_ok());
-        assert!(c.start().is_err());
+        assert!(matches!(
+            c.start(),
+            Err(crate::error::Error::HandshakeOutOfSequence { .. })
+        ));
     }
 
     /// `peer_socket_id` must come from the CONCLUSION response, not a stale INDUCTION one (draft §4.3.1).

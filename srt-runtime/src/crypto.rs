@@ -441,7 +441,10 @@ mod tests {
         icv.copy_from_slice(&RFC3394_WRAPPED_128[..8]);
         let mut wrong_kek = RFC3394_KEK_128;
         wrong_kek[0] ^= 0xFF;
-        assert!(unwrap_sek(&wrong_kek, &icv, &RFC3394_WRAPPED_128[8..]).is_err());
+        assert!(matches!(
+            unwrap_sek(&wrong_kek, &icv, &RFC3394_WRAPPED_128[8..]),
+            Err(crate::error::Error::InvalidField { .. })
+        ));
     }
 
     // -----------------------------------------------------------------
@@ -559,9 +562,18 @@ mod tests {
     #[test]
     fn invalid_klen_errs_without_panic() {
         let salt = [0u8; SALT_LEN];
-        assert!(derive_kek(b"pw", &salt, 20).is_err());
-        assert!(wrap_sek(&[0u8; 20], &[0u8; 16]).is_err());
-        assert!(aes_ctr_apply(&[0u8; 20], &salt, 0, &mut [0u8; 4]).is_err());
+        assert!(matches!(
+            derive_kek(b"pw", &salt, 20),
+            Err(crate::error::Error::InvalidField { .. })
+        ));
+        assert!(matches!(
+            wrap_sek(&[0u8; 20], &[0u8; 16]),
+            Err(crate::error::Error::InvalidField { .. })
+        ));
+        assert!(matches!(
+            aes_ctr_apply(&[0u8; 20], &salt, 0, &mut [0u8; 4]),
+            Err(crate::error::Error::InvalidField { .. })
+        ));
     }
 
     #[test]

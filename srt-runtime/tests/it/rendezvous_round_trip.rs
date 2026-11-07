@@ -196,5 +196,8 @@ fn malformed_packet_fed_mid_flow_yields_structured_error_not_panic() {
     // Once rejected, further feeds are a structured out-of-sequence error,
     // not a panic.
     let err = a.feed(&bad);
-    assert!(err.is_err());
+    assert!(matches!(
+        err,
+        Err(srt_runtime::error::Error::HandshakeOutOfSequence { .. })
+    ));
 }

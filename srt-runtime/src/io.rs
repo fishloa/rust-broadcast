@@ -4585,7 +4585,7 @@ mod adapter_tests {
             )
             .await;
             assert!(
-                outcome.is_err(),
+                matches!(outcome, Err(tokio::time::error::Elapsed(..))),
                 "ticks={ticks}: still waiting for the peer"
             );
         }

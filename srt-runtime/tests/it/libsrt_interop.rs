@@ -534,7 +534,10 @@ async fn libsrt_caller_survives_a_lost_conclusion_response() {
             "the relay must really have dropped one CONCLUSION response"
         );
         assert!(
-            accepted_rx.try_recv().is_err(),
+            matches!(
+                accepted_rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ),
             "the repeated CONCLUSION must not create a second connection"
         );
         accept_loop.abort();
