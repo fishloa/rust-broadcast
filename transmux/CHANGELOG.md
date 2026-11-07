@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- The in-crate test bit writers of `slice_header` and `display_track`, and the `hdr10plus` integration test, use one `BitWriter` (`test_bits.rs`, `tests/it/support/bit_writer.rs`) (c3 d:L2).
 - `pipeline::build_trak` takes its sample entry, media kind and `tkhd` size from one per-codec function (`pipeline/stsd.rs`, `MediaKind` owning the handler and media-header boxes) instead of a 700-line tuple-returning `match` (c3 t:S2); the seven `init_segment` container boxes (`dinf`, `minf`, `mdia`, `edts`, `trak`, `mvex`, `moov`) serialize through one `serialize_container` (c3 d:C1).
 - `TimelineOrigin`, the progressive-MP4 movie-timescale conversions, the LL-HLS ceil rescale and the tick comparisons use `broadcast_common::timescale`; a zero timescale counts as 1 uniformly (c3 L1).
 - Timescale rescaling goes through `broadcast_common::timescale` with the rounding each site already used; a zero timescale counts as 1 instead of returning the input unchanged (RTP, repackage windows) or panicking (c2 H6).

@@ -592,129 +592,84 @@ impl SpsTracker {
 mod tests {
     use super::*;
     use crate::ir::AspectRatioIdc;
+    use crate::test_bits::BitWriter;
     use alloc::vec;
-
-    /// MSB-first bit writer for spec-shaped test NALs (the same shape
-    /// `slice_header.rs` and `sps.rs` build theirs with).
-    #[derive(Default)]
-    struct W {
-        out: Vec<u8>,
-        cur: u8,
-        n: u8,
-    }
-
-    impl W {
-        fn u(&mut self, bits: u32, v: u32) {
-            for i in (0..bits).rev() {
-                self.cur = (self.cur << 1) | (((v >> i) & 1) as u8);
-                self.n += 1;
-                if self.n == 8 {
-                    self.out.push(self.cur);
-                    self.cur = 0;
-                    self.n = 0;
-                }
-            }
-        }
-        fn ue(&mut self, v: u32) {
-            let x = v + 1;
-            let len = 32 - x.leading_zeros();
-            self.u(len - 1, 0);
-            self.u(len, x);
-        }
-        fn se(&mut self, v: i32) {
-            self.ue(if v > 0 {
-                (2 * v - 1) as u32
-            } else {
-                (-2 * v) as u32
-            });
-        }
-        fn flag(&mut self, b: bool) {
-            self.u(1, u32::from(b));
-        }
-        fn rbsp_trailing_bits(mut self) -> Vec<u8> {
-            self.u(1, 1);
-            while self.n != 0 {
-                self.u(1, 0);
-            }
-            self.out
-        }
-    }
 
     /// An H.264 SPS NAL: `mb` x `mb` macroblock picture (16 luma samples per
     /// MB), no crop, with a VUI carrying `aspect_ratio_idc` (and, for
     /// Extended_SAR, the two terms). `level` differs only in bytes, never in
     /// geometry.
     fn sps_nal(sps_id: u32, mb: u32, idc: u32, extended: Option<(u32, u32)>, level: u8) -> Vec<u8> {
-        let mut w = W::default();
-        w.ue(sps_id);
+        let mut w = BitWriter::new();
+        w.ue(u64::from(sps_id));
         w.ue(0); // log2_max_frame_num_minus4
         w.ue(2); // pic_order_cnt_type
         w.ue(1); // max_num_ref_frames
-        w.flag(false); // gaps_in_frame_num_value_allowed_flag
-        w.ue(mb - 1); // pic_width_in_mbs_minus1
-        w.ue(mb - 1); // pic_height_in_map_units_minus1
-        w.flag(true); // frame_mbs_only_flag
-        w.flag(true); // direct_8x8_inference_flag
-        w.flag(false); // frame_cropping_flag
-        w.flag(true); // vui_parameters_present_flag
-        w.flag(true); // aspect_ratio_info_present_flag
-        w.u(8, idc);
+        w.bit(false); // gaps_in_frame_num_value_allowed_flag
+        w.ue(u64::from(mb - 1)); // pic_width_in_mbs_minus1
+        w.ue(u64::from(mb - 1)); // pic_height_in_map_units_minus1
+        w.bit(true); // frame_mbs_only_flag
+        w.bit(true); // direct_8x8_inference_flag
+        w.bit(false); // frame_cropping_flag
+        w.bit(true); // vui_parameters_present_flag
+        w.bit(true); // aspect_ratio_info_present_flag
+        w.u(8, u64::from(idc));
         if let Some((sw, sh)) = extended {
-            w.u(16, sw);
-            w.u(16, sh);
+            w.u(16, u64::from(sw));
+            w.u(16, u64::from(sh));
         }
-        w.flag(false); // overscan_info_present_flag
-        w.flag(true); // video_signal_type_present_flag
+        w.bit(false); // overscan_info_present_flag
+        w.bit(true); // video_signal_type_present_flag
         w.u(3, 5); // video_format
-        w.flag(false); // video_full_range_flag
-        w.flag(false); // colour_description_present_flag
+        w.bit(false); // video_full_range_flag
+        w.bit(false); // colour_description_present_flag
         let mut v = vec![0x67u8, 66, 0x00, level];
-        v.extend(w.rbsp_trailing_bits());
+        v.extend(w.trailing());
         v
     }
 
     fn pps_nal(pps_id: u32, sps_id: u32) -> Vec<u8> {
-        let mut w = W::default();
-        w.ue(pps_id);
-        w.ue(sps_id);
-        w.flag(false); // entropy_coding_mode_flag
-        w.flag(false); // bottom_field_pic_order_in_frame_present_flag
+        let mut w = BitWriter::new();
+        w.ue(u64::from(pps_id));
+        w.ue(u64::from(sps_id));
+        w.bit(false); // entropy_coding_mode_flag
+        w.bit(false); // bottom_field_pic_order_in_frame_present_flag
         w.ue(0); // num_slice_groups_minus1
         w.ue(0); // num_ref_idx_l0_default_active_minus1
         w.ue(0); // num_ref_idx_l1_default_active_minus1
-        w.flag(false); // weighted_pred_flag
+        w.bit(false); // weighted_pred_flag
         w.u(2, 0); // weighted_bipred_idc
         w.se(0); // pic_init_qp_minus26
         w.se(0); // pic_init_qs_minus26
         w.se(0); // chroma_qp_index_offset
-        w.flag(false); // deblocking_filter_control_present_flag
-        w.flag(false); // constrained_intra_pred_flag
-        w.flag(false); // redundant_pic_cnt_present_flag
+        w.bit(false); // deblocking_filter_control_present_flag
+        w.bit(false); // constrained_intra_pred_flag
+        w.bit(false); // redundant_pic_cnt_present_flag
         let mut v = vec![0x68u8];
-        v.extend(w.rbsp_trailing_bits());
+        v.extend(w.trailing());
         v
     }
 
     fn idr_slice_nal(pps_id: u32) -> Vec<u8> {
-        let mut w = W::default();
+        let mut w = BitWriter::new();
         w.ue(0); // first_mb_in_slice
         w.ue(2); // slice_type = I
-        w.ue(pps_id);
+        w.ue(u64::from(pps_id));
         w.ue(0); // frame_num
         w.ue(0); // idr_pic_id
         let mut v = vec![0x65u8];
-        v.extend(w.rbsp_trailing_bits());
+        v.extend(w.trailing());
         v
     }
 
     fn p_slice_nal(pps_id: u32) -> Vec<u8> {
-        let mut w = W::default();
+        let mut w = BitWriter::new();
         w.ue(0); // first_mb_in_slice
         w.ue(0); // slice_type = P
-        w.ue(pps_id);
+        w.ue(u64::from(pps_id));
         w.ue(1); // frame_num
         let mut v = vec![0x41u8]; // nal_ref_idc 2, nal_unit_type 1
-        v.extend(w.rbsp_trailing_bits());
+        v.extend(w.trailing());
         v
     }
 

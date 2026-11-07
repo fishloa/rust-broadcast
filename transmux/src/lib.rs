@@ -213,6 +213,8 @@ pub mod progressive_demux;
 pub mod ps_demux;
 pub mod rebase;
 pub mod repackage;
+#[cfg(test)]
+pub(crate) mod test_bits;
 pub use rtcp_packet as rtcp;
 pub mod rtmp;
 pub mod rtp;
