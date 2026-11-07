@@ -128,7 +128,7 @@
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
 //! | `std`   | yes     | `std::error::Error` impls, plus every XML path (DASH/LL-DASH MPD, Smooth Streaming, PlayReady WRMHEADER) via `quick-xml` |
-//! | `serde` | yes     | `serde::Serialize` for box types |
+//! | `serde` | no      | `serde::Serialize` for box types |
 //! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptor`]) + encrypt ([`CencEncryptor`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`broadcast_hls::cenc_ext_x_key`]) reads the always-available `Track::encryption`/`cenc` box types and needs no feature |
 //! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
 //! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |

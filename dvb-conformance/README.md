@@ -38,7 +38,7 @@ models only part of the T-STD (see below).
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Forwards `std` to `broadcast-common`, `dvb-si`, `mpeg-ts`; off gives `no_std` + `alloc` |
-| `serde` | yes | `serde::Serialize` on `ConformanceEvent`, `Indicator`, `Priority`, `Stats` |
+| `serde` | no | `serde::Serialize` on `ConformanceEvent`, `Indicator`, `Priority`, `Stats` |
 
 ```toml
 [dependencies]

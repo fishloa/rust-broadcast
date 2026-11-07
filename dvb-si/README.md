@@ -250,7 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `std` | yes | Links `std`. Off → `#![no_std]` + `alloc`. The non-Latin text charsets (`encoding_rs`) and wall-clock time need it. |
 | `chrono` | yes | MJD + BCD fields also as `chrono::DateTime<Utc>` (EIT `start_time_chrono()`, TDT/TOT `utc_time()`), local time offsets as `chrono::Duration`; the `epg` module. Off → `MjdBcdDateTime` and raw bytes only. |
 | `ts` | yes | `demux::SiDemux` over 188-byte packets (framing from [`mpeg-ts`](https://crates.io/crates/mpeg-ts)). Off → bring your own section bytes. |
-| `serde` | yes | `Serialize` on every table, descriptor and text type (`DvbText` as its decoded string). Serialize-only by design. |
+| `serde` | no | `Serialize` on every table, descriptor and text type (`DvbText` as its decoded string). Serialize-only by design. |
 | `yoke` | no | `Yokeable` on the zero-copy views + `owned::Owned<T>`. |
 | `flate2` | no | zlib-decompress `compressed_module_descriptor` modules in object carousels (implies `std`). |
 

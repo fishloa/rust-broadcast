@@ -41,7 +41,7 @@ harness  = false
 required-features = ["ts"]
 
 [features]
-default = ["std", "chrono", "ts", "serde"]
+default = ["std", "chrono", "ts"]
 
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only.

@@ -73,7 +73,7 @@ pinned by `tests/it/das_nibble_order.rs`. Independent-oracle compact vectors:
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `std` | on | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
-| `serde` | on | Serialize-only (`serde::Serialize`) on all types; no Deserialize. |
+| `serde` | off | Serialize-only (`serde::Serialize`) on all types; no Deserialize. |
 
 ## Quick start
 

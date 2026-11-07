@@ -78,7 +78,7 @@ name = "transmux_any_to_any"
 required-features = ["std"]
 
 [features]
-default = ["std", "serde", "cenc"]
+default = ["std", "cenc"]
 std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types"]
 serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc", "dep:zeroize", "dep:subtle"]

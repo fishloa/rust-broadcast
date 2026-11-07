@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WebmDemux` reports an `Info` whose `TimestampScale` is 0 or does not fit an `i64` as a malformed unit (the default scale then applies) instead of applying it: 0 collapsed every pts to 0 and values of 2^63 or more made pts negative (c5 R5-2).
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
+- BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` and `InvalidValue` now wrap `broadcast_common::error::{BufferTooShort, OutputBufferTooSmall, InvalidValue}` (`Error::BufferTooShort(e)`); the hand-written `From` impls are replaced by `#[from]`. `OutputBufferTooSmall` and `InvalidValue` display with the shared message text. `FieldOverflow` now names the `broadcast_common::error` path (same type).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The WebM `DefaultDuration` to IR-tick conversion and the progressive-MP4 interleave chunk length use `broadcast_common::timescale` (same rounding) (c6 F7).

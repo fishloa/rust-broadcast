@@ -46,7 +46,7 @@ stream conformance (see `dvb-conformance`), or do any I/O.
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | `std::error::Error` impls; turn off for `no_std` |
-| `serde` | yes | `serde::Serialize` on packet/section types (serialize-only) |
+| `serde` | no | `serde::Serialize` on packet/section types (serialize-only) |
 
 The crate is `#![no_std]` + `alloc` and `#![forbid(unsafe_code)]`;
 `default-features = false` builds on bare-metal targets that have a heap.

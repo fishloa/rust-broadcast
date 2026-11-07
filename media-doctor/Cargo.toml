@@ -58,7 +58,7 @@ http-body-util              = { version = "0.1", optional = true }
 socket2                     = { workspace = true, optional = true, features = ["all"] }
 
 [features]
-default = ["std", "serde", "cli"]
+default = ["std", "cli"]
 std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std", "broadcast-hls/std", "serde?/std", "serde_json?/std"]
 serde   = ["dep:serde", "dep:serde_json"]
 # STD-ONLY features (not no_std, not built by the CI thumbv7em step): `metrics`
