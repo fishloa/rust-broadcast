@@ -43,6 +43,19 @@ pub const SUBCELL_LEN: usize = 8;
 /// Mask for a 12-bit extent value.
 pub const EXTENT_MASK: u16 = 0x0FFF;
 
+/// Degrees per latitude unit: 90°/2^15 (§6.2.7).
+const LATITUDE_DEGREES_PER_UNIT: f64 = 90.0 / 32768.0;
+/// Degrees per longitude unit: 180°/2^15 (§6.2.7).
+const LONGITUDE_DEGREES_PER_UNIT: f64 = 180.0 / 32768.0;
+
+fn signed_degrees(raw: u16, degrees_per_unit: f64) -> f64 {
+    f64::from(i16::from_be_bytes(raw.to_be_bytes())) * degrees_per_unit
+}
+
+fn extent_degrees(raw: u16, degrees_per_unit: f64) -> f64 {
+    f64::from(raw & EXTENT_MASK) * degrees_per_unit
+}
+
 /// One sub-cell within a cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -59,7 +72,31 @@ pub struct CellListSubcell {
     pub subcell_extent_of_longitude: u16,
 }
 
-impl CellListSubcell {}
+impl CellListSubcell {
+    /// `subcell_latitude` in degrees (two's complement, 90°/2^15 per unit).
+    #[must_use]
+    pub fn subcell_latitude_deg(&self) -> f64 {
+        signed_degrees(self.subcell_latitude, LATITUDE_DEGREES_PER_UNIT)
+    }
+
+    /// `subcell_longitude` in degrees (two's complement, 180°/2^15 per unit).
+    #[must_use]
+    pub fn subcell_longitude_deg(&self) -> f64 {
+        signed_degrees(self.subcell_longitude, LONGITUDE_DEGREES_PER_UNIT)
+    }
+
+    /// `subcell_extent_of_latitude` in degrees (12-bit, 90°/2^15 per unit).
+    #[must_use]
+    pub fn subcell_extent_of_latitude_deg(&self) -> f64 {
+        extent_degrees(self.subcell_extent_of_latitude, LATITUDE_DEGREES_PER_UNIT)
+    }
+
+    /// `subcell_extent_of_longitude` in degrees (12-bit, 180°/2^15 per unit).
+    #[must_use]
+    pub fn subcell_extent_of_longitude_deg(&self) -> f64 {
+        extent_degrees(self.subcell_extent_of_longitude, LONGITUDE_DEGREES_PER_UNIT)
+    }
+}
 
 /// One cell with its sub-cell list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +116,31 @@ pub struct CellListEntry {
     pub subcells: Vec<CellListSubcell>,
 }
 
-impl CellListEntry {}
+impl CellListEntry {
+    /// `cell_latitude` in degrees (two's complement, 90°/2^15 per unit).
+    #[must_use]
+    pub fn cell_latitude_deg(&self) -> f64 {
+        signed_degrees(self.cell_latitude, LATITUDE_DEGREES_PER_UNIT)
+    }
+
+    /// `cell_longitude` in degrees (two's complement, 180°/2^15 per unit).
+    #[must_use]
+    pub fn cell_longitude_deg(&self) -> f64 {
+        signed_degrees(self.cell_longitude, LONGITUDE_DEGREES_PER_UNIT)
+    }
+
+    /// `cell_extent_of_latitude` in degrees (12-bit, 90°/2^15 per unit).
+    #[must_use]
+    pub fn cell_extent_of_latitude_deg(&self) -> f64 {
+        extent_degrees(self.cell_extent_of_latitude, LATITUDE_DEGREES_PER_UNIT)
+    }
+
+    /// `cell_extent_of_longitude` in degrees (12-bit, 180°/2^15 per unit).
+    #[must_use]
+    pub fn cell_extent_of_longitude_deg(&self) -> f64 {
+        extent_degrees(self.cell_extent_of_longitude, LONGITUDE_DEGREES_PER_UNIT)
+    }
+}
 
 /// Cell List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,8 +343,40 @@ mod tests {
         assert_eq!(sc.subcell_longitude, 0x2222);
         assert_eq!(sc.subcell_extent_of_latitude, 0x333);
         assert_eq!(sc.subcell_extent_of_longitude, 0x444);
+    }
 
-        // Accessor tests
+    #[test]
+    fn degree_accessors_scale_by_the_section_6_2_7_units() {
+        let sc = CellListSubcell {
+            cell_id_extension: 0,
+            subcell_latitude: 0xC000,
+            subcell_longitude: 0x8000,
+            subcell_extent_of_latitude: 0x800,
+            subcell_extent_of_longitude: 0xF800,
+        };
+        assert_eq!(sc.subcell_latitude_deg(), -45.0);
+        assert_eq!(sc.subcell_longitude_deg(), -180.0);
+        assert_eq!(sc.subcell_extent_of_latitude_deg(), 5.625);
+        assert_eq!(sc.subcell_extent_of_longitude_deg(), 11.25);
+        let e = CellListEntry {
+            cell_id: 0,
+            cell_latitude: 0x4000,
+            cell_longitude: 0x4000,
+            cell_extent_of_latitude: 0x800,
+            cell_extent_of_longitude: 0x800,
+            subcells: vec![sc],
+        };
+        assert_eq!(e.cell_latitude_deg(), 45.0);
+        assert_eq!(e.cell_longitude_deg(), 90.0);
+        assert_eq!(e.cell_extent_of_latitude_deg(), 5.625);
+        assert_eq!(e.cell_extent_of_longitude_deg(), 11.25);
+        let max = CellListEntry {
+            cell_latitude: 0x7FFF,
+            cell_extent_of_latitude: 0xFFF,
+            ..e
+        };
+        assert_eq!(max.cell_latitude_deg(), 32767.0 * 90.0 / 32768.0);
+        assert_eq!(max.cell_extent_of_latitude_deg(), 4095.0 * 90.0 / 32768.0);
     }
 
     #[test]

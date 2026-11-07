@@ -126,7 +126,34 @@ impl<'a> CitSection<'a> {
     }
 }
 
-impl CitSection<'_> {}
+/// `prepend_string_index` value meaning "no prepend string" (TS 102 323 §12.2).
+const NO_PREPEND_STRING_INDEX: u8 = 0xFF;
+/// Each prepend string in the block is partitioned by a `0x00` byte
+/// (TS 102 323 §12.2).
+const PREPEND_STRING_PARTITION: u8 = 0x00;
+
+impl CitSection<'_> {
+    /// Resolve a `prepend_string_index` against the prepend-string block.
+    ///
+    /// Index 0 is the first string, 1 the second, and so on; `0xFF` ("no
+    /// prepend string") and any index past the last string give `None`.
+    pub fn prepend_string(&self, index: u8) -> Option<DvbText<'_>> {
+        if index == NO_PREPEND_STRING_INDEX {
+            return None;
+        }
+        let block = self.prepend_strings.raw();
+        if block.is_empty() {
+            return None;
+        }
+        let strings = block
+            .strip_suffix(&[PREPEND_STRING_PARTITION])
+            .unwrap_or(block);
+        strings
+            .split(|&b| b == PREPEND_STRING_PARTITION)
+            .nth(usize::from(index))
+            .map(DvbText::new)
+    }
+}
 
 fn crid_entry_serialized_len(e: &CridEntry) -> usize {
     CRID_ENTRY_FIXED_LEN + e.unique_string.len()
@@ -577,5 +604,48 @@ mod tests {
         assert_eq!(cit.service_id, 0x1234);
         assert_eq!(cit.transport_stream_id, 0x0064);
         assert!(cit.crid_entries.is_empty());
+    }
+
+    #[test]
+    fn prepend_string_resolves_by_index() {
+        let cit = |block: &'static [u8]| {
+            CitSection::new(
+                false,
+                0x0001,
+                0,
+                true,
+                0,
+                0,
+                0x0001,
+                0x0001,
+                DvbText::new(block),
+                Vec::new(),
+            )
+        };
+        let two = cit(b"crid://example.com/\x00crid://other.com/\x00");
+        assert_eq!(
+            two.prepend_string(0).map(|t| t.raw()),
+            Some(&b"crid://example.com/"[..])
+        );
+        assert_eq!(
+            two.prepend_string(1).map(|t| t.raw()),
+            Some(&b"crid://other.com/"[..])
+        );
+        assert!(two.prepend_string(2).is_none());
+        assert!(two.prepend_string(0xFF).is_none());
+
+        let unterminated = cit(b"a\x00b");
+        assert_eq!(unterminated.prepend_string(1).map(|t| t.raw()), Some(&b"b"[..]));
+        assert!(unterminated.prepend_string(2).is_none());
+
+        let empty_first = cit(b"\x00x\x00");
+        assert_eq!(empty_first.prepend_string(0).map(|t| t.raw()), Some(&b""[..]));
+        assert_eq!(empty_first.prepend_string(1).map(|t| t.raw()), Some(&b"x"[..]));
+
+        assert!(cit(b"").prepend_string(0).is_none());
+
+        let many = cit(&[PREPEND_STRING_PARTITION; 300]);
+        assert!(many.prepend_string(254).is_some());
+        assert!(many.prepend_string(0xFF).is_none());
     }
 }

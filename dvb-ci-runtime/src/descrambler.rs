@@ -298,6 +298,13 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
     pub fn ci(&self) -> &C {
         &self.ci
     }
+
+    /// Mutably borrow the data-plane [`CiDataDevice`] (e.g. to reconfigure the
+    /// device itself; writing through it bypasses the PID filter of
+    /// [`feed_ts`](Self::feed_ts)).
+    pub fn ci_mut(&mut self) -> &mut C {
+        &mut self.ci
+    }
 }
 
 #[cfg(test)]
@@ -782,5 +789,13 @@ mod tests {
             ),
             "expected CaError::NoCaDescriptor via delegation, got {err:?}"
         );
+    }
+
+    #[test]
+    fn ci_mut_reaches_the_data_plane_device() {
+        let mut d = descrambler_with(driver_with_sessions(), std::iter::empty());
+        let packet = [0u8; TS_PACKET_LEN];
+        d.ci_mut().write(&packet).unwrap();
+        assert_eq!(d.ci().written_ts(), packet);
     }
 }

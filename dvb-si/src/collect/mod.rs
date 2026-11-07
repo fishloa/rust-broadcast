@@ -472,6 +472,12 @@ impl<T> CompleteTable<T> {
     pub fn sections(&self) -> &[T] {
         &self.sections
     }
+
+    /// Consume the complete table and return its parsed sections.
+    #[must_use]
+    pub fn into_sections(self) -> Vec<T> {
+        self.sections
+    }
 }
 
 impl CompleteSectionSet {
@@ -530,14 +536,38 @@ impl CompleteSectionSet {
         CompleteBat::parse(self, None)
     }
 
+    /// Build a complete BAT view using a descriptor registry.
+    pub fn bat_with_registry<'a>(
+        &'a self,
+        registry: &'a DescriptorRegistry,
+    ) -> crate::Result<CompleteBat<'a>> {
+        CompleteBat::parse(self, Some(registry))
+    }
+
     /// Build a complete SDT view from this section set.
     pub fn sdt(&self) -> crate::Result<CompleteSdt<'_>> {
         CompleteSdt::parse(self, None)
     }
 
+    /// Build a complete SDT view using a descriptor registry.
+    pub fn sdt_with_registry<'a>(
+        &'a self,
+        registry: &'a DescriptorRegistry,
+    ) -> crate::Result<CompleteSdt<'a>> {
+        CompleteSdt::parse(self, Some(registry))
+    }
+
     /// Build a complete EIT view from this section set.
     pub fn eit(&self) -> crate::Result<CompleteEit<'_>> {
         CompleteEit::parse(self, None)
+    }
+
+    /// Build a complete EIT view using a descriptor registry.
+    pub fn eit_with_registry<'a>(
+        &'a self,
+        registry: &'a DescriptorRegistry,
+    ) -> crate::Result<CompleteEit<'a>> {
+        CompleteEit::parse(self, Some(registry))
     }
 }
 
@@ -703,5 +733,117 @@ mod tests {
             "existing key must NOT be skipped when cap full"
         );
         assert_eq!(c.len(), 1);
+    }
+
+    fn long_section(table_id: u8, ext: u16, payload: &[u8]) -> Vec<u8> {
+        let section_length = (5 + payload.len() + 4) as u16;
+        let mut buf = vec![0u8; 3 + section_length as usize];
+        buf[0] = table_id;
+        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[2] = (section_length & 0xFF) as u8;
+        buf[3..5].copy_from_slice(&ext.to_be_bytes());
+        buf[5] = 0xC1;
+        buf[8..8 + payload.len()].copy_from_slice(payload);
+        let crc_off = buf.len() - 4;
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_off]);
+        buf[crc_off..].copy_from_slice(&crc.to_be_bytes());
+        buf
+    }
+
+    fn complete_set(section: &[u8]) -> CompleteSectionSet {
+        SectionSetCollector::new()
+            .push_section(section)
+            .unwrap()
+            .unwrap()
+    }
+
+    const LCN_DESCRIPTOR: [u8; 6] = [0x83, 4, 0x00, 0x01, 0xFC, 0x05];
+
+    fn only_descriptor<'a, 'b>(
+        loop_: &'b ParsedDescriptorLoop<'a>,
+    ) -> &'b AnyDescriptor<'a> {
+        assert_eq!(loop_.descriptors().len(), 1);
+        loop_.descriptors()[0].as_ref().unwrap()
+    }
+
+    fn lcn_registry() -> DescriptorRegistry {
+        let mut registry = DescriptorRegistry::new();
+        registry.with_logical_channel();
+        registry
+    }
+
+    #[test]
+    fn bat_with_registry_types_the_opted_in_private_descriptor() {
+        let mut payload = vec![0xF0, LCN_DESCRIPTOR.len() as u8];
+        payload.extend_from_slice(&LCN_DESCRIPTOR);
+        payload.extend_from_slice(&[0xF0, 0x00]);
+        let set = complete_set(&long_section(0x4A, 0x1234, &payload));
+        let registry = lcn_registry();
+        let with = set.bat_with_registry(&registry).unwrap();
+        assert_eq!(with.bouquet_id, 0x1234);
+        assert!(matches!(
+            only_descriptor(&with.bouquet_descriptors),
+            AnyDescriptor::LogicalChannel(_)
+        ));
+        let plain = set.bat().unwrap();
+        assert!(matches!(
+            only_descriptor(&plain.bouquet_descriptors),
+            AnyDescriptor::Unknown { tag: 0x83, .. }
+        ));
+    }
+
+    #[test]
+    fn sdt_with_registry_types_the_opted_in_private_descriptor() {
+        let mut payload = vec![0, 1, 0xFF, 0x00, 0x07, 0xFC, 0x80, LCN_DESCRIPTOR.len() as u8];
+        payload.extend_from_slice(&LCN_DESCRIPTOR);
+        let set = complete_set(&long_section(0x42, 7, &payload));
+        let registry = lcn_registry();
+        let with = set.sdt_with_registry(&registry).unwrap();
+        assert_eq!(with.original_network_id, 1);
+        assert_eq!(with.services.len(), 1);
+        assert_eq!(with.services[0].service_id, 7);
+        assert!(matches!(
+            only_descriptor(&with.services[0].descriptors),
+            AnyDescriptor::LogicalChannel(_)
+        ));
+        let plain = set.sdt().unwrap();
+        assert!(matches!(
+            only_descriptor(&plain.services[0].descriptors),
+            AnyDescriptor::Unknown { tag: 0x83, .. }
+        ));
+    }
+
+    #[test]
+    fn eit_with_registry_types_the_opted_in_private_descriptor() {
+        let mut payload = vec![
+            0, 1, 0, 2, 0, 0x4E, 0x00, 0x09, 0xE4, 0x09, 0x12, 0x34, 0x56, 0x00, 0x01, 0x00, 0x80,
+            LCN_DESCRIPTOR.len() as u8,
+        ];
+        payload.extend_from_slice(&LCN_DESCRIPTOR);
+        let set = complete_set(&long_section(0x4E, 100, &payload));
+        let registry = lcn_registry();
+        let with = set.eit_with_registry(&registry).unwrap();
+        assert_eq!(with.service_id, 100);
+        assert_eq!(with.events.len(), 1);
+        assert_eq!(with.events[0].event_id, 9);
+        assert!(matches!(
+            only_descriptor(&with.events[0].descriptors),
+            AnyDescriptor::LogicalChannel(_)
+        ));
+        let plain = set.eit().unwrap();
+        assert!(matches!(
+            only_descriptor(&plain.events[0].descriptors),
+            AnyDescriptor::Unknown { tag: 0x83, .. }
+        ));
+    }
+
+    #[test]
+    fn into_sections_returns_every_parsed_section() {
+        let set = complete_set(&long_section(0x4A, 9, &[0xF0, 0, 0xF0, 0]));
+        let table = set.table::<crate::tables::bat::BatSection>().unwrap();
+        assert_eq!(table.sections().len(), 1);
+        let sections = table.into_sections();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].bouquet_id, 9);
     }
 }

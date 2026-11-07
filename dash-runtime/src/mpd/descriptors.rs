@@ -18,10 +18,16 @@ pub const SCHEME_PERIOD_CONNECTIVITY: &str = "urn:mpeg:dash:period-connectivity:
 pub const SCHEME_RESET: &str = "urn:mpeg:dash:reset:2016";
 /// Annex I.2: URL parameter signalling (media Segment requests).
 pub const SCHEME_URLPARAM: &str = "urn:mpeg:dash:urlparam:2014";
+/// Annex I.3: the 2016 extended-parameterization scheme, a superset of
+/// [`SCHEME_URLPARAM`] that this crate does not understand.
+pub const SCHEME_URLPARAM_2016: &str = "urn:mpeg:dash:urlparam:2016";
 /// DASH-IF IOP v4.3: the last Segment number of a live Period.
 pub const SCHEME_LAST_SEGMENT_NUMBER: &str = "http://dashif.org/guidelines/last-segment-number";
 /// 5.5.3 rule 4: an xlink that removes its element.
 pub const XLINK_RESOLVE_TO_ZERO: &str = "urn:mpeg:dash:resolve-to-zero:2013";
+/// 5.8.5.2.2: the MP4 protection scheme (`ContentProtection`).
+pub const SCHEME_MP4_PROTECTION: &str = "urn:mpeg:dash:mp4protection:2011";
+
 /// A 5.8.5.5 role value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -139,4 +145,30 @@ pub const UNDERSTOOD_ESSENTIAL: &[&str] = &[
 #[must_use]
 pub fn essential_understood(descriptor: &Descriptor) -> bool {
     UNDERSTOOD_ESSENTIAL.contains(&descriptor.scheme_id_uri.as_str())
+}
+
+#[cfg(test)]
+mod scheme_tests {
+    use super::*;
+
+    #[test]
+    fn scheme_constants_are_the_registered_uris() {
+        assert_eq!(SCHEME_URLPARAM_2016, "urn:mpeg:dash:urlparam:2016");
+        assert_eq!(SCHEME_MP4_PROTECTION, "urn:mpeg:dash:mp4protection:2011");
+        assert_ne!(SCHEME_URLPARAM_2016, SCHEME_URLPARAM);
+    }
+
+    #[test]
+    fn the_2016_urlparam_scheme_is_not_an_understood_essential_property() {
+        let d = Descriptor {
+            scheme_id_uri: SCHEME_URLPARAM_2016.into(),
+            ..Descriptor::default()
+        };
+        assert!(!essential_understood(&d));
+        let known = Descriptor {
+            scheme_id_uri: SCHEME_URLPARAM.into(),
+            ..Descriptor::default()
+        };
+        assert!(essential_understood(&known));
+    }
 }

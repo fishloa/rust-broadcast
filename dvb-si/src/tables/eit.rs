@@ -349,6 +349,23 @@ impl<'a> EitEvent<'a> {
         broadcast_common::time::decode_mjd_bcd(self.start_time_raw)
     }
 
+    /// Set the event start time, encoding it into the 40-bit `start_time` field.
+    ///
+    /// # Errors
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// outside the representable 16-bit MJD range.
+    pub fn set_start_time_decoded(
+        &mut self,
+        dt: broadcast_common::time::MjdBcdDateTime,
+    ) -> crate::Result<()> {
+        self.start_time_raw =
+            broadcast_common::time::encode_mjd_bcd(dt).ok_or(crate::Error::ValueOutOfRange {
+                field: "EitEvent::start_time",
+                reason: "date not representable in 16-bit MJD",
+            })?;
+        Ok(())
+    }
+
     /// Decode the 24-bit BCD `duration` (HHMMSS) to a [`core::time::Duration`].
     ///
     /// Returns `None` if the BCD nibbles are out of range. Available without the
@@ -875,5 +892,35 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn set_start_time_decoded_writes_the_mjd_and_bcd_fields() {
+        let mut ev = EitEvent::new(
+            1,
+            [0; 5],
+            [0, 0, 0],
+            RunningStatus::Undefined,
+            false,
+            DescriptorLoop::new(&[]),
+        );
+        let dt = broadcast_common::time::MjdBcdDateTime {
+            year: 2023,
+            month: 1,
+            day: 1,
+            hour: 12,
+            minute: 34,
+            second: 56,
+        };
+        ev.set_start_time_decoded(dt).unwrap();
+        assert_eq!(ev.start_time_raw(), [0xEA, 0x29, 0x12, 0x34, 0x56]);
+        assert_eq!(ev.start_time(), Some(dt));
+        let before = ev.start_time_raw();
+        let out_of_range = broadcast_common::time::MjdBcdDateTime { year: 1800, ..dt };
+        assert!(matches!(
+            ev.set_start_time_decoded(out_of_range),
+            Err(crate::Error::ValueOutOfRange { .. })
+        ));
+        assert_eq!(ev.start_time_raw(), before);
     }
 }

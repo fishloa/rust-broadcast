@@ -96,6 +96,11 @@ impl TsHttpSource {
         &self.url
     }
 
+    /// Set the request URL used for the next request.
+    pub fn set_url(&mut self, url: Url) {
+        self.url = url;
+    }
+
     /// Last PCR (27 MHz) observed during the current chunk's demux.
     pub fn take_last_pcr(&mut self) -> Option<u64> {
         self.last_pcr_27mhz.take()
@@ -482,5 +487,20 @@ impl TsHttpSource {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_url_replaces_the_request_url() {
+        let first = Url::parse("http://example.invalid/a.ts").unwrap();
+        let second = Url::parse("http://example.invalid/b.ts").unwrap();
+        let mut source = TsHttpSource::new(first.clone(), TsConfig::default(), 0);
+        assert_eq!(source.url(), &first);
+        source.set_url(second.clone());
+        assert_eq!(source.url(), &second);
     }
 }

@@ -48,6 +48,20 @@ impl MjdBcdTime {
         broadcast_common::time::decode_mjd_bcd_utc(self.0)
     }
 
+    /// Encode a UTC datetime; the inverse of [`to_datetime`](Self::to_datetime).
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`] if the date is outside the 16-bit MJD range.
+    #[cfg(feature = "chrono")]
+    pub fn from_datetime(dt: chrono::DateTime<chrono::Utc>) -> Result<Self> {
+        broadcast_common::time::encode_mjd_bcd_utc(dt)
+            .map(Self::from_raw)
+            .ok_or(Error::ValueOutOfRange {
+                field: "MjdBcdTime",
+                reason: "date not representable in 16-bit MJD",
+            })
+    }
+
     /// Read the field from `bytes[off..off + 5]`, or `BufferTooShort` naming
     /// `what`.
     pub(crate) fn read(bytes: &[u8], off: usize, what: &'static str) -> Result<Self> {
@@ -116,6 +130,25 @@ mod tests {
                     what: "t"
                 }
             ))
+        ));
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn from_datetime_encodes_a_known_vector_and_inverts_to_datetime() {
+        use chrono::TimeZone;
+        let dt = chrono::Utc
+            .with_ymd_and_hms(2023, 1, 1, 12, 34, 56)
+            .unwrap();
+        let t = MjdBcdTime::from_datetime(dt).unwrap();
+        assert_eq!(t.raw(), [0xEA, 0x29, 0x12, 0x34, 0x56]);
+        assert_eq!(t.to_datetime(), Some(dt));
+        let far_future = chrono::Utc
+            .with_ymd_and_hms(9999, 12, 31, 0, 0, 0)
+            .unwrap();
+        assert!(matches!(
+            MjdBcdTime::from_datetime(far_future),
+            Err(Error::ValueOutOfRange { .. })
         ));
     }
 }

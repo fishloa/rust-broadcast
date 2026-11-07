@@ -27,6 +27,10 @@ const FIXED_LEN: usize = 5;
 
 const SAMPLE_RATE_CODE_MAX: u8 = 0x0F; // 4 bits
 const BIT_RATE_CODE_MAX: u8 = 0x3F; // 6 bits
+/// Table G.3 `bit_rate_code` bits `[4:0]`; the MSB is reserved ("x").
+const BIT_RATE_CODE_MASK: u8 = 0x1F;
+/// Table G.3 lists 1 411,2 kbit/s, so the table below is in units of 100 bit/s.
+const BIT_RATE_UNIT_BPS: u32 = 100;
 const NBLKS_MAX: u8 = 0x7F; // 7 bits
 const FSIZE_MAX: u16 = 0x3FFF; // 14 bits
 const SURROUND_MODE_MAX: u8 = 0x3F; // 6 bits
@@ -93,6 +97,42 @@ impl DtsDescriptor<'_> {
             0x0F => Some(192_000),
             _ => None,
         }
+    }
+
+    /// Decodes `bit_rate_code` to the bit rate in bit/s, per ETSI EN 300 468
+    /// Annex G Table G.3. The MSB of the 6-bit code is reserved ("x") and is
+    /// ignored; bits `[4:0]` select the rate. Returns `None` for codes below
+    /// `0x05` and for the non-numeric `open` / `variable` / `lossless` codes.
+    #[must_use]
+    pub fn bit_rate_bps(&self) -> Option<u32> {
+        let hundreds_of_bps: u32 = match self.bit_rate_code & BIT_RATE_CODE_MASK {
+            0x05 => 1_280,
+            0x06 => 1_920,
+            0x07 => 2_240,
+            0x08 => 2_560,
+            0x09 => 3_200,
+            0x0A => 3_840,
+            0x0B => 4_480,
+            0x0C => 5_120,
+            0x0D => 5_760,
+            0x0E => 6_400,
+            0x0F => 7_680,
+            0x10 => 9_600,
+            0x11 => 10_240,
+            0x12 => 11_520,
+            0x13 => 12_800,
+            0x14 => 13_440,
+            0x15 => 14_080,
+            0x16 => 14_112,
+            0x17 => 14_720,
+            0x18 => 15_360,
+            0x19 => 19_200,
+            0x1A => 20_480,
+            0x1B => 30_720,
+            0x1C => 38_400,
+            _ => return None,
+        };
+        Some(hundreds_of_bps * BIT_RATE_UNIT_BPS)
     }
 }
 
@@ -218,6 +258,37 @@ impl<'a> crate::traits::DescriptorDef<'a> for DtsDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bit_rate_bps_follows_table_g3_and_ignores_the_reserved_msb() {
+        let rate = |code: u8| {
+            DtsDescriptor {
+                sample_rate_code: 0,
+                bit_rate_code: code,
+                nblks: 5,
+                fsize: 95,
+                surround_mode: 0,
+                lfe_flag: false,
+                extended_surround_flag: 0,
+                additional_info: &[],
+            }
+            .bit_rate_bps()
+        };
+        assert_eq!(rate(0x00), None);
+        assert_eq!(rate(0x04), None);
+        assert_eq!(rate(0x05), Some(128_000));
+        assert_eq!(rate(0x0A), Some(384_000));
+        assert_eq!(rate(0x10), Some(960_000));
+        assert_eq!(rate(0x11), Some(1_024_000));
+        assert_eq!(rate(0x16), Some(1_411_200));
+        assert_eq!(rate(0x1C), Some(3_840_000));
+        for open_variable_lossless in [0x1D, 0x1E, 0x1F] {
+            assert_eq!(rate(open_variable_lossless), None);
+        }
+        for code in 0x05..=0x1C {
+            assert_eq!(rate(code), rate(code | 0x20), "code {code:#04x}");
+        }
+    }
 
     /// r03-W11: code 0b1001 is 88,2 kHz (2 x 44,1), not the 88,02 kHz the
     /// spec table prints; the 44,1 kHz family doubles at each step.

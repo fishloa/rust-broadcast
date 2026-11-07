@@ -23,6 +23,13 @@ impl ApduTag {
         Self(((b1 as u32) << 16) | ((b2 as u32) << 8) | b3 as u32)
     }
 
+    /// Build a tag from a 24-bit integer; the high byte of `value` is
+    /// discarded. Inverse of [`as_u24`](Self::as_u24).
+    #[must_use]
+    pub const fn from_u24(value: u32) -> Self {
+        Self(value & 0x00FF_FFFF)
+    }
+
     /// The tag as a 24-bit integer (low three bytes of the returned `u32`).
     #[must_use]
     pub const fn as_u24(self) -> u32 {
@@ -219,6 +226,8 @@ mod tests {
         let t = ApduTag::from_bytes(0x9F, 0x80, 0x32);
         assert_eq!(t.to_bytes(), [0x9F, 0x80, 0x32]);
         assert_eq!(t.as_u24(), 0x009F_8032);
+        assert_eq!(ApduTag::from_u24(0x009F_8032), t);
+        assert_eq!(ApduTag::from_u24(0xAB9F_8032), t);
         assert_eq!(t, CA_PMT);
     }
 
