@@ -67,6 +67,7 @@ mod dts_ts;
 mod eac3_crc2_real_capture;
 mod eac3_real_capture;
 mod eac3_real_dependent_substreams;
+mod error_variants;
 mod es_info_passthrough;
 mod esds_config;
 mod ffmpeg_oracle;
