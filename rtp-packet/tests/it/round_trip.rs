@@ -10,7 +10,7 @@
 //! e.g. Wireshark's public sample-captures site). Per the project's
 //! documented fallback (docs/CRATE-ACCEPTANCE.md — "no real capture exists,
 //! gate is the biting round-trip", the same discipline already used for
-//! `smpte2038`'s `anc.bin` / `scte104`'s hand-built vectors), every byte
+//! `st291`'s `anc.bin` / `scte104`'s hand-built vectors), every byte
 //! vector below is **hand-constructed directly from the RFC 3550 §5.1/§5.3.1
 //! bit diagrams** (`private/specs-verified/rtp/rtp-packet/rtp-header.md`), independently of this
 //! crate's own serializer — so a bug that made `serialize`/`parse` agree with

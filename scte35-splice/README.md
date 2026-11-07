@@ -8,9 +8,7 @@ Spec-cited **ANSI/SCTE 35 2023r1** splice information (Digital Program Insertion
 cueing) parser **and builder**, with the rust-broadcast family's symmetric
 `Parse`/`Serialize` round-trip discipline: every wire type round-trips byte for byte.
 
-> **Formerly `dvb-scte35`.** Renamed from `dvb-scte35` (last released as 7.9.0 in the
-> DVB lockstep) to `scte35-splice` (v1.0.0) and now independently versioned. The
-> deprecated `dvb-scte35` crate re-exports this one.
+> Formerly `dvb-scte35` (last released as 7.9.0); the deprecated `dvb-scte35` crate re-exports this one.
 
 ```toml
 [dependencies]

@@ -5,10 +5,6 @@ name: Release rmt-flute
 # (it is a standalone reusable crate with its own cadence), so it has its own
 # publish workflow. CI is the only source of published artifacts — never
 # `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN secret.
-#
-# Renamed from `release-dvb-flute.yml` at 0.4.0 — the crate implements only
-# IETF RMT standards (RFC 5651/5775/6726/5740) and no DVB standard. All
-# `dvb-flute` versions are yanked; there is no shim.
 
 on:
   push:

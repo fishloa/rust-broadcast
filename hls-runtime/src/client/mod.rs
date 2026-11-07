@@ -1,6 +1,5 @@
 //! LL-HLS playback client engine — a sans-IO Low-Latency HLS (RFC 8216bis)
-//! client (issue #717, slices 2-4; formerly the standalone `ll-hls-client`
-//! crate, folded in here as `hls-runtime`'s `client` module — see
+//! client (issue #717, slices 2-4; the `client` module of `hls-runtime` — see
 //! `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`).
 //!
 //! [`HlsClient`] is a driveable, caller-driven state machine — the same

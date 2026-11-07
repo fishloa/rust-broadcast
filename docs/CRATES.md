@@ -78,14 +78,6 @@ builds (see the table above against the in-tree versions below).
 - DASH-IF CPIX 2.3 and the SPEKE API (DRM key exchange) live in the private repo (`private/specs-verified/dash/cpix/`).
 - SMPTE ST 2110-20 (video), -21 (traffic shaping), -30 (audio) live in the private repo (`private/specs-verified/smpte/st2110/`).
 
-### Renamed crates
-
-The workspace does not publish re-export shims. When a crate is renamed, the
-old name's versions are yanked so a stale `Cargo.toml` fails loudly:
-`dvb-flute` -> `rmt-flute`, `smpte2038` and `dvb-smpte2038` -> `st291`. The
-exception is `ll-hls-runtime` -> `hls-runtime`: the rename tracked a scope
-change, so the old versions stay live.
-
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
@@ -379,7 +371,7 @@ Parses TTML2 documents into typed structures and validates them, as a separate p
 
 #### st291
 
-Parses and builds ANC data packets (DID/SDID, user data words, parity and checksum) and their two carriages: the ST 2038 `anc_data_descriptor` + ANC PES packet in MPEG-2 TS, and the RFC 8331 RTP payload. Renamed from `smpte2038` / `dvb-smpte2038` (both yanked).
+Parses and builds ANC data packets (DID/SDID, user data words, parity and checksum) and their two carriages: the ST 2038 `anc_data_descriptor` + ANC PES packet in MPEG-2 TS, and the RFC 8331 RTP payload.
 
 - **Standards:** SMPTE ST 291-1:2011; ST 2038:2021 (`ts` feature); RFC 8331 / ST 2110-40:2023 (`rtp` feature)
 - **Cargo description:** SMPTE ST 291-1 ancillary (ANC) data content — typed parse/serialize for its transports: ST 2038:2021 MPEG-2 TS carriage (anc_data_descriptor + ANC data PES packet) and RFC 8331 / ST 2110-40 RTP carriage.
@@ -611,7 +603,7 @@ Bytes-in/actions-out client session for a live MPEG-TS HTTP stream: Open/Reconne
 
 #### hls-runtime
 
-A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 demux output) and a sans-IO origin (`server`, feature `std`) that renders playlists and serves init/segment/part bytes straight from a `media-plane` `Trunk`. Earlier releases were published as `ll-hls-runtime` (those versions are still live on crates.io).
+A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 demux output) and a sans-IO origin (`server`, feature `std`) that renders playlists and serves init/segment/part bytes straight from a `media-plane` `Trunk`.
 
 - **Standards:** RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS)
 - **Cargo description:** Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter.
@@ -810,7 +802,7 @@ Reads and writes the `MulticastServerConfiguration` and `MulticastGatewayConfigu
 
 #### rmt-flute
 
-LCT headers with flag-driven field sizing, header-extension chains, ALC and FEC payload IDs, FLUTE EXT_FDT/EXT_CENC and NORM messages. Pure IETF RMT; DVB, 3GPP and ATSC profiles sit on top of it. Renamed from `dvb-flute` (yanked).
+LCT headers with flag-driven field sizing, header-extension chains, ALC and FEC payload IDs, FLUTE EXT_FDT/EXT_CENC and NORM messages. Pure IETF RMT; DVB, 3GPP and ATSC profiles sit on top of it.
 
 - **Standards:** RFC 5651 (LCT); RFC 5775 (ALC); RFC 6726 (FLUTE); RFC 5740 (NORM); RFC 5052 (FEC building block)
 - **Cargo description:** ALC/LCT/FLUTE/NORM multicast object-delivery wire formats (RFC 5651/5775/6726/5740): LCT headers with flag-driven CCI/TSI/TOI sizing, header-extension chains, ALC + FEC Payload IDs, FLUTE EXT_FDT/EXT_CENC, and NORM messages.
