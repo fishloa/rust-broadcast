@@ -36,34 +36,12 @@ impl StartScheduleDownload {
 impl<'a> Parse<'a> for StartScheduleDownload {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "start_schedule num_provider_avails",
-            });
-        }
-        let count = bytes[0] as usize;
-        let need = 1 + count * 4;
-        if bytes.len() < need {
-            return Err(Error::BufferTooShort {
-                need,
-                have: bytes.len(),
-                what: "start_schedule provider_avail_ids",
-            });
-        }
-        let mut ids = Vec::with_capacity(count);
-        for i in 0..count {
-            let off = 1 + i * 4;
-            ids.push(u32::from_be_bytes([
-                bytes[off],
-                bytes[off + 1],
-                bytes[off + 2],
-                bytes[off + 3],
-            ]));
-        }
         Ok(Self {
-            provider_avail_ids: ids,
+            provider_avail_ids: super::parse_provider_avail_ids(
+                bytes,
+                "start_schedule num_provider_avails",
+                "start_schedule provider_avail_ids",
+            )?,
         })
     }
 }
@@ -71,25 +49,14 @@ impl<'a> Parse<'a> for StartScheduleDownload {
 impl Serialize for StartScheduleDownload {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        1 + self.provider_avail_ids.len() * 4
+        super::provider_avail_ids_len(&self.provider_avail_ids)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        buf[0] = broadcast_common::len::fit_u8(
-            self.provider_avail_ids.len(),
+        super::write_provider_avail_ids(
+            &self.provider_avail_ids,
+            buf,
             "start_schedule_download.num_provider_avails",
-        )?;
-        for (i, &id) in self.provider_avail_ids.iter().enumerate() {
-            let off = 1 + i * 4;
-            buf[off..off + 4].copy_from_slice(&id.to_be_bytes());
-        }
-        Ok(need)
+        )
     }
 }
 
