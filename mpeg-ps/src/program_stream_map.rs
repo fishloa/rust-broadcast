@@ -13,6 +13,8 @@ use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 pub const PACKET_START_CODE_PREFIX: u32 = 0x00_0001;
 /// `map_stream_id` — `0xBC`, combined with the prefix forms the PSM start code.
 pub const MAP_STREAM_ID: u8 = 0xBC;
+/// Combined PSM start code: `0x000001BC`.
+pub const PSM_START_CODE: u32 = (PACKET_START_CODE_PREFIX << 8) | MAP_STREAM_ID as u32;
 
 /// Bytes before the map body: prefix(3) + map_stream_id(1) + psm_length(2) = 6.
 const PREFIX_LEN: usize = 6;
@@ -664,5 +666,10 @@ mod tests {
             ProgramStreamMap::parse(&buf),
             Err(Error::BadCrc { .. })
         ));
+    }
+
+    #[test]
+    fn psm_start_code_is_prefix_plus_stream_id() {
+        assert_eq!(PSM_START_CODE, 0x0000_01BC);
     }
 }
