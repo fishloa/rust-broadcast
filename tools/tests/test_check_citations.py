@@ -155,3 +155,141 @@ def test_fixture_dir_wrong_case_fails(tmp_path, monkeypatch) -> None:
 def test_fixture_dir_exact_case_passes(tmp_path, monkeypatch) -> None:
     _scratch(tmp_path, {"docs/good.md": "see fixtures/scte35/v300/\n", "fixtures/scte35/v300/a.mpd": "x\n"})
     assert _run(monkeypatch, tmp_path) == 0
+
+
+def _errors(monkeypatch, tmp_path: pathlib.Path, capsys) -> str:
+    rc = _run(monkeypatch, tmp_path)
+    err = capsys.readouterr().err
+    assert rc == (1 if err else 0)
+    return err
+
+
+def test_retired_crate_tests_fixtures_path_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"docs/good.md": "see `tests/fixtures/x.ts`\n"})
+    assert "retired tests/fixtures or tests/golden path" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_retired_crate_tests_golden_path_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"docs/good.md": "bless into multimux/tests/golden\n"})
+    assert "retired tests/fixtures or tests/golden path" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_retired_manifest_exclude_pattern_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/Cargo.toml": 'exclude = ["docs/**", "tests/fixtures/**"]\n'})
+    assert "retired tests/fixtures or tests/golden path" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_golden_gate_file_name_is_not_a_retired_path(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(
+        tmp_path,
+        {"docs/good.md": "see transmux/tests/golden_gate.rs and tests/golden.rs and tests/golden_wire\n"},
+    )
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_retired_path_in_exempt_guard_file_passes(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"docs/FIXTURES.md": "no tracked file may match `*/tests/golden/*`\n"})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_retired_path_in_changelog_passes(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/CHANGELOG.md": "moved tests/fixtures/x.ts\n"})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_retired_docs_specs_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"docs/good.md": "transcribe into `docs/specs/`\n"})
+    assert "retired docs/specs/ tree" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_retired_private_map_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"docs/good.md": "see PRIVATE-MAP for the layout\n"})
+    assert "PRIVATE-MAP" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_retired_test_streams_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/src/lib.rs": "// reads .test-streams/x.ts\n"})
+    assert ".test-streams" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_test_streams_allowed_in_fetch_script(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"tools/fetch-test-streams.sh": 'DEST="$ROOT/.test-streams"\n'})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_relative_fixture_citation_missing_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/tests/it/a.rs": "//! reads `../fixtures/ts/missing.ts`\n"})
+    assert "relative fixture citation does not resolve: ../fixtures/ts/missing.ts" in _errors(
+        monkeypatch, tmp_path, capsys
+    )
+
+
+def test_relative_fixture_citation_existing_passes(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(
+        tmp_path,
+        {"foo/tests/it/a.rs": "//! reads `../fixtures/ts/here.ts`\n", "fixtures/ts/here.ts": "x\n"},
+    )
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_relative_fixture_citation_prefix_glob_passes(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(
+        tmp_path,
+        {"foo/a.md": "see ../fixtures/srt/libsrt-*.bin and ../fixtures/srt/libsrt-\n", "fixtures/srt/libsrt-x.bin": "x\n"},
+    )
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_relative_fixture_citation_wrong_name_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(
+        tmp_path,
+        {"foo/a.md": "see ../fixtures/rtp/rtp_simple.bin\n", "fixtures/rtp/rtp-simple.bin": "x\n"},
+    )
+    assert "rtp_simple.bin" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_fixture_helper_argument_missing_fails(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
+    (tmp_path / "private" / "specs-verified").mkdir(parents=True, exist_ok=True)
+    _scratch(
+        tmp_path,
+        {"foo/tests/it/a.rs": 'let p = test_fixtures::path("ts/missing.ts");\n', "fixtures/ts/here.ts": "x\n"},
+    )
+    assert "ts/missing.ts" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_fixture_helper_argument_existing_passes(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(
+        tmp_path,
+        {
+            "foo/tests/it/a.rs": 'let p = test_fixtures::path("ts/here.ts");\n'
+            'let q = test_fixtures::read(&"ts/here.ts");\n'
+            'let r = test_fixtures::read_to_string("ts/{dynamic}.ts");\n',
+            "fixtures/ts/here.ts": "x\n",
+        },
+    )
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_fixture_helper_argument_private_tier_passes(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
+    (tmp_path / "private" / "specs-verified").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "private" / "fixtures" / "ts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "private" / "fixtures" / "ts" / "big.ts").write_text("x\n")
+    _scratch(tmp_path, {"foo/tests/it/a.rs": 'let p = test_fixtures::path("ts/big.ts");\n'})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_fixture_helper_argument_missing_private_tier_fails(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("SKIP_PRIVATE_FIXTURES", raising=False)
+    (tmp_path / "private" / "specs-verified").mkdir(parents=True, exist_ok=True)
+    _scratch(tmp_path, {"foo/tests/it/a.rs": 'let p = test_fixtures::path("ts/big.ts");\n'})
+    assert "ts/big.ts" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_sentence_final_period_after_fixture_doc_citation_passes(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(
+        tmp_path,
+        {"docs/good.md": "provenance in fixtures/hls/PROVENANCE.md. Next.\n", "fixtures/hls/PROVENANCE.md": "x\n"},
+    )
+    assert _errors(monkeypatch, tmp_path, capsys) == ""

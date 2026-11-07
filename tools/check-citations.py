@@ -6,7 +6,13 @@ Scans every tracked text file outside private/ and fails when:
      specs/, fixtures/ or <crate>/docs/ does not exist in the public tree;
   b. a cited private/... path does not exist (when private/specs-verified
      is checked out);
-  c. a Markdown link target points into private/.
+  c. a Markdown link target points into private/;
+  g. a retired location is named: a `tests/fixtures` or `tests/golden` path
+     (fixtures and goldens live under fixtures/<topic>/ and
+     fixtures/golden/<topic>/), `docs/specs/`, `PRIVATE-MAP`, or
+     `.test-streams` outside the fetch script;
+  h. a `../fixtures/...` citation, or a literal `test_fixtures::path|read|
+     read_to_string("<topic>/<file>")` argument, does not resolve.
 """
 
 import fnmatch
@@ -62,7 +68,25 @@ PRIVATE_CITE = re.compile(
 GITHUB_URL = re.compile(
     r"https://github\.com/fishloa/rust-broadcast/(?:blob|tree)/[^/]+/([^\s)\"#?]+)"
 )
+RETIRED_PATH = re.compile(r"(?<![\w.-])(?:[\w.+-]+/)*tests/(?:fixtures|golden)(?:/|(?![\w.-]))")
+RETIRED_DOCS_SPECS = re.compile(r"(?<![\w-])docs/specs/")
+RETIRED_PRIVATE_MAP = re.compile(r"PRIVATE-MAP")
+RETIRED_TEST_STREAMS = re.compile(r"\.test-streams")
+RELATIVE_FIXTURE_CITE = re.compile(
+    r"(?<![\w./-])((?:\.\./)+fixtures(?:/[\w.+@=*?\[\]{},-]*)*)"
+)
+FIXTURE_CALL = re.compile(
+    r"test_fixtures::(?:path|read|read_to_string)\(\s*&?\"([^\"{}\\]+)\"\s*\)"
+)
 GLOB_CHARS = set("*?[")
+RETIRED_EXEMPT = {
+    "docs/FIXTURES.md",
+    "workspace-guards/tests/guards/fixtures_one_home.rs",
+    "tools/check-citations.py",
+    "tools/tests/test_check_citations.py",
+}
+TEST_STREAMS_ALLOWED = {"tools/fetch-test-streams.sh"}
+FIXTURE_CALL_EXEMPT_PREFIX = ("test-fixtures/",)
 HISTORICAL = re.compile(r"(^|/)CHANGELOG[^/]*\.md$|^docs/release-notes/|^docs/superpowers/|^\.delegate/|^private/")
 
 
@@ -232,6 +256,21 @@ def is_text(path: Path) -> bool:
     return True
 
 
+def cite_resolves(cite: str, bases: list[str], present: set[str], present_dirs: set[str]) -> bool:
+    partial = cite[-1] in "-_."
+    for base in bases:
+        target = posixpath.normpath(posixpath.join(base, cite))
+        if any(ch in target for ch in GLOB_CHARS):
+            if any(fnmatch.fnmatch(c, target) for c in present):
+                return True
+        elif partial:
+            if any(c.startswith(target) for c in present):
+                return True
+        elif target in present or target in present_dirs:
+            return True
+    return False
+
+
 def has_prefix(p: str) -> bool:
     if p.startswith("private/"):
         return False
@@ -352,7 +391,7 @@ def main() -> int:
 
         # e. fixture citations (any extension) under fixtures/ or private/fixtures/
         for m in FIXTURE_CITE.finditer(text):
-            cite = m.group(1).rstrip()
+            cite = m.group(1).rstrip().rstrip(".,;:")
             cite_stripped = cite.rstrip("/")
             if cite_stripped.endswith(DOC_SUFFIXES):
                 continue
@@ -409,6 +448,41 @@ def main() -> int:
                 f"{rel}: citation points at a crate-local fixtures path; "
                 f"cite fixtures/<topic>/... or private/fixtures/<topic>/... instead: {cite}"
             )
+
+        # g. retired locations
+        if rel not in RETIRED_EXEMPT:
+            for pat, what in (
+                (RETIRED_PATH, "a retired tests/fixtures or tests/golden path; use fixtures/<topic>/ or fixtures/golden/<topic>/"),
+                (RETIRED_DOCS_SPECS, "the retired docs/specs/ tree; cite private/specs-verified/... directly"),
+                (RETIRED_PRIVATE_MAP, "the deleted PRIVATE-MAP; cite private paths directly"),
+            ):
+                for m in pat.finditer(text):
+                    errors.append(f"{rel}: names {what}: {m.group(0)}")
+            if rel not in TEST_STREAMS_ALLOWED:
+                for m in RETIRED_TEST_STREAMS.finditer(text):
+                    errors.append(f"{rel}: names the retired .test-streams tier (only tools/fetch-test-streams.sh may)")
+
+        # h. relative and helper-call fixture citations must resolve
+        if rel not in RETIRED_EXEMPT:
+            crate_root = rel.split("/")[0] if "/" in rel else "."
+            for m in RELATIVE_FIXTURE_CITE.finditer(text):
+                cite = m.group(1).rstrip(".,")
+                if "{" in cite:
+                    continue
+                if not cite_resolves(cite, [d, crate_root], present, present_dirs):
+                    errors.append(f"{rel}: relative fixture citation does not resolve: {cite}")
+            if not rel.startswith(FIXTURE_CALL_EXEMPT_PREFIX):
+                for m in FIXTURE_CALL.finditer(text):
+                    cite = m.group(1)
+                    if cite_resolves(f"fixtures/{cite}", ["."], present, present_dirs):
+                        continue
+                    if skip_private or cite_resolves(
+                        f"private/fixtures/{cite}", ["."], set(private_files), set()
+                    ):
+                        continue
+                    errors.append(
+                        f"{rel}: test_fixtures argument resolves in neither fixtures/ nor private/fixtures/: {cite}"
+                    )
 
         # c. markdown links into private/
         for m in MD_LINK.finditer(text):
