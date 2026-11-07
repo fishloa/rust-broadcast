@@ -44,3 +44,4 @@ mod tsduck_decompile_oracle;
 mod tsduck_interop;
 mod typed_pid;
 mod yoke;
+mod content_genre_table;

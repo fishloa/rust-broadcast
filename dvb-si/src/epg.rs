@@ -1690,6 +1690,49 @@ mod tests {
         assert_eq!(evts[0].event_name.as_deref(), Some("News at 14"));
     }
 
+    #[test]
+    fn retain_services_drops_rejected_services_and_their_collector_state() {
+        let start = start_raw(2026, 6, 10, 10);
+        let eit = |service_id: u16, name: &[u8]| {
+            eit_pf_section(
+                service_id,
+                1,
+                1,
+                1,
+                0,
+                start,
+                [1, 0, 0],
+                &short_event_bytes(name, b""),
+            )
+        };
+        let key = |service_id: u16| ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id,
+        };
+
+        let mut store = EpgStore::new();
+        store.feed(&eit(100, b"Kept")).unwrap();
+        store.feed(&eit(200, b"Dropped")).unwrap();
+        assert_eq!(store.service_count(), 2);
+        assert_eq!(store.event_count(), 2);
+
+        store.retain_services(|k| k.service_id == 100);
+
+        assert_eq!(store.service_count(), 1);
+        assert_eq!(store.event_count(), 1);
+        assert!(store.events(key(200)).is_none());
+        let kept = store.events(key(100)).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].event_name.as_deref(), Some("Kept"));
+
+        // The collector's version gate for the dropped service was cleared too,
+        // so the identical section is accepted again instead of being skipped.
+        store.feed(&eit(200, b"Dropped")).unwrap();
+        assert_eq!(store.service_count(), 2);
+        assert_eq!(store.events(key(200)).unwrap().len(), 1);
+    }
+
     // ------------------------------------------------------------------
     // schedule range query
     // ------------------------------------------------------------------
