@@ -124,6 +124,16 @@ pub enum Error {
     Rtp(rtp_packet::Error),
 }
 
+impl From<broadcast_common::len::BufferTooShort> for Error {
+    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
+        Self::BufferTooShort {
+            need: e.need,
+            have: e.have,
+            what: e.what,
+        }
+    }
+}
+
 impl From<BitError> for Error {
     fn from(e: BitError) -> Self {
         Error::Bits(e)

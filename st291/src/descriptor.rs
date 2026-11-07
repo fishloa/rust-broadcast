@@ -10,6 +10,7 @@
 //! descriptors", §4.1.2.1).
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 
 /// `stream_type` for the ANC data ES in the PMT — `0x06` (PES private data),
 /// ST 2038 §4.1.1.
@@ -57,25 +58,13 @@ impl<'a> AncDataDescriptor<'a> {
     /// [`Error::BufferTooShort`] if truncated; [`Error::BadDescriptorTag`] if
     /// the tag byte is not [`ANC_DATA_DESCRIPTOR_TAG`].
     pub fn parse(b: &'a [u8]) -> Result<Self> {
-        if b.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: b.len(),
-                what: "anc_data_descriptor header",
-            });
-        }
+        need_in(b, HEADER_LEN, "anc_data_descriptor header")?;
         if b[0] != ANC_DATA_DESCRIPTOR_TAG {
             return Err(Error::BadDescriptorTag(b[0]));
         }
         let len = usize::from(b[1]);
         let end = HEADER_LEN + len;
-        if b.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: b.len(),
-                what: "anc_data_descriptor body",
-            });
-        }
+        need_in(b, end, "anc_data_descriptor body")?;
         Ok(Self {
             inner_descriptors: &b[HEADER_LEN..end],
         })
@@ -94,13 +83,7 @@ impl<'a> AncDataDescriptor<'a> {
     /// if the body exceeds the 8-bit `descriptor_length`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "anc_data_descriptor serialize output",
-            });
-        }
+        need_in(buf, len, "anc_data_descriptor serialize output")?;
         if self.inner_descriptors.len() > 0xFF {
             return Err(Error::FieldTooWide {
                 what: "descriptor_length",

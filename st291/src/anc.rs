@@ -34,6 +34,7 @@
 //! field layout is unchanged by this — see `anc_content`'s module doc for why.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::bits::{BitReader, BitWriter};
 
@@ -298,13 +299,7 @@ impl AncDataPacket {
     /// [`Error::BadHeaderDataLength`] / [`Error::BadFixedBits`] on malformed
     /// input, or a bit-stream error walking the ANC payload.
     pub fn parse(b: &[u8]) -> Result<Self> {
-        if b.len() < PES_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: PES_HEADER_LEN,
-                have: b.len(),
-                what: "ANC PES header",
-            });
-        }
+        need_in(b, PES_HEADER_LEN, "ANC PES header")?;
         if b[0..3] != PACKET_START_CODE_PREFIX {
             return Err(Error::BadStartCode(
                 (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
@@ -427,13 +422,7 @@ impl AncDataPacket {
     /// `user_data_words.len()` does not equal `data_count & 0xFF`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "ANC PES serialize output",
-            });
-        }
+        need_in(buf, len, "ANC PES serialize output")?;
         let pes_len = self.pes_packet_length();
         if pes_len > usize::from(u16::MAX) {
             return Err(Error::PesLengthTooLarge(pes_len));
@@ -473,13 +462,7 @@ impl AncDataPacket {
 
 /// Decode the 5-byte ST 2038 PTS field (prefix `'0010'`, three `'1'` markers).
 fn read_pts(b: &[u8]) -> Result<u64> {
-    if b.len() < 5 {
-        return Err(Error::BufferTooShort {
-            need: 5,
-            have: b.len(),
-            what: "PTS field",
-        });
-    }
+    need_in(b, 5, "PTS field")?;
     if (b[0] >> 4) != PTS_PREFIX {
         return Err(Error::BadFixedBits("PTS prefix '0010'"));
     }
