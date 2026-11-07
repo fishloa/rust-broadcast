@@ -5,6 +5,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -92,13 +93,7 @@ impl RandomIndexPack {
     /// Parse a Random Index Pack (Key + Length + Value, including the
     /// trailing overall-length field) from `bytes`.
     pub fn parse_prefix(bytes: &[u8]) -> Result<(Self, usize)> {
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "Random Index Pack key",
-            });
-        }
+        need_in(bytes, 16, "Random Index Pack key")?;
         let key: [u8; 16] = ul_bytes_from_prefix(bytes);
         Self::check_key(&key)?;
 
@@ -117,13 +112,7 @@ impl RandomIndexPack {
             have: bytes.len(),
             what: "Random Index Pack value (length overflow)",
         })?;
-        if bytes.len() < value_end {
-            return Err(Error::BufferTooShort {
-                need: value_end,
-                have: bytes.len(),
-                what: "Random Index Pack value",
-            });
-        }
+        need_in(bytes, value_end, "Random Index Pack value")?;
         let v = &bytes[value_start..value_end];
         // Value = N * {BodySID: u32, ByteOffset: u64} (12 bytes each) +
         // trailing overall Length: u32.
@@ -201,13 +190,7 @@ impl Serialize for RandomIndexPack {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: buf.len(),
-                what: "Random Index Pack",
-            });
-        }
+        need_in(buf, total, "Random Index Pack")?;
         buf[0..16].copy_from_slice(&Self::key());
         let value_len = self.partitions.len() * 12 + 4;
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;

@@ -5,6 +5,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_in;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -104,13 +105,7 @@ impl PrimerPack {
     /// the Key and consuming exactly one KLV item's worth. Also usable in a
     /// stream context via the returned consumed-byte count.
     pub fn parse_prefix(bytes: &[u8]) -> Result<(Self, usize)> {
-        if bytes.len() < 16 {
-            return Err(Error::BufferTooShort {
-                need: 16,
-                have: bytes.len(),
-                what: "Primer Pack key",
-            });
-        }
+        need_in(bytes, 16, "Primer Pack key")?;
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         Self::check_key(&key)?;
 
@@ -129,13 +124,7 @@ impl PrimerPack {
             have: bytes.len(),
             what: "Primer Pack value (length overflow)",
         })?;
-        if bytes.len() < value_end {
-            return Err(Error::BufferTooShort {
-                need: value_end,
-                have: bytes.len(),
-                what: "Primer Pack value",
-            });
-        }
+        need_in(bytes, value_end, "Primer Pack value")?;
         let v = &bytes[value_start..value_end];
         if v.len() < 8 {
             return Err(Error::InvalidBatchHeader {
@@ -220,13 +209,7 @@ impl Serialize for PrimerPack {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if buf.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: buf.len(),
-                what: "Primer Pack",
-            });
-        }
+        need_in(buf, total, "Primer Pack")?;
         buf[0..16].copy_from_slice(&Self::key());
         let value_len = 8 + self.entries.len() * 18;
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
