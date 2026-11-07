@@ -45,7 +45,6 @@ packagers, QC tools and converters that need the model rather than a rendering.
 | Feature | Default | Effect |
 |---|---|---|
 | `std` | yes | Enables `Document`, foreign-content types and `validation` (they are built on `quick-xml`, which needs `std`). Without it only `error` and the `time` expression parser remain (`no_std` + `alloc`). |
-| `serde` | no | `serde::Serialize` on the model types. |
 
 ## Quick start
 

@@ -4366,7 +4366,6 @@ dependencies = [
  "broadcast-common",
  "broadcast-hls",
  "cc-data",
- "chrono",
  "dvb-vbi",
  "hex",
  "jiff",
@@ -4696,7 +4695,6 @@ version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "quick-xml",
- "serde",
  "serde_json",
  "test-fixtures",
  "thiserror 2.0.21",

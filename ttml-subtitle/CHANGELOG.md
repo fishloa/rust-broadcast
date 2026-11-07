@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- The `serde` feature and the `serde` dependency: nothing in the crate used them.
 ### Changed
 - XML 1.0 character-data validation (`Char` production, entity/character references) comes from `broadcast_common::xml_chars` instead of a private copy (dedupe D5).
 

@@ -14,11 +14,3 @@ pub trait OperationDef<'a>: Parse<'a, Error = crate::error::Error> {
     /// Diagnostic name, SCREAMING_SNAKE: `SPLICE_REQUEST`, `TIME_SIGNAL_REQUEST`, …
     const NAME: &'static str;
 }
-
-/// Implemented by every typed SCTE 104 operation data structure that belongs
-/// in a `single_operation_message` (basic request/response).
-pub trait SingleOpDef<'a>: OperationDef<'a> {}
-
-/// Implemented by every typed SCTE 104 operation data structure that belongs
-/// in a `multiple_operation_message` (Normal/Supplemental/Control).
-pub trait MultiOpDef<'a>: OperationDef<'a> {}

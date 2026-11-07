@@ -29,7 +29,6 @@ thiserror     = { version = "2", default-features = false }
 jiff          = { version = "0.2", default-features = false, features = ["alloc"] }
 # Hex codec for DATERANGE `SCTE35-*` attributes (SP5); `alloc` only, so the crate stays no_std.
 hex           = { version = "0.4", default-features = false, features = ["alloc"] }
-chrono        = { workspace = true, optional = true }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
@@ -42,10 +41,9 @@ test-fixtures = { path = "../test-fixtures" }
 transmux = { path = "../transmux", default-features = false }
 
 [features]
-default = ["std", "serde", "chrono"]
-std     = ["jiff/std", "scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std", "broadcast-hls/std"]
+default = ["std", "serde"]
+std     = ["jiff/std", "scte35-splice/std", "mp4-emsg/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std", "broadcast-hls/std"]
 serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde", "dvb-vbi?/serde", "broadcast-hls/serde"]
-chrono  = ["dep:chrono", "chrono/alloc"]
 # CEA-608/708 -> WebVTT cue extraction (`webvtt::Cea608CueExtractor` /
 # `Cea708CueExtractor`), layered on `cc-data`'s decode-only 608/708 model.
 # Not in `default`: pulls in the whole caption-decode crate, which most
