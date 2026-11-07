@@ -23,7 +23,6 @@ serde      = { version = "1", default-features = false, optional = true, feature
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-serde_json = { workspace = true }
 test-alloc = { path = "../test-alloc" }
 
 [features]

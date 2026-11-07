@@ -29,7 +29,6 @@ test-fixtures = { path = "../test-fixtures" }
 transmux = { path = "../transmux", default-features = false }
 mpeg-ts = { path = "../mpeg-ts" }
 mpeg-pes = { path = "../mpeg-pes" }
-serde_json = { workspace = true }
 
 [features]
 default = ["std", "cc-data", "teletext"]

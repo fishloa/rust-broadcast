@@ -32,7 +32,6 @@ encoding_rs = { version = "0.8", optional = true }
 test-fixtures = { path = "../test-fixtures" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc = { path = "../test-alloc" }
-hex       = "0.4"
 quick-xml = { workspace = true }
 serde_json = { workspace = true }
 criterion  = { workspace = true, features = ["html_reports"] }

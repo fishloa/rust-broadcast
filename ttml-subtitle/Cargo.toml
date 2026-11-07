@@ -23,7 +23,6 @@ thiserror  = { version = "2", default-features = false }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-serde_json = { workspace = true }
 
 [[example]]
 name = "from_scratch"
