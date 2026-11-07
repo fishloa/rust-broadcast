@@ -443,8 +443,9 @@ mod tests {
     #[test]
     fn oversized_payload_is_rejected_not_truncated() {
         let payload = [0xAAu8; 185];
-        assert!(
-            OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload).is_err()
+        assert_eq!(
+            OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload),
+            Err(Error::PayloadTooLarge { len: 185, max: 184 })
         );
     }
 
