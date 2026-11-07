@@ -20,8 +20,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use transmux::TrackId;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use crate::support::origin::{body_string, get};
+use axum::http::StatusCode;
 use broadcast_common::Unpackage;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
@@ -38,17 +38,6 @@ const PART_MS: u32 = 500;
 const WINDOW: usize = 3;
 /// How many segments to publish: well past several slides.
 const PUBLISHED: u32 = 12;
-
-fn get(uri: &str) -> Request<Body> {
-    Request::builder().uri(uri).body(Body::empty()).unwrap()
-}
-
-async fn text(resp: axum::response::Response) -> String {
-    let b = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    String::from_utf8(b.to_vec()).unwrap()
-}
 
 /// What a DASH client reads from one MPD fetch.
 struct Edge {
@@ -141,7 +130,7 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
             // client's clock stands at their end, `published * D` after AST.
             let resp = app.clone().oneshot(get(manifest_path)).await.unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
-            let xml = text(resp).await;
+            let xml = body_string(resp).await;
 
             let mut report = media_doctor::Report::new();
             media_doctor::check_dash_mpd(&xml, &mut report);

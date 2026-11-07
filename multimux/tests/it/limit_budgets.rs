@@ -10,13 +10,10 @@
 
 use std::time::Duration;
 
+use crate::support::origin::get;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
-
-fn get(path: &str) -> Request<Body> {
-    Request::builder().uri(path).body(Body::empty()).unwrap()
-}
 
 #[test]
 fn a_query_that_merely_contains_the_marker_is_not_a_blocking_reload() {

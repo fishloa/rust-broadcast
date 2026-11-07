@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use crate::support::raw_http::{EXCHANGE_DEADLINE, exchange};
 
 const OFFER: &str = "v=0\r\n\
 o=- 0 0 IN IP4 127.0.0.1\r\n\
@@ -28,16 +28,12 @@ async fn post_offer(addr: std::net::SocketAddr) -> String {
 }
 
 async fn post_offer_with_body(addr: std::net::SocketAddr, body: &str) -> String {
-    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
     let raw = format!(
         "POST /whip HTTP/1.1\r\nHost: x\r\nContent-Type: application/sdp\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    s.write_all(raw.as_bytes()).await.unwrap();
-    let mut buf = Vec::new();
-    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut buf)).await;
-    String::from_utf8_lossy(&buf).into_owned()
+    exchange(addr, &raw, EXCHANGE_DEADLINE).await
 }
 
 /// Defect 1 (structural): the driver has a transport-deadline timer arm that
