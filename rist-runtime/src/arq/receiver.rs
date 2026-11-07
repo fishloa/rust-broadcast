@@ -210,6 +210,12 @@ impl Receiver {
         self.missing.len()
     }
 
+    /// The current smoothed RTT estimate, if any real sample has been
+    /// folded in via [`Self::on_rtt_sample`] yet.
+    pub fn rtt_estimate(&self) -> Option<Duration> {
+        self.rtt.smoothed()
+    }
+
     /// Fold a fresh RTT sample (e.g. from [`super::rtt::rtt_sample`]) into
     /// this receiver's smoothed RTT estimate, used to schedule
     /// retransmission-request retries (see the `arq` module doc's
@@ -1014,5 +1020,13 @@ mod tests {
         // base=0xFFFE, +1=0xFFFF, +2 wraps to 0 (RESYNC_CONFIRM_COUNT == 3).
         assert_eq!(r.next_expected(), Some(1));
         assert_eq!(r.missing_count(), 0);
+    }
+
+    #[test]
+    fn rtt_estimate_is_none_until_a_sample_arrives() {
+        let mut r = Receiver::new(cfg());
+        assert_eq!(r.rtt_estimate(), None);
+        r.on_rtt_sample(Duration::from_millis(20));
+        assert_eq!(r.rtt_estimate(), Some(Duration::from_millis(20)));
     }
 }

@@ -5,7 +5,6 @@ All notable changes to this crate will be documented in this file.
 ## [Unreleased]
 ### Removed
 - `Error::TrailingData`, never constructed: TR-06-1 §5.2 does not fix a closed sub-packet list, and unmatched sub-packets are kept in `unknown` (c2 TH3).
-- Unused public `Receiver::rtt_estimate` (c2 TH1).
 ### Changed
 - `GenericNack` and `RangeNack` share one padded-serialize helper, and the three RFC 3550 §6.4.1 padding-count checks use `rtcp_packet::padding_count` (c3 N1). A padded sub-packet with an empty body is now `InvalidPaddingCount` instead of reading the length byte as the count.
 
