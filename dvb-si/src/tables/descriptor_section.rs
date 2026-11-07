@@ -1,5 +1,5 @@
 //! Shared wire core of the descriptor-only long sections: the CAT
-//! (ISO/IEC 13818-1 §2.4.4.7) and TSDT (§2.4.4.12) both carry a 16-bit
+//! (ISO/IEC 13818-1 §2.4.4.7) and TSDT (§2.4.4.13) both carry a 16-bit
 //! `table_id_extension`, the version / section-number header, and one
 //! descriptor loop that runs from byte 8 to the CRC with no length field.
 
