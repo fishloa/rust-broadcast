@@ -355,8 +355,12 @@ const MS_PER_SECOND: u64 = 1_000;
 /// sample of a track still appears exactly once, in decode order.
 fn plan_mdat_layout(media: &Media, movie_timescale: u32) -> Result<MdatLayout> {
     let to_movie = |ticks: i64, ts: u32| rescale_i64(ticks, ts, movie_timescale, Rounding::Floor);
-    let chunk_ticks = i128::from(movie_timescale.max(1)) * i128::from(INTERLEAVE_CHUNK_MS)
-        / i128::from(MS_PER_SECOND);
+    let chunk_ticks = rescale_u64(
+        INTERLEAVE_CHUNK_MS,
+        MS_PER_SECOND,
+        movie_timescale,
+        Rounding::Floor,
+    );
     let chunk_ticks = i64::try_from(chunk_ticks).unwrap_or(i64::MAX).max(1);
     let mut track_chunks: Vec<Vec<Chunk>> = Vec::with_capacity(media.tracks.len());
     // (start tick, track index, first sample, count) for the global merge.

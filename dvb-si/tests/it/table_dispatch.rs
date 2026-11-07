@@ -4,6 +4,7 @@
 //! matching the wire format expected by each module's parser.
 
 use dvb_si::tables::AnyTableSection;
+use test_fixtures::psi::{pat_section, pmt_section_empty};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -15,48 +16,7 @@ fn push_crc(v: &mut Vec<u8>) {
 
 // ── PAT builder ──────────────────────────────────────────────────────────────
 
-fn build_pat(tsid: u16, version: u8, entries: &[(u16, u16)]) -> Vec<u8> {
-    let section_length = (5 + entries.len() * 4 + 4) as u16; // ext_hdr(5)+entries+crc(4)
-    let mut v = vec![
-        0x00u8,
-        0xB0 | ((section_length >> 8) as u8 & 0x0F),
-        (section_length & 0xFF) as u8,
-        (tsid >> 8) as u8,
-        (tsid & 0xFF) as u8,
-        0xC0 | ((version & 0x1F) << 1) | 0x01,
-        0x00,
-        0x00,
-    ];
-    for &(pn, pid) in entries {
-        v.extend_from_slice(&pn.to_be_bytes());
-        v.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
-        v.push((pid & 0xFF) as u8);
-    }
-    push_crc(&mut v);
-    v
-}
-
 // ── PMT builder ──────────────────────────────────────────────────────────────
-
-fn build_pmt(program_number: u16, version: u8, pcr_pid: u16) -> Vec<u8> {
-    let section_length = (5 + 2 + 2 + 4) as u16; // ext_hdr(5)+pcr_pid(2)+prog_info_len(2)+crc(4)
-    let mut v = vec![
-        0x02u8,
-        0xB0 | ((section_length >> 8) as u8 & 0x0F),
-        (section_length & 0xFF) as u8,
-        (program_number >> 8) as u8,
-        (program_number & 0xFF) as u8,
-        0xC0 | ((version & 0x1F) << 1) | 0x01,
-        0x00,
-        0x00,
-        0xE0 | ((pcr_pid >> 8) as u8 & 0x1F),
-        (pcr_pid & 0xFF) as u8,
-        0xF0, // program_info_length hi nibble
-        0x00, // program_info_length = 0
-    ];
-    push_crc(&mut v);
-    v
-}
 
 // ── SDT builder ──────────────────────────────────────────────────────────────
 
@@ -201,7 +161,7 @@ fn build_protection_message() -> Vec<u8> {
 
 #[test]
 fn dispatch_pat_table_id_0x00() {
-    let bytes = build_pat(0x1234, 0, &[(1, 0x0100)]);
+    let bytes = pat_section(0x1234, 0, &[(1, 0x0100)]);
     let parsed = AnyTableSection::parse(&bytes).unwrap();
     assert!(
         matches!(parsed, AnyTableSection::PatSection(_)),
@@ -211,7 +171,7 @@ fn dispatch_pat_table_id_0x00() {
 
 #[test]
 fn dispatch_pmt_table_id_0x02() {
-    let bytes = build_pmt(42, 0, 0x0100);
+    let bytes = pmt_section_empty(42, 0, 0x0100);
     let parsed = AnyTableSection::parse(&bytes).unwrap();
     assert!(
         matches!(parsed, AnyTableSection::PmtSection(_)),
@@ -413,7 +373,7 @@ fn every_table_id_variant_is_dispatched() {
 /// `AnyTableSection::name()` reflects the contained type's `TableDef::NAME`.
 #[test]
 fn name_maps_variant_to_tabledef_name() {
-    let pat = build_pat(0x0001, 0, &[(1, 0x0100)]);
+    let pat = pat_section(0x0001, 0, &[(1, 0x0100)]);
     let table = AnyTableSection::parse(&pat).expect("valid PAT");
     assert_eq!(table.name(), "PROGRAM_ASSOCIATION");
 

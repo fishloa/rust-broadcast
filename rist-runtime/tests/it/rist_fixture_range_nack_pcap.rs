@@ -132,13 +132,6 @@ fn udp_packets(data: &[u8]) -> Vec<UdpPacket<'_>> {
 /// `additional=0`).
 const FRAME_15_HEX: &str = "80c90001d561560481ca0009d5615604011d416c65782d53747564696f2d4d32403132372e302e302e313a333233350080cc0005d561560452495354054500000602000006060000";
 
-fn hex_decode(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-        .collect()
-}
-
 /// Parses the exact frame-15 NACK->retransmission pair documented in
 /// `PROVENANCE.md`: a genuine Range-Based Retransmission Request naming
 /// three lost sequence numbers, immediately followed (frames 21/22/23) by
@@ -156,7 +149,7 @@ fn frame15_range_nack_matches_documented_retransmission_pair() {
     assert_eq!(frame15.src_port, RTCP_PORT);
     assert_eq!(
         frame15.payload,
-        hex_decode(FRAME_15_HEX).as_slice(),
+        test_fixtures::hex_bytes(FRAME_15_HEX).as_slice(),
         "frame 15's raw bytes must match PROVENANCE.md's documented hex dump exactly"
     );
 

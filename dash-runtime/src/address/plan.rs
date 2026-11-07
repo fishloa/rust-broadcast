@@ -27,13 +27,12 @@ use crate::mpd::model::{BaseInfo, ByteRange, UrlType};
 use crate::timing::availability::{
     init_available_from, segment_available_from_ticks, segment_available_until_ticks, ticks_to_us,
 };
+use broadcast_common::timescale::{Rounding, from_micros};
 
 const MICROS: i128 = 1_000_000;
 
 fn us_to_ticks_ceil(us: i128, timescale: u64) -> u64 {
-    let n = us.max(0).saturating_mul(i128::from(timescale));
-    let t = n.div_euclid(MICROS) + i128::from(n.rem_euclid(MICROS) != 0);
-    u64::try_from(t).unwrap_or(u64::MAX)
+    u64::try_from(from_micros(us.max(0), timescale, Rounding::Ceil)).unwrap_or(u64::MAX)
 }
 
 /// What a dynamic MPD adds to the plan.

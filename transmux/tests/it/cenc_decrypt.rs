@@ -366,7 +366,11 @@ fn demux_avc_track_matches_mp4decrypt() {
 
     // mp4decrypt's.
     let out = std::env::temp_dir().join(format!("w7_dec_{}.mp4", std::process::id()));
-    let key_arg = format!("{}:{}", hex(&LAYOUT_KID), hex(&LAYOUT_KEY));
+    let key_arg = format!(
+        "{}:{}",
+        test_fixtures::hex_lower(&LAYOUT_KID),
+        test_fixtures::hex_lower(&LAYOUT_KEY)
+    );
     let status = std::process::Command::new("mp4decrypt")
         .arg("--key")
         .arg(&key_arg)
@@ -410,11 +414,6 @@ const LAYOUT_KEY: [u8; 16] = [
 
 fn layout_keys() -> KeyMap {
     KeyMap::new().with_key(LAYOUT_KID, LAYOUT_KEY)
-}
-
-/// Hex-encode 16 bytes for `mp4decrypt --key`.
-fn hex(b: &[u8; 16]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// True if `mp4decrypt` (Bento4) is on `PATH`.

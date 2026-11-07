@@ -8,6 +8,9 @@ pub const TS_SEG0_URL: &str = "http://origin.test/hls/index0.ts";
 pub const TS_SEG1_URL: &str = "http://origin.test/hls/index1.ts";
 pub const MS: u64 = 1_000;
 pub const SEC: u64 = 1_000_000;
+pub const BASE_DATE: &str = "Mon, 26 Oct 2026 08:39:04 GMT";
+pub const PLUS_30S: &str = "Mon, 26 Oct 2026 08:39:34 GMT";
+pub const PLUS_1H: &str = "Mon, 26 Oct 2026 09:39:04 GMT";
 
 const TS_FIXTURE_DIR: &str = "../fixtures/hls/ts-hls";
 const CMAF_FIXTURE_DIR: &str = "hls/cmaf-fmp4";

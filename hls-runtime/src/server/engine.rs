@@ -4103,11 +4103,7 @@ mod tests {
     fn trunk_events_render_as_ext_x_daterange() {
         // splice_insert, event_id=2002, pts=2_160_000 (~24s at 90kHz) — the
         // same fixture timed-metadata's own timeline tests use.
-        let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
-        let splice_bytes: Vec<u8> = (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect();
+        let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
 
         let (trunk, origin, writer) = make_origin();
 

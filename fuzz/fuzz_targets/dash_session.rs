@@ -4,43 +4,28 @@ use std::collections::BTreeMap;
 
 use broadcast_client::{Action, Config, Credentials, DashClockPolicy, Event, Session, Status};
 use libfuzzer_sys::fuzz_target;
+use test_fixtures::fuzz::{
+    CAPS, DEFAULT_PUBLISH_US, DashWorld, GRACE_US, HTTP_DATES, MAX_INPUT, MICROS, PIN_ORIGIN,
+    PREFER_HOST, RESYNC_US, STEPS_US, USE_ATO, flip_byte, pick_mpd, take_arbitrary, truncate_tail,
+    utc_body,
+};
 
-const MAX_INPUT: usize = 1 << 20;
 const HEADER: usize = 8;
 const STEP_BYTES: usize = 4;
 const STEP_BUDGET: usize = 5_000;
 const MAX_PUMP_ACTIONS: usize = 4_096;
 const LIVE_CONNECTIONS_CAP: usize = 4_096;
-const MICROS: u64 = 1_000_000;
-const POOL: usize = 4;
 const ORIGIN_PREFIX: &str = "http://example/";
 const MPD_URL: &str = "http://example/dash/stream.mpd";
 const AUDIT_HEADERS: [&str; 2] = ["authorization", "cookie"];
 const WINDOWS: [usize; 4] = [1, 2, 4, 8];
-const FAILURE_CAPS: [u32; 4] = [0, 1, 3, 8];
-const RESYNC_US: [u64; 4] = [MICROS, 30 * MICROS, 600 * MICROS, u64::MAX];
-const GRACE_US: [u64; 3] = [0, MICROS, 5 * MICROS];
 const REFRESH_US: [u64; 4] = [1_000, 500_000, 2 * MICROS, 30 * MICROS];
 const TIMEOUT_US: [u64; 4] = [1_000, 2 * MICROS, 20 * MICROS, 120 * MICROS];
-const STEPS_US: [u64; 6] = [
-    1_000,
-    50_000,
-    500_000,
-    2 * MICROS,
-    30 * MICROS,
-    700 * MICROS,
-];
 const CHUNK_BYTES: [usize; 4] = [1, 7, 1_316, usize::MAX];
 const SMALL_BODY: usize = 2_048;
 const MODES: u8 = 21;
 const HOST_SKEW_MODE: u8 = 19;
 const SKEW_BASE_US: i64 = 100 * MICROS as i64;
-const DEFAULT_PUBLISH_US: i64 = 1_788_000_000 * MICROS as i64;
-const HTTP_DATES: [&str; 3] = [
-    "Mon, 26 Oct 2026 09:18:20 GMT",
-    "Thu, 01 Jan 1970 00:00:00 GMT",
-    "not a date",
-];
 const RETRY_AFTER: [&str; 5] = [
     "0",
     "3",
@@ -54,32 +39,12 @@ const LOCATIONS: [&str; 3] = [
     "/dash/relative.mpd",
 ];
 
-const MPDS: [&[u8]; 10] = [
-    include_bytes!("../../fixtures/dash/live-number/live.mpd"),
-    include_bytes!("../../fixtures/dash/live-timeline/live.mpd"),
-    include_bytes!("../../fixtures/dash/livesim2/segtimeline_time_a.mpd"),
-    include_bytes!("../../fixtures/dash/livesim2/segtimeline_time_b.mpd"),
-    include_bytes!("../../fixtures/dash/livesim2/segtimelinenr_a.mpd"),
-    include_bytes!("../../fixtures/dash/livesim2/segtimelinenr_b.mpd"),
-    include_bytes!("../../fixtures/dash/manifest.mpd"),
-    include_bytes!("../../fixtures/dash/multiperiod-restart/multiperiod.mpd"),
-    include_bytes!("../../fixtures/dash/segmentlist/list.mpd"),
-    include_bytes!("../../fixtures/dash/ondemand-sidx/ondemand.mpd"),
+const EXTRA_MPDS: [&str; 4] = [
+    "dash/manifest.mpd",
+    "dash/multiperiod-restart/multiperiod.mpd",
+    "dash/segmentlist/list.mpd",
+    "dash/ondemand-sidx/ondemand.mpd",
 ];
-const VIDEO_SEGS: [&[u8]; POOL] = [
-    include_bytes!("../../fixtures/dash/live-number/seg-0-005.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-0-006.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-0-007.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-0-008.m4s"),
-];
-const AUDIO_SEGS: [&[u8]; POOL] = [
-    include_bytes!("../../fixtures/dash/live-number/seg-1-005.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-1-006.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-1-007.m4s"),
-    include_bytes!("../../fixtures/dash/live-number/seg-1-008.m4s"),
-];
-const VIDEO_INIT: &[u8] = include_bytes!("../../fixtures/dash/live-number/init-0.m4s");
-const AUDIO_INIT: &[u8] = include_bytes!("../../fixtures/dash/live-number/init-1.m4s");
 
 struct Request {
     method: String,
@@ -187,64 +152,6 @@ impl Watch {
     }
 }
 
-fn name_hash(name: &str) -> usize {
-    name.bytes().fold(0usize, |h, b| {
-        h.wrapping_mul(31).wrapping_add(usize::from(b))
-    })
-}
-
-fn real_body(url: &str, range: Option<(u64, u64)>) -> Option<Vec<u8>> {
-    let path = url.split('?').next()?;
-    let name = path.rsplit('/').next()?;
-    let audio = path.contains("-1-") || path.contains("A48") || path.contains("init-1");
-    let all: &[u8] = if name.contains("init") {
-        if audio { AUDIO_INIT } else { VIDEO_INIT }
-    } else if audio {
-        AUDIO_SEGS[name_hash(name) % POOL]
-    } else {
-        VIDEO_SEGS[name_hash(name) % POOL]
-    };
-    match range {
-        None => Some(all.to_vec()),
-        Some((off, len)) => {
-            let start = usize::try_from(off).ok()?;
-            let end = start.saturating_add(usize::try_from(len).ok()?);
-            all.get(start..end.min(all.len())).map(<[u8]>::to_vec)
-        }
-    }
-}
-
-fn arbitrary(rest: &mut &[u8], aux: u8) -> Vec<u8> {
-    let take = (usize::from(aux) * 8).min(rest.len());
-    let (head, tail) = rest.split_at(take);
-    *rest = tail;
-    head.to_vec()
-}
-
-fn utc_body(now: u64, base_unix: i64, aux: u8, rest: &mut &[u8]) -> Vec<u8> {
-    match aux % 5 {
-        0 | 1 => {
-            let unix = base_unix.saturating_add(i64::try_from(now).unwrap_or(0));
-            let secs = unix.div_euclid(1_000_000);
-            let ms = unix.rem_euclid(1_000_000) / 1_000;
-            let days = secs.div_euclid(86_400);
-            let tod = secs.rem_euclid(86_400);
-            format!(
-                "2026-10-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-                1 + days.rem_euclid(28),
-                tod / 3_600,
-                tod % 3_600 / 60,
-                tod % 60,
-                ms
-            )
-            .into_bytes()
-        }
-        2 => arbitrary(rest, aux),
-        3 => Vec::new(),
-        _ => vec![b'9'; 5_000],
-    }
-}
-
 fn deliver(
     session: &mut Session,
     conn: u32,
@@ -290,9 +197,11 @@ fn answer(
     let real: Vec<u8> = if is_mpd {
         mpd.to_vec()
     } else if is_utc {
-        utc_body(now, publish, aux, rest)
+        utc_body(aux, aux, now, publish, rest)
     } else {
-        real_body(&req.url, req.byte_range).unwrap_or_default()
+        DashWorld::loaded()
+            .real_body(&req.url, req.byte_range)
+            .unwrap_or_default()
     };
     let chunk = CHUNK_BYTES[usize::from(aux >> 2) % CHUNK_BYTES.len()];
     let mut headers = vec![header("Content-Length", &real.len().to_string())];
@@ -312,21 +221,19 @@ fn answer(
             session.on_closed(conn, None, now);
         }
         8 => {
-            let cut = real.len().saturating_sub(usize::from(aux) + 1);
-            deliver(session, conn, now, 200, &headers, &real[..cut], chunk);
+            let mut body = real.clone();
+            truncate_tail(&mut body, aux);
+            deliver(session, conn, now, 200, &headers, &body, chunk);
             session.on_closed(conn, None, now);
         }
         9 => {
             let mut body = real.clone();
-            if !body.is_empty() {
-                let at = usize::from(aux) * 7 % body.len();
-                body[at] ^= 0xFF;
-            }
+            flip_byte(&mut body, aux);
             deliver(session, conn, now, 200, &headers, &body, chunk);
             session.on_closed(conn, None, now);
         }
         10 => {
-            let body = arbitrary(rest, aux);
+            let body = take_arbitrary(rest, aux);
             deliver(session, conn, now, 200, &[], &body, chunk);
             session.on_closed(conn, None, now);
         }
@@ -359,7 +266,8 @@ fn answer(
             session.on_closed(conn, None, now);
         }
         18 => {
-            let alt = MPDS[usize::from(aux) % MPDS.len()];
+            let mpds = &DashWorld::loaded().mpds;
+            let alt = &mpds[usize::from(aux) % mpds.len()];
             deliver(session, conn, now, 200, &[], alt, chunk);
             session.on_closed(conn, None, now);
         }
@@ -388,33 +296,27 @@ fuzz_target!(|data: &[u8]| {
     if data.len() < HEADER || data.len() > MAX_INPUT {
         return;
     }
+    let world = DashWorld::get_or_load(&test_fixtures::read, &EXTRA_MPDS);
     let (head, mut rest) = data.split_at(HEADER);
     let mut config = Config::default();
     config.max_inflight_segments = WINDOWS[usize::from(head[3] & 3)];
-    config.max_segment_failures = FAILURE_CAPS[usize::from((head[3] >> 2) & 3)];
+    config.max_segment_failures = CAPS[usize::from((head[3] >> 2) & 3)];
     config.max_key_failures = config.max_segment_failures;
     config.request_timeout_us = TIMEOUT_US[usize::from(head[6] & 3)];
     config.segment_timeout_us = TIMEOUT_US[usize::from((head[6] >> 2) & 3)];
-    config.max_manifest_bytes = [4_096, 1 << 20, 1 << 20, 1 << 20][usize::from((head[6] >> 4) & 3)];
+    config.max_manifest_bytes =
+        [4_096, MAX_INPUT, MAX_INPUT, MAX_INPUT][usize::from((head[6] >> 4) & 3)];
     config.initial_cookies = vec![("seed".to_owned(), "1".to_owned())];
-    if head[3] & 0x10 != 0 {
+    if head[3] & PREFER_HOST != 0 {
         config.dash.clock_policy = DashClockPolicy::PreferHost;
     }
-    config.dash.cross_origin_urls = head[3] & 0x20 == 0;
-    config.dash.use_availability_time_offset = head[3] & 0x40 != 0;
+    config.dash.cross_origin_urls = head[3] & PIN_ORIGIN == 0;
+    config.dash.use_availability_time_offset = head[3] & USE_ATO != 0;
     config.dash.utc_resync_us = RESYNC_US[usize::from(head[4] & 3)];
     config.dash.early_grace_us = GRACE_US[usize::from((head[4] >> 2) % 3)];
     config.dash.min_mpd_refresh_us = REFRESH_US[usize::from((head[4] >> 4) & 3)];
 
-    let selector = usize::from(head[0]) % (MPDS.len() + 1);
-    let mpd: Vec<u8> = if selector == 0 {
-        let len = (usize::from(head[1]) << 8 | usize::from(head[2])) % (rest.len() + 1);
-        let (m, tail) = rest.split_at(len);
-        rest = tail;
-        m.to_vec()
-    } else {
-        MPDS[selector - 1].to_vec()
-    };
+    let mpd = pick_mpd(&world.mpds, head[0], head[1], head[2], &mut rest);
     let publish = dash_runtime::mpd::Mpd::parse(&mpd)
         .ok()
         .and_then(|m| m.publish_time_us)

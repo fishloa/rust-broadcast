@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
+use crate::support::origin::get;
+use axum::http::{StatusCode, header};
 use tower::ServiceExt;
 use transmux::TrackId;
 use transmux::avc_config_from_sprop;
@@ -80,10 +80,6 @@ impl Feeder {
             }
         }
     }
-}
-
-fn get(uri: &str) -> Request<Body> {
-    Request::builder().uri(uri).body(Body::empty()).unwrap()
 }
 
 fn app(store: &Arc<RouteHandle>) -> axum::Router {

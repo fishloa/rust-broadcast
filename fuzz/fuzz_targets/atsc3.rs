@@ -22,7 +22,7 @@ fuzz_target!(|data: &[u8]| {
     // Test 2: SLT XML parse (if data is valid UTF-8)
     if let Ok(xml) = core::str::from_utf8(data) {
         // Cap to 256 KiB to prevent OOM from deeply nested XML
-        if xml.len() <= 256 * 1024 {
+        if xml.len() <= test_fixtures::fuzz::INPUT_CAP_256K {
             let _ = atsc3::Slt::parse(xml);
         }
     }

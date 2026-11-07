@@ -6,8 +6,8 @@ use dash_runtime::selection::{Policy, RepRef, select};
 use dash_runtime::timing::live_edge::{join_index, newest_complete, window};
 use dash_runtime::timing::period::period_timings;
 use libfuzzer_sys::fuzz_target;
+use test_fixtures::fuzz::MAX_INPUT;
 
-const MAX_INPUT: usize = 1 << 20;
 const SEGMENTS_WALKED: usize = 64;
 const SAMPLE_CLOCK_US: i128 = 1_800_000_000_000_000;
 

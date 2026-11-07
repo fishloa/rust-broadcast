@@ -890,19 +890,7 @@ mod tests {
 007900ab02208000008028203c46a00527ffac2136563040827004a1164883521e8\
 f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
 88900001000c0081000014101e22241f4100";
-        hex_to_bytes(hex)
-    }
-
-    fn hex_to_bytes(s: &str) -> Vec<u8> {
-        let clean: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-        clean
-            .chunks(2)
-            .map(|c| {
-                let hi = (c[0] as char).to_digit(16).unwrap() as u8;
-                let lo = (c[1] as char).to_digit(16).unwrap() as u8;
-                (hi << 4) | lo
-            })
-            .collect()
+        test_fixtures::hex_bytes(hex)
     }
 
     #[test]

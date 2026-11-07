@@ -17,7 +17,7 @@ use libfuzzer_sys::fuzz_target;
 // `lib.rs`'s own `multiline_payload_round_trips_through_write_and_parse` unit
 // test to arbitrary input.
 fuzz_target!(|data: &[u8]| {
-    if data.len() > 256 * 1024 {
+    if data.len() > test_fixtures::fuzz::INPUT_CAP_256K {
         return;
     }
     let Ok(input) = core::str::from_utf8(data) else {

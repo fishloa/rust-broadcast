@@ -416,3 +416,11 @@ tstabcomp --compile time_signal_segmentation.xml
 `at = 1,234,567` ticks, `id = Some(0x4800000A)`, `kind = BreakStart`,
 `duration = Some(900,000)` ticks.
 
+
+## `splice-insert-2002.bin`
+
+The 36-byte Unified Streaming `splice_info_section` (splice id 2002, out-of-network,
+`pts_time = 0`, `break_duration` 2,160,000 ticks = 24 s) that the `timed-metadata`
+tests, README and examples carry as hex. One file replaces fourteen inline hex
+copies across `timed-metadata`, `hls-runtime` and `multimux`. Public SCTE 35 sample
+bytes, redistributable under the workspace licence.

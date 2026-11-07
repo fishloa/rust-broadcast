@@ -6,6 +6,7 @@ All notable changes to dash-runtime will be documented in this file.
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Changed
+- `timing::ticks_to_us` and the plan's microsecond-to-tick ceiling use `broadcast_common::timescale::{to_micros, from_micros}` (c6 F7).
 - The `live_fuzz_crash_regression` test and the `dash_client_live` fuzz target share one driver module (`tests/it/common/live_fuzz_driver.rs`) instead of a 322-line copy (c3 d:T1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - The MPD reader's attribute loop is `broadcast_common::xml_chars::read_attributes_checked` with the attribute count and size limits as its hook; an over-limit attribute count is now reported after (not before) a malformed value on the same start tag (c2 H8).

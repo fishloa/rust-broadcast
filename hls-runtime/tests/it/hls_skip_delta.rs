@@ -210,11 +210,7 @@ fn bad_skip_value_is_ignored() {
 
 #[test]
 fn skip_yes_keeps_dateranges_v2_drops_them() {
-    let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
-    let splice_bytes: Vec<u8> = (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-        .collect();
+    let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
 
     for v2 in [false, true] {
         let (trunk, origin, writer) = make_origin();

@@ -1150,15 +1150,8 @@ async fn raw_traversal_requests_never_read_outside_the_root() {
 /// and return the whole response as a string. No URL library is involved, so
 /// the bytes on the wire are exactly `path`.
 async fn raw_get(addr: SocketAddr, path: &str) -> String {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut sock = tokio::net::TcpStream::connect(addr)
-        .await
-        .expect("connect media port");
     let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-    sock.write_all(req.as_bytes()).await.expect("write");
-    let mut buf = Vec::new();
-    let _ = tokio::time::timeout(Duration::from_secs(10), sock.read_to_end(&mut buf)).await;
-    String::from_utf8_lossy(&buf).into_owned()
+    crate::support::raw_http::exchange(addr, &req, Duration::from_secs(10)).await
 }
 
 // --- W5/A1 (audit run 7): a router-build panic must not register the route ---

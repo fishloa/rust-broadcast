@@ -26,6 +26,7 @@
 //! without hand-fabricating one).
 
 use std::fs;
+use test_fixtures::vectors::DAC4_ORACLE;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
@@ -182,14 +183,7 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
 
 #[test]
 fn ac4_round_trips_through_cmaf_mux_then_demux() {
-    // The same real, recorded `dac4` (ac4_dsi_v1) oracle body used by
-    // `tests/it/codecs_new.rs::DAC4_ORACLE` (29 bytes, real Dolby AC-4 init
-    // segment; source mp4 non-redistributable, issue #431).
-    const DAC4_ORACLE: &[u8] = &[
-        0x20, 0xa4, 0x01, 0x40, 0x00, 0x00, 0x00, 0x1f, 0xff, 0xff, 0xff, 0xe0, 0x01, 0x0f, 0xf8,
-        0x80, 0x00, 0x00, 0x42, 0x00, 0x00, 0x25, 0x01, 0x00, 0x00, 0x00, 0x30, 0x08, 0x00,
-    ];
-    let config = Ac4SpecificBox::parse(DAC4_ORACLE).expect("parse dac4 oracle");
+    let config = Ac4SpecificBox::parse(&DAC4_ORACLE).expect("parse dac4 oracle");
 
     let spec = TrackSpec::new(
         TrackId::new(1),

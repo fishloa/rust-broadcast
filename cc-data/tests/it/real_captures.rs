@@ -42,14 +42,6 @@ const CAPTURES: &[Capture] = &[
     },
 ];
 
-fn hex(s: &str) -> Vec<u8> {
-    assert!(s.len().is_multiple_of(2), "odd hex length");
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
 fn frames(cap: &Capture) -> Option<Vec<(u64, Vec<u8>)>> {
     let Some(path) = test_fixtures::private(cap.rel) else {
         eprintln!(
@@ -63,7 +55,7 @@ fn frames(cap: &Capture) -> Option<Vec<(u64, Vec<u8>)>> {
         text.lines()
             .map(|line| {
                 let (pts, body) = line.split_once(' ').expect("`<pts> <hex>` line");
-                (pts.parse().expect("pts"), hex(body))
+                (pts.parse().expect("pts"), test_fixtures::hex_bytes(body))
             })
             .collect(),
     )

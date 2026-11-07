@@ -20,14 +20,6 @@
 use srt_runtime::Error;
 use srt_runtime::crypto::{derive_kek, pbkdf2_hmac_sha1, unwrap_sek, wrap_sek};
 
-fn hex_decode(s: &str) -> Vec<u8> {
-    let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-        .collect()
-}
-
 // ---------------------------------------------------------------------------
 // RFC 3394 §4 — all six key-wrap vectors (128/192/256-bit KEKs).
 // ---------------------------------------------------------------------------
@@ -81,9 +73,9 @@ const VECTORS: &[Rfc3394Vector] = &[
 #[test]
 fn rfc3394_wrap_vectors() {
     for v in VECTORS {
-        let kek = hex_decode(v.kek_hex);
-        let key_data = hex_decode(v.key_data_hex);
-        let expected_ct = hex_decode(v.ciphertext_hex);
+        let kek = test_fixtures::hex_bytes(v.kek_hex);
+        let key_data = test_fixtures::hex_bytes(v.key_data_hex);
+        let expected_ct = test_fixtures::hex_bytes(v.ciphertext_hex);
 
         let (icv, wrapped) =
             wrap_sek(&kek, &key_data).unwrap_or_else(|e| panic!("{} wrap failed: {e}", v.name));
@@ -97,9 +89,9 @@ fn rfc3394_wrap_vectors() {
 #[test]
 fn rfc3394_unwrap_vectors() {
     for v in VECTORS {
-        let kek = hex_decode(v.kek_hex);
-        let key_data = hex_decode(v.key_data_hex);
-        let ct = hex_decode(v.ciphertext_hex);
+        let kek = test_fixtures::hex_bytes(v.kek_hex);
+        let key_data = test_fixtures::hex_bytes(v.key_data_hex);
+        let ct = test_fixtures::hex_bytes(v.ciphertext_hex);
 
         let mut icv = [0u8; 8];
         icv.copy_from_slice(&ct[..8]);
@@ -120,8 +112,8 @@ fn rfc3394_unwrap_vectors() {
 fn rfc3394_unwrap_rejects_corruption() {
     // Flip one bit of a valid ciphertext; unwrap must fail with a typed error.
     let v = &VECTORS[0];
-    let kek = hex_decode(v.kek_hex);
-    let ct = hex_decode(v.ciphertext_hex);
+    let kek = test_fixtures::hex_bytes(v.kek_hex);
+    let ct = test_fixtures::hex_bytes(v.ciphertext_hex);
 
     let mut corrupted = ct.clone();
     // Flip a bit in the wrapped portion (not the ICV alone is enough, but flip
@@ -207,7 +199,7 @@ fn rfc6070_pbkdf2_vectors() {
     for v in PBKDF2_VECTORS {
         let mut out = vec![0u8; v.dk_len];
         pbkdf2_hmac_sha1(v.password, v.salt, v.iterations, &mut out);
-        let expected = hex_decode(v.expected_hex);
+        let expected = test_fixtures::hex_bytes(v.expected_hex);
         assert_eq!(out, expected, "{} mismatch", v.name);
     }
 }
@@ -220,7 +212,7 @@ fn rfc6070_pbkdf2_long_vector() {
     }
     let mut out = vec![0u8; 20];
     pbkdf2_hmac_sha1(b"password", b"salt", 16777216, &mut out);
-    let expected = hex_decode("eefe3d61cd4da4e4e9945b3d6ba2158c2634e984");
+    let expected = test_fixtures::hex_bytes("eefe3d61cd4da4e4e9945b3d6ba2158c2634e984");
     assert_eq!(out, expected, "RFC6070 #4 (16777216 iterations) mismatch");
 }
 

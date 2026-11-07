@@ -409,20 +409,6 @@ mod tests {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    /// Build a long-form section with the given table_id and body bytes.
-    /// Returns the full section including its 3-byte header (no CRC — the
-    /// reassembler does not validate CRC).
-    fn build_section(table_id: u8, body_after_length: &[u8]) -> Vec<u8> {
-        let section_length = body_after_length.len() as u16;
-        let mut v = Vec::with_capacity(3 + section_length as usize);
-        v.push(table_id);
-        // SSI=1, PI=0, reserved=11, length upper 4 bits
-        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
-        v.extend_from_slice(body_after_length);
-        v
-    }
-
     fn concat_sections(sections: &[Vec<u8>]) -> Vec<u8> {
         let total: usize = sections.iter().map(|s| s.len()).sum();
         let mut out = Vec::with_capacity(total);
@@ -475,7 +461,7 @@ mod tests {
         let sections: Vec<Vec<u8>> = (0..400usize)
             .map(|n| {
                 let body: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
-                build_section((n % 200) as u8, &body)
+                test_fixtures::psi::short_section((n % 200) as u8, &body)
             })
             .collect();
         assert_round_trip(&sections);
@@ -485,7 +471,7 @@ mod tests {
 
     #[test]
     fn split_single_section() {
-        let s = build_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
         let refs = split_sections(&s);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0], s.as_slice());
@@ -493,8 +479,8 @@ mod tests {
 
     #[test]
     fn split_two_sections() {
-        let s1 = build_section(0x42, &[0x01, 0x02]);
-        let s2 = build_section(0x46, &[0x03, 0x04, 0x05]);
+        let s1 = test_fixtures::psi::short_section(0x42, &[0x01, 0x02]);
+        let s2 = test_fixtures::psi::short_section(0x46, &[0x03, 0x04, 0x05]);
         let both = concat_sections(&[s1.clone(), s2.clone()]);
         let refs = split_sections(&both);
         assert_eq!(refs.len(), 2);
@@ -510,7 +496,7 @@ mod tests {
 
     #[test]
     fn split_trailing_garbage_ignored() {
-        let s = build_section(0x42, &[0xAA; 3]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 3]);
         let mut data = s.clone();
         data.push(0xFF); // trailing byte that doesn't complete a header
         let refs = split_sections(&data);
@@ -548,7 +534,7 @@ mod tests {
 
     #[test]
     fn first_poll_always_emits() {
-        let s = build_section(0x42, &[0xAA; 10]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s.clone(), Duration::from_millis(100));
         let pkts = mux.poll(Duration::ZERO);
@@ -557,8 +543,8 @@ mod tests {
 
     #[test]
     fn first_poll_emits_all_entries() {
-        let s1 = build_section(0x42, &[0x01; 5]);
-        let s2 = build_section(0x46, &[0x02; 5]);
+        let s1 = test_fixtures::psi::short_section(0x42, &[0x01; 5]);
+        let s2 = test_fixtures::psi::short_section(0x46, &[0x02; 5]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s1.clone(), Duration::from_millis(100));
         mux.upsert(Pid::new(0x0200), s2.clone(), Duration::from_millis(200));
@@ -576,7 +562,7 @@ mod tests {
 
     #[test]
     fn entry_emits_only_when_due() {
-        let s = build_section(0x42, &[0xAA; 10]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s.clone(), Duration::from_millis(100));
 
@@ -599,8 +585,8 @@ mod tests {
 
     #[test]
     fn two_entries_different_cadence() {
-        let s1 = build_section(0x42, &[0x01; 5]);
-        let s2 = build_section(0x46, &[0x02; 5]);
+        let s1 = test_fixtures::psi::short_section(0x42, &[0x01; 5]);
+        let s2 = test_fixtures::psi::short_section(0x46, &[0x02; 5]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::new(0x0100),
@@ -655,7 +641,7 @@ mod tests {
 
     #[test]
     fn entry_emits_again_after_full_interval() {
-        let s = build_section(0x42, &[0xAA; 20]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 20]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s, Duration::from_secs(1));
 
@@ -680,8 +666,8 @@ mod tests {
     fn upsert_updates_existing_entry() {
         // Same table_id (0x42, SDT actual) both times: this is a genuine
         // update of the same logical table, so it must replace, not add.
-        let s1 = build_section(0x42, &[0xAA; 5]);
-        let s2 = build_section(0x42, &[0xBB; 10]);
+        let s1 = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
+        let s2 = test_fixtures::psi::short_section(0x42, &[0xBB; 10]);
         let mut mux = SiMux::new();
 
         mux.upsert(Pid::new(0x0100), s1, Duration::from_millis(100));
@@ -710,8 +696,8 @@ mod tests {
     /// continuous continuity counter across the shared PID.
     #[test]
     fn upsert_tdt_then_tot_both_emitted_with_continuous_cc() {
-        let tdt = build_section(0x70, &[0xAA; 5]); // TDT
-        let tot = build_section(0x73, &[0xBB; 8]); // TOT
+        let tdt = test_fixtures::psi::short_section(0x70, &[0xAA; 5]); // TDT
+        let tot = test_fixtures::psi::short_section(0x73, &[0xBB; 8]); // TOT
         let mut mux = SiMux::new();
 
         mux.upsert_tdt(tdt.clone());
@@ -748,8 +734,8 @@ mod tests {
     /// PID 0x0011.
     #[test]
     fn upsert_sdt_and_bat_both_emitted() {
-        let sdt = build_section(0x42, &[0xCC; 5]);
-        let bat = build_section(0x4A, &[0xDD; 6]);
+        let sdt = test_fixtures::psi::short_section(0x42, &[0xCC; 5]);
+        let bat = test_fixtures::psi::short_section(0x4A, &[0xDD; 6]);
         let mut mux = SiMux::new();
 
         mux.upsert_sdt_actual(sdt.clone());
@@ -778,7 +764,7 @@ mod tests {
 
     #[test]
     fn upsert_sdt_actual_uses_correct_pid() {
-        let s = build_section(0x42, &[0x01]);
+        let s = test_fixtures::psi::short_section(0x42, &[0x01]);
         let mut mux = SiMux::new();
         mux.upsert_sdt_actual(s);
         let pkts = mux.poll(Duration::ZERO);
@@ -791,7 +777,7 @@ mod tests {
 
     #[test]
     fn upsert_tdt_uses_correct_pid() {
-        let s = build_section(0x70, &[0x01]);
+        let s = test_fixtures::psi::short_section(0x70, &[0x01]);
         let mut mux = SiMux::new();
         mux.upsert_tdt(s);
         let pkts = mux.poll(Duration::ZERO);
@@ -804,7 +790,7 @@ mod tests {
 
     #[test]
     fn upsert_tot_uses_correct_pid() {
-        let s = build_section(0x73, &[0x01]);
+        let s = test_fixtures::psi::short_section(0x73, &[0x01]);
         let mut mux = SiMux::new();
         mux.upsert_tot(s);
         let pkts = mux.poll(Duration::ZERO);
@@ -819,8 +805,8 @@ mod tests {
 
     #[test]
     fn simux_round_trip_single_entry() {
-        let s1 = build_section(0x42, &[0xAA; 20]);
-        let s2 = build_section(0x46, &[0xBB; 15]);
+        let s1 = test_fixtures::psi::short_section(0x42, &[0xAA; 20]);
+        let s2 = test_fixtures::psi::short_section(0x46, &[0xBB; 15]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::new(0x0100),
@@ -845,8 +831,8 @@ mod tests {
 
     #[test]
     fn simux_round_trip_multi_pid() {
-        let s_a = build_section(0x42, &[0xA0; 10]);
-        let s_b = build_section(0x46, &[0xB0; 10]);
+        let s_a = test_fixtures::psi::short_section(0x42, &[0xA0; 10]);
+        let s_b = test_fixtures::psi::short_section(0x46, &[0xB0; 10]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s_a.clone(), Duration::from_millis(100));
         mux.upsert(Pid::new(0x0200), s_b.clone(), Duration::from_millis(100));
@@ -876,7 +862,7 @@ mod tests {
     #[test]
     fn continuity_counter_continuous_across_polls() {
         // Section large enough to span at least 2 packets.
-        let s = build_section(0x42, &[0xAA; 250]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 250]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s, Duration::from_millis(100));
 
@@ -907,7 +893,7 @@ mod tests {
 
     #[test]
     fn poll_into_clears_out_before_appending() {
-        let s = build_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s, Duration::from_millis(100));
 
@@ -922,14 +908,14 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "25 ms")]
     fn upsert_rejects_sub_25ms_interval_in_debug() {
-        let s = build_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s, Duration::from_millis(10));
     }
 
     #[test]
     fn upsert_accepts_25ms_interval() {
-        let s = build_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
         let mut mux = SiMux::new();
         mux.upsert(Pid::new(0x0100), s, MIN_SECTION_INTERVAL);
         let pkts = mux.poll(Duration::ZERO);
@@ -940,13 +926,13 @@ mod tests {
 
     #[test]
     fn round_trip_single_short_section() {
-        let s = build_section(0x42, &[0xAA; 10]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
         assert_round_trip(&[s]);
     }
 
     #[test]
     fn round_trip_one_byte_body() {
-        let s = build_section(0x46, &[0xBB]); // 4 bytes total
+        let s = test_fixtures::psi::short_section(0x46, &[0xBB]); // 4 bytes total
         assert_round_trip(&[s]);
     }
 
@@ -954,7 +940,7 @@ mod tests {
     fn round_trip_section_exactly_pusi_cap_boundary() {
         // A section whose total length is exactly PUSI_PAYLOAD_CAP (183).
         let body = vec![0xCC; PUSI_PAYLOAD_CAP - 3];
-        let s = build_section(0x50, &body);
+        let s = test_fixtures::psi::short_section(0x50, &body);
         assert_eq!(s.len(), PUSI_PAYLOAD_CAP);
         assert_round_trip(&[s]);
     }
@@ -963,7 +949,7 @@ mod tests {
     fn round_trip_section_just_over_pusi_cap() {
         // One byte more than fits in a PUSI packet → must span to continuation.
         let body = vec![0xDD; PUSI_PAYLOAD_CAP - 3 + 1];
-        let s = build_section(0x52, &body);
+        let s = test_fixtures::psi::short_section(0x52, &body);
         assert_eq!(s.len(), PUSI_PAYLOAD_CAP + 1);
         assert_round_trip(&[s]);
     }
@@ -972,7 +958,7 @@ mod tests {
     fn round_trip_section_spans_many_packets() {
         // A 2000-byte section spans ~11 packets.
         let body = vec![0xEE; 2000 - 3];
-        let s = build_section(0x60, &body);
+        let s = test_fixtures::psi::short_section(0x60, &body);
         assert_round_trip(&[s]);
     }
 
@@ -983,16 +969,16 @@ mod tests {
         // #148 the reassembler ignores that trailing stuffing instead of
         // counting it toward MAX_SECTION_SIZE, so a full-size section round-trips.
         let body = vec![0x11; 4096 - 3];
-        let s = build_section(0x80, &body);
+        let s = test_fixtures::psi::short_section(0x80, &body);
         assert_eq!(s.len(), 4096);
         assert_round_trip(&[s]);
     }
 
     #[test]
     fn round_trip_multiple_short_sections_in_one_batch() {
-        let s1 = build_section(0x42, &[0x01, 0x02]); // 5 bytes
-        let s2 = build_section(0x46, &[0x03]); // 4 bytes
-        let s3 = build_section(0x4A, &[0x04, 0x05, 0x06]); // 6 bytes
+        let s1 = test_fixtures::psi::short_section(0x42, &[0x01, 0x02]); // 5 bytes
+        let s2 = test_fixtures::psi::short_section(0x46, &[0x03]); // 4 bytes
+        let s3 = test_fixtures::psi::short_section(0x4A, &[0x04, 0x05, 0x06]); // 6 bytes
         assert_round_trip(&[s1, s2, s3]);
     }
 
@@ -1002,10 +988,10 @@ mod tests {
         // boundary.  Second section starts fresh in the next packet with
         // PUSI=1, pointer_field=0.
         let body1 = vec![0xA1; PUSI_PAYLOAD_CAP - 3];
-        let s1 = build_section(0x50, &body1);
+        let s1 = test_fixtures::psi::short_section(0x50, &body1);
         assert_eq!(s1.len(), PUSI_PAYLOAD_CAP);
 
-        let s2 = build_section(0x52, &[0xB1, 0xB2]);
+        let s2 = test_fixtures::psi::short_section(0x52, &[0xB1, 0xB2]);
         assert_round_trip(&[s1, s2]);
     }
 
@@ -1018,9 +1004,9 @@ mod tests {
         // `round_trip_section_ends_exactly_at_boundary` above, which only
         // exercises the boundary at pos=0.
         let body1 = vec![0xA5; 366 - 3];
-        let s1 = build_section(0x50, &body1);
+        let s1 = test_fixtures::psi::short_section(0x50, &body1);
         assert_eq!(s1.len(), 366);
-        let s2 = build_section(0x52, &[0xB1, 0xB2, 0xB3]);
+        let s2 = test_fixtures::psi::short_section(0x52, &[0xB1, 0xB2, 0xB3]);
 
         let mut packetiser = SectionPacketiser::new(Pid::new(0x0100));
         let packets = packetiser.packetise(&[s1.as_slice(), s2.as_slice()]);
@@ -1048,13 +1034,13 @@ mod tests {
     fn round_trip_mix_small_large_sections() {
         // Mix of small and spanning sections that stress pointer_field and
         // concatenation.
-        let s1 = build_section(0x10, &[0xAA; 5]);
+        let s1 = test_fixtures::psi::short_section(0x10, &[0xAA; 5]);
         let body2 = vec![0xBB; 200];
-        let s2 = build_section(0x20, &body2);
-        let s3 = build_section(0x30, &[0xCC; 50]);
+        let s2 = test_fixtures::psi::short_section(0x20, &body2);
+        let s3 = test_fixtures::psi::short_section(0x30, &[0xCC; 50]);
         let body4 = vec![0xDD; 800];
-        let s4 = build_section(0x40, &body4);
-        let s5 = build_section(0x50, &[0xEE]); // 1-byte body
+        let s4 = test_fixtures::psi::short_section(0x40, &body4);
+        let s5 = test_fixtures::psi::short_section(0x50, &[0xEE]); // 1-byte body
         assert_round_trip(&[s1, s2, s3, s4, s5]);
     }
 
@@ -1064,7 +1050,7 @@ mod tests {
     fn continuity_counter_increments_per_packet() {
         // Use a section large enough to span several packets.
         let body = vec![0xAA; 500];
-        let section = build_section(0x42, &body);
+        let section = test_fixtures::psi::short_section(0x42, &body);
         let mut p = SectionPacketiser::new(Pid::new(0x0100));
 
         let packets = p.packetise(&[&section]);
@@ -1086,7 +1072,7 @@ mod tests {
         let mut p = SectionPacketiser::with_continuity(Pid::new(0x0100), 14);
         // Section large enough to span at least 3 packets.
         let body = vec![0xBB; 500];
-        let s = build_section(0x42, &body);
+        let s = test_fixtures::psi::short_section(0x42, &body);
 
         // First call: CC 14, 15, 0, …
         let pkts1 = p.packetise(&[&s]);
@@ -1112,7 +1098,7 @@ mod tests {
 
     #[test]
     fn pusi_set_when_section_starts() {
-        let s = build_section(0x42, &[0xAA; 10]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
         let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s]);
         assert!(!packets.is_empty());
@@ -1123,7 +1109,7 @@ mod tests {
     #[test]
     fn pusi_not_set_on_mid_section_continuation() {
         let body = vec![0xAA; 500];
-        let s = build_section(0x42, &body);
+        let s = test_fixtures::psi::short_section(0x42, &body);
         let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s]);
         assert!(packets.len() >= 2);
@@ -1142,9 +1128,9 @@ mod tests {
         // Packet 1: PUSI=1, pointer=0, section1 head.
         // Packet 2: PUSI=1, pointer > 0 (tail of section1 before section2).
         let body1 = vec![0xA1; 197]; // 200-byte section
-        let s1 = build_section(0x52, &body1);
+        let s1 = test_fixtures::psi::short_section(0x52, &body1);
         assert_eq!(s1.len(), 200);
-        let s2 = build_section(0x54, &[0xB1; 47]); // 50-byte section
+        let s2 = test_fixtures::psi::short_section(0x54, &[0xB1; 47]); // 50-byte section
         assert_eq!(s2.len(), 50);
 
         let mut p = SectionPacketiser::new(Pid::new(0x0100));
@@ -1169,7 +1155,7 @@ mod tests {
 
     #[test]
     fn final_packet_unused_tail_is_stuffing() {
-        let s = build_section(0x42, &[0xAA; 5]); // 8 bytes total
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]); // 8 bytes total
         let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s]);
 
@@ -1189,8 +1175,8 @@ mod tests {
 
     #[test]
     fn reassembler_discards_stuffing() {
-        let s1 = build_section(0x42, &[0xAA; 10]);
-        let s2 = build_section(0x46, &[0xBB; 5]);
+        let s1 = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
+        let s2 = test_fixtures::psi::short_section(0x46, &[0xBB; 5]);
 
         let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s1, &s2]);
@@ -1220,7 +1206,7 @@ mod tests {
 
     #[test]
     fn packetise_into_clears_out_first() {
-        let s = build_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
         let mut p = SectionPacketiser::new(Pid::new(0x0100));
 
         let mut out = vec![[0u8; TS_PACKET_SIZE]; 99]; // pre-existing junk
@@ -1250,7 +1236,7 @@ mod tests {
 
     #[test]
     fn has_payload_always_true_no_adaptation() {
-        let s = build_section(0x42, &[0xAA; 50]);
+        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 50]);
         let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s]);
         for pkt_raw in &packets {

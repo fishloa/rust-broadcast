@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WebmDemux` reports an `Info` whose `TimestampScale` is 0 or does not fit an `i64` as a malformed unit (the default scale then applies) instead of applying it: 0 collapsed every pts to 0 and values of 2^63 or more made pts negative (c5 R5-2).
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- The WebM `DefaultDuration` to IR-tick conversion and the progressive-MP4 interleave chunk length use `broadcast_common::timescale` (same rounding) (c6 F7).
 - The `stco`, `co64`, `stss` parse and all six flat FullBox table serializers (`stco`, `co64`, `stss`, `stts`, `ctts`, `elst`) go through one `parse_flat_table` / `serialize_flat_table`; `stts`/`ctts`/`elst` keep their own `parse_body` (they report a truncated entry as an error, the others a count check) (c3 d:ST1).
 - The in-crate test bit writers of `slice_header` and `display_track`, and the `hdr10plus` integration test, use one `BitWriter` (`test_bits.rs`, `tests/it/support/bit_writer.rs`) (c3 d:L2).
 - `splice` uses `CodecConfig::is_video` and compares codec families by enum discriminant instead of its private string table; the AVC, HEVC and VVC length-size check shares one `VALID_LENGTH_SIZES` (c4 D2, D3, M3).

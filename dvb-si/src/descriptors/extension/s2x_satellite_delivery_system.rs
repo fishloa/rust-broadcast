@@ -906,7 +906,7 @@ mod tests {
         // TSDuck reference test-015: real s2x_mode==3 descriptor with
         // scrambling, 2 channel bonds, and a 1-byte reserved tail.
         let hex = "7f2a1750e3023456876543210037250456789601065432180340f600246754bd00654367123451000087642e";
-        let bytes = from_hex(hex);
+        let bytes = test_fixtures::hex_bytes(hex);
         let d = ExtensionDescriptor::parse(&bytes)
             .unwrap_or_else(|e| panic!("parse tsduck s2x: {e:?}"));
 

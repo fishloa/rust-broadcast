@@ -10,3 +10,6 @@ description = "Workspace fixture loader shared by test suites (unpublished)."
 
 [lints]
 workspace = true
+
+[dependencies]
+hex = "0.4"

@@ -53,6 +53,7 @@ use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 
+use broadcast_common::timescale::{Rounding, rescale_u64};
 use broadcast_common::{Parse, Unpackage};
 
 use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
@@ -1025,10 +1026,7 @@ struct BlockSpan {
 /// (i.e. via whole milliseconds) loses up to a millisecond per frame, which
 /// accumulates across every frame of a laced run.
 pub fn ns_to_ir_ticks(ns: u64) -> u64 {
-    let ticks = u128::from(ns) * u128::from(IR_TIMESCALE);
-    // Round-half-up: add half a second's worth of nanoseconds before dividing.
-    let half = NS_PER_SECOND as u128 / 2;
-    u64::try_from((ticks + half) / NS_PER_SECOND as u128).unwrap_or(u64::MAX)
+    rescale_u64(ns, NS_PER_SECOND, IR_TIMESCALE, Rounding::Nearest)
 }
 
 /// The nominal per-frame duration (IR ticks) for a track whose TrackEntry

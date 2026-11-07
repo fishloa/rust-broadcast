@@ -2,24 +2,21 @@
 
 use std::collections::VecDeque;
 
-use dash_runtime::client::{
-    Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
-};
+use dash_runtime::client::{Action, DashClient, DashConfig, Error, Failure, FailureClass, Output};
 use libfuzzer_sys::fuzz_target;
+use test_fixtures::fuzz::{
+    MAX_INPUT, flip_byte, pick_mpd, slice_range, take_arbitrary, truncate_tail,
+};
 
-const MAX_INPUT: usize = 1 << 20;
+#[path = "../../dash-runtime/tests/it/common/fuzz_pull.rs"]
+mod pull;
+use pull::{BASE_URL, MPD_NAME, PENDING_CAP, deliver_resource, pull_limits};
+
 const HEADER: usize = 4;
 const CHUNK: usize = 2;
 const STEP_BUDGET: usize = 4_000;
-const PENDING_CAP: usize = 4_096;
-const WINDOW_MASK: u8 = 0b11;
-const CAP_SHIFT: u32 = 2;
-const CAP_MASK: u8 = 0b11;
-const CAPS: [u32; 4] = [0, 1, 3, 8];
 const PIN_ORIGIN: u8 = 0b1_0000;
 const MODES: u8 = 12;
-const BASE_URL: &str = "http://example/dash/";
-const MPD_NAME: &str = "stream.mpd";
 
 const MPDS: [&[u8]; 2] = [
     include_bytes!("../../fixtures/dash/manifest.mpd"),
@@ -75,14 +72,7 @@ const FILES: [(&str, &[u8]); 11] = [
 fn real_body(url: &str, range: Option<(u64, u64)>) -> Option<Vec<u8>> {
     let name = url.split('?').next()?.rsplit('/').next()?;
     let (_, all) = FILES.iter().find(|(n, _)| *n == name)?;
-    match range {
-        None => Some(all.to_vec()),
-        Some((off, len)) => {
-            let start = usize::try_from(off).ok()?;
-            let end = start.saturating_add(usize::try_from(len).ok()?);
-            all.get(start..end.min(all.len())).map(<[u8]>::to_vec)
-        }
-    }
+    slice_range(all, range)
 }
 
 enum Answer {
@@ -95,25 +85,19 @@ fn answer(real: Option<Vec<u8>>, mode: u8, aux: u8, rest: &mut &[u8]) -> Answer 
         0..=4 => real.map_or(Answer::Fail(Failure::Status(404)), Answer::Body),
         5 => match real {
             Some(mut b) => {
-                b.truncate(b.len().saturating_sub(usize::from(aux) + 1));
+                truncate_tail(&mut b, aux);
                 Answer::Body(b)
             }
             None => Answer::Fail(Failure::Status(404)),
         },
         6 => match real {
             Some(mut b) if !b.is_empty() => {
-                let at = usize::from(aux) * 7 % b.len();
-                b[at] ^= 0xFF;
+                flip_byte(&mut b, aux);
                 Answer::Body(b)
             }
             _ => Answer::Fail(Failure::Status(404)),
         },
-        7 => {
-            let take = (usize::from(aux) * 8).min(rest.len());
-            let (head, tail) = rest.split_at(take);
-            *rest = tail;
-            Answer::Body(head.to_vec())
-        }
+        7 => Answer::Body(take_arbitrary(rest, aux)),
         8 => Answer::Fail(Failure::Status(404)),
         9 => Answer::Fail(Failure::Status(503)),
         10 => Answer::Fail(Failure::Transport),
@@ -135,24 +119,12 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let (head, mut rest) = data.split_at(HEADER);
-    let mut cfg = PullLimits::default();
-    cfg.max_inflight_segments = usize::from(head[0] & WINDOW_MASK) + 1;
-    let cap = CAPS[usize::from((head[0] >> CAP_SHIFT) & CAP_MASK)];
-    cfg.max_segment_failures = cap;
-    cfg.max_init_failures = cap;
+    let cfg = pull_limits(head[0]);
     let mut dash = DashConfig::default();
     dash.cross_origin_urls = head[0] & PIN_ORIGIN == 0;
     let window = cfg.max_inflight_segments;
 
-    let selector = usize::from(head[1]) % (MPDS.len() + 1);
-    let mpd: Vec<u8> = if selector == 0 {
-        let len = (usize::from(head[2]) << 8 | usize::from(head[3])) % (rest.len() + 1);
-        let (m, tail) = rest.split_at(len);
-        rest = tail;
-        m.to_vec()
-    } else {
-        MPDS[selector - 1].to_vec()
-    };
+    let mpd = pick_mpd(&MPDS, head[1], head[2], head[3], &mut rest);
 
     let url = format!("{BASE_URL}{MPD_NAME}");
     let mut client = DashClient::new(url, dash, cfg);
@@ -220,16 +192,7 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
             (Some(id), Answer::Body(b)) => {
-                let r = match id {
-                    ResourceId::Init { .. } => client.on_init(now, id, &b),
-                    ResourceId::Index { .. } => client.on_index(now, id, &b),
-                    _ => client.on_segment(now, id, &b),
-                };
-                if let Err(Error::Rejected { id, class, .. }) = r
-                    && let FailureClass::Retry { .. } = class
-                {
-                    client.retry(now, id);
-                }
+                deliver_resource(&mut client, now, id, &b);
             }
         }
         if terminal {

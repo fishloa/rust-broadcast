@@ -4,6 +4,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::{Rounding, to_micros};
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 /// Default backward step that marks a new timeline, microseconds.
@@ -36,8 +37,6 @@ impl Default for TimelineJumpConfig {
         }
     }
 }
-
-const MICROS_PER_SEC: i128 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -204,7 +203,7 @@ impl JumpDetector {
     }
 
     fn to_us(pts: i64, timescale: u32) -> i128 {
-        i128::from(pts) * MICROS_PER_SEC / i128::from(timescale)
+        to_micros(i128::from(pts), timescale, Rounding::TowardZero)
     }
 
     pub(crate) fn is_jump(

@@ -13,10 +13,3 @@ pub(crate) fn round_trip(d: &ExtensionDescriptor) {
     let re = ExtensionDescriptor::parse(&buf).unwrap();
     assert_eq!(*d, re);
 }
-
-pub(crate) fn from_hex(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-        .collect()
-}

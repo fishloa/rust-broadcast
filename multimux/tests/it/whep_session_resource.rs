@@ -12,60 +12,10 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use crate::support::raw_http::{Resp, http};
 
 const TRICKLE: &str = "application/trickle-ice-sdpfrag";
 const CANDIDATE: &str = "2 1 udp 2130706431 10.0.0.9 5555 typ host";
-
-struct Resp {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: String,
-}
-
-impl Resp {
-    fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.as_str())
-    }
-}
-
-async fn http(
-    addr: std::net::SocketAddr,
-    method: &str,
-    path: &str,
-    headers: &[(&str, &str)],
-    body: &str,
-) -> Resp {
-    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n");
-    for (k, v) in headers {
-        req.push_str(&format!("{k}: {v}\r\n"));
-    }
-    req.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
-    s.write_all(req.as_bytes()).await.unwrap();
-    let mut buf = Vec::new();
-    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut buf)).await;
-    let text = String::from_utf8_lossy(&buf).into_owned();
-    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
-    let mut lines = head.lines();
-    let status = lines
-        .next()
-        .and_then(|l| l.split_whitespace().nth(1))
-        .and_then(|c| c.parse().ok())
-        .unwrap_or_else(|| panic!("no status line in {text:?}"));
-    let headers = lines
-        .filter_map(|l| l.split_once(':'))
-        .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
-        .collect();
-    Resp {
-        status,
-        headers,
-        body: body.to_string(),
-    }
-}
 
 async fn post_offer(addr: std::net::SocketAddr) -> Resp {
     http(

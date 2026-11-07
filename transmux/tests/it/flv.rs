@@ -903,7 +903,7 @@ fn maximum_representable_width_still_parses() {
     let mut flv: Vec<u8> = Vec::new();
     flv.extend_from_slice(b"FLV   	    ");
     // The same SPS with pic_width_in_mbs_minus1 = 4094 → 65 520 samples.
-    let sps = hex_to_bytes("42001ff4001ffee2");
+    let sps = test_fixtures::hex_bytes("42001ff4001ffee2");
     let mut nal: Vec<u8> = Vec::new();
     nal.push(0x67);
     nal.extend_from_slice(&sps);
@@ -944,13 +944,6 @@ fn push_flv_tag(out: &mut Vec<u8>, tag_type: u8, timestamp: u32, body: &[u8]) {
     out.extend_from_slice(body);
     let size = (out.len() - start) as u32;
     out.extend_from_slice(&size.to_be_bytes());
-}
-
-/// Decode a hex string to bytes.
-fn hex_to_bytes(s: &str) -> Vec<u8> {
-    (0..s.len() / 2)
-        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("hex"))
-        .collect()
 }
 
 // ---------------------------------------------------------------------------

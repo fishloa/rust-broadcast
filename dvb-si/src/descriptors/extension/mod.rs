@@ -748,7 +748,7 @@ mod tests {
             ),
         ];
         for (hex, ext) in vectors {
-            let bytes = from_hex(hex);
+            let bytes = test_fixtures::hex_bytes(hex);
             let d =
                 ExtensionDescriptor::parse(&bytes).unwrap_or_else(|e| panic!("parse {hex}: {e:?}"));
             assert_eq!(d.kind(), Some(ext), "kind for {hex}");
@@ -760,7 +760,8 @@ mod tests {
         // Decoded-field spot checks (prove we interpret TSDuck's known values,
         // not merely round-trip our own): the rich image_icon and the rich
         // service_prominence from the XML sources of tests 015 / 115.
-        let icon = from_hex("7f1a000cfc2b3e71c809696d6167652f706e67080123456789abcdef");
+        let icon =
+            test_fixtures::hex_bytes("7f1a000cfc2b3e71c809696d6167652f706e67080123456789abcdef");
         match &ExtensionDescriptor::parse(&icon).unwrap().body {
             ExtensionBody::ImageIcon(b) => {
                 assert_eq!(b.descriptor_number, 0);
@@ -787,7 +788,9 @@ mod tests {
             other => panic!("expected ImageIcon, got {other:?}"),
         }
 
-        let sp = from_hex("7f20221a300c04d2f000092911fc465241fd47425211fa0102fb0b0c000ddeadbeef");
+        let sp = test_fixtures::hex_bytes(
+            "7f20221a300c04d2f000092911fc465241fd47425211fa0102fb0b0c000ddeadbeef",
+        );
         match &ExtensionDescriptor::parse(&sp).unwrap().body {
             ExtensionBody::ServiceProminence(b) => {
                 assert_eq!(b.sogi_list.len(), 2);

@@ -9,19 +9,15 @@
 #![cfg(feature = "sample-aes")]
 
 use transmux::sample_aes::{
-    self, BLOCK_LEN, ExtXKey, H264_CLEAR_PREFIX_LEN, H264_MIN_ENCRYPTED_NAL_LEN, KEY_LEN,
-    aac_decrypt_frame, aac_encrypt_frame, ac3_decrypt_frame, ac3_encrypt_frame,
-    aes128_decrypt_segment, aes128_encrypt_segment, format_iv, h264_decrypt_nal, h264_encrypt_nal,
-    iv_from_sequence_number,
+    self, BLOCK_LEN, ExtXKey, H264_CLEAR_PREFIX_LEN, H264_MIN_ENCRYPTED_NAL_LEN, aac_decrypt_frame,
+    aac_encrypt_frame, ac3_decrypt_frame, ac3_encrypt_frame, aes128_decrypt_segment,
+    aes128_encrypt_segment, format_iv, h264_decrypt_nal, h264_encrypt_nal, iv_from_sequence_number,
 };
 
-// NIST SP 800-38A F.2.1/F.2.2 CBC-AES128 known-answer vector.
-const KEY: [u8; KEY_LEN] = [
-    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c,
-];
-const IV: [u8; BLOCK_LEN] = [
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-];
+use test_fixtures::vectors::{
+    NIST_AES128_KEY as KEY, NIST_CBC_CIPHERTEXT_BLOCK_1 as CT, NIST_CBC_IV as IV,
+    NIST_CBC_PLAINTEXT_BLOCK_1 as PT,
+};
 
 /// Test 1 — AES-128-CBC known-answer test via the full-segment API.
 ///
@@ -30,14 +26,6 @@ const IV: [u8; BLOCK_LEN] = [
 /// PKCS#7 padding block is dropped on decrypt, recovering the plaintext.
 #[test]
 fn aes128_cbc_known_answer_vector() {
-    const PT: [u8; 16] = [
-        0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17,
-        0x2a,
-    ];
-    const CT: [u8; 16] = [
-        0x76, 0x49, 0xab, 0xac, 0x81, 0x19, 0xb2, 0x46, 0xce, 0xe9, 0x8e, 0x9b, 0x12, 0xe9, 0x19,
-        0x7d,
-    ];
     // Full-segment encrypt of one block → NIST CT block + one PKCS#7 pad block.
     let ct = aes128_encrypt_segment(&KEY, &IV, &PT);
     assert_eq!(ct.len(), 32, "one block + one full pad block");

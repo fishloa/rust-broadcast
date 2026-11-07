@@ -34,16 +34,8 @@ const TIMESCALE: u32 = 90_000;
 const FRAME_DUR: u32 = TIMESCALE / 30;
 const SYNC_INTERVAL: u32 = 15;
 
-/// A real SCTE-35 `splice_insert` (event_id 2002) — the fixture
-/// `timed-metadata`'s own tests use.
-const SPLICE_INSERT_HEX: &str =
-    "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
-
-fn hex_bytes(hex: &str) -> Vec<u8> {
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
-        .collect()
+fn splice_insert() -> Vec<u8> {
+    test_fixtures::read("scte35/splice-insert-2002.bin")
 }
 
 fn mp4dump_available() -> bool {
@@ -198,7 +190,7 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
     let writer = trunk.writer().expect("trunk writer");
     let mut timeline = timed_metadata::Timeline::new();
     let ev = timeline
-        .push_scte35(&hex_bytes(SPLICE_INSERT_HEX))
+        .push_scte35(&splice_insert())
         .expect("parse splice");
     let declared_id = ev.id.expect("a splice_insert has an event id");
     writer.publish_event(ev, EventAnchor::Media(MediaTime(PTS_ORIGIN as u64)));
@@ -258,13 +250,13 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
     );
     assert_eq!(
         box0.message_data,
-        hex_bytes(SPLICE_INSERT_HEX).as_slice(),
+        splice_insert().as_slice(),
         "message_data must be the source section, byte-for-byte"
     );
     let reparsed = SpliceInfoSection::parse(box0.message_data).expect("independent parse");
     assert_eq!(
         reparsed,
-        SpliceInfoSection::parse(&hex_bytes(SPLICE_INSERT_HEX)).expect("source parse"),
+        SpliceInfoSection::parse(&splice_insert()).expect("source parse"),
         "the message_data must decode to the source section"
     );
 

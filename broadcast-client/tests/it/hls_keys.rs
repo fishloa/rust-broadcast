@@ -38,13 +38,12 @@ fn msn_iv(msn: u64) -> [u8; 16] {
     iv
 }
 
-fn hex(b: &[u8; 16]) -> String {
-    b.iter().map(|x| format!("{x:02X}")).collect()
-}
-
 fn key_tag(uri: &str, iv: Option<&[u8; 16]>) -> String {
     match iv {
-        Some(iv) => format!("#EXT-X-KEY:METHOD=AES-128,URI=\"{uri}\",IV=0x{}\n", hex(iv)),
+        Some(iv) => format!(
+            "#EXT-X-KEY:METHOD=AES-128,URI=\"{uri}\",IV=0x{}\n",
+            test_fixtures::hex_upper(iv)
+        ),
         None => format!("#EXT-X-KEY:METHOD=AES-128,URI=\"{uri}\"\n"),
     }
 }
@@ -462,7 +461,7 @@ fn unsupported_host(key_line: &str) -> Host {
 fn sample_aes_emits_unsupported_encryption_event_no_samples() {
     let mut h = unsupported_host(&format!(
         "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"{KEY_URL}\",IV=0x{}\n",
-        hex(&iv_seq(1))
+        test_fixtures::hex_upper(&iv_seq(1))
     ));
     h.run_until(has_fatal, 1000);
     h.run_until(|_| false, 200);
