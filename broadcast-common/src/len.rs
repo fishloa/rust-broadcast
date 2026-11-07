@@ -202,11 +202,11 @@ mod tests {
 
     #[test]
     fn need_out_boundaries() {
-        let mut b = [0u8; 4];
+        let b = [0u8; 4];
         assert_eq!(need_out(&b, 4), Ok(()));
         assert_eq!(need_out(&b, 0), Ok(()));
         assert_eq!(
-            need_out(&mut b, 5),
+            need_out(&b, 5),
             Err(OutputBufferTooSmall { need: 5, have: 4 })
         );
     }
