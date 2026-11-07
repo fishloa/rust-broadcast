@@ -26,7 +26,7 @@
 //! survives is the assertion.
 
 use broadcast_common::Parse;
-use rdd29::{AtmosFrame, BedDefinition1};
+use rdd29::{AtmosFrame, BedDefinition1, Error};
 
 /// The exact shape the fuzzer found, reconstructed from the format rather than
 /// copied from a crash artifact.
@@ -84,18 +84,55 @@ fn arbitrary_short_inputs_do_not_reserve() {
         0x08, 0x0a, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x7f, 0xff, 0xff, 0xff,
     ];
     for n in 0..=crafted.len() {
-        assert!(
-            AtmosFrame::parse(&crafted[..n]).is_err(),
-            "prefix of len {n} (raw {crafted:02x?}) must not parse: \
-             it is a truncated massive-SubElementCount body"
-        );
+        let err = AtmosFrame::parse(&crafted[..n])
+            .err()
+            .unwrap_or_else(|| panic!("prefix of len {n} (raw {crafted:02x?}) must not parse"));
+        match n {
+            0 => assert!(
+                matches!(
+                    &err,
+                    Error::Bits {
+                        what: "ElementID",
+                        ..
+                    }
+                ),
+                "{err:?}"
+            ),
+            1 => assert!(
+                matches!(
+                    &err,
+                    Error::Bits {
+                        what: "ElementSize",
+                        ..
+                    }
+                ),
+                "{err:?}"
+            ),
+            2..=11 => assert_eq!(
+                err,
+                Error::BufferTooShort {
+                    need: 12,
+                    have: n,
+                    what: "ATMOSFrame body"
+                }
+            ),
+            _ => assert_eq!(
+                err,
+                Error::InvalidValue {
+                    field: "ATMOSFrame.SubElementCount",
+                    value: 0x7FFF_FFFF,
+                    reason: "exceeds the bytes remaining in the frame body"
+                }
+            ),
+        }
     }
     // The all-ones fill escalates the Plex escape code past the end of the
     // input, so it must fail too — never silently succeed while the count is
     // attacker-controlled.
     let all_ones = vec![0xFFu8; 16];
-    assert!(
-        AtmosFrame::parse(&all_ones).is_err(),
+    assert_eq!(
+        AtmosFrame::parse(&all_ones).err(),
+        Some(Error::PlexUnrepresentable { field: "ElementID" }),
         "an all-ones body must fail, not accept an escaped Plex count"
     );
     for len in 0..64usize {
