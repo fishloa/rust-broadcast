@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Lockstep release 13.0.0: no functional change; the CLI builds against `dvb-si` 13, `dvb-t2mi` 13 and `mpeg-ts` 0.7.
+
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).
 ### Dependencies
