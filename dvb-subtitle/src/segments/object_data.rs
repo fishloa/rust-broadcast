@@ -823,13 +823,7 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
                 })
             }
             0x01 => {
-                if payload_data.is_empty() {
-                    return Err(Error::BufferTooShort {
-                        need: 1,
-                        have: 0,
-                        what: "character count",
-                    });
-                }
+                need_in(payload_data, 1, "character count")?;
                 let number_of_codes = payload_data[0] as usize;
                 let codes_len = 1 + number_of_codes * 2;
                 need_in(payload_data, codes_len, "character codes")?;
