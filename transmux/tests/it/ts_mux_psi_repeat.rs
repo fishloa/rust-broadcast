@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use broadcast_common::{Package, Unpackage};
 use dvb_conformance::{ConformanceMonitor, Indicator};
+use mpeg_ts::ts::TsPacket;
 use transmux::{Media, TsDemux, TsMux};
 
 const PKT: usize = 188;
@@ -53,17 +54,8 @@ impl Pkt<'_> {
     }
     /// PCR base in 90 kHz ticks, if the adaptation field carries a PCR.
     fn pcr90(&self) -> Option<u64> {
-        if self.0[3] & 0x20 == 0 || self.0[4] < 7 || self.0[5] & 0x10 == 0 {
-            return None;
-        }
-        let b = &self.0[6..11];
-        Some(
-            (u64::from(b[0]) << 25)
-                | (u64::from(b[1]) << 17)
-                | (u64::from(b[2]) << 9)
-                | (u64::from(b[3]) << 1)
-                | u64::from(b[4] >> 7),
-        )
+        let af = TsPacket::parse(self.0).ok()?.adaptation_field()?.ok()?;
+        Some(af.pcr?.base)
     }
     fn payload(&self) -> &[u8] {
         let start = if self.0[3] & 0x20 != 0 {

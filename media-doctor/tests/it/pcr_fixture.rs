@@ -5,7 +5,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use media_doctor::{Diagnostic, PcrCheck, Report, Severity};
+use mpeg_ts::owned::OwnedTsPacket;
+use mpeg_ts::ts::{Pcr, TsPacket};
 
 fn read(rel: &str) -> Vec<u8> {
     let path = test_fixtures::path(rel);
@@ -340,8 +343,7 @@ fn real_pcr_value_gap_is_still_reported() {
 #[test]
 fn discontinuity_step_is_not_also_reported_as_repetition() {
     const TS_PACKET_SIZE: usize = 188;
-    const PCR_MODULUS_27MHZ: u128 = (1u128 << 33) * 300;
-    const CLOCK_27MHZ: u128 = 27_000_000;
+    const CLOCK_27MHZ: u64 = 27_000_000;
 
     let ts = read("ts/pcr-wrap.ts");
     let mut out = ts.clone();
@@ -351,25 +353,19 @@ fn discontinuity_step_is_not_also_reported_as_repetition() {
 
     for i in 0..packets {
         let base = i * TS_PACKET_SIZE;
-        let afc = (out[base + 3] >> 4) & 0x03;
-        if afc & 0x02 == 0 || out[base + 4] == 0 || out[base + 5] & 0x10 == 0 || i < midpoint {
+        if i < midpoint {
             continue;
         }
-        let b = u128::from(out[base + 6]) << 25
-            | u128::from(out[base + 7]) << 17
-            | u128::from(out[base + 8]) << 9
-            | u128::from(out[base + 9]) << 1
-            | u128::from(out[base + 10]) >> 7;
-        let e = u128::from(out[base + 10] & 0x01) << 8 | u128::from(out[base + 11]);
-        // +600 s, modulo the 33-bit x 300 clock.
-        let v = (b * 300 + e + 600 * CLOCK_27MHZ) % PCR_MODULUS_27MHZ;
-        let (nb, ne) = (v / 300, v % 300);
-        out[base + 6] = ((nb >> 25) & 0xFF) as u8;
-        out[base + 7] = ((nb >> 17) & 0xFF) as u8;
-        out[base + 8] = ((nb >> 9) & 0xFF) as u8;
-        out[base + 9] = ((nb >> 1) & 0xFF) as u8;
-        out[base + 10] = ((nb & 1) as u8) << 7 | 0x7E | ((ne >> 8) & 1) as u8;
-        out[base + 11] = (ne & 0xFF) as u8;
+        let packet: &mut [u8; TS_PACKET_SIZE] =
+            (&mut out[base..base + TS_PACKET_SIZE]).try_into().unwrap();
+        let Some(pcr) = TsPacket::parse(packet)
+            .ok()
+            .and_then(|p| p.adaptation_field()?.ok()?.pcr)
+        else {
+            continue;
+        };
+        let moved = (pcr.as_27mhz() + 600 * CLOCK_27MHZ) % PCR_WRAP_27MHZ;
+        OwnedTsPacket::set_pcr(packet, Pcr::from_27mhz(moved)).unwrap();
         shifted += 1;
     }
     assert!(

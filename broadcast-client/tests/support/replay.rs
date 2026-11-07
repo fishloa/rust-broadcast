@@ -2,11 +2,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
+use mpeg_ts::ts::{AdaptationField, TsPacket};
 
 pub const TS_PACKET: usize = 188;
-const PID_MASK: u16 = 0x1fff;
-const PCR_FLAG: u8 = 0x10;
-const ADAPTATION_PRESENT: u8 = 0x20;
 const PCR_BASE_MODULUS_27MHZ: u64 = (1 << 33) * 300;
 const PCR_HZ: u64 = 27_000_000;
 const FALLBACK_BPS: u64 = 12_000_000;
@@ -16,17 +14,14 @@ pub fn bitrate_bps(bytes: &[u8]) -> u64 {
     let mut first: Option<(usize, u16, u64)> = None;
     let mut last: Option<(usize, u64)> = None;
     for (i, p) in bytes.chunks_exact(TS_PACKET).enumerate() {
-        if p[0] != 0x47 || p[3] & ADAPTATION_PRESENT == 0 || p[4] < 7 || p[5] & PCR_FLAG == 0 {
+        let Ok(packet) = TsPacket::parse(p) else {
             continue;
-        }
-        let pid = (u16::from(p[1]) << 8 | u16::from(p[2])) & PID_MASK;
-        let base = u64::from(p[6]) << 25
-            | u64::from(p[7]) << 17
-            | u64::from(p[8]) << 9
-            | u64::from(p[9]) << 1
-            | u64::from(p[10] >> 7);
-        let ext = u64::from(p[10] & 1) << 8 | u64::from(p[11]);
-        let pcr = base * 300 + ext;
+        };
+        let Some(Ok(AdaptationField { pcr: Some(pcr), .. })) = packet.adaptation_field() else {
+            continue;
+        };
+        let pid = packet.header.pid.value();
+        let pcr = pcr.as_27mhz();
         match first {
             None => first = Some((i, pid, pcr)),
             Some((_, fp, _)) if fp == pid => last = Some((i, pcr)),

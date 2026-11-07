@@ -24,6 +24,7 @@ use std::time::Duration;
 use dvb_conformance::{ConformanceMonitor, Indicator};
 use media_plane::PushEgress;
 use media_plane::SampleCursorItem;
+use mpeg_ts::ts::TsPacket;
 use multimux::push::{PushTransport, SrtTransport, SrtTransportConfig};
 use srt_runtime::HandshakeConfig;
 use srt_runtime::io::SrtListener;
@@ -81,17 +82,8 @@ impl Pkt<'_> {
         self.0[3] & 0x10 != 0
     }
     fn pcr90(&self) -> Option<u64> {
-        if self.0[3] & 0x20 == 0 || self.0[4] < 7 || self.0[5] & 0x10 == 0 {
-            return None;
-        }
-        let b = &self.0[6..11];
-        Some(
-            (u64::from(b[0]) << 25)
-                | (u64::from(b[1]) << 17)
-                | (u64::from(b[2]) << 9)
-                | (u64::from(b[3]) << 1)
-                | u64::from(b[4] >> 7),
-        )
+        let af = TsPacket::parse(self.0).ok()?.adaptation_field()?.ok()?;
+        Some(af.pcr?.base)
     }
     fn payload(&self) -> &[u8] {
         let start = if self.0[3] & 0x20 != 0 {

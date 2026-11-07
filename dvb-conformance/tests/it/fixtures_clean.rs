@@ -34,6 +34,7 @@ use std::fs::File;
 use std::io::Read;
 
 use dvb_conformance::{ConformanceMonitor, Indicator, Priority};
+use mpeg_ts::ts::TsPacket;
 
 const TS_PACKET_SIZE: usize = 188;
 
@@ -178,21 +179,20 @@ fn pcr_packet_times_us(data: &[u8]) -> Vec<f64> {
     let mut first_pid: Option<u16> = None;
     let n = data.len() / TS_PACKET_SIZE;
     for (i, p) in data.chunks_exact(TS_PACKET_SIZE).enumerate() {
-        // adaptation field present, length >= 7, PCR flag set
-        if p[0] != 0x47 || p[3] & 0x20 == 0 || p[4] < 7 || p[5] & 0x10 == 0 {
+        let Ok(packet) = TsPacket::parse(p) else {
             continue;
-        }
-        let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
+        };
+        let Some(Ok(pcr)) = packet.adaptation_field().map(|af| af.map(|af| af.pcr)) else {
+            continue;
+        };
+        let Some(pcr) = pcr else {
+            continue;
+        };
+        let pid = packet.header.pid.value();
         if *first_pid.get_or_insert(pid) != pid {
             continue;
         }
-        let base = (u64::from(p[6]) << 25)
-            | (u64::from(p[7]) << 17)
-            | (u64::from(p[8]) << 9)
-            | (u64::from(p[9]) << 1)
-            | (u64::from(p[10]) >> 7);
-        let pcr = base * 300 + (u64::from(p[10] & 1) << 8 | u64::from(p[11]));
-        pcrs.push((i, pcr as f64 / 27.0));
+        pcrs.push((i, pcr.as_27mhz() as f64 / 27.0));
     }
     assert!(pcrs.len() >= 2, "capture carries a repeating PCR PID");
     let mut out = Vec::with_capacity(n);

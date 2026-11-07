@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::TsPacket;
 
 /// Deterministically corrupt the continuity counter in a TS packet.
 ///
@@ -64,4 +65,16 @@ pub fn extract_pid(pkt: &[u8]) -> Pid {
     let b1 = pkt[1];
     let b2 = pkt[2];
     Pid::new((((b1 & 0x1F) as u16) << 8) | (b2 as u16))
+}
+
+/// The adaptation field's PCR on the 27 MHz clock and its `discontinuity_indicator`, if the
+/// packet carries a PCR.
+pub fn pcr_and_disc(p: &[u8]) -> Option<(u64, bool)> {
+    let af = TsPacket::parse(p).ok()?.adaptation_field()?.ok()?;
+    Some((af.pcr?.as_27mhz(), af.discontinuity_indicator))
+}
+
+/// The packet's PCR on the 27 MHz clock, if it carries one.
+pub fn pcr_27mhz(p: &[u8]) -> Option<u64> {
+    pcr_and_disc(p).map(|(pcr, _)| pcr)
 }
