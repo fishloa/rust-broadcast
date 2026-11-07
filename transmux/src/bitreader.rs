@@ -10,6 +10,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::bits::{BitError, BitWriter};
 
 /// Unescape a NAL unit byte stream into an RBSP: remove every `00 00 03` → `00 00`.
 pub(crate) fn unescape(nal: &[u8]) -> Vec<u8> {
@@ -75,6 +76,48 @@ pub(crate) fn read_bits_checked(
 /// the `need` field of a `BufferTooShort`).
 pub(crate) fn bytes_needed(bit_pos: usize, n: usize) -> usize {
     bit_pos.saturating_add(n).div_ceil(8)
+}
+
+/// Maps a shared [`BitError`] onto this crate's typed errors.
+pub(crate) fn bit_error(what: &'static str, e: BitError) -> Error {
+    match e {
+        BitError::OutOfBounds {
+            needed_bits,
+            remaining_bits,
+        } => Error::BufferTooShort {
+            need: remaining_bits.div_ceil(8) + needed_bits.div_ceil(8),
+            have: remaining_bits.div_ceil(8),
+            what,
+        },
+        BitError::TooManyBits { requested } => Error::InvalidValue {
+            field: what,
+            value: u64::from(requested),
+            reason: "field wider than 64 bits",
+        },
+        BitError::ValueTooWide { value, .. } => Error::InvalidValue {
+            field: what,
+            value,
+            reason: "value does not fit the field width",
+        },
+        _ => Error::InvalidValue {
+            field: what,
+            value: 0,
+            reason: "bit reader error",
+        },
+    }
+}
+
+/// Writes the low `n` bits of `value` after a `fit_bits` range check, with
+/// this crate's typed errors: the one writer shim the AVS3-audio, HDR10+ and
+/// VVC record serializers share.
+pub(crate) fn write_bits_checked(
+    w: &mut BitWriter<'_>,
+    value: u64,
+    n: u32,
+    what: &'static str,
+) -> Result<()> {
+    let value = broadcast_common::len::fit_bits(value, n, what)?;
+    w.write_bits(value, n).map_err(|e| bit_error(what, e))
 }
 
 /// Bit-level reader over an RBSP buffer (after emulation-prevention byte removal).

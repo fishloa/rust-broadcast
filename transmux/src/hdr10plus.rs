@@ -28,9 +28,10 @@
 //! symmetric: every parsed value, including the alignment padding bits, is
 //! re-emitted unchanged.
 
+use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitError, BitReader, BitWriter};
+use broadcast_common::bits::{BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
 
 /// SEI `payloadType` of `user_data_registered_itu_t_t35` (H.265 D.2.6).
@@ -89,41 +90,8 @@ const BEZIER_ANCHOR_COUNT_BITS: u32 = 4;
 const BEZIER_ANCHOR_BITS: u32 = 10;
 const COLOR_SATURATION_WEIGHT_BITS: u32 = 6;
 
-fn bit_err(what: &'static str, e: BitError) -> Error {
-    match e {
-        BitError::OutOfBounds {
-            needed_bits,
-            remaining_bits,
-        } => Error::BufferTooShort {
-            need: remaining_bits.div_ceil(8) + needed_bits.div_ceil(8),
-            have: remaining_bits.div_ceil(8),
-            what,
-        },
-        BitError::TooManyBits { requested } => Error::InvalidValue {
-            field: what,
-            value: u64::from(requested),
-            reason: "field wider than 64 bits",
-        },
-        BitError::ValueTooWide { value, .. } => Error::InvalidValue {
-            field: what,
-            value,
-            reason: "value does not fit the field width",
-        },
-        _ => Error::InvalidValue {
-            field: what,
-            value: 0,
-            reason: "bit reader error",
-        },
-    }
-}
-
 fn read(r: &mut BitReader<'_>, bits: u32, what: &'static str) -> Result<u64> {
-    r.read_bits(bits).map_err(|e| bit_err(what, e))
-}
-
-fn write(w: &mut BitWriter<'_>, value: u64, bits: u32, what: &'static str) -> Result<()> {
-    let value = broadcast_common::len::fit_bits(value, bits, what)?;
-    w.write_bits(value, bits).map_err(|e| bit_err(what, e))
+    r.read_bits(bits).map_err(|e| bit_error(what, e))
 }
 
 /// `overlap_process_option` (ST 2094-40 clause 6.7): how the rendered pixels
@@ -309,7 +277,7 @@ fn write_lut(
     lut: &Option<PeakLuminanceTable>,
     what: &'static str,
 ) -> Result<()> {
-    write(w, u64::from(lut.is_some()), FLAG_BITS, what)?;
+    write_bits_checked(w, u64::from(lut.is_some()), FLAG_BITS, what)?;
     let Some(l) = lut else { return Ok(()) };
     if l.rows > LUT_MAX_DIMENSION
         || l.columns > LUT_MAX_DIMENSION
@@ -321,10 +289,10 @@ fn write_lut(
             reason: "table size disagrees with rows x columns or exceeds 25x25",
         });
     }
-    write(w, u64::from(l.rows), LUT_DIMENSION_BITS, what)?;
-    write(w, u64::from(l.columns), LUT_DIMENSION_BITS, what)?;
+    write_bits_checked(w, u64::from(l.rows), LUT_DIMENSION_BITS, what)?;
+    write_bits_checked(w, u64::from(l.columns), LUT_DIMENSION_BITS, what)?;
     for v in &l.values {
-        write(w, u64::from(*v), LUT_VALUE_BITS, what)?;
+        write_bits_checked(w, u64::from(*v), LUT_VALUE_BITS, what)?;
     }
     Ok(())
 }
@@ -378,35 +346,35 @@ fn color_volume_bits(c: &ColorVolumeTransform) -> usize {
 
 fn write_color_volume(w: &mut BitWriter<'_>, c: &ColorVolumeTransform) -> Result<()> {
     for v in c.max_scl {
-        write(w, u64::from(v), MAXSCL_BITS, "maxscl")?;
+        write_bits_checked(w, u64::from(v), MAXSCL_BITS, "maxscl")?;
     }
-    write(
+    write_bits_checked(
         w,
         u64::from(c.average_max_rgb),
         AVERAGE_MAXRGB_BITS,
         "average_maxrgb",
     )?;
-    write(
+    write_bits_checked(
         w,
         c.distribution_max_rgb.len() as u64,
         DISTRIBUTION_COUNT_BITS,
         "num_distribution_maxrgb_percentiles",
     )?;
     for p in &c.distribution_max_rgb {
-        write(
+        write_bits_checked(
             w,
             u64::from(p.percentage),
             DISTRIBUTION_PERCENTAGE_BITS,
             "distribution_maxrgb_percentages",
         )?;
-        write(
+        write_bits_checked(
             w,
             u64::from(p.percentile),
             DISTRIBUTION_PERCENTILE_BITS,
             "distribution_maxrgb_percentiles",
         )?;
     }
-    write(
+    write_bits_checked(
         w,
         u64::from(c.fraction_bright_pixels),
         FRACTION_BRIGHT_PIXELS_BITS,
@@ -450,43 +418,43 @@ fn transform_tail_bits(c: &ColorVolumeTransform) -> usize {
 }
 
 fn write_transform_tail(w: &mut BitWriter<'_>, c: &ColorVolumeTransform) -> Result<()> {
-    write(
+    write_bits_checked(
         w,
         u64::from(c.tone_mapping.is_some()),
         FLAG_BITS,
         "tone_mapping_flag",
     )?;
     if let Some(t) = &c.tone_mapping {
-        write(
+        write_bits_checked(
             w,
             u64::from(t.knee_point_x),
             KNEE_POINT_BITS,
             "knee_point_x",
         )?;
-        write(
+        write_bits_checked(
             w,
             u64::from(t.knee_point_y),
             KNEE_POINT_BITS,
             "knee_point_y",
         )?;
-        write(
+        write_bits_checked(
             w,
             t.anchors.len() as u64,
             BEZIER_ANCHOR_COUNT_BITS,
             "num_bezier_curve_anchors",
         )?;
         for a in &t.anchors {
-            write(w, u64::from(*a), BEZIER_ANCHOR_BITS, "bezier_curve_anchors")?;
+            write_bits_checked(w, u64::from(*a), BEZIER_ANCHOR_BITS, "bezier_curve_anchors")?;
         }
     }
-    write(
+    write_bits_checked(
         w,
         u64::from(c.color_saturation_weight.is_some()),
         FLAG_BITS,
         "color_saturation_mapping_flag",
     )?;
     if let Some(weight) = c.color_saturation_weight {
-        write(
+        write_bits_checked(
             w,
             u64::from(weight),
             COLOR_SATURATION_WEIGHT_BITS,
@@ -533,67 +501,67 @@ const REGION_BITS: usize = 4 * WINDOW_CORNER_BITS as usize
     + OVERLAP_PROCESS_OPTION_BITS as usize;
 
 fn write_region(w: &mut BitWriter<'_>, g: &WindowRegion) -> Result<()> {
-    write(
+    write_bits_checked(
         w,
         u64::from(g.upper_left_corner_x),
         WINDOW_CORNER_BITS,
         "window_upper_left_corner_x",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.upper_left_corner_y),
         WINDOW_CORNER_BITS,
         "window_upper_left_corner_y",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.lower_right_corner_x),
         WINDOW_CORNER_BITS,
         "window_lower_right_corner_x",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.lower_right_corner_y),
         WINDOW_CORNER_BITS,
         "window_lower_right_corner_y",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.center_of_ellipse_x),
         ELLIPSE_CENTER_BITS,
         "center_of_ellipse_x",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.center_of_ellipse_y),
         ELLIPSE_CENTER_BITS,
         "center_of_ellipse_y",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.rotation_angle),
         ROTATION_ANGLE_BITS,
         "rotation_angle",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.semimajor_axis_internal_ellipse),
         ELLIPSE_AXIS_BITS,
         "semimajor_axis_internal_ellipse",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.semimajor_axis_external_ellipse),
         ELLIPSE_AXIS_BITS,
         "semimajor_axis_external_ellipse",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.semiminor_axis_external_ellipse),
         ELLIPSE_AXIS_BITS,
         "semiminor_axis_external_ellipse",
     )?;
-    write(
+    write_bits_checked(
         w,
         u64::from(g.overlap_process_option.code()),
         OVERLAP_PROCESS_OPTION_BITS,
@@ -867,7 +835,7 @@ impl Serialize for Hdr10PlusMetadata {
         let body = &mut buf[T35_HEADER_LEN..need];
         body.fill(0);
         let mut w = BitWriter::new(body);
-        write(
+        write_bits_checked(
             &mut w,
             self.num_windows() as u64,
             NUM_WINDOWS_BITS,
@@ -876,7 +844,7 @@ impl Serialize for Hdr10PlusMetadata {
         for extra in &self.additional_windows {
             write_region(&mut w, &extra.region)?;
         }
-        write(
+        write_bits_checked(
             &mut w,
             u64::from(self.targeted_system_display_maximum_luminance),
             TARGETED_MAX_LUMINANCE_BITS,
@@ -900,7 +868,7 @@ impl Serialize for Hdr10PlusMetadata {
         }
         let pad = self.padding_bits();
         if pad > 0 {
-            write(
+            write_bits_checked(
                 &mut w,
                 u64::from(self.alignment_padding),
                 pad,

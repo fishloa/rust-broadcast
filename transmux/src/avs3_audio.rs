@@ -22,10 +22,11 @@
 //! done here. The `reserved` bits state no value in the standard: captured on
 //! parse and re-emitted verbatim; hand-built values are 0 (ISOBMFF convention).
 
+use crate::bitreader::write_bits_checked;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::{fit_bits, fit_u16};
+use broadcast_common::len::fit_u16;
 use broadcast_common::{Parse, Serialize};
 
 /// FourCC of the Audio Vivid decoder configuration box.
@@ -373,12 +374,6 @@ impl<'a> Parse<'a> for Ca3SpecificBox {
     }
 }
 
-fn wr(w: &mut BitWriter<'_>, v: u64, n: u32, field: &'static str) -> Result<()> {
-    let v = fit_bits(v, n, field)?;
-    w.write_bits(v, n)
-        .map_err(|_| Error::InvalidInput("dca3 bit writer overflow"))
-}
-
 impl Ca3SpecificBox {
     fn bits(&self) -> usize {
         match &self.config {
@@ -438,7 +433,7 @@ impl Serialize for Ca3SpecificBox {
         }
         buf[..need].fill(0);
         let mut w = BitWriter::new(&mut buf[..need]);
-        wr(
+        write_bits_checked(
             &mut w,
             u64::from(self.config.audio_codec_id()),
             4,
@@ -446,15 +441,15 @@ impl Serialize for Ca3SpecificBox {
         )?;
         match &self.config {
             Ca3Config::GeneralBitrate(g) => {
-                wr(
+                write_bits_checked(
                     &mut w,
                     u64::from(g.sampling_frequency_index),
                     4,
                     "sampling_frequency_index",
                 )?;
-                wr(&mut w, u64::from(g.nn_type), 3, "nn_type")?;
-                wr(&mut w, u64::from(g.reserved), 1, "reserved")?;
-                wr(
+                write_bits_checked(&mut w, u64::from(g.nn_type), 3, "nn_type")?;
+                write_bits_checked(&mut w, u64::from(g.reserved), 1, "reserved")?;
+                write_bits_checked(
                     &mut w,
                     u64::from(g.content.content_type()),
                     4,
@@ -465,20 +460,20 @@ impl Serialize for Ca3SpecificBox {
                         channel_number_index,
                         reserved,
                     } => {
-                        wr(
+                        write_bits_checked(
                             &mut w,
                             u64::from(channel_number_index),
                             7,
                             "channel_number_index",
                         )?;
-                        wr(&mut w, u64::from(reserved), 1, "reserved")?;
+                        write_bits_checked(&mut w, u64::from(reserved), 1, "reserved")?;
                     }
                     Avs3AudioContent::Object {
                         number_objects,
                         reserved,
                     } => {
-                        wr(&mut w, u64::from(number_objects), 7, "number_objects")?;
-                        wr(&mut w, u64::from(reserved), 1, "reserved")?;
+                        write_bits_checked(&mut w, u64::from(number_objects), 7, "number_objects")?;
+                        write_bits_checked(&mut w, u64::from(reserved), 1, "reserved")?;
                     }
                     Avs3AudioContent::ChannelAndObject {
                         channel_number_index,
@@ -486,36 +481,38 @@ impl Serialize for Ca3SpecificBox {
                         number_objects,
                         reserved_object,
                     } => {
-                        wr(
+                        write_bits_checked(
                             &mut w,
                             u64::from(channel_number_index),
                             7,
                             "channel_number_index",
                         )?;
-                        wr(&mut w, u64::from(reserved_channel), 1, "reserved")?;
-                        wr(&mut w, u64::from(number_objects), 7, "number_objects")?;
-                        wr(&mut w, u64::from(reserved_object), 1, "reserved")?;
+                        write_bits_checked(&mut w, u64::from(reserved_channel), 1, "reserved")?;
+                        write_bits_checked(&mut w, u64::from(number_objects), 7, "number_objects")?;
+                        write_bits_checked(&mut w, u64::from(reserved_object), 1, "reserved")?;
                     }
                     Avs3AudioContent::Hoa { hoa_order } => {
-                        wr(&mut w, u64::from(hoa_order), 4, "hoa_order")?;
+                        write_bits_checked(&mut w, u64::from(hoa_order), 4, "hoa_order")?;
                     }
                     Avs3AudioContent::Reserved(_) => {}
                 }
-                wr(&mut w, u64::from(g.total_bitrate), 16, "total_bitrate")?;
-                wr(&mut w, u64::from(g.resolution), 2, "resolution")?;
+                write_bits_checked(&mut w, u64::from(g.total_bitrate), 16, "total_bitrate")?;
+                write_bits_checked(&mut w, u64::from(g.resolution), 2, "resolution")?;
                 let tail_bits = if g.content.content_type() == 3 { 2 } else { 6 };
-                wr(&mut w, u64::from(g.reserved_tail), tail_bits, "reserved")?;
+                write_bits_checked(&mut w, u64::from(g.reserved_tail), tail_bits, "reserved")?;
             }
             Ca3Config::Lossless(l) => {
                 let explicit = l.sampling_frequency_index == SAMPLING_FREQUENCY_INDEX_EXPLICIT;
-                wr(
+                write_bits_checked(
                     &mut w,
                     u64::from(l.sampling_frequency_index),
                     4,
                     "sampling_frequency_index",
                 )?;
                 match (explicit, l.sampling_frequency) {
-                    (true, Some(f)) => wr(&mut w, u64::from(f), 24, "sampling_frequency")?,
+                    (true, Some(f)) => {
+                        write_bits_checked(&mut w, u64::from(f), 24, "sampling_frequency")?
+                    }
                     (false, None) => {}
                     _ => {
                         return Err(Error::InvalidInput(
@@ -523,47 +520,47 @@ impl Serialize for Ca3SpecificBox {
                         ));
                     }
                 }
-                wr(&mut w, u64::from(l.anc_data_index), 1, "anc_data_index")?;
-                wr(&mut w, u64::from(l.coding_profile), 3, "coding_profile")?;
-                wr(&mut w, u64::from(l.channel_number), 8, "channel_number")?;
-                wr(&mut w, u64::from(l.resolution), 2, "resolution")?;
+                write_bits_checked(&mut w, u64::from(l.anc_data_index), 1, "anc_data_index")?;
+                write_bits_checked(&mut w, u64::from(l.coding_profile), 3, "coding_profile")?;
+                write_bits_checked(&mut w, u64::from(l.channel_number), 8, "channel_number")?;
+                write_bits_checked(&mut w, u64::from(l.resolution), 2, "resolution")?;
                 let n = fit_u16(l.addition_info.len(), "addition_info_length")?;
-                wr(&mut w, u64::from(n), 16, "addition_info_length")?;
+                write_bits_checked(&mut w, u64::from(n), 16, "addition_info_length")?;
                 for b in &l.addition_info {
-                    wr(&mut w, u64::from(*b), 8, "addition_info")?;
+                    write_bits_checked(&mut w, u64::from(*b), 8, "addition_info")?;
                 }
-                wr(&mut w, u64::from(l.reserved), 2, "reserved")?;
+                write_bits_checked(&mut w, u64::from(l.reserved), 2, "reserved")?;
             }
             Ca3Config::GeneralHigh(g) => {
-                wr(
+                write_bits_checked(
                     &mut w,
                     u64::from(g.sampling_frequency_index),
                     4,
                     "sampling_frequency_index",
                 )?;
-                wr(&mut w, u64::from(g.anc_data_index), 1, "anc_data_index")?;
-                wr(&mut w, u64::from(g.coding_profile), 3, "coding_profile")?;
-                wr(&mut w, u64::from(g.bitstream_type), 1, "bitstream_type")?;
-                wr(
+                write_bits_checked(&mut w, u64::from(g.anc_data_index), 1, "anc_data_index")?;
+                write_bits_checked(&mut w, u64::from(g.coding_profile), 3, "coding_profile")?;
+                write_bits_checked(&mut w, u64::from(g.bitstream_type), 1, "bitstream_type")?;
+                write_bits_checked(
                     &mut w,
                     u64::from(g.channel_number_index),
                     7,
                     "channel_number_index",
                 )?;
-                wr(&mut w, u64::from(g.bitrate_index), 4, "bitrate_index")?;
-                wr(
+                write_bits_checked(&mut w, u64::from(g.bitrate_index), 4, "bitrate_index")?;
+                write_bits_checked(
                     &mut w,
                     u64::from(g.raw_frame_length),
                     16,
                     "raw_frame_length",
                 )?;
-                wr(&mut w, u64::from(g.resolution), 2, "resolution")?;
+                write_bits_checked(&mut w, u64::from(g.resolution), 2, "resolution")?;
                 let n = fit_u16(g.addition_info.len(), "addition_info_length")?;
-                wr(&mut w, u64::from(n), 16, "addition_info_length")?;
+                write_bits_checked(&mut w, u64::from(n), 16, "addition_info_length")?;
                 for b in &g.addition_info {
-                    wr(&mut w, u64::from(*b), 8, "addition_info")?;
+                    write_bits_checked(&mut w, u64::from(*b), 8, "addition_info")?;
                 }
-                wr(&mut w, u64::from(g.reserved), 6, "reserved")?;
+                write_bits_checked(&mut w, u64::from(g.reserved), 6, "reserved")?;
             }
             Ca3Config::Other { .. } => {}
         }
