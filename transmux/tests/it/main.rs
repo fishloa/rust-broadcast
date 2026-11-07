@@ -152,6 +152,7 @@ mod streaming_ts_demux_liveness;
 mod streaming_tshls;
 mod streaming_tshls_config_change;
 mod streaming_tshls_late_track;
+mod streaming_tshls_pmt_version;
 mod subtitle_ac4_strictness;
 mod subtitle_manifests;
 mod subtitle_real_producers;

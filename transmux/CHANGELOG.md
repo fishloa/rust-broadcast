@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- `StreamingTsHlsSegmenter` (and the TS muxer's continuing path) increments the PMT `version_number` modulo 32 whenever the PMT content changes, so a track added with `add_track` mid-stream reaches a demuxer that joined earlier; an unchanged PMT keeps its version; the first segment after `add_track` is flagged `#EXT-X-DISCONTINUITY` (RFC 8216bis section 4.4.4.3: track set changed) (#1699).
 - `WebmDemux` reports an `Info` whose `TimestampScale` is 0 or does not fit an `i64` as a malformed unit (the default scale then applies) instead of applying it: 0 collapsed every pts to 0 and values of 2^63 or more made pts negative (c5 R5-2).
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).

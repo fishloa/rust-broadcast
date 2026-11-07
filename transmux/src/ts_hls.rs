@@ -1257,6 +1257,15 @@ impl StreamingTsHlsSegmenter {
     /// has already been buffered/cut) keeps the existing anchor unchanged
     /// and simply adds the track for muxing.
     ///
+    /// # PMT version and discontinuity
+    ///
+    /// Once any segment has been cut, the track set the stream carries
+    /// changes, so the next segment's PMT is written with `version_number`
+    /// incremented modulo 32 (ISO/IEC 13818-1 §2.4.4.9; issue #1699) and that
+    /// segment is flagged discontinuous, because RFC 8216bis §4.4.4.3 requires
+    /// `#EXT-X-DISCONTINUITY` when the number, type or identifiers of tracks
+    /// change.
+    ///
     /// # Errors
     /// [`Error::InvalidInput`] if `spec.track_id` collides with an existing
     /// track.
@@ -1277,6 +1286,10 @@ impl StreamingTsHlsSegmenter {
             base_decode: 0,
             flush_clock: MediaClock::new(),
         });
+
+        if self.total_segments > 0 {
+            self.pending_discontinuity = true;
+        }
 
         if nothing_cut_or_buffered && new_is_video && !current_anchor_is_video {
             self.anchor = new_index;
