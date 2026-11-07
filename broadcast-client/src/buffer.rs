@@ -93,6 +93,9 @@ const TICKS_PER_SEC_27MHZ: u64 = 27_000_000;
 const PENDING_TRACK_KEY: u32 = u32::MAX;
 
 pub(crate) fn raw_27mhz(pts: i64, timescale: u32) -> i128 {
+    if timescale == 0 {
+        return 0;
+    }
     rescale(
         i128::from(pts),
         timescale,
