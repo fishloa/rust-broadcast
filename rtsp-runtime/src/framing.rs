@@ -56,9 +56,15 @@ mod tests {
     #[test]
     fn the_cap_applies_to_any_unterminated_shape() {
         let a = vec![b'A'; 70 * 1024];
-        assert!(head_end(&a, 0).is_err());
+        assert!(matches!(
+            head_end(&a, 0),
+            Err(crate::error::Error::MessageParse(..))
+        ));
         let lines = b"X-A: b\r\n".repeat(9000);
-        assert!(head_end(&lines, 0).is_err());
+        assert!(matches!(
+            head_end(&lines, 0),
+            Err(crate::error::Error::MessageParse(..))
+        ));
         assert!(head_end(&a[..1000], 0).unwrap().is_none());
     }
 }

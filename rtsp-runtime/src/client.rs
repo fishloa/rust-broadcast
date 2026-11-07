@@ -862,7 +862,10 @@ mod tests {
     #[test]
     fn play_in_init_bites() {
         let mut c = ClientSession::new();
-        assert!(c.play("rtsp://h/s").is_err());
+        assert!(matches!(
+            c.play("rtsp://h/s"),
+            Err(crate::error::Error::MethodNotValidInState { .. })
+        ));
     }
 
     #[test]
@@ -1117,7 +1120,7 @@ mod tests {
             }
         }
         assert!(
-            last.is_err(),
+            matches!(last, Err(crate::error::Error::MessageParse(..))),
             "expected the oversized inbound buffer to be rejected, not grown forever"
         );
     }
@@ -1125,7 +1128,10 @@ mod tests {
     #[test]
     fn record_fails_from_init_state() {
         let mut c = ClientSession::new();
-        assert!(c.record("rtsp://h/s").is_err());
+        assert!(matches!(
+            c.record("rtsp://h/s"),
+            Err(crate::error::Error::MethodNotValidInState { .. })
+        ));
     }
 
     #[test]

@@ -226,11 +226,23 @@ fn malformed_values_are_errors() {
         "RTP/AVP;mode=\"PLAY",
         "RTP/AVP;a b=c",
     ] {
-        assert!(Transport::parse(bad).is_err(), "{bad:?} must be rejected");
+        assert!(
+            matches!(
+                Transport::parse(bad),
+                Err(rtsp_runtime::error::Error::TransportParse(..))
+            ),
+            "{bad:?} must be rejected"
+        );
     }
-    assert!(SessionHeader::parse("").is_err());
+    assert!(matches!(
+        SessionHeader::parse(""),
+        Err(rtsp_runtime::error::Error::SessionParse(..))
+    ));
     assert!(
-        SessionHeader::parse("a\r\nb").is_err(),
+        matches!(
+            SessionHeader::parse("a\r\nb"),
+            Err(rtsp_runtime::error::Error::SessionParse(..))
+        ),
         "control characters are rejected"
     );
 }

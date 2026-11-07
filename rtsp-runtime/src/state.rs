@@ -160,12 +160,18 @@ mod tests {
 
     #[test]
     fn client_play_from_init_bites() {
-        assert!(client_next_state(SessionState::Init, &Method::Play).is_err());
+        assert!(matches!(
+            client_next_state(SessionState::Init, &Method::Play),
+            Err(crate::error::Error::MethodNotValidInState { .. })
+        ));
     }
 
     #[test]
     fn client_pause_from_ready_bites() {
-        assert!(client_next_state(SessionState::Ready, &Method::Pause).is_err());
+        assert!(matches!(
+            client_next_state(SessionState::Ready, &Method::Pause),
+            Err(crate::error::Error::MethodNotValidInState { .. })
+        ));
     }
 
     #[test]
@@ -204,6 +210,9 @@ mod tests {
 
     #[test]
     fn server_play_from_init_bites() {
-        assert!(server_next_state(SessionState::Init, &Method::Play).is_err());
+        assert!(matches!(
+            server_next_state(SessionState::Init, &Method::Play),
+            Err(crate::error::Error::MethodNotValidInState { .. })
+        ));
     }
 }
