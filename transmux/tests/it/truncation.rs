@@ -68,7 +68,8 @@ fn packager_output_truncations_all_error() {
 }
 
 /// Hostile input: very deep nesting of unknown elements is skipped iteratively
-/// (no recursion), so a 60k-deep MPD parses without a stack overflow.
+/// (no recursion), so a 60k-deep MPD is refused with the typed depth limit
+/// (#1708) instead of overflowing the stack.
 #[test]
 fn deeply_nested_unknown_elements_do_not_overflow() {
     let depth = 60_000;
@@ -77,5 +78,11 @@ fn deeply_nested_unknown_elements_do_not_overflow() {
         "<x>".repeat(depth),
         "</x>".repeat(depth)
     );
-    assert!(Mpd::parse(&xml).is_ok());
+    assert!(matches!(
+        Mpd::parse(&xml),
+        Err(transmux::dash_parse::DashParseError::TooLarge {
+            limit: broadcast_common::xml_chars::XmlLimit::Depth,
+            ..
+        })
+    ));
 }
