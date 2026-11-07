@@ -4091,7 +4091,10 @@ mod tests {
 
         wait_until_stalled(&trunk, 1);
         assert!(
-            done_rx.try_recv().is_err(),
+            matches!(
+                done_rx.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ),
             "publish_segment must block: the pin has not consumed seq 1 yet"
         );
 
