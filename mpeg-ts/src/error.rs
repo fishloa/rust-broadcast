@@ -13,40 +13,20 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
-    #[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]
-    BufferTooShort {
-        /// Bytes required to proceed.
-        need: usize,
-        /// Bytes actually available.
-        have: usize,
-        /// Human-readable name of the type or field being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// CRC-32 validation failed for a table section.
-    #[error("CRC-32 mismatch: computed {computed:#010x}, expected {expected:#010x}")]
-    CrcMismatch {
-        /// CRC we calculated over the section bytes.
-        computed: u32,
-        /// CRC carried at the end of the section.
-        expected: u32,
-    },
+    #[error(transparent)]
+    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
 
-    /// TS sync byte was not the expected `0x47`.
-    #[error("invalid TS sync byte: expected 0x47, got {found:#04x}")]
-    InvalidSyncByte {
-        /// The byte actually read at position 0.
-        found: u8,
-    },
+    /// A fixed marker did not match (TS sync byte, expected `0x47`).
+    #[error(transparent)]
+    InvalidSync(#[from] broadcast_common::error::InvalidSync),
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
-    #[error("serialize: output buffer too small — need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Required size.
-        need: usize,
-        /// Actual size.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// A `section_length` declared more bytes than the containing buffer could hold.
     #[error("section_length {declared} exceeds remaining buffer ({available} bytes)")]
@@ -88,23 +68,4 @@ pub enum Error {
         /// Actual `payload.len()`.
         actual: usize,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }
