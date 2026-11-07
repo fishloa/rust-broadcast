@@ -5,6 +5,20 @@ decisions over a TS-over-HTTP source (`tshttp-runtime`), an HLS source (`hls-run
 source (`dash-runtime`), a Smooth Streaming source (`transmux`'s MS-SSTR parser), an RTMP play source (`rtmp-runtime`), an RTSP source (`rtsp-runtime`), an SRT caller source (`srt-runtime`) and UDP/RTP TS sources. The host performs only transport I/O (HTTP requests, a TCP
 connection for RTSP, a datagram socket for UDP and RTP); time is a caller-supplied monotonic `now_us`.
 
+## What it does / what it does not
+
+Does: one sans-IO `Session` over every source kind (TS-over-HTTP, HLS, DASH, Smooth Streaming, RTMP, RTSP, UDP/RTP, SRT), with auth, redirects, cookies, retry and backoff, buffering and join decisions. Bytes go in, `Action`s come out, and time is the caller's monotonic `now_us`.
+
+Does not: open sockets, run a TLS stack, spawn threads or read a clock. The host executes each `Action` and reports the result back (see the Host contract below).
+
+## Standards supported
+
+The client defers each protocol to the crate that implements it: `tshttp-runtime` (TS over HTTP), `hls-runtime` (RFC 8216 and RFC 8216bis), `dash-runtime` (ISO/IEC 23009-1), `transmux` (MS-SSTR Smooth Streaming), `rtsp-runtime` (RFC 2326), `rtmp-runtime` (RTMP 1.0), `srt-runtime` (SRT) and `rtp-packet` (RFC 3550). The per-source sections below state the behaviour each source has under this client.
+
+## What is implemented
+
+The sections below describe, in order: source selection, UDP and RTP, SRT, RTSP, buffer events, timeline jumps, encrypted HLS, the host contract, the clock and `Retry-After` handling, DASH, client certificates, and cookies and custom headers.
+
 ## Sources
 
 `Config::kind` selects the source; `SourceKind::Auto` picks UDP for a `udp://` URL, RTP for an `rtp://` URL, RTSP for an `rtsp://` or `rtsps://` URL,
@@ -456,3 +470,23 @@ while let Some(action) = session.poll(0) {
     let _ = action;
 }
 ```
+
+## Feature flags
+
+| Feature | Default | Effect |
+|---|---|---|
+| `serde` | no | `Serialize` on events and configuration, forwarded to `broadcast-common`, `transmux`, `tshttp-runtime` and `buffering-runtime`. |
+
+The crate is `std`-only and has no `std` feature.
+
+## Design notes
+
+The session design, the host contract and every decision behind it are in [`docs/broadcast-client/DESIGN.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/broadcast-client/DESIGN.md). The DASH path is covered by a table-driven fault matrix with an exhaustiveness guard and a livesim2 end-to-end test.
+
+## Related crates
+
+`tshttp-runtime`, `hls-runtime`, `dash-runtime`, `rtsp-runtime`, `rtmp-runtime`, `srt-runtime`, `transmux`, `rtp-packet`, `broadcast-auth` and `buffering-runtime` (the policy and protocol engines this session drives).
+
+## MSRV and licence
+
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

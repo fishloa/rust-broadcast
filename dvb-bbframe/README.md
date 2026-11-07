@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/dvb-bbframe.svg)](https://crates.io/crates/dvb-bbframe)
 [![docs.rs](https://img.shields.io/docsrs/dvb-bbframe)](https://docs.rs/dvb-bbframe)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-licence)
 
 **DVB-S2 / S2X / T2 Base-Band Frame (BBFRAME) header parser and builder, ISSY decoding, and Transport Stream user-packet extraction in Normal and High Efficiency Mode.**
 
@@ -115,7 +115,7 @@ Transport Error Indicator).
 - Public enums carry `name()` and `Display`; `#![warn(missing_docs)]`;
   `no_std` + `alloc`.
 
-## Related crates and license
+## Related crates and licence
 
 Depends on `broadcast-common`. Consumed by `dvb-t2mi` (T2-MI inner-TS
 recovery). Lockstep version with `dvb-si`, `dvb-t2mi`,

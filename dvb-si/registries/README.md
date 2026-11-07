@@ -24,7 +24,7 @@ chance of a transcription/codegen mistake inventing a registry value.
 (`tsCAS.names` also carries `[CASFamily]`/`[CASFamilyRange]` sections, which are
 TSDuck-internal and unused here — kept only so the file stays byte-verbatim.)
 
-## License / attribution
+## Licence / attribution
 
 TSDuck is distributed under the **BSD 2-Clause License** (compatible with this
 crate's `MIT OR Apache-2.0`). The required copyright notice and license text:

@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/mpeg-pes.svg)](https://crates.io/crates/mpeg-pes)
 [![docs.rs](https://img.shields.io/docsrs/mpeg-pes)](https://docs.rs/mpeg-pes)
 [![MSRV](https://img.shields.io/badge/MSRV-1.95.0-blue.svg)](https://blog.rust-lang.org/)
-[![license](https://img.shields.io/crates/l/mpeg-pes.svg)](#related-crates-and-license)
+[![license](https://img.shields.io/crates/l/mpeg-pes.svg)](#related-crates-and-licence)
 
 **PES (Packetized Elementary Stream) packet parse/serialize with PTS/DTS: the layer between MPEG-TS/PS packets and an elementary-stream consumer.**
 
@@ -106,7 +106,7 @@ Examples (`cargo run -p mpeg-pes --example <name>`): `parse_pes_packet`,
 - `no_std` + `alloc`, `#![warn(missing_docs)]`; label convention
   (`name()`/`Display`) guarded by `workspace-guards/tests/guards/label.rs`.
 
-## Related crates and license
+## Related crates and licence
 
 Depends on `broadcast-common`. Used with `mpeg-ts` (TS payloads in) and
 `mpeg-ps` (program-stream PES), and consumed by `transmux`, `ts-fix`, `media-doctor`, `caption-convert` and `dvb-subtitle`.

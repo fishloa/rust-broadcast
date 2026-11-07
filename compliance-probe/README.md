@@ -130,7 +130,7 @@ Runnable examples: `cargo run -p compliance-probe --example fixture_report`
   always-zero metric.
 - Public enums carry `name()` and `Display` (`workspace-guards/tests/guards/label.rs`).
 
-## Related crates and license
+## Related crates and licence
 
 Depends on `broadcast-common`, `dvb-conformance`, `mpeg-ts`, `scte35-splice`,
 `timed-metadata`, `media-doctor`, `media-plane`. Designed to sit beside

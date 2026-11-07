@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/dvb-t2mi.svg)](https://crates.io/crates/dvb-t2mi)
 [![docs.rs](https://img.shields.io/docsrs/dvb-t2mi)](https://docs.rs/dvb-t2mi)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-licence)
 
 **DVB-T2 Modulator Interface (T2-MI, ETSI TS 102 773) packet and payload parser and builder, with a TS-in/typed-payload-out pump and one-call inner-TS recovery.**
 
@@ -139,7 +139,7 @@ Examples: `cargo run -p dvb-t2mi --example parse_header` and `--example pump_cap
 - **Label convention.** Public enums carry `name()` and `Display`.
 - `#![warn(missing_docs)]`, `no_std` + `alloc`.
 
-## Related crates and license
+## Related crates and licence
 
 Depends on `broadcast-common`, and (with `ts`) on `mpeg-ts` and `dvb-bbframe`.
 The full chain: T2-MI here, BBFrame extraction in `dvb-bbframe`, SI in `dvb-si`.

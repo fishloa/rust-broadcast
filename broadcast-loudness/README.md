@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness)
 [![docs.rs](https://docs.rs/broadcast-loudness/badge.svg)](https://docs.rs/broadcast-loudness)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#msrv-and-license)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#msrv-and-licence)
 
 EBU R 128 / ITU-R BS.1770-5 loudness measurement for Rust: K-weighting,
 momentary / short-term / integrated loudness (LUFS), loudness range (LU) and
@@ -125,6 +125,6 @@ and `--example measure_true_peak`. For interleaved or multichannel input use
 Leaf crate: depends only on `broadcast-common`. Consumers that probe live
 streams (for example `compliance-probe`) can feed it decoded PCM.
 
-## MSRV and license
+## MSRV and licence
 
 MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

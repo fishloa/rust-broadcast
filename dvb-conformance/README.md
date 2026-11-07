@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance)
 [![docs.rs](https://img.shields.io/docsrs/dvb-conformance)](https://docs.rs/dvb-conformance)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#related-crates-and-licence)
 
 **ETSI TR 101 290 transport-stream conformance monitor: feed TS packets with a caller-supplied clock, get structured per-indicator events for the first, second and third measurement priorities.**
 
@@ -153,7 +153,7 @@ bytes, deferred).
   honestly is documented and not emitted rather than approximated.
 - Public enums carry `name()` and `Display`; `no_std` + `alloc`.
 
-## Related crates and license
+## Related crates and licence
 
 Depends on `broadcast-common`, `mpeg-ts` and `dvb-si`. Used by
 `compliance-probe`, `media-doctor`, `ts-fix`, `multimux` and `transmux`. Lockstep

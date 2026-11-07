@@ -108,6 +108,13 @@ cargo run -p dash-runtime --example play_live
 cargo run -p dash-runtime --example play_live -- --mpd fixtures/dash/live-timeline/live.mpd --seconds 4 --skew-ms 1500
 ```
 
+## What is implemented
+
+- The MPD parser and consume-only model, bounded against hostile input.
+- Lazy segment plans for `SegmentTemplate`, `SegmentTimeline`, `SegmentList` and `SegmentBase` with `sidx`, including availability windows.
+- The UTC clock (`UTCTiming`, host clock, response `Date`) and live-edge arithmetic.
+- `DashClient`, playing static and dynamic MPDs to ordered `Fmp4Demux` samples with typed failure classes.
+
 ## Static presentations: behaviour worth knowing
 
 - **One timeline.** The selected video and audio Representations of a Period are requested interleaved by media start time (the stream that is furthest behind goes first), inside one window of `max_inflight_segments` that counts requested and arrived-but-undelivered segments. Track ids are 1-based, video then audio, and a Representation switch keeps them.
@@ -141,6 +148,10 @@ Independent oracles, not this crate's own output:
 
 Tripwires: `tests/it/no_clock_guard.rs` (no `now()` outside tests), `workspace-guards/tests/guards/handroll_data.rs`, `workspace-guards/tests/guards/label.rs`, `workspace-guards/tests/guards/non_exhaustive.rs`. Fuzz targets `dash_mpd_parse`, `dash_address`, `dash_client_static` and `dash_client_live` live in the workspace `fuzz/` crate.
 
+## Design notes
+
+The decision log, including every point where the standard is silent or contradicts itself, is [`docs/dash-runtime/DESIGN.md`](https://github.com/fishloa/rust-broadcast/blob/main/docs/dash-runtime/DESIGN.md). The crate performs no I/O and reads no clock; `tests/it/no_clock_guard.rs` and `tests/it/no_handroll_guard.rs` enforce both.
+
 ## Feature flags
 
 None. The crate is `std` (the XML reader, `quick-xml`, needs it).
@@ -149,6 +160,6 @@ None. The crate is `std` (the XML reader, `quick-xml`, needs it).
 
 `transmux` (the DASH generator this crate is tested against, `Fmp4Demux`, `sidx` and duration parsers it reuses), `container-probe` (the structural "is this body a media segment" check), `hls-runtime` (the HLS counterpart), `broadcast-client` (the client session that drives this client).
 
-## License
+## MSRV and licence
 
-MIT OR Apache-2.0
+MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

@@ -151,6 +151,6 @@ $ maturin develop
 $ pytest -q
 ```
 
-## License
+## Licence
 
 MIT OR Apache-2.0.
