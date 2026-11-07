@@ -166,6 +166,7 @@ pub(crate) async fn media_playlist(
 mod tests {
     use super::*;
     use crate::route::RouteHandle;
+    use crate::testutil::body_string;
     use hls_runtime::server::Container;
     use transmux::ll_hls::SegmentInfo;
 
@@ -198,13 +199,6 @@ mod tests {
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 0x22))
             .expect("add_segment");
         route
-    }
-
-    async fn body_string(resp: Response) -> String {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        String::from_utf8(bytes.to_vec()).unwrap()
     }
 
     fn state(route: Arc<RouteHandle>) -> TsHlsState {

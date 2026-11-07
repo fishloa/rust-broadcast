@@ -75,19 +75,15 @@ use transmux::TrackId;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::get;
 use broadcast_common::Package;
 use hls_runtime::server::DEFAULT_TRACK_ID;
-use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use transmux::{Addressing, LlDashPackager, Media, Track, TrackSegments};
 
-use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::origin::resource::cors_preflight;
 use crate::output::dash::{
-    DASH_MANIFEST_CONTENT_TYPE, format_iso8601, select_representable_track,
-    xs_duration_secs_checked,
+    format_iso8601, select_representable_track, serve_mpd, xs_duration_secs_checked,
 };
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
@@ -131,43 +127,7 @@ impl Output for LlDashOutput {
 /// representable track (mirrors `crate::output::dash`'s `manifest.mpd`
 /// handler and its issue #776 fix).
 async fn manifest(State(route): State<Arc<RouteHandle>>) -> Response {
-    let serving = match http::resolve_route_program(&route) {
-        Ok(serving) => serving,
-        Err(resp) => return *resp,
-    };
-    let trunk = serving.trunk();
-    let origin = LlDashOrigin { route };
-    let resp = http::resolve_blocking(&trunk, &origin, (), BLOCKING_RELOAD_TIMEOUT, || ()).await;
-    http::into_response(resp, StatusCode::SERVICE_UNAVAILABLE, |body| {
-        ([(header::CONTENT_TYPE, DASH_MANIFEST_CONTENT_TYPE)], body).into_response()
-    })
-}
-
-/// The LL-DASH manifest [`ServedEgress`] — same stateless-render shape as
-/// `crate::output::dash`'s `DashOrigin`; see that type's own doc for why
-/// this never answers [`EgressResponse::Await`].
-struct LlDashOrigin {
-    route: Arc<RouteHandle>,
-}
-
-impl ServedEgress for LlDashOrigin {
-    type Request = ();
-    type Body = String;
-
-    fn resolve(
-        &self,
-        _request: (),
-        _now: broadcast_common::Timestamp,
-        _await_policy: AwaitPolicy,
-    ) -> EgressResponse<String> {
-        match render_ll_dash_mpd(&self.route) {
-            Some(body) => EgressResponse::Ready {
-                body,
-                cache: CachePolicy::NoCache,
-            },
-            None => EgressResponse::NotFound,
-        }
-    }
+    serve_mpd(route, render_ll_dash_mpd).await
 }
 
 /// Render the live LL-DASH MPD for `route`'s current window +
@@ -272,20 +232,11 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transmux::CodecConfig;
-    use transmux::TrackSpec;
-    use transmux::ll_hls::PartInfo;
+    use crate::output::dash::DASH_MANIFEST_CONTENT_TYPE;
+    use crate::testutil::video_spec;
+    use axum::http::{StatusCode, header};
 
-    fn video_spec(track_id: TrackId) -> TrackSpec {
-        TrackSpec::new(
-            track_id,
-            90_000,
-            CodecConfig::Vp8 {
-                width: 1280,
-                height: 720,
-            },
-        )
-    }
+    use transmux::ll_hls::PartInfo;
 
     fn part(seq: u32, idx: u32) -> PartInfo {
         PartInfo {

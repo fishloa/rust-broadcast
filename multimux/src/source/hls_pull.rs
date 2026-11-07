@@ -740,6 +740,7 @@ fn hls_pull_has_no_inline_sleep_outside_the_scheduler() {
 
 #[cfg(test)]
 mod tests {
+    use crate::testutil::drain;
     /// Before/after pin (#1141): the shared `Backoff` reproduces the
     /// shift-based schedule `retry_backoff` carried before consolidation.
     /// SP1.5: `retry_backoff` is the pre-consolidation shift series
@@ -778,7 +779,7 @@ mod tests {
     use broadcast_auth::Credentials;
     use broadcast_hls::{MediaPlaylist, MediaSegment};
     use media_plane::ingress::HealthState;
-    use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
+    use media_plane::trunk::{SampleCursor, TrunkConfig};
     use std::collections::HashMap;
     use std::num::NonZeroUsize;
     use std::sync::Arc;
@@ -1067,16 +1068,6 @@ Content-Length: {over}
 
     fn handshake() -> HandshakePolicy {
         HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
-    }
-
-    fn drain(cursor: &mut SampleCursor) -> usize {
-        let mut n = 0;
-        while let Some(item) = cursor.poll() {
-            if matches!(item, SampleCursorItem::Timed { .. }) {
-                n += 1;
-            }
-        }
-        n
     }
 
     const TRACK_ID: TrackId = TrackId::new(1);

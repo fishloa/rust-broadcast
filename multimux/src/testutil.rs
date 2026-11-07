@@ -112,3 +112,32 @@ async fn auth_gate(State(verifier): State<Arc<Verifier>>, req: Request, next: Ne
     )
         .into_response()
 }
+
+pub(crate) async fn body_string(resp: Response) -> String {
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+/// Counts the timed samples currently readable from `cursor`.
+pub(crate) fn drain(cursor: &mut media_plane::trunk::SampleCursor) -> usize {
+    let mut n = 0;
+    while let Some(item) = cursor.poll() {
+        if matches!(item, media_plane::trunk::SampleCursorItem::Timed { .. }) {
+            n += 1;
+        }
+    }
+    n
+}
+
+pub(crate) fn video_spec(track_id: transmux::TrackId) -> transmux::pipeline::TrackSpec {
+    transmux::pipeline::TrackSpec::new(
+        track_id,
+        90_000,
+        transmux::pipeline::CodecConfig::Vp8 {
+            width: 1280,
+            height: 720,
+        },
+    )
+}
