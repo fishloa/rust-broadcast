@@ -1,6 +1,7 @@
 //! CLUT Definition Segment — ETSI EN 300 743 §7.2.4, Table 16 (segment_type 0x12).
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The CLUT_definition_segment segment_type.
@@ -112,13 +113,7 @@ impl ClutEntry {
     }
 
     fn parse(bytes: &[u8]) -> Result<(Self, usize)> {
-        if bytes.len() < ENTRY_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: ENTRY_HEADER_LEN,
-                have: bytes.len(),
-                what: "CLUT_entry header",
-            });
-        }
+        need_in(bytes, ENTRY_HEADER_LEN, "CLUT_entry header")?;
         let clut_entry_id = bytes[0];
         let flag_2bit = (bytes[1] & 0x80) != 0;
         let flag_4bit = (bytes[1] & 0x40) != 0;
@@ -132,13 +127,7 @@ impl ClutEntry {
             } else {
                 ENTRY_REDUCED_LEN
             };
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "CLUT_entry data",
-            });
-        }
+        need_in(bytes, total, "CLUT_entry data")?;
         let (y, cr, cb, t) = if full_range_flag {
             (bytes[2], bytes[3], bytes[4], bytes[5])
         } else {
@@ -189,13 +178,7 @@ impl<'a> Parse<'a> for ClutDefinitionSegment {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + FIXED_LEN,
-                have: bytes.len(),
-                what: "CLUT_definition_segment",
-            });
-        }
+        need_in(bytes, HEADER_LEN + FIXED_LEN, "CLUT_definition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -205,21 +188,9 @@ impl<'a> Parse<'a> for ClutDefinitionSegment {
         let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
         let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let total = HEADER_LEN + segment_length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "CLUT_definition_segment data",
-            });
-        }
+        need_in(bytes, total, "CLUT_definition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
-        if body.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: body.len(),
-                what: "CLUT_definition_segment body",
-            });
-        }
+        need_in(body, FIXED_LEN, "CLUT_definition_segment body")?;
         let clut_id = body[0];
         let clut_version_number = body[1] >> 4;
         let reserved = body[1] & 0x0F;
@@ -269,13 +240,7 @@ impl Serialize for ClutDefinitionSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "CLUT_definition_segment serialize",
-            });
-        }
+        need_in(buf, len, "CLUT_definition_segment serialize")?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

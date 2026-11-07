@@ -4,6 +4,7 @@
 //! The body is opaque raw bytes.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The stuffing segment_type.
@@ -26,13 +27,7 @@ impl<'a> Parse<'a> for StuffingSegment<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "stuffing_segment",
-            });
-        }
+        need_in(bytes, HEADER_LEN, "stuffing_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -42,13 +37,7 @@ impl<'a> Parse<'a> for StuffingSegment<'a> {
         let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
         let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let total = HEADER_LEN + segment_length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "stuffing_segment data",
-            });
-        }
+        need_in(bytes, total, "stuffing_segment data")?;
         Ok(StuffingSegment {
             page_id,
             data: &bytes[HEADER_LEN..total],
@@ -65,13 +54,7 @@ impl Serialize for StuffingSegment<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "stuffing_segment serialize",
-            });
-        }
+        need_in(buf, len, "stuffing_segment serialize")?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

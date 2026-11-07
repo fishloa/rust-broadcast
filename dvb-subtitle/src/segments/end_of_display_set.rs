@@ -1,6 +1,7 @@
 //! End of Display Set Segment — ETSI EN 300 743 §7.2.6, Table 28 (segment_type 0x80).
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The end_of_display_set_segment segment_type.
@@ -20,13 +21,7 @@ impl<'a> Parse<'a> for EndOfDisplaySetSegment {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "end_of_display_set_segment",
-            });
-        }
+        need_in(bytes, HEADER_LEN, "end_of_display_set_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -51,13 +46,7 @@ impl Serialize for EndOfDisplaySetSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "end_of_display_set_segment serialize",
-            });
-        }
+        need_in(buf, len, "end_of_display_set_segment serialize")?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

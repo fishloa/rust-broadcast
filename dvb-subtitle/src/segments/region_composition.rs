@@ -1,6 +1,7 @@
 //! Region Composition Segment — ETSI EN 300 743 §7.2.3, Table 11 (segment_type 0x11).
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The region_composition_segment segment_type.
@@ -276,13 +277,7 @@ pub struct RegionCompositionSegment {
 }
 
 fn parse_object_entry(bytes: &[u8]) -> Result<(RegionObjectEntry, usize)> {
-    if bytes.len() < OBJECT_ENTRY_BASE_LEN {
-        return Err(Error::BufferTooShort {
-            need: OBJECT_ENTRY_BASE_LEN,
-            have: bytes.len(),
-            what: "region_object_entry",
-        });
-    }
+    need_in(bytes, OBJECT_ENTRY_BASE_LEN, "region_object_entry")?;
     let object_id = u16::from_be_bytes([bytes[0], bytes[1]]);
     let obj_type_val = (bytes[2] >> 6) & 0x03;
     let obj_provider_val = (bytes[2] >> 4) & 0x03;
@@ -308,13 +303,11 @@ fn parse_object_entry(bytes: &[u8]) -> Result<(RegionObjectEntry, usize)> {
 
     let has_extra = obj_type_val == 0x01 || obj_type_val == 0x02;
     if has_extra {
-        if bytes.len() < OBJECT_ENTRY_BASE_LEN + OBJECT_EXTRA_LEN {
-            return Err(Error::BufferTooShort {
-                need: OBJECT_ENTRY_BASE_LEN + OBJECT_EXTRA_LEN,
-                have: bytes.len(),
-                what: "region_object_entry extra",
-            });
-        }
+        need_in(
+            bytes,
+            OBJECT_ENTRY_BASE_LEN + OBJECT_EXTRA_LEN,
+            "region_object_entry extra",
+        )?;
         Ok((
             RegionObjectEntry {
                 object_id,
@@ -347,13 +340,7 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + FIXED_LEN,
-                have: bytes.len(),
-                what: "region_composition_segment",
-            });
-        }
+        need_in(bytes, HEADER_LEN + FIXED_LEN, "region_composition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -363,21 +350,9 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
         let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
         let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let total = HEADER_LEN + segment_length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "region_composition_segment data",
-            });
-        }
+        need_in(bytes, total, "region_composition_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
-        if body.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: body.len(),
-                what: "region_composition_segment body",
-            });
-        }
+        need_in(body, FIXED_LEN, "region_composition_segment body")?;
         let region_id = body[0];
         let region_version_number = body[1] >> 4;
         let region_fill_flag = (body[1] & 0x08) != 0;
@@ -452,13 +427,7 @@ impl Serialize for RegionCompositionSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "region_composition_segment serialize",
-            });
-        }
+        need_in(buf, len, "region_composition_segment serialize")?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());

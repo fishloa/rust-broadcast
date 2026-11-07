@@ -3,6 +3,7 @@
 //! Permits a CLUT to be defined in colour systems other than ITU-R BT.601.
 
 use crate::error::{Error, Result};
+use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 /// The alternative_CLUT_segment segment_type.
@@ -35,13 +36,7 @@ pub struct ClutParameters {
 impl ClutParameters {
     /// Parse CLUT_parameters from 2 raw bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: bytes.len(),
-                what: "CLUT_parameters",
-            });
-        }
+        need_in(bytes, 2, "CLUT_parameters")?;
         let entry_max_number = bytes[0] >> 6;
         let colour_component_type = (bytes[0] >> 4) & 0x03;
         let output_bit_depth = (bytes[0] >> 1) & 0x07;
@@ -186,13 +181,7 @@ impl AlternativeClutEntry {
 
     fn parse(bytes: &[u8], output_bit_depth: u8) -> Result<Self> {
         let entry_len = Self::serialized_len(output_bit_depth);
-        if bytes.len() < entry_len {
-            return Err(Error::BufferTooShort {
-                need: entry_len,
-                have: bytes.len(),
-                what: "alternative_CLUT_entry",
-            });
-        }
+        need_in(bytes, entry_len, "alternative_CLUT_entry")?;
         let (luma, c1, c2, t) = if output_bit_depth == 1 {
             let v0 = ((bytes[0] as u16) << 2) | ((bytes[1] as u16) >> 6);
             let v1 = (((bytes[1] as u16) & 0x3F) << 4) | ((bytes[2] as u16) >> 4);
@@ -238,13 +227,7 @@ impl<'a> Parse<'a> for AlternativeClutSegment {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + FIXED_LEN,
-                have: bytes.len(),
-                what: "alternative_CLUT_segment",
-            });
-        }
+        need_in(bytes, HEADER_LEN + FIXED_LEN, "alternative_CLUT_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
             return Err(Error::BadSyncByte(bytes[0]));
         }
@@ -254,21 +237,9 @@ impl<'a> Parse<'a> for AlternativeClutSegment {
         let page_id = u16::from_be_bytes([bytes[2], bytes[3]]);
         let segment_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let total = HEADER_LEN + segment_length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "alternative_CLUT_segment data",
-            });
-        }
+        need_in(bytes, total, "alternative_CLUT_segment data")?;
         let body = &bytes[HEADER_LEN..HEADER_LEN + segment_length];
-        if body.len() < FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: FIXED_LEN,
-                have: body.len(),
-                what: "alternative_CLUT_segment body",
-            });
-        }
+        need_in(body, FIXED_LEN, "alternative_CLUT_segment body")?;
         let clut_id = body[0];
         let clut_version_number = body[1] >> 4;
         let reserved = body[1] & 0x0F;
@@ -319,13 +290,7 @@ impl Serialize for AlternativeClutSegment {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::BufferTooShort {
-                need: len,
-                have: buf.len(),
-                what: "alternative_CLUT_segment serialize",
-            });
-        }
+        need_in(buf, len, "alternative_CLUT_segment serialize")?;
         buf[0] = 0x0F;
         buf[1] = SEGMENT_TYPE;
         buf[2..4].copy_from_slice(&self.page_id.to_be_bytes());
