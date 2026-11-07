@@ -267,7 +267,7 @@ mod tests {
     fn rejects_truncation_overflow_and_empty() {
         assert!(matches!(
             MvcOperationPointDescriptor::parse(&[TAG, 3, 118, 0, 1]),
-            Err(crate::Error::BufferTooShort { .. })
+            Err(crate::Error::BufferTooShort(..))
         ));
         let mut d = MvcOperationPointDescriptor::new(1, [false; 6], 0, vec![]);
         let mut out = [0u8; 16];

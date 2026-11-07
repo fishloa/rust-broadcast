@@ -166,7 +166,7 @@ mod tests {
         let d = MultiplexBufferUtilizationDescriptor::new(false, 0, 0);
         let mut tiny = vec![0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     /// H.222.0 Table 2-65. Parsed reserved bit is preserved (no longer

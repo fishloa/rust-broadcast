@@ -29,11 +29,13 @@ impl<'a> CompleteBat<'a> {
         registry: Option<&'a DescriptorRegistry>,
     ) -> crate::Result<Self> {
         let sections: Vec<bat::BatSection<'a>> = set.parse_sections()?;
-        let first = sections.first().ok_or(crate::Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "CompleteBat sections",
-        })?;
+        let first = sections.first().ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "CompleteBat sections",
+            },
+        ))?;
         let transport_streams = CompleteTransportStream::collect(
             sections.iter().flat_map(|section| {
                 section.transport_streams.iter().map(|ts| {

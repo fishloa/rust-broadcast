@@ -253,11 +253,11 @@ impl LtcFrame {
     /// [`Error::InvalidValue`] when `frames` exceeds `rate.max_frame()`.
     pub fn validate_for_rate(&self, rate: FrameRate) -> Result<()> {
         if self.frames > rate.max_frame() {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "frames",
-                value: self.frames,
+                value: u64::from(self.frames),
                 reason: "exceeds the maximum frame number of this frame rate",
-            });
+            }));
         }
         Ok(())
     }
@@ -293,32 +293,32 @@ impl LtcFrame {
     /// cannot silently round-trip.
     fn validate(&self) -> Result<()> {
         if self.hours > MAX_HOURS {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "hours",
-                value: self.hours,
+                value: u64::from(self.hours),
                 reason: "exceeds the 24-hour-clock maximum (23)",
-            });
+            }));
         }
         if self.minutes > MAX_MINUTES_SECONDS {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "minutes",
-                value: self.minutes,
+                value: u64::from(self.minutes),
                 reason: "exceeds the maximum (59)",
-            });
+            }));
         }
         if self.seconds > MAX_MINUTES_SECONDS {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "seconds",
-                value: self.seconds,
+                value: u64::from(self.seconds),
                 reason: "exceeds the maximum (59)",
-            });
+            }));
         }
         if self.frames > MAX_FRAMES {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "frames",
-                value: self.frames,
+                value: u64::from(self.frames),
                 reason: "exceeds the widest supported frame-rate maximum (29)",
-            });
+            }));
         }
         for (index, &value) in self.user_bits.iter().enumerate() {
             if value > MAX_BINARY_GROUP {
@@ -336,10 +336,11 @@ impl<'a> Parse<'a> for LtcFrame {
         need_in(bytes, FRAME_LEN, "LTC codeword")?;
 
         if [bytes[8], bytes[9]] != SYNC_WORD {
-            return Err(Error::SyncWordMismatch {
-                expected: SYNC_WORD,
-                found: [bytes[8], bytes[9]],
-            });
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "sync word",
+                expected: u32::from(u16::from_be_bytes(SYNC_WORD)),
+                found: u32::from(u16::from_be_bytes([bytes[8], bytes[9]])),
+            }));
         }
 
         let frame_units = bytes[0] & 0x0F;
@@ -469,13 +470,13 @@ mod tests {
         assert!(f.validate_for_rate(FrameRate::Fps30).is_ok());
         assert!(matches!(
             &(f.validate_for_rate(FrameRate::Fps25)),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         f.frames = 24;
         assert!(f.validate_for_rate(FrameRate::Fps25).is_ok());
         assert!(matches!(
             f.validate_for_rate(FrameRate::Fps24),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
         f.frames = 23;
         assert!(f.validate_for_rate(FrameRate::Fps24).is_ok());
@@ -487,10 +488,12 @@ mod tests {
         let mut out = [0u8; FRAME_LEN - 1];
         assert_eq!(
             f.serialize_into(&mut out),
-            Err(Error::OutputBufferTooSmall {
-                need: FRAME_LEN,
-                have: FRAME_LEN - 1
-            })
+            Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need: FRAME_LEN,
+                    have: FRAME_LEN - 1
+                }
+            ))
         );
     }
 
@@ -543,7 +546,7 @@ mod tests {
         bytes[9] = 0x00;
         assert!(matches!(
             LtcFrame::parse(&bytes),
-            Err(Error::SyncWordMismatch { .. })
+            Err(Error::InvalidSync(..))
         ));
     }
 
@@ -552,11 +555,13 @@ mod tests {
         let bytes = [0u8; 9];
         assert!(matches!(
             LtcFrame::parse(&bytes),
-            Err(Error::BufferTooShort {
-                need: 10,
-                have: 9,
-                ..
-            })
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 10,
+                    have: 9,
+                    ..
+                }
+            ))
         ));
     }
 
@@ -567,7 +572,10 @@ mod tests {
         let mut out = [0u8; FRAME_LEN];
         assert!(matches!(
             f.serialize_into(&mut out),
-            Err(Error::InvalidValue { field: "hours", .. })
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "hours",
+                ..
+            }))
         ));
     }
 
@@ -578,10 +586,10 @@ mod tests {
         let mut out = [0u8; FRAME_LEN];
         assert!(matches!(
             f.serialize_into(&mut out),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "frames",
                 ..
-            })
+            }))
         ));
     }
 

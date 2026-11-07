@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = TsdtSection::parse(&[0x03, 0xB0]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

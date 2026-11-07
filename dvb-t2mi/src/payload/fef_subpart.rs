@@ -129,11 +129,11 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
         let (hdr, rest) = bytes.split_first_chunk::<FEF_SUBPART_HEADER_LEN>().ok_or(
-            crate::Error::BufferTooShort {
+            crate::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: FEF_SUBPART_HEADER_LEN,
                 have: bytes.len(),
                 what: "FefSubPartPayload header",
-            },
+            }),
         )?;
 
         // rfu1: bytes 3-6 (32 bits) — must be 0
@@ -319,7 +319,7 @@ mod tests {
         let buf = [0u8; 14];
         assert!(matches!(
             &(FefSubPartPayload::parse(&buf)),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 

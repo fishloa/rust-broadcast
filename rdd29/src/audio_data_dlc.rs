@@ -45,11 +45,11 @@ impl<'a> AudioDataDlc<'a> {
     /// 16-bit field can address (§5.5.1: max 65535 bytes).
     pub fn new(audio_data_id: u32, payload: &'a [u8]) -> Result<Self> {
         if payload.len() > usize::from(u16::MAX) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "AudioDataDLC.DLCSize",
                 value: payload.len() as u64,
                 reason: "DLCSize is a 16-bit field, max 65535 bytes",
-            });
+            }));
         }
         Ok(Self {
             audio_data_id,
@@ -69,21 +69,21 @@ impl<'a> Parse<'a> for AudioDataDlc<'a> {
         let payload_start = r.bits_read() / 8;
         let payload_end = payload_start
             .checked_add(dlc_size)
-            .ok_or(Error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "AudioDataDLC.DLCSize",
                 value: dlc_size as u64,
                 reason: "DLCSize overflowed usize",
-            })?;
+            }))?;
         need_in(bytes, payload_end, "AudioDataDLC.payload")?;
         if payload_end != bytes.len() {
             // §5.5.1: "DLCSize shall indicate the size in bytes of the
             // remainder of the AudioDataDLC Element" — i.e. it must consume
             // exactly the rest of this element's ElementSize-bounded body.
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "AudioDataDLC.DLCSize",
                 value: dlc_size as u64,
                 reason: "must equal exactly the remainder of the element body (§5.5.1)",
-            });
+            }));
         }
         Ok(Self {
             audio_data_id,
@@ -151,7 +151,7 @@ mod tests {
 
         let too_big = alloc::vec![0u8; usize::from(u16::MAX) + 1];
         let err = AudioDataDlc::new(0, &too_big).unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }));
+        assert!(matches!(err, Error::InvalidValue(..)));
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
         let short = bytes.len() - 1;
         bytes.truncate(short);
         let err = AudioDataDlc::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]

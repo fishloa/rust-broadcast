@@ -161,7 +161,11 @@ impl<'a> Sndu<'a> {
             data[crc_start + 3],
         ]);
         if computed != found {
-            return Err(Error::CrcMismatch { computed, found });
+            return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+                what: "SNDU",
+                computed,
+                expected: found,
+            }));
         }
 
         let payload = PayloadChain::parse(type_field, &data[payload_start..crc_start])?;
@@ -179,13 +183,7 @@ impl<'a> Sndu<'a> {
         need_out(out, total)?;
 
         let length = self.length_field();
-        if length > END_INDICATOR_LENGTH as usize {
-            return Err(Error::FieldTooWide {
-                what: "Length",
-                value: length as u32,
-                bits: 15,
-            });
-        }
+        broadcast_common::len::fit_bits(length as u64, 15, "Length")?;
         // D=1 with Length=0x7FFF is the reserved End Indicator (0xFFFF on the
         // wire, §6), not a real SNDU header — every receiver (including this
         // crate's own `ts::maybe_finish`) stops the packet there (ULE-W2,
@@ -348,7 +346,7 @@ mod tests {
         sndu.serialize_into(&mut buf).unwrap();
         let last = buf.len() - 1;
         buf[last] ^= 0x01;
-        assert!(matches!(Sndu::parse(&buf), Err(Error::CrcMismatch { .. })));
+        assert!(matches!(Sndu::parse(&buf), Err(Error::CrcMismatch(..))));
     }
 
     #[test]

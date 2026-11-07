@@ -45,11 +45,13 @@ impl<'a> Parse<'a> for TimeDescriptor {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "time_descriptor")?;
         if body.len() < BODY_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + BODY_LEN,
-                have: bytes.len(),
-                what: "time_descriptor body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + BODY_LEN,
+                    have: bytes.len(),
+                    what: "time_descriptor body",
+                },
+            ));
         }
         let tai_seconds = (u64::from(body[0]) << 40)
             | (u64::from(body[1]) << 32)
@@ -57,18 +59,20 @@ impl<'a> Parse<'a> for TimeDescriptor {
             | (u64::from(body[3]) << 16)
             | (u64::from(body[4]) << 8)
             | u64::from(body[5]);
-        let tai_ns =
-            u32::from_be_bytes(*body[6..].first_chunk::<4>().ok_or(Error::BufferTooShort {
+        let tai_ns = u32::from_be_bytes(*body[6..].first_chunk::<4>().ok_or(
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: HEADER_LEN + BODY_LEN,
                 have: bytes.len(),
                 what: "time_descriptor body",
-            })?);
-        let utc_offset =
-            u16::from_be_bytes(*body[10..].first_chunk::<2>().ok_or(Error::BufferTooShort {
+            }),
+        )?);
+        let utc_offset = u16::from_be_bytes(*body[10..].first_chunk::<2>().ok_or(
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: HEADER_LEN + BODY_LEN,
                 have: bytes.len(),
                 what: "time_descriptor body",
-            })?);
+            }),
+        )?);
         Ok(Self {
             identifier,
             tai_seconds,

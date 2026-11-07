@@ -69,11 +69,13 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: sel.len(),
-                what: "vvc_subpictures body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: sel.len(),
+                    what: "vvc_subpictures body",
+                },
+            ));
         }
         let byte0 = sel[0];
         let default_service_mode = (byte0 & 0x80) != 0;
@@ -249,7 +251,7 @@ mod tests {
         let bytes = wrap(0x23, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 
@@ -260,7 +262,7 @@ mod tests {
         let bytes = wrap(0x23, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 

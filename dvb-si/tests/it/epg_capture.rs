@@ -95,11 +95,13 @@ impl<'a> broadcast_common::Parse<'a> for MyPrivateDesc {
     type Error = dvb_si::Error;
     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
         if bytes.len() < 3 {
-            return Err(dvb_si::Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "MyPrivateDesc",
-            });
+            return Err(dvb_si::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: bytes.len(),
+                    what: "MyPrivateDesc",
+                },
+            ));
         }
         Ok(Self { val: bytes[2] })
     }

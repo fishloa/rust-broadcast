@@ -14,24 +14,12 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer shorter than
     /// required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed/serialized.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// A bit-level read/write (via [`broadcast_common::bits`]) failed while
     /// decoding or encoding `what`.
@@ -69,27 +57,13 @@ pub enum Error {
     },
     /// A field value did not fit its wire bit-width, or a derived count
     /// (e.g. `ElementSize` vs. actual body length) was inconsistent.
-    #[error("field {field} value {value} invalid: {reason}")]
-    InvalidValue {
-        /// The offending field/derived-count name.
-        field: &'static str,
-        /// The offending value.
-        value: u64,
-        /// Why it is invalid.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
     /// A "Reserved (set to `X`)" field (RDD 29 gives an explicit literal
     /// value for every reserved field it defines) did not match its
     /// documented constant.
-    #[error("reserved field {field} must be {expected:#x}, found {found:#x}")]
-    InvalidReserved {
-        /// The reserved field's name.
-        field: &'static str,
-        /// The documented literal value it must hold.
-        expected: u64,
-        /// The value actually found.
-        found: u64,
-    },
+    #[error(transparent)]
+    ReservedBits(#[from] broadcast_common::error::ReservedBits),
     /// The outermost `ReadElement()` header's `ElementID` did not match the
     /// element type expected at this parse site (e.g. [`crate::AtmosFrame`]
     /// requires `ATMOS_FRAME`, Table 1).
@@ -100,16 +74,6 @@ pub enum Error {
         /// The `ElementID` actually read.
         found: u32,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
 }
 
 /// Attaches a `what`-context to a [`BitError`], turning it into an
@@ -125,14 +89,5 @@ pub(crate) trait BitResultExt<T> {
 impl<T> BitResultExt<T> for core::result::Result<T, BitError> {
     fn ctx(self, what: &'static str) -> Result<T> {
         self.map_err(|source| Error::Bits { what, source })
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
     }
 }

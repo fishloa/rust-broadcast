@@ -208,7 +208,7 @@ fn collector_rejects_crc_mismatch() {
     let err = collector.push_section(&section).unwrap_err();
     assert!(matches!(
         err,
-        CollectError::Section(dvb_si::Error::CrcMismatch { .. })
+        CollectError::Section(dvb_si::Error::CrcMismatch(..))
     ));
 }
 

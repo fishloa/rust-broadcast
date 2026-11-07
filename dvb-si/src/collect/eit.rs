@@ -744,11 +744,13 @@ impl<'a> CompleteEit<'a> {
         registry: Option<&'a DescriptorRegistry>,
     ) -> crate::Result<Self> {
         let sections: Vec<eit::EitSection<'a>> = set.parse_sections()?;
-        let first = sections.first().ok_or(crate::Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "CompleteEit sections",
-        })?;
+        let first = sections.first().ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "CompleteEit sections",
+            },
+        ))?;
         let mut events = Vec::new();
         for section in &sections {
             events.extend(section.events.iter().map(|event| CompleteEitEvent {

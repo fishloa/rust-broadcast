@@ -8,28 +8,16 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// `packet_start_code_prefix` was not `0x000001`.
-    #[error("invalid packet_start_code_prefix: {0:#08X} (expected 0x000001)")]
-    BadStartCode(u32),
+    #[error(transparent)]
+    InvalidSync(#[from] broadcast_common::error::InvalidSync),
     /// A required `marker_bit` was not `1` in a PTS/DTS field.
     #[error("bad timestamp marker bit in {0}")]
     BadTimestampMarker(&'static str),
@@ -55,23 +43,4 @@ pub enum Error {
     /// to write silently as `PTS_DTS_flags=00`).
     #[error("forbidden PTS_DTS_flags combination: DTS without PTS")]
     ForbiddenPtsDtsFlags,
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

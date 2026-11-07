@@ -7,6 +7,7 @@
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidValue` now wrap `broadcast_common::error` types (tuple variants). Hand-written `From` impls removed; messages follow the common wording.
 
 ## [0.2.0] - 2026-10-17
 ### Documentation

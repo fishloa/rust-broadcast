@@ -257,7 +257,7 @@ mod tests {
         let d = SvcExtensionDescriptor::default();
         let mut tiny = vec![0u8; 5];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     /// H.222.0 Table 2-99. Both reserved regions are preserved verbatim (the

@@ -8,31 +8,19 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// The `data_identifier` was not the required `0x20`.
     #[error("bad data_identifier: {0:#04X} (expected 0x20)")]
     BadDataIdentifier(u8),
-    /// The `sync_byte` was not the required `0x0F`.
-    #[error("bad sync_byte: {0:#04X} (expected 0x0F)")]
-    BadSyncByte(u8),
+    /// A fixed marker did not match (`sync_byte`, expected `0x0F`).
+    #[error(transparent)]
+    InvalidSync(#[from] broadcast_common::error::InvalidSync),
     /// The `end_of_PES_data_field_marker` was not `0xFF`.
     #[error("bad end_of_PES_data_field_marker: {0:#04X} (expected 0xFF)")]
     BadEndOfPesMarker(u8),
@@ -75,30 +63,6 @@ pub enum Error {
     },
     /// A field value does not fit the bits the wire format gives it (e.g. a
     /// reduced-range CLUT colour component wider than its 6/4/2-bit slot).
-    #[error("invalid value for {field}: {reason}")]
-    InvalidValue {
-        /// The field being serialized.
-        field: &'static str,
-        /// Why the value is rejected.
-        reason: &'static str,
-    },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
 }

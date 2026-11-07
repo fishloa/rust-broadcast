@@ -16,7 +16,10 @@ use scte104::time::Time;
 
 fn too_small(e: &Error) -> Option<(usize, usize)> {
     match e {
-        Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+        Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+            need,
+            have,
+        }) => Some((*need, *have)),
         _ => None,
     }
 }
@@ -35,11 +38,11 @@ fn assert_truncations_rejected<'a, T: Parse<'a, Error = Error> + core::fmt::Debu
 ) {
     for have in 0..wire.len() {
         match T::parse(&wire[..have]) {
-            Err(Error::BufferTooShort {
+            Err(Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need,
                 have: got,
                 what: w,
-            }) => {
+            })) => {
                 assert_eq!(
                     (need, got, w),
                     (wire.len(), have, what),
@@ -96,11 +99,13 @@ fn inject_response_wire_round_trip_and_truncation() {
     assert_eq!(InjectResponse::parse(&[0x2A]).unwrap(), op);
     assert_eq!(
         InjectResponse::parse(&[]),
-        Err(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "inject_response message_number",
-        })
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "inject_response message_number",
+            }
+        ))
     );
     assert_short_buffers(&op);
 }

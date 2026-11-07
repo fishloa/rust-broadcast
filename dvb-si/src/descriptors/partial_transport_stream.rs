@@ -192,14 +192,14 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = PartialTransportStreamDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
     fn parse_rejects_truncated_body() {
         // length=8 but only 4 payload bytes present.
         let err = PartialTransportStreamDescriptor::parse(&[TAG, 8, 0, 0, 0, 0]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -234,7 +234,7 @@ mod tests {
         let d = PartialTransportStreamDescriptor::new(1, 1, 1);
         let mut tiny = [0u8; 5];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

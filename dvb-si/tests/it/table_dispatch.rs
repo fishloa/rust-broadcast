@@ -293,7 +293,7 @@ fn dispatch_unknown_table_id_0x90() {
 fn dispatch_empty_input_returns_buffer_too_short() {
     let err = AnyTableSection::parse(&[]).unwrap_err();
     assert!(
-        matches!(err, dvb_si::error::Error::BufferTooShort { .. }),
+        matches!(err, dvb_si::error::Error::BufferTooShort(..)),
         "expected BufferTooShort, got {err:?}"
     );
 }

@@ -2064,23 +2064,13 @@ pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
 /// Map an [`rtp_packet::Error`] onto this crate's [`Error`].
 fn map_rtp_error(e: rtp_packet::Error) -> Error {
     match e {
-        rtp_packet::Error::BufferTooShort { need, have, what } => {
-            Error::BufferTooShort(BufferTooShort { need, have, what })
-        }
-        rtp_packet::Error::InvalidVersion(v) => Error::InvalidValue(InvalidValue {
+        rtp_packet::Error::BufferTooShort(e) => Error::BufferTooShort(e),
+        rtp_packet::Error::UnsupportedVersion(e) => Error::InvalidValue(InvalidValue {
             field: "rtp_version",
-            value: u64::from(v),
+            value: u64::from(e.found),
             reason: "must be 2",
         }),
-        rtp_packet::Error::InvalidValue {
-            field,
-            value,
-            reason,
-        } => Error::InvalidValue(InvalidValue {
-            field,
-            value,
-            reason,
-        }),
+        rtp_packet::Error::InvalidValue(e) => Error::InvalidValue(e),
         rtp_packet::Error::InvalidPadding { count, reason } => Error::InvalidValue(InvalidValue {
             field: "rtp_padding",
             value: u64::from(count),

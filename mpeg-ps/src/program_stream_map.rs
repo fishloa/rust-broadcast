@@ -84,11 +84,13 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
     fn parse(b: &'a [u8]) -> Result<Self> {
         if b.len() < PREFIX_LEN + 2 + 4 {
             // prefix + psm_length(2) + CRC(4) = minimum
-            return Err(Error::BufferTooShort {
-                need: PREFIX_LEN + 2 + 4,
-                have: b.len(),
-                what: "program_stream_map",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: PREFIX_LEN + 2 + 4,
+                    have: b.len(),
+                    what: "program_stream_map",
+                },
+            ));
         }
 
         // packet_start_code_prefix (3 bytes) + map_stream_id (1 byte)
@@ -119,10 +121,11 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         ]);
         let computed_crc = crc32_mpeg2::compute(crc_data);
         if computed_crc != stored_crc {
-            return Err(Error::BadCrc {
+            return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+                what: "PSM",
                 computed: computed_crc,
-                stored: stored_crc,
-            });
+                expected: stored_crc,
+            }));
         }
 
         // flags byte: current_next(1) | single_extension(1) | reserved(1) | version(5)
@@ -193,11 +196,13 @@ fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> 
         let (stream_id_extension, descriptors) = if elementary_stream_id == 0xFD && !single_flag {
             // Extension form with pseudo descriptor
             if es_info_length < 3 {
-                return Err(Error::BufferTooShort {
-                    need: 3,
-                    have: es_info_length,
-                    what: "pseudo descriptor for stream_id_extension",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 3,
+                        have: es_info_length,
+                        what: "pseudo descriptor for stream_id_extension",
+                    },
+                ));
             }
             // pseudo_descriptor_tag + pseudo_descriptor_length + marker+extension
             if data[entry_hdr_end + 2] & 0x80 == 0 {
@@ -651,7 +656,7 @@ mod tests {
         buf[crc_off] ^= 0xFF;
         assert!(matches!(
             ProgramStreamMap::parse(&buf),
-            Err(Error::BadCrc { .. })
+            Err(Error::CrcMismatch(..))
         ));
     }
 }

@@ -85,7 +85,7 @@ mod tests {
         ));
         assert!(matches!(
             &(TypeDescriptor::parse(&[TAG, 3, b'a'])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         let big = vec![b'x'; 256];
         let d = TypeDescriptor {

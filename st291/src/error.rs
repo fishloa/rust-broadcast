@@ -11,34 +11,23 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// `packet_start_code_prefix` was not `0x000001`.
-    #[error("invalid packet_start_code_prefix: {0:#08X} (expected 0x000001)")]
-    BadStartCode(u32),
+    #[error(transparent)]
+    InvalidSync(#[from] broadcast_common::error::InvalidSync),
     /// `stream_id` was not `0xBD` (private_stream_1).
     #[error("invalid stream_id: {0:#04X} (expected 0xBD private_stream_1)")]
     BadStreamId(u8),
-    /// A required marker / fixed-bit pattern did not hold.
-    #[error("bad fixed/marker bits in {0}")]
-    BadFixedBits(&'static str),
+    /// A required marker / fixed-bit pattern did not hold, or a reserved
+    /// field was not zero.
+    #[error(transparent)]
+    ReservedBits(#[from] broadcast_common::error::ReservedBits),
     /// `PTS_DTS_flags` was not `'10'` (ST 2038 mandates PTS-only).
     #[error("invalid PTS_DTS_flags: {0:#04b} (expected 0b10, PTS only)")]
     BadPtsDtsFlags(u8),
@@ -59,16 +48,9 @@ pub enum Error {
     /// A serialized structure exceeded a 16-bit length field.
     #[error("PES_packet_length {0} exceeds the 16-bit field maximum (65535)")]
     PesLengthTooLarge(usize),
-    /// A field value did not fit in its wire bit-width.
-    #[error("field {what} value {value} does not fit in {bits} bits")]
-    FieldTooWide {
-        /// The over-wide field name.
-        what: &'static str,
-        /// The offending value.
-        value: u32,
-        /// The field width on the wire.
-        bits: u32,
-    },
+    /// A value did not fit in its wire bit-width.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
     /// `user_data_words.len()` does not equal the expected UDW count
     /// (`data_count & 0xFF`); serializing would zero-fill or truncate.
     #[error("inconsistent user_data_words length: have {have}, need {need} (data_count & 0xFF)")]
@@ -78,29 +60,12 @@ pub enum Error {
         /// Expected count: `data_count & 0xFF`.
         need: usize,
     },
-    /// A field required by the spec to be `0` was not — RFC 8331 §2.1
-    /// `reserved` (22 bits) or a per-ANC-packet `word_align` padding region
-    /// (`rtp` feature).
-    #[error("reserved field {what} was not zero: {value:#X}")]
-    ReservedNotZero {
-        /// The field name (e.g. `"reserved (RFC 8331 §2.1)"` or
-        /// `"word_align"`).
-        what: &'static str,
-        /// The nonzero value actually present.
-        value: u64,
-    },
     /// An RFC 8331 ANC RTP payload's declared `Length` did not match the
     /// bytes actually consumed while parsing `ANC_Count` ANC packets (`rtp`
     /// feature) — catches a corrupted `Length` or a corrupted `ANC_Count`
     /// (either one desyncs the two).
-    #[error("ANC RTP payload Length mismatch: header declares {declared}, computed {computed}")]
-    LengthMismatch {
-        /// The `Length` value read from the wire.
-        declared: usize,
-        /// The number of bytes actually consumed while parsing `ANC_Count`
-        /// ANC packets.
-        computed: usize,
-    },
+    #[error(transparent)]
+    LengthMismatch(#[from] broadcast_common::error::LengthMismatch),
     /// [`crate::anc_content::AncContent::verify_checksum`] found the stored
     /// `Checksum_Word` did not match the ST 291-1 computation over the
     /// current `did`/`sdid`/`data_count`/`user_data_words` (see
@@ -134,27 +99,8 @@ pub enum Error {
     Rtp(rtp_packet::Error),
 }
 
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
 impl From<BitError> for Error {
     fn from(e: BitError) -> Self {
         Error::Bits(e)
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
     }
 }

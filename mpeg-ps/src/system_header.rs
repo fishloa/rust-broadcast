@@ -121,11 +121,13 @@ impl<'a> Parse<'a> for SystemHeader {
         // byte 5: packet_rate_restriction_flag(1) | reserved(7)
 
         if body.len() < 6 {
-            return Err(Error::BufferTooShort {
-                need: 6 + PREFIX_LEN,
-                have: b.len(),
-                what: "system_header fixed body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 6 + PREFIX_LEN,
+                    have: b.len(),
+                    what: "system_header fixed body",
+                },
+            ));
         }
 
         // Marker bit checks
@@ -241,18 +243,18 @@ impl SystemHeader {
     fn validate_stream_loop(&self) -> Result<()> {
         for b in &self.std_buffer_bounds {
             if b.stream_id & 0x80 == 0 {
-                return Err(Error::InvalidField {
+                return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                     field: "system_header.stream_id",
                     reason: "stream_id MSB is 0, so the entry would end the stream loop on parse",
-                });
+                }));
             }
             match b.stream_id_extension {
                 Some(ext) => {
                     if b.stream_id != EXT_STREAM_ID {
-                        return Err(Error::InvalidField {
+                        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                             field: "system_header.stream_id_extension",
                             reason: "stream_id_extension requires stream_id 0xB7",
-                        });
+                        }));
                     }
                     broadcast_common::len::fit_bits(
                         u64::from(ext),
@@ -262,10 +264,10 @@ impl SystemHeader {
                 }
                 None => {
                     if b.stream_id == EXT_STREAM_ID {
-                        return Err(Error::InvalidField {
+                        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                             field: "system_header.stream_id",
                             reason: "stream_id 0xB7 requires stream_id_extension",
-                        });
+                        }));
                     }
                 }
             }
@@ -280,10 +282,10 @@ impl SystemHeader {
             .first()
             .is_some_and(|f| f & 0x80 != 0)
         {
-            return Err(Error::InvalidField {
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                 field: "system_header.trailing_reserved",
                 reason: "first byte has its MSB set, so it would be re-read as a stream-bound entry",
-            });
+            }));
         }
         Ok(())
     }

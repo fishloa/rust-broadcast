@@ -22,11 +22,13 @@ impl<'a> broadcast_common::Parse<'a> for MyPrivate {
     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
         // Full descriptor: [tag, len, x_byte]
         if bytes.len() < 3 {
-            return Err(dvb_si::Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "MyPrivate",
-            });
+            return Err(dvb_si::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: bytes.len(),
+                    what: "MyPrivate",
+                },
+            ));
         }
         if bytes[0] != MY_PRIVATE_TAG {
             return Err(dvb_si::Error::InvalidDescriptor {
@@ -58,11 +60,13 @@ impl<'a> broadcast_common::Parse<'a> for MyPrivate2 {
 
     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
         if bytes.len() < 3 {
-            return Err(dvb_si::Error::BufferTooShort {
-                need: 3,
-                have: bytes.len(),
-                what: "MyPrivate2",
-            });
+            return Err(dvb_si::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: bytes.len(),
+                    what: "MyPrivate2",
+                },
+            ));
         }
         if bytes[0] != MY_PRIVATE_TAG {
             return Err(dvb_si::Error::InvalidDescriptor {
@@ -153,11 +157,13 @@ fn custom_registration_overrides_builtin() {
         type Error = dvb_si::Error;
         fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
             if bytes.len() < 2 {
-                return Err(dvb_si::Error::BufferTooShort {
-                    need: 2,
-                    have: bytes.len(),
-                    what: "MyShortEventOverride",
-                });
+                return Err(dvb_si::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 2,
+                        have: bytes.len(),
+                        what: "MyShortEventOverride",
+                    },
+                ));
             }
             Ok(Self { raw_len: bytes[1] })
         }
@@ -259,11 +265,13 @@ fn registry_truncation_semantics_match() {
     assert!(matches!(it.next(), Some(Ok(AnyDescriptor::ShortEvent(_)))));
     assert_eq!(
         it.next().and_then(Result::err),
-        Some(dvb_si::Error::BufferTooShort {
-            need: 257,
-            have: 3,
-            what: "descriptor body in loop"
-        })
+        Some(dvb_si::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 257,
+                have: 3,
+                what: "descriptor body in loop"
+            }
+        ))
     );
     assert!(it.next().is_none());
     assert!(it.next().is_none(), "must stay fused");
@@ -285,10 +293,7 @@ fn registry_custom_parse_error_continues() {
     let items: Vec<_> = reg.parse_loop(&bytes).collect();
     assert_eq!(items.len(), 2, "both entries should appear");
     assert!(
-        matches!(
-            &(items[0]),
-            Err(dvb_si::error::Error::BufferTooShort { .. })
-        ),
+        matches!(&(items[0]), Err(dvb_si::error::Error::BufferTooShort(..))),
         "malformed custom should be Err"
     );
     assert!(matches!(items[1], Ok(AnyDescriptor::Stuffing(_))));

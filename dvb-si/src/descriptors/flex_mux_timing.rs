@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = FlexMuxTimingDescriptor::parse(&[TAG, 11, 0, 0]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     /// Regression for issue #1053: the pre-fix BODY_LEN of 10 rejected every
@@ -154,6 +154,6 @@ mod tests {
         };
         let mut tiny = vec![0u8; 5];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 }

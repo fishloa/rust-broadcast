@@ -9,41 +9,17 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
-    /// A field value did not fit in its wire bit-width.
-    #[error("field {what} value {value} does not fit in {bits} bits")]
-    FieldTooWide {
-        /// The over-wide field name.
-        what: &'static str,
-        /// The offending value.
-        value: u64,
-        /// The field width on the wire.
-        bits: u32,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    /// A value did not fit the wire field it is written to.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
     /// A reserved / version field carried an unexpected value.
-    #[error("invalid field {what}: {reason}")]
-    InvalidField {
-        /// The field name.
-        what: &'static str,
-        /// Why it is invalid.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidField(#[from] broadcast_common::error::InvalidField),
     /// A header-extension was malformed (bad HET/HEL or truncated content).
     #[error("invalid header extension: {reason}")]
     InvalidExtension {
@@ -59,23 +35,4 @@ pub enum Error {
         /// Why it is inconsistent.
         reason: &'static str,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

@@ -675,7 +675,7 @@ mod tests {
         let bytes = wrap(0x00, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 

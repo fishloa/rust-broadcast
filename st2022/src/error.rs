@@ -14,36 +14,17 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer shorter than
     /// required.
-    #[error("buffer too short: need {need}, have {have} for {what}")]
-    BufferTooShort {
-        /// Minimum bytes required.
-        need: usize,
-        /// Bytes actually available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
     /// A field value did not fit its wire bit-width, or a derived count was
     /// inconsistent (e.g. the header extension length).
-    #[error("field {field} value {value} invalid: {reason}")]
-    InvalidValue {
-        /// The offending field name.
-        field: &'static str,
-        /// The offending value.
-        value: u64,
-        /// Why it is invalid.
-        reason: &'static str,
-    },
+    #[error(transparent)]
+    InvalidValue(#[from] broadcast_common::error::InvalidValue),
     /// `clock_frequency` (`CF`, §6.4) requires the 32-bit Video Timestamp
     /// row to be present exactly when `clock_frequency` !=
     /// [`ClockFrequency::NoTimestamp`], but the header disagreed.
@@ -60,23 +41,4 @@ pub enum Error {
         /// Whether a video timestamp was actually present.
         found_present: bool,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

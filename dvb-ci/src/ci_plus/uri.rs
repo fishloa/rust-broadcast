@@ -301,7 +301,7 @@ mod tests {
     fn too_short_errors() {
         assert!(matches!(
             UriMessage::parse(&[0x03, 0x00]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 }

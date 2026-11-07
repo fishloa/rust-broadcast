@@ -586,11 +586,13 @@ const FUNC_HEADER_LEN: usize = 2;
 fn parse_time_offset(body: &[u8]) -> Result<TimeOffsetBody, crate::Error> {
     let (b, _) =
         body.split_first_chunk::<TIME_OFFSET_BODY_LEN>()
-            .ok_or(crate::Error::BufferTooShort {
-                need: TIME_OFFSET_BODY_LEN,
-                have: body.len(),
-                what: "time offset function body",
-            })?;
+            .ok_or(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: TIME_OFFSET_BODY_LEN,
+                    have: body.len(),
+                    what: "time offset function body",
+                },
+            ))?;
     Ok(TimeOffsetBody {
         time_offset: i16::from_be_bytes(*b),
     })
@@ -599,11 +601,13 @@ fn parse_time_offset(body: &[u8]) -> Result<TimeOffsetBody, crate::Error> {
 fn parse_frequency_offset(body: &[u8]) -> Result<FrequencyOffsetBody, crate::Error> {
     let (b, _) = body
         .split_first_chunk::<FREQUENCY_OFFSET_BODY_LEN>()
-        .ok_or(crate::Error::BufferTooShort {
-            need: FREQUENCY_OFFSET_BODY_LEN,
-            have: body.len(),
-            what: "frequency offset function body",
-        })?;
+        .ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: FREQUENCY_OFFSET_BODY_LEN,
+                have: body.len(),
+                what: "frequency offset function body",
+            },
+        ))?;
     // 24-bit two's complement: place in the top of an i32, then arithmetic-shift back.
     Ok(FrequencyOffsetBody {
         frequency_offset: i32::from_be_bytes([b[0], b[1], b[2], 0]) >> 8,
@@ -611,13 +615,15 @@ fn parse_frequency_offset(body: &[u8]) -> Result<FrequencyOffsetBody, crate::Err
 }
 
 fn parse_power(body: &[u8]) -> Result<PowerBody, crate::Error> {
-    let (b, _) =
-        body.split_first_chunk::<POWER_BODY_LEN>()
-            .ok_or(crate::Error::BufferTooShort {
+    let (b, _) = body
+        .split_first_chunk::<POWER_BODY_LEN>()
+        .ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
                 need: POWER_BODY_LEN,
                 have: body.len(),
                 what: "power function body",
-            })?;
+            },
+        ))?;
     Ok(PowerBody {
         tx_power: u16::from_be_bytes(*b),
     })
@@ -626,11 +632,13 @@ fn parse_power(body: &[u8]) -> Result<PowerBody, crate::Error> {
 fn parse_cell_id(body: &[u8]) -> Result<CellIdBody, crate::Error> {
     let (b, _) =
         body.split_first_chunk::<CELL_ID_BODY_LEN>()
-            .ok_or(crate::Error::BufferTooShort {
-                need: CELL_ID_BODY_LEN,
-                have: body.len(),
-                what: "cell id function body",
-            })?;
+            .ok_or(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: CELL_ID_BODY_LEN,
+                    have: body.len(),
+                    what: "cell id function body",
+                },
+            ))?;
     Ok(CellIdBody {
         cell_id: u16::from_be_bytes([b[0], b[1]]),
         wait_for_enable_flag: b[2] & 0x80 != 0,
@@ -639,11 +647,13 @@ fn parse_cell_id(body: &[u8]) -> Result<CellIdBody, crate::Error> {
 }
 
 fn parse_bandwidth(body: &[u8]) -> Result<BandwidthBody, crate::Error> {
-    let b = *body.first().ok_or(crate::Error::BufferTooShort {
-        need: BANDWIDTH_BODY_LEN,
-        have: body.len(),
-        what: "bandwidth function body",
-    })?;
+    let b = *body.first().ok_or(crate::Error::BufferTooShort(
+        broadcast_common::error::BufferTooShort {
+            need: BANDWIDTH_BODY_LEN,
+            have: body.len(),
+            what: "bandwidth function body",
+        },
+    ))?;
     Ok(BandwidthBody {
         ch_bandwidth: b >> 1,
         wait_for_enable_flag: b & 0x01 != 0,
@@ -681,11 +691,13 @@ fn parse_tr_papr(body: &[u8]) -> Result<TrPaprBody, crate::Error> {
 fn parse_l1_ace_papr(body: &[u8]) -> Result<L1AcePaprBody, crate::Error> {
     let (b, _) =
         body.split_first_chunk::<L1_ACE_PAPR_BODY_LEN>()
-            .ok_or(crate::Error::BufferTooShort {
-                need: L1_ACE_PAPR_BODY_LEN,
-                have: body.len(),
-                what: "L1-ACE-PAPR function body",
-            })?;
+            .ok_or(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: L1_ACE_PAPR_BODY_LEN,
+                    have: body.len(),
+                    what: "L1-ACE-PAPR function body",
+                },
+            ))?;
     Ok(L1AcePaprBody {
         l1_ace_max_correction: u16::from_be_bytes([b[0], b[1]]),
         rfu: u16::from_be_bytes([b[2], b[3]]),
@@ -1137,32 +1149,38 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
 
         while pos < individual_addressing_length {
             if pos + TX_HEADER_LEN > individual_addressing_length {
-                return Err(crate::Error::BufferTooShort {
-                    need: pos + TX_HEADER_LEN,
-                    have: individual_addressing_length,
-                    what: "transmitter entry header",
-                });
+                return Err(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + TX_HEADER_LEN,
+                        have: individual_addressing_length,
+                        what: "transmitter entry header",
+                    },
+                ));
             }
 
             let (tx_id_bytes, _) = data
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(crate::Error::BufferTooShort {
-                    need: pos + 2,
-                    have: individual_addressing_length,
-                    what: "transmitter entry header",
-                })?;
+                .ok_or(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 2,
+                        have: individual_addressing_length,
+                        what: "transmitter entry header",
+                    },
+                ))?;
             let transmitter_id = u16::from_be_bytes(*tx_id_bytes);
             let function_loop_length = data[pos + 2] as usize;
             pos += TX_HEADER_LEN;
 
             let func_end = pos + function_loop_length;
             if func_end > individual_addressing_length {
-                return Err(crate::Error::BufferTooShort {
-                    need: func_end,
-                    have: individual_addressing_length,
-                    what: "function loop",
-                });
+                return Err(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: func_end,
+                        have: individual_addressing_length,
+                        what: "function loop",
+                    },
+                ));
             }
 
             let max_funcs = function_loop_length / FUNC_HEADER_LEN + 1;
@@ -1170,11 +1188,13 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
 
             while pos < func_end {
                 if pos + FUNC_HEADER_LEN > func_end {
-                    return Err(crate::Error::BufferTooShort {
-                        need: pos + FUNC_HEADER_LEN,
-                        have: func_end,
-                        what: "function entry header",
-                    });
+                    return Err(crate::Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + FUNC_HEADER_LEN,
+                            have: func_end,
+                            what: "function entry header",
+                        },
+                    ));
                 }
 
                 let tag = data[pos];
@@ -1191,11 +1211,13 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
 
                 let body_end = pos + body_len;
                 if body_end > func_end {
-                    return Err(crate::Error::BufferTooShort {
-                        need: body_end,
-                        have: func_end,
-                        what: "function body",
-                    });
+                    return Err(crate::Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: body_end,
+                            have: func_end,
+                            what: "function body",
+                        },
+                    ));
                 }
 
                 let body_bytes = &data[pos..body_end];
@@ -1392,7 +1414,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             &(IndividualAddressingPayload::parse(&[0x00])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -1400,11 +1422,13 @@ mod tests {
     fn parse_rejects_truncated_data() {
         assert_eq!(
             IndividualAddressingPayload::parse(&[0x00, 0x04, 0xAA, 0xBB]).err(),
-            Some(crate::Error::BufferTooShort {
-                need: 6,
-                have: 4,
-                what: "IndividualAddressingPayload data"
-            })
+            Some(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 6,
+                    have: 4,
+                    what: "IndividualAddressingPayload data"
+                }
+            ))
         );
     }
 
@@ -1569,7 +1593,7 @@ mod tests {
         let buf = [0x00u8, 0x02, 0x00];
         assert!(matches!(
             &(IndividualAddressingPayload::parse(&buf)),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -1579,11 +1603,13 @@ mod tests {
         let buf = [0x00u8, tx_loop.len() as u8, 0x00, 0x01, 0x02, 0x10];
         assert_eq!(
             IndividualAddressingPayload::parse(&buf).err(),
-            Some(crate::Error::BufferTooShort {
-                need: 5,
-                have: 4,
-                what: "function loop"
-            })
+            Some(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 5,
+                    have: 4,
+                    what: "function loop"
+                }
+            ))
         );
     }
 
@@ -1594,7 +1620,7 @@ mod tests {
         buf.extend_from_slice(&tx_loop);
         assert!(matches!(
             &(IndividualAddressingPayload::parse(&buf)),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 

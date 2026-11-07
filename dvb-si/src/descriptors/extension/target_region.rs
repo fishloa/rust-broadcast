@@ -125,11 +125,13 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
             0 => RegionCodes::None,
             1 => {
                 if pos >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: sel.len(),
-                        what: "target_region body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "target_region body",
+                        },
+                    ));
                 }
                 let primary = sel[pos];
                 pos += 1;
@@ -139,11 +141,13 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
             }
             2 => {
                 if pos + 1 >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 2,
-                        have: sel.len(),
-                        what: "target_region body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 2,
+                            have: sel.len(),
+                            what: "target_region body",
+                        },
+                    ));
                 }
                 let primary = sel[pos];
                 let secondary = sel[pos + 1];
@@ -155,22 +159,26 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
             }
             3 => {
                 if pos + 3 >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 4,
-                        have: sel.len(),
-                        what: "target_region body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "target_region body",
+                        },
+                    ));
                 }
                 let primary = sel[pos];
                 let secondary = sel[pos + 1];
                 let (tert_bytes, _) =
                     sel[pos + 2..]
                         .split_first_chunk::<2>()
-                        .ok_or(Error::BufferTooShort {
-                            need: pos + 4,
-                            have: sel.len(),
-                            what: "target_region body",
-                        })?;
+                        .ok_or(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + 4,
+                                have: sel.len(),
+                                what: "target_region body",
+                            },
+                        ))?;
                 let tertiary = u16::from_be_bytes(*tert_bytes);
                 pos += 4;
                 RegionCodes::Full {

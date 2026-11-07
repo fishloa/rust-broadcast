@@ -207,7 +207,7 @@ mod tests {
         ));
         assert!(matches!(
             Avs2VideoDescriptor::parse(&[TAG, 5, 0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

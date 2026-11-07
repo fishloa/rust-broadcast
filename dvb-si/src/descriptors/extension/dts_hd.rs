@@ -298,11 +298,13 @@ impl Serialize for SubstreamInfo {
 impl<'a> Parse<'a> for DtsHd<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        let first = *sel.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "DTS-HD descriptor body",
-        })?;
+        let first = *sel.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "DTS-HD descriptor body",
+            },
+        ))?;
         let substream_core_flag = (first & 0x80) != 0;
         let substream_0_flag = (first & 0x40) != 0;
         let substream_1_flag = (first & 0x20) != 0;
@@ -398,11 +400,13 @@ fn parse_asset_info(sel: &[u8], pos: &mut usize) -> Result<AssetInfo> {
     *pos += 1;
 
     let component_type = if component_type_flag {
-        let ct = *sel.get(*pos).ok_or(Error::BufferTooShort {
-            need: *pos + 1,
-            have: sel.len(),
-            what: "asset_info component_type",
-        })?;
+        let ct = *sel.get(*pos).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: *pos + 1,
+                have: sel.len(),
+                what: "asset_info component_type",
+            },
+        ))?;
         *pos += 1;
         Some(ct)
     } else {
@@ -411,11 +415,13 @@ fn parse_asset_info(sel: &[u8], pos: &mut usize) -> Result<AssetInfo> {
 
     let iso_639_language_code = if language_code_flag {
         let need_lang = *pos + ISO_639_LEN;
-        let lang_bytes = sel.get(*pos..need_lang).ok_or(Error::BufferTooShort {
-            need: need_lang,
-            have: sel.len(),
-            what: "asset_info ISO_639_language_code",
-        })?;
+        let lang_bytes = sel.get(*pos..need_lang).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: need_lang,
+                have: sel.len(),
+                what: "asset_info ISO_639_language_code",
+            },
+        ))?;
         *pos += ISO_639_LEN;
         Some(LangCode([lang_bytes[0], lang_bytes[1], lang_bytes[2]]))
     } else {
@@ -520,7 +526,7 @@ mod tests {
         };
         let mut buf = [0u8; 1]; // shorter than serialized_len()
         let err = s.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

@@ -12,7 +12,9 @@ fn cw_provision_rejects_every_short_buffer() {
         msg.serialized_len(),
         |buf| msg.serialize_into(buf),
         |e| match e {
-            dvb_simulcrypt::Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+            dvb_simulcrypt::Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall { need, have },
+            ) => Some((*need, *have)),
             _ => None,
         },
     );

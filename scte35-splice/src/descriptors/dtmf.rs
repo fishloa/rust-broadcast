@@ -43,20 +43,24 @@ impl<'a> Parse<'a> for DtmfDescriptor {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "DTMF_descriptor")?;
         if body.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + 2,
-                have: bytes.len(),
-                what: "DTMF_descriptor preroll/count",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + 2,
+                    have: bytes.len(),
+                    what: "DTMF_descriptor preroll/count",
+                },
+            ));
         }
         let preroll = body[0];
         let dtmf_count = (body[1] >> 5) as usize; // 3-bit count, 5 reserved
         if body.len() < 2 + dtmf_count {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + 2 + dtmf_count,
-                have: bytes.len(),
-                what: "DTMF_descriptor chars",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + 2 + dtmf_count,
+                    have: bytes.len(),
+                    what: "DTMF_descriptor chars",
+                },
+            ));
         }
         Ok(Self {
             identifier,

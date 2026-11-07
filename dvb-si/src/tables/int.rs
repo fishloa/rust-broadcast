@@ -212,11 +212,13 @@ impl<'a> Parse<'a> for IntSection<'a> {
         let mut loops = Vec::new();
         while pos < payload_end {
             if pos + LOOP_LEN_FIELD > payload_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + LOOP_LEN_FIELD,
-                    have: payload_end,
-                    what: "IntSection target_descriptor_loop length",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + LOOP_LEN_FIELD,
+                        have: payload_end,
+                        what: "IntSection target_descriptor_loop length",
+                    },
+                ));
             }
             let target_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             let target_start = pos + LOOP_LEN_FIELD;
@@ -232,11 +234,13 @@ impl<'a> Parse<'a> for IntSection<'a> {
             pos = target_end;
 
             if pos + LOOP_LEN_FIELD > payload_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + LOOP_LEN_FIELD,
-                    have: payload_end,
-                    what: "IntSection operational_descriptor_loop length",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + LOOP_LEN_FIELD,
+                        have: payload_end,
+                        what: "IntSection operational_descriptor_loop length",
+                    },
+                ));
             }
             let op_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
             let op_start = pos + LOOP_LEN_FIELD;
@@ -515,10 +519,10 @@ mod tests {
     fn parse_rejects_buffer_too_short() {
         assert!(matches!(
             IntSection::parse(&[TABLE_ID, 0xF0]).unwrap_err(),
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "IntSection",
                 ..
-            }
+            })
         ));
     }
 
@@ -539,7 +543,7 @@ mod tests {
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             int.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

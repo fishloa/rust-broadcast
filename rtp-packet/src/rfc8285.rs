@@ -225,11 +225,11 @@ impl Serialize for OneByteElements<'_> {
         // `buf` untouched rather than half-serialized (r14-RTP-O1).
         for e in &self.0 {
             if !(ONE_BYTE_DATA_MIN..=ONE_BYTE_DATA_MAX).contains(&e.data.len()) {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "OneByteElement::data.len()",
                     value: e.data.len() as u64,
                     reason: "must be 1..=16 bytes (RFC 8285 §4.2: len nibble = data.len() - 1)",
-                });
+                }));
             }
         }
         let mut pos = 0;
@@ -305,11 +305,13 @@ impl<'a> Parse<'a> for TwoByteElements<'a> {
             }
             let len_pos = pos + 1;
             if bytes.len() <= len_pos {
-                return Err(Error::BufferTooShort {
-                    need: len_pos + 1,
-                    have: bytes.len(),
-                    what: "RFC 8285 two-byte extension element length byte",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: len_pos + 1,
+                        have: bytes.len(),
+                        what: "RFC 8285 two-byte extension element length byte",
+                    },
+                ));
             }
             let len = usize::from(bytes[len_pos]);
             let data_start = len_pos + 1;
@@ -343,11 +345,11 @@ impl Serialize for TwoByteElements<'_> {
         // Validate first (see `OneByteElements::serialize_into`).
         for e in &self.0 {
             if e.data.len() > TWO_BYTE_DATA_MAX {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "TwoByteElement::data.len()",
                     value: e.data.len() as u64,
                     reason: "exceeds the 8-bit length field maximum (255)",
-                });
+                }));
             }
         }
         let mut pos = 0;
@@ -450,7 +452,7 @@ mod tests {
         let mut buf = vec![0xAAu8; 64];
         assert!(matches!(
             &(one.serialize_into(&mut buf)),
-            Err(crate::error::Error::InvalidValue { .. })
+            Err(crate::error::Error::InvalidValue(..))
         ));
         assert!(
             buf.iter().all(|&b| b == 0xAA),
@@ -471,7 +473,7 @@ mod tests {
         let mut buf = vec![0xAAu8; 512];
         assert!(matches!(
             two.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
         assert!(
             buf.iter().all(|&b| b == 0xAA),
@@ -670,10 +672,10 @@ mod tests {
         let mut out = vec![0u8; 4];
         assert!(matches!(
             elements.serialize_into(&mut out),
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "OneByteElement::data.len()",
                 ..
-            })
+            }))
         ));
     }
 
@@ -683,7 +685,7 @@ mod tests {
         let bytes = [(1 << 4) | 3, 0xAA, 0xBB];
         assert!(matches!(
             OneByteElements::parse(&bytes),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 
@@ -812,7 +814,7 @@ mod tests {
         let bytes = [10u8]; // id byte with no following length byte
         assert!(matches!(
             TwoByteElements::parse(&bytes),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 
@@ -821,7 +823,7 @@ mod tests {
         let bytes = [10u8, 4, 0x01, 0x02]; // claims 4 bytes, only 2 present
         assert!(matches!(
             TwoByteElements::parse(&bytes),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

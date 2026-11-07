@@ -18,14 +18,12 @@ pub enum Error {
         len: usize,
     },
 
-    /// The first byte of the packet was not the TS sync byte `0x47`.
+    /// The first byte of the packet was not the TS sync byte `0x47`
+    /// (carried as a [`broadcast_common::error::InvalidSync`]).
     ///
     /// ISO/IEC 13818-1 §2.4.3.2 — `sync_byte == 0x47`.
-    #[error("missing TS sync byte: expected 0x47, got {found:#04x}")]
-    NoSyncByte {
-        /// The byte actually found at position 0.
-        found: u8,
-    },
+    #[error(transparent)]
+    InvalidSync(#[from] broadcast_common::error::InvalidSync),
 
     /// The buffer given to [`crate::pes::reconstruct_access_units`] is not a
     /// whole number of 188-byte TS packets.

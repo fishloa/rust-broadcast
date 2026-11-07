@@ -178,22 +178,26 @@ impl<'a> Iterator for SpliceDescriptorIter<'a> {
         let rem = &self.bytes[self.pos..];
         if rem.len() < 2 {
             self.fused = true;
-            return Some(Err(crate::error::Error::BufferTooShort {
-                need: 2,
-                have: rem.len(),
-                what: "splice_descriptor header in loop",
-            }));
+            return Some(Err(crate::error::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 2,
+                    have: rem.len(),
+                    what: "splice_descriptor header in loop",
+                },
+            )));
         }
         let tag = rem[0];
         let len = rem[1] as usize;
         let total = 2 + len;
         if rem.len() < total {
             self.fused = true;
-            return Some(Err(crate::error::Error::BufferTooShort {
-                need: total,
-                have: rem.len(),
-                what: "splice_descriptor body in loop",
-            }));
+            return Some(Err(crate::error::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: total,
+                    have: rem.len(),
+                    what: "splice_descriptor body in loop",
+                },
+            )));
         }
         let full = &rem[..total];
         self.pos += total;
@@ -263,7 +267,7 @@ mod tests {
         let mut it = parse_loop(&bytes);
         assert!(matches!(
             &(it.next().unwrap()),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(it.next().is_none());
     }

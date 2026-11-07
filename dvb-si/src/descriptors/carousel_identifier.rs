@@ -560,7 +560,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         // Only the tag byte — not even the length field present.
         let err = CarouselIdentifierDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -614,7 +614,7 @@ mod tests {
         // Declared length=10 but only 4 bytes of body present.
         let err =
             CarouselIdentifierDescriptor::parse(&[TAG, 0x0A, 0x00, 0x00, 0x00, 0x01]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -622,7 +622,7 @@ mod tests {
         let d = anchor_descriptor();
         let mut tiny = [0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     // ── serde tests ──────────────────────────────────────────────────────────

@@ -181,7 +181,7 @@ fn extension_with_zero_length_word_count_round_trips() {
 fn rejects_short_buffer() {
     assert!(matches!(
         RtpPacket::parse(&[0x80, 0x60, 0x00]),
-        Err(Error::BufferTooShort { .. })
+        Err(Error::BufferTooShort(..))
     ));
 }
 
@@ -192,10 +192,12 @@ fn rejects_truncated_csrc_list() {
     bytes[0] = 0x80 | 0x01; // V=2 P=0 X=0 CC=1
     assert!(matches!(
         RtpPacket::parse(&bytes),
-        Err(Error::BufferTooShort {
-            what: "CSRC list",
-            ..
-        })
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                what: "CSRC list",
+                ..
+            }
+        ))
     ));
 }
 
@@ -212,9 +214,11 @@ fn rejects_truncated_extension_data() {
     ];
     assert!(matches!(
         RtpPacket::parse(&bytes),
-        Err(Error::BufferTooShort {
-            what: "header extension data",
-            ..
-        })
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                what: "header extension data",
+                ..
+            }
+        ))
     ));
 }

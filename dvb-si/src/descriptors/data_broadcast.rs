@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = DataBroadcastDescriptor::parse(&[TAG]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod tests {
         };
         let mut tiny = [0u8; 4];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     #[test]

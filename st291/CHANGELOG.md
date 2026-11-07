@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `LengthMismatch` now wrap `broadcast_common::error` types (tuple variants; `LengthMismatch` gains `what`, `computed` is now `actual`); `BadStartCode(u32)` is replaced by `InvalidSync`, `BadFixedBits(&str)` and `ReservedNotZero { what, value }` by one `ReservedBits(broadcast_common::error::ReservedBits)` carrying the expected and found values, `FieldTooWide { what, value: u32, bits }` by `FieldOverflow(broadcast_common::error::FieldOverflow)` (values are no longer truncated to `u32`). Hand-written `From` impls removed.
 ### Added
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 

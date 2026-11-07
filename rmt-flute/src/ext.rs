@@ -134,13 +134,7 @@ impl<'a> HeaderExtension<'a> {
                 });
             }
             let hel = total / WORD;
-            if hel > u8::MAX as usize {
-                return Err(Error::FieldTooWide {
-                    what: "HEL",
-                    value: hel as u64,
-                    bits: 8,
-                });
-            }
+            broadcast_common::len::fit_bits(hel as u64, 8, "HEL")?;
             out[1] = hel as u8;
             out[2..total].copy_from_slice(self.content);
             Ok(total)

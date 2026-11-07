@@ -185,29 +185,33 @@ impl<'a> AnyElement<'a> {
         let element_size = read_plex(&mut r, 8, "ElementSize")?;
         debug_assert!(r.is_byte_aligned());
         let header_len = r.bits_read() / 8;
-        let element_size = usize::try_from(element_size).map_err(|_| Error::InvalidValue {
-            field: "ElementSize",
-            value: element_size,
-            reason: "does not fit in this platform's usize",
+        let element_size = usize::try_from(element_size).map_err(|_| {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "ElementSize",
+                value: element_size,
+                reason: "does not fit in this platform's usize",
+            })
         })?;
         let body_end = header_len
             .checked_add(element_size)
-            .ok_or(Error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ElementSize",
                 value: element_size as u64,
                 reason: "overflowed usize",
-            })?;
+            }))?;
         need_in(bytes, body_end, "element body")?;
         let body = &bytes[header_len..body_end];
         let element = match element_id {
             ELEMENT_ID_BED_DEFINITION1 => Self::BedDefinition1(BedDefinition1::parse(body)?),
             ELEMENT_ID_OBJECT_DEFINITION1 => {
-                let frame_rate = frame_rate.ok_or(Error::InvalidValue {
-                    field: "ObjectDefinition1",
-                    value: 0,
-                    reason: "parsing an OBJECT_DEFINITION1 element requires the enclosing \
+                let frame_rate = frame_rate.ok_or(Error::InvalidValue(
+                    broadcast_common::error::InvalidValue {
+                        field: "ObjectDefinition1",
+                        value: 0,
+                        reason: "parsing an OBJECT_DEFINITION1 element requires the enclosing \
                              ATMOSFrame's FrameRate as context",
-                })?;
+                    },
+                ))?;
                 Self::ObjectDefinition1(ObjectDefinition1::parse_with_frame_rate(body, frame_rate)?)
             }
             ELEMENT_ID_AUDIO_DATA_DLC => Self::AudioDataDlc(AudioDataDlc::parse(body)?),
@@ -293,6 +297,6 @@ mod tests {
         element.serialize_into(&mut wire).unwrap();
 
         let err = AnyElement::parse_with_frame_rate(&wire, None).unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }));
+        assert!(matches!(err, Error::InvalidValue(..)));
     }
 }

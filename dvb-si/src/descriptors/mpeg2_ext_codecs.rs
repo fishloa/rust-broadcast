@@ -553,7 +553,7 @@ mod tests {
         ));
         assert!(matches!(
             LcevcVideo::parse_body(&b[..3]),
-            Err(crate::Error::BufferTooShort { .. })
+            Err(crate::Error::BufferTooShort(..))
         ));
     }
 
@@ -566,7 +566,7 @@ mod tests {
         assert_eq!(d.write_body().unwrap(), b);
         assert!(matches!(
             LcevcLinkage::parse_body(&[3, 1]),
-            Err(crate::Error::BufferTooShort { .. })
+            Err(crate::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             &(LcevcLinkage::new(vec![0; 256]).write_body()),

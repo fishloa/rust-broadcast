@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `broadcast_common::Parse` / `Serialize` implemented for the crate's wire types, delegating to the existing inherent methods (which stay); each type is round-trip tested through the traits (c6 C6-06).
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidField` now wrap `broadcast_common::error` types (tuple variants; `InvalidField` field `what` is now `field`); `FieldTooWide { what, value, bits }` is replaced by `FieldOverflow(broadcast_common::error::FieldOverflow)`. Hand-written `From` impls removed.
 
 ## [0.5.0] - 2026-10-17
 ### Documentation

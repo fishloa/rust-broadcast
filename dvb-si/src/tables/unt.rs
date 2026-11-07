@@ -261,20 +261,24 @@ impl<'a> Parse<'a> for UntSection<'a> {
         let mut platforms = Vec::new();
         while pos < payload_end {
             if pos + crate::compatibility::COMPAT_DESC_LEN_FIELD > payload_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
-                    have: payload_end,
-                    what: "UntSection compatibilityDescriptorLength",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
+                        have: payload_end,
+                        what: "UntSection compatibilityDescriptorLength",
+                    },
+                ));
             }
             let (b2, _) = bytes
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
-                    have: payload_end,
-                    what: "UntSection compatibilityDescriptorLength",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
+                        have: payload_end,
+                        what: "UntSection compatibilityDescriptorLength",
+                    },
+                ))?;
             let compat_desc_len = u16::from_be_bytes(*b2) as usize;
             let compat_total = crate::compatibility::COMPAT_DESC_LEN_FIELD + compat_desc_len;
             if pos + compat_total > payload_end {
@@ -289,20 +293,24 @@ impl<'a> Parse<'a> for UntSection<'a> {
             pos += compat_total;
 
             if pos + PLATFORM_LOOP_LEN_FIELD > payload_end {
-                return Err(Error::BufferTooShort {
-                    need: pos + PLATFORM_LOOP_LEN_FIELD,
-                    have: payload_end,
-                    what: "UntSection platform_loop_length",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + PLATFORM_LOOP_LEN_FIELD,
+                        have: payload_end,
+                        what: "UntSection platform_loop_length",
+                    },
+                ));
             }
             let (b2, _) = bytes
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + PLATFORM_LOOP_LEN_FIELD,
-                    have: payload_end,
-                    what: "UntSection platform_loop_length",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + PLATFORM_LOOP_LEN_FIELD,
+                        have: payload_end,
+                        what: "UntSection platform_loop_length",
+                    },
+                ))?;
             let platform_loop_length = u16::from_be_bytes(*b2) as usize;
             pos += PLATFORM_LOOP_LEN_FIELD;
             let platform_end = pos + platform_loop_length;
@@ -316,11 +324,13 @@ impl<'a> Parse<'a> for UntSection<'a> {
             let mut target_operational_pairs = Vec::new();
             while pos < platform_end {
                 if pos + DESC_LOOP_LEN_FIELD > platform_end {
-                    return Err(Error::BufferTooShort {
-                        need: pos + DESC_LOOP_LEN_FIELD,
-                        have: platform_end,
-                        what: "UntSection target_descriptor_loop length",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + DESC_LOOP_LEN_FIELD,
+                            have: platform_end,
+                            what: "UntSection target_descriptor_loop length",
+                        },
+                    ));
                 }
                 let target_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
                 let target_start = pos + DESC_LOOP_LEN_FIELD;
@@ -336,11 +346,13 @@ impl<'a> Parse<'a> for UntSection<'a> {
                 pos = target_end;
 
                 if pos + DESC_LOOP_LEN_FIELD > platform_end {
-                    return Err(Error::BufferTooShort {
-                        need: pos + DESC_LOOP_LEN_FIELD,
-                        have: platform_end,
-                        what: "UntSection operational_descriptor_loop length",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + DESC_LOOP_LEN_FIELD,
+                            have: platform_end,
+                            what: "UntSection operational_descriptor_loop length",
+                        },
+                    ));
                 }
                 let op_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
                 let op_start = pos + DESC_LOOP_LEN_FIELD;
@@ -791,7 +803,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             UntSection::parse(&[TABLE_ID, 0x00]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -812,7 +824,7 @@ mod tests {
         let mut buf = vec![0u8; unt.serialized_len() - 1];
         assert!(matches!(
             unt.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

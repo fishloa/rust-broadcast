@@ -319,7 +319,7 @@ mod tests {
         let bytes = [TAG, 3, 0x20, 0x00];
         assert!(matches!(
             TelephoneDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

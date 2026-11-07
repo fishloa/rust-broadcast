@@ -559,7 +559,7 @@ mod tests {
         let bytes = [TAG, 5, 0x00, 0x00];
         assert!(matches!(
             AnnouncementSupportDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -599,7 +599,7 @@ mod tests {
         let mut buf = vec![0u8; 3];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

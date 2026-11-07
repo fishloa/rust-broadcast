@@ -60,6 +60,7 @@ const PTS_PREFIX: u8 = 0b0010;
 pub const STUFFING_BYTE: u8 = 0xFF;
 
 /// 33-bit PTS mask.
+#[cfg(test)]
 const PTS_MASK: u64 = (1 << 33) - 1;
 
 // Byte 6 (Table 2): `'10'`(2, bits 7:6) marker + `PES_scrambling_control`
@@ -73,6 +74,8 @@ const BYTE6_FIXED_MASK: u8 = 0b1011_0100;
 const BYTE6_FIXED_VALUE: u8 = 0b1000_0100;
 /// `PES_scrambling_control` field (bits 5:4).
 const BYTE6_SCRAMBLING_MASK: u8 = 0b0011_0000;
+/// `data_alignment_indicator` bit (bit 2; ST 2038 Table 2: fixed `'1'`).
+const BYTE6_DATA_ALIGNMENT_BIT: u8 = 0b0000_0100;
 /// `PES_priority` bit (bit 3).
 const BYTE6_PES_PRIORITY_BIT: u8 = 0b0000_1000;
 /// `copyright` bit (bit 1).
@@ -207,7 +210,7 @@ impl AncPacket {
     /// Read one record starting at the byte boundary `r` is currently on.
     ///
     /// # Errors
-    /// [`Error::BadFixedBits`] if the leading `'000000'` field (Table 2) is
+    /// [`Error::ReservedBits`] if the leading `'000000'` field (Table 2) is
     /// nonzero, or the trailing byte-alignment padding is not all `'1'` bits
     /// (S291-W3, #1116) — either would otherwise parse `Ok` and reserialize
     /// to different bytes, since the writer always emits the canonical
@@ -217,7 +220,11 @@ impl AncPacket {
         // pattern this crate validates.
         let leading = r.read_bits(W_LEADING_ZEROS)?;
         if leading != 0 {
-            return Err(Error::BadFixedBits("ANC record leading '000000' bits"));
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "ANC record leading '000000' bits",
+                expected: 0,
+                found: leading,
+            }));
         }
         let c_not_y_channel_flag = r.read_bool()?;
         let line_number = r.read_bits(W_LINE_NUMBER)? as u16;
@@ -236,7 +243,11 @@ impl AncPacket {
             let pad_value = r.read_bits(pad as u32)?;
             let all_ones = (1u64 << pad) - 1;
             if pad_value != all_ones {
-                return Err(Error::BadFixedBits("ANC record byte-alignment '1' padding"));
+                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    field: "ANC record byte-alignment '1' padding",
+                    expected: all_ones,
+                    found: pad_value,
+                }));
             }
         }
         Ok(Self {
@@ -294,16 +305,18 @@ impl AncDataPacket {
     /// `packet_start_code_prefix`.
     ///
     /// # Errors
-    /// [`Error::BufferTooShort`] / [`Error::BadStartCode`] /
+    /// [`Error::BufferTooShort`] / [`Error::InvalidSync`] /
     /// [`Error::BadStreamId`] / [`Error::BadPtsDtsFlags`] /
-    /// [`Error::BadHeaderDataLength`] / [`Error::BadFixedBits`] on malformed
+    /// [`Error::BadHeaderDataLength`] / [`Error::ReservedBits`] on malformed
     /// input, or a bit-stream error walking the ANC payload.
     pub fn parse(b: &[u8]) -> Result<Self> {
         need_in(b, PES_HEADER_LEN, "ANC PES header")?;
         if b[0..3] != PACKET_START_CODE_PREFIX {
-            return Err(Error::BadStartCode(
-                (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
-            ));
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "packet_start_code_prefix",
+                expected: 0x000001,
+                found: (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
+            }));
         }
         if b[3] != ANC_STREAM_ID {
             return Err(Error::BadStreamId(b[3]));
@@ -316,17 +329,25 @@ impl AncDataPacket {
         let f1 = b[6];
         if (f1 & BYTE6_FIXED_MASK) != BYTE6_FIXED_VALUE {
             if (f1 >> 6) != (BYTE6_FIXED_VALUE >> 6) {
-                return Err(Error::BadFixedBits("PES '10' marker"));
+                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    field: "PES '10' marker",
+                    expected: u64::from(BYTE6_FIXED_VALUE >> 6),
+                    found: u64::from(f1 >> 6),
+                }));
             }
             if (f1 & BYTE6_SCRAMBLING_MASK) != 0x00 {
-                return Err(Error::BadFixedBits(
-                    "PES_scrambling_control shall be '00' (ST 2038 Table 2)",
-                ));
+                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    field: "PES_scrambling_control",
+                    expected: 0,
+                    found: u64::from(f1 & BYTE6_SCRAMBLING_MASK),
+                }));
             }
             // data_alignment_indicator bit[2] must be '1'.
-            return Err(Error::BadFixedBits(
-                "data_alignment_indicator shall be '1' (ST 2038 Table 2)",
-            ));
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "data_alignment_indicator",
+                expected: u64::from(BYTE6_DATA_ALIGNMENT_BIT),
+                found: u64::from(f1 & BYTE6_DATA_ALIGNMENT_BIT),
+            }));
         }
         let pes_priority = f1 & BYTE6_PES_PRIORITY_BIT != 0;
         let copyright = f1 & BYTE6_COPYRIGHT_BIT != 0;
@@ -340,9 +361,11 @@ impl AncDataPacket {
             return Err(Error::BadPtsDtsFlags(pts_dts_flags));
         }
         if f2 & BYTE7_ZERO_FLAGS_MASK != 0 {
-            return Err(Error::BadFixedBits(
-                "ESCR/ES_rate/DSM_trick_mode/additional_copy_info/PES_CRC/PES_extension flags shall be 0 (ST 2038 Table 2)",
-            ));
+            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "ESCR/ES_rate/DSM_trick_mode/additional_copy_info/PES_CRC/PES_extension flags",
+                expected: 0,
+                found: u64::from(f2 & BYTE7_ZERO_FLAGS_MASK),
+            }));
         }
 
         // Byte 8: PES_header_data_length == 0x05.
@@ -391,7 +414,11 @@ impl AncDataPacket {
         let stuffing_bytes = payload.len() - pos;
         for &byte in &payload[pos..] {
             if byte != STUFFING_BYTE {
-                return Err(Error::BadFixedBits("stuffing_byte (expected 0xFF)"));
+                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    field: "stuffing_byte",
+                    expected: u64::from(STUFFING_BYTE),
+                    found: u64::from(byte),
+                }));
             }
         }
 
@@ -417,7 +444,7 @@ impl AncDataPacket {
     /// # Errors
     /// [`Error::BufferTooShort`] if `buf` is too small;
     /// [`Error::PesLengthTooLarge`] if `PES_packet_length` overflows 16 bits;
-    /// [`Error::FieldTooWide`] if any field exceeds its wire width;
+    /// [`Error::FieldOverflow`] if any field exceeds its wire width;
     /// [`Error::InconsistentUdwLength`] if any [`AncPacket`]'s
     /// `user_data_words.len()` does not equal `data_count & 0xFF`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -464,10 +491,18 @@ impl AncDataPacket {
 fn read_pts(b: &[u8]) -> Result<u64> {
     need_in(b, 5, "PTS field")?;
     if (b[0] >> 4) != PTS_PREFIX {
-        return Err(Error::BadFixedBits("PTS prefix '0010'"));
+        return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            field: "PTS prefix '0010'",
+            expected: u64::from(PTS_PREFIX),
+            found: u64::from(b[0] >> 4),
+        }));
     }
     if b[0] & 0x01 == 0 || b[2] & 0x01 == 0 || b[4] & 0x01 == 0 {
-        return Err(Error::BadFixedBits("PTS marker_bit"));
+        return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            field: "PTS marker_bit",
+            expected: 1,
+            found: 0,
+        }));
     }
     let field: &[u8; 5] = b[..5].try_into().expect("length checked above");
     Ok(broadcast_common::clock33::unpack_marked(field).timestamp)
@@ -475,15 +510,9 @@ fn read_pts(b: &[u8]) -> Result<u64> {
 
 /// Encode a 33-bit PTS into the 5-byte ST 2038 PTS field (prefix `'0010'`).
 ///
-/// [`Error::FieldTooWide`] if `pts` exceeds the 33-bit field.
+/// [`Error::FieldOverflow`] if `pts` exceeds the 33-bit field.
 fn write_pts(pts: u64) -> Result<[u8; 5]> {
-    if pts > PTS_MASK {
-        return Err(Error::FieldTooWide {
-            what: "PTS",
-            value: pts as u32,
-            bits: 33,
-        });
-    }
+    broadcast_common::len::fit_bits(pts, 33, "PTS")?;
     Ok(broadcast_common::clock33::pack_marked(pts, PTS_PREFIX))
 }
 
@@ -537,11 +566,9 @@ mod tests {
         let result = write_pts(PTS_MASK + 1);
         assert!(matches!(
             result,
-            Err(Error::FieldTooWide {
-                what: "PTS",
-                bits: 33,
-                ..
-            })
+            Err(Error::FieldOverflow(
+                broadcast_common::error::FieldOverflow { field: "PTS", .. }
+            ))
         ));
     }
 
@@ -716,8 +743,8 @@ mod tests {
         // bits[5:4] of byte 6 = PES_scrambling_control; set to '01'.
         out[6] = (out[6] & !0x30) | 0x10;
         assert!(
-            matches!(AncDataPacket::parse(&out), Err(Error::BadFixedBits(_))),
-            "expected BadFixedBits for non-zero scrambling_control"
+            matches!(AncDataPacket::parse(&out), Err(Error::ReservedBits(_))),
+            "expected ReservedBits for non-zero scrambling_control"
         );
     }
 
@@ -730,8 +757,8 @@ mod tests {
         // bit[2] of byte 6 = data_alignment_indicator; clear it.
         out[6] &= !0x04;
         assert!(
-            matches!(AncDataPacket::parse(&out), Err(Error::BadFixedBits(_))),
-            "expected BadFixedBits for data_alignment_indicator=0"
+            matches!(AncDataPacket::parse(&out), Err(Error::ReservedBits(_))),
+            "expected ReservedBits for data_alignment_indicator=0"
         );
     }
 
@@ -785,7 +812,10 @@ mod tests {
         out[2] = 0x02;
         assert!(matches!(
             AncDataPacket::parse(&out),
-            Err(Error::BadStartCode(0x000002))
+            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                found: 0x000002,
+                ..
+            }))
         ));
     }
 
@@ -839,7 +869,7 @@ mod tests {
         bytes[PES_HEADER_LEN] |= 0x80; // top bit of the '000000' field
         assert!(matches!(
             AncDataPacket::parse(&bytes),
-            Err(Error::BadFixedBits(_))
+            Err(Error::ReservedBits(_))
         ));
     }
 
@@ -854,7 +884,7 @@ mod tests {
         bytes[last] &= 0xFE; // clear the last bit: part of the '1' padding
         assert!(matches!(
             AncDataPacket::parse(&bytes),
-            Err(Error::BadFixedBits(_))
+            Err(Error::ReservedBits(_))
         ));
     }
 
@@ -868,7 +898,7 @@ mod tests {
         bytes[7] |= 0x01; // PES_extension_flag, fixed '0'
         assert!(matches!(
             AncDataPacket::parse(&bytes),
-            Err(Error::BadFixedBits(_))
+            Err(Error::ReservedBits(_))
         ));
     }
 }

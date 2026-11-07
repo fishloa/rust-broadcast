@@ -108,7 +108,7 @@ mod tests {
         let bytes = [TAG, 5, b'e', b'n'];
         assert!(matches!(
             VbiTeletextDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

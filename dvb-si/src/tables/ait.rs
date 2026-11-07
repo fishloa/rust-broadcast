@@ -372,11 +372,13 @@ impl<'a> Parse<'a> for AitSection<'a> {
         // drop them on re-serialisation (parse -> serialize would not be
         // byte-identical).
         if app_loop_actual_end != app_loop_end {
-            return Err(Error::BufferTooShort {
-                need: app_loop_end - app_loop_actual_end,
-                have: 0,
-                what: "AitSection trailing bytes after application loop",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: app_loop_end - app_loop_actual_end,
+                    have: 0,
+                    what: "AitSection trailing bytes after application loop",
+                },
+            ));
         }
 
         let mut applications = Vec::new();
@@ -410,11 +412,13 @@ impl<'a> Parse<'a> for AitSection<'a> {
         }
 
         if pos != app_loop_actual_end {
-            return Err(Error::BufferTooShort {
-                need: app_loop_actual_end - pos,
-                have: 0,
-                what: "AitSection trailing application bytes",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: app_loop_actual_end - pos,
+                    have: 0,
+                    what: "AitSection trailing application bytes",
+                },
+            ));
         }
 
         Ok(AitSection {
@@ -599,7 +603,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = AitSection::parse(&[0x74, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -900,10 +904,10 @@ mod tests {
         let err = AitSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "AitSection trailing bytes after application loop",
                 ..
-            }
+            })
         ));
     }
 
@@ -931,10 +935,10 @@ mod tests {
         let err = AitSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "AitSection trailing application bytes",
                 ..
-            }
+            })
         ));
     }
 

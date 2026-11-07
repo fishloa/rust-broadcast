@@ -8,23 +8,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
     /// The SNDU `Length` field is inconsistent with the available bytes.
     ///
     /// `Length` counts from the byte after the Type field up to and including
@@ -37,46 +25,15 @@ pub enum Error {
         reason: &'static str,
     },
     /// The 32-bit CRC trailer did not match the recomputed value (RFC 4326 §4.6).
-    #[error("SNDU CRC mismatch: computed {computed:#010X}, found {found:#010X}")]
-    CrcMismatch {
-        /// CRC recomputed over the SNDU.
-        computed: u32,
-        /// CRC read from the trailer.
-        found: u32,
-    },
-    /// A field value did not fit in its wire bit-width.
-    #[error("field {what} value {value} does not fit in {bits} bits")]
-    FieldTooWide {
-        /// The over-wide field name.
-        what: &'static str,
-        /// The offending value.
-        value: u32,
-        /// The field width on the wire.
-        bits: u32,
-    },
+    #[error(transparent)]
+    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
+    /// A value did not fit the wire field it is written to.
+    #[error(transparent)]
+    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
     /// An extension header was malformed (bad H-LEN/H-Type or truncated body).
     #[error("invalid extension header: {reason}")]
     InvalidExtensionHeader {
         /// Why the extension header is invalid.
         reason: &'static str,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

@@ -470,11 +470,13 @@ pub(crate) fn invalid(reason: &'static str) -> Error {
 /// Shared by [`ExtensionDescriptor::parse`] and [`ExtensionRegistry::parse`].
 pub(crate) fn validate_and_split(bytes: &[u8]) -> Result<(u8, &[u8])> {
     if bytes.len() < HEADER_LEN {
-        return Err(Error::BufferTooShort {
-            need: HEADER_LEN,
-            have: bytes.len(),
-            what: "ExtensionDescriptor header",
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: HEADER_LEN,
+                have: bytes.len(),
+                what: "ExtensionDescriptor header",
+            },
+        ));
     }
     if bytes[0] != TAG {
         return Err(Error::InvalidDescriptor {
@@ -485,11 +487,13 @@ pub(crate) fn validate_and_split(bytes: &[u8]) -> Result<(u8, &[u8])> {
     let length = bytes[1] as usize;
     let end = HEADER_LEN + length;
     if bytes.len() < end {
-        return Err(Error::BufferTooShort {
-            need: end,
-            have: bytes.len(),
-            what: "ExtensionDescriptor body",
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: end,
+                have: bytes.len(),
+                what: "ExtensionDescriptor body",
+            },
+        ));
     }
     if length < MIN_BODY_LEN {
         return Err(Error::InvalidDescriptor {
@@ -523,10 +527,12 @@ impl Serialize for ExtensionDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
+            return Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need: len,
+                    have: buf.len(),
+                },
+            ));
         }
         let body_len = len - HEADER_LEN;
         if body_len > MAX_DESCRIPTOR_LENGTH {
@@ -587,7 +593,7 @@ mod tests {
         let raw = [TAG, 3, 0x08];
         assert!(matches!(
             ExtensionDescriptor::parse(&raw).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -644,7 +650,7 @@ mod tests {
         let mut tiny = [0u8; 2];
         assert!(matches!(
             d.serialize_into(&mut tiny).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

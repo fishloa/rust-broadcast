@@ -6,6 +6,7 @@
 ### Changed
 - Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).
 - TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
+- BREAKING: `Error::NoSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`.
 
 ## [0.7.0] - 2026-10-17
 ### Documentation

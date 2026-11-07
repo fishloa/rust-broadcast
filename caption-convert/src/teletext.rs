@@ -194,11 +194,13 @@ mod tests {
         let err = conv.push_wire_fields(0, &[&[0x00]]);
         assert_eq!(
             err.err(),
-            Some(crate::Error::DvbVbi(dvb_vbi::Error::BufferTooShort {
-                need: 44,
-                have: 1,
-                what: "txt_data_field"
-            }))
+            Some(crate::Error::DvbVbi(dvb_vbi::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 44,
+                    have: 1,
+                    what: "txt_data_field"
+                }
+            )))
         );
     }
 }

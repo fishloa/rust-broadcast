@@ -33,9 +33,11 @@ fn short_output_is_output_buffer_too_small() {
     let mut out = vec![0u8; have];
     assert_eq!(
         Serialize::serialize_into(&sndu, &mut out),
-        Err(Error::OutputBufferTooSmall {
-            need: data.len(),
-            have
-        })
+        Err(Error::OutputBufferTooSmall(
+            broadcast_common::error::OutputBufferTooSmall {
+                need: data.len(),
+                have
+            }
+        ))
     );
 }

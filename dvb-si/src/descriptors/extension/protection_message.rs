@@ -50,20 +50,24 @@ impl<'a> ProtectionMessage<'a> {
 impl<'a> Parse<'a> for ProtectionMessage<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        let first = *sel.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "protection_message body",
-        })?;
+        let first = *sel.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "protection_message body",
+            },
+        ))?;
         let reserved = (first >> 4) & RESERVED_MASK;
         let component_count = usize::from(first & 0x0F);
         let component_tags = sel
             .get(1..1 + component_count)
-            .ok_or(Error::BufferTooShort {
-                need: 1 + component_count,
-                have: sel.len(),
-                what: "protection_message component_tags",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1 + component_count,
+                    have: sel.len(),
+                    what: "protection_message component_tags",
+                },
+            ))?;
         // Table 40 ends with the component_tag loop. Bytes after it have no
         // defined meaning and are deliberately tolerated, not rejected: real
         // streams carry slack and rejection would break them (r03-W9; the

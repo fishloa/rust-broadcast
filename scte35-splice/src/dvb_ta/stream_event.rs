@@ -190,22 +190,26 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
             });
         }
         if dvb_data_length < 1 {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: dvb_data_length,
-                what: "DSM-CC_stream_event_payload_binary flags byte",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: dvb_data_length,
+                    what: "DSM-CC_stream_event_payload_binary flags byte",
+                },
+            ));
         }
         let flags = bytes[1];
         let event_type = (flags >> 4) & 0x01;
         let timeline_type = TimelineType::from_bits(flags & 0x0F);
         let temi = if timeline_type == TimelineType::Temi {
             if dvb_data_length < 3 || bytes.len() < 4 {
-                return Err(Error::BufferTooShort {
-                    need: 4,
-                    have: bytes.len(),
-                    what: "DSM-CC_stream_event_payload_binary temi fields",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 4,
+                        have: bytes.len(),
+                        what: "DSM-CC_stream_event_payload_binary temi fields",
+                    },
+                ));
             }
             Some((bytes[2], bytes[3]))
         } else {
@@ -219,11 +223,13 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
 
         // private_data_length(8).
         if bytes.len() <= pos {
-            return Err(Error::BufferTooShort {
-                need: pos + 1,
-                have: bytes.len(),
-                what: "DSM-CC_stream_event_payload_binary private_data_length",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + 1,
+                    have: bytes.len(),
+                    what: "DSM-CC_stream_event_payload_binary private_data_length",
+                },
+            ));
         }
         let private_data_length = bytes[pos] as usize;
         pos += 1;
@@ -256,11 +262,13 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
         let carriage = if event_type == EVENT_TYPE_REFERENCE {
             // carousel_object_name_length(8) + chars.
             if bytes.len() <= pos {
-                return Err(Error::BufferTooShort {
-                    need: pos + 1,
-                    have: bytes.len(),
-                    what: "DSM-CC_stream_event_payload_binary carousel_object_name_length",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 1,
+                        have: bytes.len(),
+                        what: "DSM-CC_stream_event_payload_binary carousel_object_name_length",
+                    },
+                ));
             }
             let name_len = bytes[pos] as usize;
             pos += 1;

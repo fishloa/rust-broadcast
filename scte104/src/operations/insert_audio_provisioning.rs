@@ -110,18 +110,22 @@ pub struct InsertAudioProvisioning {
 impl<'a> Parse<'a> for InsertAudioProvisioning {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (&count, rest) = bytes.split_first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "insert_audio_provisioning audio_count",
-        })?;
+        let (&count, rest) = bytes.split_first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "insert_audio_provisioning audio_count",
+            },
+        ))?;
         let need = usize::from(count) * ENTRY_LEN;
         if rest.len() < need {
-            return Err(Error::BufferTooShort {
-                need: 1 + need,
-                have: bytes.len(),
-                what: "insert_audio_provisioning entries",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1 + need,
+                    have: bytes.len(),
+                    what: "insert_audio_provisioning entries",
+                },
+            ));
         }
         let entries = rest[..need]
             .chunks_exact(ENTRY_LEN)
@@ -210,11 +214,11 @@ mod tests {
     fn truncated_entries_are_rejected() {
         assert!(matches!(
             &(InsertAudioProvisioning::parse(&[2, 1, 1, 2])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(matches!(
             &(InsertAudioProvisioning::parse(&[])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 }

@@ -121,11 +121,13 @@ impl<'a> Parse<'a> for RstSection {
             });
         }
         if !section_length.is_multiple_of(ENTRY_LEN) {
-            return Err(Error::BufferTooShort {
-                need: (section_length / ENTRY_LEN + 1) * ENTRY_LEN,
-                have: section_length,
-                what: "RstSection entry alignment",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: (section_length / ENTRY_LEN + 1) * ENTRY_LEN,
+                    have: section_length,
+                    what: "RstSection entry alignment",
+                },
+            ));
         }
         let mut entries = Vec::with_capacity(section_length / ENTRY_LEN);
         let mut off = HEADER_LEN;
@@ -251,7 +253,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             RstSection::parse(&[0x71, 0x70]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -260,10 +262,10 @@ mod tests {
         let bytes = [TABLE_ID, 0x70, 0x04, 0x00, 0x00, 0x00, 0x00];
         assert!(matches!(
             RstSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "RstSection entry alignment",
                 ..
-            }
+            })
         ));
     }
 

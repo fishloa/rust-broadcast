@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = DsmccSection::parse(&[0x3B, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     /// Regression for r02-W9: `private_indicator` is an independent bit of

@@ -19,7 +19,10 @@ fn real_route_packets_reject_every_short_buffer() {
             pkt.serialized_len(),
             |buf| pkt.serialize_into(buf),
             |e| match e {
-                Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+                Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+                    need,
+                    have,
+                }) => Some((*need, *have)),
                 _ => None,
             },
         );

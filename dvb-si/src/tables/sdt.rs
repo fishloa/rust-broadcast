@@ -199,11 +199,13 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             let (b2, _) = bytes
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + 2,
-                    have: services_end,
-                    what: "SdtSection service_id",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 2,
+                        have: services_end,
+                        what: "SdtSection service_id",
+                    },
+                ))?;
             let service_id = u16::from_be_bytes(*b2);
             let flags = bytes[pos + 2];
             let eit_schedule_flag = (flags & EIT_SCHEDULE_FLAG) != 0;
@@ -234,11 +236,13 @@ impl<'a> Parse<'a> for SdtSection<'a> {
         }
 
         if pos != services_end {
-            return Err(Error::BufferTooShort {
-                need: services_end - pos,
-                have: 0,
-                what: "SdtSection trailing service bytes",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: services_end - pos,
+                    have: 0,
+                    what: "SdtSection trailing service bytes",
+                },
+            ));
         }
 
         Ok(SdtSection {
@@ -447,7 +451,7 @@ mod tests {
     #[test]
     fn parse_rejects_short_buffer() {
         let err = SdtSection::parse(&[0x42, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
     #[test]
@@ -597,10 +601,10 @@ mod tests {
         let err = SdtSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "SdtSection trailing service bytes",
                 ..
-            }
+            })
         ));
     }
 

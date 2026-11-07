@@ -114,11 +114,13 @@ impl<'a> Parse<'a> for SingleOperationMessage<'a> {
 
         // messageSize must be at least HEADER_LEN (ANSI/SCTE 104 2023 §8.2.2).
         if (message_size as usize) < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: message_size as usize,
-                what: "messageSize too small",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN,
+                    have: message_size as usize,
+                    what: "messageSize too small",
+                },
+            ));
         }
 
         let body_start = HEADER_LEN;
@@ -202,11 +204,13 @@ mod tests {
         let result = SingleOperationMessage::parse(&bad_msg);
         assert_eq!(
             result.err(),
-            Some(Error::BufferTooShort {
-                need: 13,
-                have: 5,
-                what: "messageSize too small"
-            }),
+            Some(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 13,
+                    have: 5,
+                    what: "messageSize too small"
+                }
+            )),
             "parse should reject messageSize < HEADER_LEN"
         );
     }

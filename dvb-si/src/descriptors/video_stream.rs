@@ -434,7 +434,7 @@ mod tests {
         let d = VideoStreamDescriptor::mpeg1(false, FrameRateCode::Frame25_0, false, false);
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
     #[test]
     fn serialize_rejects_missingmpeg2_conditional_fields() {

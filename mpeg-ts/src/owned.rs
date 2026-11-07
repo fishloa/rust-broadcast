@@ -124,12 +124,16 @@ impl OwnedTsPacket {
 
     /// Parse a 188-byte owned TS packet.
     ///
-    /// Returns [`Error::InvalidSyncByte`] if `raw[0] != 0x47`.
+    /// Returns [`Error::InvalidSync`] if `raw[0] != 0x47`.
     /// Header bit-parsing is delegated to [`TsHeader::parse`].
     /// The `discontinuity` field defaults to `false`; set it manually if needed.
     pub fn parse(raw: [u8; TS_PACKET_SIZE]) -> Result<Self> {
         if raw[0] != TS_SYNC_BYTE {
-            return Err(Error::InvalidSyncByte { found: raw[0] });
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "TS sync byte",
+                expected: u32::from(TS_SYNC_BYTE),
+                found: u32::from(raw[0]),
+            }));
         }
         let hdr = TsHeader::parse(&raw[..4])?;
         Ok(Self {
@@ -342,11 +346,13 @@ impl OwnedTsPacket {
         // Byte 3: check adaptation_field_control has adaptation bit set
         // (ADAPTATION_FLAG = bit 5, ISO/IEC 13818-1 §2.4.3.3).
         if packet[3] & ADAPTATION_FLAG == 0 {
-            return Err(Error::BufferTooShort {
-                need: 6,
-                have: 0,
-                what: "set_pcr: no adaptation field",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 6,
+                    have: 0,
+                    what: "set_pcr: no adaptation field",
+                },
+            ));
         }
         let af_len = packet[4] as usize;
         // W7 (#1074): the flags byte (1) + PCR field (PCR_FIELD_LEN = 6) must
@@ -357,19 +363,23 @@ impl OwnedTsPacket {
         // the adaptation field, i.e. into the payload.
         const REQUIRED_AF_LEN: usize = 1 + PCR_FIELD_LEN;
         if af_len < REQUIRED_AF_LEN {
-            return Err(Error::BufferTooShort {
-                need: REQUIRED_AF_LEN,
-                have: af_len,
-                what: "set_pcr: adaptation field too short for flags byte + PCR",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: REQUIRED_AF_LEN,
+                    have: af_len,
+                    what: "set_pcr: adaptation field too short for flags byte + PCR",
+                },
+            ));
         }
         // Byte 5: adaptation field flags byte (AF_PCR_FLAG = 0x10, §2.4.3.4).
         if packet[5] & AF_PCR_FLAG == 0 {
-            return Err(Error::BufferTooShort {
-                need: 6,
-                have: 0,
-                what: "set_pcr: PCR flag not set in adaptation field",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 6,
+                    have: 0,
+                    what: "set_pcr: PCR flag not set in adaptation field",
+                },
+            ));
         }
         // PCR occupies the 6 bytes starting at offset 6 (after header + af_len byte + flags byte).
         let pcr_start = 6usize;
@@ -532,7 +542,7 @@ mod tests {
             extension: 0,
         };
         let err = OwnedTsPacket::set_pcr(&mut raw, pcr).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(err, Error::BufferTooShort(..)));
         assert_eq!(
             &raw[6..],
             payload_before.as_slice(),

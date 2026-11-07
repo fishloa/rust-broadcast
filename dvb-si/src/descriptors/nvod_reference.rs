@@ -136,7 +136,7 @@ mod tests {
         let bytes = [TAG, 12, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03];
         assert!(matches!(
             NvodReferenceDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

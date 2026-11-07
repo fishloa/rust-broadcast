@@ -8,23 +8,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Input shorter than required.
-    #[error("buffer too short: need {need}, have {have} ({what})")]
-    BufferTooShort {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-        /// What was being parsed.
-        what: &'static str,
-    },
+    #[error(transparent)]
+    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
     /// Output buffer smaller than `serialized_len()`.
-    #[error("output buffer too small: need {need}, have {have}")]
-    OutputBufferTooSmall {
-        /// Bytes required.
-        need: usize,
-        /// Bytes available.
-        have: usize,
-    },
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
     /// An object's 3-byte `apdu_tag` did not match the expected value.
     #[error("unexpected apdu_tag: got {got:#08X}, expected {expected:#08X} ({what})")]
     UnexpectedApduTag {
@@ -65,15 +53,8 @@ pub enum Error {
     LengthTooLarge(usize),
     /// A declared `length_field` did not match the actual body length, or the
     /// body did not fit the fixed shape the object requires.
-    #[error("length mismatch for {what}: declared {declared}, body has {actual}")]
-    LengthMismatch {
-        /// What was being parsed.
-        what: &'static str,
-        /// The `length_field` value.
-        declared: usize,
-        /// The body length actually available.
-        actual: usize,
-    },
+    #[error(transparent)]
+    LengthMismatch(#[from] broadcast_common::error::LengthMismatch),
     /// A fixed-shape object had a body length the spec does not allow.
     #[error("invalid object body for {what}: {reason}")]
     InvalidObject {
@@ -89,23 +70,4 @@ pub enum Error {
         /// The 32-bit `resource_identifier()`.
         resource_id: u32,
     },
-}
-
-impl From<broadcast_common::len::BufferTooShort> for Error {
-    fn from(e: broadcast_common::len::BufferTooShort) -> Self {
-        Self::BufferTooShort {
-            need: e.need,
-            have: e.have,
-            what: e.what,
-        }
-    }
-}
-
-impl From<broadcast_common::len::OutputBufferTooSmall> for Error {
-    fn from(e: broadcast_common::len::OutputBufferTooSmall) -> Self {
-        Self::OutputBufferTooSmall {
-            need: e.need,
-            have: e.have,
-        }
-    }
 }

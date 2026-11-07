@@ -74,11 +74,13 @@ pub(crate) fn parse_provider_avail_ids(
     what_ids: &'static str,
 ) -> Result<Vec<u32>> {
     let Some(&count) = bytes.first() else {
-        return Err(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: what_count,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: what_count,
+            },
+        ));
     };
     let count = usize::from(count);
     let need = 1 + count * 4;
@@ -383,7 +385,9 @@ impl Serialize for InjectResponse {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if buf.is_empty() {
-            return Err(Error::OutputBufferTooSmall { need: 1, have: 0 });
+            return Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall { need: 1, have: 0 },
+            ));
         }
         buf[0] = self.message_number;
         Ok(1)

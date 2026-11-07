@@ -21,11 +21,13 @@ fn all_prefixes_err<'a, T: Parse<'a, Error = Error>>(full: &'a [u8], what: &'sta
         let need = if n < 2 { 2 } else { full.len() };
         assert_eq!(
             T::parse(&full[..n]).err(),
-            Some(Error::BufferTooShort {
-                need,
-                have: n,
-                what
-            }),
+            Some(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need,
+                    have: n,
+                    what
+                }
+            )),
             "prefix len {n}"
         );
     }
@@ -74,11 +76,11 @@ fn pat_truncated_is_err() {
     let declared = buf.len() - 3;
     for n in 0..buf.len() {
         let expected = if n < 12 {
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: 12,
                 have: n,
                 what: "PatSection",
-            }
+            })
         } else {
             Error::SectionLengthOverflow {
                 declared,

@@ -764,11 +764,13 @@ impl<'a> Reader<'a> {
     }
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.buf.len() < self.pos + n {
-            return Err(Error::BufferTooShort {
-                need: n,
-                have: self.buf.len().saturating_sub(self.pos),
-                what: self.what,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: n,
+                    have: self.buf.len().saturating_sub(self.pos),
+                    what: self.what,
+                },
+            ));
         }
         let s = &self.buf[self.pos..self.pos + n];
         self.pos += n;

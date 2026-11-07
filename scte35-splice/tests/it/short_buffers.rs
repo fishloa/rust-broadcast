@@ -16,7 +16,10 @@ fn splice_info_section_rejects_every_short_buffer() {
         section.serialized_len(),
         |buf| section.serialize_into(buf),
         |e| match e {
-            Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+                need,
+                have,
+            }) => Some((*need, *have)),
             _ => None,
         },
     );

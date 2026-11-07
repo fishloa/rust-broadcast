@@ -124,7 +124,7 @@ mod tests {
         let mut it = parse_unt_loop(&[0x01, 0x20, 0x00]);
         assert!(matches!(
             &(it.next().unwrap()),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert!(it.next().is_none());
     }

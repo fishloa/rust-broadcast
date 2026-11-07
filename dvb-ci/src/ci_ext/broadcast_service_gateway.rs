@@ -217,11 +217,13 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
         let loop_start = EIT_SECTION_ACK_PREFIX;
         let loop_end = loop_start + length;
         if body.len() < loop_end {
-            return Err(Error::LengthMismatch {
-                what: "EITSectionAck event loop",
-                declared: length,
-                actual: body.len() - loop_start,
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "EITSectionAck event loop",
+                    declared: length,
+                    actual: body.len() - loop_start,
+                },
+            ));
         }
         objects::reject_trailing_body(body, loop_end, "EITSectionAck")?;
         let mut events = Vec::new();
@@ -246,11 +248,13 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
             let desc_start = p + EIT_EVENT_FIXED;
             let desc_end = desc_start + dll;
             if desc_end > loop_end {
-                return Err(Error::LengthMismatch {
-                    what: "EITSectionAck event descriptors",
-                    declared: dll,
-                    actual: loop_end - desc_start,
-                });
+                return Err(Error::LengthMismatch(
+                    broadcast_common::error::LengthMismatch {
+                        what: "EITSectionAck event descriptors",
+                        declared: dll,
+                        actual: loop_end - desc_start,
+                    },
+                ));
             }
             events.push(EitEvent {
                 event_id,

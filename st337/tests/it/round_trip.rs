@@ -164,9 +164,9 @@ fn six_word_preamble_underflow_length_code_is_rejected() {
     let err = Burst::parse(&bytes).unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidValue {
+        Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: "length_code",
             ..
-        }
+        })
     ));
 }

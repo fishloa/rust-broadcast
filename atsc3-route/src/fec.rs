@@ -126,13 +126,7 @@ impl Serialize for RepairFecPayloadId {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, ROUTE_FEC_PAYLOAD_ID_LEN)?;
-        if self.esi > MAX_ESI {
-            return Err(Error::FieldTooWide {
-                what: "ESI",
-                value: self.esi as u64,
-                bits: 24,
-            });
-        }
+        broadcast_common::len::fit_bits(self.esi as u64, 24, "ESI")?;
         let esi_bytes = self.esi.to_be_bytes();
         buf[0] = self.sbn;
         buf[1..4].copy_from_slice(&esi_bytes[1..4]);
@@ -248,7 +242,9 @@ mod tests {
         let mut out = [0u8; ROUTE_FEC_PAYLOAD_ID_LEN];
         assert!(matches!(
             id.serialize_into(&mut out),
-            Err(Error::FieldTooWide { what: "ESI", .. })
+            Err(Error::FieldOverflow(
+                broadcast_common::error::FieldOverflow { field: "ESI", .. }
+            ))
         ));
     }
 

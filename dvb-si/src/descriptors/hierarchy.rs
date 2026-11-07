@@ -399,7 +399,7 @@ mod tests {
         let d = HierarchyDescriptor::default();
         let mut tiny = vec![0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     /// H.222.0 Table 2-49. All three reserved regions are preserved verbatim.

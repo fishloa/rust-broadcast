@@ -15,7 +15,10 @@ fn tune_rejects_every_short_buffer() {
         tune.serialized_len(),
         |buf| tune.serialize_into(buf),
         |e| match e {
-            Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+                need,
+                have,
+            }) => Some((*need, *have)),
             _ => None,
         },
     );

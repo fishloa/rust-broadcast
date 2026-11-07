@@ -133,7 +133,7 @@ mod tests {
         let d = StdDescriptor::new(false);
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 
     /// H.222.0 Table 2-70. Parsed reserved bits are preserved (zero-reserved

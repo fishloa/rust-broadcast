@@ -163,11 +163,13 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
             }
             None
         } else {
-            let head = *body.get(FIXED_BODY_LEN).ok_or(Error::BufferTooShort {
-                need: FIXED_BODY_LEN + 1,
-                have: body.len(),
-                what: "TuwaAvs3VideoDescriptor",
-            })?;
+            let head = *body.get(FIXED_BODY_LEN).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: FIXED_BODY_LEN + 1,
+                    have: body.len(),
+                    what: "TuwaAvs3VideoDescriptor",
+                },
+            ))?;
             let n = usize::from(head >> 1);
             let id_type = head & 1 != 0;
             let rest = &body[FIXED_BODY_LEN + 1..];
@@ -395,12 +397,12 @@ mod tests {
         ));
         assert!(matches!(
             TuwaAvs3VideoDescriptor::parse(&[TAG, 6, 0, 0, 0, 0, 0, 0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         // main stream with no reference header byte
         assert!(matches!(
             TuwaAvs3VideoDescriptor::parse(&[TAG, 7, 0, 0, 0, 0x40, 0, 0, 0]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         // num_ref=2 but only one reference present
         assert!(matches!(

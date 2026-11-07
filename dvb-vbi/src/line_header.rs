@@ -6,7 +6,7 @@
 //! (The monochrome data unit, §4.9.1, packs its first byte differently — two
 //! segment flags occupy `[7:6]` instead — and so does *not* use this header.)
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 /// Size in bytes of the shared first-byte line header.
 pub const LINE_HEADER_LEN: usize = 1;
@@ -58,20 +58,8 @@ impl LineHeader {
     /// line_offset. Errors if `line_offset` does not fit in 5 bits or
     /// `reserved` in 2.
     pub fn to_byte(self) -> Result<u8> {
-        if self.reserved > RESERVED_PREFIX {
-            return Err(Error::FieldTooWide {
-                what: "reserved_future_use",
-                value: self.reserved as u32,
-                bits: 2,
-            });
-        }
-        if self.line_offset > 0b0001_1111 {
-            return Err(Error::FieldTooWide {
-                what: "line_offset",
-                value: self.line_offset as u32,
-                bits: 5,
-            });
-        }
+        broadcast_common::len::fit_bits(self.reserved as u64, 2, "reserved_future_use")?;
+        broadcast_common::len::fit_bits(self.line_offset as u64, 5, "line_offset")?;
         let mut b = self.reserved << 6;
         if self.field_parity {
             b |= 0b0010_0000;
@@ -113,7 +101,7 @@ mod tests {
     fn rejects_overwide_line_offset() {
         assert!(matches!(
             LineHeader::new(true, 32).to_byte(),
-            Err(Error::FieldTooWide { .. })
+            Err(crate::error::Error::FieldOverflow(..))
         ));
     }
 }

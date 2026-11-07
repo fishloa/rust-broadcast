@@ -121,6 +121,6 @@ mod tests {
         };
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(err, Error::OutputBufferTooSmall(..)));
     }
 }

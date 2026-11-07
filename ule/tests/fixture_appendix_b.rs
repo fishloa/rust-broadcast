@@ -70,7 +70,7 @@ fn corrupted_crc_is_rejected() {
     let last = data.len() - 1;
     data[last] ^= 0xFF; // flip the low CRC byte
     assert!(
-        matches!(Sndu::parse(&data), Err(ule::Error::CrcMismatch { .. })),
+        matches!(Sndu::parse(&data), Err(ule::Error::CrcMismatch(..))),
         "a bad CRC must be rejected"
     );
 }

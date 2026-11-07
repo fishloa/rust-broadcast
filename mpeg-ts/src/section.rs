@@ -134,7 +134,11 @@ impl<'a> Section<'a> {
         let computed = crc::compute(covered);
 
         if computed != expected {
-            return Err(Error::CrcMismatch { computed, expected });
+            return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+                what: "section",
+                computed,
+                expected,
+            }));
         }
         Ok(())
     }
@@ -374,7 +378,7 @@ mod tests {
             let buf = vec![0x00u8; bad_len];
             let err = Section::parse(&buf).unwrap_err();
             assert!(
-                matches!(err, Error::BufferTooShort { need: 3, have, .. } if have == bad_len),
+                matches!(err, Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 3, have, .. }) if have == bad_len),
                 "expected BufferTooShort for len={bad_len}, got {err:?}"
             );
         }
@@ -507,7 +511,7 @@ mod tests {
         let section = Section::parse(&raw).unwrap();
         let err = section.validate_crc(&raw).unwrap_err();
         assert!(
-            matches!(err, Error::CrcMismatch { .. }),
+            matches!(err, Error::CrcMismatch(..)),
             "expected CrcMismatch, got {err:?}"
         );
     }
@@ -521,7 +525,13 @@ mod tests {
         // Pass an empty slice — shorter than CRC_LEN bytes.
         let err = section.validate_crc(&[]).unwrap_err();
         assert!(
-            matches!(err, Error::BufferTooShort { need: CRC_LEN, .. }),
+            matches!(
+                err,
+                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                    need: CRC_LEN,
+                    ..
+                })
+            ),
             "expected BufferTooShort(need=CRC_LEN), got {err:?}"
         );
     }

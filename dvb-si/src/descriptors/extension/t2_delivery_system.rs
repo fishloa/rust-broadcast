@@ -390,11 +390,13 @@ impl<'a> Parse<'a> for T2DeliverySystem {
         let plp_id = sel[0];
         let (t2_id_bytes, _) = sel[1..]
             .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
-                need: T2_FIXED_PREFIX_LEN,
-                have: sel.len(),
-                what: "T2_delivery_system body",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: T2_FIXED_PREFIX_LEN,
+                    have: sel.len(),
+                    what: "T2_delivery_system body",
+                },
+            ))?;
         let t2_system_id = u16::from_be_bytes(*t2_id_bytes);
         let mut pos = T2_FIXED_PREFIX_LEN;
         let mut reserved_future_use = T2_RESERVED_FUTURE_USE_DEFAULT;
@@ -434,20 +436,24 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                 let (cell_id_bytes, _) = sel
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<2>())
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + 2,
-                        have: sel.len(),
-                        what: "T2_delivery_system body",
-                    })?;
+                    .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 2,
+                            have: sel.len(),
+                            what: "T2_delivery_system body",
+                        },
+                    ))?;
                 let cell_id = u16::from_be_bytes(*cell_id_bytes);
                 pos += 2;
                 let centre_frequencies = if tfs {
                     if pos >= sel.len() {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 1,
-                            have: sel.len(),
-                            what: "T2_delivery_system body",
-                        });
+                        return Err(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + 1,
+                                have: sel.len(),
+                                what: "T2_delivery_system body",
+                            },
+                        ));
                     }
                     let freq_loop_len = sel[pos] as usize;
                     pos += 1;
@@ -463,11 +469,13 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                         let (fb, _) = sel
                             .get(pos..)
                             .and_then(|s| s.split_first_chunk::<4>())
-                            .ok_or(Error::BufferTooShort {
-                                need: pos + 4,
-                                have: sel.len(),
-                                what: "T2_delivery_system body",
-                            })?;
+                            .ok_or(Error::BufferTooShort(
+                                broadcast_common::error::BufferTooShort {
+                                    need: pos + 4,
+                                    have: sel.len(),
+                                    what: "T2_delivery_system body",
+                                },
+                            ))?;
                         freqs.push(u32::from_be_bytes(*fb));
                         pos += 4;
                     }
@@ -477,21 +485,25 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     let (freq_bytes, _) = sel
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<4>())
-                        .ok_or(Error::BufferTooShort {
-                        need: pos + 4,
-                        have: sel.len(),
-                        what: "T2_delivery_system body",
-                    })?;
+                        .ok_or(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "T2_delivery_system body",
+                        },
+                    ))?;
                     let freq = u32::from_be_bytes(*freq_bytes);
                     pos += 4;
                     vec![freq]
                 };
                 if pos >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: sel.len(),
-                        what: "T2_delivery_system body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "T2_delivery_system body",
+                        },
+                    ));
                 }
                 let subcell_loop_len = sel[pos] as usize;
                 pos += 1;
@@ -507,11 +519,13 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     let (tf_bytes, _) = sel
                         .get(pos + 1..)
                         .and_then(|s| s.split_first_chunk::<4>())
-                        .ok_or(Error::BufferTooShort {
-                            need: pos + 5,
-                            have: sel.len(),
-                            what: "T2_delivery_system body",
-                        })?;
+                        .ok_or(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + 5,
+                                have: sel.len(),
+                                what: "T2_delivery_system body",
+                            },
+                        ))?;
                     subcells.push(T2Subcell {
                         cell_id_extension: sel[pos],
                         transposer_frequency: u32::from_be_bytes(*tf_bytes),

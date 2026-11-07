@@ -336,11 +336,11 @@ impl<'a> AudioDescription<'a> {
     /// would be indistinguishable from the terminator on the wire).
     pub fn with_text(text: &'a [u8]) -> Result<Self> {
         if text.contains(&0) {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "AudioDescription.text",
                 value: 0,
                 reason: "text must not contain an embedded NUL byte",
-            });
+            }));
         }
         Ok(Self {
             flag_byte: AUDIO_DESCRIPTION_TEXT_FOLLOWS,
@@ -393,11 +393,11 @@ impl<'a> ObjectDefinition1<'a> {
         if let Some(first) = pan_sub_blocks.first()
             && first.pan.is_none()
         {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ObjectDefinition1.pan_sub_blocks[0]",
                 value: 0,
                 reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)",
-            });
+            }));
         }
         Ok(Self {
             meta_id,
@@ -532,21 +532,23 @@ impl<'a> ObjectDefinition1<'a> {
     ) -> Result<AudioDescription<'a>> {
         debug_assert!(r.is_byte_aligned());
         let flag_start = r.bits_read() / 8;
-        let flag_byte = *bytes.get(flag_start).ok_or(Error::BufferTooShort {
-            need: flag_start + 1,
-            have: bytes.len(),
-            what: "ObjectDefinition1.AudioDescription",
-        })?;
+        let flag_byte = *bytes.get(flag_start).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: flag_start + 1,
+                have: bytes.len(),
+                what: "ObjectDefinition1.AudioDescription",
+            },
+        ))?;
         r.skip_bits(8).ctx("ObjectDefinition1.AudioDescription")?;
         let text =
             if flag_byte & AUDIO_DESCRIPTION_TEXT_FOLLOWS != 0 {
                 let text_start = flag_start + 1;
                 let nul_offset = bytes[text_start..].iter().position(|&b| b == 0x00).ok_or(
-                    Error::InvalidValue {
+                    Error::InvalidValue(broadcast_common::error::InvalidValue {
                         field: "ObjectDefinition1.AudioDescription",
                         value: 0,
                         reason: "NULL-terminated text ran past the end of the element body",
-                    },
+                    }),
                 )?;
                 let text_end = text_start + nul_offset;
                 let consumed_bytes = (text_end + 1) - text_start; // text + terminator
@@ -591,31 +593,31 @@ impl<'a> ObjectDefinition1<'a> {
         if let Some(first) = self.pan_sub_blocks.first()
             && first.pan.is_none()
         {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ObjectDefinition1.pan_sub_blocks[0]",
                 value: 0,
                 reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)",
-            });
+            }));
         }
         for (i, sb) in self.pan_sub_blocks.iter().enumerate() {
             if let Some(info) = &sb.pan
                 && info.decor_coef_prefix.reads_coef() != info.decor_coef.is_some()
             {
-                return Err(Error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                     field: "ObjectDefinition1.pan_sub_blocks[i].decor_coef",
                     value: i as u64,
                     reason: "decor_coef must be Some iff decor_coef_prefix reads a coefficient \
                              (CoefFollows/Reserved)",
-                });
+                }));
             }
         }
         let text_follows = self.audio_description.flag_byte & AUDIO_DESCRIPTION_TEXT_FOLLOWS != 0;
         if text_follows != self.audio_description.text.is_some() {
-            return Err(Error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ObjectDefinition1.audio_description",
                 value: u64::from(self.audio_description.flag_byte),
                 reason: "text must be Some iff flag_byte's 0x80 bit is set",
-            });
+            }));
         }
         Ok(())
     }
@@ -844,11 +846,11 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "ObjectDefinition1.pan_sub_blocks[0]",
                 value: 0,
                 reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)"
-            }
+            })
         );
     }
 
@@ -856,11 +858,11 @@ mod tests {
     fn embedded_nul_in_text_is_rejected() {
         assert_eq!(
             AudioDescription::with_text(b"bad\0text").err(),
-            Some(Error::InvalidValue {
+            Some(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "AudioDescription.text",
                 value: 0,
                 reason: "text must not contain an embedded NUL byte"
-            })
+            }))
         );
     }
 
@@ -872,11 +874,11 @@ mod tests {
             ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Reserved(0x9)).unwrap_err();
         assert_eq!(
             err,
-            Error::InvalidValue {
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field: "FrameRate",
                 value: 9,
                 reason: "reserved FrameRate has no Table 7 NumPanSubBlocks entry"
-            }
+            })
         );
     }
 
@@ -910,7 +912,7 @@ mod tests {
         let mut buf = alloc::vec![0u8; obj.serialized_len()];
         assert!(matches!(
             obj.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
     }
 
@@ -932,7 +934,7 @@ mod tests {
         let mut buf = alloc::vec![0u8; obj.serialized_len()];
         assert!(matches!(
             obj.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
     }
 
@@ -959,7 +961,7 @@ mod tests {
         let mut buf = alloc::vec![0u8; obj.serialized_len()];
         assert!(matches!(
             obj.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
     }
 
@@ -982,7 +984,7 @@ mod tests {
         let mut buf = alloc::vec![0u8; obj.serialized_len()];
         assert!(matches!(
             obj.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
     }
 
@@ -1002,7 +1004,7 @@ mod tests {
         let mut buf = alloc::vec![0u8; obj.serialized_len()];
         assert!(matches!(
             obj.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
     }
 
@@ -1031,7 +1033,7 @@ mod tests {
         let mut buf = alloc::vec![0u8; obj.serialized_len()];
         assert!(matches!(
             obj.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue(..))
         ));
     }
 }

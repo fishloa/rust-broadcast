@@ -872,7 +872,7 @@ mod tests {
         // Truncated partition.
         assert!(matches!(
             VirtualSegmentation::parse_body(&[0x3F, 0x8F]),
-            Err(crate::Error::BufferTooShort { .. })
+            Err(crate::Error::BufferTooShort(..))
         ));
         // Two bytes, zero partitions, no timescale: the second byte is trailing.
         let d = VirtualSegmentation::parse_body(&[0x0F, 0xAB]).unwrap();
@@ -896,7 +896,7 @@ mod tests {
         ));
         assert!(matches!(
             GreenExtension::parse_body(&b[..4]),
-            Err(crate::Error::BufferTooShort { .. })
+            Err(crate::Error::BufferTooShort(..))
         ));
     }
 
@@ -949,7 +949,7 @@ mod tests {
         assert_eq!(d.write_body().unwrap(), m);
         assert!(matches!(
             &(JxsVideo::parse_body(&m[..m.len() - 1])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 }

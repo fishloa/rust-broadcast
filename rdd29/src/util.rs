@@ -11,7 +11,7 @@ use crate::error::{BitResultExt, Error, Result};
 /// — see `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 4.
 ///
 /// # Errors
-/// [`Error::InvalidReserved`] if the field's value does not equal `expected`.
+/// [`Error::ReservedBits`] if the field's value does not equal `expected`.
 pub(crate) fn read_reserved(
     r: &mut BitReader<'_>,
     width: u32,
@@ -20,11 +20,11 @@ pub(crate) fn read_reserved(
 ) -> Result<()> {
     let found = r.read_bits(width).ctx(field)?;
     if found != expected {
-        return Err(Error::InvalidReserved {
+        return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
             field,
             expected,
             found,
-        });
+        }));
     }
     Ok(())
 }
@@ -75,20 +75,20 @@ pub(crate) fn write_align_bits(
         return if align_bits == 0 {
             Ok(())
         } else {
-            Err(Error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
                 field,
                 value: u64::from(align_bits),
                 reason: "no padding bits are needed here, but align_bits is nonzero",
-            })
+            }))
         };
     }
     let max = (1u16 << pad) - 1;
     if u16::from(align_bits) > max {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field,
             value: u64::from(align_bits),
             reason: "does not fit in the number of padding bits needed here",
-        });
+        }));
     }
     w.write_bits(u64::from(align_bits), pad as u32).ctx(field)
 }
@@ -99,11 +99,11 @@ pub(crate) fn write_align_bits(
 pub(crate) fn expect_fully_consumed(r: &BitReader<'_>, what: &'static str) -> Result<()> {
     let remaining = r.bits_remaining();
     if remaining != 0 {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field: what,
             value: remaining as u64,
             reason: "trailing unparsed bits remain in the element body",
-        });
+        }));
     }
     Ok(())
 }

@@ -135,15 +135,17 @@ mod tests {
     fn parse_rejects_body_shorter_than_3_bytes() {
         assert!(matches!(
             &(BbframePayload::parse(&[0x00, 0x00])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
         assert_eq!(
             BbframePayload::parse(&[]).err(),
-            Some(crate::Error::BufferTooShort {
-                need: 3,
-                have: 0,
-                what: "BbframePayload header (frame_idx + plp_id + intl_frame_start + rfu)"
-            })
+            Some(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: 0,
+                    what: "BbframePayload header (frame_idx + plp_id + intl_frame_start + rfu)"
+                }
+            ))
         );
     }
 

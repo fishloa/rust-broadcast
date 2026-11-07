@@ -260,13 +260,13 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             COMPAT_DESC_LEN_FIELD,
             "CompatibilityDescriptor length field",
         )?;
-        let (b2, _) = bytes
-            .split_first_chunk::<2>()
-            .ok_or(Error::BufferTooShort {
+        let (b2, _) = bytes.split_first_chunk::<2>().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
                 need: COMPAT_DESC_LEN_FIELD,
                 have: bytes.len(),
                 what: "CompatibilityDescriptor length field",
-            })?;
+            },
+        ))?;
         let compat_desc_len = u16::from_be_bytes(*b2) as usize;
         let body_end = COMPAT_DESC_LEN_FIELD + compat_desc_len;
         if body_end > bytes.len() {
@@ -282,11 +282,13 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             });
         }
         if compat_desc_len < DESC_COUNT_FIELD {
-            return Err(Error::BufferTooShort {
-                need: COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD,
-                have: bytes.len(),
-                what: "CompatibilityDescriptor descriptorCount",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD,
+                    have: bytes.len(),
+                    what: "CompatibilityDescriptor descriptorCount",
+                },
+            ));
         }
         let body = &bytes[COMPAT_DESC_LEN_FIELD..body_end];
         let descriptor_count =
@@ -296,11 +298,13 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
         let mut descriptors = Vec::with_capacity(descriptor_count.min(max_entries));
         for _ in 0..descriptor_count {
             if pos + DESC_HEADER_LEN > body.len() {
-                return Err(Error::BufferTooShort {
-                    need: COMPAT_DESC_LEN_FIELD + pos + DESC_HEADER_LEN,
-                    have: COMPAT_DESC_LEN_FIELD + body.len(),
-                    what: "CompatibilityDescriptor entry header",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: COMPAT_DESC_LEN_FIELD + pos + DESC_HEADER_LEN,
+                        have: COMPAT_DESC_LEN_FIELD + body.len(),
+                        what: "CompatibilityDescriptor entry header",
+                    },
+                ));
             }
             let descriptor_type = DescriptorType::from_u8(body[pos]);
             let descriptor_length = body[pos + 1] as usize;
@@ -343,11 +347,13 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             let mut sub_pos = sub_desc_start;
             for _ in 0..sub_descriptor_count {
                 if sub_pos + SUB_DESC_HEADER_LEN > sub_desc_end {
-                    return Err(Error::BufferTooShort {
-                        need: COMPAT_DESC_LEN_FIELD + sub_pos + SUB_DESC_HEADER_LEN,
-                        have: COMPAT_DESC_LEN_FIELD + sub_desc_end,
-                        what: "CompatibilityDescriptor subDescriptor header",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: COMPAT_DESC_LEN_FIELD + sub_pos + SUB_DESC_HEADER_LEN,
+                            have: COMPAT_DESC_LEN_FIELD + sub_desc_end,
+                            what: "CompatibilityDescriptor subDescriptor header",
+                        },
+                    ));
                 }
                 let sub_descriptor_type = SubDescriptorType::from_u8(body[sub_pos]);
                 let sub_descriptor_length = body[sub_pos + 1] as usize;
@@ -555,7 +561,7 @@ mod tests {
         let bytes: &[u8] = &[0x00, 0x03, 0x00, 0x01, 0x01];
         assert!(matches!(
             CompatibilityDescriptor::parse(bytes),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 
@@ -569,7 +575,7 @@ mod tests {
         ];
         assert!(matches!(
             &(CompatibilityDescriptor::parse(bytes)),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -715,7 +721,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             CompatibilityDescriptor::parse(&[0x00]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -749,7 +755,7 @@ mod tests {
         };
         assert!(matches!(
             cd.serialize_into(&mut [0u8; 1]).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 }

@@ -22,11 +22,13 @@ pub struct DtsNeural<'a> {
 impl<'a> Parse<'a> for DtsNeural<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
-        let (&config_id, additional_info) = sel.split_first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "DTS-Neural descriptor body",
-        })?;
+        let (&config_id, additional_info) = sel.split_first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "DTS-Neural descriptor body",
+            },
+        ))?;
         Ok(DtsNeural {
             config_id,
             additional_info,

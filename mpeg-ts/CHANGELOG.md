@@ -9,6 +9,7 @@
 - `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what` and its message becomes "<what> CRC-32 mismatch: ..."); `InvalidSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`. The hand-written `From` impls are gone (`#[from]` replaces them); error values are otherwise unchanged.
 
 ## [0.6.2] - 2026-10-18
 ### Documentation

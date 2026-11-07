@@ -29,9 +29,9 @@
 //!     type Error = dvb_si::Error;
 //!     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
 //!         if bytes.len() < 2 {
-//!             return Err(dvb_si::Error::BufferTooShort {
+//!             return Err(dvb_si::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
 //!                 need: 2, have: bytes.len(), what: "MyPrivate",
-//!             });
+//!             }));
 //!         }
 //!         Ok(Self { x: bytes[1] })
 //!     }
@@ -173,11 +173,13 @@ mod tests {
         type Error = crate::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.is_empty() {
-                return Err(crate::Error::BufferTooShort {
-                    need: 1,
-                    have: 0,
-                    what: "CustomTable",
-                });
+                return Err(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 1,
+                        have: 0,
+                        what: "CustomTable",
+                    },
+                ));
             }
             Ok(Self {
                 table_id: bytes[0],
@@ -206,11 +208,13 @@ mod tests {
         type Error = crate::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.is_empty() {
-                return Err(crate::Error::BufferTooShort {
-                    need: 1,
-                    have: 0,
-                    what: "MultiRangeTable",
-                });
+                return Err(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 1,
+                        have: 0,
+                        what: "MultiRangeTable",
+                    },
+                ));
             }
             Ok(Self { table_id: bytes[0] })
         }
@@ -232,11 +236,13 @@ mod tests {
         type Error = crate::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.is_empty() {
-                return Err(crate::Error::BufferTooShort {
-                    need: 1,
-                    have: 0,
-                    what: "OverridePat",
-                });
+                return Err(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 1,
+                        have: 0,
+                        what: "OverridePat",
+                    },
+                ));
             }
             Ok(Self { table_id: bytes[0] })
         }
@@ -344,11 +350,13 @@ mod tests {
         let result = AnyTableSection::parse_with(&reg, &[]);
         assert!(matches!(
             result,
-            Err(crate::Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                ..
-            })
+            Err(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: 0,
+                    ..
+                }
+            ))
         ));
     }
 

@@ -98,7 +98,7 @@ mod tests {
         let bytes = [TAG, 4, 0x12, 0x34, 0x56];
         assert!(matches!(
             TimeShiftedEventDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -131,7 +131,7 @@ mod tests {
         let mut tiny = [0u8; 5];
         assert!(matches!(
             d.serialize_into(&mut tiny).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 }

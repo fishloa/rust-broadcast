@@ -32,11 +32,11 @@ impl<'a> BitReader<'a> {
     }
 
     fn short(&self, need_bits: usize) -> Error {
-        Error::BufferTooShort {
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: (self.inner.bits_read() + need_bits).div_ceil(BITS_PER_BYTE),
             have: self.data.len(),
             what: self.what,
-        }
+        })
     }
 
     /// Bits not yet consumed.

@@ -20,6 +20,8 @@ fn short_output_is_output_buffer_too_small() {
     let pkt = <PesPacket as Parse>::parse(&VIDEO_PTS_ONLY).unwrap();
     assert_eq!(
         Serialize::serialize_into(&pkt, &mut [0u8; 15]),
-        Err(Error::OutputBufferTooSmall { need: 16, have: 15 })
+        Err(Error::OutputBufferTooSmall(
+            broadcast_common::error::OutputBufferTooSmall { need: 16, have: 15 }
+        ))
     );
 }

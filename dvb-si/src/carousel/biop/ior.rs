@@ -156,11 +156,13 @@ impl<'a> Tap<'a> {
         let (tap_hdr, _) =
             bytes[pos..end]
                 .split_first_chunk::<TAP_FIXED_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: pos + TAP_FIXED_LEN,
-                    have: end,
-                    what: "BIOP Tap fixed fields",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + TAP_FIXED_LEN,
+                        have: end,
+                        what: "BIOP Tap fixed fields",
+                    },
+                ))?;
         let id = u16::from_be_bytes([tap_hdr[0], tap_hdr[1]]);
         let use_ = u16::from_be_bytes([tap_hdr[2], tap_hdr[3]]);
         let association_tag = u16::from_be_bytes([tap_hdr[4], tap_hdr[5]]);
@@ -230,11 +232,13 @@ impl<'a> ObjectLocation<'a> {
     fn parse_from(bytes: &'a [u8], pos: usize, end: usize) -> Result<(Self, usize)> {
         let (ol_hdr, _) = bytes[pos..end]
             .split_first_chunk::<OBJECT_LOCATION_FIXED_LEN>()
-            .ok_or(Error::BufferTooShort {
-                need: pos + OBJECT_LOCATION_FIXED_LEN,
-                have: end,
-                what: "BIOP ObjectLocation fixed fields",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + OBJECT_LOCATION_FIXED_LEN,
+                    have: end,
+                    what: "BIOP ObjectLocation fixed fields",
+                },
+            ))?;
         let carousel_id = u32::from_be_bytes([ol_hdr[0], ol_hdr[1], ol_hdr[2], ol_hdr[3]]);
         let module_id = u16::from_be_bytes([ol_hdr[4], ol_hdr[5]]);
         let version_major = ol_hdr[6];
@@ -297,11 +301,13 @@ impl<'a> ConnBinder<'a> {
 
     fn parse_from(bytes: &'a [u8], pos: usize, end: usize) -> Result<(Self, usize)> {
         if pos + CONN_BINDER_FIXED_LEN > end {
-            return Err(Error::BufferTooShort {
-                need: pos + CONN_BINDER_FIXED_LEN,
-                have: end,
-                what: "BIOP ConnBinder taps_count",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + CONN_BINDER_FIXED_LEN,
+                    have: end,
+                    what: "BIOP ConnBinder taps_count",
+                },
+            ));
         }
         let taps_count = bytes[pos] as usize;
         let mut cur = pos + CONN_BINDER_FIXED_LEN;
@@ -374,11 +380,13 @@ impl<'a> BiopProfileBody<'a> {
     fn parse_from(bytes: &'a [u8]) -> Result<Self> {
         let end = bytes.len();
         if end < BIOP_BODY_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: BIOP_BODY_FIXED_LEN,
-                have: end,
-                what: "BIOP Profile Body fixed fields",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: BIOP_BODY_FIXED_LEN,
+                    have: end,
+                    what: "BIOP Profile Body fixed fields",
+                },
+            ));
         }
         let byte_order = bytes[0];
         if byte_order != BYTE_ORDER_BIG_ENDIAN {
@@ -398,11 +406,13 @@ impl<'a> BiopProfileBody<'a> {
 
         let (ch0, _) = bytes[pos..end]
             .split_first_chunk::<COMPONENT_HEADER_LEN>()
-            .ok_or(Error::BufferTooShort {
-                need: pos + COMPONENT_HEADER_LEN,
-                have: end,
-                what: "BIOP ObjectLocation component header",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + COMPONENT_HEADER_LEN,
+                    have: end,
+                    what: "BIOP ObjectLocation component header",
+                },
+            ))?;
         let comp0_tag = u32::from_be_bytes([ch0[0], ch0[1], ch0[2], ch0[3]]);
         if comp0_tag != TAG_OBJECT_LOCATION {
             return Err(Error::ReservedBitsViolation {
@@ -425,22 +435,26 @@ impl<'a> BiopProfileBody<'a> {
         // a vendor extension) would otherwise be silently dropped on
         // re-serialise (r02-W7).
         if consumed != comp0_end {
-            return Err(Error::BufferTooShort {
-                need: comp0_end - consumed,
-                have: 0,
-                what: "BIOP ObjectLocation trailing bytes after objectKey_data",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: comp0_end - consumed,
+                    have: 0,
+                    what: "BIOP ObjectLocation trailing bytes after objectKey_data",
+                },
+            ));
         }
         pos = comp0_end;
 
         // Second component: ConnBinder
         let (ch1, _) = bytes[pos..end]
             .split_first_chunk::<COMPONENT_HEADER_LEN>()
-            .ok_or(Error::BufferTooShort {
-                need: pos + COMPONENT_HEADER_LEN,
-                have: end,
-                what: "BIOP ConnBinder component header",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + COMPONENT_HEADER_LEN,
+                    have: end,
+                    what: "BIOP ConnBinder component header",
+                },
+            ))?;
         let comp1_tag = u32::from_be_bytes([ch1[0], ch1[1], ch1[2], ch1[3]]);
         if comp1_tag != TAG_CONN_BINDER {
             return Err(Error::ReservedBitsViolation {
@@ -462,11 +476,13 @@ impl<'a> BiopProfileBody<'a> {
         // component whose taps end before `comp1_end` would otherwise be
         // silently dropped on re-serialise (r02-W7).
         if consumed != comp1_end {
-            return Err(Error::BufferTooShort {
-                need: comp1_end - consumed,
-                have: 0,
-                what: "BIOP ConnBinder trailing bytes after taps",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: comp1_end - consumed,
+                    have: 0,
+                    what: "BIOP ConnBinder trailing bytes after taps",
+                },
+            ));
         }
         pos = comp1_end;
 
@@ -476,11 +492,13 @@ impl<'a> BiopProfileBody<'a> {
         for _ in 0..extra_count {
             let (ch_ex, _) = bytes[pos..end]
                 .split_first_chunk::<COMPONENT_HEADER_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: pos + COMPONENT_HEADER_LEN,
-                    have: end,
-                    what: "BIOP extra liteComponent header",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + COMPONENT_HEADER_LEN,
+                        have: end,
+                        what: "BIOP extra liteComponent header",
+                    },
+                ))?;
             let tag = u32::from_be_bytes([ch_ex[0], ch_ex[1], ch_ex[2], ch_ex[3]]);
             let data_len = ch_ex[4] as usize;
             pos += COMPONENT_HEADER_LEN;
@@ -502,11 +520,13 @@ impl<'a> BiopProfileBody<'a> {
         // so anything left here would be silently dropped on re-serialise
         // (r02-W7).
         if pos != end {
-            return Err(Error::BufferTooShort {
-                need: end - pos,
-                have: 0,
-                what: "BIOP Profile Body trailing bytes after liteComponents",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: end - pos,
+                    have: 0,
+                    what: "BIOP Profile Body trailing bytes after liteComponents",
+                },
+            ));
         }
 
         Ok(BiopProfileBody {
@@ -626,11 +646,13 @@ impl NsapAddress {
         let (nsap, _) = bytes
             .get(pos..)
             .and_then(|s| s.split_first_chunk::<NSAP_ADDRESS_LEN>())
-            .ok_or(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "NSAP address (20 bytes)",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: end,
+                    have: bytes.len(),
+                    what: "NSAP address (20 bytes)",
+                },
+            ))?;
         // AFI and Type are fixed per DVB profile; do not reject if they differ
         // (be tolerant, but documented).
         let carousel_id = u32::from_be_bytes([nsap[2], nsap[3], nsap[4], nsap[5]]);
@@ -689,11 +711,13 @@ impl<'a> NameComponent<'a> {
     pub(crate) fn parse_32bit(bytes: &'a [u8], pos: usize, end: usize) -> Result<(Self, usize)> {
         let (bid, _) = bytes[pos..end]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: pos + NAMING_FIELD_LEN,
-                have: end,
-                what: "CosNaming id_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + NAMING_FIELD_LEN,
+                    have: end,
+                    what: "CosNaming id_length",
+                },
+            ))?;
         let id_start = pos + NAMING_FIELD_LEN;
         let id_range = super::span(id_start, u32::from_be_bytes(*bid), end)?;
         let id = &bytes[id_range.clone()];
@@ -701,11 +725,13 @@ impl<'a> NameComponent<'a> {
         let (bkind, _) =
             bytes[kind_pos..end]
                 .split_first_chunk::<4>()
-                .ok_or(Error::BufferTooShort {
-                    need: kind_pos + NAMING_FIELD_LEN,
-                    have: end,
-                    what: "CosNaming kind_length",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: kind_pos + NAMING_FIELD_LEN,
+                        have: end,
+                        what: "CosNaming kind_length",
+                    },
+                ))?;
         let kind_start = kind_pos + NAMING_FIELD_LEN;
         let kind_range = super::span(kind_start, u32::from_be_bytes(*bkind), end)?;
         let kind = &bytes[kind_range.clone()];
@@ -735,11 +761,13 @@ impl<'a> NameComponent<'a> {
     /// Parse one BIOP Directory name component with 8-bit length prefixes.
     pub(crate) fn parse_8bit(bytes: &'a [u8], pos: usize, end: usize) -> Result<(Self, usize)> {
         if pos + 1 > end {
-            return Err(Error::BufferTooShort {
-                need: pos + 1,
-                have: end,
-                what: "BIOP NameComponent id_length (8-bit)",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + 1,
+                    have: end,
+                    what: "BIOP NameComponent id_length (8-bit)",
+                },
+            ));
         }
         let id_len = bytes[pos] as usize;
         let id_start = pos + 1;
@@ -752,11 +780,13 @@ impl<'a> NameComponent<'a> {
         let id = &bytes[id_start..id_start + id_len];
         let kind_pos = id_start + id_len;
         if kind_pos + 1 > end {
-            return Err(Error::BufferTooShort {
-                need: kind_pos + 1,
-                have: end,
-                what: "BIOP NameComponent kind_length (8-bit)",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: kind_pos + 1,
+                    have: end,
+                    what: "BIOP NameComponent kind_length (8-bit)",
+                },
+            ));
         }
         let kind_len = bytes[kind_pos] as usize;
         let kind_start = kind_pos + 1;
@@ -828,11 +858,13 @@ impl<'a> ServiceLocation<'a> {
 
     fn parse_from(bytes: &'a [u8], pos: usize, end: usize) -> Result<(Self, usize)> {
         if pos + SERVICE_DOMAIN_LEN_FIELD > end {
-            return Err(Error::BufferTooShort {
-                need: pos + SERVICE_DOMAIN_LEN_FIELD,
-                have: end,
-                what: "ServiceLocation serviceDomain_length",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + SERVICE_DOMAIN_LEN_FIELD,
+                    have: end,
+                    what: "ServiceLocation serviceDomain_length",
+                },
+            ));
         }
         let sd_len = bytes[pos] as usize;
         if sd_len != NSAP_ADDRESS_LEN {
@@ -843,22 +875,26 @@ impl<'a> ServiceLocation<'a> {
         }
         let sd_start = pos + SERVICE_DOMAIN_LEN_FIELD;
         if sd_start + NSAP_ADDRESS_LEN > end {
-            return Err(Error::BufferTooShort {
-                need: sd_start + NSAP_ADDRESS_LEN,
-                have: end,
-                what: "ServiceLocation serviceDomain_data",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: sd_start + NSAP_ADDRESS_LEN,
+                    have: end,
+                    what: "ServiceLocation serviceDomain_data",
+                },
+            ));
         }
         let service_domain = NsapAddress::parse_from(bytes, sd_start)?;
         let mut cur = sd_start + NSAP_ADDRESS_LEN;
 
         let (bnc, _) = bytes[cur..end]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + NAMING_COUNT_LEN,
-                have: end,
-                what: "ServiceLocation nameComponents_count",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + NAMING_COUNT_LEN,
+                    have: end,
+                    what: "ServiceLocation nameComponents_count",
+                },
+            ))?;
         let name_count = u32::from_be_bytes(*bnc) as usize;
         cur += NAMING_COUNT_LEN;
         let mut path = Vec::with_capacity(name_count.min(16));
@@ -870,11 +906,13 @@ impl<'a> ServiceLocation<'a> {
 
         let (bic, _) = bytes[cur..end]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: cur + INITIAL_CONTEXT_LEN_FIELD,
-                have: end,
-                what: "ServiceLocation initialContext_length",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cur + INITIAL_CONTEXT_LEN_FIELD,
+                    have: end,
+                    what: "ServiceLocation initialContext_length",
+                },
+            ))?;
         cur += INITIAL_CONTEXT_LEN_FIELD;
         let ic_range = super::span(cur, u32::from_be_bytes(*bic), end)?;
         let initial_context = &bytes[ic_range.clone()];
@@ -932,11 +970,13 @@ impl<'a> LiteOptionsProfileBody<'a> {
     fn parse_from(bytes: &'a [u8]) -> Result<Self> {
         let end = bytes.len();
         if end < LITE_OPTIONS_BODY_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: LITE_OPTIONS_BODY_FIXED_LEN,
-                have: end,
-                what: "LiteOptions Profile Body fixed fields",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: LITE_OPTIONS_BODY_FIXED_LEN,
+                    have: end,
+                    what: "LiteOptions Profile Body fixed fields",
+                },
+            ));
         }
         let byte_order = bytes[0];
         if byte_order != BYTE_ORDER_BIG_ENDIAN {
@@ -957,11 +997,13 @@ impl<'a> LiteOptionsProfileBody<'a> {
         // First component: ServiceLocation (32-bit component_data_length)
         let (slch, _) = bytes[pos..end]
             .split_first_chunk::<SERVICE_LOCATION_COMP_HEADER_LEN>()
-            .ok_or(Error::BufferTooShort {
-                need: pos + SERVICE_LOCATION_COMP_HEADER_LEN,
-                have: end,
-                what: "LiteOptions ServiceLocation component header",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + SERVICE_LOCATION_COMP_HEADER_LEN,
+                    have: end,
+                    what: "LiteOptions ServiceLocation component header",
+                },
+            ))?;
         let comp0_tag = u32::from_be_bytes([slch[0], slch[1], slch[2], slch[3]]);
         if comp0_tag != TAG_SERVICE_LOCATION {
             return Err(Error::ReservedBitsViolation {
@@ -976,11 +1018,13 @@ impl<'a> LiteOptionsProfileBody<'a> {
         // Reject slack inside `component_data_length` (r02-W7), matching
         // `BiopProfileBody`'s ObjectLocation/ConnBinder components above.
         if consumed != comp0_end {
-            return Err(Error::BufferTooShort {
-                need: comp0_end - consumed,
-                have: 0,
-                what: "LiteOptions ServiceLocation trailing bytes",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: comp0_end - consumed,
+                    have: 0,
+                    what: "LiteOptions ServiceLocation trailing bytes",
+                },
+            ));
         }
         pos = comp0_end;
 
@@ -990,11 +1034,13 @@ impl<'a> LiteOptionsProfileBody<'a> {
         for _ in 0..extra_count {
             let (ech, _) = bytes[pos..end]
                 .split_first_chunk::<COMPONENT_HEADER_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: pos + COMPONENT_HEADER_LEN,
-                    have: end,
-                    what: "LiteOptions extra component header",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + COMPONENT_HEADER_LEN,
+                        have: end,
+                        what: "LiteOptions extra component header",
+                    },
+                ))?;
             let tag = u32::from_be_bytes([ech[0], ech[1], ech[2], ech[3]]);
             let data_len = ech[4] as usize;
             pos += COMPONENT_HEADER_LEN;
@@ -1013,11 +1059,13 @@ impl<'a> LiteOptionsProfileBody<'a> {
 
         // Reject slack after the last liteComponent (r02-W7).
         if pos != end {
-            return Err(Error::BufferTooShort {
-                need: end - pos,
-                have: 0,
-                what: "LiteOptions Profile Body trailing bytes after liteComponents",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: end - pos,
+                    have: 0,
+                    what: "LiteOptions Profile Body trailing bytes after liteComponents",
+                },
+            ));
         }
 
         Ok(LiteOptionsProfileBody {
@@ -1191,11 +1239,13 @@ impl<'a> Ior<'a> {
         let (ior_hdr, _) =
             bytes
                 .split_first_chunk::<IOR_FIXED_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: IOR_FIXED_LEN,
-                    have: end,
-                    what: "IOP::IOR fixed fields",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: IOR_FIXED_LEN,
+                        have: end,
+                        what: "IOP::IOR fixed fields",
+                    },
+                ))?;
         let type_id_length_wire =
             u32::from_be_bytes([ior_hdr[0], ior_hdr[1], ior_hdr[2], ior_hdr[3]]);
         // DVB: only alias type_ids (N%4==0); reject non-conformant.
@@ -1212,11 +1262,13 @@ impl<'a> Ior<'a> {
 
         let (bpc, _) = bytes[pos..end]
             .split_first_chunk::<4>()
-            .ok_or(Error::BufferTooShort {
-                need: pos + 4,
-                have: end,
-                what: "IOR taggedProfiles_count",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + 4,
+                    have: end,
+                    what: "IOR taggedProfiles_count",
+                },
+            ))?;
         let profiles_count = u32::from_be_bytes(*bpc) as usize;
         pos += 4;
 
@@ -1224,11 +1276,13 @@ impl<'a> Ior<'a> {
         for _ in 0..profiles_count {
             let (phdr, _) = bytes[pos..end]
                 .split_first_chunk::<PROFILE_HEADER_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: pos + PROFILE_HEADER_LEN,
-                    have: end,
-                    what: "TaggedProfile header",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + PROFILE_HEADER_LEN,
+                        have: end,
+                        what: "TaggedProfile header",
+                    },
+                ))?;
             let tag = u32::from_be_bytes([phdr[0], phdr[1], phdr[2], phdr[3]]);
             let data_len_wire = u32::from_be_bytes([phdr[4], phdr[5], phdr[6], phdr[7]]);
             pos += PROFILE_HEADER_LEN;
@@ -1258,11 +1312,13 @@ impl<'a> Parse<'a> for Ior<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (ior, pos) = Self::parse_at(bytes)?;
         if pos != bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: bytes.len() - pos,
-                have: 0,
-                what: "IOP::IOR trailing bytes after taggedProfiles",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: bytes.len() - pos,
+                    have: 0,
+                    what: "IOP::IOR trailing bytes after taggedProfiles",
+                },
+            ));
         }
         Ok(ior)
     }
@@ -1371,7 +1427,7 @@ mod tests {
 
         let err = BiopProfileBody::parse_from(&bytes).unwrap_err();
         assert!(
-            matches!(&err, Error::BufferTooShort { what, .. } if what.contains("ObjectLocation trailing")),
+            matches!(&err, Error::BufferTooShort(broadcast_common::error::BufferTooShort { what, .. }) if what.contains("ObjectLocation trailing")),
             "expected ObjectLocation trailing-bytes error, got {err:?}"
         );
     }
@@ -1385,7 +1441,7 @@ mod tests {
         raw.push(0xEE);
         let err = Ior::parse(&raw).unwrap_err();
         assert!(
-            matches!(&err, Error::BufferTooShort { what, .. } if what.contains("IOR trailing bytes")),
+            matches!(&err, Error::BufferTooShort(broadcast_common::error::BufferTooShort { what, .. }) if what.contains("IOR trailing bytes")),
             "expected IOR trailing-bytes error, got {err:?}"
         );
         // `parse_at` on the other hand accepts it and reports the true

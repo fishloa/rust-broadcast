@@ -110,11 +110,13 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
 
     let ts_loop_start = desc_end;
     if body_end - ts_loop_start < LOOP_LENGTH_FIELD_LEN {
-        return Err(Error::BufferTooShort {
-            need: body_end - ts_loop_start + LOOP_LENGTH_FIELD_LEN,
-            have: body_end - ts_loop_start,
-            what: labels.loop_header,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: body_end - ts_loop_start + LOOP_LENGTH_FIELD_LEN,
+                have: body_end - ts_loop_start,
+                what: labels.loop_header,
+            },
+        ));
     }
     let ts_loop_length = super::desc_loop_len_of(bytes[ts_loop_start], bytes[ts_loop_start + 1]);
     let mut pos = ts_loop_start + LOOP_LENGTH_FIELD_LEN;
@@ -130,11 +132,13 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
     let mut transport_streams = Vec::new();
     while pos < loop_end {
         if pos + TS_HEADER_LEN > loop_end {
-            return Err(Error::BufferTooShort {
-                need: pos + TS_HEADER_LEN,
-                have: loop_end,
-                what: labels.entry,
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: pos + TS_HEADER_LEN,
+                    have: loop_end,
+                    what: labels.entry,
+                },
+            ));
         }
         let hdr = &bytes[pos..pos + TS_HEADER_LEN];
         let transport_descriptors_length = super::desc_loop_len_of(hdr[4], hdr[5]);

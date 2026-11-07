@@ -40,11 +40,13 @@ impl<'a> Parse<'a> for ComponentModeDpi {
         // No explicit count — parse all available entries
         let count = bytes.len() / ENTRY_LEN;
         if !bytes.len().is_multiple_of(ENTRY_LEN) {
-            return Err(Error::BufferTooShort {
-                need: (count + 1) * ENTRY_LEN,
-                have: bytes.len(),
-                what: "component_mode_DPI data",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: (count + 1) * ENTRY_LEN,
+                    have: bytes.len(),
+                    what: "component_mode_DPI data",
+                },
+            ));
         }
         let mut components = Vec::with_capacity(count);
         for i in 0..count {

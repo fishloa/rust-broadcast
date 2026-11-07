@@ -307,22 +307,10 @@ impl WssDataField {
     /// `wss_data_block` is range-checked and the preserved RFU tail is emitted.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         need_out(out, WSS_FIELD_LEN)?;
-        if self.wss_data_block > WSS_DATA_BLOCK_MASK {
-            return Err(Error::FieldTooWide {
-                what: "wss_data_block",
-                value: self.wss_data_block as u32,
-                bits: 14,
-            });
-        }
+        broadcast_common::len::fit_bits(self.wss_data_block as u64, 14, "wss_data_block")?;
         out[0] = self.header.to_byte()?;
         out[1] = (self.wss_data_block >> 6) as u8;
-        if self.reserved_tail > WSS_RESERVED_TAIL {
-            return Err(Error::FieldTooWide {
-                what: "reserved_future_use",
-                value: self.reserved_tail as u32,
-                bits: 2,
-            });
-        }
+        broadcast_common::len::fit_bits(self.reserved_tail as u64, 2, "reserved_future_use")?;
         out[2] = (((self.wss_data_block as u8) & WSS_BYTE2_DATA_MASK) << 2) | self.reserved_tail;
         Ok(WSS_FIELD_LEN)
     }
@@ -458,10 +446,10 @@ impl<'a> MonochromeDataField<'a> {
         let n_pixels = data[3] as usize;
         // §4.9.2 mandates n_pixels > 0; a zero-n_pixels unit is non-conformant.
         if n_pixels == 0 {
-            return Err(Error::InvalidField {
-                what: "n_pixels",
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "n_pixels",
                 reason: "n_pixels shall be > 0 (ETSI EN 301 775 §4.9.2)",
-            });
+            }));
         }
         need_in(
             data,
@@ -484,20 +472,8 @@ impl<'a> MonochromeDataField<'a> {
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
         need_out(out, total)?;
-        if self.line_offset > MONO_LINE_OFFSET {
-            return Err(Error::FieldTooWide {
-                what: "line_offset",
-                value: self.line_offset as u32,
-                bits: 5,
-            });
-        }
-        if self.samples.len() > u8::MAX as usize {
-            return Err(Error::FieldTooWide {
-                what: "n_pixels",
-                value: self.samples.len() as u32,
-                bits: 8,
-            });
-        }
+        broadcast_common::len::fit_bits(self.line_offset as u64, 5, "line_offset")?;
+        broadcast_common::len::fit_bits(self.samples.len() as u64, 8, "n_pixels")?;
         let mut b0 = self.line_offset;
         if self.first_segment {
             b0 |= MONO_FIRST_SEGMENT;
@@ -712,10 +688,10 @@ pub struct DataUnit<'a> {
 /// Reject a `stuffing_byte` run that is not all `0xFF` (Table 1).
 fn check_stuffing(bytes: &[u8]) -> Result<()> {
     if bytes.iter().any(|&b| b != crate::data_unit_id::ID_STUFFING) {
-        return Err(Error::InvalidField {
-            what: "stuffing_byte",
+        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            field: "stuffing_byte",
             reason: "stuffing_byte shall be 0xFF (ETSI EN 301 775 Table 1)",
-        });
+        }));
     }
     Ok(())
 }
@@ -734,10 +710,10 @@ impl<'a> DataUnit<'a> {
     /// the extra `0xFF` bytes would re-parse as part of the payload.
     fn check_stuffing_allowed(&self) -> Result<()> {
         if self.stuffing != 0 && self.payload_owns_whole_body() {
-            return Err(Error::InvalidField {
-                what: "DataUnit.stuffing",
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "DataUnit.stuffing",
                 reason: "must be 0 for an Opaque or Stuffing payload (its whole body is the payload)",
-            });
+            }));
         }
         Ok(())
     }
@@ -754,10 +730,10 @@ impl<'a> DataUnit<'a> {
     /// already longer than `length`.
     pub fn padded_to(mut self, length: u8) -> Result<Self> {
         if self.payload_owns_whole_body() {
-            return Err(Error::InvalidField {
-                what: "DataUnit.stuffing",
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "DataUnit.stuffing",
                 reason: "an Opaque or Stuffing payload cannot be padded (its whole body is the payload)",
-            });
+            }));
         }
         let have = self.payload.serialized_len();
         let want = usize::from(length);
@@ -881,13 +857,7 @@ impl<'a> DataUnit<'a> {
         let total = self.serialized_len();
         need_out(out, total)?;
         let length = self.data_unit_length();
-        if length > u8::MAX as usize {
-            return Err(Error::FieldTooWide {
-                what: "data_unit_length",
-                value: length as u32,
-                bits: 8,
-            });
-        }
+        broadcast_common::len::fit_bits(length as u64, 8, "data_unit_length")?;
         out[0] = self.id.to_u8();
         out[1] = length as u8;
         let written = self.payload.serialize_into(&mut out[2..total])?;
@@ -1017,8 +987,8 @@ const MONO_MAX_PIXELS: usize = 251;
 /// Valid `Y_value` range (ITU-R BT.601, §4.9.1, Table 12).
 const MONO_Y_RANGE: core::ops::RangeInclusive<u8> = 0x10..=0xEB;
 
-fn violation(what: &'static str, reason: &'static str) -> Error {
-    Error::InvalidField { what, reason }
+fn violation(field: &'static str, reason: &'static str) -> Error {
+    Error::InvalidField(broadcast_common::error::InvalidField { field, reason })
 }
 
 impl DataUnit<'_> {
@@ -1495,11 +1465,13 @@ mod tests {
         let data = [0xC3u8, 0x0E, 0x00];
         assert_eq!(
             DataUnit::parse(&data).err(),
-            Some(crate::Error::BufferTooShort {
-                need: 16,
-                have: 3,
-                what: "data_unit body"
-            })
+            Some(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 16,
+                    have: 3,
+                    what: "data_unit body"
+                }
+            ))
         );
     }
 
@@ -1512,10 +1484,10 @@ mod tests {
         ];
         assert!(matches!(
             DataUnit::parse(&data),
-            Err(Error::InvalidField {
-                what: "stuffing_byte",
+            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "stuffing_byte",
                 ..
-            })
+            }))
         ));
     }
 
@@ -1546,10 +1518,12 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(crate::error::Error::InvalidField {
-                    what: "n_pixels",
-                    ..
-                })
+                Err(crate::error::Error::InvalidField(
+                    broadcast_common::error::InvalidField {
+                        field: "n_pixels",
+                        ..
+                    }
+                ))
             ),
             "n_pixels=0 must be rejected with InvalidField, got: {result:?}"
         );
@@ -1837,18 +1811,20 @@ mod tests {
         wire[last] = 0x00;
         assert!(matches!(
             DataUnit::parse(&wire),
-            Err(Error::InvalidField {
-                what: "stuffing_byte",
+            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "stuffing_byte",
                 ..
-            })
+            }))
         ));
         // A bare stuffing data unit (0xFF) is checked the same way.
         assert_eq!(
             DataUnit::parse(&[0xFF, 0x02, 0xFF, 0x00]).err(),
-            Some(crate::Error::InvalidField {
-                what: "stuffing_byte",
-                reason: "stuffing_byte shall be 0xFF (ETSI EN 301 775 Table 1)"
-            })
+            Some(crate::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "stuffing_byte",
+                    reason: "stuffing_byte shall be 0xFF (ETSI EN 301 775 Table 1)"
+                }
+            ))
         );
         assert!(DataUnit::parse(&[0xFF, 0x02, 0xFF, 0xFF]).is_ok());
     }
@@ -1907,10 +1883,12 @@ mod tests {
         );
         assert_eq!(
             short.validate().err(),
-            Some(crate::Error::InvalidField {
-                what: "data_unit_length",
-                reason: "shall be 0x2C when data_identifier is 0x10-0x1F (EN 301 775 §4.4.2); pad with DataUnit::padded_to"
-            })
+            Some(crate::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "data_unit_length",
+                    reason: "shall be 0x2C when data_identifier is 0x10-0x1F (EN 301 775 §4.4.2); pad with DataUnit::padded_to"
+                }
+            ))
         );
 
         // Not a VBI data_identifier.
@@ -1918,10 +1896,12 @@ mod tests {
         bad_di.data_identifier = 0x20;
         assert_eq!(
             bad_di.validate().err(),
-            Some(crate::Error::InvalidField {
-                what: "data_identifier",
-                reason: "shall be 0x10-0x1F or 0x99-0x9B for VBI data (EN 301 775 §4.1)"
-            })
+            Some(crate::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "data_identifier",
+                    reason: "shall be 0x10-0x1F or 0x99-0x9B for VBI data (EN 301 775 §4.1)"
+                }
+            ))
         );
 
         // VPS on the wrong line parses fine but does not validate.
@@ -1937,10 +1917,12 @@ mod tests {
         let reparsed = DataField::parse(&wire).unwrap();
         assert_eq!(
             reparsed.validate().err(),
-            Some(crate::Error::InvalidField {
-                what: "line_offset",
-                reason: "VPS is generated only on field_parity 1, line_offset 16 (§4.6.2)"
-            })
+            Some(crate::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "line_offset",
+                    reason: "VPS is generated only on field_parity 1, line_offset 16 (§4.6.2)"
+                }
+            ))
         );
 
         // Teletext framing code vs id.
@@ -1967,10 +1949,12 @@ mod tests {
             txt(DataUnitId::InvertedTeletext, FRAMING_CODE_EBU)
                 .validate()
                 .err(),
-            Some(crate::Error::InvalidField {
-                what: "framing_code",
-                reason: "does not match the data_unit_id's Teletext variant (§4.5.2)"
-            })
+            Some(crate::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "framing_code",
+                    reason: "does not match the data_unit_id's Teletext variant (§4.5.2)"
+                }
+            ))
         );
 
         // Monochrome sample range.
@@ -1990,17 +1974,21 @@ mod tests {
         mono(&[0x80; 4]).validate().unwrap();
         assert_eq!(
             mono(&[0x00; 4]).validate().err(),
-            Some(crate::Error::InvalidField {
-                what: "Y_value",
-                reason: "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)"
-            })
+            Some(crate::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "Y_value",
+                    reason: "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)"
+                }
+            ))
         );
         assert_eq!(
             mono(&[0xF0; 4]).validate().err(),
-            Some(crate::Error::InvalidField {
-                what: "Y_value",
-                reason: "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)"
-            })
+            Some(crate::Error::InvalidField(
+                broadcast_common::error::InvalidField {
+                    field: "Y_value",
+                    reason: "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)"
+                }
+            ))
         );
     }
 }

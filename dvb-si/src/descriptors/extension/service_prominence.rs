@@ -72,11 +72,13 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: sel.len(),
-                what: "service_prominence body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: sel.len(),
+                    what: "service_prominence body",
+                },
+            ));
         }
         let sogi_list_length = sel[0] as usize;
         need_in(sel, 1 + sogi_list_length, "service_prominence body")?;
@@ -85,11 +87,13 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
         let mut k = 0;
         while k < sogi_slice.len() {
             if sogi_slice.len() - k < 2 {
-                return Err(Error::BufferTooShort {
-                    need: 1 + k + 2,
-                    have: sel.len(),
-                    what: "service_prominence body",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: 1 + k + 2,
+                        have: sel.len(),
+                        what: "service_prominence body",
+                    },
+                ));
             }
             let byte0 = sogi_slice[k];
             let byte1 = sogi_slice[k + 1];
@@ -103,11 +107,13 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
                 let (b, _) =
                     sogi_slice[k..]
                         .split_first_chunk::<2>()
-                        .ok_or(Error::BufferTooShort {
-                            need: 1 + k + 2,
-                            have: sel.len(),
-                            what: "service_prominence body",
-                        })?;
+                        .ok_or(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: 1 + k + 2,
+                                have: sel.len(),
+                                what: "service_prominence body",
+                            },
+                        ))?;
                 let id = u16::from_be_bytes(*b);
                 k += 2;
                 Some(id)
@@ -116,20 +122,24 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             };
             let target_region_loop = if target_region_flag {
                 if sogi_slice.len() - k < 1 {
-                    return Err(Error::BufferTooShort {
-                        need: 1 + k + 1,
-                        have: sel.len(),
-                        what: "service_prominence body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: 1 + k + 1,
+                            have: sel.len(),
+                            what: "service_prominence body",
+                        },
+                    ));
                 }
                 let region_len = sogi_slice[k] as usize;
                 k += 1;
                 if sogi_slice.len() - k < region_len {
-                    return Err(Error::BufferTooShort {
-                        need: 1 + k + region_len,
-                        have: sel.len(),
-                        what: "service_prominence body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: 1 + k + region_len,
+                            have: sel.len(),
+                            what: "service_prominence body",
+                        },
+                    ));
                 }
                 let region_bytes = &sogi_slice[k..k + region_len];
                 k += region_len;
@@ -359,7 +369,7 @@ mod tests {
         let bytes = wrap(0x22, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 
@@ -370,7 +380,7 @@ mod tests {
         let bytes = wrap(0x22, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 

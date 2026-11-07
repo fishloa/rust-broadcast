@@ -31,19 +31,19 @@ fn a_truncated_pack_header_reports_what_is_missing() {
     assert!(pack.len() >= PACK_HEADER_FIXED_LEN);
     assert_eq!(
         PackHeader::parse(&pack[..PACK_HEADER_FIXED_LEN - 1]).unwrap_err(),
-        Error::BufferTooShort {
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: PACK_HEADER_FIXED_LEN,
             have: PACK_HEADER_FIXED_LEN - 1,
             what: "pack_header",
-        }
+        })
     );
     assert_eq!(
         PackHeader::parse(&[]).unwrap_err(),
-        Error::BufferTooShort {
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: PACK_HEADER_FIXED_LEN,
             have: 0,
             what: "pack_header",
-        }
+        })
     );
 }
 
@@ -54,11 +54,11 @@ fn stuffing_declared_beyond_the_buffer_is_reported() {
     stuffed[13] = (stuffed[13] & !0x07) | 0x05;
     assert_eq!(
         PackHeader::parse(&stuffed).unwrap_err(),
-        Error::BufferTooShort {
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: PACK_HEADER_FIXED_LEN + 5,
             have: PACK_HEADER_FIXED_LEN,
             what: "pack_header stuffing bytes",
-        }
+        })
     );
 }
 
@@ -85,11 +85,11 @@ fn a_system_header_with_a_wrong_start_code_names_the_code() {
     );
     assert_eq!(
         SystemHeader::parse(&system_header[..3]).unwrap_err(),
-        Error::BufferTooShort {
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: 6,
             have: 3,
             what: "system_header prefix",
-        }
+        })
     );
 }
 
@@ -134,11 +134,11 @@ fn a_truncated_program_stream_map_reports_the_minimum_length() {
     let err = ProgramStreamMap::parse(&good[..5]).unwrap_err();
     assert_eq!(
         err,
-        Error::BufferTooShort {
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
             need: 12,
             have: 5,
             what: "program_stream_map",
-        }
+        })
     );
 }
 
@@ -148,7 +148,10 @@ fn serializing_into_a_short_buffer_reports_output_buffer_too_small_with_the_need
     let ph = PackHeader::parse(&pack).unwrap();
     let sh = SystemHeader::parse(&system_header).unwrap();
     let to_short = |e: &Error| match e {
-        Error::OutputBufferTooSmall { need, have } => Some((*need, *have)),
+        Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+            need,
+            have,
+        }) => Some((*need, *have)),
         _ => None,
     };
     test_fixtures::assert_short_buffers_rejected(

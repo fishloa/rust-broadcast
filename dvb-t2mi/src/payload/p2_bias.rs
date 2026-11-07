@@ -117,7 +117,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             &(P2BiasPayload::parse(&[0x00, 0x00, 0x00, 0x00])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -142,7 +142,9 @@ mod tests {
         let mut buf = [0u8; 4];
         assert_eq!(
             payload.serialize_into(&mut buf).err(),
-            Some(crate::Error::OutputBufferTooSmall { need: 5, have: 4 })
+            Some(crate::Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall { need: 5, have: 4 }
+            ))
         );
     }
 }

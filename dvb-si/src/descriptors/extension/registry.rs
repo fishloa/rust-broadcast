@@ -282,7 +282,7 @@ mod tests {
         let raw = [TAG];
         assert!(matches!(
             reg.parse(&raw).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

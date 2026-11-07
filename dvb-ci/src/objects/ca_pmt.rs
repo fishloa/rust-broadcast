@@ -256,11 +256,13 @@ pub(crate) fn parse_cmd_and_descriptors<'a>(
     }
     let end = *pos + info_length;
     if end > body.len() {
-        return Err(Error::LengthMismatch {
-            what,
-            declared: info_length,
-            actual: body.len().saturating_sub(*pos),
-        });
+        return Err(Error::LengthMismatch(
+            broadcast_common::error::LengthMismatch {
+                what,
+                declared: info_length,
+                actual: body.len().saturating_sub(*pos),
+            },
+        ));
     }
     let cmd_id = CaPmtCmdId::from_u8(body[*pos]);
     let descriptors = &body[*pos + 1..end];

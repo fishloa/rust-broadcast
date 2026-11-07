@@ -154,11 +154,13 @@ impl<'a> Parse<'a> for TcObject {
                 reason: "length_field must be 1",
             });
         }
-        let t_c_id = *bytes.get(1 + hdr).ok_or(Error::BufferTooShort {
-            need: 1 + hdr + 1,
-            have: bytes.len(),
-            what: "TcObject t_c_id",
-        })?;
+        let t_c_id = *bytes.get(1 + hdr).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1 + hdr + 1,
+                have: bytes.len(),
+                what: "TcObject t_c_id",
+            },
+        ))?;
         Ok(Self {
             tag,
             t_c_id,
@@ -304,11 +306,13 @@ impl<'a> Parse<'a> for CommandTpdu<'a> {
         let start = 1 + hdr;
         let end = start + len;
         if bytes.len() < end {
-            return Err(Error::LengthMismatch {
-                what: "C_TPDU",
-                declared: len,
-                actual: bytes.len().saturating_sub(start),
-            });
+            return Err(Error::LengthMismatch(
+                broadcast_common::error::LengthMismatch {
+                    what: "C_TPDU",
+                    declared: len,
+                    actual: bytes.len().saturating_sub(start),
+                },
+            ));
         }
         Ok(Self {
             tag,
@@ -459,11 +463,13 @@ fn parse_fixed<'a>(
     what: &'static str,
 ) -> Result<(LengthForm, &'a [u8])> {
     if bytes.is_empty() {
-        return Err(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what,
+            },
+        ));
     }
     if bytes[0] != expected {
         return Err(Error::UnexpectedTpduTag {
@@ -482,11 +488,13 @@ fn parse_fixed<'a>(
     let start = 1 + hdr;
     let end = start + body_len;
     if bytes.len() < end {
-        return Err(Error::BufferTooShort {
-            need: end,
-            have: bytes.len(),
-            what,
-        });
+        return Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: end,
+                have: bytes.len(),
+                what,
+            },
+        ));
     }
     Ok((form, &bytes[start..end]))
 }

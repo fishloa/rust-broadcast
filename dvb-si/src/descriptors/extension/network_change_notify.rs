@@ -172,11 +172,13 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
             let (cell_id_bytes, _) = sel
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<2>())
-                .ok_or(Error::BufferTooShort {
-                    need: pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
-                    have: sel.len(),
-                    what: "network_change_notify body",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
+                        have: sel.len(),
+                        what: "network_change_notify body",
+                    },
+                ))?;
             let cell_id = u16::from_be_bytes(*cell_id_bytes);
             let loop_length = sel[pos + CELL_HEADER_LEN] as usize;
             pos += CELL_HEADER_LEN + LOOP_LENGTH_LEN;
@@ -189,11 +191,13 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                 let remaining = inner_end - pos;
                 // At minimum we need CHANGE_BASE_LEN bytes for a basic entry.
                 if remaining < CHANGE_BASE_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: inner_end - remaining + CHANGE_BASE_LEN,
-                        have: sel.len(),
-                        what: "network_change_notify body",
-                    });
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: inner_end - remaining + CHANGE_BASE_LEN,
+                            have: sel.len(),
+                            what: "network_change_notify body",
+                        },
+                    ));
                 }
                 let network_change_id = sel[pos];
                 let network_change_version = sel[pos + 1];
@@ -214,20 +218,24 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
 
                 let invariant_ts = if invariant_ts_present == 1 {
                     if pos + INVARIANT_TS_LEN > inner_end {
-                        return Err(Error::BufferTooShort {
-                            need: pos + INVARIANT_TS_LEN,
-                            have: sel.len(),
-                            what: "network_change_notify body",
-                        });
+                        return Err(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + INVARIANT_TS_LEN,
+                                have: sel.len(),
+                                what: "network_change_notify body",
+                            },
+                        ));
                     }
                     let (inv_bytes, _) = sel
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<INVARIANT_TS_LEN>())
-                        .ok_or(Error::BufferTooShort {
-                            need: pos + INVARIANT_TS_LEN,
-                            have: sel.len(),
-                            what: "network_change_notify body",
-                        })?;
+                        .ok_or(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + INVARIANT_TS_LEN,
+                                have: sel.len(),
+                                what: "network_change_notify body",
+                            },
+                        ))?;
                     let ts = InvariantTs {
                         tsid: u16::from_be_bytes([inv_bytes[0], inv_bytes[1]]),
                         onid: u16::from_be_bytes([inv_bytes[2], inv_bytes[3]]),

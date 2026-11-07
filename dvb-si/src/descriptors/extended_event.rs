@@ -271,7 +271,7 @@ mod tests {
     fn parse_rejects_short_header() {
         assert!(matches!(
             ExtendedEventDescriptor::parse(&[TAG, 2, 0, 0]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -335,10 +335,10 @@ mod tests {
         let bytes = &[0x4E, 0x00, 0, 0, 0, 0, 0, 0];
         assert!(matches!(
             ExtendedEventDescriptor::parse(bytes).unwrap_err(),
-            Error::BufferTooShort {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 what: "ExtendedEventDescriptor body",
                 ..
-            }
+            })
         ));
     }
 

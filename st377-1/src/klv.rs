@@ -91,16 +91,20 @@ impl<'a> KlvItem<'a> {
         let key: UlBytes = ul_bytes_from_prefix(bytes);
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
         let value_start = 16 + len_token_size;
-        let len = usize::try_from(len).map_err(|_| Error::BufferTooShort {
-            need: usize::MAX,
-            have: bytes.len(),
-            what: "KLV value (length exceeds platform usize)",
+        let len = usize::try_from(len).map_err(|_| {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                need: usize::MAX,
+                have: bytes.len(),
+                what: "KLV value (length exceeds platform usize)",
+            })
         })?;
-        let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort {
-            need: usize::MAX,
-            have: bytes.len(),
-            what: "KLV value (length overflow)",
-        })?;
+        let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: usize::MAX,
+                have: bytes.len(),
+                what: "KLV value (length overflow)",
+            },
+        ))?;
         need_in(bytes, value_end, "KLV value")?;
         Ok((
             KlvItem {
@@ -119,11 +123,13 @@ impl<'a> Parse<'a> for KlvItem<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (item, consumed) = Self::parse_prefix(bytes)?;
         if consumed != bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: consumed,
-                have: bytes.len(),
-                what: "KLV item (trailing bytes after exact-fit parse)",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: consumed,
+                    have: bytes.len(),
+                    what: "KLV item (trailing bytes after exact-fit parse)",
+                },
+            ));
         }
         Ok(item)
     }
@@ -189,10 +195,12 @@ mod tests {
         let mut buf = alloc::vec![0u8; need - 1];
         assert_eq!(
             item.serialize_into(&mut buf),
-            Err(Error::OutputBufferTooSmall {
-                need,
-                have: need - 1
-            })
+            Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need,
+                    have: need - 1
+                }
+            ))
         );
     }
 
@@ -262,7 +270,7 @@ mod tests {
     fn truncated_key_is_error() {
         assert!(matches!(
             KlvItem::parse(&[0u8; 10]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 

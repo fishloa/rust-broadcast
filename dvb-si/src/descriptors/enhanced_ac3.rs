@@ -287,7 +287,7 @@ mod tests {
     fn parse_rejects_short_buffer() {
         assert!(matches!(
             EnhancedAc3Descriptor::parse(&[TAG]).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

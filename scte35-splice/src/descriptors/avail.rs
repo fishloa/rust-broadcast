@@ -36,18 +36,21 @@ impl<'a> Parse<'a> for AvailDescriptor {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "avail_descriptor")?;
         if body.len() < 4 {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + 4,
-                have: bytes.len(),
-                what: "avail_descriptor provider_avail_id",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: HEADER_LEN + 4,
+                    have: bytes.len(),
+                    what: "avail_descriptor provider_avail_id",
+                },
+            ));
         }
-        let provider_avail_id =
-            u32::from_be_bytes(*body.first_chunk::<4>().ok_or(Error::BufferTooShort {
+        let provider_avail_id = u32::from_be_bytes(*body.first_chunk::<4>().ok_or(
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
                 need: HEADER_LEN + 4,
                 have: bytes.len(),
                 what: "avail_descriptor provider_avail_id",
-            })?);
+            }),
+        )?);
         Ok(Self {
             identifier,
             provider_avail_id,

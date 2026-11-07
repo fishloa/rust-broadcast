@@ -216,7 +216,7 @@ mod tests {
         let bytes = [TAG, 5, 0x80, 0x00, 0x01];
         assert!(matches!(
             ServiceAvailabilityDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
@@ -234,7 +234,7 @@ mod tests {
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::OutputBufferTooSmall { .. }
+            Error::OutputBufferTooSmall(..)
         ));
     }
 

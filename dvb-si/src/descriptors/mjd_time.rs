@@ -56,11 +56,13 @@ impl MjdBcdTime {
             .and_then(|s| s.first_chunk::<MJD_BCD_LEN>())
         {
             Some(b) => Ok(Self(*b)),
-            None => Err(Error::BufferTooShort {
-                need: off.saturating_add(MJD_BCD_LEN),
-                have: bytes.len(),
-                what,
-            }),
+            None => Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: off.saturating_add(MJD_BCD_LEN),
+                    have: bytes.len(),
+                    what,
+                },
+            )),
         }
     }
 
@@ -107,11 +109,13 @@ mod tests {
     fn read_rejects_short_buffer() {
         assert!(matches!(
             MjdBcdTime::read(&[0; 4], 0, "t"),
-            Err(Error::BufferTooShort {
-                need: 5,
-                have: 4,
-                what: "t"
-            })
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 5,
+                    have: 4,
+                    what: "t"
+                }
+            ))
         ));
     }
 }

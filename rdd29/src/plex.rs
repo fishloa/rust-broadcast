@@ -64,11 +64,11 @@ pub(crate) fn write_plex(
     field: &'static str,
 ) -> Result<()> {
     if value > PLEX_MAX_VALUE {
-        return Err(Error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
             field,
             value,
             reason: "exceeds the Plex-encodable maximum 0xFFFFFFFE",
-        });
+        }));
     }
     let mut width = start_width;
     loop {
@@ -171,7 +171,7 @@ mod tests {
         let mut buf = [0u8; 8];
         let mut w = BitWriter::new(&mut buf);
         let err = write_plex(&mut w, PLEX_MAX_VALUE + 1, 8, "test").unwrap_err();
-        assert!(matches!(err, Error::InvalidValue { .. }));
+        assert!(matches!(err, Error::InvalidValue(..)));
     }
 
     #[test]

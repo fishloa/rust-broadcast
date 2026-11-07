@@ -79,18 +79,16 @@ impl<'a> AncDataDescriptor<'a> {
     /// Serialize back to bytes.
     ///
     /// # Errors
-    /// [`Error::BufferTooShort`] if `buf` is too small; [`Error::FieldTooWide`]
+    /// [`Error::BufferTooShort`] if `buf` is too small; [`Error::FieldOverflow`]
     /// if the body exceeds the 8-bit `descriptor_length`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        if self.inner_descriptors.len() > 0xFF {
-            return Err(Error::FieldTooWide {
-                what: "descriptor_length",
-                value: self.inner_descriptors.len() as u32,
-                bits: 8,
-            });
-        }
+        broadcast_common::len::fit_bits(
+            self.inner_descriptors.len() as u64,
+            8,
+            "descriptor_length",
+        )?;
         buf[0] = ANC_DATA_DESCRIPTOR_TAG;
         buf[1] = self.inner_descriptors.len() as u8;
         buf[HEADER_LEN..len].copy_from_slice(self.inner_descriptors);
@@ -117,10 +115,12 @@ mod tests {
         let mut out = vec![0u8; b.len() - 1];
         assert_eq!(
             d.serialize_into(&mut out),
-            Err(Error::OutputBufferTooSmall {
-                need: b.len(),
-                have: b.len() - 1
-            })
+            Err(Error::OutputBufferTooSmall(
+                broadcast_common::error::OutputBufferTooSmall {
+                    need: b.len(),
+                    have: b.len() - 1
+                }
+            ))
         );
     }
 
@@ -158,7 +158,7 @@ mod tests {
         let b = [ANC_DATA_DESCRIPTOR_TAG, 0x05, 0x01];
         assert!(matches!(
             AncDataDescriptor::parse(&b),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
     }
 }

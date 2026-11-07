@@ -417,16 +417,20 @@ impl<'a> LocalSet<'a> {
 
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
         let value_start = 16 + len_token_size;
-        let len = usize::try_from(len).map_err(|_| Error::BufferTooShort {
-            need: usize::MAX,
-            have: bytes.len(),
-            what: "Local Set value (length exceeds platform usize)",
+        let len = usize::try_from(len).map_err(|_| {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                need: usize::MAX,
+                have: bytes.len(),
+                what: "Local Set value (length exceeds platform usize)",
+            })
         })?;
-        let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort {
-            need: usize::MAX,
-            have: bytes.len(),
-            what: "Local Set value (length overflow)",
-        })?;
+        let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: usize::MAX,
+                have: bytes.len(),
+                what: "Local Set value (length overflow)",
+            },
+        ))?;
         need_in(bytes, value_end, "Local Set value")?;
 
         let mut cursor = &bytes[value_start..value_end];
@@ -445,19 +449,23 @@ impl<'a> LocalSet<'a> {
             // #1108/MX-W1: `item_len` is a 64-bit length; a bare `as usize`
             // truncates it on a 32-bit target instead of rejecting an
             // over-range value.
-            let item_len = usize::try_from(item_len).map_err(|_| Error::BufferTooShort {
-                need: usize::MAX,
-                have: rest.len(),
-                what: "Local Set item value (length exceeds platform usize)",
+            let item_len = usize::try_from(item_len).map_err(|_| {
+                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                    need: usize::MAX,
+                    have: rest.len(),
+                    what: "Local Set item value (length exceeds platform usize)",
+                })
             })?;
             let value_start = item_len_size;
             let value_end = value_start
                 .checked_add(item_len)
-                .ok_or(Error::BufferTooShort {
-                    need: usize::MAX,
-                    have: rest.len(),
-                    what: "Local Set item value (length overflow)",
-                })?;
+                .ok_or(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: usize::MAX,
+                        have: rest.len(),
+                        what: "Local Set item value (length overflow)",
+                    },
+                ))?;
             need_in(rest, value_end, "Local Set item value")?;
             items.push(LocalSetItem {
                 tag,
@@ -497,11 +505,13 @@ impl<'a> Parse<'a> for LocalSet<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (set, consumed) = Self::parse_prefix(bytes)?;
         if consumed != bytes.len() {
-            return Err(Error::BufferTooShort {
-                need: consumed,
-                have: bytes.len(),
-                what: "Local Set (trailing bytes after exact-fit parse)",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: consumed,
+                    have: bytes.len(),
+                    what: "Local Set (trailing bytes after exact-fit parse)",
+                },
+            ));
         }
         Ok(set)
     }

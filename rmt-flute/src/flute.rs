@@ -44,11 +44,13 @@ impl ExtFdt {
     /// whose HET is [`HET_EXT_FDT`] (the 24 bits after the HET byte).
     pub fn parse(content: &[u8]) -> Result<Self> {
         if content.len() != 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: content.len(),
-                what: "EXT_FDT content",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: content.len(),
+                    what: "EXT_FDT content",
+                },
+            ));
         }
         // 24 bits: V(4) | instance_id(20).
         let v = content[0] >> 4;
@@ -62,20 +64,8 @@ impl ExtFdt {
 
     /// Encode the 3 content bytes (the 24 bits after HET).
     pub fn to_content(&self) -> Result<[u8; 3]> {
-        if self.version > 0x0F {
-            return Err(Error::FieldTooWide {
-                what: "EXT_FDT V",
-                value: self.version as u64,
-                bits: 4,
-            });
-        }
-        if self.instance_id > FDT_INSTANCE_ID_MAX {
-            return Err(Error::FieldTooWide {
-                what: "FDT Instance ID",
-                value: self.instance_id as u64,
-                bits: 20,
-            });
-        }
+        broadcast_common::len::fit_bits(self.version as u64, 4, "EXT_FDT V")?;
+        broadcast_common::len::fit_bits(self.instance_id as u64, 20, "FDT Instance ID")?;
         Ok([
             (self.version << 4) | ((self.instance_id >> 16) as u8 & 0x0F),
             (self.instance_id >> 8) as u8,
@@ -191,11 +181,13 @@ impl ExtCenc {
     /// whose HET is [`HET_EXT_CENC`]: `CENC(8) | Reserved(16)`.
     pub fn parse(content: &[u8]) -> Result<Self> {
         if content.len() != 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: content.len(),
-                what: "EXT_CENC content",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: content.len(),
+                    what: "EXT_CENC content",
+                },
+            ));
         }
         Ok(ExtCenc {
             algorithm: CencAlgorithm::from_u8(content[0]),
@@ -280,7 +272,7 @@ mod tests {
             version: 2,
             instance_id: FDT_INSTANCE_ID_MAX + 1,
         };
-        assert!(matches!(f.to_content(), Err(Error::FieldTooWide { .. })));
+        assert!(matches!(f.to_content(), Err(Error::FieldOverflow(..))));
     }
 
     #[test]

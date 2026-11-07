@@ -99,7 +99,7 @@ fn every_descriptor_in_the_tsduck_pmt_is_typed_and_round_trips() {
             0x3F if d[2] == 0x13 => {
                 assert!(matches!(
                     &(Mpeg2ExtensionDescriptor::parse(d)),
-                    Err(dvb_si::error::Error::BufferTooShort { .. })
+                    Err(dvb_si::error::Error::BufferTooShort(..))
                 ));
             }
             0x3F => {
@@ -359,7 +359,7 @@ fn hevc_subregion_follows_the_spec_and_diverges_from_tsduck() {
     // silently reinterpreted.
     assert!(matches!(
         Mpeg2ExtensionDescriptor::parse(&raw),
-        Err(Error::BufferTooShort { .. })
+        Err(Error::BufferTooShort(..))
     ));
     // The offsets TSDuck wrote are exactly what the spec loop reads when the
     // count says two: patching SubstreamCountMinus1 to 2 yields one clean layout.
@@ -399,7 +399,7 @@ fn virtual_segmentation_follows_the_spec_and_diverges_from_tsduck() {
     // consumes 30 00 1f, partition 1 then starts at 5f and is truncated. Rejected.
     assert!(matches!(
         Mpeg2ExtensionDescriptor::parse(&b),
-        Err(Error::BufferTooShort { .. })
+        Err(Error::BufferTooShort(..))
     ));
     // The same bytes with the field patched to 0 (MDL = 1, a 13-bit duration, what
     // TSDuck meant) parse cleanly under the spec reading.

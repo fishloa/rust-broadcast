@@ -334,23 +334,26 @@ fn adaptation_field_skip(pkt: &[u8], has_adaptation: bool) -> usize {
 impl<'a> TsPacket<'a> {
     /// Parse a single 188-byte TS packet from a buffer.
     ///
-    /// Returns `Err(Error::InvalidSyncByte)` if the first byte is not `0x47`,
+    /// Returns `Err(Error::InvalidSync)` if the first byte is not `0x47`,
     /// `Err(Error::BufferTooShort)` if fewer than 188 bytes, or `Ok` with
     /// the parsed packet otherwise.
     pub fn parse(buf: &'a [u8]) -> Result<Self> {
         need_in(buf, TS_PACKET_SIZE, "TsPacket")?;
         if buf[0] != TS_SYNC_BYTE {
-            return Err(Error::InvalidSyncByte { found: buf[0] });
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "TS sync byte",
+                expected: u32::from(TS_SYNC_BYTE),
+                found: u32::from(buf[0]),
+            }));
         }
 
-        let raw: &[u8; TS_PACKET_SIZE] =
-            buf[..TS_PACKET_SIZE]
-                .try_into()
-                .map_err(|_| Error::BufferTooShort {
-                    need: TS_PACKET_SIZE,
-                    have: buf.len(),
-                    what: "TsPacket::parse (array conversion)",
-                })?;
+        let raw: &[u8; TS_PACKET_SIZE] = buf[..TS_PACKET_SIZE].try_into().map_err(|_| {
+            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                need: TS_PACKET_SIZE,
+                have: buf.len(),
+                what: "TsPacket::parse (array conversion)",
+            })
+        })?;
 
         let header = TsHeader::parse(&raw[..4])?;
 
@@ -487,11 +490,13 @@ impl Pcr {
         let b: &[u8; PCR_FIELD_LEN] = af
             .get(at..at + PCR_FIELD_LEN)
             .and_then(|s| s.try_into().ok())
-            .ok_or(Error::BufferTooShort {
-                need: at + PCR_FIELD_LEN,
-                have: af.len(),
-                what: "adaptation_field PCR",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: at + PCR_FIELD_LEN,
+                    have: af.len(),
+                    what: "adaptation_field PCR",
+                },
+            ))?;
         let base = ((b[0] as u64) << 25)
             | ((b[1] as u64) << 17)
             | ((b[2] as u64) << 9)
@@ -647,11 +652,13 @@ impl<'a> AdaptationFieldExtension<'a> {
         let ext_len = data[0] as usize;
         // At least 1 byte (the flags byte) must be present inside the extension.
         if data.len() < 1 + ext_len || ext_len < 1 {
-            return Err(Error::BufferTooShort {
-                need: 2.max(1 + ext_len),
-                have: data.len(),
-                what: "adaptation_field_extension body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 2.max(1 + ext_len),
+                    have: data.len(),
+                    what: "adaptation_field_extension body",
+                },
+            ));
         }
         let ext = &data[1..1 + ext_len]; // extension bytes, starts with flags byte
         let flags = ext[0];
@@ -875,11 +882,13 @@ impl<'a> AdaptationField<'a> {
     /// `adaptation_field_length` byte itself. This matches how
     /// `TsPacket::parse` captures and hands them off.
     pub(crate) fn parse(af: &'a [u8]) -> Result<Self> {
-        let flags = *af.first().ok_or(Error::BufferTooShort {
-            need: 1,
-            have: 0,
-            what: "adaptation_field flags",
-        })?;
+        let flags = *af.first().ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "adaptation_field flags",
+            },
+        ))?;
         let mut cursor = 1usize;
 
         let mut pcr_reserved = PCR_RESERVED_VALUE;
@@ -901,11 +910,13 @@ impl<'a> AdaptationField<'a> {
             None
         };
         let splice_countdown = if flags & AF_SPLICING_FLAG != 0 {
-            let b = *af.get(cursor).ok_or(Error::BufferTooShort {
-                need: cursor + 1,
-                have: af.len(),
-                what: "adaptation_field splice_countdown",
-            })?;
+            let b = *af.get(cursor).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cursor + 1,
+                    have: af.len(),
+                    what: "adaptation_field splice_countdown",
+                },
+            ))?;
             cursor += 1;
             Some(b as i8)
         } else {
@@ -915,18 +926,22 @@ impl<'a> AdaptationField<'a> {
         // transport_private_data (ISO/IEC 13818-1 §2.4.3.4):
         // transport_private_data_length(8) + transport_private_data_byte * N
         let transport_private_data = if flags & AF_TRANSPORT_PRIVATE_DATA_FLAG != 0 {
-            let tpd_len = *af.get(cursor).ok_or(Error::BufferTooShort {
-                need: cursor + 1,
-                have: af.len(),
-                what: "transport_private_data_length",
-            })? as usize;
+            let tpd_len = *af.get(cursor).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cursor + 1,
+                    have: af.len(),
+                    what: "transport_private_data_length",
+                },
+            ))? as usize;
             cursor += 1;
             let end = cursor + tpd_len;
-            let slice = af.get(cursor..end).ok_or(Error::BufferTooShort {
-                need: end,
-                have: af.len(),
-                what: "transport_private_data",
-            })?;
+            let slice = af.get(cursor..end).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: end,
+                    have: af.len(),
+                    what: "transport_private_data",
+                },
+            ))?;
             cursor = end;
             Some(slice)
         } else {
@@ -935,11 +950,13 @@ impl<'a> AdaptationField<'a> {
 
         // adaptation_field_extension (ISO/IEC 13818-1 §2.4.3.5):
         let extension = if flags & AF_EXTENSION_FLAG != 0 {
-            let ext_data = af.get(cursor..).ok_or(Error::BufferTooShort {
-                need: cursor + 1,
-                have: af.len(),
-                what: "adaptation_field_extension",
-            })?;
+            let ext_data = af.get(cursor..).ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: cursor + 1,
+                    have: af.len(),
+                    what: "adaptation_field_extension",
+                },
+            ))?;
             let ext = AdaptationFieldExtension::parse(ext_data)?;
             // advance cursor past the extension (ext_data[0] = length byte)
             if !ext_data.is_empty() {
@@ -1291,7 +1308,7 @@ mod tests {
         pkt[0] = 0x46; // wrong sync byte
         let err = TsPacket::parse(&pkt).unwrap_err();
         match err {
-            Error::InvalidSyncByte { found } => assert_eq!(found, 0x46),
+            Error::InvalidSync(e) => assert_eq!(e.found, 0x46),
             other => panic!("expected InvalidSyncByte, got {other:?}"),
         }
     }
@@ -2236,7 +2253,7 @@ mod tests {
         let mut buf = [0u8; 3]; // need 7
         assert!(matches!(
             af.serialize_into(&mut buf),
-            Err(Error::OutputBufferTooSmall { .. })
+            Err(Error::OutputBufferTooSmall(..))
         ));
     }
 

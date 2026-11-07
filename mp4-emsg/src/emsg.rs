@@ -202,7 +202,12 @@ impl<'a> EmsgBox<'a> {
             });
         }
 
-        let version = EmsgVersion::from_u8(version).ok_or(Error::UnsupportedVersion { version })?;
+        let version = EmsgVersion::from_u8(version).ok_or(Error::UnsupportedVersion(
+            broadcast_common::error::UnsupportedVersion {
+                what: "emsg",
+                found: version,
+            },
+        ))?;
 
         // The box body region is [FULLBOX_HEADER_LEN, size).
         let body = &data[FULLBOX_HEADER_LEN..size as usize];
@@ -274,7 +279,7 @@ impl<'a> EmsgBox<'a> {
     ///
     /// # Errors
     /// Returns [`Error::OutputBufferTooSmall`] if `out` is too small,
-    /// [`Error::FieldTooWide`] if the total size does not fit in `u32` or
+    /// [`Error::FieldOverflow`] if the total size does not fit in `u32` or
     /// `flags` does not fit in 24 bits, and [`Error::InvalidString`] if
     /// `scheme_id_uri` or `value` contains an embedded NUL byte (valid UTF-8,
     /// but it would silently misframe the null-terminated wire string on
@@ -282,25 +287,13 @@ impl<'a> EmsgBox<'a> {
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         const FLAGS_MAX: u32 = 0x00FF_FFFF;
         let flags = self.flags;
-        if flags > FLAGS_MAX {
-            return Err(Error::FieldTooWide {
-                what: "flags",
-                value: u64::from(flags),
-                bits: 24,
-            });
-        }
+        broadcast_common::len::fit_mask(flags, FLAGS_MAX, "flags")?;
         reject_interior_nul(self.scheme_id_uri, "scheme_id_uri")?;
         reject_interior_nul(self.value, "value")?;
 
         let total = self.serialized_len();
         need_out(out, total)?;
-        if total > u32::MAX as usize {
-            return Err(Error::FieldTooWide {
-                what: "size",
-                value: total as u64,
-                bits: 32,
-            });
-        }
+        broadcast_common::len::fit_u32(total, "size")?;
 
         // size u32, type 'emsg', version u8, flags u24.
         out[0..U32_LEN].copy_from_slice(&(total as u32).to_be_bytes());
@@ -602,7 +595,9 @@ mod tests {
         out[8] = 9; // bad version
         assert!(matches!(
             EmsgBox::parse(&out),
-            Err(Error::UnsupportedVersion { version: 9 })
+            Err(Error::UnsupportedVersion(
+                broadcast_common::error::UnsupportedVersion { found: 9, .. }
+            ))
         ));
     }
 
@@ -713,7 +708,9 @@ mod tests {
         };
         assert!(matches!(
             b.to_vec(),
-            Err(Error::FieldTooWide { what: "flags", .. })
+            Err(Error::FieldOverflow(
+                broadcast_common::error::FieldOverflow { field: "flags", .. }
+            ))
         ));
     }
 

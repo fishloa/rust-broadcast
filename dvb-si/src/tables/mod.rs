@@ -391,11 +391,13 @@ pub(crate) fn check_loop_reaches_crc(
     what: &'static str,
 ) -> crate::Result<()> {
     if loop_end != crc_pos {
-        return Err(crate::error::Error::BufferTooShort {
-            need: crc_pos.saturating_sub(loop_end),
-            have: 0,
-            what,
-        });
+        return Err(crate::error::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: crc_pos.saturating_sub(loop_end),
+                have: 0,
+                what,
+            },
+        ));
     }
     Ok(())
 }

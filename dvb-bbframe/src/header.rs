@@ -280,11 +280,13 @@ impl<'a> Parse<'a> for Bbheader {
     fn parse(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         let (hdr, _) = bytes
             .split_first_chunk::<BBHEADER_LEN>()
-            .ok_or(Error::BufferTooShort {
-                need: BBHEADER_LEN,
-                have: bytes.len(),
-                what: "BBHEADER",
-            })?;
+            .ok_or(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: BBHEADER_LEN,
+                    have: bytes.len(),
+                    what: "BBHEADER",
+                },
+            ))?;
 
         let matype_bytes = [hdr[0], hdr[1]];
         let matype = Matype::try_from(matype_bytes)?;
@@ -474,7 +476,7 @@ mod tests {
     fn parse_rejects_buffer_shorter_than_10() {
         assert!(matches!(
             &(Bbheader::parse(&[0u8; 9])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 
@@ -1094,10 +1096,10 @@ mod tests {
         let err = hdr.serialize_into(&mut small).unwrap_err();
         assert_eq!(
             err,
-            Error::OutputBufferTooSmall {
+            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
                 need: BBHEADER_LEN,
                 have: small.len(),
-            }
+            })
         );
     }
 

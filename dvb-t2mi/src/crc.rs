@@ -15,21 +15,27 @@ pub const CRC_LEN: usize = 4;
 ///
 /// Returns `Ok(())` if the last 4 bytes match the computed CRC-32 of the
 /// preceding payload. Returns `Error::BufferTooShort` if `bytes.len() < CRC_LEN`.
-/// Returns `Error::CrcMismatch { computed, expected }` on mismatch.
+/// Returns `Error::CrcMismatch(broadcast_common::error::CrcMismatch { what, computed, expected })` on mismatch.
 pub fn validate_crc(bytes: &[u8]) -> Result<()> {
     let (payload, trailer) = bytes
         .split_last_chunk::<CRC_LEN>()
-        .ok_or(Error::BufferTooShort {
-            need: CRC_LEN,
-            have: bytes.len(),
-            what: "T2-MI CRC",
-        })?;
+        .ok_or(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: CRC_LEN,
+                have: bytes.len(),
+                what: "T2-MI CRC",
+            },
+        ))?;
     let expected = u32::from_be_bytes(*trailer);
     let computed = crc32_mpeg2::compute(payload);
     if computed == expected {
         Ok(())
     } else {
-        Err(Error::CrcMismatch { computed, expected })
+        Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+            what: "T2-MI packet",
+            computed,
+            expected,
+        }))
     }
 }
 
@@ -75,10 +81,11 @@ mod tests {
         *buf.last_mut().unwrap() ^= 0xFF;
         assert_eq!(
             validate_crc(&buf),
-            Err(Error::CrcMismatch {
+            Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+                what: "T2-MI packet",
                 computed: c,
                 expected: c ^ 0xFF
-            })
+            }))
         );
     }
 
@@ -94,10 +101,11 @@ mod tests {
         corrupted[0] ^= 0xFF;
         assert_eq!(
             validate_crc(&buf),
-            Err(Error::CrcMismatch {
+            Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+                what: "T2-MI packet",
                 computed: compute(&corrupted),
                 expected: c
-            })
+            }))
         );
     }
 
@@ -105,11 +113,13 @@ mod tests {
     fn validate_crc_rejects_too_short_input() {
         assert!(matches!(
             validate_crc(&[0x01, 0x02]),
-            Err(Error::BufferTooShort {
-                need: CRC_LEN,
-                have: 2,
-                ..
-            })
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: CRC_LEN,
+                    have: 2,
+                    ..
+                }
+            ))
         ));
     }
 }

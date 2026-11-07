@@ -53,7 +53,11 @@ impl Engine {
             return Err(Error::ShortPacket { len: packet.len() });
         }
         if packet[0] != TS_SYNC_BYTE {
-            return Err(Error::NoSyncByte { found: packet[0] });
+            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+                what: "TS sync byte",
+                expected: u32::from(TS_SYNC_BYTE),
+                found: u32::from(packet[0]),
+            }));
         }
         Ok(())
     }

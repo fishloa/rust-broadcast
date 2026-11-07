@@ -817,11 +817,13 @@ pub(crate) fn parse_l1_post_from_framed(
     let (b, _) = framed
         .get(pos..)
         .and_then(|s| s.split_first_chunk::<2>())
-        .ok_or(crate::Error::BufferTooShort {
-            need: pos + 2,
-            have: framed.len(),
-            what: "L1CONF_LEN",
-        })?;
+        .ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: pos + 2,
+                have: framed.len(),
+                what: "L1CONF_LEN",
+            },
+        ))?;
     let l1conf_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1conf_bytes = l1conf_len_bits.div_ceil(8);
@@ -837,11 +839,13 @@ pub(crate) fn parse_l1_post_from_framed(
     let (b, _) = framed
         .get(pos..)
         .and_then(|s| s.split_first_chunk::<2>())
-        .ok_or(crate::Error::BufferTooShort {
-            need: pos + 2,
-            have: framed.len(),
-            what: "L1DYN_CURR_LEN",
-        })?;
+        .ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: pos + 2,
+                have: framed.len(),
+                what: "L1DYN_CURR_LEN",
+            },
+        ))?;
     let l1dyn_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1dyn_bytes = l1dyn_len_bits.div_ceil(8);
@@ -853,11 +857,13 @@ pub(crate) fn parse_l1_post_from_framed(
     let (b, _) = framed
         .get(pos..)
         .and_then(|s| s.split_first_chunk::<2>())
-        .ok_or(crate::Error::BufferTooShort {
-            need: pos + 2,
-            have: framed.len(),
-            what: "L1EXT_LEN",
-        })?;
+        .ok_or(crate::Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: pos + 2,
+                have: framed.len(),
+                what: "L1EXT_LEN",
+            },
+        ))?;
     let l1ext_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1ext_bytes = l1ext_len_bits.div_ceil(8);

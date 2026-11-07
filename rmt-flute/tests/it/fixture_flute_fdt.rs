@@ -87,6 +87,6 @@ fn truncated_header_is_rejected() {
     let short = &data[..10];
     assert!(matches!(
         AlcPacket::parse(short, FEC_PAYLOAD_ID_128_LEN),
-        Err(rmt_flute::Error::BufferTooShort { .. })
+        Err(rmt_flute::Error::BufferTooShort(..))
     ));
 }

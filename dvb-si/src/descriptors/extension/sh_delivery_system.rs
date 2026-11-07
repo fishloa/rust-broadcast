@@ -770,11 +770,13 @@ impl<'a> Parse<'a> for ShDeliverySystem {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: sel.len(),
-                what: "SH_delivery_system body",
-            });
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 1,
+                    have: sel.len(),
+                    what: "SH_delivery_system body",
+                },
+            ));
         }
         let diversity_mode = ShDiversityMode::from_u8(sel[0] >> 4);
         let diversity_reserved = sel[0] & DIVERSITY_RESERVED_MASK;
@@ -782,11 +784,13 @@ impl<'a> Parse<'a> for ShDeliverySystem {
         let mut modulations = Vec::new();
         while pos < sel.len() {
             if sel.len() - pos < 3 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 3,
-                    have: sel.len(),
-                    what: "SH_delivery_system body",
-                });
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: pos + 3,
+                        have: sel.len(),
+                        what: "SH_delivery_system body",
+                    },
+                ));
             }
             let flags = sel[pos];
             let modulation_type = (flags >> 7) & 0x01;
@@ -836,11 +840,13 @@ impl<'a> Parse<'a> for ShDeliverySystem {
             let interleaver = if interleaver_presence == 1 {
                 if interleaver_type == 0 {
                     if sel.len() - pos < 4 {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 4,
-                            have: sel.len(),
-                            what: "SH_delivery_system body",
-                        });
+                        return Err(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + 4,
+                                have: sel.len(),
+                                what: "SH_delivery_system body",
+                            },
+                        ));
                     }
                     let b0 = sel[pos];
                     let b1 = sel[pos + 1];
@@ -861,11 +867,13 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                     })
                 } else {
                     if sel.len() - pos < 1 {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 1,
-                            have: sel.len(),
-                            what: "SH_delivery_system body",
-                        });
+                        return Err(Error::BufferTooShort(
+                            broadcast_common::error::BufferTooShort {
+                                need: pos + 1,
+                                have: sel.len(),
+                                what: "SH_delivery_system body",
+                            },
+                        ));
                     }
                     let common_multiplier = sel[pos] >> 2;
                     let reserved_future_use = sel[pos] & INTERLEAVER_RESERVED_MASK;
@@ -1328,7 +1336,7 @@ mod tests {
         let bytes = wrap(0x05, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 
@@ -1352,7 +1360,7 @@ mod tests {
         let bytes = wrap(0x05, &[]);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::BufferTooShort { .. }
+            crate::error::Error::BufferTooShort(..)
         ));
     }
 

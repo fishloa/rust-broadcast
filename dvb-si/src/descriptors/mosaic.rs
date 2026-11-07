@@ -635,7 +635,7 @@ mod tests {
         let bytes = [TAG, 5, 0x08, 0x00];
         assert!(matches!(
             MosaicDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 

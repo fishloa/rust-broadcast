@@ -154,15 +154,17 @@ mod tests {
     fn parse_rejects_buffer_shorter_than_3() {
         assert_eq!(
             AuxIqPayload::parse(&[0x00]).err(),
-            Some(crate::Error::BufferTooShort {
-                need: 3,
-                have: 1,
-                what: "AuxIqPayload header"
-            })
+            Some(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 3,
+                    have: 1,
+                    what: "AuxIqPayload header"
+                }
+            ))
         );
         assert!(matches!(
             &(AuxIqPayload::parse(&[])),
-            Err(crate::error::Error::BufferTooShort { .. })
+            Err(crate::error::Error::BufferTooShort(..))
         ));
     }
 

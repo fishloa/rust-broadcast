@@ -272,7 +272,7 @@ mod tests {
     fn rejects_bad_input() {
         assert!(matches!(
             MetadataSection::parse(&[0x06, 0xB0, 0x00]),
-            Err(Error::BufferTooShort { .. })
+            Err(Error::BufferTooShort(..))
         ));
         let mut b = vec![0u8; 12];
         b[0] = 0x05;

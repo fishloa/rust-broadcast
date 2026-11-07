@@ -112,7 +112,7 @@ mod tests {
         let bytes = [TAG, 4, 0x06, 0x50];
         assert!(matches!(
             CaIdentifierDescriptor::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { .. }
+            Error::BufferTooShort(..)
         ));
     }
 
