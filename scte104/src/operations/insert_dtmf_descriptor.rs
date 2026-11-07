@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for insert_DTMF_descriptor_request (§8.3, Table 8-4).
@@ -24,22 +25,10 @@ pub struct InsertDtmfDescriptor<'a> {
 impl<'a> Parse<'a> for InsertDtmfDescriptor<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: bytes.len(),
-                what: "insert_DTMF_descriptor pre_roll+dtmf_length",
-            });
-        }
+        need_in(bytes, 2, "insert_DTMF_descriptor pre_roll+dtmf_length")?;
         let pre_roll = bytes[0];
         let dtmf_length = bytes[1] as usize;
-        if bytes.len() < 2 + dtmf_length {
-            return Err(Error::BufferTooShort {
-                need: 2 + dtmf_length,
-                have: bytes.len(),
-                what: "insert_DTMF_descriptor DTMF chars",
-            });
-        }
+        need_in(bytes, 2 + dtmf_length, "insert_DTMF_descriptor DTMF chars")?;
         Ok(Self {
             pre_roll,
             dtmf_chars: &bytes[2..2 + dtmf_length],
@@ -54,12 +43,7 @@ impl Serialize for InsertDtmfDescriptor<'_> {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         buf[0] = self.pre_roll;
         buf[1] = broadcast_common::len::fit_u8(
             self.dtmf_chars.len(),

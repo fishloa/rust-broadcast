@@ -6,6 +6,7 @@
 //! literal to the type's `OperationDef::OP_ID`.
 
 use crate::error::Result;
+use broadcast_common::len::need_out;
 
 /// Declares [`AnyOperation`] + its dispatcher from one operation-type list.
 macro_rules! declare_operations {
@@ -115,12 +116,7 @@ macro_rules! declare_operations {
                         Self::$variant(c) => c.serialize_into(buf),
                     )+
                     Self::Unknown { body, .. } => {
-                        if buf.len() < body.len() {
-                            return Err(crate::error::Error::OutputBufferTooSmall {
-                                need: body.len(),
-                                have: buf.len(),
-                            });
-                        }
+                        need_out(buf, body.len())?;
                         buf[..body.len()].copy_from_slice(body);
                         Ok(body.len())
                     }

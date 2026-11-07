@@ -8,6 +8,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for insert_alternate_break_duration request (§8.3, Table 8-4).
@@ -46,12 +47,7 @@ impl Serialize for InsertAlternateBreakDuration {
         LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, LEN)?;
         buf[..LEN].copy_from_slice(&self.alternate_break_duration.to_be_bytes());
         Ok(LEN)
     }

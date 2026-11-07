@@ -10,6 +10,7 @@
 //!   `schedule_definition_data()` / `schedule_component_mode_request_data()`).
 
 use crate::error::{Error, Result};
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `time()` — §12.4.
@@ -42,13 +43,7 @@ impl Time {
 impl<'a> Parse<'a> for Time {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < TIME_LEN {
-            return Err(Error::BufferTooShort {
-                need: TIME_LEN,
-                have: bytes.len(),
-                what: "time()",
-            });
-        }
+        need_in(bytes, TIME_LEN, "time()")?;
         Ok(Self {
             seconds: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
             microseconds: u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
@@ -62,12 +57,7 @@ impl Serialize for Time {
         TIME_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < TIME_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: TIME_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, TIME_LEN)?;
         buf[0..4].copy_from_slice(&self.seconds.to_be_bytes());
         buf[4..8].copy_from_slice(&self.microseconds.to_be_bytes());
         Ok(TIME_LEN)
@@ -91,13 +81,7 @@ pub const SCHEDULE_TIME_LEN: usize = 4;
 impl<'a> Parse<'a> for SpliceScheduleTime {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < SCHEDULE_TIME_LEN {
-            return Err(Error::BufferTooShort {
-                need: SCHEDULE_TIME_LEN,
-                have: bytes.len(),
-                what: "schedule time",
-            });
-        }
+        need_in(bytes, SCHEDULE_TIME_LEN, "schedule time")?;
         Ok(Self {
             seconds: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
         })
@@ -110,12 +94,7 @@ impl Serialize for SpliceScheduleTime {
         SCHEDULE_TIME_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < SCHEDULE_TIME_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: SCHEDULE_TIME_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, SCHEDULE_TIME_LEN)?;
         buf[0..4].copy_from_slice(&self.seconds.to_be_bytes());
         Ok(SCHEDULE_TIME_LEN)
     }
@@ -256,26 +235,14 @@ impl<'a> Parse<'a> for Timestamp {
         match bytes[0] {
             0 => Ok(Self::None),
             1 => {
-                if bytes.len() < 7 {
-                    return Err(Error::BufferTooShort {
-                        need: 7,
-                        have: bytes.len(),
-                        what: "timestamp UTC",
-                    });
-                }
+                need_in(bytes, 7, "timestamp UTC")?;
                 Ok(Self::Utc(UtcTimestamp {
                     seconds: u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]),
                     microseconds: u16::from_be_bytes([bytes[5], bytes[6]]),
                 }))
             }
             2 => {
-                if bytes.len() < 5 {
-                    return Err(Error::BufferTooShort {
-                        need: 5,
-                        have: bytes.len(),
-                        what: "timestamp VITC",
-                    });
-                }
+                need_in(bytes, 5, "timestamp VITC")?;
                 Ok(Self::SmpteVitc(SmpteVitcTimestamp {
                     hours: bytes[1],
                     minutes: bytes[2],
@@ -284,13 +251,7 @@ impl<'a> Parse<'a> for Timestamp {
                 }))
             }
             3 => {
-                if bytes.len() < 3 {
-                    return Err(Error::BufferTooShort {
-                        need: 3,
-                        have: bytes.len(),
-                        what: "timestamp GPI",
-                    });
-                }
+                need_in(bytes, 3, "timestamp GPI")?;
                 Ok(Self::Gpi(GpiTimestamp {
                     gpi_number: bytes[1],
                     gpi_edge: bytes[2],
@@ -316,12 +277,7 @@ impl Serialize for Timestamp {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         match self {
             Self::None => {
                 buf[0] = 0;

@@ -6,6 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 /// `opID` for delete_ControlWord_data (§8.3, Table 8-4).
@@ -45,13 +46,7 @@ pub struct UpdateControlWord {
 impl<'a> Parse<'a> for DeleteControlWord {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < DELETE_LEN {
-            return Err(Error::BufferTooShort {
-                need: DELETE_LEN,
-                have: bytes.len(),
-                what: "delete_ControlWord data",
-            });
-        }
+        need_in(bytes, DELETE_LEN, "delete_ControlWord data")?;
         Ok(Self { cw_index: bytes[0] })
     }
 }
@@ -62,12 +57,7 @@ impl Serialize for DeleteControlWord {
         DELETE_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < DELETE_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: DELETE_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, DELETE_LEN)?;
         buf[0] = self.cw_index;
         Ok(DELETE_LEN)
     }
@@ -81,13 +71,7 @@ impl OperationDef<'_> for DeleteControlWord {
 impl<'a> Parse<'a> for UpdateControlWord {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < UPDATE_LEN {
-            return Err(Error::BufferTooShort {
-                need: UPDATE_LEN,
-                have: bytes.len(),
-                what: "update_ControlWord data",
-            });
-        }
+        need_in(bytes, UPDATE_LEN, "update_ControlWord data")?;
         Ok(Self {
             cw_index: bytes[0],
             cw_a: u64::from_be_bytes([
@@ -111,12 +95,7 @@ impl Serialize for UpdateControlWord {
         UPDATE_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < UPDATE_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: UPDATE_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, UPDATE_LEN)?;
         buf[0] = self.cw_index;
         buf[1..9].copy_from_slice(&self.cw_a.to_be_bytes());
         buf[9..17].copy_from_slice(&self.cw_b.to_be_bytes());

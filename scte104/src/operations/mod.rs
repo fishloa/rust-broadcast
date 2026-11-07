@@ -82,13 +82,7 @@ pub(crate) fn parse_provider_avail_ids(
     };
     let count = usize::from(count);
     let need = 1 + count * 4;
-    if bytes.len() < need {
-        return Err(Error::BufferTooShort {
-            need,
-            have: bytes.len(),
-            what: what_ids,
-        });
-    }
+    need_in(bytes, need, what_ids)?;
     Ok(bytes[1..need]
         .chunks_exact(4)
         .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
@@ -105,12 +99,7 @@ pub(crate) fn write_provider_avail_ids(
     what_count: &'static str,
 ) -> Result<usize> {
     let need = provider_avail_ids_len(ids);
-    if buf.len() < need {
-        return Err(Error::OutputBufferTooSmall {
-            need,
-            have: buf.len(),
-        });
-    }
+    need_out(buf, need)?;
     buf[0] = broadcast_common::len::fit_u8(ids.len(), what_count)?;
     for (chunk, &id) in buf[1..need].chunks_exact_mut(4).zip(ids) {
         chunk.copy_from_slice(&id.to_be_bytes());
@@ -295,6 +284,7 @@ pub struct AsAliveResponse;
 // ── Parse / Serialize impls for the simple single-operation types ──
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::time::TIME_LEN;
@@ -414,13 +404,7 @@ impl crate::traits::OperationDef<'_> for InjectResponse {
 impl<'a> Parse<'a> for InjectCompleteResponse {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < 2 {
-            return Err(Error::BufferTooShort {
-                need: 2,
-                have: bytes.len(),
-                what: "inject_complete_response",
-            });
-        }
+        need_in(bytes, 2, "inject_complete_response")?;
         Ok(Self {
             message_number: bytes[0],
             cue_message_count: bytes[1],
@@ -434,12 +418,7 @@ impl Serialize for InjectCompleteResponse {
         2
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < 2 {
-            return Err(Error::OutputBufferTooSmall {
-                need: 2,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, 2)?;
         buf[0] = self.message_number;
         buf[1] = self.cue_message_count;
         Ok(2)
@@ -456,13 +435,7 @@ impl crate::traits::OperationDef<'_> for InjectCompleteResponse {
 impl<'a> Parse<'a> for ConfigRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < CONFIG_REQUEST_LEN {
-            return Err(Error::BufferTooShort {
-                need: CONFIG_REQUEST_LEN,
-                have: bytes.len(),
-                what: "config_request_data",
-            });
-        }
+        need_in(bytes, CONFIG_REQUEST_LEN, "config_request_data")?;
         Ok(Self {
             as_ip_address: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
             as_socket_number: u16::from_be_bytes([bytes[4], bytes[5]]),
@@ -481,12 +454,7 @@ impl Serialize for ConfigRequest {
         CONFIG_REQUEST_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < CONFIG_REQUEST_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: CONFIG_REQUEST_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, CONFIG_REQUEST_LEN)?;
         buf[0..4].copy_from_slice(&self.as_ip_address.to_be_bytes());
         buf[4..6].copy_from_slice(&self.as_socket_number.to_be_bytes());
         buf[6] = self.activeflag;
@@ -506,13 +474,7 @@ impl crate::traits::OperationDef<'_> for ConfigRequest {
 impl<'a> Parse<'a> for ConfigResponse {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < CONFIG_RESPONSE_LEN {
-            return Err(Error::BufferTooShort {
-                need: CONFIG_RESPONSE_LEN,
-                have: bytes.len(),
-                what: "config_response_data",
-            });
-        }
+        need_in(bytes, CONFIG_RESPONSE_LEN, "config_response_data")?;
         Ok(Self {
             as_index: bytes[0],
             permanent_connection_requested: bytes[1],
@@ -526,12 +488,7 @@ impl Serialize for ConfigResponse {
         CONFIG_RESPONSE_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < CONFIG_RESPONSE_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: CONFIG_RESPONSE_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, CONFIG_RESPONSE_LEN)?;
         buf[0] = self.as_index;
         buf[1] = self.permanent_connection_requested;
         Ok(CONFIG_RESPONSE_LEN)
@@ -548,13 +505,7 @@ impl_empty_body!(ProvisioningResponse, "PROVISIONING_RESPONSE", 0x000C);
 impl<'a> Parse<'a> for FaultRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < FAULT_REQUEST_LEN {
-            return Err(Error::BufferTooShort {
-                need: FAULT_REQUEST_LEN,
-                have: bytes.len(),
-                what: "fault_request_data",
-            });
-        }
+        need_in(bytes, FAULT_REQUEST_LEN, "fault_request_data")?;
         let mut injector_service_name = [0u8; 32];
         injector_service_name.copy_from_slice(&bytes[6..38]);
         Ok(Self {
@@ -572,12 +523,7 @@ impl Serialize for FaultRequest {
         FAULT_REQUEST_LEN
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < FAULT_REQUEST_LEN {
-            return Err(Error::OutputBufferTooSmall {
-                need: FAULT_REQUEST_LEN,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, FAULT_REQUEST_LEN)?;
         buf[0..4].copy_from_slice(&self.injector_ip_address.to_be_bytes());
         buf[4..6].copy_from_slice(&self.injector_socket_number.to_be_bytes());
         buf[6..38].copy_from_slice(&self.injector_service_name);
@@ -719,12 +665,7 @@ impl<'a> AnySingleOperation<'a> {
             Self::AsAliveRequest(r) => r.serialize_into(buf),
             Self::AsAliveResponse(r) => r.serialize_into(buf),
             Self::Unknown { body, .. } => {
-                if buf.len() < body.len() {
-                    return Err(Error::OutputBufferTooSmall {
-                        need: body.len(),
-                        have: buf.len(),
-                    });
-                }
+                need_out(buf, body.len())?;
                 buf[..body.len()].copy_from_slice(body);
                 Ok(body.len())
             }

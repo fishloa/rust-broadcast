@@ -5,6 +5,7 @@
 //! `(component_tag, time)`.
 
 use alloc::vec::Vec;
+use broadcast_common::len::need_out;
 
 use crate::error::{Error, Result};
 use crate::time::SpliceScheduleTime;
@@ -65,12 +66,7 @@ impl Serialize for ScheduleComponentMode {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
+        need_out(buf, need)?;
         for (i, c) in self.components.iter().enumerate() {
             let off = i * ENTRY_LEN;
             buf[off] = c.component_tag;
