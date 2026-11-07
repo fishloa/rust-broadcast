@@ -410,13 +410,7 @@ impl<'a> PesExtension<'a> {
     }
 
     fn parse(data: &'a [u8]) -> Result<Self> {
-        if data.is_empty() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: 0,
-                what: "PES_extension flags byte",
-            });
-        }
+        need_in(data, 1, "PES_extension flags byte")?;
         let flags = data[0];
         let mut cursor = 1usize;
 
