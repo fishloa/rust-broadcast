@@ -1809,6 +1809,12 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
 mod tests {
     use super::*;
     use crate::route::RouteHandle;
+
+    #[test]
+    fn a_zero_timescale_rescales_without_dividing_by_zero() {
+        assert_eq!(rescale_to_90k(7, 0), 7 * 90_000);
+    }
+
     use crate::source::report_driver_progress;
     use crate::source::ts_program::TsIngestSession;
     use crate::source::ts_program::test_support::{

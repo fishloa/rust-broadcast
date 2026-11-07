@@ -127,6 +127,11 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_timescale_converts_without_dividing_by_zero() {
+        assert_eq!(ticks_to_us(5, 0), 5_000_000);
+    }
+
+    #[test]
     fn a_timeline_without_discontinuity_is_untouched() {
         let mut st = Stitcher::default();
         st.set_tracks(&[spec(1, 1000)]);
