@@ -40,6 +40,12 @@ models only part of the T-STD (see below).
 | `std` | yes | Forwards `std` to `broadcast-common`, `dvb-si`, `mpeg-ts`; off gives `no_std` + `alloc` |
 | `serde` | no | `serde::Serialize` on `ConformanceEvent`, `Indicator`, `Priority`, `Stats` |
 
+`serde` is opt-in and off by default; enable it explicitly:
+
+```toml
+dvb-conformance = { version = "12", features = ["serde"] }
+```
+
 ```toml
 [dependencies]
 dvb-conformance = "12"

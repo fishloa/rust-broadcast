@@ -254,6 +254,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `yoke` | no | `Yokeable` on the zero-copy views + `owned::Owned<T>`. |
 | `flate2` | no | zlib-decompress `compressed_module_descriptor` modules in object carousels (implies `std`). |
 
+`serde` is opt-in and off by default; enable it explicitly:
+
+```toml
+dvb-si = { version = "12", features = ["serde"] }
+```
+
 ```toml
 dvb-si = { version = "12", default-features = false }   # no_std + alloc, bring your own sections
 ```
