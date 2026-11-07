@@ -8,6 +8,7 @@
 //! [`broadcast_common::crc32_mpeg2`].
 
 use alloc::vec::Vec;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext_header::PayloadChain;
@@ -106,13 +107,7 @@ impl<'a> Sndu<'a> {
     /// (header..CRC) to be present; trailing bytes are ignored. Validates the
     /// CRC-32 trailer against a recomputed value (§4.6).
     pub fn parse(data: &'a [u8]) -> Result<Self> {
-        if data.len() < BASE_HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: BASE_HEADER_LEN,
-                have: data.len(),
-                what: "SNDU base header",
-            });
-        }
+        need_in(data, BASE_HEADER_LEN, "SNDU base header")?;
         let first = u16::from_be_bytes([data[0], data[1]]);
         let d_bit = (first & D_BIT_MASK) != 0;
         let length = first & LENGTH_MASK;
@@ -181,12 +176,7 @@ impl<'a> Sndu<'a> {
     /// the typed fields. Returns the number of bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
-        if out.len() < total {
-            return Err(Error::OutputBufferTooSmall {
-                need: total,
-                have: out.len(),
-            });
-        }
+        need_out(out, total)?;
 
         let length = self.length_field();
         if length > END_INDICATOR_LENGTH as usize {
