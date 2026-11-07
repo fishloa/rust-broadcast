@@ -609,11 +609,27 @@ mod tests {
         let pps = decode_avc_slice_pps(&pps_nal(0, false, false, 0)).unwrap();
         let n = slice(1, false, 1, Some(false), 1, &|_| {});
         for cut in 1..4 {
-            assert!(parse_avc_slice_header(&n[..cut], &sps, &pps).is_err());
+            assert!(matches!(
+                parse_avc_slice_header(&n[..cut], &sps, &pps),
+                Err(Error::BufferTooShort { .. })
+            ));
         }
         let other = AvcSlicePps { pps_id: 4, ..pps };
-        assert!(parse_avc_slice_header(&n, &sps, &other).is_err());
-        assert!(parse_avc_slice_header(&[0x67, 0x01], &sps, &pps).is_err());
+        assert!(matches!(
+            parse_avc_slice_header(&n, &sps, &other),
+            Err(Error::InvalidValue {
+                field: "pic_parameter_set_id",
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_avc_slice_header(&[0x67, 0x01], &sps, &pps),
+            Err(Error::InvalidValue {
+                field: "nal_unit_type",
+                value: 7,
+                ..
+            })
+        ));
     }
 
     fn params() -> (Vec<u8>, Vec<u8>) {

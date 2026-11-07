@@ -78,6 +78,12 @@ mod be_u64_tests {
                 what: "t"
             })
         ));
-        assert!(be_u64(&b, usize::MAX, "t").is_err());
+        assert!(matches!(
+            be_u64(&b, usize::MAX, "t"),
+            Err(Error::BufferTooShort {
+                need: usize::MAX,
+                ..
+            })
+        ));
     }
 }

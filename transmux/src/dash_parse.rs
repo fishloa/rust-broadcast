@@ -1989,7 +1989,13 @@ mod tests {
         ] {
             let mut reader = new_reader(bad);
             next_tag(&mut reader).unwrap();
-            assert!(text_content(&mut reader, "B", false).is_err(), "{bad}");
+            assert!(
+                matches!(
+                    text_content(&mut reader, "B", false),
+                    Err(DashParseError::Xml { .. })
+                ),
+                "{bad}"
+            );
         }
         let mut reader = new_reader("<B>x<c>y</c></B><Next/>");
         next_tag(&mut reader).unwrap();
@@ -2012,7 +2018,13 @@ mod tests {
         ] {
             let mut reader = new_reader(bad);
             next_tag(&mut reader).unwrap();
-            assert!(text_content(&mut reader, "B", false).is_err(), "{bad:?}");
+            assert!(
+                matches!(
+                    text_content(&mut reader, "B", false),
+                    Err(DashParseError::Xml { .. })
+                ),
+                "{bad:?}"
+            );
         }
         for bad in [r#"<X a="&#x1;"/>"#, "<X a=\"\u{1}\"/>"] {
             let mut reader = new_reader(bad);
@@ -2726,7 +2738,12 @@ mod tests {
         let tl = SegmentTimeline {
             segments: vec![s(Some(0), 1, -1)],
         };
-        assert!(tl.resolve(1, Some(u64::MAX)).is_err());
+        assert!(matches!(
+            tl.resolve(1, Some(u64::MAX)),
+            Err(DashParseError::TimelineTooLong {
+                count_hint: u64::MAX
+            })
+        ));
     }
 
     #[test]

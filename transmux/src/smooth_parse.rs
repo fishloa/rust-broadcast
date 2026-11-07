@@ -1693,12 +1693,18 @@ mod tests {
             sampling_rate: None,
             ..base.clone()
         };
-        assert!(synthesise_asc(AOT_AAC_LC, &no_rate).is_err());
+        assert!(matches!(
+            synthesise_asc(AOT_AAC_LC, &no_rate),
+            Err(crate::Error::UnsupportedCodec { .. })
+        ));
         let no_channels = QualityLevel {
             channels: None,
             ..base
         };
-        assert!(synthesise_asc(AOT_AAC_LC, &no_channels).is_err());
+        assert!(matches!(
+            synthesise_asc(AOT_AAC_LC, &no_channels),
+            Err(crate::Error::UnsupportedCodec { .. })
+        ));
     }
 
     /// The SPS-decoded geometry is authoritative, so an SPS whose coded width

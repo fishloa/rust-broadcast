@@ -473,6 +473,12 @@ mod tests {
             Err(Error::BufferTooShort { .. })
         ));
         // A body too short for the fixed record.
-        assert!(Vp9ConfigurationBox::parse(&[0x01, 0x00, 0x00, 0x00, 0x00]).is_err());
+        assert!(matches!(
+            Vp9ConfigurationBox::parse(&[0x01, 0x00, 0x00, 0x00, 0x00]),
+            Err(Error::BufferTooShort {
+                what: "vpcC body",
+                ..
+            })
+        ));
     }
 }

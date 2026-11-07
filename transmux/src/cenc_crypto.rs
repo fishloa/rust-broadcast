@@ -632,8 +632,14 @@ mod tests {
             subsamples: Vec::new(),
         };
         let mut buf = alloc::vec![0u8; 32];
-        assert!(validate_sample_decrypt(CencScheme::Cbcs, &bad_pattern, &entry, 32).is_err());
-        assert!(cbcs_sample(&bad_pattern, &entry, &KEY, &mut buf, CbcsOp::Decrypt).is_err());
+        assert!(matches!(
+            validate_sample_decrypt(CencScheme::Cbcs, &bad_pattern, &entry, 32),
+            Err(Error::InvalidInput(_))
+        ));
+        assert!(matches!(
+            cbcs_sample(&bad_pattern, &entry, &KEY, &mut buf, CbcsOp::Decrypt),
+            Err(Error::InvalidInput(_))
+        ));
     }
 
     /// CTR: encrypt then decrypt with the same iv/key/subsamples returns the

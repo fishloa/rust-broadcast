@@ -655,9 +655,15 @@ fn frame_payloads_reject_out_of_range_timestamps() {
     // Sanity: in-range input is accepted (so the Errs below are the guards).
     assert!(transmux::flv_frame_payloads(&media_with(0, 0)).is_ok());
     // 9 000 000 ms composition offset > SI24 (8 388 607).
-    assert!(transmux::flv_frame_payloads(&media_with(0, 9_000_000)).is_err());
+    assert!(matches!(
+        transmux::flv_frame_payloads(&media_with(0, 9_000_000)),
+        Err(transmux::FlvError::Codec(transmux::Error::InvalidInput(_)))
+    ));
     // DTS 2^32 ms is past the 32-bit millisecond clock.
-    assert!(transmux::flv_frame_payloads(&media_with(1 << 32, 1 << 32)).is_err());
+    assert!(matches!(
+        transmux::flv_frame_payloads(&media_with(1 << 32, 1 << 32)),
+        Err(transmux::FlvError::Codec(transmux::Error::InvalidInput(_)))
+    ));
 }
 
 // ---------------------------------------------------------------------------

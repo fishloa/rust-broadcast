@@ -421,14 +421,23 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
     };
     let mut too_wide = base.clone();
     too_wide.primary_window.max_scl[0] = 1 << 17;
-    assert!(too_wide.try_to_bytes().is_err());
+    assert!(matches!(
+        too_wide.try_to_bytes(),
+        Err(transmux::Error::FieldOverflow(_))
+    ));
     let mut bad_table = base.clone();
     bad_table.mastering_display_actual_peak_luminance = Some(PeakLuminanceTable {
         rows: 2,
         columns: 2,
         values: vec![0; 3],
     });
-    assert!(bad_table.try_to_bytes().is_err());
+    assert!(matches!(
+        bad_table.try_to_bytes(),
+        Err(transmux::Error::InvalidValue {
+            field: "mastering_display_actual_peak_luminance",
+            ..
+        })
+    ));
     let mut too_many_windows = base.clone();
     for k in 0..3 {
         too_many_windows.additional_windows.push(AdditionalWindow {
@@ -436,7 +445,14 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
             color_volume: transform(2),
         });
     }
-    assert!(too_many_windows.try_to_bytes().is_err());
+    assert!(matches!(
+        too_many_windows.try_to_bytes(),
+        Err(transmux::Error::InvalidValue {
+            field: "num_windows",
+            value: 4,
+            ..
+        })
+    ));
     let mut too_many_points = base;
     too_many_points.primary_window.distribution_max_rgb = (0..16u32)
         .map(|k| DistributionPoint {
@@ -444,7 +460,10 @@ fn serializing_inconsistent_values_is_an_error_not_a_misframed_payload() {
             percentile: k,
         })
         .collect();
-    assert!(too_many_points.try_to_bytes().is_err());
+    assert!(matches!(
+        too_many_points.try_to_bytes(),
+        Err(transmux::Error::FieldOverflow(_))
+    ));
 }
 
 fn hevc_track(media: &Media) -> &transmux::ir::Track {
