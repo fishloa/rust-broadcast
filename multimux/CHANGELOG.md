@@ -6,6 +6,7 @@
 - `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
 ### Changed
 - Depends on `broadcast-client` (its `tshttp` module) instead of the absorbed `tshttp-runtime` crate; the policy types are unchanged.
+- The Smooth output manifest is written through the shared `broadcast_common::xml_chars` writer helpers (output byte-identical); the in-crate XML test readers are namespace-aware.
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - DASH and LL-DASH share one manifest handler and `ServedEgress` (`output::dash::serve_mpd`); the in-crate tests share `body_string`, `drain` and `video_spec` from `testutil` (c7 G7).
 - The DASH period stitcher's `ticks_to_us` uses `broadcast_common::timescale::to_micros` (c6 F7).

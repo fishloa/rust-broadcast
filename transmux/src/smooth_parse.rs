@@ -296,12 +296,16 @@ impl crate::xml_walk::XmlWalkError for SmoothParseError {
     }
 }
 
-crate::xml_walk::xml_walk_fns!(SmoothParseError, None, smooth_limits());
+crate::xml_walk::xml_walk_fns!(SmoothParseError, None);
 
-/// The shared XML limits, with the attribute ceiling raised to twice
+/// The input bounds [`SmoothManifest::parse`] applies: the shared
+/// [`XmlLimits`] defaults with the attribute ceiling raised to twice
 /// [`MAX_CODEC_PRIVATE_DATA_HEX_LEN`] so that parser's own typed cap (not the
-/// generic one) is what rejects an oversized `CodecPrivateData`.
-fn smooth_limits() -> XmlLimits {
+/// generic one) is what rejects an oversized `CodecPrivateData`. Real Smooth
+/// manifests are a few KiB; the 4 MiB byte bound covers a multi-hour live
+/// manifest with 100 000 chunk entries.
+#[must_use]
+pub fn default_limits() -> XmlLimits {
     let mut limits = XmlLimits::default();
     limits.max_attribute_bytes = 2 * MAX_CODEC_PRIVATE_DATA_HEX_LEN;
     limits
@@ -547,8 +551,14 @@ impl SmoothManifest {
     /// the inverse of [`crate::smooth::SmoothPackager`]'s rendered XML
     /// output.
     pub fn parse(xml: &str) -> Result<SmoothManifest> {
+        Self::parse_with_limits(xml, default_limits())
+    }
+
+    /// [`SmoothManifest::parse`] under caller-chosen input bounds; a document
+    /// past one fails with [`SmoothParseError::TooLarge`].
+    pub fn parse_with_limits(xml: &str, limits: XmlLimits) -> Result<SmoothManifest> {
         const EL: &str = "SmoothStreamingMedia";
-        let mut xml_reader = new_reader(xml);
+        let mut xml_reader = new_reader_with(xml, limits);
         let reader = &mut xml_reader;
 
         let (attrs, self_closing) = match next_tag(reader)? {

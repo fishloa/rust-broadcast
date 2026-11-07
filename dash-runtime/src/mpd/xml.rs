@@ -10,7 +10,9 @@ use quick_xml::NsReader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 
-use crate::error::{Limit, MpdError};
+use broadcast_common::xml_chars::{LimitExceeded, XmlBudget};
+
+use crate::error::MpdError;
 use crate::limits::Limits;
 
 /// ISO/IEC 23009-1 clause 5.3.1 / Annex B: the MPD schema namespace.
@@ -105,6 +107,14 @@ const BOM: char = '\u{FEFF}';
 
 struct Reader<'a> {
     inner: NsReader<&'a [u8]>,
+    budget: XmlBudget,
+}
+
+fn exceeded(e: LimitExceeded) -> MpdError {
+    MpdError::TooLarge {
+        limit: e.limit.into(),
+        max: e.max,
+    }
 }
 
 fn ns_of(result: ResolveResult<'_>) -> Result<Ns, String> {
@@ -123,26 +133,12 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn attrs(&self, e: &BytesStart<'_>, limits: &Limits) -> Result<Vec<Attr>, MpdError> {
+    fn attrs(&self, e: &BytesStart<'_>) -> Result<Vec<Attr>, MpdError> {
         let attributes = broadcast_common::xml_chars::read_attributes_checked(
             &self.inner,
             e,
             |m| self.fail(m),
-            |count, value| {
-                if count > limits.max_attributes {
-                    return Err(MpdError::TooLarge {
-                        limit: Limit::Attributes,
-                        max: limits.max_attributes,
-                    });
-                }
-                if value.len() > limits.max_attribute_bytes {
-                    return Err(MpdError::TooLarge {
-                        limit: Limit::AttributeBytes,
-                        max: limits.max_attribute_bytes,
-                    });
-                }
-                Ok(())
-            },
+            |count, value| self.budget.admit_attribute(count, value).map_err(exceeded),
         )?;
         Ok(attributes
             .into_iter()
@@ -166,22 +162,18 @@ enum Frame {
 
 /// Read `xml` into an element tree rooted at the `MPD` element.
 pub(crate) fn read_tree(xml: &[u8], limits: &Limits) -> Result<Elem, MpdError> {
-    if xml.len() > limits.max_bytes {
-        return Err(MpdError::TooLarge {
-            limit: Limit::InputBytes,
-            max: limits.max_bytes,
-        });
-    }
+    let budget = XmlBudget::new(limits.xml_limits());
+    budget.check_input(xml.len()).map_err(exceeded)?;
     let text = core::str::from_utf8(xml).map_err(|e| MpdError::InvalidUtf8 {
         valid_up_to: e.valid_up_to(),
     })?;
     let text = text.strip_prefix(BOM).unwrap_or(text);
     let mut reader = Reader {
         inner: NsReader::from_str(text),
+        budget,
     };
 
     let mut stack: Vec<Frame> = Vec::new();
-    let mut elements = 0usize;
     let mut root: Option<Elem> = None;
 
     loop {
@@ -204,18 +196,9 @@ pub(crate) fn read_tree(xml: &[u8], limits: &Limits) -> Result<Elem, MpdError> {
                 if root.is_some() && stack.is_empty() {
                     return Err(reader.fail("more than one root element"));
                 }
-                elements += 1;
-                if elements > limits.max_elements {
-                    return Err(MpdError::TooLarge {
-                        limit: Limit::Elements,
-                        max: limits.max_elements,
-                    });
-                }
-                if stack.len() + 1 > limits.max_depth {
-                    return Err(MpdError::TooLarge {
-                        limit: Limit::Depth,
-                        max: limits.max_depth,
-                    });
+                reader.budget.open_element().map_err(exceeded)?;
+                if empty {
+                    reader.budget.close_element();
                 }
                 let ns = ns_result.map_err(|m| reader.fail(m))?;
                 let local = e.local_name().into_inner();
@@ -230,7 +213,7 @@ pub(crate) fn read_tree(xml: &[u8], limits: &Limits) -> Result<Elem, MpdError> {
                     Frame::Kept(Elem {
                         ns,
                         name: local.to_string(),
-                        attrs: reader.attrs(e, limits)?,
+                        attrs: reader.attrs(e)?,
                         children: Vec::new(),
                         text: String::new(),
                     })
@@ -244,7 +227,10 @@ pub(crate) fn read_tree(xml: &[u8], limits: &Limits) -> Result<Elem, MpdError> {
                 }
             }
             Event::End(_) => match stack.pop() {
-                Some(frame) => attach(frame, &mut stack, &mut root),
+                Some(frame) => {
+                    reader.budget.close_element();
+                    attach(frame, &mut stack, &mut root)
+                }
                 None => return Err(reader.fail("unexpected end tag")),
             },
             Event::DocType(_) => return Err(reader.fail("DOCTYPE declarations are not allowed")),

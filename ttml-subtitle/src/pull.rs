@@ -21,7 +21,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use broadcast_common::xml_chars::TagAttribute;
+use broadcast_common::xml_chars::{LimitExceeded, TagAttribute, XmlBudget, XmlLimits};
 use quick_xml::NsReader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::PrefixDeclaration;
@@ -124,15 +124,51 @@ pub(crate) struct Pull<'a> {
     pending: Option<Item>,
     /// The XML declaration, if the prolog carried one (set by [`Pull::root`]).
     declaration: Option<XmlDeclaration>,
+    budget: XmlBudget,
+}
+
+fn exceeded(e: LimitExceeded) -> Error {
+    Error::TooLarge {
+        limit: e.limit,
+        max: e.max,
+    }
 }
 
 impl<'a> Pull<'a> {
-    pub(crate) fn new(xml: &'a str) -> Self {
-        Self {
+    pub(crate) fn new(xml: &'a str, limits: XmlLimits) -> Result<Self> {
+        let budget = XmlBudget::new(limits);
+        budget.check_input(xml.len()).map_err(exceeded)?;
+        Ok(Self {
             reader: NsReader::from_str(xml),
             pending: None,
             declaration: None,
+            budget,
+        })
+    }
+
+    fn account(&mut self, event: &Event<'_>) -> Result<()> {
+        match event {
+            Event::Start(_) => self.budget.open_element().map_err(exceeded),
+            Event::Empty(_) => {
+                self.budget.open_element().map_err(exceeded)?;
+                self.budget.close_element();
+                Ok(())
+            }
+            Event::End(_) => {
+                self.budget.close_element();
+                Ok(())
+            }
+            _ => Ok(()),
         }
+    }
+
+    fn raw(&mut self) -> Result<Event<'a>> {
+        let event = match self.reader.read_event() {
+            Ok(event) => event,
+            Err(e) => return Err(self.fail(&e.to_string())),
+        };
+        self.account(&event)?;
+        Ok(event)
     }
 
     fn fail(&self, message: &str) -> Error {
@@ -144,7 +180,10 @@ impl<'a> Pull<'a> {
 
     /// The next event with its (owned) element-namespace resolution.
     fn read(&mut self) -> Result<(core::result::Result<Option<String>, String>, Event<'a>)> {
-        broadcast_common::xml_chars::read_event(&mut self.reader).map_err(|m| self.fail(&m))
+        let (ns, event) =
+            broadcast_common::xml_chars::read_event(&mut self.reader).map_err(|m| self.fail(&m))?;
+        self.account(&event)?;
+        Ok((ns, event))
     }
 
     /// The named namespace bindings in scope right now, innermost first.
@@ -172,8 +211,12 @@ impl<'a> Pull<'a> {
         empty: bool,
     ) -> Result<StartTag> {
         let namespace = ns.map_err(|m| self.fail(&m))?;
-        let attributes =
-            broadcast_common::xml_chars::read_attributes(&self.reader, e, |m| self.fail(m))?;
+        let attributes = broadcast_common::xml_chars::read_attributes_checked(
+            &self.reader,
+            e,
+            |m| self.fail(m),
+            |count, value| self.budget.admit_attribute(count, value).map_err(exceeded),
+        )?;
         let consumed = core::cell::RefCell::new(alloc::vec![false; attributes.len()]);
         let prefix = e.name().prefix().map(|p| String::from(p.into_inner()));
         Ok(StartTag {
@@ -276,10 +319,7 @@ impl<'a> Pull<'a> {
     /// and whitespace may follow.
     pub(crate) fn finish(&mut self) -> Result<()> {
         loop {
-            let event = match self.reader.read_event() {
-                Ok(event) => event,
-                Err(e) => return Err(self.fail(&e.to_string())),
-            };
+            let event = self.raw()?;
             match event {
                 Event::Eof => return Ok(()),
                 Event::Text(t) if t.trim_ascii().is_empty() => {}
@@ -297,10 +337,7 @@ impl<'a> Pull<'a> {
     /// semantic one (as it did when the whole document was read first).
     pub(crate) fn drain(&mut self) -> Result<()> {
         loop {
-            let event = match self.reader.read_event() {
-                Ok(event) => event,
-                Err(e) => return Err(self.fail(&e.to_string())),
-            };
+            let event = self.raw()?;
             match event {
                 Event::Eof => return Ok(()),
                 Event::DocType(_) => {
@@ -355,10 +392,7 @@ impl<'a> Pull<'a> {
         }
         let mut depth: usize = 1;
         while depth > 0 {
-            let event = match self.reader.read_event() {
-                Ok(event) => event,
-                Err(e) => return Err(self.fail(&e.to_string())),
-            };
+            let event = self.raw()?;
             if self.char_data(&event)?.is_some() {
                 continue;
             }

@@ -20,7 +20,7 @@ extern crate alloc;
 
 use alloc::string::{String, ToString};
 
-use broadcast_common::xml_chars::TagAttribute;
+use broadcast_common::xml_chars::{LimitExceeded, TagAttribute, XmlBudget, XmlLimits};
 use quick_xml::NsReader;
 use quick_xml::events::{BytesStart, Event};
 
@@ -115,13 +115,49 @@ impl StartTag {
 /// The pull parser: a [`quick_xml::NsReader`] over the input.
 pub(crate) struct Events<'a> {
     reader: NsReader<&'a [u8]>,
+    budget: XmlBudget,
+}
+
+fn exceeded(e: LimitExceeded) -> Error {
+    Error::TooLarge {
+        limit: e.limit,
+        max: e.max,
+    }
 }
 
 impl<'a> Events<'a> {
-    pub(crate) fn new(xml: &'a str) -> Self {
-        Self {
+    pub(crate) fn new(xml: &'a str, limits: XmlLimits) -> Result<Self> {
+        let budget = XmlBudget::new(limits);
+        budget.check_input(xml.len()).map_err(exceeded)?;
+        Ok(Self {
             reader: NsReader::from_str(xml),
+            budget,
+        })
+    }
+
+    fn account(&mut self, event: &Event<'_>) -> Result<()> {
+        match event {
+            Event::Start(_) => self.budget.open_element().map_err(exceeded),
+            Event::Empty(_) => {
+                self.budget.open_element().map_err(exceeded)?;
+                self.budget.close_element();
+                Ok(())
+            }
+            Event::End(_) => {
+                self.budget.close_element();
+                Ok(())
+            }
+            _ => Ok(()),
         }
+    }
+
+    fn raw(&mut self) -> Result<Event<'a>> {
+        let event = match self.reader.read_event() {
+            Ok(event) => event,
+            Err(e) => return Err(self.fail(&e.to_string())),
+        };
+        self.account(&event)?;
+        Ok(event)
     }
 
     fn fail(&self, message: &str) -> Error {
@@ -140,8 +176,12 @@ impl<'a> Events<'a> {
         empty: bool,
     ) -> Result<StartTag> {
         let namespace = ns.map_err(|m| self.fail(&m))?;
-        let attributes =
-            broadcast_common::xml_chars::read_attributes(&self.reader, e, |m| self.fail(m))?;
+        let attributes = broadcast_common::xml_chars::read_attributes_checked(
+            &self.reader,
+            e,
+            |m| self.fail(m),
+            |count, value| self.budget.admit_attribute(count, value).map_err(exceeded),
+        )?;
         Ok(StartTag {
             namespace,
             local: e.local_name().into_inner().to_string(),
@@ -152,7 +192,10 @@ impl<'a> Events<'a> {
 
     /// The next event with its (owned) element-namespace resolution.
     fn read(&mut self) -> Result<(core::result::Result<Option<String>, String>, Event<'a>)> {
-        broadcast_common::xml_chars::read_event(&mut self.reader).map_err(|m| self.fail(&m))
+        let (ns, event) =
+            broadcast_common::xml_chars::read_event(&mut self.reader).map_err(|m| self.fail(&m))?;
+        self.account(&event)?;
+        Ok((ns, event))
     }
 
     /// The one place character data is decoded and validated: `Some(text)` for
@@ -171,10 +214,7 @@ impl<'a> Events<'a> {
     fn skip_content(&mut self) -> Result<()> {
         let mut depth: usize = 1;
         while depth > 0 {
-            let event = match self.reader.read_event() {
-                Ok(event) => event,
-                Err(e) => return Err(self.fail(&e.to_string())),
-            };
+            let event = self.raw()?;
             if self.char_data(&event)?.is_some() {
                 continue;
             }
@@ -243,10 +283,7 @@ impl<'a> Events<'a> {
     /// well-formedness error elsewhere in the document first.
     pub(crate) fn finish(&mut self) -> Result<()> {
         loop {
-            let event = self
-                .reader
-                .read_event()
-                .map_err(|e| self.fail(&e.to_string()))?;
+            let event = self.raw()?;
             match event {
                 Event::Eof => return Ok(()),
                 Event::Text(t) if t.trim_ascii().is_empty() => {}
@@ -264,10 +301,7 @@ impl<'a> Events<'a> {
     /// semantic one, as it would have when the whole document was read first).
     pub(crate) fn drain(&mut self) -> Result<()> {
         loop {
-            let event = self
-                .reader
-                .read_event()
-                .map_err(|e| self.fail(&e.to_string()))?;
+            let event = self.raw()?;
             match event {
                 Event::Eof => return Ok(()),
                 Event::DocType(_) => {
@@ -305,10 +339,7 @@ impl<'a> Events<'a> {
         }
         let mut text = String::new();
         loop {
-            let event = match self.reader.read_event() {
-                Ok(event) => event,
-                Err(e) => return Err(self.fail(&e.to_string())),
-            };
+            let event = self.raw()?;
             if let Some(piece) = self.char_data(&event)? {
                 text.push_str(&piece);
                 continue;
@@ -528,7 +559,7 @@ mod tests {
     use super::*;
 
     fn skip_root(xml: &str) -> Result<()> {
-        let mut ev = Events::new(xml);
+        let mut ev = Events::new(xml, XmlLimits::default())?;
         let root = ev.root()?;
         ev.skip(&root)
     }

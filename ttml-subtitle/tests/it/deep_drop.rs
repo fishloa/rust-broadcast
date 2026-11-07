@@ -103,7 +103,10 @@ fn hostile_deep_xml_is_err_not_overflow() {
             assert!(
                 matches!(
                     &(Document::parse_str(&xml)),
-                    Err(ttml_subtitle::error::Error::XmlParse(_))
+                    Err(ttml_subtitle::error::Error::TooLarge {
+                        limit: broadcast_common::xml_chars::XmlLimit::Depth,
+                        ..
+                    })
                 ),
                 "deep XML accepted"
             );
@@ -115,7 +118,10 @@ fn hostile_deep_xml_is_err_not_overflow() {
         );
         assert!(matches!(
             &(Document::parse_str(&spans)),
-            Err(ttml_subtitle::error::Error::XmlParse(_))
+            Err(ttml_subtitle::error::Error::TooLarge {
+                limit: broadcast_common::xml_chars::XmlLimit::Depth,
+                ..
+            })
         ));
     });
 }

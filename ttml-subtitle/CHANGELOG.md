@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `Document::parse_str_with_limits` takes a caller-chosen `broadcast_common::xml_chars::XmlLimits`; `default_limits()` and `MAX_TTML_BYTES` (64 MiB), `MAX_TTML_DEPTH` (128), `MAX_TTML_ELEMENTS` (2 000 000), `MAX_TTML_ATTRIBUTE_BYTES` (64 KiB) are what `parse_str` applies; `Error::TooLarge { limit, max }` reports a tripped bound.
+### Fixed
+- A hostile document could use unbounded memory and time: input size, element depth and count, and attribute size and count are now bounded, including inside preserved foreign subtrees. Nesting past 128 levels is now `Error::TooLarge` instead of `Error::ConstraintViolation` or a parse.
 ### Removed
 - Unused public items, with no use in the workspace beyond their own unit tests: `validate_to_result`.
 - `Error::UnexpectedElement`, `Error::ProhibitedElement`, `Error::ProhibitedAttribute` and `Error::Serialize`: never constructed. Foreign elements are preserved and profile violations are reported as validation findings, not errors.

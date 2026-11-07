@@ -55,8 +55,10 @@ use crate::movie_fragment::{
 };
 use crate::pipeline::{CodecConfig, Sample};
 use crate::segments::{MediaDataBox, SegmentTypeBox};
-use quick_xml::Writer;
-use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
+use broadcast_common::xml_chars::{
+    XmlWriter, close_element as close, empty_element as empty, finish_document as finish,
+    new_writer, open_element as open, write_declaration,
+};
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
 /// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`).
@@ -929,53 +931,15 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
 // quick-xml writer plumbing
 // ---------------------------------------------------------------------------
 
-/// The manifest writer: a two-space-indenting `quick_xml::Writer`. Every
-/// attribute value and text node is escaped by quick-xml. Writing to an
-/// in-memory `Vec` cannot fail, so write results are intentionally discarded.
-type XmlWriter = Writer<Vec<u8>>;
-
-fn new_writer() -> XmlWriter {
-    Writer::new_with_indent(Vec::new(), b' ', 2)
-}
-
 /// `<?xml version="1.0" encoding="utf-8"?>`.
 fn declaration(w: &mut XmlWriter) {
-    let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
-}
-
-fn element_tag<'a>(name: &'a str, attrs: &'a [(&str, String)]) -> BytesStart<'a> {
-    let mut start = BytesStart::new(name);
-    for (key, value) in attrs {
-        start.push_attribute((*key, value.as_str()));
-    }
-    start
-}
-
-/// `<name a="b">`.
-fn open(w: &mut XmlWriter, name: &str, attrs: &[(&str, String)]) {
-    let _ = w.write_event(Event::Start(element_tag(name, attrs)));
-}
-
-/// `<name a="b"/>`.
-fn empty(w: &mut XmlWriter, name: &str, attrs: &[(&str, String)]) {
-    let _ = w.write_event(Event::Empty(element_tag(name, attrs)));
-}
-
-/// `</name>`.
-fn close(w: &mut XmlWriter, name: &str) {
-    let _ = w.write_event(Event::End(BytesEnd::new(name)));
-}
-
-/// The written document plus a trailing newline.
-fn finish(w: XmlWriter) -> String {
-    let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();
-    out.push('\n');
-    out
+    write_declaration(w, "utf-8");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quick_xml::events::{BytesStart, Event};
 
     /// Every attribute value and text node goes through quick-xml's escaping:
     /// all five specials, exact output, and the output re-parses to the original.

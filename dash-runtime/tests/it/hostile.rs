@@ -86,6 +86,50 @@ fn depth_bound() {
 }
 
 #[test]
+fn caller_limits_override_each_xml_bound() {
+    let nest = |n: usize| {
+        let mut s = String::new();
+        s.push_str(&"<Foo>".repeat(n));
+        s.push_str(&"</Foo>".repeat(n));
+        wrap(&s)
+    };
+    let deep = nest(100);
+    assert_eq!(too_large(parse(&deep)), Limit::Depth);
+    let mut limits = Limits::default();
+    limits.max_depth = 200;
+    assert!(Mpd::parse_with(deep.as_bytes(), &limits).is_ok());
+    limits.max_depth = 5;
+    assert_eq!(
+        too_large(Mpd::parse_with(nest(5).as_bytes(), &limits)),
+        Limit::Depth
+    );
+    let mut tight = Limits::default();
+    tight.max_elements = 2;
+    assert_eq!(
+        too_large(Mpd::parse_with(wrap("<A/><B/>").as_bytes(), &tight)),
+        Limit::Elements
+    );
+    let mut tight = Limits::default();
+    tight.max_attributes = 1;
+    assert_eq!(
+        too_large(Mpd::parse_with(
+            format!(r#"<MPD xmlns="{NS}" type="static" x="1"/>"#).as_bytes(),
+            &tight
+        )),
+        Limit::Attributes
+    );
+    let mut tight = Limits::default();
+    tight.max_attribute_bytes = 3;
+    assert_eq!(
+        too_large(Mpd::parse_with(
+            format!(r#"<MPD xmlns="{NS}" type="static" x="1234"/>"#).as_bytes(),
+            &tight
+        )),
+        Limit::AttributeBytes
+    );
+}
+
+#[test]
 fn attribute_bounds() {
     let long = |n: usize| {
         wrap(&format!(

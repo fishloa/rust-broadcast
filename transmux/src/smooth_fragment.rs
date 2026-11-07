@@ -15,13 +15,15 @@
 //! The same walkers serve `multimux`'s Smooth-pull and `broadcast-client`'s Smooth source, so a
 //! Smooth fragment is judged by one box walk.
 
-use quick_xml::Reader;
+use broadcast_common::xml_chars::{XmlBudget, namespace_of};
+use quick_xml::NsReader;
 use quick_xml::events::Event;
 
 use crate::box_types::{box_iter, parse_box};
 use crate::error::{Error, Result};
 use crate::movie_fragment::MovieFragmentBox;
 use crate::smooth::{TFXD_UUID, TfxdBox};
+use crate::smooth_parse::default_limits;
 
 const PROTECTION_ELEMENT: &str = "Protection";
 const BOX_MOOF: [u8; 4] = *b"moof";
@@ -67,23 +69,47 @@ impl FragmentState {
 broadcast_common::impl_spec_display!(FragmentState);
 
 /// Whether the manifest carries a `<Protection>` element (PlayReady/PIFF sample encryption)
-/// anywhere, matched by local name on a `quick-xml` pull loop: a prefixed `<ms:Protection>`
-/// counts, a comment, an attribute value or a longer name such as `<ProtectionFoo>` does not.
+/// anywhere, matched on a namespace-aware `quick-xml` pull loop under the same bounds as
+/// [`crate::smooth_parse::SmoothManifest::parse`]: only an element in no namespace counts (a
+/// Smooth manifest has none), so a `<ms:Protection>` or default-namespaced look-alike in a
+/// foreign namespace, a comment, an attribute value or a longer name such as `<ProtectionFoo>`
+/// does not.
 ///
 /// A document the reader cannot get through reports `false`; the caller goes on to
 /// [`crate::smooth_parse::SmoothManifest::parse`], which rejects the same input with its own
 /// error, so nothing unreadable is ever played.
 #[must_use]
 pub fn manifest_declares_protection(xml: &str) -> bool {
-    let mut reader = Reader::from_str(xml);
+    let mut budget = XmlBudget::new(default_limits());
+    if budget.check_input(xml.len()).is_err() {
+        return false;
+    }
+    let mut reader = NsReader::from_str(xml);
     loop {
-        match reader.read_event() {
-            Ok(Event::Start(e) | Event::Empty(e))
-                if e.local_name().as_ref() == PROTECTION_ELEMENT =>
-            {
-                return true;
+        match reader.read_resolved_event() {
+            Ok((ns, Event::Start(e))) => {
+                if budget.open_element().is_err() {
+                    return false;
+                }
+                if matches!(namespace_of(ns), Ok(None))
+                    && e.local_name().as_ref() == PROTECTION_ELEMENT
+                {
+                    return true;
+                }
             }
-            Ok(Event::Eof) | Err(_) => return false,
+            Ok((ns, Event::Empty(e))) => {
+                if budget.open_element().is_err() {
+                    return false;
+                }
+                budget.close_element();
+                if matches!(namespace_of(ns), Ok(None))
+                    && e.local_name().as_ref() == PROTECTION_ELEMENT
+                {
+                    return true;
+                }
+            }
+            Ok((_, Event::End(_))) => budget.close_element(),
+            Ok((_, Event::Eof)) | Err(_) => return false,
             Ok(_) => {}
         }
     }

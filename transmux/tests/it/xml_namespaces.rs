@@ -3,9 +3,12 @@
 //! WRMHEADER is only written), so it has no case here.
 #![cfg(feature = "std")]
 
-use broadcast_common::xml_chars::XmlLimit;
+use broadcast_common::xml_chars::{XmlLimit, XmlLimits};
 use transmux::Mpd;
 use transmux::dash_parse::DashParseError;
+use transmux::dash_parse::default_limits as dash_defaults;
+use transmux::smooth_fragment::manifest_declares_protection;
+use transmux::smooth_parse::default_limits as smooth_defaults;
 use transmux::smooth_parse::{SmoothManifest, SmoothParseError};
 
 const DASH: &str = "urn:mpeg:dash:schema:mpd:2011";
@@ -189,4 +192,118 @@ fn smooth_unbound_prefix_trailing_and_depth_are_rejected() {
             ..
         })
     ));
+}
+
+#[test]
+fn protection_probe_ignores_foreign_namespace_look_alikes() {
+    assert!(manifest_declares_protection(&format!(
+        "<SmoothStreamingMedia {SMOOTH}><Protection/></SmoothStreamingMedia>"
+    )));
+    assert!(!manifest_declares_protection(&format!(
+        r#"<SmoothStreamingMedia {SMOOTH} xmlns:ms="urn:x"><ms:Protection/></SmoothStreamingMedia>"#
+    )));
+    assert!(!manifest_declares_protection(&format!(
+        r#"<SmoothStreamingMedia {SMOOTH}><Protection xmlns="urn:x"/></SmoothStreamingMedia>"#
+    )));
+}
+
+#[test]
+fn protection_probe_fails_closed_to_false_past_the_bounds() {
+    let deep = format!(
+        "<SmoothStreamingMedia {SMOOTH}>{}<Protection/>{}</SmoothStreamingMedia>",
+        "<x>".repeat(100),
+        "</x>".repeat(100)
+    );
+    assert!(!manifest_declares_protection(&deep));
+}
+
+fn tight(mut limits: XmlLimits, change: impl FnOnce(&mut XmlLimits)) -> XmlLimits {
+    change(&mut limits);
+    limits
+}
+
+fn dash_hit(xml: &str, limits: XmlLimits) -> XmlLimit {
+    match Mpd::parse_with_limits(xml, limits) {
+        Err(DashParseError::TooLarge { limit, .. }) => limit,
+        other => panic!("expected TooLarge, got {other:?}"),
+    }
+}
+
+fn smooth_hit(xml: &str, limits: XmlLimits) -> XmlLimit {
+    match SmoothManifest::parse_with_limits(xml, limits) {
+        Err(SmoothParseError::TooLarge { limit, .. }) => limit,
+        other => panic!("expected TooLarge, got {:?}", other.map(|_| ())),
+    }
+}
+
+#[test]
+fn dash_caller_limits_trip_each_bound_and_can_raise_the_defaults() {
+    let xml = mpd(r#"profiles="p""#, "<Period/>");
+    let d = dash_defaults();
+    assert_eq!(
+        dash_hit(&xml, tight(d.clone(), |l| l.max_bytes = xml.len() - 1)),
+        XmlLimit::InputBytes
+    );
+    assert_eq!(
+        dash_hit(&xml, tight(d.clone(), |l| l.max_depth = 1)),
+        XmlLimit::Depth
+    );
+    assert_eq!(
+        dash_hit(&xml, tight(d.clone(), |l| l.max_elements = 1)),
+        XmlLimit::Elements
+    );
+    assert_eq!(
+        dash_hit(&xml, tight(d.clone(), |l| l.max_attribute_bytes = 0)),
+        XmlLimit::AttributeBytes
+    );
+    assert_eq!(
+        dash_hit(&xml, tight(d.clone(), |l| l.max_attributes = 0)),
+        XmlLimit::Attributes
+    );
+    let nested = format!("{}{}", "<x>".repeat(100), "</x>".repeat(100));
+    let deep = mpd(r#"profiles="p""#, &nested);
+    assert!(Mpd::parse(&deep).is_err());
+    assert!(Mpd::parse_with_limits(&deep, tight(d, |l| l.max_depth = 200)).is_ok());
+}
+
+#[test]
+fn smooth_caller_limits_trip_each_bound_and_can_raise_the_defaults() {
+    let xml = format!(
+        r#"<SmoothStreamingMedia {SMOOTH}><StreamIndex Type="video" Url="u"/></SmoothStreamingMedia>"#
+    );
+    let d = smooth_defaults();
+    assert_eq!(
+        smooth_hit(&xml, tight(d.clone(), |l| l.max_bytes = xml.len() - 1)),
+        XmlLimit::InputBytes
+    );
+    assert_eq!(
+        smooth_hit(&xml, tight(d.clone(), |l| l.max_depth = 1)),
+        XmlLimit::Depth
+    );
+    assert_eq!(
+        smooth_hit(&xml, tight(d.clone(), |l| l.max_elements = 1)),
+        XmlLimit::Elements
+    );
+    assert_eq!(
+        smooth_hit(&xml, tight(d.clone(), |l| l.max_attribute_bytes = 0)),
+        XmlLimit::AttributeBytes
+    );
+    assert_eq!(
+        smooth_hit(&xml, tight(d.clone(), |l| l.max_attributes = 1)),
+        XmlLimit::Attributes
+    );
+    let deep = format!(
+        "<SmoothStreamingMedia {SMOOTH}>{}{}</SmoothStreamingMedia>",
+        "<x>".repeat(100),
+        "</x>".repeat(100)
+    );
+    assert!(SmoothManifest::parse(&deep).is_err());
+    assert!(SmoothManifest::parse_with_limits(&deep, tight(d, |l| l.max_depth = 200)).is_ok());
+}
+
+#[test]
+fn largest_real_manifest_parses_with_the_defaults() {
+    let xml = test_fixtures::read_to_string("dash/livesim2/segtimelinenr_a.mpd");
+    assert!(xml.len() > 2_000);
+    transmux::Mpd::parse(&xml).expect("defaults admit the fixture");
 }

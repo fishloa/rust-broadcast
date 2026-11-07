@@ -63,6 +63,22 @@ pub struct Limits {
     pub max_segment_urls: usize,
 }
 
+impl Limits {
+    /// The XML-level subset of these bounds as the shared
+    /// [`XmlLimits`](broadcast_common::xml_chars::XmlLimits) the MPD reader
+    /// enforces through an [`XmlBudget`](broadcast_common::xml_chars::XmlBudget).
+    #[must_use]
+    pub fn xml_limits(&self) -> broadcast_common::xml_chars::XmlLimits {
+        let mut xml = broadcast_common::xml_chars::XmlLimits::default();
+        xml.max_bytes = self.max_bytes;
+        xml.max_depth = self.max_depth;
+        xml.max_elements = self.max_elements;
+        xml.max_attribute_bytes = self.max_attribute_bytes;
+        xml.max_attributes = self.max_attributes;
+        xml
+    }
+}
+
 impl Default for Limits {
     fn default() -> Self {
         Self {

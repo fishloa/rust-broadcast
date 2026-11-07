@@ -3,6 +3,8 @@
 extern crate alloc;
 
 use alloc::string::String;
+#[cfg(feature = "std")]
+use broadcast_common::xml_chars::XmlLimit;
 use thiserror::Error;
 
 /// Result type alias for dvb-mabr operations.
@@ -62,6 +64,17 @@ pub enum Error {
     /// are defined).
     #[error("unknown ServiceComponentIdentifier xsi:type '{0}'")]
     UnknownComponentType(String),
+
+    /// The document exceeded an input bound ([`XmlLimits`](broadcast_common::xml_chars::XmlLimits));
+    /// raise it with `parse_str_with_limits`.
+    #[cfg(feature = "std")]
+    #[error("document exceeds the {limit} limit of {max}")]
+    TooLarge {
+        /// The bound that tripped.
+        limit: XmlLimit,
+        /// Its ceiling.
+        max: usize,
+    },
 
     /// A `ServiceComponentIdentifier` element carried no `xsi:type`
     /// attribute at all.

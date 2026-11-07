@@ -4,7 +4,8 @@
 //! strings; malformed documents are structured errors, never panics.
 #![cfg(feature = "std")]
 
-use dvb_mabr::{Error, MulticastGatewayConfiguration};
+use broadcast_common::xml_chars::{XmlLimit, XmlLimits};
+use dvb_mabr::{Error, MulticastGatewayConfiguration, MulticastServerConfiguration};
 
 /// All five XML specials in one string.
 const SPECIALS: &str = "a&b<c>d\"e'f";
@@ -135,13 +136,81 @@ fn deeply_nested_document_does_not_overflow_the_stack() {
         "<a>".repeat(depth),
         "</a>".repeat(depth)
     );
-    // Deep nesting is skipped without recursion: a clean parse or quick-xml's
-    // nesting limit, as a structured error; never a stack overflow or a panic.
-    let result = MulticastGatewayConfiguration::parse_str(&xml);
-    assert!(
-        matches!(result, Ok(_) | Err(Error::XmlParse(_))),
-        "unexpected result: {result:?}"
+    assert_eq!(
+        MulticastGatewayConfiguration::parse_str(&xml).unwrap_err(),
+        Error::TooLarge {
+            limit: XmlLimit::Depth,
+            max: XmlLimits::default().max_depth
+        }
     );
+}
+
+fn tight(change: impl FnOnce(&mut XmlLimits)) -> XmlLimits {
+    let mut limits = XmlLimits::default();
+    change(&mut limits);
+    limits
+}
+
+fn limit_hit(xml: &str, limits: XmlLimits) -> XmlLimit {
+    match MulticastGatewayConfiguration::parse_str_with_limits(xml, limits) {
+        Err(Error::TooLarge { limit, .. }) => limit,
+        other => panic!("expected TooLarge, got {other:?}"),
+    }
+}
+
+#[test]
+fn each_input_limit_is_enforced() {
+    let xml = gateway_doc("sid", "loc");
+    assert_eq!(
+        limit_hit(&xml, tight(|l| l.max_bytes = xml.len() - 1)),
+        XmlLimit::InputBytes
+    );
+    assert_eq!(limit_hit(&xml, tight(|l| l.max_depth = 2)), XmlLimit::Depth);
+    assert_eq!(
+        limit_hit(&xml, tight(|l| l.max_elements = 2)),
+        XmlLimit::Elements
+    );
+    assert_eq!(
+        limit_hit(&xml, tight(|l| l.max_attribute_bytes = 2)),
+        XmlLimit::AttributeBytes
+    );
+    assert_eq!(
+        limit_hit(&xml, tight(|l| l.max_attributes = 1)),
+        XmlLimit::Attributes
+    );
+}
+
+#[test]
+fn a_skipped_foreign_subtree_still_counts_against_the_limits() {
+    let xml = format!(
+        "<MulticastGatewayConfiguration xmlns=\"{NS}\" schemaVersion=\"2\"><x:f xmlns:x=\"urn:x\"><x:g/><x:g/><x:g/></x:f></MulticastGatewayConfiguration>"
+    );
+    assert_eq!(
+        limit_hit(&xml, tight(|l| l.max_elements = 3)),
+        XmlLimit::Elements
+    );
+}
+
+#[test]
+fn custom_limits_override_the_defaults() {
+    let xml = gateway_doc("sid", "loc");
+    let roomy = tight(|l| l.max_bytes = xml.len());
+    assert!(MulticastGatewayConfiguration::parse_str_with_limits(&xml, roomy).is_ok());
+    let deep = tight(|l| l.max_depth = 1_000_000);
+    let nested = format!(
+        "<MulticastGatewayConfiguration xmlns=\"{NS}\" schemaVersion=\"2\">{}{}</MulticastGatewayConfiguration>",
+        "<a>".repeat(100),
+        "</a>".repeat(100)
+    );
+    assert!(MulticastGatewayConfiguration::parse_str(&nested).is_err());
+    assert!(MulticastGatewayConfiguration::parse_str_with_limits(&nested, deep).is_ok());
+}
+
+#[test]
+fn largest_real_fixture_parses_with_the_defaults() {
+    let xml = test_fixtures::read_to_string("mabr/annex-c1-server-config.xml");
+    assert!(xml.len() > 20_000);
+    MulticastServerConfiguration::parse_str(&xml).expect("defaults admit the fixture");
 }
 
 /// XML 1.0 §2.2: a control character is not allowed, literally or through a

@@ -12,9 +12,10 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use quick_xml::NsReader;
+use quick_xml::Writer;
 use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_predefined_entity;
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::{QName, ResolveResult};
 
 /// Message for a character outside the XML 1.0 §2.2 `Char` production.
@@ -312,6 +313,71 @@ impl XmlBudget {
     }
 }
 
+/// The in-memory writer the manifest and document writers build into.
+pub type XmlWriter = Writer<Vec<u8>>;
+
+/// A two-space-indenting [`XmlWriter`]. Every attribute value and text node
+/// written through the helpers below is escaped by quick-xml.
+#[must_use]
+pub fn new_writer() -> XmlWriter {
+    Writer::new_with_indent(Vec::new(), b' ', 2)
+}
+
+/// `<?xml version="1.0" encoding="{encoding}"?>`. Writing to the in-memory
+/// `Vec` cannot fail, so the write result is discarded.
+pub fn write_declaration(w: &mut XmlWriter, encoding: &str) {
+    let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some(encoding), None)));
+}
+
+/// The attribute list of an element with none.
+pub const NO_ATTRS: &[(&str, &str)] = &[];
+
+/// A start tag for `name` carrying `attrs` in order (values escaped when
+/// written).
+#[must_use]
+pub fn start_tag<'a, V: AsRef<str>>(name: &'a str, attrs: &'a [(&str, V)]) -> BytesStart<'a> {
+    let mut start = BytesStart::new(name);
+    for (key, value) in attrs {
+        start.push_attribute((*key, value.as_ref()));
+    }
+    start
+}
+
+/// `<name a="b">`.
+pub fn open_element<V: AsRef<str>>(w: &mut XmlWriter, name: &str, attrs: &[(&str, V)]) {
+    let _ = w.write_event(Event::Start(start_tag(name, attrs)));
+}
+
+/// `<name a="b"/>`.
+pub fn empty_element<V: AsRef<str>>(w: &mut XmlWriter, name: &str, attrs: &[(&str, V)]) {
+    let _ = w.write_event(Event::Empty(start_tag(name, attrs)));
+}
+
+/// `</name>`.
+pub fn close_element(w: &mut XmlWriter, name: &str) {
+    let _ = w.write_event(Event::End(BytesEnd::new(name)));
+}
+
+/// Escaped character data.
+pub fn write_text(w: &mut XmlWriter, text: &str) {
+    let _ = w.write_event(Event::Text(BytesText::new(text)));
+}
+
+/// A leaf element with escaped text content on one line (`<name>text</name>`).
+pub fn text_element(w: &mut XmlWriter, name: &str, text: &str) {
+    open_element(w, name, NO_ATTRS);
+    write_text(w, text);
+    close_element(w, name);
+}
+
+/// The written document plus a trailing newline.
+#[must_use]
+pub fn finish_document(w: XmlWriter) -> String {
+    let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();
+    out.push('\n');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,5 +554,19 @@ mod tests {
             XmlLimit::AttributeBytes
         );
         b.admit_attribute(1, "ab").unwrap();
+    }
+
+    #[test]
+    fn writer_helpers_escape_and_indent() {
+        let mut w = new_writer();
+        write_declaration(&mut w, "utf-8");
+        open_element(&mut w, "R", &[("k", "a&b\"c".to_string())]);
+        empty_element(&mut w, "E", &[("v", "<")]);
+        text_element(&mut w, "T", "x<y");
+        close_element(&mut w, "R");
+        assert_eq!(
+            finish_document(w),
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<R k=\"a&amp;b&quot;c\">\n  <E v=\"&lt;\"/>\n  <T>x&lt;y</T>\n</R>\n"
+        );
     }
 }

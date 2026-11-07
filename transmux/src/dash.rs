@@ -100,8 +100,10 @@ use crate::media::{Media, Track};
 use crate::pipeline::{CodecConfig, TrackSpec};
 use crate::sps::rfc6381_avc1;
 use broadcast_common::error::InvalidField;
-use quick_xml::Writer;
-use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+use broadcast_common::xml_chars::{
+    NO_ATTRS, XmlWriter, close_element as close, empty_element as empty, finish_document as finish,
+    new_writer, open_element as open, text_element, write_declaration,
+};
 
 /// DASH MPD namespace (ISO/IEC 23009-1 §5.3.1.2 — `urn:mpeg:dash:schema:mpd:2011`).
 pub const MPD_NAMESPACE: &str = "urn:mpeg:dash:schema:mpd:2011";
@@ -1484,7 +1486,7 @@ fn format_kid(kid: &[u8; 16]) -> String {
 /// (`prev S@t + prev@d * (prev@r+1)`, L1791), which this list satisfies by
 /// construction (no gaps/discontinuities are modelled here).
 fn write_segment_timeline(w: &mut XmlWriter, durations: &[u64]) {
-    open(w, "SegmentTimeline", &[]);
+    open(w, "SegmentTimeline", NO_ATTRS);
     let mut t: u64 = 0;
     let mut idx = 0usize;
     let mut first = true;
@@ -1514,55 +1516,9 @@ fn write_segment_timeline(w: &mut XmlWriter, durations: &[u64]) {
 // quick-xml writer plumbing
 // ---------------------------------------------------------------------------
 
-/// The manifest writer: a two-space-indenting `quick_xml::Writer`. Every
-/// attribute value and text node is escaped by quick-xml. Writing to an
-/// in-memory `Vec` cannot fail, so write results are intentionally discarded.
-type XmlWriter = Writer<Vec<u8>>;
-
-fn new_writer() -> XmlWriter {
-    Writer::new_with_indent(Vec::new(), b' ', 2)
-}
-
 /// `<?xml version="1.0" encoding="utf-8"?>`.
 fn declaration(w: &mut XmlWriter) {
-    let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
-}
-
-fn element_tag<'a>(name: &'a str, attrs: &'a [(&str, String)]) -> BytesStart<'a> {
-    let mut start = BytesStart::new(name);
-    for (key, value) in attrs {
-        start.push_attribute((*key, value.as_str()));
-    }
-    start
-}
-
-/// `<name a="b">`.
-fn open(w: &mut XmlWriter, name: &str, attrs: &[(&str, String)]) {
-    let _ = w.write_event(Event::Start(element_tag(name, attrs)));
-}
-
-/// `<name a="b"/>`.
-fn empty(w: &mut XmlWriter, name: &str, attrs: &[(&str, String)]) {
-    let _ = w.write_event(Event::Empty(element_tag(name, attrs)));
-}
-
-/// `</name>`.
-fn close(w: &mut XmlWriter, name: &str) {
-    let _ = w.write_event(Event::End(BytesEnd::new(name)));
-}
-
-/// A leaf element with escaped text content on one line (`<name>text</name>`).
-fn text_element(w: &mut XmlWriter, name: &str, text: &str) {
-    open(w, name, &[]);
-    let _ = w.write_event(Event::Text(BytesText::new(text)));
-    close(w, name);
-}
-
-/// The written document plus a trailing newline.
-fn finish(w: XmlWriter) -> String {
-    let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();
-    out.push('\n');
-    out
+    write_declaration(w, "utf-8");
 }
 
 #[cfg(test)]

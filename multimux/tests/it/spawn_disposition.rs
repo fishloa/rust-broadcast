@@ -136,17 +136,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/smooth.rs",
-        131,
+        132,
         "spawn_blocking Smooth layout build; awaited inline",
     ),
     (
         "output/smooth.rs",
-        185,
+        186,
         "spawn_blocking Smooth layout locate; awaited inline",
     ),
     (
         "output/smooth.rs",
-        234,
+        235,
         "spawn_blocking Smooth fragment build; awaited inline",
     ),
     (
