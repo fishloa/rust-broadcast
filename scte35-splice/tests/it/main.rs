@@ -15,3 +15,5 @@ mod serde_round_trip;
 mod serialize_field_width;
 mod spec_drift;
 mod spec_samples;
+mod short_buffers;
+mod dvb_ta_profile_validation;
