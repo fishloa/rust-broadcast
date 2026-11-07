@@ -300,7 +300,10 @@ fn frame_len_distinguishes_incomplete_from_complete() {
     assert!(SimulcryptMessage::frame_len(partial).unwrap() > partial.len());
     // Calling parse_on on that same incomplete buffer errors, which is
     // exactly the ambiguous case frame_len resolves for the caller.
-    assert!(SimulcryptMessage::parse_on(Interface::EcmgScs, partial).is_err());
+    assert!(matches!(
+        SimulcryptMessage::parse_on(Interface::EcmgScs, partial),
+        Err(dvb_simulcrypt::Error::InvalidMessageLength { .. })
+    ));
 
     // Full frame present: frame_len matches exactly, and parse_on succeeds.
     assert_eq!(SimulcryptMessage::frame_len(&bytes), Some(total));

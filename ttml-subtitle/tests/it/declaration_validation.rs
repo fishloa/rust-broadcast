@@ -49,6 +49,12 @@ fn declaration_after_whitespace_or_second_declaration_is_rejected() {
         format!("<?xml version=\"1.0\"?><?xml version=\"1.0\"?>{TT}"),
         format!("<?pi x?><?xml version=\"1.0\"?>{TT}"),
     ] {
-        assert!(Document::parse_str(&xml).is_err(), "accepted: {xml}");
+        assert!(
+            matches!(
+                Document::parse_str(&xml),
+                Err(ttml_subtitle::Error::XmlParse(..))
+            ),
+            "accepted: {xml}"
+        );
     }
 }

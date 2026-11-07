@@ -139,7 +139,7 @@ fn try_new_rejects_out_of_range_and_new_masks_wire_values() {
     for bad in [0x2000u16, 0x2064, 0x8000, 0xFFFF] {
         let err: PidOutOfRange = Pid::try_new(bad).unwrap_err();
         assert_eq!(err.value, bad);
-        assert!(Pid::try_from(bad).is_err());
+        assert!(matches!(Pid::try_from(bad), Err(PidOutOfRange { .. })));
         // `new` is the wire-parsing constructor: it masks, never errors.
         assert_eq!(Pid::new(bad).value(), bad & 0x1FFF);
     }
@@ -180,7 +180,7 @@ fn packetiser_takes_a_typed_pid_and_emits_it_on_every_packet() {
         }
     }
     // The over-range value never reaches the packetiser: it cannot be built.
-    assert!(Pid::try_new(0x2000).is_err());
+    assert!(matches!(Pid::try_new(0x2000), Err(PidOutOfRange { .. })));
 }
 
 #[test]

@@ -57,7 +57,10 @@ fn min_window_cap_drops_the_oldest_and_counts() {
     assert_eq!(w.len(), 8);
     assert_eq!(w.overflows(), 12);
     assert_eq!(w.min(), Some(112));
-    assert!(MinWindow::new(0, 8).is_err());
+    assert!(matches!(
+        MinWindow::new(0, 8),
+        Err(buffering_runtime::Error::ZeroLengthWindow)
+    ));
     w.clear();
     assert!(w.is_empty());
     assert_eq!(w.min(), None);

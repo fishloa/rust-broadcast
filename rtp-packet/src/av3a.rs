@@ -1148,7 +1148,10 @@ mod tests {
             &(Av3aFmtp::parse("config=abc")),
             Err(crate::error::Error::InvalidValue { .. })
         ));
-        assert!(Av3aFmtp::parse("codec-nn-id=zz").is_err());
+        assert!(matches!(
+            Av3aFmtp::parse("codec-nn-id=zz"),
+            Err(Error::InvalidValue { .. })
+        ));
         assert!(matches!(
             &(Av3aFmtp::parse("rate=x")),
             Err(crate::error::Error::InvalidValue { .. })
@@ -1166,8 +1169,14 @@ mod tests {
             &(Av3aFmtp::parse("rate=+48000")),
             Err(crate::error::Error::InvalidValue { .. })
         ));
-        assert!(Av3aFmtp::parse("bitrate=+320").is_err());
-        assert!(Av3aFmtp::parse("rate=0").is_err());
+        assert!(matches!(
+            Av3aFmtp::parse("bitrate=+320"),
+            Err(Error::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            Av3aFmtp::parse("rate=0"),
+            Err(Error::InvalidValue { .. })
+        ));
         assert!(matches!(
             &(Av3aFmtp::parse("rate=48000; rate=44100")),
             Err(crate::error::Error::InvalidValue { .. })

@@ -1694,7 +1694,10 @@ mod tests {
             })
         ));
         let rr = ReceiverReport::new(1, vec![]).with_profile_extensions(vec![1; 5]);
-        assert!(rr.serialize_into(&mut buf).is_err());
+        assert!(matches!(
+            rr.serialize_into(&mut buf),
+            Err(Error::InvalidValue { .. })
+        ));
 
         // Parse side: a well-formed packet whose trailing bytes are not a
         // multiple of 4 after padding strip (P=1, 4 trailing bytes with the

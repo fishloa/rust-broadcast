@@ -80,5 +80,8 @@ fn a_sentinel_with_alignment_stuffing_is_an_error_not_a_guess() {
     b[11] |= 0x0F;
     b[12] = 0xFF;
     recrc(&mut b);
-    assert!(SpliceInfoSection::parse(&b).is_err());
+    assert!(matches!(
+        SpliceInfoSection::parse(&b),
+        Err(scte35_splice::Error::InvalidValue { .. })
+    ));
 }

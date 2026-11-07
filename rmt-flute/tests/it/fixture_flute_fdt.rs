@@ -85,5 +85,8 @@ fn truncated_header_is_rejected() {
     let data = fixture();
     // Cut the buffer mid-LCT-header (the HDR_LEN claims 20 header bytes).
     let short = &data[..10];
-    assert!(AlcPacket::parse(short, FEC_PAYLOAD_ID_128_LEN).is_err());
+    assert!(matches!(
+        AlcPacket::parse(short, FEC_PAYLOAD_ID_128_LEN),
+        Err(rmt_flute::Error::BufferTooShort { .. })
+    ));
 }

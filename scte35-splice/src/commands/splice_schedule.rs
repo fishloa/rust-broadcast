@@ -326,7 +326,10 @@ mod tests {
             })
             .collect();
         let sched = SpliceSchedule { events };
-        assert!(sched.try_to_bytes().is_err());
+        assert!(matches!(
+            sched.try_to_bytes(),
+            Err(Error::FieldOverflow(..))
+        ));
     }
 
     /// The boundary: exactly 255 events still serializes and round-trips.

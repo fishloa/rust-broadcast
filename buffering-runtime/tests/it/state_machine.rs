@@ -870,7 +870,10 @@ fn config_validation_names_every_bad_field() {
     let e = BufferController::new(c, None).unwrap_err();
     assert_eq!(e.to_string(), "invalid configuration: interval");
     assert!(ControllerConfig::new(ok.jitter, ok.policy, 20_000, 200_000).is_ok());
-    assert!(ControllerConfig::new(ok.jitter, ok.policy, 20_000, 0).is_err());
+    assert!(matches!(
+        ControllerConfig::new(ok.jitter, ok.policy, 20_000, 0),
+        Err(Error::InvalidConfig(..))
+    ));
 }
 
 #[test]
