@@ -218,6 +218,12 @@ impl Receiver {
         self.rtt.update(sample);
     }
 
+    /// The current smoothed RTT estimate, or `None` until a sample has been
+    /// folded in via [`Self::on_rtt_sample`].
+    pub fn rtt_estimate(&self) -> Option<Duration> {
+        self.rtt.smoothed()
+    }
+
     /// Process one arriving RTP data packet's sequence number.
     pub fn feed(&mut self, seq_number: u16, now: Duration) -> DeliveryOutcome {
         match self.highest_received {
@@ -1014,5 +1020,16 @@ mod tests {
         // base=0xFFFE, +1=0xFFFF, +2 wraps to 0 (RESYNC_CONFIRM_COUNT == 3).
         assert_eq!(r.next_expected(), Some(1));
         assert_eq!(r.missing_count(), 0);
+    }
+
+    #[test]
+    fn rtt_estimate_is_none_until_a_sample_arrives_then_smooths() {
+        let mut r = Receiver::new(cfg());
+        assert_eq!(r.rtt_estimate(), None);
+        r.on_rtt_sample(Duration::from_millis(20));
+        assert_eq!(r.rtt_estimate(), Some(Duration::from_millis(20)));
+        r.on_rtt_sample(Duration::from_millis(100));
+        let smoothed = r.rtt_estimate().unwrap();
+        assert!(smoothed > Duration::from_millis(20) && smoothed < Duration::from_millis(100));
     }
 }

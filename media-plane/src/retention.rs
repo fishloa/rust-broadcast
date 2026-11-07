@@ -392,6 +392,12 @@ impl<S: SegmentSink> RetentionDriver<S> {
         usize::from(self.in_flight.is_some())
     }
 
+    /// Segments currently in the cold ledger (handed off and still inside
+    /// `cold_window`): a diagnostic, not a capacity.
+    pub fn cold_len(&self) -> usize {
+        self.cold.len()
+    }
+
     /// Resolve where segment `sequence_number` currently is. See
     /// [the module docs](self#does-a-cold-segment-stay-addressable-yes--cold-ask-the-sink)
     /// for the design story; this is the decision table:
@@ -1025,5 +1031,25 @@ mod tests {
             SegmentLocation::Hot,
             "produced but not yet drained by this driver: still Hot, got {loc:?}"
         );
+    }
+
+    #[test]
+    fn cold_len_counts_hand_offs_until_the_cold_window_expires() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(64), nz(8), nz(8)));
+        let writer = trunk.segment_writer().unwrap();
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: Duration::from_secs(10),
+        };
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
+            .expect("Tiered must build a driver");
+        assert_eq!(driver.cold_len(), 0);
+        for seq in 1..=2u32 {
+            writer.publish_segment(segment_entry(seq)).unwrap();
+        }
+        driver.drive(Timestamp::from_nanos(0));
+        assert_eq!(driver.cold_len(), 2);
+        driver.drive(Timestamp::from_nanos(11_000_000_000));
+        assert_eq!(driver.cold_len(), 0);
     }
 }

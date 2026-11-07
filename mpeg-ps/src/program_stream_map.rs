@@ -14,6 +14,9 @@ use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 pub const PACKET_START_CODE_PREFIX: u32 = 0x00_0001;
 /// `map_stream_id` — `0xBC`, combined with the prefix forms the PSM start code.
 pub const MAP_STREAM_ID: u8 = 0xBC;
+/// The combined PSM start code: `packet_start_code_prefix` + `map_stream_id`
+/// (`0x000001BC`).
+pub const PSM_START_CODE: u32 = (PACKET_START_CODE_PREFIX << 8) | MAP_STREAM_ID as u32;
 
 /// Bytes before the map body: prefix(3) + map_stream_id(1) + psm_length(2) = 6.
 const PREFIX_LEN: usize = 6;
@@ -415,6 +418,8 @@ mod tests {
 
         let mut buf = vec![0u8; psm.serialized_len()];
         psm.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[..4], PSM_START_CODE.to_be_bytes());
+        assert_eq!(PSM_START_CODE, 0x0000_01BC);
 
         // Parse back
         let parsed = ProgramStreamMap::parse(&buf).unwrap();
