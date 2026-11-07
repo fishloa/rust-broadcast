@@ -123,7 +123,7 @@ fn render_rejects_injection_and_invalid_models() {
     p.media[0].name = "a\"b".into();
     assert!(matches!(
         p.to_m3u8(),
-        Err(broadcast_hls::Error::InvalidUri { .. })
+        Err(broadcast_hls::Error::InvalidQuotedString { .. })
     ));
     let mut p = MasterPlaylist::parse(MASTER).unwrap();
     p.media[0].uri = Some("x\ny".into());
