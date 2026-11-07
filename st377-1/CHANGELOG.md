@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Removed
-- Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `as_uuid_bytes`, `from_ul`, `from_uuid`.
+- Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `from_ul`.
 - `Error::InvalidKeyLength`: never constructed; a short buffer is reported as `BufferTooShort`.
 ### Changed
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
