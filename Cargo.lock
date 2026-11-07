@@ -1277,7 +1277,6 @@ dependencies = [
  "criterion",
  "encoding_rs",
  "flate2",
- "libm",
  "mpeg-ts",
  "num_enum",
  "quick-xml",

@@ -8,6 +8,7 @@
 ### Changed
 - `CompleteNit` and `CompleteBat` flatten their transport-stream loops through one `CompleteTransportStream::collect` (c4 M6).
 - Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- `libm` dependency dropped: `set_orbital_position_deg` rounds with an exact fraction test (identical to `f64::round` over the allowed 0.0..=6553.5 range, pinned by a test over the boundary values) (c4 T6).
 - `tables::sat`: the 600-line SAT body parse and 300-line write matches are one function per satellite_table_id (internal, c3 t:S7).
 - `build.rs` generates the CA-system and private-data-specifier name functions from one writer (c3 d:D1).
 - NIT and BAT share one section parse/serialize core, CAT and TSDT another, and the three descriptor registries use `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H4, H1).

@@ -267,7 +267,7 @@ impl SatelliteDeliverySystemDescriptor {
                 reason: "degrees must be in 0.0..=6553.5",
             });
         }
-        let tenths = libm::round(deg * 10.0) as u64;
+        let tenths = round_half_away(deg * 10.0);
         self.orbital_position_bcd = super::encode_bcd_field(
             tenths,
             4,
@@ -437,6 +437,19 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
 impl crate::traits::DescriptorDef<'_> for SatelliteDeliverySystemDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SATELLITE_DELIVERY_SYSTEM";
+}
+
+/// Round-half-away-from-zero of a non-negative `x` below 2^52, without `std`.
+///
+/// `x - trunc(x)` is exact in binary floating point for every such `x`, so the
+/// `>= 0.5` test sees the true fraction and the result equals `f64::round`.
+fn round_half_away(x: f64) -> u64 {
+    let whole = x as u64;
+    if x - whole as f64 >= 0.5 {
+        whole + 1
+    } else {
+        whole
+    }
 }
 
 #[cfg(test)]
@@ -700,5 +713,34 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf[8] & 0x18, 0);
+    }
+
+    #[test]
+    fn round_half_away_matches_std_round_over_the_allowed_range() {
+        let boundary = [
+            0.0,
+            0.05,
+            0.049_999_999_999_999_996,
+            0.499_999_999_999_999_94,
+            0.5,
+            1.5,
+            2.5,
+            19.99,
+            6_553.5 * 10.0 - 0.5,
+            6_553.5 * 10.0,
+        ];
+        for x in boundary {
+            assert_eq!(round_half_away(x), x.round() as u64, "x = {x}");
+        }
+        for tenths in 0..=65_535u32 {
+            let deg = f64::from(tenths) / 10.0;
+            for x in [
+                deg * 10.0,
+                (deg + 0.05) * 10.0,
+                (deg - 0.05).max(0.0) * 10.0,
+            ] {
+                assert_eq!(round_half_away(x), x.round() as u64, "x = {x}");
+            }
+        }
     }
 }
