@@ -21,6 +21,7 @@ mod true_peak;
 
 pub use channel_layout::ChannelLayout;
 pub use error::{Error, Result};
+pub use filter::MIN_SAMPLE_RATE;
 pub use loudness_meter::{LoudnessMeter, MAX_SAMPLE_RATE};
 pub use profile::{
     ACCEPTABLE_MAX_RATIO, CHINESE_PROFILES, GY_T_282_2014, GY_T_377_2023_NOISY,
@@ -34,7 +35,7 @@ pub mod kfilter {
     //! K-weighting IIR filter coefficients + state (ITU-R BS.1770-5 §Annex 1).
     //!
     //! [`k_weighting_coeffs`] derives the two stage coefficients for any
-    //! sample rate via a bilinear transform; at 48 kHz they match the
+    //! sample rate from [`crate::MIN_SAMPLE_RATE`] up via a bilinear transform; at 48 kHz they match the
     //! BS.1770-5 Annex 1 tabulated coefficients. The [`crate::LoudnessMeter`]
     //! applies them internally; re-exported here for consumers who need the
     //! raw filter (e.g. visualising the frequency response).

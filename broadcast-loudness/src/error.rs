@@ -17,12 +17,13 @@ pub enum Error {
         got: usize,
     },
 
-    /// A sample rate of zero, or above [`crate::MAX_SAMPLE_RATE`], was requested.
+    /// A sample rate below [`crate::MIN_SAMPLE_RATE`] or above
+    /// [`crate::MAX_SAMPLE_RATE`] was requested.
     ///
-    /// A loudness meter needs a positive sample rate to derive K‑weighting
-    /// filter coefficients and to convert sample counts to seconds; the upper
-    /// bound keeps the sliding-window allocation finite.
-    #[error("sample rate must be between 1 and 768000 Hz, got {got} Hz")]
+    /// Below the minimum the K‑weighting shelf corner is at or above Nyquist
+    /// and the derived filter is unstable; the upper bound keeps the
+    /// sliding-window allocation finite.
+    #[error("sample rate must be between 3364 and 768000 Hz, got {got} Hz")]
     InvalidSampleRate {
         /// The invalid sample rate requested.
         got: u32,

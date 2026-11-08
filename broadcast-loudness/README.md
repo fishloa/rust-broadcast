@@ -11,8 +11,8 @@ true-peak (dBTP), plus the Chinese NRTA loudness target profiles.
 ## What it does / what it does not
 
 **Does.** Measures audio the way broadcast loudness standards define it: feed it
-PCM samples (f32 / f64, mono / stereo / 5.1 / custom channel weights, any sample
-rate above zero) and read back loudness and peak numbers. Used by QC tools,
+PCM samples (f32 / f64, mono / stereo / 5.1 / custom channel weights, sample
+rates from 3364 Hz to 768 kHz) and read back loudness and peak numbers. Used by QC tools,
 ingest checks, normalisers and compliance probes. `check` / `classify_*` compare
 a measurement with the Chinese GY/T targets.
 

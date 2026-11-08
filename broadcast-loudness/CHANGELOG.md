@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- BREAKING: `LoudnessMeter::new` rejects sample rates below the new `MIN_SAMPLE_RATE` (3364 Hz) with `InvalidSampleRate`. At or below Nyquist of the 1681.97 Hz K-weighting shelf corner the bilinear pre-warp `tan(pi*fc/fs)` wraps negative and the stage 1 poles leave the unit circle (radius 1.12 at 1 Hz, 2.14 at 1 kHz, 2.15 at 2 kHz), so 100, 1000 and 2000 Hz returned NaN/inf (#1734). Results at 44.1/48/96/192 kHz are unchanged.
 - `LoudnessMeter` no longer keeps one value per 100 ms block for gated integrated loudness and LRA (unbounded on a long-running stream, #1729). Blocks accumulate into fixed-size 0.01 LU histograms with exact per-bin energy sums; memory is constant in stream length.
 
 ## [0.6.0] - 2026-11-07

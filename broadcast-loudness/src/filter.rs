@@ -8,7 +8,7 @@
 //!
 //! BS.1770‑5 Annex 1 tabulates the coefficients **only at 48 kHz** and gives no
 //! derivation for other sample rates. Rather than hard-code a single rate, the
-//! coefficients here are derived for any sample rate by bilinear-transforming
+//! coefficients here are derived for any sample rate from `MIN_SAMPLE_RATE` up by bilinear-transforming
 //! the *analog* prototype filters with frequency pre-warping — the same
 //! derivation libebur128 uses. The analog parameters (corner frequencies and
 //! quality factors) were chosen so that the 48 kHz bilinear transform
@@ -86,6 +86,25 @@ pub fn apply_biquad(x: f64, coeffs: &BiquadCoeffs, state: &mut BiquadState) -> f
     y
 }
 
+/// Corner frequency in Hz of the stage 1 head-related high-shelf prototype.
+const SHELF_FC: f64 = 1_681.974_450_955_533;
+
+/// Corner frequency in Hz of the stage 2 RLB high-pass prototype.
+const HIGH_PASS_FC: f64 = 38.135_470_876_024_44;
+
+/// Lowest sample rate in Hz at which the K-weighting filters can be derived.
+///
+/// The bilinear transform pre-warps a prototype corner `fc` with
+/// `k = tan(pi * fc / fs)`, which is only a valid design while `fc < fs / 2`.
+/// At or above Nyquist `tan` wraps to a negative `k` and the stage 1 poles
+/// leave the unit circle (radius 1.12 at 1 Hz, 2.14 at 1 kHz, 2.15 at 2 kHz),
+/// so the filter state grows without bound and the meter returns NaN/inf. The
+/// shelf corner (1681.97 Hz, ITU-R BS.1770-5 Annex 1, see
+/// `private/specs-verified/loudness/bs1770-algorithm.md`) is the highest of the
+/// two, so the minimum is the smallest integer rate above twice that corner;
+/// the high-pass corner (38.1 Hz) is always valid at any such rate.
+pub const MIN_SAMPLE_RATE: u32 = (2.0 * SHELF_FC) as u32 + 1;
+
 /// Derive the two K‑weighting stage coefficients for a given sample rate.
 ///
 /// Returns `(stage1_shelving, stage2_highpass)`.
@@ -97,7 +116,8 @@ pub fn apply_biquad(x: f64, coeffs: &BiquadCoeffs, state: &mut BiquadState) -> f
 ///
 /// # Panics
 ///
-/// Panics if `sample_rate == 0` (the caller validates the rate before calling).
+/// Panics if `sample_rate < MIN_SAMPLE_RATE` (the caller validates the rate
+/// before calling).
 ///
 /// ## Stage 1 — head‑related high‑shelf filter
 ///
@@ -114,12 +134,15 @@ pub fn k_weighting_coeffs(sample_rate: u32) -> (BiquadCoeffs, BiquadCoeffs) {
     // Gain in dB (libebur128: 3.999843853973347, ≈ +4 dB). The exact constant
     // reproduces the BS.1770-5 tabulated coefficients at 48 kHz exactly.
     const SHELF_GAIN_DB: f64 = 3.999_843_853_973_347;
-    const SHELF_FC: f64 = 1_681.974_450_955_533;
     const SHELF_Q: f64 = 0.707_175_236_955_419_6;
     // libebur128 uses the exact exponent Vb = Vh^0.4996667741545416,
     // not sqrt(Vh).
     const SHELF_VB_EXP: f64 = 0.499_666_774_154_541_6;
 
+    assert!(
+        sample_rate >= MIN_SAMPLE_RATE,
+        "sample rate below MIN_SAMPLE_RATE"
+    );
     let vh = libm::pow(10.0, SHELF_GAIN_DB / 20.0);
     let vb = libm::pow(vh, SHELF_VB_EXP);
     let k = libm::tan(core::f64::consts::PI * SHELF_FC / sample_rate as f64);
@@ -133,7 +156,6 @@ pub fn k_weighting_coeffs(sample_rate: u32) -> (BiquadCoeffs, BiquadCoeffs) {
     };
 
     // --- Stage 2: RLB high-pass filter ---
-    const HIGH_PASS_FC: f64 = 38.135_470_876_024_44;
     const HIGH_PASS_Q: f64 = 0.500_327_037_323_877_3;
 
     let k = libm::tan(core::f64::consts::PI * HIGH_PASS_FC / sample_rate as f64);
