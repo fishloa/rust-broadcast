@@ -111,15 +111,17 @@ and `--example measure_true_peak`. For interleaved or multichannel input use
 
 ## Design notes
 
-- Streaming and bounded-memory: all of a `LoudnessMeter`'s state is allocated by
-  `new` (and by `clone`): two fixed 0.01 LU loudness histograms of 640 000 bytes
-  together, plus the sliding-window trackers (3.4 s of `f64`s at the sample
-  rate). Pushing and finishing allocate nothing, however long the stream
-  (`tests/no_allocation_while_metering.rs`); that fixed 640 kB is more than the
-  old per-block history used for measurements under about an hour.
-- Gating is exact at the threshold except when the one 0.01 LU bin holding a
-  relative-gate threshold contains blocks on both sides of it; the crate source
-  (`loudness_meter.rs`) states the bound.
+- Streaming and bounded-memory: a `LoudnessMeter` holds 640 000 bytes of
+  block history (plus the sliding-window trackers, 3.4 s of `f64`s at the
+  sample rate), allocated by `new` and by `clone`. For the first 40 000
+  blocks (66 min 40 s at the 100 ms hop) that history is the exact block list,
+  and integrated loudness and LRA are identical to 0.6.0 bit for bit. The next
+  block folds each list into a fixed 0.01 LU histogram of the same size, once
+  (peak 960 000 bytes while folding); pushing allocates nothing else, however
+  long the stream (`tests/no_allocation_while_metering.rs`).
+- In histogram form, gating is exact at the threshold except when the one
+  0.01 LU bin holding a relative-gate threshold contains blocks on both sides
+  of it; the crate source (`loudness_meter.rs`) states the bound.
 - Samples louder than `LoudnessMeter::max_sample_magnitude` (about +19.8 dBFS
   mono, +16.8 dBFS stereo, +12.2 dBFS 5.1) are rejected: they could carry a
   block past the +30 LKFS top of the histograms.

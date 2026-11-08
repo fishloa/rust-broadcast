@@ -15,9 +15,8 @@
 //!   small ring of the last 30 completed sub-blocks (bounded, never grows)
 //!   derives one 400 ms gating-block LKFS value and, once at least 3 s have
 //!   elapsed, one 3 s short-term LKFS value every 100 ms step. Each derived
-//!   value is folded into a fixed-size histogram (issue #1729) and then
-//!   dropped, so memory is O(1) in stream length and independent of sample
-//!   rate. This 100 ms grid is exactly what BS.1770-5's own 75%-overlap
+//!   value goes into a fixed-size block history (issue #1729, below), so
+//!   memory is O(1) in stream length and independent of sample rate. This 100 ms grid is exactly what BS.1770-5's own 75%-overlap
 //!   gating blocks, and Tech 3342's "≥10 Hz" short-term sampling, specify.
 //! - **Max momentary / max short-term** — Tech 3341 §Table 1 cases 9-14
 //!   test the exact, continuously-slid maximum (not merely sampled every
@@ -37,38 +36,48 @@
 //! gating-block histogram, which is the correct input for integrated
 //! loudness (unaffected by this fix).
 //!
-//! ## Histogram accumulation (issue #1729)
+//! ## Block history: exact list, then histogram (issue #1729)
 //!
-//! Blocks are binned by loudness at 0.01 LU resolution between the
-//! −70 LKFS absolute gate (BS.1770-5 Annex 1, eq. 6; transcription
+//! Each of the two histories (400 ms gating blocks, 3 s short-term values)
+//! first keeps an exact list of block mean squares, allocated up front at the
+//! size of the histogram it may later become: 40 000 blocks, 66 min 40 s at
+//! the 100 ms block hop. While the list is in use, integrated loudness
+//! (BS.1770-5 Annex 1, eq. (5)/(6); transcription
 //! `private/specs-verified/loudness/broadcast-loudness/bs1770-algorithm.md`)
-//! and a 30 LKFS ceiling. Each bin keeps its block count, the exact sum of
-//! block mean-square energies, and its lowest and highest block energy, so
-//! the gated mean of eq. (5)/(6) is computed from energies, not quantised
-//! loudness. The two histograms take a fixed 640 000 bytes per meter
-//! (2 × 10 000 bins × 32 bytes), allocated by [`LoudnessMeter::new`] and by
-//! every `clone`, whatever the measurement length.
-//!
-//! The relative gates (−10 LU integrated; −20 LU LRA per EBU Tech 3342,
+//! and LRA (EBU Tech 3342,
 //! `private/specs-verified/loudness/broadcast-loudness/tech3342-lra.md`) are
+//! the 0.6.0 block-list computation, bit for bit.
+//!
+//! The 40 001st block folds the list into a histogram once, and every later
+//! block goes there. Blocks are binned by loudness at 0.01 LU resolution
+//! between the −70 LKFS absolute gate and a 30 LKFS ceiling. Each bin keeps
+//! its block count, the exact sum of block mean-square energies, and its
+//! lowest and highest block energy, so the gated mean is computed from
+//! energies, not quantised loudness.
+//!
+//! Memory: 640 000 bytes for the two histories in either form (2 × 40 000 ×
+//! 8 bytes, or 2 × 10 000 bins × 32 bytes), allocated by
+//! [`LoudnessMeter::new`] and by every `clone`. Each fold allocates its
+//! histogram before freeing its list, so the peak while folding is 960 000
+//! bytes.
+//!
+//! In histogram form, the relative gates (−10 LU integrated, −20 LU LRA) are
 //! applied at the exact threshold to every bin wholly above or below it, and
 //! to the bin containing the threshold whenever its blocks all lie on one
 //! side, so integrated loudness and the gated block set then equal the
-//! block-list reference. When that one bin holds blocks on both sides of the
+//! block-list result. When that one bin holds blocks on both sides of the
 //! threshold, its loudest block is kept, its quietest dropped, and the count
 //! in between estimated as if every block sat at the bin's lowest or highest
 //! energy; this is exact when the bin holds at most two distinct loudnesses
 //! (steady programme plus a transition block). Otherwise up to `count - 2`
 //! blocks of that bin, all within 0.01 LU of the gate, can land on the wrong
-//! side. Gating is discontinuous, so the worst case is the reference's own
-//! jump at that gate: on a two-level test signal whose quieter level sits in
-//! that bin, about 1.9 LU of integrated loudness or 21 LU of LRA, confined to
-//! programme levels whose block loudnesses straddle the threshold inside one
-//! bin.
-//!
-//! The Tech 3342 10th/95th percentiles are resolved to a bin and report the
-//! loudness of that bin's mean energy, so each is within one bin width
-//! (0.01 LU) of the reference and LRA within two.
+//! side. Gating is discontinuous, so the worst case is the block-list
+//! result's own jump at that gate: on a two-level test signal whose quieter
+//! level sits in that bin, about 1.9 LU of integrated loudness or 21 LU of
+//! LRA, confined to programme levels whose block loudnesses straddle the
+//! threshold inside one bin. The Tech 3342 10th/95th percentiles are resolved
+//! to a bin and report the loudness of that bin's mean energy, so each is
+//! within one bin width (0.01 LU) of the exact value and LRA within two.
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -314,30 +323,70 @@ impl Bin {
     }
 }
 
-/// Fixed-size histogram of block loudness. Blocks failing the absolute gate
-/// are not recorded.
-#[derive(Debug, Clone)]
+/// Blocks a history keeps exactly before it folds them into bins: as many
+/// `f64` mean squares as the bins themselves occupy (40 000 blocks, 66 min
+/// 40 s at the 100 ms block hop).
+const EXACT_BLOCKS: usize =
+    HISTOGRAM_BINS * core::mem::size_of::<Bin>() / core::mem::size_of::<f64>();
+
+/// The block loudness history of one measurement. Blocks failing the
+/// absolute gate are not recorded. Up to `exact_capacity` blocks are kept as
+/// an exact list of mean squares in arrival order; the block after that folds
+/// the list into the fixed-size bins, which take every later block.
+#[derive(Debug)]
 struct LoudnessHistogram {
     gate: GateComparison,
+    exact: Vec<f64>,
+    exact_capacity: usize,
     bins: Vec<Bin>,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "std"))]
     recorded: Vec<f64>,
+}
+
+impl Clone for LoudnessHistogram {
+    fn clone(&self) -> Self {
+        let mut exact = Vec::with_capacity(self.exact.capacity());
+        exact.extend_from_slice(&self.exact);
+        Self {
+            gate: self.gate,
+            exact,
+            exact_capacity: self.exact_capacity,
+            bins: self.bins.clone(),
+            #[cfg(all(test, feature = "std"))]
+            recorded: self.recorded.clone(),
+        }
+    }
 }
 
 impl LoudnessHistogram {
     fn new(gate: GateComparison) -> Self {
+        Self::with_exact_capacity(gate, EXACT_BLOCKS)
+    }
+
+    fn with_exact_capacity(gate: GateComparison, exact_capacity: usize) -> Self {
         Self {
             gate,
-            bins: alloc::vec![Bin::EMPTY; HISTOGRAM_BINS],
-            #[cfg(test)]
+            exact: Vec::with_capacity(exact_capacity),
+            exact_capacity,
+            bins: Vec::new(),
+            #[cfg(all(test, feature = "std"))]
             recorded: Vec::new(),
         }
     }
 
     fn clear(&mut self) {
-        self.bins.fill(Bin::EMPTY);
-        #[cfg(test)]
-        self.recorded.clear();
+        *self = Self::with_exact_capacity(self.gate, self.exact_capacity);
+    }
+
+    fn is_binned(&self) -> bool {
+        !self.bins.is_empty()
+    }
+
+    fn fold_into_bins(&mut self) {
+        self.bins = alloc::vec![Bin::EMPTY; HISTOGRAM_BINS];
+        for mean_sq in core::mem::take(&mut self.exact) {
+            self.bin_record(mean_sq, mean_sq_to_lkfs(mean_sq));
+        }
     }
 
     fn bin_of(lkfs: f64) -> usize {
@@ -350,8 +399,19 @@ impl LoudnessHistogram {
         if !self.gate.passes(lkfs, ABSOLUTE_GATE) {
             return;
         }
-        #[cfg(test)]
+        #[cfg(all(test, feature = "std"))]
         self.recorded.push(lkfs);
+        if !self.is_binned() {
+            if self.exact.len() < self.exact_capacity {
+                self.exact.push(mean_sq);
+                return;
+            }
+            self.fold_into_bins();
+        }
+        self.bin_record(mean_sq, lkfs);
+    }
+
+    fn bin_record(&mut self, mean_sq: f64, lkfs: f64) {
         let bin = &mut self.bins[Self::bin_of(lkfs)];
         bin.count += 1;
         bin.energy += mean_sq;
@@ -407,6 +467,9 @@ impl LoudnessHistogram {
     }
 
     fn integrated(&self) -> f64 {
+        if !self.is_binned() {
+            return self.exact_integrated();
+        }
         let Some(threshold) = self.relative_threshold(RELATIVE_GATE) else {
             return f64::NEG_INFINITY;
         };
@@ -428,7 +491,12 @@ impl LoudnessHistogram {
         f64::NEG_INFINITY
     }
 
-    fn loudness_range(&self) -> f64 {
+    /// Consumes the exact list when it is in use (it sorts it in place, so
+    /// finishing allocates nothing).
+    fn loudness_range(&mut self) -> f64 {
+        if !self.is_binned() {
+            return self.exact_loudness_range();
+        }
         let Some(threshold) = self.relative_threshold(LRA_RELATIVE_GATE) else {
             return 0.0;
         };
@@ -445,6 +513,53 @@ impl LoudnessHistogram {
         let low = self.percentile_loudness(cut, rank(LRA_LOW_PERCENT));
         let high = self.percentile_loudness(cut, rank(LRA_HIGH_PERCENT));
         high - low
+    }
+}
+
+/// Exact-list gating, step for step the 0.6.0 block-list computation (BS.1770-5
+/// eq. (5)/(6) and the Tech 3342 reference), so its results are identical to
+/// that release bit for bit.
+impl LoudnessHistogram {
+    fn exact_mean(lkfs: impl Iterator<Item = f64> + Clone) -> Option<f64> {
+        let n = lkfs.clone().count();
+        (n > 0).then(|| {
+            let power: f64 = lkfs.map(lkfs_to_mean_sq).sum();
+            mean_sq_to_lkfs(power / n as f64)
+        })
+    }
+
+    fn exact_integrated(&self) -> f64 {
+        let lkfs = self.exact.iter().map(|&mean_sq| mean_sq_to_lkfs(mean_sq));
+        let Some(mean) = Self::exact_mean(lkfs.clone()) else {
+            return f64::NEG_INFINITY;
+        };
+        let threshold = mean + RELATIVE_GATE;
+        let gate = self.gate;
+        Self::exact_mean(lkfs.filter(move |&l| gate.passes(l, threshold)))
+            .unwrap_or(f64::NEG_INFINITY)
+    }
+
+    fn exact_loudness_range(&mut self) -> f64 {
+        for value in &mut self.exact {
+            *value = mean_sq_to_lkfs(*value);
+        }
+        let Some(mean) = Self::exact_mean(self.exact.iter().copied()) else {
+            return 0.0;
+        };
+        let threshold = mean + LRA_RELATIVE_GATE;
+        let gate = self.gate;
+        self.exact.retain(|&l| gate.passes(l, threshold));
+        if self.exact.is_empty() {
+            return 0.0;
+        }
+        self.exact.sort_unstable_by(f64::total_cmp);
+        let n = self.exact.len();
+        // Tech 3342 MATLAB: round((n-1)*PRC/100 + 1), 1-based -> 0-based rank.
+        let rank = |percent: f64| {
+            let one_based = libm::round((n as f64 - 1.0) * percent / 100.0 + 1.0) as usize;
+            one_based.saturating_sub(1).min(n - 1)
+        };
+        self.exact[rank(LRA_HIGH_PERCENT)] - self.exact[rank(LRA_LOW_PERCENT)]
     }
 }
 
@@ -555,10 +670,12 @@ impl LoudnessMeter {
     ///
     /// `layout` — channel configuration with per‑channel weights.
     ///
-    /// Allocates all of the meter's state up front, whatever the measurement
-    /// length: 640 000 bytes of loudness histograms plus 3.4 s of `f64`s at
-    /// `sample_rate` for the sliding-window maxima. Pushing and finishing
-    /// allocate nothing.
+    /// Allocates the meter's state up front: 640 000 bytes of block history
+    /// plus 3.4 s of `f64`s at `sample_rate` for the sliding-window maxima.
+    /// Gating is exact (identical to 0.6.0) for the first 40 000 blocks,
+    /// 66 min 40 s; the next block swaps each 320 000-byte exact list for an
+    /// equally sized histogram, once, which is the only allocation pushing
+    /// ever makes (see the crate's design notes for its bound).
     pub fn new(sample_rate: u32, layout: ChannelLayout) -> Result<Self, crate::Error> {
         if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate) {
             return Err(crate::Error::InvalidSampleRate { got: sample_rate });
@@ -595,6 +712,14 @@ impl LoudnessMeter {
             frame_count: 0,
             max_sample_magnitude: max_sample_magnitude(layout),
         })
+    }
+
+    #[cfg(all(test, feature = "std"))]
+    fn with_exact_capacity(mut self, blocks: usize) -> Self {
+        self.gating_blocks = LoudnessHistogram::with_exact_capacity(GateComparison::Above, blocks);
+        self.short_term_blocks =
+            LoudnessHistogram::with_exact_capacity(GateComparison::AtOrAbove, blocks);
+        self
     }
 
     /// Reset the meter for a new measurement.
@@ -907,9 +1032,9 @@ impl LoudnessMeter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
-    use super::{HISTOGRAM_BINS, LoudnessMeter, SHORT_TERM_SUB_BLOCKS};
+    use super::{EXACT_BLOCKS, HISTOGRAM_BINS, LoudnessMeter, SHORT_TERM_SUB_BLOCKS};
     use crate::channel_layout::ChannelLayout;
 
     /// Issue #1072 (audit LOUD-C2): the bounded ring/tracker state must
@@ -946,8 +1071,11 @@ mod tests {
                 "sample_rate {sample_rate}: short-term ring is not fixed-size"
             );
 
-            assert_eq!(meter.gating_blocks.bins.len(), HISTOGRAM_BINS);
-            assert_eq!(meter.short_term_blocks.bins.len(), HISTOGRAM_BINS);
+            for h in [&meter.gating_blocks, &meter.short_term_blocks] {
+                assert!(!h.is_binned());
+                assert_eq!(h.exact.capacity(), EXACT_BLOCKS);
+            }
+            assert_eq!(2 * EXACT_BLOCKS * core::mem::size_of::<f64>(), 640_000);
             assert_eq!(
                 2 * HISTOGRAM_BINS * core::mem::size_of::<super::Bin>(),
                 640_000
@@ -957,8 +1085,9 @@ mod tests {
 
     mod gate_edge {
         use super::super::{
-            BIN_WIDTH_LU, LRA_HIGH_PERCENT, LRA_LOW_PERCENT, LRA_RELATIVE_GATE, LoudnessHistogram,
-            LoudnessMeter, RELATIVE_GATE, SUB_BLOCK_S, lkfs_to_mean_sq, mean_sq_to_lkfs,
+            ABSOLUTE_GATE, BIN_WIDTH_LU, LRA_HIGH_PERCENT, LRA_LOW_PERCENT, LRA_RELATIVE_GATE,
+            LoudnessHistogram, LoudnessMeter, RELATIVE_GATE, SUB_BLOCK_S, lkfs_to_mean_sq,
+            mean_sq_to_lkfs,
         };
         use crate::channel_layout::ChannelLayout;
         use alloc::vec::Vec;
@@ -993,8 +1122,24 @@ mod tests {
             }
         }
 
-        fn meter_for(tone: Tone, quiet_dbfs: f64) -> LoudnessMeter {
-            let mut m = LoudnessMeter::new(RATE, ChannelLayout::Mono).unwrap();
+        /// Exact keeps the default list, longer than these programmes; Binned
+        /// folds into the histogram on the first block.
+        #[derive(Clone, Copy, PartialEq)]
+        enum Mode {
+            Exact,
+            Binned,
+        }
+
+        fn meter(mode: Mode) -> LoudnessMeter {
+            let m = LoudnessMeter::new(RATE, ChannelLayout::Mono).unwrap();
+            match mode {
+                Mode::Exact => m,
+                Mode::Binned => m.with_exact_capacity(0),
+            }
+        }
+
+        fn meter_for(tone: Tone, quiet_dbfs: f64, mode: Mode) -> LoudnessMeter {
+            let mut m = meter(mode);
             let n = (SEGMENT_S * f64::from(RATE)) as usize;
             for (dbfs, offset) in [(LOUD_DBFS, 0), (quiet_dbfs, n)] {
                 let amp = libm::pow(10.0, dbfs / 20.0);
@@ -1061,7 +1206,7 @@ mod tests {
             }
 
             fn mostly_kept(&self, tone: Tone, quiet_dbfs: f64) -> bool {
-                let m = meter_for(tone, quiet_dbfs);
+                let m = meter_for(tone, quiet_dbfs, Mode::Exact);
                 let h = (self.histogram)(&m);
                 let thr = threshold(&h.recorded, self.gate_lu);
                 let kept = h
@@ -1096,8 +1241,9 @@ mod tests {
                 let (mut wholly_below, mut straddling) = (0, 0);
                 for k in -STEPS_BELOW..=STEPS_ABOVE {
                     let q = jump + f64::from(k) * STEP_DB;
-                    let m = meter_for(tone, q);
+                    let m = meter_for(tone, q, Mode::Binned);
                     let h = (self.histogram)(&m);
+                    assert!(h.is_binned());
                     let thr = threshold(&h.recorded, self.gate_lu);
                     let bin = &h.bins[LoudnessHistogram::bin_of(thr)];
                     let got = (self.result)(&m);
@@ -1124,6 +1270,151 @@ mod tests {
             }
         }
 
+        /// The 0.6.0 block-list gating, transcribed from that release.
+        mod v0_6_0 {
+            use super::{
+                ABSOLUTE_GATE, LRA_HIGH_PERCENT, LRA_LOW_PERCENT, RELATIVE_GATE, lkfs_to_mean_sq,
+                mean_sq_to_lkfs,
+            };
+            use alloc::vec::Vec;
+
+            fn mean_of_lkfs(values: &[f64]) -> f64 {
+                if values.is_empty() {
+                    return f64::NEG_INFINITY;
+                }
+                let n = values.len() as f64;
+                let sum_power: f64 = values.iter().map(|&l| lkfs_to_mean_sq(l)).sum();
+                mean_sq_to_lkfs(sum_power / n)
+            }
+
+            pub(super) fn integrated(blocks: &[f64]) -> f64 {
+                let abs_gated: Vec<f64> = blocks
+                    .iter()
+                    .copied()
+                    .filter(|&l| l > ABSOLUTE_GATE)
+                    .collect();
+                if abs_gated.is_empty() {
+                    return f64::NEG_INFINITY;
+                }
+                let rel_threshold = mean_of_lkfs(&abs_gated) + RELATIVE_GATE;
+                let rel_gated: Vec<f64> = abs_gated
+                    .iter()
+                    .copied()
+                    .filter(|&l| l > rel_threshold)
+                    .collect();
+                mean_of_lkfs(&rel_gated)
+            }
+
+            pub(super) fn lra(blocks: &[f64]) -> f64 {
+                let abs_gated: Vec<f64> = blocks
+                    .iter()
+                    .copied()
+                    .filter(|&l| l >= ABSOLUTE_GATE)
+                    .collect();
+                if abs_gated.is_empty() {
+                    return 0.0;
+                }
+                let rel_threshold = mean_of_lkfs(&abs_gated) - 20.0;
+                let mut rel_gated: Vec<f64> = abs_gated
+                    .iter()
+                    .copied()
+                    .filter(|&l| l >= rel_threshold)
+                    .collect();
+                if rel_gated.is_empty() {
+                    return 0.0;
+                }
+                rel_gated.sort_unstable_by(|a, b| {
+                    a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+                });
+                let n = rel_gated.len();
+                let idx = |p: f64| {
+                    (libm::round((n as f64 - 1.0) * p / 100.0 + 1.0) as usize)
+                        .saturating_sub(1)
+                        .min(n - 1)
+                };
+                rel_gated[idx(LRA_HIGH_PERCENT)] - rel_gated[idx(LRA_LOW_PERCENT)]
+            }
+        }
+
+        /// Exact mode against 0.6.0, bit for bit, at every 0.0001 dB step
+        /// across the gate.
+        fn exact_sweep(gate: &Gate, tone: Tone, v0_6_0: fn(&[f64]) -> f64) {
+            let jump = gate.edge(tone);
+            for k in -STEPS_BELOW..=STEPS_ABOVE {
+                let q = jump + f64::from(k) * STEP_DB;
+                let m = meter_for(tone, q, Mode::Exact);
+                let h = (gate.histogram)(&m);
+                assert!(!h.is_binned());
+                let (got, want) = ((gate.result)(&m), v0_6_0(&h.recorded));
+                assert_eq!(
+                    got.to_bits(),
+                    want.to_bits(),
+                    "q = {q}: got {got}, 0.6.0 {want}"
+                );
+            }
+        }
+
+        #[test]
+        fn exact_integrated_gate_is_0_6_0_bit_for_bit_across_the_edge() {
+            exact_sweep(&INTEGRATED, Tone::Aligned, v0_6_0::integrated);
+            exact_sweep(&INTEGRATED, Tone::Wandering, v0_6_0::integrated);
+        }
+
+        #[test]
+        fn exact_lra_gate_is_0_6_0_bit_for_bit_across_the_edge() {
+            exact_sweep(&LRA, Tone::Aligned, v0_6_0::lra);
+            exact_sweep(&LRA, Tone::Wandering, v0_6_0::lra);
+        }
+
+        /// A programme of pseudo-random levels that folds into the histogram
+        /// half way gives the exact result to within the histogram bound.
+        #[test]
+        fn folding_mid_programme_does_not_move_the_result() {
+            const SECONDS: usize = 60;
+            const LEVEL_SPAN_DB: f64 = 30.0;
+            let run = |exact_capacity: Option<usize>| {
+                let base = LoudnessMeter::new(RATE, ChannelLayout::Mono).unwrap();
+                let mut m = match exact_capacity {
+                    Some(c) => base.with_exact_capacity(c),
+                    None => base,
+                };
+                let mut seed = 0x2545_f491_u32;
+                for second in 0..SECONDS {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let dbfs = -40.0 + LEVEL_SPAN_DB * f64::from(seed >> 8) / f64::from(1u32 << 24);
+                    let amp = libm::pow(10.0, dbfs / 20.0);
+                    for i in 0..RATE as usize {
+                        let t = (second * RATE as usize + i) as f64 / f64::from(RATE);
+                        m.push_f64(&[amp * libm::sin(2.0 * core::f64::consts::PI * 997.0 * t)])
+                            .unwrap();
+                    }
+                }
+                m.finish();
+                m
+            };
+            let exact = run(None);
+            let half = exact.gating_blocks.recorded.len() / 2;
+            let folded = run(Some(half));
+            assert!(!exact.gating_blocks.is_binned() && !exact.short_term_blocks.is_binned());
+            assert!(folded.gating_blocks.is_binned() && folded.short_term_blocks.is_binned());
+            for (gate, h) in [
+                (&INTEGRATED, &folded.gating_blocks),
+                (&LRA, &folded.short_term_blocks),
+            ] {
+                let thr = threshold(&h.recorded, gate.gate_lu);
+                let bin = &h.bins[LoudnessHistogram::bin_of(thr)];
+                assert!(
+                    h.gate.passes(bin.min_lkfs(), thr) || !h.gate.passes(bin.max_lkfs(), thr),
+                    "threshold bin straddles; pick another seed"
+                );
+            }
+            let di = (folded.integrated_lufs() - exact.integrated_lufs()).abs();
+            let dl = (folded.loudness_range() - exact.loudness_range()).abs();
+            assert!(di < INTEGRATED.tolerance, "integrated moved {di}");
+            assert!(dl < LRA.tolerance, "LRA moved {dl}");
+            assert!(exact.loudness_range() > 1.0, "{}", exact.loudness_range());
+        }
+
         fn check(gate: &Gate) {
             let (wholly_below, straddling) = gate.sweep(Tone::Aligned);
             assert!(
@@ -1136,12 +1427,12 @@ mod tests {
         }
 
         #[test]
-        fn integrated_gate_matches_the_reference_across_the_edge() {
+        fn binned_integrated_gate_stays_within_the_bound_across_the_edge() {
             check(&INTEGRATED);
         }
 
         #[test]
-        fn lra_gate_matches_the_reference_across_the_edge() {
+        fn binned_lra_gate_stays_within_the_bound_across_the_edge() {
             check(&LRA);
         }
     }
@@ -1156,12 +1447,23 @@ mod tests {
             .map(|ulps| f64::from_bits((estimate.to_bits() as i64 + ulps) as u64))
             .find(|&m| mean_sq_to_lkfs(m) == ABSOLUTE_GATE)
             .unwrap();
-        let mut lra = LoudnessHistogram::new(GateComparison::AtOrAbove);
-        let mut integrated = LoudnessHistogram::new(GateComparison::Above);
-        lra.record(at_gate);
-        integrated.record(at_gate);
-        assert_eq!(lra.totals_from(0).0, 1);
-        assert_eq!(integrated.totals_from(0).0, 0);
+        for exact_capacity in [0, 1] {
+            let mut lra =
+                LoudnessHistogram::with_exact_capacity(GateComparison::AtOrAbove, exact_capacity);
+            let mut integrated =
+                LoudnessHistogram::with_exact_capacity(GateComparison::Above, exact_capacity);
+            lra.record(at_gate);
+            integrated.record(at_gate);
+            let held = |h: &LoudnessHistogram| {
+                if h.is_binned() {
+                    h.totals_from(0).0 as usize
+                } else {
+                    h.exact.len()
+                }
+            };
+            assert_eq!(held(&lra), 1);
+            assert_eq!(held(&integrated), 0);
+        }
     }
 
     #[test]
