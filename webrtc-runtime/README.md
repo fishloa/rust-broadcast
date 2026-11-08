@@ -88,6 +88,7 @@ Runnable programs: `whip_lifecycle`, `ice_server_links` and `whip_media_smoke` (
 ## What is implemented
 
 - **`whip`:** `client::WhipClient` (`offer`, `flush_candidates`, `ice_restart`, `terminate`, `on_response`) and `server::WhipSession` (`on_post`, `accept`, `on_patch`, `ack_trickle`, `ack_restart`, `on_delete`, `ack_delete`), each with a typed `State` and `Event`.
+- **`session`:** the one engine behind both protocols, `client::Client<P>` and `server::Session<P>` over a sealed `Profile` (`Whip`, `Whep`); `WhipClient`, `WhepPlayer`, `WhipSession` and `WhepSession` are aliases of it, and `State` and `Event` are shared per role.
 - **`whep`:** `player::WhepPlayer` and `server::WhepSession`, including the counter-offer flow and the `CounterOffered` state.
 - **`ice`:** `IceServer`, `parse_ice_server_links`, `format_ice_server_links` (RFC 9725 §4.4, the `Link` header is a documented hand-rolled exception to the no-hand-roll guard because no crate parses RFC 8288 links with these parameters).
 - **`media`** (feature `media`): `MediaTransport` with `handle_datagram`, `poll_transmit`, `handle_timeout`, `poll_timeout`, `add_remote_candidate`, `restart_ice` (in place, keeps DTLS and SRTP), `encrypt_rtp`, `encrypt_rtcp`, `needs_rekey`, `rekey`, plus `MediaTransportConfig` and `MediaEvent`.
