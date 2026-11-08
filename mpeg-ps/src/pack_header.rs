@@ -72,7 +72,6 @@ impl<'a> Parse<'a> for PackHeader<'a> {
         // byte 12: mux[5:0](6, bits[7:2]) | marker_bit(2, bits[1:0])
         // byte 13: reserved(5, bits[7:3]) | stuffing(3, bits[2:0])
 
-        // Validate marker bits at byte12[1:0]
         if b[12] & 0x03 != 0x03 {
             return Err(Error::BadMarker("program_mux_rate markers"));
         }
