@@ -283,6 +283,7 @@ impl CommandDef<'_> for SpliceSchedule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn rt(cmd: &SpliceSchedule) {
         let bytes = cmd.try_to_bytes().unwrap();

@@ -937,6 +937,7 @@ broadcast_common::impl_spec_display!(PlpCodeRate, Reserved);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn spec_label_known_and_reserved() {

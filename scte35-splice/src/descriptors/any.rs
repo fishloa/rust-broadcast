@@ -212,6 +212,7 @@ mod tests {
     use super::*;
     use crate::descriptors::avail::AvailDescriptor;
     use crate::descriptors::header::CUEI;
+    use alloc::{vec, vec::Vec};
     use broadcast_common::Serialize;
 
     #[test]

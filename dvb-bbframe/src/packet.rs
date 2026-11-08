@@ -638,6 +638,7 @@ impl CarryOverExtractor {
 mod tests {
     use super::*;
     use crate::header::{Bbheader, Matype, Mode, TsGs};
+    use alloc::vec;
 
     /// Plain NM header: ISSYI=0, NPD=0, so UPL=188*8=1504 and the stride is
     /// the bare `CRC-8 + 187-byte UP` (EN 302 755 §5.1.8 figure 5).

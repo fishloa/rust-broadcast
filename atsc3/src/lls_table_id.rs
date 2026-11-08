@@ -108,6 +108,7 @@ broadcast_common::impl_spec_display!(LlsTableId, Reserved);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn known_values_round_trip() {

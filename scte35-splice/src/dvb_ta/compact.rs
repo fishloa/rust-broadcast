@@ -610,6 +610,7 @@ impl CompactSpliceInsert {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Independent oracle: pack `(value, width)` fields MSB-first through a
     /// string of `0`/`1` characters (deliberately not `BitWriter`), so a layout

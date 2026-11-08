@@ -516,6 +516,7 @@ impl Serialize for Burst<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{string::ToString, vec};
 
     #[test]
     fn serialize_into_short_output_is_output_buffer_too_small() {

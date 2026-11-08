@@ -116,6 +116,7 @@ fn all_ones_for_width(width: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn round_trip(value: u64, start_width: u32) {
         let bits = plex_bits(value, start_width);

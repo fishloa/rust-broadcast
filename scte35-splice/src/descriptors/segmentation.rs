@@ -539,6 +539,7 @@ impl<'a> SpliceDescriptorDef<'a> for SegmentationDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn rt(d: &SegmentationDescriptor) {
         let bytes = d.try_to_bytes().unwrap();

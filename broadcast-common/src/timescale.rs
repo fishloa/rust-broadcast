@@ -122,6 +122,7 @@ pub fn rescale_u64(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn rounding_modes_differ_on_a_half_and_a_negative() {

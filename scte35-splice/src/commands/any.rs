@@ -158,6 +158,7 @@ declare_commands! {'a;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn unknown_command_type_round_trips_body() {

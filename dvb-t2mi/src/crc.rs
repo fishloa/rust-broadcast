@@ -42,6 +42,7 @@ pub fn validate_crc(bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
     use broadcast_common::crc32_mpeg2::compute;
 
     #[test]
