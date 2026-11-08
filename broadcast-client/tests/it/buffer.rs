@@ -135,6 +135,7 @@ struct Host {
     times: Vec<u64>,
     chunk_marks: Vec<usize>,
     ticks: Vec<(u64, Option<u64>)>,
+    now: u64,
 }
 
 impl Host {
@@ -156,6 +157,7 @@ impl Host {
             times: Vec::new(),
             chunk_marks: Vec::new(),
             ticks: Vec::new(),
+            now: 0,
         })
     }
 
@@ -170,12 +172,14 @@ impl Host {
     }
 
     fn data(&mut self, bytes: &[u8], now: u64) {
+        self.now = now;
         self.chunk_marks.push(self.events.len());
         self.session.on_data(self.conn, bytes, now);
         self.drain(now);
     }
 
     fn tick(&mut self, now: u64) {
+        self.now = now;
         let p = self.clock.position(now);
         self.ticks.push((now, p));
         self.session.on_playback_position(now, p);
@@ -1070,7 +1074,7 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     let base = h.log().len();
 
     h.session
-        .set_rendered_tracks(&[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
     let after = &h.log()[base..];
     assert_eq!(after.len(), 3, "{after:?}");
     assert_eq!(register_change(&after[0]), Some((false, AUDIO)));
@@ -1081,11 +1085,11 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     );
     let base = h.log().len();
     h.session
-        .set_rendered_tracks(&[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
     assert_eq!(h.log().len(), base);
 
     h.session
-        .set_rendered_tracks(&[ids[&VIDEO], ids[&AUDIO], ids[&OTHER_AUDIO]]);
+        .set_rendered_tracks(h.now, &[ids[&VIDEO], ids[&AUDIO], ids[&OTHER_AUDIO]]);
     let after = &h.log()[base..];
     assert_eq!(after.len(), 2, "{after:?}");
     assert_eq!(register_change(&after[0]), Some((true, AUDIO)));
@@ -1343,7 +1347,7 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
                 if i == switch_at {
                     let ids = h.track_ids();
                     h.session
-                        .set_rendered_tracks(&[ids[&VIDEO], ids[&OTHER_AUDIO]]);
+                        .set_rendered_tracks(t, &[ids[&VIDEO], ids[&OTHER_AUDIO]]);
                     switched_log_len = h.log().len();
                     switched_event_idx = h.events.len();
                 }
@@ -1538,7 +1542,7 @@ fn run_declaring(bytes: &[u8], delay_us: Option<u64>) -> Host {
         if tracks_at.is_some_and(|at| now >= at + delay)
             && let Some(p) = pick_rendered(&h)
         {
-            h.session.set_rendered_tracks(&[p.video, p.audio]);
+            h.session.set_rendered_tracks(now, &[p.video, p.audio]);
             h.tick(now);
             declared = true;
         }

@@ -754,7 +754,7 @@ fn renditions_drv(playout: PlayoutConfig) -> Renditions {
     let (bodies, video_end_url, audio_urls, audio_track) = rendition_bodies();
     let mut d = Drv::new(MASTER_URL, cfg(playout), bodies);
     d.session
-        .set_rendered_tracks(&[tid(VIDEO), tid(audio_track)]);
+        .set_rendered_tracks(d.now, &[tid(VIDEO), tid(audio_track)]);
     Renditions {
         d,
         video_end_url,
@@ -891,7 +891,7 @@ fn start_at_is_origin_pts_27mhz() {
 #[test]
 fn set_rendered_tracks_audio_only_uses_audio_origin() {
     let mut d = Drv::new(TS_PLAYLIST_URL, cfg(PlayoutConfig::default()), ts_bodies());
-    d.session.set_rendered_tracks(&[tid(AUDIO)]);
+    d.session.set_rendered_tracks(d.now, &[tid(AUDIO)]);
     d.serve_all_except(&[]);
     let list = nb(&d.events);
     let points = lead_points(&list, &[AUDIO]);
@@ -1095,7 +1095,8 @@ fn gate_events_deterministic_across_chunking() {
 #[test]
 fn no_events_before_first_sample() {
     let mut d = Drv::new(TS_PLAYLIST_URL, cfg(PlayoutConfig::default()), ts_bodies());
-    d.session.set_rendered_tracks(&[tid(VIDEO), tid(AUDIO)]);
+    d.session
+        .set_rendered_tracks(d.now, &[tid(VIDEO), tid(AUDIO)]);
     d.serve(TS_PLAYLIST_URL);
     d.pos(Some(0));
     d.pos(None);
@@ -1162,7 +1163,7 @@ fn playout_audio_rendition_switch_does_not_pin_stale_audio_obs() {
     let audio_track = f.audio_stream_track_id.value() + AUDIO_TRACK_ID_OFFSET;
     let mut r = Drv::new(MASTER_URL, cfg(PlayoutConfig::default()), bodies);
     r.session
-        .set_rendered_tracks(&[tid(VIDEO), tid(audio_track)]);
+        .set_rendered_tracks(r.now, &[tid(VIDEO), tid(audio_track)]);
 
     // Serve everything except the new rendition's segments.
     let withheld_refs: Vec<&str> = withheld.iter().map(String::as_str).collect();
