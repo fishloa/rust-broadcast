@@ -142,7 +142,7 @@ struct WireArrivals {
     first_ts: std::collections::BTreeMap<u8, u32>,
     idr_starts: std::collections::BTreeMap<u8, Vec<i64>>,
     order: std::collections::BTreeMap<u8, Vec<i64>>,
-    last_sr: std::collections::BTreeMap<u8, (f64, u32)>,
+    sender_reports: std::collections::BTreeMap<u8, Vec<(f64, u32)>>,
 }
 
 impl WireArrivals {
@@ -171,7 +171,10 @@ impl WireArrivals {
                         u32::from_be_bytes([frame[at], frame[at + 1], frame[at + 2], frame[at + 3]])
                     };
                     let ntp = f64::from(word(8)) + f64::from(word(12)) / NTP_FRACTION;
-                    self.last_sr.insert(channel - 1, (ntp, word(16)));
+                    self.sender_reports
+                        .entry(channel - 1)
+                        .or_default()
+                        .push((ntp, word(16)));
                 }
                 if channel.is_multiple_of(CHANNELS_PER_TRACK) && frame.len() >= RTP_HEADER_MIN {
                     let ts = u32::from_be_bytes([
@@ -232,6 +235,33 @@ impl WireArrivals {
             .next_back()
             .map(|(_, &t)| t)
     }
+}
+
+fn is_synced(state: AvSync) -> bool {
+    matches!(state, AvSync::SenderReport | AvSync::RtpInfo)
+}
+
+fn sr_faithfulness_violation(state: Option<AvSync>, deviation: f64) -> Option<f64> {
+    (state == Some(AvSync::SenderReport) && deviation.abs() >= SR_FAITHFUL_SECONDS)
+        .then_some(deviation)
+}
+
+fn expected_first_gap(state: Option<AvSync>, video_sent_early_s: f64) -> f64 {
+    if state == Some(AvSync::RtpInfo) {
+        video_sent_early_s
+    } else {
+        0.0
+    }
+}
+
+fn sr_wall_at_origin(wire: &WireArrivals, channel: u8, scale: f64) -> f64 {
+    let first_ts = wire.first_ts[&channel];
+    let mut origins: Vec<f64> = wire.sender_reports[&channel]
+        .iter()
+        .map(|&(ntp, sr_ts)| ntp - f64::from(sr_ts.wrapping_sub(first_ts) as i32) / scale)
+        .collect();
+    origins.sort_by(f64::total_cmp);
+    origins[origins.len() / 2]
 }
 
 fn micros(start: Instant) -> u64 {
@@ -484,10 +514,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                         let ts = track_timescale.get(&tid).copied().unwrap_or(1).max(1);
                         let seconds = pts as f64 / f64::from(ts);
                         first_sample_pts.entry(tid).or_insert(pts);
-                        if sync_states
-                            .last()
-                            .is_some_and(|(_, s)| *s == AvSync::SenderReport)
-                        {
+                        if sync_states.last().is_some_and(|(_, s)| is_synced(*s)) {
                             emitted.push((tid, pts, now));
                             emitted_data.push((is_video, sample.data.to_vec(), seconds));
                             emitted_audio_idx.push(if is_video { -1 } else { audio_count - 1 });
@@ -606,10 +633,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         samples.len()
     );
     let states: Vec<AvSync> = sync_states.iter().map(|(_, s)| *s).collect();
-    assert_eq!(
-        states.last(),
-        Some(&AvSync::SenderReport),
-        "mediamtx sends Sender Reports, the sync state must reach SenderReport: {sync_states:?}"
+    assert!(
+        states.last().is_some_and(|s| is_synced(*s)),
+        "the sync state must reach RtpInfo or SenderReport: {sync_states:?}"
     );
     let first_gap = match (first_audio_sample_pts, first_video_sample_pts) {
         (Some(a), Some(v)) => {
@@ -702,10 +728,8 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
             .entry(video)
             .or_default()
             .push(seconds - arrival as f64 / 1e6);
-        let (ntp, sr_ts) = wire.last_sr[&channel];
-        let sr_rel = f64::from(sr_ts.wrapping_sub(wire.first_ts[&channel]) as i32);
         let scale = f64::from(track_timescale[&tid]);
-        let wall = ntp + (rel as f64 - sr_rel) / scale;
+        let wall = sr_wall_at_origin(&wire, channel, scale) + rel as f64 / scale;
         sr_residual.entry(video).or_default().push(seconds - wall);
         sr_vs_arrival
             .entry(video)
@@ -744,9 +768,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     eprintln!(
         "SRFAITHFUL[{label}] emitted-timeline-minus-SR-mapping audio-vs-video={sr_faithfulness:.4}"
     );
-    assert!(
-        sr_faithfulness.abs() < SR_FAITHFUL_SECONDS,
-        "{label}: the emitted timeline departs from the Sender Report mapping by {sr_faithfulness} s"
+    assert_eq!(
+        sr_faithfulness_violation(states.last().copied(), sr_faithfulness),
+        None,
+        "{label}: the emitted timeline departs from the Sender Report mapping"
     );
     let video_sent_early_s =
         (ground.audio_median - audio_offset) - (ground.video_median - video_offset);
@@ -763,9 +788,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     eprintln!(
         "AVSYNC[{label}] states={sync_states:?} first_audio_minus_first_video_s={first_gap:.4} av_offset_s={av_offset:.4} av_offset_by_video_pts_s={av_offset_pts:.4} (median pts-minus-RTP-arrival: audio {audio_offset:.4}, video {video_offset:.4}) emission_lag_s={emission_lag:.4} (info only)"
     );
+    let expected_first_gap = expected_first_gap(states.last().copied(), video_sent_early_s);
     assert!(
-        first_gap.abs() < COMMON_TIMELINE_BOUND_SECONDS,
-        "first audio is {first_gap} s from first video on the common timeline"
+        (first_gap - expected_first_gap).abs() < COMMON_TIMELINE_BOUND_SECONDS,
+        "first audio is {first_gap} s from first video on the common timeline, expected {expected_first_gap} s"
     );
     assert!(
         av_offset.abs() < COMMON_TIMELINE_BOUND_SECONDS,
@@ -846,4 +872,28 @@ fn print_lead_series(label: &str, session: &Session) {
             _ => {}
         }
     }
+}
+
+#[test]
+fn sender_report_faithfulness_binds_only_in_sender_report_mode() {
+    let observed_with_rtp_info = -0.0415;
+    assert_eq!(
+        sr_faithfulness_violation(Some(AvSync::RtpInfo), observed_with_rtp_info),
+        None,
+        "an RTP-Info timeline is the server's statement and is not derived from Sender Reports"
+    );
+    assert_eq!(
+        sr_faithfulness_violation(Some(AvSync::SenderReport), observed_with_rtp_info),
+        Some(observed_with_rtp_info)
+    );
+    assert_eq!(
+        sr_faithfulness_violation(Some(AvSync::SenderReport), 0.006),
+        None
+    );
+}
+
+#[test]
+fn first_sample_gap_expectation_follows_the_sync_mode() {
+    assert_eq!(expected_first_gap(Some(AvSync::SenderReport), 0.127), 0.0);
+    assert_eq!(expected_first_gap(Some(AvSync::RtpInfo), 0.127), 0.127);
 }
