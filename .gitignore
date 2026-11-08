@@ -46,3 +46,4 @@ validation_data.json
 
 # dvb-si descriptor namespace dir named "target" (INT/UNT target descriptors), not a build dir
 !/dvb-si/src/descriptors/target/
+/multimux/node_modules
