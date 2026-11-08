@@ -182,6 +182,7 @@ fn eac3_held_access_unit_is_retimed_onto_the_next_pes_timeline_after_a_pts_jump(
 ///
 /// MPD shape: timescale 90000, presentationTimeOffset 900000, Period 30 s,
 /// `<S t="900000" d="180000" r="-1"/>` -> 15 two-second segments.
+#[cfg(feature = "std")]
 #[test]
 fn segment_timeline_negative_r_ignores_presentation_time_offset() {
     use transmux::dash_parse::{S, SegmentTimeline};
@@ -223,6 +224,7 @@ fn segment_timeline_negative_r_ignores_presentation_time_offset() {
 /// segments with no error: the `S` (whose `@d` the MPD declares) silently
 /// vanishes from the plan. ceil((t_next - t)/d) with t_next <= t must be an
 /// error (malformed timeline) or at least the one segment the `S` names.
+#[cfg(feature = "std")]
 #[test]
 fn segment_timeline_negative_r_non_increasing_next_t_silently_drops_the_s() {
     use transmux::dash_parse::{S, SegmentTimeline};

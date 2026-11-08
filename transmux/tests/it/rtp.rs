@@ -7,6 +7,7 @@
 use broadcast_common::{Package, Serialize, Unpackage};
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
+#[cfg(feature = "std")]
 use transmux::rtp::base64_decode;
 use transmux::{
     Media, NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacket,
@@ -1118,6 +1119,7 @@ fn incomplete_aac_fragments_are_not_emitted_truncated() {
 /// encoding. Before this, only "has a video track been seen" was tracked, so a
 /// third video track reused `video_pt + 2` (colliding with the second) and
 /// `96 + 2 = 98` collided with `DEFAULT_KLV_PT`.
+#[cfg(feature = "std")]
 #[test]
 fn every_stream_gets_a_unique_dynamic_payload_type() {
     let media = demux_fixture();
@@ -1189,6 +1191,7 @@ fn every_stream_gets_a_unique_dynamic_payload_type() {
 /// The oracle is `sdp-types`, a third-party crate already in the workspace
 /// (rtsp-runtime depends on it) — so this catches a misreading of RFC 4566 that
 /// the renderer and its own string assertions would share.
+#[cfg(feature = "std")]
 #[test]
 fn generated_sdp_parses_with_an_independent_parser() {
     let media = demux_fixture();
@@ -1256,6 +1259,7 @@ fn generated_sdp_parses_with_an_independent_parser() {
 /// RFC 8866 §5: v=, o=, s=, [c=], t=, then attributes, then each m= section.
 /// An INDEPENDENT check: the writer is `sdp-types`, so its own parser can no
 /// longer vouch for it.
+#[cfg(feature = "std")]
 #[test]
 fn sdp_line_order_follows_rfc8866_section_5() {
     let out = packetise(&demux_fixture());
@@ -1525,6 +1529,7 @@ fn aac_pkt(seq: u16, ts: u32, au: &[u8]) -> Vec<u8> {
 /// made this a way to inject arbitrary fields — an address of
 /// `"1.2.3.4\r\nm=video 0 RTP/AVP 96"` produced a whole extra media section —
 /// which a `core::net::IpAddr` makes impossible.
+#[cfg(feature = "std")]
 #[test]
 fn connection_address_is_typed_and_emits_the_right_addrtype() {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -2396,6 +2401,7 @@ fn gap_before_an_fu_a_start_loses_only_the_runs_au() {
 
 // ── Test 5: SDP.as_str() correctness against the demuxed config ───────────────────────
 
+#[cfg(feature = "std")]
 #[test]
 fn sdp_matches_demuxed_config() {
     let media = demux_fixture();
@@ -2472,6 +2478,7 @@ fn sdp_matches_demuxed_config() {
 }
 
 /// Extract a `key=value` fmtp parameter value (up to `;`, whitespace, or EOL).
+#[cfg(feature = "std")]
 fn extract_param(sdp: &str, key: &str) -> String {
     let start = sdp
         .find(key)
