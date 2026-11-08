@@ -246,7 +246,7 @@ jobs:
         run: |
           set -euo pipefail
           ARCHIVE="mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL -o "${RUNNER_TEMP}/${ARCHIVE}" "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/${ARCHIVE}"
+          curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o "${RUNNER_TEMP}/${ARCHIVE}" "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/${ARCHIVE}"
           echo "${MEDIAMTX_SHA256}  ${RUNNER_TEMP}/${ARCHIVE}" | sha256sum --check
           mkdir -p "${RUNNER_TEMP}/mediamtx-bin"
           tar -xzf "${RUNNER_TEMP}/${ARCHIVE}" -C "${RUNNER_TEMP}/mediamtx-bin" mediamtx
