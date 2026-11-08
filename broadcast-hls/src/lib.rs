@@ -7313,8 +7313,10 @@ seg0.m4s\n";
                       #EXT-X-BYTERANGE:1@18446744073709551615\n\
                       seg0.ts\n";
         let err = MediaPlaylist::parse(input).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("overflows"), "expected overflow error: {msg}");
+        assert!(
+            matches!(&err, Error::HlsParse { line_no: 4, reason, .. } if reason.contains("overflows")),
+            "expected overflow error: {err:?}"
+        );
     }
 
     #[test]
@@ -7353,8 +7355,8 @@ seg0.m4s\n";
                       seg0.ts\n";
         let err = MediaPlaylist::parse(input).unwrap_err();
         assert!(
-            err.to_string().contains("overflows"),
-            "MAP BYTERANGE overflow: {err}"
+            matches!(&err, Error::HlsParse { reason, .. } if reason.contains("overflows")),
+            "MAP BYTERANGE overflow: {err:?}"
         );
     }
 
@@ -7368,8 +7370,8 @@ seg0.m4s\n";
                       seg0.ts\n";
         let err = MediaPlaylist::parse(input).unwrap_err();
         assert!(
-            err.to_string().contains("overflows"),
-            "PART BYTERANGE overflow: {err}"
+            matches!(&err, Error::HlsParse { reason, .. } if reason.contains("overflows")),
+            "PART BYTERANGE overflow: {err:?}"
         );
     }
 
@@ -7384,8 +7386,8 @@ seg0.m4s\n";
                       seg0.ts\n";
         let err = MediaPlaylist::parse(input).unwrap_err();
         assert!(
-            err.to_string().contains("overflows"),
-            "PRELOAD-HINT overflow: {err}"
+            matches!(&err, Error::HlsParse { reason, .. } if reason.contains("overflows")),
+            "PRELOAD-HINT overflow: {err:?}"
         );
     }
 }
