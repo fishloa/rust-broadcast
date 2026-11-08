@@ -347,7 +347,7 @@ fn player(session: &mut Session, now: u64, chunk: &[u8]) {
                 .filter(|(n, _)| byte(3) >> (n % 8) & 1 == 1)
                 .map(|(_, id)| TrackId::new(*id))
                 .collect();
-            session.set_rendered_tracks(&ids);
+            session.set_rendered_tracks(now, &ids);
         }
         3 => session.rejoin(),
         _ => session.hint(PLAYER_HINTS[usize::from(byte(3)) % PLAYER_HINTS.len()]),
