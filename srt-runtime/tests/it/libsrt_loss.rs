@@ -38,7 +38,6 @@ include!("support/skip.rs");
 include!("support/libsrt_spawn.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
-const PERIODIC_NAK_LATENCY_MS: u16 = 2_000;
 /// Small payloads, so that a thousand of them fit a kernel UDP buffer in one
 /// go (the periodic-NAK test needs hundreds of losses outstanding at once).
 const PAYLOAD_LEN: usize = 256;
@@ -377,14 +376,14 @@ async fn libsrt_sender_recovers_a_hundreds_of_losses_list_from_our_periodic_nak(
         const SMALL_NAK_LIST_LEN: usize = 8;
         let periodic_nak_forwarded = Arc::new(AtomicBool::new(false));
         let (mut receiver, relay, _libsrt, src_port) = our_listener_behind_a_relay(
-            HandshakeConfig {
-                // Room for the periodic NAK to do the recovering before
-                // either side would give up on a packet, however long the
-                // host stalls the NAK/retransmit exchange.
-                latency_ms: PERIODIC_NAK_LATENCY_MS,
-                ..HandshakeConfig::default()
-            },
-            "latency=120",
+            // TLPKTDROP is not negotiated: recovery here takes several
+            // periodic-NAK rounds, and a host stall inflates the RTT-derived
+            // NAK interval, so with the drop on a recovery that outlasts the
+            // latency skips the chunk (observed: a skipped chunk, or no
+            // retransmission at all, under load) instead of exercising the
+            // NAK path this test is about.
+            HandshakeConfig::default(),
+            "tlpktdrop=0&latency=120",
             None,
             // Drop every other first-time chunk in the range (isolated
             // losses: one single-entry NAK each). Even indices only, so the
