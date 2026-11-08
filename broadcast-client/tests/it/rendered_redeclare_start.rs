@@ -62,7 +62,7 @@ fn drain(s: &mut Session, host: &mut Host, now: u64, run: &mut Run) {
     run.inputs.extend(s.drain_buffer_inputs());
 }
 
-fn run(bytes: &[u8]) -> Run {
+fn run(bytes: &[u8], redeclare: bool) -> Run {
     let bps = bitrate_bps(bytes);
     let mut config = Config::default();
     config.record_buffer_inputs = true;
@@ -110,7 +110,8 @@ fn run(bytes: &[u8]) -> Run {
             host.first_at = Some(now);
             drain(&mut s, &mut host, now, &mut out);
         }
-        if !host.second_done
+        if redeclare
+            && !host.second_done
             && host
                 .first_at
                 .is_some_and(|f| now >= f + SECOND_DECLARATION_AFTER_US)
@@ -133,7 +134,10 @@ fn a_video_first_declaration_does_not_start_before_the_audio_delivers() {
     let Some(bytes) = test_fixtures::require_bytes(TF1, "rendered_redeclare_start") else {
         return;
     };
-    let r = run(&shift_pes(&bytes, 0, -AUDIO_BEHIND_90KHZ, Shift::Audio));
+    let r = run(
+        &shift_pes(&bytes, 0, -AUDIO_BEHIND_90KHZ, Shift::Audio),
+        true,
+    );
     let audio = r.audio;
     let start = r.start_input.expect("the run reaches Start");
     let before = &r.inputs[..start];
@@ -151,5 +155,36 @@ fn a_video_first_declaration_does_not_start_before_the_audio_delivers() {
     assert!(
         churn.is_empty(),
         "audio {audio} stayed rendered but was unregistered: {churn:?}"
+    );
+}
+
+#[test]
+fn a_track_dropped_before_start_is_released_at_the_start() {
+    let Some(bytes) = test_fixtures::require_bytes(TF1, "rendered_redeclare_start") else {
+        return;
+    };
+    let r = run(
+        &shift_pes(&bytes, 0, -AUDIO_BEHIND_90KHZ, Shift::Audio),
+        false,
+    );
+    let audio = r.audio;
+    let start = r.start_input.expect("the run reaches Start");
+    let unregister = r
+        .inputs
+        .iter()
+        .position(|i| matches!(i, BufferInput::Unregister { track, .. } if *track == audio));
+    assert!(
+        r.inputs[..start]
+            .iter()
+            .any(|i| matches!(i, BufferInput::TrackMedia { track, .. } if *track == audio)),
+        "the dropped audio {audio} must still hold the first Start"
+    );
+    let decided = r.inputs[..start]
+        .iter()
+        .rposition(|i| matches!(i, BufferInput::Tick { .. }))
+        .unwrap();
+    assert!(
+        unregister.is_some_and(|u| u > decided),
+        "audio {audio} is released after the tick that started, not before: {unregister:?} vs {decided}"
     );
 }
