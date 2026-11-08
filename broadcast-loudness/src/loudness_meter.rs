@@ -14,9 +14,9 @@
 //!   sub-blocks (a fixed handful of running totals, O(1) per sample); a
 //!   small ring of the last 30 completed sub-blocks (bounded, never grows)
 //!   derives one 400 ms gating-block LKFS value and, once at least 3 s have
-//!   elapsed, one 3 s short-term LKFS value every 100 ms step. Only those
-//!   derived values are retained (`gating_blocks`/`short_term_blocks`) —
-//!   about 36 000 `f64`s/hour, not 172 million, and independent of sample
+//!   elapsed, one 3 s short-term LKFS value every 100 ms step. Each derived
+//!   value is folded into a fixed-size histogram (issue #1729) and then
+//!   dropped, so memory is O(1) in stream length and independent of sample
 //!   rate. This 100 ms grid is exactly what BS.1770-5's own 75%-overlap
 //!   gating blocks, and Tech 3342's "≥10 Hz" short-term sampling, specify.
 //! - **Max momentary / max short-term** — Tech 3341 §Table 1 cases 9-14
@@ -32,10 +32,24 @@
 //! EBU Tech 3342 defines Loudness Range over the distribution of
 //! **short-term (3 s window)** loudness values, sampled at ≥10 Hz — NOT the
 //! 400 ms gating blocks BS.1770-5's own integrated-loudness gating uses.
-//! [`LoudnessMeter::loudness_range`] is computed from the 3 s
-//! `short_term_blocks` history above; [`LoudnessMeter::integrated_lufs`]
-//! uses the 400 ms `gating_blocks` history, which is the correct input for
-//! integrated loudness (unaffected by this fix).
+//! [`LoudnessMeter::loudness_range`] is computed from the 3 s short-term
+//! histogram above; [`LoudnessMeter::integrated_lufs`] uses the 400 ms
+//! gating-block histogram, which is the correct input for integrated
+//! loudness (unaffected by this fix).
+//!
+//! ## Histogram accumulation (issue #1729)
+//!
+//! Blocks are binned by loudness at 0.01 LU resolution between the
+//! −70 LKFS absolute gate (BS.1770-5 Annex 1, eq. 6; transcription
+//! `private/specs-verified/loudness/bs1770-algorithm.md`) and a 30 LKFS
+//! ceiling. Each bin keeps its block count and the exact sum of block
+//! mean-square energies, so the gated mean of eq. (5)/(6) is computed from
+//! energies, not quantised loudness. The relative gates (−10 LU integrated,
+//! −20 LU LRA per EBU Tech 3342,
+//! `private/specs-verified/loudness/tech3342-lra.md`) and the Tech 3342
+//! 10th/95th percentile ranks are resolved to a bin; a percentile reports
+//! the loudness of its bin's mean energy, so the error is below one bin
+//! width, far inside the Tech 3342 ±1 LU tolerance.
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -82,12 +96,6 @@ fn mean_sq_to_lkfs(mean_sq: f64) -> f64 {
     } else {
         LOUDNESS_OFFSET + 10.0 * libm::log10(mean_sq)
     }
-}
-
-/// BS.1770‑5 Annex 1 inverse: LKFS → mean square.
-#[inline]
-fn lkfs_to_mean_sq(lkfs: f64) -> f64 {
-    libm::pow(10.0, (lkfs - LOUDNESS_OFFSET) / 10.0)
 }
 
 /// Per‑channel K‑weighting filter state.
@@ -199,14 +207,117 @@ impl SlidingWindowMax {
     }
 }
 
-/// A pre‑computed block loudness value — either a 400 ms gating block (for
-/// the integrated measurement) or a 3 s short-term value (for LRA); the two
-/// histories are the same shape, kept as separate `Vec`s (see
-/// [`LoudnessMeter::gating_blocks`] / `short_term_blocks`).
-#[derive(Debug, Clone, Copy)]
-struct LkfsSample {
-    /// Loudness in LKFS of this block/window.
-    lkfs: f64,
+/// Bin width of [`LoudnessHistogram`] in LU.
+const BIN_WIDTH_LU: f64 = 0.01;
+
+/// Loudness above which blocks share the top bin of [`LoudnessHistogram`]
+/// (their energy still counts exactly).
+const HISTOGRAM_CEILING_LKFS: f64 = 30.0;
+
+/// Number of bins spanning [`ABSOLUTE_GATE`] to [`HISTOGRAM_CEILING_LKFS`].
+const HISTOGRAM_BINS: usize =
+    ((HISTOGRAM_CEILING_LKFS - ABSOLUTE_GATE) / BIN_WIDTH_LU + 0.5) as usize;
+
+/// LRA relative gate in LU (EBU Tech 3342).
+const LRA_RELATIVE_GATE: f64 = -20.0;
+
+/// LRA lower percentile (EBU Tech 3342).
+const LRA_LOW_PERCENT: f64 = 10.0;
+
+/// LRA upper percentile (EBU Tech 3342).
+const LRA_HIGH_PERCENT: f64 = 95.0;
+
+/// Fixed-size histogram of block loudness: per bin, the block count and the
+/// exact sum of block mean-square energies. Blocks at or below the absolute
+/// gate are not recorded.
+#[derive(Debug, Clone)]
+struct LoudnessHistogram {
+    counts: Vec<u64>,
+    energies: Vec<f64>,
+}
+
+impl LoudnessHistogram {
+    fn new() -> Self {
+        Self {
+            counts: alloc::vec![0; HISTOGRAM_BINS],
+            energies: alloc::vec![0.0; HISTOGRAM_BINS],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.counts.fill(0);
+        self.energies.fill(0.0);
+    }
+
+    fn bin_of(lkfs: f64) -> usize {
+        let idx = (lkfs - ABSOLUTE_GATE) / BIN_WIDTH_LU;
+        (idx as usize).min(HISTOGRAM_BINS - 1)
+    }
+
+    fn record(&mut self, mean_sq: f64) {
+        let lkfs = mean_sq_to_lkfs(mean_sq);
+        if lkfs <= ABSOLUTE_GATE {
+            return;
+        }
+        let bin = Self::bin_of(lkfs);
+        self.counts[bin] += 1;
+        self.energies[bin] += mean_sq;
+    }
+
+    fn totals_from(&self, first_bin: usize) -> (u64, f64) {
+        let count = self.counts[first_bin..].iter().sum();
+        let energy = self.energies[first_bin..].iter().sum();
+        (count, energy)
+    }
+
+    fn relative_gate_bin(&self, gate_lu: f64) -> Option<usize> {
+        let (count, energy) = self.totals_from(0);
+        if count == 0 {
+            return None;
+        }
+        let threshold = mean_sq_to_lkfs(energy / count as f64) + gate_lu;
+        Some(Self::bin_of(threshold.max(ABSOLUTE_GATE)))
+    }
+
+    fn integrated(&self) -> f64 {
+        let Some(first) = self.relative_gate_bin(RELATIVE_GATE) else {
+            return f64::NEG_INFINITY;
+        };
+        let (count, energy) = self.totals_from(first);
+        if count == 0 {
+            return f64::NEG_INFINITY;
+        }
+        mean_sq_to_lkfs(energy / count as f64)
+    }
+
+    fn percentile_loudness(&self, first: usize, rank: usize) -> f64 {
+        let mut seen = 0u64;
+        for bin in first..HISTOGRAM_BINS {
+            seen += self.counts[bin];
+            if seen > rank as u64 {
+                return mean_sq_to_lkfs(self.energies[bin] / self.counts[bin] as f64);
+            }
+        }
+        f64::NEG_INFINITY
+    }
+
+    fn loudness_range(&self) -> f64 {
+        let Some(first) = self.relative_gate_bin(LRA_RELATIVE_GATE) else {
+            return 0.0;
+        };
+        let (n, _) = self.totals_from(first);
+        if n == 0 {
+            return 0.0;
+        }
+        // Tech 3342 MATLAB: round((n-1)*PRC/100 + 1), 1-based -> 0-based rank.
+        let rank = |percent: f64| {
+            let one_based = libm::round((n as f64 - 1.0) * percent / 100.0 + 1.0) as usize;
+            one_based.saturating_sub(1).min(n as usize - 1)
+        };
+        let low = self.percentile_loudness(first, rank(LRA_LOW_PERCENT));
+        let high = self.percentile_loudness(first, rank(LRA_HIGH_PERCENT));
+        high - low
+    }
 }
 
 /// EBU R 128 / ITU‑R BS.1770‑5 loudness meter.
@@ -252,15 +363,13 @@ pub struct LoudnessMeter {
     /// of all of it once full.
     sub_block_ring: VecDeque<f64>,
 
-    /// One 400 ms gating-block LKFS value per completed 100 ms step —
-    /// drives integrated loudness. O(duration / 100 ms), not O(sample
-    /// count).
-    gating_blocks: Vec<LkfsSample>,
+    /// 400 ms gating blocks, one per completed 100 ms step — drives
+    /// integrated loudness. Fixed size (issue #1729).
+    gating_blocks: LoudnessHistogram,
 
-    /// One 3 s short-term LKFS value per completed 100 ms step (once at
-    /// least 3 s have elapsed) — drives LRA (issue #1051). Same bound as
-    /// `gating_blocks`.
-    short_term_blocks: Vec<LkfsSample>,
+    /// 3 s short-term values, one per completed 100 ms step once 3 s have
+    /// elapsed — drives LRA (issue #1051). Fixed size (issue #1729).
+    short_term_blocks: LoudnessHistogram,
 
     /// Exact per-sample sliding-window max tracker for the 400 ms
     /// momentary window (bounded to `0.4 * sample_rate` samples — see
@@ -328,8 +437,8 @@ impl LoudnessMeter {
             current_sub_block_sum: 0.0,
             current_sub_block_count: 0,
             sub_block_ring: VecDeque::with_capacity(SHORT_TERM_SUB_BLOCKS),
-            gating_blocks: Vec::new(),
-            short_term_blocks: Vec::new(),
+            gating_blocks: LoudnessHistogram::new(),
+            short_term_blocks: LoudnessHistogram::new(),
             momentary_max: SlidingWindowMax::new(momentary_window_samples),
             short_term_max: SlidingWindowMax::new(short_term_window_samples),
             integrated: f64::NEG_INFINITY,
@@ -413,13 +522,12 @@ impl LoudnessMeter {
                 .rev()
                 .take(MOMENTARY_SUB_BLOCKS)
                 .sum();
-            let lkfs = mean_sq_to_lkfs(sum / MOMENTARY_SUB_BLOCKS as f64);
-            self.gating_blocks.push(LkfsSample { lkfs });
+            self.gating_blocks.record(sum / MOMENTARY_SUB_BLOCKS as f64);
         }
         if n >= SHORT_TERM_SUB_BLOCKS {
             let sum: f64 = self.sub_block_ring.iter().sum();
-            let lkfs = mean_sq_to_lkfs(sum / SHORT_TERM_SUB_BLOCKS as f64);
-            self.short_term_blocks.push(LkfsSample { lkfs });
+            self.short_term_blocks
+                .record(sum / SHORT_TERM_SUB_BLOCKS as f64);
         }
     }
 
@@ -592,40 +700,8 @@ impl LoudnessMeter {
         self.current_sub_block_sum = 0.0;
         self.current_sub_block_count = 0;
 
-        // --- Integrated loudness (two‑stage gating), from the 400 ms
-        // gating-block history ---
-        // Stage 1: absolute gate at —70 LKFS
-        let abs_gated: Vec<f64> = self
-            .gating_blocks
-            .iter()
-            .filter(|b| b.lkfs > ABSOLUTE_GATE)
-            .map(|b| b.lkfs)
-            .collect();
-
-        let integrated = if abs_gated.is_empty() {
-            f64::NEG_INFINITY
-        } else {
-            let abs_gated_loudness = mean_of_lkfs(&abs_gated);
-            let rel_threshold = abs_gated_loudness + RELATIVE_GATE;
-
-            // Stage 2: relative gate
-            let rel_gated: Vec<f64> = abs_gated
-                .iter()
-                .filter(|&&l| l > rel_threshold)
-                .copied()
-                .collect();
-
-            if rel_gated.is_empty() {
-                f64::NEG_INFINITY
-            } else {
-                mean_of_lkfs(&rel_gated)
-            }
-        };
-        self.integrated = integrated;
-
-        // --- LRA (EBU Tech 3342), from the 3 s short-term history
-        // (issue #1051 — NOT the 400 ms gating-block history) ---
-        self.lra = compute_lra(&self.short_term_blocks);
+        self.integrated = self.gating_blocks.integrated();
+        self.lra = self.short_term_blocks.loudness_range();
 
         // --- Max momentary and max short‑term: read from the exact
         // per-sample sliding-window trackers (updated incrementally on
@@ -676,69 +752,6 @@ impl LoudnessMeter {
     }
 }
 
-/// Compute the mean loudness from a list of LKFS values.
-fn mean_of_lkfs(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return f64::NEG_INFINITY;
-    }
-    let n = values.len() as f64;
-    let sum_power: f64 = values.iter().map(|&l| lkfs_to_mean_sq(l)).sum();
-    mean_sq_to_lkfs(sum_power / n)
-}
-
-/// Compute Loudness Range per EBU Tech 3342.
-///
-/// Input: short‑term (3 s sliding window) loudness values, sampled at
-/// 10 Hz (issue #1051 — NOT 400 ms momentary/gating blocks, which have
-/// far higher variance on real programme material and badly inflate LRA;
-/// see the module docs). The algorithm:
-/// 1. Absolute gate: keep blocks ≥ —70 LUFS.
-/// 2. Compute absolute‑gated integrated loudness.
-/// 3. Relative gate: keep blocks ≥ (integrated —20 LU).
-/// 4. Compute 10th and 95th percentiles of the distribution.
-/// 5. LRA = 95th percentile — 10th percentile.
-fn compute_lra(blocks: &[LkfsSample]) -> f64 {
-    // Absolute gate
-    let abs_gated: Vec<f64> = blocks
-        .iter()
-        .filter(|b| b.lkfs >= ABSOLUTE_GATE)
-        .map(|b| b.lkfs)
-        .collect();
-
-    if abs_gated.is_empty() {
-        return 0.0;
-    }
-
-    let abs_integrated = mean_of_lkfs(&abs_gated);
-    let rel_threshold = abs_integrated - 20.0; // —20 LU relative gate
-
-    // Relative gate
-    let mut rel_gated: Vec<f64> = abs_gated
-        .iter()
-        .filter(|&&l| l >= rel_threshold)
-        .copied()
-        .collect();
-
-    if rel_gated.is_empty() {
-        return 0.0;
-    }
-
-    // Sort for percentile computation
-    rel_gated.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-
-    let n = rel_gated.len();
-    // Tech 3342 MATLAB: round((n-1)*PRC/100 + 1) — 1‑based indexing → 0‑based
-    let low_idx = (libm::round((n as f64 - 1.0) * 10.0 / 100.0 + 1.0) as usize).saturating_sub(1);
-    let high_idx = (libm::round((n as f64 - 1.0) * 95.0 / 100.0 + 1.0) as usize).saturating_sub(1);
-    let low_idx = low_idx.min(n - 1);
-    let high_idx = high_idx.min(n - 1);
-
-    let perc_low = rel_gated[low_idx];
-    let perc_high = rel_gated[high_idx];
-
-    perc_high - perc_low
-}
-
 #[cfg(test)]
 mod tests {
     use super::{LoudnessMeter, SHORT_TERM_SUB_BLOCKS};
@@ -778,15 +791,8 @@ mod tests {
                 "sample_rate {sample_rate}: short-term ring is not fixed-size"
             );
 
-            // The per-100ms-step histories grow with DURATION (~20 entries
-            // for a 2 s measurement), never with sample count — 192 kHz's
-            // 4x the raw samples must NOT produce 4x the entries.
-            assert!(
-                meter.gating_blocks.len() <= 25,
-                "sample_rate {sample_rate}: gating_blocks scaled with sample count \
-                 ({} entries for a 2 s measurement)",
-                meter.gating_blocks.len()
-            );
+            assert_eq!(meter.gating_blocks.counts.len(), super::HISTOGRAM_BINS);
+            assert_eq!(meter.short_term_blocks.counts.len(), super::HISTOGRAM_BINS);
         }
     }
 
