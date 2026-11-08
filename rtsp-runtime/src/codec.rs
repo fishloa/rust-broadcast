@@ -10,7 +10,7 @@ use rtsp_types::Message;
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::client::{ClientEvent, ClientSession};
-use crate::error::{Error, Result};
+use crate::error::{Error, MessageKind, Result};
 use crate::interleaved::{InterleavedFrame, MAGIC};
 use crate::limits::MAX_MESSAGE_BYTES;
 
@@ -145,18 +145,23 @@ impl Decoder for ServerCodec {
             Err(rtsp_types::ParseError::Incomplete(Some(more))) => {
                 let want = src.len().saturating_add(more.get());
                 if want > MAX_MESSAGE_BYTES {
-                    return Err(Error::MessageParse(format!(
-                        "request of at least {want} bytes exceeds the {MAX_MESSAGE_BYTES}-byte maximum"
-                    ).into()));
+                    return Err(Error::MessageParse {
+                        what: MessageKind::Request,
+                        source: format!(
+                            "request of at least {want} bytes exceeds the {MAX_MESSAGE_BYTES}-byte maximum"
+                        )
+                        .into(),
+                    });
                 }
                 self.skip_until = want;
                 Ok(None)
             }
             // Terminator present yet no length: rtsp_types wants more input.
             Err(rtsp_types::ParseError::Incomplete(None)) => Ok(None),
-            Err(rtsp_types::ParseError::Error) => {
-                Err(Error::MessageParse(Box::new(rtsp_types::ParseError::Error)))
-            }
+            Err(rtsp_types::ParseError::Error) => Err(Error::MessageParse {
+                what: MessageKind::Request,
+                source: Box::new(rtsp_types::ParseError::Error),
+            }),
         }
     }
 }
@@ -201,7 +206,7 @@ mod tests {
             Ok(Some(ClientEvent::Response { cseq: 1, .. }))
         ));
         assert!(
-            matches!(codec.decode(&mut buf), Err(Error::MessageParse(_))),
+            matches!(codec.decode(&mut buf), Err(Error::MessageParse { .. })),
             "then the terminal error"
         );
     }
@@ -294,7 +299,7 @@ mod tests {
         let mut buf = BytesMut::from(&vec![b'A'; 70 * 1024][..]);
         assert!(matches!(
             codec.decode(&mut buf),
-            Err(Error::MessageParse(_))
+            Err(Error::MessageParse { .. })
         ));
     }
 
@@ -305,7 +310,7 @@ mod tests {
         buf.extend_from_slice(&b"X-A: b\r\n".repeat(9000));
         assert!(matches!(
             codec.decode(&mut buf),
-            Err(Error::MessageParse(_))
+            Err(Error::MessageParse { .. })
         ));
     }
 

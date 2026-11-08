@@ -6,7 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Changed
-- BREAKING: `Error::MessageParse` and `Error::Tls` carry a boxed source error, `Error::MessageWrite` carries the `rtsp_types::WriteError`, and `Error::Io` is `Io { context, source: std::io::Error }` (they were flattened `String`s that lost the source). `Error` no longer derives `Clone`, `PartialEq` or `Eq` (#1726).
+- BREAKING: `Error` keeps the underlying error as its `source()` instead of flattening it to a `String`, and its `Display` prints only its own context (so an error-chain reporter prints each message once): `Error::MessageParse { what: MessageKind, source }` (the codec's or framing check's error, `what` = request / response / message framing), `Error::Tls { server_name, source }` (the rejected server name next to the rustls error), `Error::MessageWrite` carries the `rtsp_types::WriteError`, `Error::Auth` no longer repeats the `broadcast_auth::Error` in its message, and `Error::Io` is `Io { context: IoContext, source: std::io::Error }` with the closed set `IoContext::{Connect, TlsHandshake, Read, Socket}`. `Error` no longer derives `Clone`, `PartialEq` or `Eq` (#1726).
+- New `IoContext` and `MessageKind` label enums (`name()` + `Display`), re-exported at the crate root.
 
 ## [0.9.0] - 2026-11-07
 ### Changed

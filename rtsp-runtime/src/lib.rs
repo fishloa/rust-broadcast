@@ -21,7 +21,7 @@ pub mod transport;
 
 pub use auth::{Authenticator, Credentials};
 pub use client::{ClientEvent, ClientSession, HandleOutcome, RtpInfoEntry};
-pub use error::{Error, Result};
+pub use error::{Error, IoContext, MessageKind, Result};
 pub use interleaved::InterleavedFrame;
 #[cfg(feature = "tokio")]
 pub use io::{

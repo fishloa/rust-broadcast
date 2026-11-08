@@ -8,7 +8,7 @@
 
 use memchr::memmem;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, MessageKind, Result};
 use crate::limits::MAX_HEAD_BYTES;
 
 /// Longest terminator (`\r\n\r\n`); a resumed scan reaches back this much minus one.
@@ -32,9 +32,10 @@ pub(crate) fn head_end(buf: &[u8], scanned: usize) -> Result<Option<usize>> {
     };
     let head_len = end.unwrap_or(buf.len());
     if head_len > MAX_HEAD_BYTES {
-        return Err(Error::MessageParse(
-            format!("header block over {MAX_HEAD_BYTES} bytes without a terminator").into(),
-        ));
+        return Err(Error::MessageParse {
+            what: MessageKind::Framing,
+            source: format!("header block over {MAX_HEAD_BYTES} bytes without a terminator").into(),
+        });
     }
     Ok(end)
 }
@@ -58,12 +59,12 @@ mod tests {
         let a = vec![b'A'; 70 * 1024];
         assert!(matches!(
             head_end(&a, 0),
-            Err(crate::error::Error::MessageParse(..))
+            Err(crate::error::Error::MessageParse { .. })
         ));
         let lines = b"X-A: b\r\n".repeat(9000);
         assert!(matches!(
             head_end(&lines, 0),
-            Err(crate::error::Error::MessageParse(..))
+            Err(crate::error::Error::MessageParse { .. })
         ));
         assert!(head_end(&a[..1000], 0).unwrap().is_none());
     }

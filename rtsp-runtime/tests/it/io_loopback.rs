@@ -452,7 +452,7 @@ async fn server_read_buffer_is_capped_against_an_unterminated_header() {
         .expect("server task must reject the oversized buffer instead of blocking forever")
         .unwrap();
     assert!(
-        matches!(result, Err(rtsp_runtime::error::Error::MessageParse(..))),
+        matches!(result, Err(rtsp_runtime::error::Error::MessageParse { .. })),
         "expected the oversized request buffer to be rejected, not grown forever"
     );
     drop(client);

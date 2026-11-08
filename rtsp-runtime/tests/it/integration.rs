@@ -482,7 +482,7 @@ fn terminal_error_still_returns_the_events_decoded_before_it() {
     // no events.
     assert!(matches!(
         session_awaiting_play().handle_data_strict(&stream),
-        Err(rtsp_runtime::Error::MessageParse(_))
+        Err(rtsp_runtime::Error::MessageParse { .. })
     ));
 
     // Chunk-size invariance: byte-at-a-time yields the same events, then the
