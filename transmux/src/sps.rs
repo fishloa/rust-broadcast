@@ -2287,22 +2287,22 @@ mod tests {
         /// 3 general + 4-bit idc + 2-bit idc + 16 NAL/tile/CTU + 2-bit idc +
         /// 43 intra/inter/transform/loop-filter flags (§7.3.3.2).
         const GCI_FLAG_BITS: u32 = 3 + 4 + 2 + 16 + 2 + 43;
-        let mut s = BitSink::new();
-        s.bits(0, 8); // sps_seq_parameter_set_id, sps_video_parameter_set_id
-        s.bits(0, 3); // sps_max_sublayers_minus1
-        s.bits(1, 2); // sps_chroma_format_idc (4:2:0)
-        s.bits(0, 2); // sps_log2_ctu_size_minus5
+        let mut s = BitWriter::new();
+        s.u(8, 0); // sps_seq_parameter_set_id, sps_video_parameter_set_id
+        s.u(3, 0); // sps_max_sublayers_minus1
+        s.u(2, 1); // sps_chroma_format_idc (4:2:0)
+        s.u(2, 0); // sps_log2_ctu_size_minus5
         s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
-        s.bits(1, 7); // general_profile_idc
+        s.u(7, 1); // general_profile_idc
         s.bit(false); // general_tier_flag
-        s.bits(32, 8); // general_level_idc
+        s.u(8, 32); // general_level_idc
         s.bit(false); // ptl_frame_only_constraint_flag
         s.bit(false); // ptl_multilayer_enabled_flag
         s.bit(true); // gci_present_flag
         for _ in 0..GCI_FLAG_BITS {
             s.bit(false);
         }
-        s.bits(u64::from(additional), 8); // gci_num_additional_bits
+        s.u(8, u64::from(additional)); // gci_num_additional_bits
         if additional > 5 {
             for _ in 0..6 {
                 s.bit(false); // the six extra constraint flags
@@ -2315,10 +2315,10 @@ mod tests {
                 s.bit(false); // gci_reserved_bit[i] — none skipped for 1..=5
             }
         }
-        while !s.nbits.is_multiple_of(8) {
+        while !s.aligned() {
             s.bit(false); // gci_alignment_zero_bit
         }
-        s.bits(0, 8); // ptl_num_sub_profiles
+        s.u(8, 0); // ptl_num_sub_profiles
         s.bit(false); // sps_gdr_enabled_flag
         s.bit(false); // sps_ref_pic_resampling_enabled_flag
         s.ue(width);
@@ -2394,20 +2394,20 @@ mod tests {
     #[test]
     fn vvc_sps_gci_present_flag_is_skipped_to_dimensions() {
         const GCI_BITS: u32 = 1 + 3 + 4 + 2 + 13 + 6 + 3 + 6 + 15 + 7 + 5 + 6 + 8;
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         // sps_seq_parameter_set_id u(4), sps_video_parameter_set_id u(4)
-        s.bits(0, 8);
+        s.u(8, 0);
         // sps_max_sublayers_minus1 u(3) == 0
-        s.bits(0, 3);
+        s.u(3, 0);
         // sps_chroma_format_idc u(2) == 1 (4:2:0), sps_log2_ctu_size_minus5 u(2)
-        s.bits(1, 2);
-        s.bits(0, 2);
+        s.u(2, 1);
+        s.u(2, 0);
         // sps_ptl_dpb_hrd_params_present_flag u(1) == 1
         s.bit(true);
         // profile_tier_level(1, 0):
-        s.bits(1, 7); // general_profile_idc
+        s.u(7, 1); // general_profile_idc
         s.bit(false); // general_tier_flag
-        s.bits(32, 8); // general_level_idc
+        s.u(8, 32); // general_level_idc
         s.bit(false); // ptl_frame_only_constraint_flag
         s.bit(false); // ptl_multilayer_enabled_flag
         // general_constraints_info(): gci_present_flag == 1 then 78 zero bits.
@@ -2416,11 +2416,11 @@ mod tests {
             s.bit(false);
         }
         // gci_alignment_zero_bit to the byte boundary (computed by the sink).
-        while !s.nbits.is_multiple_of(8) {
+        while !s.aligned() {
             s.bit(false);
         }
         // ptl_num_sub_profiles u(8) == 0
-        s.bits(0, 8);
+        s.u(8, 0);
         // sps_gdr_enabled_flag, sps_ref_pic_resampling_enabled_flag
         s.bit(false);
         s.bit(false);
@@ -2447,22 +2447,22 @@ mod tests {
     /// path), pinning that the fix did not change the present-flag-0 layout.
     #[test]
     fn vvc_sps_gci_absent_still_decodes() {
-        let mut s = BitSink::new();
-        s.bits(0, 8); // ids
-        s.bits(0, 3); // sps_max_sublayers_minus1
-        s.bits(1, 2); // sps_chroma_format_idc
-        s.bits(0, 2); // sps_log2_ctu_size_minus5
+        let mut s = BitWriter::new();
+        s.u(8, 0); // ids
+        s.u(3, 0); // sps_max_sublayers_minus1
+        s.u(2, 1); // sps_chroma_format_idc
+        s.u(2, 0); // sps_log2_ctu_size_minus5
         s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
-        s.bits(1, 7); // general_profile_idc
+        s.u(7, 1); // general_profile_idc
         s.bit(false); // general_tier_flag
-        s.bits(32, 8); // general_level_idc
+        s.u(8, 32); // general_level_idc
         s.bit(false); // ptl_frame_only_constraint_flag
         s.bit(false); // ptl_multilayer_enabled_flag
         s.bit(false); // gci_present_flag == 0
-        while !s.nbits.is_multiple_of(8) {
+        while !s.aligned() {
             s.bit(false); // gci_alignment_zero_bit
         }
-        s.bits(0, 8); // ptl_num_sub_profiles
+        s.u(8, 0); // ptl_num_sub_profiles
         s.bit(false); // sps_gdr_enabled_flag
         s.bit(false); // sps_ref_pic_resampling_enabled_flag
         s.ue(640);
@@ -2480,22 +2480,22 @@ mod tests {
     /// its low 16 bits (#997 class). 70 000 truncated to `u16` would be 4464.
     #[test]
     fn vvc_sps_width_above_u16_is_not_truncated() {
-        let mut s = BitSink::new();
-        s.bits(0, 8); // ids
-        s.bits(0, 3); // sps_max_sublayers_minus1
-        s.bits(1, 2); // sps_chroma_format_idc
-        s.bits(0, 2); // sps_log2_ctu_size_minus5
+        let mut s = BitWriter::new();
+        s.u(8, 0); // ids
+        s.u(3, 0); // sps_max_sublayers_minus1
+        s.u(2, 1); // sps_chroma_format_idc
+        s.u(2, 0); // sps_log2_ctu_size_minus5
         s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
-        s.bits(1, 7); // general_profile_idc
+        s.u(7, 1); // general_profile_idc
         s.bit(false); // general_tier_flag
-        s.bits(32, 8); // general_level_idc
+        s.u(8, 32); // general_level_idc
         s.bit(false); // ptl_frame_only_constraint_flag
         s.bit(false); // ptl_multilayer_enabled_flag
         s.bit(false); // gci_present_flag == 0
-        while !s.nbits.is_multiple_of(8) {
+        while !s.aligned() {
             s.bit(false);
         }
-        s.bits(0, 8); // ptl_num_sub_profiles
+        s.u(8, 0); // ptl_num_sub_profiles
         s.bit(false); // sps_gdr_enabled_flag
         s.bit(false); // sps_ref_pic_resampling_enabled_flag
         s.ue(70_000);
@@ -2531,66 +2531,13 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    /// Minimal MSB-first bit writer for hand-built SPS RBSPs in these tests.
-    struct BitSink {
-        bytes: Vec<u8>,
-        cur: u8,
-        nbits: u32,
-    }
+    use crate::test_bits::BitWriter;
 
-    impl BitSink {
-        fn new() -> Self {
-            Self {
-                bytes: Vec::new(),
-                cur: 0,
-                nbits: 0,
-            }
-        }
-        fn bit(&mut self, b: bool) {
-            if b {
-                self.cur |= 1 << (7 - self.nbits);
-            }
-            self.nbits += 1;
-            if self.nbits == 8 {
-                self.bytes.push(self.cur);
-                self.cur = 0;
-                self.nbits = 0;
-            }
-        }
-        fn bits(&mut self, v: u64, n: u32) {
-            for i in (0..n).rev() {
-                self.bit((v >> i) & 1 == 1);
-            }
-        }
-        /// `ue(v)` encoder — the exact inverse of `BitReader::read_ue`
-        /// (H.264 §9.1).
-        fn ue(&mut self, v: u64) {
-            let code = v + 1;
-            let len = 64 - code.leading_zeros();
-            for _ in 0..len - 1 {
-                self.bit(false);
-            }
-            self.bits(code, len);
-        }
-        /// Write a value with exactly 32 leading zero bits (ue value
-        /// `0xFFFF_FFFF`): past every spec bound above, yet inside the
-        /// reader's ≤32-zero cap — so these tests exercise the *SPS-level*
-        /// checks, not the bitreader cap.
-        fn ue_huge(&mut self) {
-            for _ in 0..32 {
-                self.bit(false);
-            }
-            self.bit(true);
-            for _ in 0..32 {
-                self.bit(false);
-            }
-        }
-        fn finish(mut self) -> Vec<u8> {
-            if self.nbits > 0 {
-                self.bytes.push(self.cur);
-            }
-            self.bytes
-        }
+    /// A value with exactly 32 leading zero bits (ue value `0xFFFF_FFFF`): past
+    /// every spec bound above, yet inside the reader's 32-zero cap, so these
+    /// tests exercise the SPS-level checks, not the bitreader cap.
+    fn ue_huge(s: &mut BitWriter) {
+        s.u(32, 0).bit(true).u(32, 0);
     }
 
     /// `num_ref_frames_in_pic_order_cnt_cycle = 2^32-1` as the last field of
@@ -2601,14 +2548,14 @@ mod tests {
     #[test]
     fn avc_sps_huge_poc_cycle_count_is_rejected() {
         let mut nal = vec![0x67u8, 66, 0x00, 30]; // nal hdr, profile 66 (no high branch)
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         s.ue(0); // seq_parameter_set_id
         s.ue(0); // log2_max_frame_num_minus4
         s.ue(1); // pic_order_cnt_type = 1
         s.bit(false); // delta_pic_order_always_zero_flag
         s.bit(true); // offset_for_non_ref_pic se(0)
         s.bit(true); // offset_for_top_to_bottom_field se(0)
-        s.ue_huge(); // num_ref_frames_in_pic_order_cnt_cycle = 2^32-1 > 255
+        ue_huge(&mut s); // num_ref_frames_in_pic_order_cnt_cycle = 2^32-1 > 255
         nal.extend(s.finish());
 
         let err =
@@ -2630,7 +2577,7 @@ mod tests {
     #[test]
     fn avc_sps_chroma_format_idc_above_3_is_rejected() {
         let mut nal = vec![0x67u8, 100, 0x00, 30]; // High profile → chroma branch
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         s.ue(0); // seq_parameter_set_id
         s.ue(4); // chroma_format_idc — out of range
         nal.extend(s.finish());
@@ -2654,7 +2601,7 @@ mod tests {
     #[test]
     fn avc_sps_bit_depth_minus8_above_6_is_rejected() {
         let mut nal = vec![0x67u8, 100, 0x00, 30];
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         s.ue(0); // seq_parameter_set_id
         s.ue(1); // chroma_format_idc
         s.ue(7); // bit_depth_luma_minus8 — out of range (max 6)
@@ -2680,17 +2627,17 @@ mod tests {
     #[test]
     fn hevc_sps_huge_short_term_ref_pic_set_count_terminates_promptly() {
         let mut nal = vec![0x42u8, 0x01]; // NAL header (nal_unit_type=33)
-        let mut s = BitSink::new();
-        s.bits(0, 4); // sps_video_parameter_set_id u(4)
-        s.bits(0, 3); // sps_max_sub_layers_minus1 u(3) = 0
+        let mut s = BitWriter::new();
+        s.u(4, 0); // sps_video_parameter_set_id u(4)
+        s.u(3, 0); // sps_max_sub_layers_minus1 u(3) = 0
         s.bit(false); // sps_temporal_id_nesting_flag
         // profile_tier_level(1, 0): general_* only.
-        s.bits(0, 2); // general_profile_space
+        s.u(2, 0); // general_profile_space
         s.bit(false); // general_tier_flag
-        s.bits(1, 5); // general_profile_idc
-        s.bits(0, 32); // general_profile_compatibility_flags
-        s.bits(0xE0_00_00_00_00_00, 48); // general_constraint_indicator_flags
-        s.bits(93, 8); // general_level_idc
+        s.u(5, 1); // general_profile_idc
+        s.u(32, 0); // general_profile_compatibility_flags
+        s.u(48, 0xE0_00_00_00_00_00); // general_constraint_indicator_flags
+        s.u(8, 93); // general_level_idc
         s.ue(0); // sps_seq_parameter_set_id
         s.ue(1); // chroma_format_idc
         s.ue(16); // pic_width_in_luma_samples
@@ -2714,7 +2661,7 @@ mod tests {
         s.bit(false); // amp_enabled_flag
         s.bit(false); // sample_adaptive_offset_enabled_flag
         s.bit(false); // pcm_enabled_flag
-        s.ue_huge(); // num_short_term_ref_pic_sets = 2^32-1 > 64
+        ue_huge(&mut s); // num_short_term_ref_pic_sets = 2^32-1 > 64
         nal.extend(s.finish());
 
         let info = decode_hevc_sps(&nal)
@@ -2744,13 +2691,13 @@ mod tests {
     /// §E.1.1 / H.265 §E.2.1 syntax).
     type AspectBits = Option<(u8, Option<(u16, u16)>)>;
 
-    fn put_aspect(s: &mut BitSink, aspect: AspectBits) {
+    fn put_aspect(s: &mut BitWriter, aspect: AspectBits) {
         s.bit(aspect.is_some()); // aspect_ratio_info_present_flag
         if let Some((idc, ext)) = aspect {
-            s.bits(u64::from(idc), 8); // aspect_ratio_idc
+            s.u(8, u64::from(idc)); // aspect_ratio_idc
             if let Some((w, h)) = ext {
-                s.bits(u64::from(w), 16); // sar_width
-                s.bits(u64::from(h), 16); // sar_height
+                s.u(16, u64::from(w)); // sar_width
+                s.u(16, u64::from(h)); // sar_height
             }
         }
     }
@@ -2763,16 +2710,16 @@ mod tests {
         aspect: AspectBits,
     ) -> Vec<u8> {
         let mut nal = vec![0x42u8, 0x01];
-        let mut s = BitSink::new();
-        s.bits(0, 4); // sps_video_parameter_set_id
-        s.bits(0, 3); // sps_max_sub_layers_minus1
+        let mut s = BitWriter::new();
+        s.u(4, 0); // sps_video_parameter_set_id
+        s.u(3, 0); // sps_max_sub_layers_minus1
         s.bit(true); // sps_temporal_id_nesting_flag
-        s.bits(0, 2); // general_profile_space
+        s.u(2, 0); // general_profile_space
         s.bit(false); // general_tier_flag
-        s.bits(1, 5); // general_profile_idc
-        s.bits(0, 32); // general_profile_compatibility_flags
-        s.bits(ptl_bits, 48); // general_constraint_indicator_flags
-        s.bits(93, 8); // general_level_idc
+        s.u(5, 1); // general_profile_idc
+        s.u(32, 0); // general_profile_compatibility_flags
+        s.u(48, ptl_bits); // general_constraint_indicator_flags
+        s.u(8, 93); // general_level_idc
         s.ue(0); // sps_seq_parameter_set_id
         s.ue(1); // chroma_format_idc
         s.ue(16); // pic_width_in_luma_samples
@@ -2888,9 +2835,9 @@ mod tests {
     /// A HEVC prefix SEI carrying a `pic_timing` with the given
     /// `pic_struct`/`source_scan_type`/`duplicate_flag` (§D.2.3).
     fn hevc_pic_timing_sei(pic_struct: u64, scan: u64) -> Vec<u8> {
-        let mut p = BitSink::new();
-        p.bits(pic_struct, 4);
-        p.bits(scan, 2);
+        let mut p = BitWriter::new();
+        p.u(4, pic_struct);
+        p.u(2, scan);
         p.bit(false); // duplicate_flag
         let payload = p.finish(); // one byte (7 bits + pad)
         let mut body = vec![1u8, payload.len() as u8]; // payloadType 1, size
@@ -2948,22 +2895,22 @@ mod tests {
         nal_hrd: Option<(u64, u64)>,
         vcl_hrd: Option<(u64, u64)>,
     ) -> Vec<u8> {
-        fn hrd(s: &mut BitSink, (cpb, dpb): (u64, u64)) {
+        fn hrd(s: &mut BitWriter, (cpb, dpb): (u64, u64)) {
             s.ue(1); // cpb_cnt_minus1 (two schedules, so the loop must iterate)
-            s.bits(0, 4); // bit_rate_scale
-            s.bits(0, 4); // cpb_size_scale
+            s.u(4, 0); // bit_rate_scale
+            s.u(4, 0); // cpb_size_scale
             for _ in 0..2 {
                 s.ue(7); // bit_rate_value_minus1
                 s.ue(9); // cpb_size_value_minus1
                 s.bit(true); // cbr_flag
             }
-            s.bits(22, 5); // initial_cpb_removal_delay_length_minus1
-            s.bits(cpb, 5); // cpb_removal_delay_length_minus1
-            s.bits(dpb, 5); // dpb_output_delay_length_minus1
-            s.bits(24, 5); // time_offset_length
+            s.u(5, 22); // initial_cpb_removal_delay_length_minus1
+            s.u(5, cpb); // cpb_removal_delay_length_minus1
+            s.u(5, dpb); // dpb_output_delay_length_minus1
+            s.u(5, 24); // time_offset_length
         }
         let mut nal = vec![0x67u8, 66, 0x00, 30];
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         s.ue(0); // seq_parameter_set_id
         s.ue(0); // log2_max_frame_num_minus4 -> frame_num is 4 bits
         s.ue(2); // pic_order_cnt_type
@@ -2981,8 +2928,8 @@ mod tests {
         s.bit(false); // video_signal_type_present_flag
         s.bit(false); // chroma_loc_info_present_flag
         s.bit(true); // timing_info_present_flag
-        s.bits(1, 32); // num_units_in_tick
-        s.bits(50, 32); // time_scale
+        s.u(32, 1); // num_units_in_tick
+        s.u(32, 50); // time_scale
         s.bit(true); // fixed_frame_rate_flag
         s.bit(nal_hrd.is_some()); // nal_hrd_parameters_present_flag
         if let Some(h) = nal_hrd {
@@ -3003,7 +2950,7 @@ mod tests {
     }
 
     fn avc_pps() -> Vec<u8> {
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         s.ue(0); // pic_parameter_set_id
         s.ue(0); // seq_parameter_set_id
         s.bit(false); // entropy_coding_mode_flag
@@ -3012,7 +2959,7 @@ mod tests {
         s.ue(0);
         s.ue(0); // num_ref_idx_l0/l1_default_active_minus1
         s.bit(false); // weighted_pred_flag
-        s.bits(0, 2); // weighted_bipred_idc
+        s.u(2, 0); // weighted_bipred_idc
         s.ue(0); // pic_init_qp_minus26 se(0)
         s.ue(0); // pic_init_qs_minus26
         s.ue(0); // chroma_qp_index_offset
@@ -3027,19 +2974,21 @@ mod tests {
 
     /// An I slice (type 7), `frame_num` 0, as a frame or as a top/bottom field.
     fn avc_slice(field: Option<bool>) -> Vec<u8> {
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         s.ue(0); // first_mb_in_slice
         s.ue(7); // slice_type (I)
         s.ue(0); // pic_parameter_set_id
-        s.bits(0, 4); // frame_num
+        s.u(4, 0); // frame_num
         match field {
-            None => s.bit(false), // field_pic_flag
+            None => {
+                s.bit(false); // field_pic_flag
+            }
             Some(bottom) => {
                 s.bit(true); // field_pic_flag
                 s.bit(bottom); // bottom_field_flag
             }
         }
-        s.bits(0, 8); // slice data stand-in (never parsed)
+        s.u(8, 0); // slice data stand-in (never parsed)
         let mut nal = vec![0x61u8]; // nal_ref_idc 3, type 1
         nal.extend(s.finish());
         nal
@@ -3048,13 +2997,13 @@ mod tests {
     /// An H.264 `pic_timing` SEI NAL: `cpb`/`dpb` delay bit lengths, then
     /// `pic_struct` (§D.1.3), then a zero clock-timestamp-flag tail.
     fn avc_pic_timing_sei(delays: Option<(u32, u32)>, pic_struct: u64) -> Vec<u8> {
-        let mut p = BitSink::new();
+        let mut p = BitWriter::new();
         if let Some((cpb, dpb)) = delays {
-            p.bits(0x15555 & ((1 << cpb) - 1), cpb); // cpb_removal_delay
-            p.bits(0x2AAAA & ((1 << dpb) - 1), dpb); // dpb_output_delay
+            p.u(cpb, 0x15555 & ((1 << cpb) - 1)); // cpb_removal_delay
+            p.u(dpb, 0x2AAAA & ((1 << dpb) - 1)); // dpb_output_delay
         }
-        p.bits(pic_struct, 4);
-        p.bits(0, 3); // clock_timestamp_flag[0..] = 0
+        p.u(4, pic_struct);
+        p.u(3, 0); // clock_timestamp_flag[0..] = 0
         let payload = p.finish();
         let mut nal = vec![0x06u8, 1, payload.len() as u8];
         nal.extend_from_slice(&payload);
@@ -3176,7 +3125,7 @@ mod tests {
     /// a mis-sized aspect read shifts the walk and corrupts the frame rate).
     fn avc_display_sps(vui: bool, aspect: AspectBits) -> Vec<u8> {
         let mut nal = vec![0x67u8, 66, 0x00, 30];
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         s.ue(0); // seq_parameter_set_id
         s.ue(0); // log2_max_frame_num_minus4
         s.ue(2); // pic_order_cnt_type
@@ -3194,8 +3143,8 @@ mod tests {
             s.bit(false); // video_signal_type_present_flag
             s.bit(false); // chroma_loc_info_present_flag
             s.bit(true); // timing_info_present_flag
-            s.bits(1, 32); // num_units_in_tick
-            s.bits(50, 32); // time_scale
+            s.u(32, 1); // num_units_in_tick
+            s.u(32, 50); // time_scale
             s.bit(true); // fixed_frame_rate_flag
             s.bit(false); // nal_hrd_parameters_present_flag
             s.bit(false); // vcl_hrd_parameters_present_flag
@@ -3255,30 +3204,36 @@ mod tests {
     }
 
     /// Append `overscan_info_present_flag(..)` then `video_signal_type(..)`.
-    fn put_colour_vui(s: &mut BitSink, v: ColourVui) {
+    fn put_colour_vui(s: &mut BitWriter, v: ColourVui) {
         match v.overscan {
             Some(appropriate) => {
                 s.bit(true); // overscan_info_present_flag
                 s.bit(appropriate); // overscan_appropriate_flag
             }
-            None => s.bit(false),
+            None => {
+                s.bit(false);
+            }
         }
         match v.vst {
             Some((format, full_range, colour)) => {
                 s.bit(true); // video_signal_type_present_flag
-                s.bits(u64::from(format), 3); // video_format
+                s.u(3, u64::from(format)); // video_format
                 s.bit(full_range); // video_full_range_flag
                 match colour {
                     Some((primaries, transfer, matrix)) => {
                         s.bit(true); // colour_description_present_flag
-                        s.bits(u64::from(primaries), 8);
-                        s.bits(u64::from(transfer), 8);
-                        s.bits(u64::from(matrix), 8);
+                        s.u(8, u64::from(primaries));
+                        s.u(8, u64::from(transfer));
+                        s.u(8, u64::from(matrix));
                     }
-                    None => s.bit(false),
+                    None => {
+                        s.bit(false);
+                    }
                 }
             }
-            None => s.bit(false),
+            None => {
+                s.bit(false);
+            }
         }
     }
 
@@ -3416,7 +3371,7 @@ mod tests {
     /// after it: a mis-sized colour read shifts the walk and corrupts the fps.
     fn avc_colour_sps(colour: ColourVui) -> Vec<u8> {
         let mut nal = vec![0x67u8, 66, 0x00, 30];
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         s.ue(0); // seq_parameter_set_id
         s.ue(0); // log2_max_frame_num_minus4
         s.ue(2); // pic_order_cnt_type
@@ -3432,8 +3387,8 @@ mod tests {
         put_colour_vui(&mut s, colour);
         s.bit(false); // chroma_loc_info_present_flag
         s.bit(true); // timing_info_present_flag
-        s.bits(1, 32); // num_units_in_tick
-        s.bits(50, 32); // time_scale
+        s.u(32, 1); // num_units_in_tick
+        s.u(32, 50); // time_scale
         s.bit(true); // fixed_frame_rate_flag
         s.bit(false); // nal_hrd_parameters_present_flag
         s.bit(false); // vcl_hrd_parameters_present_flag
@@ -3448,16 +3403,16 @@ mod tests {
     /// `field_seq_flag`/`frame_field_info_present_flag`, read and asserted.
     fn hevc_colour_sps(colour: ColourVui) -> Vec<u8> {
         let mut nal = vec![0x42u8, 0x01];
-        let mut s = BitSink::new();
-        s.bits(0, 4); // sps_video_parameter_set_id
-        s.bits(0, 3); // sps_max_sub_layers_minus1
+        let mut s = BitWriter::new();
+        s.u(4, 0); // sps_video_parameter_set_id
+        s.u(3, 0); // sps_max_sub_layers_minus1
         s.bit(true); // sps_temporal_id_nesting_flag
-        s.bits(0, 2); // general_profile_space
+        s.u(2, 0); // general_profile_space
         s.bit(false); // general_tier_flag
-        s.bits(1, 5); // general_profile_idc
-        s.bits(0, 32); // general_profile_compatibility_flags
-        s.bits(0, 48); // general_constraint_indicator_flags
-        s.bits(93, 8); // general_level_idc
+        s.u(5, 1); // general_profile_idc
+        s.u(32, 0); // general_profile_compatibility_flags
+        s.u(48, 0); // general_constraint_indicator_flags
+        s.u(8, 93); // general_level_idc
         s.ue(0); // sps_seq_parameter_set_id
         s.ue(1); // chroma_format_idc
         s.ue(16); // pic_width_in_luma_samples
@@ -3727,16 +3682,16 @@ mod tests {
         hrd: Option<(bool, bool, u32)>, // (general, within, ed_minus1)
     ) -> Vec<u8> {
         let mut nal = vec![0x42u8, 0x01];
-        let mut s = BitSink::new();
-        s.bits(0, 4); // vps id
-        s.bits(0, 3); // max sub layers minus1 = 0
+        let mut s = BitWriter::new();
+        s.u(4, 0); // vps id
+        s.u(3, 0); // max sub layers minus1 = 0
         s.bit(true); // temporal id nesting
-        s.bits(0, 2); // profile space
+        s.u(2, 0); // profile space
         s.bit(false); // tier
-        s.bits(1, 5); // profile idc
-        s.bits(0, 32); // compat
-        s.bits(0, 48); // constraint
-        s.bits(93, 8); // level
+        s.u(5, 1); // profile idc
+        s.u(32, 0); // compat
+        s.u(48, 0); // constraint
+        s.u(8, 93); // level
         s.ue(0); // sps id
         s.ue(1); // chroma
         s.ue(16); // width
@@ -3773,8 +3728,8 @@ mod tests {
         s.bit(ffi); // frame_field_info_present_flag
         s.bit(false); // default display window
         s.bit(true); // vui timing info present
-        s.bits(u64::from(num_units), 32);
-        s.bits(u64::from(time_scale), 32);
+        s.u(32, u64::from(num_units));
+        s.u(32, u64::from(time_scale));
         s.bit(false); // poc proportional
         if let Some((general, within, ed)) = hrd {
             s.bit(true); // vui_hrd_parameters_present_flag
@@ -3783,11 +3738,11 @@ mod tests {
             s.bit(false); // vcl_hrd_parameters_present_flag
             // nal||vcl true:
             s.bit(false); // sub_pic_hrd_params_present_flag
-            s.bits(0, 4); // bit_rate_scale
-            s.bits(0, 4); // cpb_size_scale
-            s.bits(0, 5); // initial_cpb_removal_delay_length_minus1
-            s.bits(0, 5); // au_cpb_removal_delay_length_minus1
-            s.bits(0, 5); // dpb_output_delay_length_minus1
+            s.u(4, 0); // bit_rate_scale
+            s.u(4, 0); // cpb_size_scale
+            s.u(5, 0); // initial_cpb_removal_delay_length_minus1
+            s.u(5, 0); // au_cpb_removal_delay_length_minus1
+            s.u(5, 0); // dpb_output_delay_length_minus1
             // i=0
             s.bit(general); // fixed_pic_rate_general_flag
             if !general {
@@ -3990,29 +3945,29 @@ mod tests {
     #[test]
     fn hevc_vps_timing_synthetic_valid() {
         let mut nal = vec![0x40u8, 0x01]; // NAL header (nal_unit_type=32)
-        let mut s = BitSink::new();
+        let mut s = BitWriter::new();
         // vps_video_parameter_set_id u(4)
-        s.bits(0, 4);
+        s.u(4, 0);
         // vps_base_layer_internal_flag u(1)
         s.bit(true);
         // vps_base_layer_available_flag u(1)
         s.bit(true);
         // vps_max_layers_minus1 u(6)
-        s.bits(0, 6);
+        s.u(6, 0);
         // vps_max_sub_layers_minus1 u(3)
-        s.bits(0, 3);
+        s.u(3, 0);
         // vps_temporal_id_nesting_flag u(1)
         s.bit(true);
         // vps_reserved_0xffff_16bits u(16)
-        s.bits(0xffff, 16);
+        s.u(16, 0xffff);
         // profile_tier_level(1, 0): general_profile_space 2, tier 1, profile_idc 5,
         // compat 32, constraint 48, level 8; no sub-layers.
-        s.bits(0, 2); // general_profile_space
+        s.u(2, 0); // general_profile_space
         s.bit(false); // general_tier_flag
-        s.bits(1, 5); // general_profile_idc
-        s.bits(0, 32); // general_profile_compatibility_flags
-        s.bits(0, 48); // general_constraint_indicator_flags
-        s.bits(0x21, 8); // general_level_idc
+        s.u(5, 1); // general_profile_idc
+        s.u(32, 0); // general_profile_compatibility_flags
+        s.u(48, 0); // general_constraint_indicator_flags
+        s.u(8, 0x21); // general_level_idc
         // vps_sub_layer_ordering_info_present_flag u(1)
         s.bit(true);
         // one sub-layer (i=0): three ue(v)
@@ -4020,15 +3975,15 @@ mod tests {
         s.ue(0);
         s.ue(0);
         // vps_max_layer_id u(6)
-        s.bits(0, 6);
+        s.u(6, 0);
         // vps_num_layer_sets_minus1 ue(v) = 0
         s.ue(0);
         // vps_timing_info_present_flag u(1)
         s.bit(true);
         // vps_num_units_in_tick u(32) = 7
-        s.bits(7, 32);
+        s.u(32, 7);
         // vps_time_scale u(32) = 9
-        s.bits(9, 32);
+        s.u(32, 9);
         nal.extend(s.finish());
         let t = decode_hevc_vps_timing(&nal)
             .expect("parse")
@@ -4040,32 +3995,32 @@ mod tests {
     #[test]
     fn hevc_vps_timing_synthetic_with_layer_set() {
         let mut nal = vec![0x40u8, 0x01];
-        let mut s = BitSink::new();
-        s.bits(0, 4); // vps_video_parameter_set_id
+        let mut s = BitWriter::new();
+        s.u(4, 0); // vps_video_parameter_set_id
         s.bit(true); // base_layer_internal
         s.bit(true); // base_layer_available
-        s.bits(0, 6); // max_layers_minus1
-        s.bits(0, 3); // max_sub_layers_minus1
+        s.u(6, 0); // max_layers_minus1
+        s.u(3, 0); // max_sub_layers_minus1
         s.bit(true); // temporal_id_nesting
-        s.bits(0xffff, 16); // reserved
+        s.u(16, 0xffff); // reserved
         // profile_tier_level(1, 0)
-        s.bits(0, 2);
+        s.u(2, 0);
         s.bit(false);
-        s.bits(1, 5);
-        s.bits(0, 32);
-        s.bits(0, 48);
-        s.bits(0x21, 8);
+        s.u(5, 1);
+        s.u(32, 0);
+        s.u(48, 0);
+        s.u(8, 0x21);
         s.bit(true); // ordering present
         s.ue(0);
         s.ue(0);
         s.ue(0);
-        s.bits(0, 6); // vps_max_layer_id
+        s.u(6, 0); // vps_max_layer_id
         s.ue(1); // vps_num_layer_sets_minus1 = 1
         // layer_id_included_flag[1][0] = 1
         s.bit(true);
         s.bit(true); // timing present
-        s.bits(7, 32);
-        s.bits(9, 32);
+        s.u(32, 7);
+        s.u(32, 9);
         nal.extend(s.finish());
         let t = decode_hevc_vps_timing(&nal)
             .expect("parse")
@@ -4077,32 +4032,32 @@ mod tests {
     #[test]
     fn hevc_vps_timing_synthetic_boundary_rejected() {
         let mut nal = vec![0x40u8, 0x01];
-        let mut s = BitSink::new();
-        s.bits(0, 4); // vps_video_parameter_set_id
+        let mut s = BitWriter::new();
+        s.u(4, 0); // vps_video_parameter_set_id
         s.bit(true); // base_layer_internal
         s.bit(true); // base_layer_available
-        s.bits(0, 6); // max_layers_minus1
-        s.bits(0, 3); // max_sub_layers_minus1
+        s.u(6, 0); // max_layers_minus1
+        s.u(3, 0); // max_sub_layers_minus1
         s.bit(true); // temporal_id_nesting
-        s.bits(0xffff, 16); // reserved
+        s.u(16, 0xffff); // reserved
         // profile_tier_level(1, 0)
-        s.bits(0, 2);
+        s.u(2, 0);
         s.bit(false);
-        s.bits(1, 5);
-        s.bits(0, 32);
-        s.bits(0, 48);
-        s.bits(0x21, 8);
+        s.u(5, 1);
+        s.u(32, 0);
+        s.u(48, 0);
+        s.u(8, 0x21);
         s.bit(true); // ordering present
         s.ue(0);
         s.ue(0);
         s.ue(0);
-        s.bits(0, 6); // vps_max_layer_id
+        s.u(6, 0); // vps_max_layer_id
         // vps_num_layer_sets_minus1 = 1024 -> out of range
         s.ue(1024);
         // timing flag not reached but fill something
         s.bit(true);
-        s.bits(1, 32);
-        s.bits(1, 32);
+        s.u(32, 1);
+        s.u(32, 1);
         nal.extend(s.finish());
         let r = decode_hevc_vps_timing(&nal);
         assert!(
@@ -4118,32 +4073,32 @@ mod tests {
     /// value being tested (not running out of bits) decides the outcome.
     fn synth_vps(layer_sets_minus1: u32, num_units: u32, time_scale: u32) -> Vec<u8> {
         let mut nal = vec![0x40u8, 0x01];
-        let mut s = BitSink::new();
-        s.bits(0, 4);
+        let mut s = BitWriter::new();
+        s.u(4, 0);
         s.bit(true);
         s.bit(true);
-        s.bits(0, 6);
-        s.bits(0, 3);
+        s.u(6, 0);
+        s.u(3, 0);
         s.bit(true);
-        s.bits(0xffff, 16);
-        s.bits(0, 2);
+        s.u(16, 0xffff);
+        s.u(2, 0);
         s.bit(false);
-        s.bits(1, 5);
-        s.bits(0, 32);
-        s.bits(0, 48);
-        s.bits(0x21, 8);
+        s.u(5, 1);
+        s.u(32, 0);
+        s.u(48, 0);
+        s.u(8, 0x21);
         s.bit(true);
         s.ue(0);
         s.ue(0);
         s.ue(0);
-        s.bits(0, 6); // vps_max_layer_id
+        s.u(6, 0); // vps_max_layer_id
         s.ue(u64::from(layer_sets_minus1));
         for _ in 0..layer_sets_minus1 {
             s.bit(false); // layer_id_included_flag[i][0]
         }
         s.bit(true); // vps_timing_info_present_flag
-        s.bits(u64::from(num_units), 32);
-        s.bits(u64::from(time_scale), 32);
+        s.u(32, u64::from(num_units));
+        s.u(32, u64::from(time_scale));
         nal.extend(s.finish());
         nal
     }

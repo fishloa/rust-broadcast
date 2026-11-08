@@ -576,6 +576,7 @@ impl Serialize for DtsSpecificBox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_bits::BitWriter;
     use broadcast_common::{Parse, Serialize};
 
     /// Spec-derived test vector: hand-computed from §E.2.2.3.1 field layout.
@@ -610,20 +611,8 @@ mod tests {
         assert_eq!(parsed, orig, "parse(serialize(x)) must equal x");
     }
 
-    // -----------------------------------------------------------------
-    // DtsCoreFrameInfo — hand-rolled bit writer (independent of production
-    // `read_bits`) builds synthetic core headers to exercise the parser.
-    // -----------------------------------------------------------------
-
-    fn write_bits(buf: &mut [u8], bit_pos: &mut usize, n: usize, val: u64) {
-        for i in (0..n).rev() {
-            let byte_idx = *bit_pos / 8;
-            let bit_in_byte = 7 - (*bit_pos % 8);
-            let bit = ((val >> i) & 1) as u8;
-            buf[byte_idx] = (buf[byte_idx] & !(1 << bit_in_byte)) | (bit << bit_in_byte);
-            *bit_pos += 1;
-        }
-    }
+    // DtsCoreFrameInfo: a bit writer independent of production `read_bits`
+    // builds synthetic core headers to exercise the parser.
 
     /// Build a synthetic DTS core frame header (Table 5-1), header only (11 bytes).
     fn build_core_header(
@@ -634,27 +623,28 @@ mod tests {
         rate: u8,
         lff: u8,
     ) -> Vec<u8> {
-        let mut buf = vec![0u8; 16];
-        let mut bp = 0usize;
-        write_bits(&mut buf, &mut bp, 32, DTS_CORE_SYNC_WORD as u64);
-        write_bits(&mut buf, &mut bp, 1, 1); // FTYPE: normal frame
-        write_bits(&mut buf, &mut bp, 5, 31); // SHORT
-        write_bits(&mut buf, &mut bp, 1, 0); // CPF
-        write_bits(&mut buf, &mut bp, 7, nblks as u64);
-        write_bits(&mut buf, &mut bp, 14, fsize as u64);
-        write_bits(&mut buf, &mut bp, 6, amode as u64);
-        write_bits(&mut buf, &mut bp, 4, sfreq as u64);
-        write_bits(&mut buf, &mut bp, 5, rate as u64);
-        write_bits(&mut buf, &mut bp, 1, 0); // FixedBit
-        write_bits(&mut buf, &mut bp, 1, 0); // DYNF
-        write_bits(&mut buf, &mut bp, 1, 0); // TIMEF
-        write_bits(&mut buf, &mut bp, 1, 0); // AUXF
-        write_bits(&mut buf, &mut bp, 1, 0); // HDCD
-        write_bits(&mut buf, &mut bp, 3, 0); // EXT_AUDIO_ID
-        write_bits(&mut buf, &mut bp, 1, 0); // EXT_AUDIO
-        write_bits(&mut buf, &mut bp, 1, 0); // ASPF
-        write_bits(&mut buf, &mut bp, 2, lff as u64); // LFF
-        write_bits(&mut buf, &mut bp, 1, 0); // HFLAG
+        let mut w = BitWriter::new();
+        w.u(32, DTS_CORE_SYNC_WORD as u64);
+        w.u(1, 1); // FTYPE: normal frame
+        w.u(5, 31); // SHORT
+        w.u(1, 0); // CPF
+        w.u(7, nblks as u64);
+        w.u(14, fsize as u64);
+        w.u(6, amode as u64);
+        w.u(4, sfreq as u64);
+        w.u(5, rate as u64);
+        w.u(1, 0); // FixedBit
+        w.u(1, 0); // DYNF
+        w.u(1, 0); // TIMEF
+        w.u(1, 0); // AUXF
+        w.u(1, 0); // HDCD
+        w.u(3, 0); // EXT_AUDIO_ID
+        w.u(1, 0); // EXT_AUDIO
+        w.u(1, 0); // ASPF
+        w.u(2, lff as u64); // LFF
+        w.u(1, 0); // HFLAG
+        let mut buf = w.finish();
+        buf.resize(16, 0);
         buf
     }
 
