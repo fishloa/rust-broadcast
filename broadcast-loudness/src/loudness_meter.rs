@@ -328,7 +328,7 @@ impl LoudnessHistogram {
 
     fn record(&mut self, mean_sq: f64) {
         let lkfs = mean_sq_to_lkfs(mean_sq);
-        if lkfs <= ABSOLUTE_GATE {
+        if !self.gate.passes(lkfs, ABSOLUTE_GATE) {
             return;
         }
         #[cfg(test)]
@@ -365,17 +365,16 @@ impl LoudnessHistogram {
     fn cut(&self, threshold: f64) -> GateCut {
         let at = Self::bin_of(threshold);
         let bin = &self.bins[at];
-        let (kept, kept_energy) =
-            if bin.count == 0 || self.gate.passes(bin.min_lkfs(), threshold) {
-                (bin.count, bin.energy)
-            } else if !self.gate.passes(bin.max_lkfs(), threshold) {
-                (0, 0.0)
-            } else {
-                let at_max = (bin.energy - bin.count as f64 * bin.min_energy)
-                    / (bin.max_energy - bin.min_energy);
-                let kept = (libm::round(at_max) as u64).clamp(1, bin.count - 1);
-                (kept, kept as f64 * bin.max_energy)
-            };
+        let (kept, kept_energy) = if bin.count == 0 || self.gate.passes(bin.min_lkfs(), threshold) {
+            (bin.count, bin.energy)
+        } else if !self.gate.passes(bin.max_lkfs(), threshold) {
+            (0, 0.0)
+        } else {
+            let at_max = (bin.energy - bin.count as f64 * bin.min_energy)
+                / (bin.max_energy - bin.min_energy);
+            let kept = (libm::round(at_max) as u64).clamp(1, bin.count - 1);
+            (kept, kept as f64 * bin.max_energy)
+        };
         GateCut {
             bin: at,
             kept,
@@ -918,9 +917,8 @@ mod tests {
 
     mod gate_edge {
         use super::super::{
-            BIN_WIDTH_LU, LOUDNESS_OFFSET, LRA_HIGH_PERCENT, LRA_LOW_PERCENT,
-            LRA_RELATIVE_GATE, LoudnessHistogram, LoudnessMeter, RELATIVE_GATE, SUB_BLOCK_S,
-            mean_sq_to_lkfs,
+            BIN_WIDTH_LU, LOUDNESS_OFFSET, LRA_HIGH_PERCENT, LRA_LOW_PERCENT, LRA_RELATIVE_GATE,
+            LoudnessHistogram, LoudnessMeter, RELATIVE_GATE, SUB_BLOCK_S, mean_sq_to_lkfs,
         };
         use crate::channel_layout::ChannelLayout;
         use alloc::vec::Vec;
@@ -1030,7 +1028,11 @@ mod tests {
                 let m = meter_for(tone, quiet_dbfs);
                 let h = (self.histogram)(&m);
                 let thr = threshold(&h.recorded, self.gate_lu);
-                let kept = h.recorded.iter().filter(|&&l| h.gate.passes(l, thr)).count();
+                let kept = h
+                    .recorded
+                    .iter()
+                    .filter(|&&l| h.gate.passes(l, thr))
+                    .count();
                 4 * kept > 3 * h.recorded.len()
             }
 
@@ -1088,7 +1090,10 @@ mod tests {
 
         fn check(gate: &Gate) {
             let (wholly_below, straddling) = gate.sweep(Tone::Aligned);
-            assert!(wholly_below > 0, "sweep never reached the bin-resolution case");
+            assert!(
+                wholly_below > 0,
+                "sweep never reached the bin-resolution case"
+            );
             assert_eq!(straddling, 0, "aligned tone: every step must be exact");
             let (_, straddling) = gate.sweep(Tone::Wandering);
             assert!(straddling > 0, "sweep never reached a straddling bin");
@@ -1103,6 +1108,24 @@ mod tests {
         fn lra_gate_matches_the_reference_across_the_edge() {
             check(&LRA);
         }
+    }
+
+    #[test]
+    fn absolute_gate_keeps_a_block_at_exactly_minus_70_for_lra_only() {
+        use super::{
+            ABSOLUTE_GATE, GateComparison, LOUDNESS_OFFSET, LoudnessHistogram, mean_sq_to_lkfs,
+        };
+        let estimate = libm::pow(10.0, (ABSOLUTE_GATE - LOUDNESS_OFFSET) / 10.0);
+        let at_gate = (-64i64..=64)
+            .map(|ulps| f64::from_bits((estimate.to_bits() as i64 + ulps) as u64))
+            .find(|&m| mean_sq_to_lkfs(m) == ABSOLUTE_GATE)
+            .unwrap();
+        let mut lra = LoudnessHistogram::new(GateComparison::AtOrAbove);
+        let mut integrated = LoudnessHistogram::new(GateComparison::Above);
+        lra.record(at_gate);
+        integrated.record(at_gate);
+        assert_eq!(lra.totals_from(0).0, 1);
+        assert_eq!(integrated.totals_from(0).0, 0);
     }
 
     #[test]
