@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A track the host drops from an explicit rendered set before the first `Start` keeps holding the start (it stays registered with the buffer controller and its ends are still reported) until that `Start` or until `Config::start_pending_track_wait_us` (default 1.5 s) after the drop, whichever comes first. A host that declared `[video]` and then `[video, audio]` a few ms later had audio unregistered in between, got a `Start` judged on video alone at the next tick, and audio was re-registered after the fact (tf-1 on tvOS, 2026-11-08: a `DataArriving` pause on audio 0.4 s after the start). A host that really renders video only waits at most that bound for the dropped audio, not the controller's silence timeout; after the first `Start` a dropped track is released at once, as before. `start_pending_track_hard_cap_us` does not apply: it extends the wait only for a PMT-declared audio stream that has no track yet.
 
+## [0.4.0] - 2026-11-08
+### Dependencies
+- Sibling crates move to a new epoch: `rtsp-runtime` 0.9 -> 0.10. The `Cargo.toml` requirements name the new version; `rtsp-runtime`'s `Error` carries its source errors and no longer derives `Clone`/`PartialEq` (#1726), which this crate's public API does not expose.
+
 ## [0.3.0] - 2026-11-07
 ### Added
 - absorbs the former `tshttp-runtime` crate as module `broadcast_client::tshttp`, so `tshttp_runtime::X` becomes `broadcast_client::tshttp::X` (`TsHttpClient`, `TsHttpPolicy`, `Config`, `Action`, `Event`, `StarveKind`, `DemuxEvent`); the `serde` feature now also enables `Serialize`/`Deserialize` on those types. The module is `std` like the rest of the crate (the standalone `no_std` build is gone).
