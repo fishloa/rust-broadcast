@@ -239,8 +239,10 @@ impl Session<Whep> {
         valid_until: Option<String>,
     ) -> HttpResponse {
         let ct = match valid_until {
-            Some(ref date) => alloc::format!("application/sdp; valid-until=\"{date}\""),
-            None => "application/sdp".into(),
+            Some(ref date) => {
+                alloc::format!("{}; valid-until=\"{date}\"", content_type::SDP)
+            }
+            None => content_type::SDP.into(),
         };
         let built = HttpResponse::new(StatusCode::NOT_ACCEPTABLE)
             .with_location(&self.session_url)
