@@ -318,5 +318,5 @@ async fn eof_mid_frame_is_an_error_not_a_clean_end() {
     drop(server_io);
     let mut c = AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), short());
     let err = c.recv_interleaved().await.expect_err("truncated frame");
-    assert!(matches!(err, Error::Io(_)), "{err:?}");
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
 }
