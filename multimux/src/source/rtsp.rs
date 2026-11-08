@@ -116,6 +116,20 @@ impl PullKind for RtspKind {
     type Extra = ();
 }
 
+impl crate::source::pull_target::PullDrive for RtspKind {
+    const SEGMENTED: bool = false;
+
+    async fn drive(
+        route: std::sync::Arc<crate::source::pull_target::PullRoute<Self>>,
+        trunk_config: media_plane::trunk::TrunkConfig,
+        handshake: media_plane::ingress::HandshakePolicy,
+        route_handle: std::sync::Arc<crate::route::RouteHandle>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::Result<()> {
+        Err(run_rtsp(&route, trunk_config, handshake, &route_handle, cancel).await)
+    }
+}
+
 /// Which handshake request [`RtspIngestSession`] is currently waiting a
 /// response for — the state `poll_transmit`/`feed` walk through instead of
 /// `RtspDialer::dial` blocking on it.

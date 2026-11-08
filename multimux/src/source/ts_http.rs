@@ -98,6 +98,20 @@ impl PullKind for TsHttpKind {
     type Extra = ();
 }
 
+impl crate::source::pull_target::PullDrive for TsHttpKind {
+    const SEGMENTED: bool = false;
+
+    async fn drive(
+        route: std::sync::Arc<crate::source::pull_target::PullRoute<Self>>,
+        trunk_config: media_plane::trunk::TrunkConfig,
+        handshake: media_plane::ingress::HandshakePolicy,
+        route_handle: std::sync::Arc<crate::route::RouteHandle>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::Result<()> {
+        run_ts_http(&route, trunk_config, handshake, &route_handle, cancel).await
+    }
+}
+
 /// Constructs a [`TsIngestSession`] — performs **no I/O** (see the module
 /// doc). The GET lives in [`open_stream`].
 #[derive(Clone, Copy, Debug, Default)]
