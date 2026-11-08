@@ -98,8 +98,6 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         return Outcome::None;
     }
 
-    // Best (stride, phase): the longest consecutive sync run seen over all
-    // lanes. Track it here so we can report its tier and detail.
     let mut best_stride: Option<usize> = None;
     let mut best_phase = 0usize;
     let mut best_run = 0usize;
@@ -135,8 +133,6 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
                 }
                 pos += stride;
             }
-            // Track the best partial run of any length for the
-            // `Insufficient` / `None` decision.
             if longest > best_observed_run {
                 best_observed_run = longest;
                 best_observed_stride = stride;
