@@ -2,9 +2,21 @@
 
 _Released 2026-11-08._
 
-Breaking-class release (0.3 -> 0.4) because `rtsp-runtime` moves to 0.10, which changes the caret epoch this crate builds against. The one new feature is an opt-in recording of the buffering controller's inputs for offline replay; nothing changes for a caller that does not turn it on.
+Breaking-class release (0.3 -> 0.4): `rtsp-runtime` moves to 0.10, which changes the caret epoch this crate builds against, and `Session::set_rendered_tracks` takes the host's `now_us`. The one new feature is an opt-in recording of the buffering controller's inputs for offline replay; nothing changes for a caller that does not turn it on.
 
 Version: 0.3.0 -> 0.4.0.
+
+## Breaking changes and migration
+
+`Session::set_rendered_tracks(now_us, tracks)` takes the host clock like every other input. The buffer input log stamps the `register` and `unregister` rows a rendered-set change makes with the time of the call that made it; before, they carried the last logged time, up to a tick earlier, which misdated a field log by 6 ms.
+
+```rust
+// before
+session.set_rendered_tracks(&[video, audio]);
+
+// after: pass the same monotonic microseconds you pass to the other calls
+session.set_rendered_tracks(now_us, &[video, audio]);
+```
 
 ## Added
 
@@ -33,6 +45,10 @@ std::fs::write("capture.csv", text)?;
 ```
 
 Drain regularly on a long run; the queue holds at most `max_recorded_buffer_inputs` rows.
+
+## Fixed
+
+- A track the host drops from an explicit rendered set before the first `Start` keeps holding that `Start` (it stays registered with the buffer controller and its ends are still reported) until the `Start` or until `Config::start_pending_track_wait_us` (default 1.5 s) after the drop, whichever comes first. A host that declared `[video]` and then `[video, audio]` a few ms later used to have audio unregistered in between, got a `Start` judged on video alone at the next tick, and audio was registered again afterwards (observed on tvOS as a `DataArriving` pause on audio 0.4 s after the start). A host that really renders video only waits at most that bound for the dropped audio.
 
 ## Changed
 
