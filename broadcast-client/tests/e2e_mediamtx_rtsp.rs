@@ -844,7 +844,9 @@ fn print_lead_series(label: &str, session: &Session) {
     for input in session.buffer_input_log() {
         match input {
             BufferInput::Register { track: t, .. } => eprintln!("LEAD[{label}] register track {t}"),
-            BufferInput::Unregister { track: t, .. } => eprintln!("LEAD[{label}] unregister track {t}"),
+            BufferInput::Unregister { track: t, .. } => {
+                eprintln!("LEAD[{label}] unregister track {t}")
+            }
             BufferInput::TrackMedia {
                 now_us,
                 track,

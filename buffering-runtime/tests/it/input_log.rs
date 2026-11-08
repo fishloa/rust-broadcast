@@ -103,7 +103,12 @@ fn malformed_rows_are_typed_errors_carrying_the_line() {
         ("chunk,1,,", Reason::MissingField { field: "bytes" }),
         ("media,1,2,zz", Reason::BadNumber { field: "end" }),
         ("hint,1,nonsense,", Reason::UnknownHint),
-        ("tick,1,2,3", Reason::BadNumber { field: "has_position" }),
+        (
+            "tick,1,2,3",
+            Reason::BadNumber {
+                field: "has_position",
+            },
+        ),
     ];
     for (line, reason) in cases {
         let e: InputLogError = Input::parse_row(line).unwrap_err();

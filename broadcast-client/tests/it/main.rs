@@ -43,6 +43,7 @@ mod hls_keys;
 mod hls_live_silent;
 mod hls_renditions;
 mod hold_early_release;
+mod input_log;
 mod hold_transparency;
 mod mtls;
 mod no_clock_guard;

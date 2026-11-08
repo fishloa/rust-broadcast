@@ -1,11 +1,10 @@
 //! Buffer-event feeder: owns the buffering controller and feeding state.
 
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::format;
-use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use broadcast_common::timescale::{Rounding, rescale};
+use buffering_runtime::input_log::Input;
 use buffering_runtime::{
     BufferController, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
 };
@@ -16,149 +15,10 @@ use crate::join::VideoJoin;
 
 const SILENCE_MARGIN_US: u64 = 500_000;
 
-/// One call the session made into the buffering controller, recorded for offline replay.
-///
-/// Recording is opt-in ([`crate::Config::record_buffer_inputs`]); the host takes the recorded
-/// inputs with [`crate::Session::drain_buffer_inputs`]. Fed in order to a
-/// [`buffering_runtime::BufferController`] built from [`crate::Config::controller_config`], they
-/// reproduce the session's buffering decisions. Times are the session's monotonic microseconds;
-/// positions and media ends are 27 MHz ticks. [`BufferInput::csv_row`] renders one input as a row
-/// of a `kind,now_us,a,b` log ([`BufferInput::CSV_HEADER`]).
-///
-/// A [`BufferInput::Register`] or [`BufferInput::Unregister`] happens inside a session call that
-/// has no time of its own, so its `now_us` is the time of the most recent timed input.
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BufferInput {
-    /// `on_chunk`: bytes arrived.
-    Chunk {
-        /// Arrival time.
-        now_us: u64,
-        /// Chunk length.
-        bytes: u32,
-        /// Last PCR of the chunk, 27 MHz.
-        pcr: Option<u64>,
-    },
-    /// `on_track_media`: a track's buffered media now ends at `end`.
-    TrackMedia {
-        /// Report time.
-        now_us: u64,
-        /// Controller track key.
-        track: u32,
-        /// Media end, 27 MHz.
-        end: u64,
-    },
-    /// `on_tick`: the host's playback position.
-    Tick {
-        /// Tick time.
-        now_us: u64,
-        /// Playback position, 27 MHz.
-        pts: Option<u64>,
-    },
-    /// `on_hint`.
-    Hint {
-        /// Hint time.
-        now_us: u64,
-        /// The hint.
-        hint: Hint,
-    },
-    /// `register_track`.
-    Register {
-        /// Time of the most recent timed input.
-        now_us: u64,
-        /// Controller track key.
-        track: u32,
-    },
-    /// `unregister_track`.
-    Unregister {
-        /// Time of the most recent timed input.
-        now_us: u64,
-        /// Controller track key.
-        track: u32,
-    },
-}
-
-const CSV_KIND_CHUNK: &str = "chunk";
-const CSV_KIND_MEDIA: &str = "media";
-const CSV_KIND_TICK: &str = "tick";
-const CSV_KIND_HINT: &str = "hint";
-const CSV_KIND_REGISTER: &str = "register";
-const CSV_KIND_UNREGISTER: &str = "unregister";
-const CSV_HAS_POSITION: &str = "1";
-const CSV_NO_POSITION: &str = "0";
-const HINT_CODE_FIRST: u32 = 1;
-
-impl BufferInput {
-    /// Header row of a CSV input log.
-    pub const CSV_HEADER: &'static str = "kind,now_us,a,b";
-
-    /// Spec label.
-    #[must_use]
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Chunk { .. } => "chunk",
-            Self::TrackMedia { .. } => "track media",
-            Self::Tick { .. } => "tick",
-            Self::Hint { .. } => "hint",
-            Self::Register { .. } => "register",
-            Self::Unregister { .. } => "unregister",
-        }
-    }
-
-    /// The CSV `a` column value of a `hint` row: the zero-based position of `hint` in the order
-    /// of [`Hint::code`], so `Hint::from_code(csv_code + 1)` recovers it.
-    #[must_use]
-    pub fn hint_csv_code(hint: Hint) -> u32 {
-        hint.code().saturating_sub(HINT_CODE_FIRST)
-    }
-
-    /// One CSV row (columns of [`BufferInput::CSV_HEADER`]) without a trailing newline.
-    ///
-    /// | kind | `a` | `b` |
-    /// |---|---|---|
-    /// | `chunk` | bytes | last PCR, 27 MHz, or empty |
-    /// | `media` | track key | media end, 27 MHz |
-    /// | `tick` | `1` with a position, `0` without | position, 27 MHz, or empty |
-    /// | `register`, `unregister` | track key | empty |
-    /// | `hint` | [`BufferInput::hint_csv_code`] | empty |
-    #[must_use]
-    pub fn csv_row(&self) -> String {
-        match self {
-            Self::Chunk { now_us, bytes, pcr } => {
-                format!("{CSV_KIND_CHUNK},{now_us},{bytes},{}", opt(*pcr))
-            }
-            Self::TrackMedia { now_us, track, end } => {
-                format!("{CSV_KIND_MEDIA},{now_us},{track},{end}")
-            }
-            Self::Tick { now_us, pts } => {
-                let has = if pts.is_some() {
-                    CSV_HAS_POSITION
-                } else {
-                    CSV_NO_POSITION
-                };
-                format!("{CSV_KIND_TICK},{now_us},{has},{}", opt(*pts))
-            }
-            Self::Hint { now_us, hint } => {
-                format!("{CSV_KIND_HINT},{now_us},{},", Self::hint_csv_code(*hint))
-            }
-            Self::Register { now_us, track } => format!("{CSV_KIND_REGISTER},{now_us},{track},"),
-            Self::Unregister { now_us, track } => {
-                format!("{CSV_KIND_UNREGISTER},{now_us},{track},")
-            }
-        }
-    }
-}
-
-fn opt(v: Option<u64>) -> String {
-    v.map_or_else(String::new, |v| v.to_string())
-}
-
-broadcast_common::impl_spec_display!(BufferInput);
-
 pub(crate) struct InputLog {
     enabled: bool,
     cap: usize,
-    queue: Vec<BufferInput>,
+    queue: Vec<Input>,
     dropped: u64,
     last_now_us: u64,
 }
@@ -183,7 +43,7 @@ impl InputLog {
         self.last_now_us
     }
 
-    pub(crate) fn record(&mut self, input: BufferInput) -> bool {
+    pub(crate) fn record(&mut self, input: Input) -> bool {
         if !self.enabled {
             return false;
         }
@@ -195,11 +55,11 @@ impl InputLog {
         false
     }
 
-    pub(crate) fn peek(&self) -> &[BufferInput] {
+    pub(crate) fn peek(&self) -> &[Input] {
         &self.queue
     }
 
-    pub(crate) fn drain(&mut self) -> alloc::vec::Drain<'_, BufferInput> {
+    pub(crate) fn drain(&mut self) -> alloc::vec::Drain<'_, Input> {
         self.queue.drain(..)
     }
 
@@ -285,6 +145,7 @@ pub(crate) fn effective_controller_config(
 
 pub(crate) struct Feeder {
     config: ControllerConfig,
+    initial_seed: Option<StallMemorySnapshot>,
     seed: Option<StallMemorySnapshot>,
     controller: Option<BufferController>,
     finite: bool,
@@ -325,6 +186,7 @@ impl Feeder {
     ) -> Self {
         Self {
             config,
+            initial_seed: seed,
             seed,
             controller: None,
             finite: false,
@@ -360,6 +222,14 @@ impl Feeder {
     pub(crate) fn set_recording(&mut self, enabled: bool, cap: usize) {
         self.log.enabled = enabled;
         self.log.cap = cap;
+    }
+
+    pub(crate) fn replay_config(&self) -> ControllerConfig {
+        self.controller_config()
+    }
+
+    pub(crate) fn replay_seed(&self) -> Option<StallMemorySnapshot> {
+        self.initial_seed
     }
 
     pub(crate) fn set_finite(&mut self) {
@@ -434,10 +304,22 @@ impl Feeder {
         };
         if want && !self.pending_registered {
             c.register_track(PENDING_TRACK_KEY);
-            rec!(self, BufferInput::Register { now_us: self.log.last_now(), track: PENDING_TRACK_KEY });
+            rec!(
+                self,
+                Input::Register {
+                    now_us: self.log.last_now(),
+                    track: PENDING_TRACK_KEY
+                }
+            );
         } else if !want && self.pending_registered {
             c.unregister_track(PENDING_TRACK_KEY);
-            rec!(self, BufferInput::Unregister { now_us: self.log.last_now(), track: PENDING_TRACK_KEY });
+            rec!(
+                self,
+                Input::Unregister {
+                    now_us: self.log.last_now(),
+                    track: PENDING_TRACK_KEY
+                }
+            );
         }
         self.pending_registered = want;
     }
@@ -482,7 +364,13 @@ impl Feeder {
             && let Some(c) = &mut self.controller
         {
             c.unregister_track(t.value());
-            rec!(self, BufferInput::Unregister { now_us: self.log.last_now(), track: t.value() });
+            rec!(
+                self,
+                Input::Unregister {
+                    now_us: self.log.last_now(),
+                    track: t.value()
+                }
+            );
         }
     }
 
@@ -530,7 +418,13 @@ impl Feeder {
             self.pending_zero.remove(&t);
             if let Some(c) = &mut self.controller {
                 c.unregister_track(t.value());
-                rec!(self, BufferInput::Unregister { now_us: self.log.last_now(), track: t.value() });
+                rec!(
+                    self,
+                    Input::Unregister {
+                        now_us: self.log.last_now(),
+                        track: t.value()
+                    }
+                );
             }
         }
         if !self
@@ -545,7 +439,13 @@ impl Feeder {
             self.rendered.insert(*t);
             if let Some(c) = &mut self.controller {
                 c.register_track(t.value());
-                rec!(self, BufferInput::Register { now_us: self.log.last_now(), track: t.value() });
+                rec!(
+                    self,
+                    Input::Register {
+                        now_us: self.log.last_now(),
+                        track: t.value()
+                    }
+                );
             }
             self.seed_from_history(*t);
         }
@@ -713,7 +613,13 @@ impl Feeder {
         {
             for t in &self.rendered {
                 c.register_track(t.value());
-                rec!(self, BufferInput::Register { now_us: self.log.last_now(), track: t.value() });
+                rec!(
+                    self,
+                    Input::Register {
+                        now_us: self.log.last_now(),
+                        track: t.value()
+                    }
+                );
             }
             self.controller = Some(c);
             self.pending_registered = false;
@@ -743,7 +649,7 @@ impl Feeder {
             c.on_track_media(now_us, t.value(), end);
             rec!(
                 self,
-                BufferInput::TrackMedia {
+                Input::TrackMedia {
                     now_us,
                     track: t.value(),
                     end
@@ -769,7 +675,7 @@ impl Feeder {
         c.on_chunk(now_us, len, pcr);
         rec!(
             self,
-            BufferInput::Chunk {
+            Input::Chunk {
                 now_us,
                 bytes: len,
                 pcr
@@ -791,7 +697,7 @@ impl Feeder {
         self.ensure_controller();
         if let Some(c) = &mut self.controller {
             c.on_hint(now_us, h);
-            rec!(self, BufferInput::Hint { now_us, hint: h });
+            rec!(self, Input::Hint { now_us, hint: h });
         }
     }
 
@@ -802,7 +708,7 @@ impl Feeder {
         self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
             c.on_tick(now_us, pts);
-            rec!(self, BufferInput::Tick { now_us, pts });
+            rec!(self, Input::Tick { now_us, pts });
         }
     }
 

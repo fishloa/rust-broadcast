@@ -1,8 +1,8 @@
 mod apple_tv_input_logs;
 mod burst;
 mod granularity;
-mod input_log;
 mod granularity_coalesce;
+mod input_log;
 mod multi_track;
 mod no_float_guard;
 mod oracles;

@@ -26,9 +26,9 @@ pub mod udp;
 
 pub use crate::tshttp::StarveKind;
 pub use broadcast_auth::Credentials;
-pub use buffer::BufferInput;
 pub use buffering_runtime::Hint;
 pub use buffering_runtime::Hint as BufferHint;
+pub use buffering_runtime::input_log::{Input as BufferInput, InputLog};
 pub use dash_runtime::client::config::{DashClockPolicy, DashConfig};
 pub use dash_runtime::timing::clock::ClockSource;
 pub use error::{Error, TransportError};

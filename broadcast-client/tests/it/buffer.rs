@@ -284,7 +284,12 @@ fn chunk_count(log: &[BufferInput]) -> usize {
 
 fn without_registration(log: &[BufferInput]) -> Vec<BufferInput> {
     log.iter()
-        .filter(|l| !matches!(l, BufferInput::Register { .. } | BufferInput::Unregister { .. }))
+        .filter(|l| {
+            !matches!(
+                l,
+                BufferInput::Register { .. } | BufferInput::Unregister { .. }
+            )
+        })
         .cloned()
         .collect()
 }
@@ -1059,9 +1064,8 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     let n = 1_400;
     h.run(&bytes[..n * CHUNK], CHUNK, &realtime(n), 0);
     let ids = h.track_ids();
-    let registers = |h: &Host| -> Vec<(bool, u32)> {
-        h.log().iter().filter_map(register_change).collect()
-    };
+    let registers =
+        |h: &Host| -> Vec<(bool, u32)> { h.log().iter().filter_map(register_change).collect() };
     assert_eq!(registers(&h), [(true, VIDEO), (true, AUDIO)]);
     let base = h.log().len();
 

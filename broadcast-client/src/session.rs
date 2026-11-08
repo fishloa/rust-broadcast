@@ -934,7 +934,7 @@ impl Session {
     /// [`Config::record_buffer_inputs`] is set.
     #[cfg(feature = "__test-seams")]
     #[doc(hidden)]
-    pub fn buffer_input_log(&self) -> &[crate::BufferInput] {
+    pub fn buffer_input_log(&self) -> &[buffering_runtime::input_log::Input] {
         self.buffer.log.peek()
     }
 
@@ -945,10 +945,30 @@ impl Session {
     /// fills at the rate of chunk, media and tick calls). Inputs that arrive while it is full
     /// are dropped and counted by [`Session::dropped_buffer_inputs`].
     ///
-    /// Write each with [`crate::BufferInput::csv_row`] to build a log that replays offline
-    /// through a `buffering_runtime::BufferController` built from [`Config::controller_config`].
-    pub fn drain_buffer_inputs(&mut self) -> impl Iterator<Item = crate::BufferInput> + '_ {
+    /// Collect them with [`Session::buffer_input_log_config`] and
+    /// [`Session::buffer_input_log_seed`] into a `buffering_runtime::input_log::InputLog` to write
+    /// a self-describing log that replays offline.
+    pub fn drain_buffer_inputs(
+        &mut self,
+    ) -> impl Iterator<Item = buffering_runtime::input_log::Input> + '_ {
         self.buffer.log.drain()
+    }
+
+    /// The controller configuration to write as the `config` rows of an
+    /// [`InputLog`](buffering_runtime::input_log::InputLog) built from
+    /// [`Session::drain_buffer_inputs`]: the one the session's own controller was built from
+    /// (see [`Config::controller_config`]).
+    #[must_use]
+    pub fn buffer_input_log_config(&self) -> buffering_runtime::ControllerConfig {
+        self.buffer.replay_config()
+    }
+
+    /// The stall-memory seed the session's controller started from (the `seed` row of an
+    /// [`InputLog`](buffering_runtime::input_log::InputLog)); `None` for a session opened without
+    /// [`Session::open_with_memory`].
+    #[must_use]
+    pub fn buffer_input_log_seed(&self) -> Option<buffering_runtime::StallMemorySnapshot> {
+        self.buffer.replay_seed()
     }
 
     /// Buffering inputs dropped because the queue held [`Config::max_recorded_buffer_inputs`].
@@ -1603,7 +1623,7 @@ mod tests {
             .filter(|l| {
                 matches!(
                     l,
-                    crate::BufferInput::Hint {
+                    buffering_runtime::input_log::Input::Hint {
                         hint: Hint::PcrDiscontinuity,
                         ..
                     }

@@ -1060,7 +1060,7 @@ pub struct Config {
     /// Record every call the session makes into its buffering controller so the host can drain
     /// them with [`crate::Session::drain_buffer_inputs`] and replay them offline through a
     /// `buffering_runtime::BufferController` built from [`Config::controller_config`] (see
-    /// [`crate::BufferInput`]). Off by default; when off nothing is recorded and no memory is
+    /// [`crate::BufferInput`] (`buffering_runtime::input_log::Input`)). Off by default; when off nothing is recorded and no memory is
     /// used.
     pub record_buffer_inputs: bool,
     /// Cap on recorded buffering inputs held for the host while
@@ -1293,7 +1293,10 @@ impl core::fmt::Debug for Config {
             .field("auto_select_audio", &self.auto_select_audio)
             .field("max_queued_events", &self.max_queued_events)
             .field("record_buffer_inputs", &self.record_buffer_inputs)
-            .field("max_recorded_buffer_inputs", &self.max_recorded_buffer_inputs)
+            .field(
+                "max_recorded_buffer_inputs",
+                &self.max_recorded_buffer_inputs,
+            )
             .field("timeline_jump", &self.timeline_jump)
             .field(
                 "tracks_hold_max_input_bytes",

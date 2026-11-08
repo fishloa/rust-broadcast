@@ -212,7 +212,9 @@ impl Input {
                 } else if row.a == NO_POSITION {
                     None
                 } else {
-                    return Err(row.fail(Reason::BadNumber { field: "has_position" }));
+                    return Err(row.fail(Reason::BadNumber {
+                        field: "has_position",
+                    }));
                 };
                 Ok(Self::Tick { now_us, pts })
             }
@@ -275,11 +277,16 @@ impl<'a> Row<'a> {
         }
     }
 
-    fn number<T: core::str::FromStr>(&self, field: &'static str, v: &str) -> Result<T, InputLogError> {
+    fn number<T: core::str::FromStr>(
+        &self,
+        field: &'static str,
+        v: &str,
+    ) -> Result<T, InputLogError> {
         if v.is_empty() {
             return Err(self.fail(Reason::MissingField { field }));
         }
-        v.parse().map_err(|_| self.fail(Reason::BadNumber { field }))
+        v.parse()
+            .map_err(|_| self.fail(Reason::BadNumber { field }))
     }
 
     fn optional<T: core::str::FromStr>(
@@ -487,7 +494,11 @@ impl InputLog {
             out.write_char('\n')?;
         }
         if let Some(s) = &self.seed {
-            writeln!(out, "{KIND_SEED},{CONFIG_NOW_US},{},{}", s.peak_us, s.age_us)?;
+            writeln!(
+                out,
+                "{KIND_SEED},{CONFIG_NOW_US},{},{}",
+                s.peak_us, s.age_us
+            )?;
         }
         for input in &self.inputs {
             input.write_row(out)?;
@@ -517,14 +528,14 @@ impl InputLog {
     ///
     /// # Errors
     /// [`InputLogError`] for a bad row.
-    pub fn parse_with_config(text: &str, fallback: ControllerConfig) -> Result<Self, InputLogError> {
+    pub fn parse_with_config(
+        text: &str,
+        fallback: ControllerConfig,
+    ) -> Result<Self, InputLogError> {
         Self::parse_inner(text, fallback).map(|(log, _)| log)
     }
 
-    fn parse_inner(
-        text: &str,
-        fallback: ControllerConfig,
-    ) -> Result<(Self, bool), InputLogError> {
+    fn parse_inner(text: &str, fallback: ControllerConfig) -> Result<(Self, bool), InputLogError> {
         let mut lines = text.lines().filter(|l| !l.trim().is_empty());
         let header = lines.next().unwrap_or("");
         if header.trim_end_matches('\r') != Input::CSV_HEADER {

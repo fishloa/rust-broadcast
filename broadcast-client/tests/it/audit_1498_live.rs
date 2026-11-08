@@ -487,8 +487,8 @@ fn a_looped_small_finite_ts_is_not_paused_by_the_hosts_stale_position() {
 
 fn finite_loop(file: &[u8]) {
     let mut config = Config::default();
-        config.record_buffer_inputs = true;
-        let mut session = Session::open(URL, config, 0).unwrap();
+    config.record_buffer_inputs = true;
+    let mut session = Session::open(URL, config, 0).unwrap();
     let conn = request_conn(&mut session, 0);
     let first = skip_none!(finite_pass(&mut session, conn, file, 0, None));
     assert!(
