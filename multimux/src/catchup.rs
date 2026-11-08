@@ -979,8 +979,8 @@ mod tests {
         )
         .expect_err("a byte_len the file cannot back must be rejected, not allocated");
         assert!(
-            err.to_string().contains("corrupt or truncated sidecar"),
-            "expected the bounds-check error, got: {err}"
+            matches!(&err, ReadArchivedError::Other(msg) if msg.contains("corrupt or truncated sidecar")),
+            "expected the bounds-check error, got: {err:?}"
         );
 
         cleanup(&tmp);

@@ -174,7 +174,6 @@ pub fn parse_all_packs(b: &[u8]) -> Result<(Vec<Pack<'_>>, &[u8])> {
                 packs.push(pack);
             }
             None => {
-                // End code consumed 4 bytes; finish
                 remaining = &remaining[4..];
                 break;
             }

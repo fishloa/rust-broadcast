@@ -240,9 +240,6 @@ impl SmoothSource {
         self.check_completion();
     }
 
-    // store now? add field? We'll add now field.
-    // Actually add now field to struct. Need update struct. We'll handle via local.
-
     fn schedule(&mut self) {
         if self.fatal || self.ended || self.manifest.is_none() {
             return;

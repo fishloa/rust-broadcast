@@ -396,7 +396,6 @@ impl IngestState {
             return Err(IngestError::SegmentWithoutHeader);
         }
 
-        // Determine disposition.
         let mut regression = false;
         let mut duplicate = true;
         let mut has_comparable = false;

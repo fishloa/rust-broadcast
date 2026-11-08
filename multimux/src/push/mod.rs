@@ -524,8 +524,6 @@ pub async fn drive_push<T: PushTransport>(
             }
         }
 
-        // Drain the cursor, feeding each item straight to the egress (sans-IO
-        // — see `PushTransportEgress`'s module doc) when connected.
         let mut dropped_while_disconnected = 0u64;
         while let Some(item) = cursor.poll() {
             if let SampleCursorItem::Lagged { skipped } | SampleCursorItem::Degraded { skipped } =

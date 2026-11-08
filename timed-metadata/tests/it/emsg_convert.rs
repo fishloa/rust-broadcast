@@ -4,6 +4,7 @@
 //! captures.
 
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
+use timed_metadata::Error;
 use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};
 
 fn read_fixture(name: &str) -> Vec<u8> {
@@ -126,9 +127,5 @@ fn v0_with_past_start_errors() {
         timescale: 90_000,
     };
     let err = emsg_to_v0(&v1, &timing_past).unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("precedes"),
-        "expected 'precedes' in error message, got: {msg}"
-    );
+    assert_eq!(err, Error::EmsgPresentationTimeBeforeEpt);
 }

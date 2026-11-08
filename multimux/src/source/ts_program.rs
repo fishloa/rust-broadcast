@@ -189,8 +189,6 @@ impl ProgramTracker {
                             self.pending
                                 .push_back(SessionEvent::NewProgram { program, tracks });
                         }
-                        // Flush the pre-resolution backlog, oldest first,
-                        // now that every sample's programme is announced.
                         self.held_bytes = 0;
                         for (track_id, sample) in std::mem::take(&mut self.held) {
                             if let Some(&program) = self.track_program.get(&track_id) {

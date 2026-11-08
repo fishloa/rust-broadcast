@@ -833,8 +833,6 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     };
     let config = AVCConfigurationBox::new(record);
 
-    // Fill in DTS for unstamped AUs by anchoring off the stamped ones and the
-    // constant frame duration, so every sample carries a decode time.
     let dts = interpolate_dts(&units);
     let pts = interpolate_pts(&units, &dts);
 
@@ -1167,7 +1165,6 @@ fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
                 }
             }
             (Some(t90), None) => {
-                // First stamped frame: establish the anchor.
                 anchor_wire90 = t90 as i128;
                 ticks_since_anchor = 0;
                 rescale_90k(t90)

@@ -182,7 +182,6 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             sample_rate,
             sample_size,
         } => {
-            // Serialize the esds to a full box, then carry its body opaquely.
             let mut esds_full = vec![0u8; esds.serialized_len()];
             let n = esds.serialize_into(&mut esds_full)?;
             let esds_opaque = OpaqueBox::new(*b"esds", esds_full[8..n].to_vec());

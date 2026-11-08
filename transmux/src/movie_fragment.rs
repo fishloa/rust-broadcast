@@ -1507,8 +1507,6 @@ pub fn protect_media_segment(
     let mut moof =
         MovieFragmentBox::parse_body(&moof_bytes[crate::box_types::box_header_len(moof_bytes)?..])?;
 
-    // Build senc/saiz/saio for each protected traf, index-aligned with
-    // `moof.traf`.
     let mut built: Vec<Option<CencFragmentBoxes>> = (0..moof.traf.len()).map(|_| None).collect();
     for p in protections {
         let idx = moof

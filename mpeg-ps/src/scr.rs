@@ -85,7 +85,6 @@ pub(crate) fn read_scr_field(b: &[u8], what: &'static str) -> Result<Scr> {
     if (b0 >> 4) == 0b0010 {
         return Err(Error::Mpeg1NotSupported);
     }
-    // Check '01' prefix
     if (b0 >> 6) != 0b01 {
         return Err(Error::BadScrPrefix(b0 >> 6));
     }

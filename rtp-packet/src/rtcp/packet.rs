@@ -891,7 +891,6 @@ fn parse_sdes_chunk(bytes: &[u8]) -> Result<(SdesChunk, usize)> {
         });
         off = end;
     }
-    // Advance past the type-0 terminator to the next 32-bit boundary.
     let padded = off.div_ceil(WORD_LEN) * WORD_LEN;
     need_in(bytes, padded, "SDES chunk padding")?;
     Ok((SdesChunk { source, items }, padded))
@@ -1050,7 +1049,6 @@ impl Serialize for Bye {
                 reason: "exceeds 8-bit reason length",
             }));
         }
-        // Zero the whole region so trailing padding bytes are 0.
         for b in buf[..len].iter_mut() {
             *b = 0;
         }

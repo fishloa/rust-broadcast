@@ -387,7 +387,6 @@ impl TsbpdScheduler {
                 if seq_number == self.next_release {
                     self.next_release = seq::seq_next(seq_number);
                 }
-                // Remove from buffer if it was somehow already there.
                 self.buffer.remove(&seq_number);
                 // Try to release any now-unblocked packets that are also
                 // too-late (the receiver-buffer read pseudocode, rule 21:

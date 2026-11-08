@@ -136,9 +136,9 @@ fn clock_policy_labels() {
 }
 
 #[test]
-fn the_error_names_the_field_in_its_message() {
+fn the_error_names_the_offending_field() {
     let mut cfg = DashConfig::default();
     cfg.utc_resync_us = 0;
     let err = cfg.validate().unwrap_err();
-    assert!(err.to_string().contains("utc_resync_us"), "{err}");
+    assert_eq!(err.field, "utc_resync_us");
 }

@@ -113,8 +113,6 @@ impl StuffingOp {
         let mode = match cfg {
             Stuffing::DropNulls => StuffingMode::Drop,
             Stuffing::PadTo { packets_per_input } => {
-                // If the target is 2.0, we want 2 total packets per input packet.
-                // That means 1 null packet per input packet.
                 let nulls_per_real = packets_per_input - 1.0;
                 StuffingMode::Pad {
                     nulls_per_real,
@@ -131,7 +129,6 @@ impl StuffingOp {
         if packet.len() < 3 {
             return false;
         }
-        // Extract PID from bytes 1-2.
         let pid = (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16;
         pid == NULL_PID.value()
     }
@@ -141,7 +138,6 @@ impl Op for StuffingOp {
     fn process(&mut self, packet: &[u8], _model: &mut StreamModel, out: &mut dyn FnMut(&[u8])) {
         match &mut self.mode {
             StuffingMode::Drop => {
-                // Drop null packets; pass everything else through.
                 if !Self::is_null_packet(packet) {
                     out(packet);
                 }
@@ -158,7 +154,6 @@ impl Op for StuffingOp {
                 // Accumulate the number of null packets to insert.
                 *accumulated += *nulls_per_real;
 
-                // Emit null packets for every 1.0 units of accumulated nulls.
                 while *accumulated >= 1.0 {
                     let null = make_null_packet(*null_cc);
                     out(&null);

@@ -192,8 +192,6 @@ impl Ac3SyncframeInfo {
         let fscod = read_bits(es, &mut bit_pos, 2, "fscod")? as u8;
         // frmsizecod: 6 bits
         let frmsizecod = read_bits(es, &mut bit_pos, 6, "frmsizecod")? as u8;
-        // ---- bsi() starts here ----
-        // bsid: 5 bits
         let bsid = read_bits(es, &mut bit_pos, 5, "bsid")? as u8;
         // bsmod: 3 bits
         let bsmod = read_bits(es, &mut bit_pos, 3, "bsmod")? as u8;
@@ -1743,41 +1741,9 @@ pub(crate) mod tests {
         assert_eq!(dec3.rfc6381(), "ec-3");
     }
 
+    use crate::test_bits::BitWriter;
+
     // ── r04-W5: dec3 built from real syncframes ───────────────────────────────
-
-    /// Minimal MSB-first bit writer for building spec-conformant `bsi()` vectors.
-    #[derive(Default)]
-    struct BitBuf {
-        bytes: Vec<u8>,
-        bit: usize,
-    }
-
-    impl BitBuf {
-        fn put(&mut self, n: usize, val: u64) -> &mut Self {
-            for i in (0..n).rev() {
-                let b = (val >> i) & 1;
-                if self.bit.is_multiple_of(8) {
-                    self.bytes.push(0);
-                }
-                if b == 1 {
-                    let idx = self.bytes.len() - 1;
-                    self.bytes[idx] |= 1 << (7 - (self.bit % 8));
-                }
-                self.bit += 1;
-            }
-            self
-        }
-        fn align(&mut self) -> &mut Self {
-            while !self.bit.is_multiple_of(8) {
-                self.put(1, 0);
-            }
-            self
-        }
-        fn take(&mut self) -> Vec<u8> {
-            self.bit = 0;
-            core::mem::take(&mut self.bytes)
-        }
-    }
 
     /// Build an E-AC-3 `bsi()` for a frame, per §E.1.2.2. Only the fields the
     /// crate reads are ever nonzero; `mixmdate` is left 0 so the walk is the
@@ -1794,38 +1760,38 @@ pub(crate) mod tests {
         chanmape: Option<u16>,
         bsmod: Option<u8>,
     ) -> Vec<u8> {
-        let mut w = BitBuf::default();
-        w.put(16, AC3_SYNCWORD as u64);
-        w.put(2, strmtyp as u64);
-        w.put(3, substreamid as u64);
-        w.put(11, frmsiz as u64);
-        w.put(2, fscod as u64);
-        w.put(2, numblkscod as u64);
-        w.put(3, acmod as u64);
-        w.put(1, lfeon as u64);
-        w.put(5, 16); // bsid = 16 (E-AC-3)
-        w.put(5, 31); // dialnorm
-        w.put(1, 0); // compre
+        let mut w = BitWriter::new();
+        w.u(16, AC3_SYNCWORD as u64);
+        w.u(2, strmtyp as u64);
+        w.u(3, substreamid as u64);
+        w.u(11, frmsiz as u64);
+        w.u(2, fscod as u64);
+        w.u(2, numblkscod as u64);
+        w.u(3, acmod as u64);
+        w.u(1, lfeon as u64);
+        w.u(5, 16); // bsid = 16 (E-AC-3)
+        w.u(5, 31); // dialnorm
+        w.u(1, 0); // compre
         if acmod == 0 {
-            w.put(5, 31); // dialnorm2
-            w.put(1, 0); // compr2e
+            w.u(5, 31); // dialnorm2
+            w.u(1, 0); // compr2e
         }
         if strmtyp == 1 {
-            w.put(1, u64::from(chanmape.is_some()));
+            w.u(1, u64::from(chanmape.is_some()));
             if let Some(map) = chanmape {
-                w.put(16, map as u64);
+                w.u(16, map as u64);
             }
         }
-        w.put(1, 0); // mixmdate
-        w.put(1, u64::from(bsmod.is_some())); // infomdate
+        w.u(1, 0); // mixmdate
+        w.u(1, u64::from(bsmod.is_some())); // infomdate
         if let Some(m) = bsmod {
-            w.put(3, m as u64);
+            w.u(3, m as u64);
         }
         let _ = numblkscod;
-        w.align();
+        w.align_zero();
         // Zero-pad to the declared frame size: §E.1.3.1.3 makes `frmsiz` the
         // syncframe length in 16-bit words, and the splitter walks frames by it.
-        let mut bytes = w.take();
+        let mut bytes = w.finish();
         let frame_len = (frmsiz as usize + 1) * BYTES_PER_WORD;
         assert!(
             bytes.len() <= frame_len,
@@ -2264,41 +2230,41 @@ pub(crate) mod tests {
     /// wrong width would land `bsmod` on the wrong bits.
     #[test]
     fn dec3_bsmod_reached_through_mixmdate_variants() {
-        for (mixdef, mixdata_bits) in [(1u64, 5usize), (2, 12)] {
-            let mut w = BitBuf::default();
-            w.put(16, AC3_SYNCWORD as u64);
-            w.put(2, 0); // strmtyp independent
-            w.put(3, 0); // substreamid
-            w.put(11, 64); // frmsiz
-            w.put(2, 0); // fscod 48 kHz
-            w.put(2, 3); // numblkscod 6 blocks
-            w.put(3, 7); // acmod 3/2 (three front channels)
-            w.put(1, 1); // lfeon
-            w.put(5, 16); // bsid
-            w.put(5, 31); // dialnorm
-            w.put(1, 0); // compre
-            w.put(1, 1); // mixmdate
-            w.put(2, 0); // dmixmod
-            w.put(3, 0); // ltrtcmixlev
-            w.put(3, 0); // lorocmixlev
-            w.put(3, 0); // ltrtsurmixlev
-            w.put(3, 0); // lorosurmixlev
-            w.put(1, 0); // lfemixlevcode
-            w.put(1, 0); // pgmscle
-            w.put(1, 0); // extpgmscle
-            w.put(2, mixdef);
+        for (mixdef, mixdata_bits) in [(1u64, 5u32), (2, 12)] {
+            let mut w = BitWriter::new();
+            w.u(16, AC3_SYNCWORD as u64);
+            w.u(2, 0); // strmtyp independent
+            w.u(3, 0); // substreamid
+            w.u(11, 64); // frmsiz
+            w.u(2, 0); // fscod 48 kHz
+            w.u(2, 3); // numblkscod 6 blocks
+            w.u(3, 7); // acmod 3/2 (three front channels)
+            w.u(1, 1); // lfeon
+            w.u(5, 16); // bsid
+            w.u(5, 31); // dialnorm
+            w.u(1, 0); // compre
+            w.u(1, 1); // mixmdate
+            w.u(2, 0); // dmixmod
+            w.u(3, 0); // ltrtcmixlev
+            w.u(3, 0); // lorocmixlev
+            w.u(3, 0); // ltrtsurmixlev
+            w.u(3, 0); // lorosurmixlev
+            w.u(1, 0); // lfemixlevcode
+            w.u(1, 0); // pgmscle
+            w.u(1, 0); // extpgmscle
+            w.u(2, mixdef);
             if mixdef == 1 {
-                w.put(1, 0); // premixcmpsel
-                w.put(1, 0); // drcsrc
-                w.put(3, 0); // premixcmpscl
+                w.u(1, 0); // premixcmpsel
+                w.u(1, 0); // drcsrc
+                w.u(3, 0); // premixcmpscl
             } else {
-                w.put(mixdata_bits, 0); // mixdata(12)
+                w.u(mixdata_bits, 0); // mixdata(12)
             }
-            w.put(1, 0); // frmmixcfginfoe
-            w.put(1, 1); // infomdate
-            w.put(3, 5); // bsmod
-            w.align();
-            let es = w.take();
+            w.u(1, 0); // frmmixcfginfoe
+            w.u(1, 1); // infomdate
+            w.u(3, 5); // bsmod
+            w.align_zero();
+            let es = w.finish();
             let info = Ec3SyncframeInfo::from_es(&es).unwrap();
             assert_eq!(info.bsmod, 5, "mixdef {mixdef}: bsmod landed correctly");
         }
@@ -2373,28 +2339,28 @@ pub(crate) mod tests {
     fn bsmod_is_reached_for_a_strmtyp_two_frame() {
         // A strmtyp-2 frame with infomdate and a distinctive bsmod, built with
         // no programme-mix block (the independent-without-AC3 layout).
-        let mut w = BitBuf::default();
-        w.put(16, AC3_SYNCWORD as u64);
-        w.put(2, 2); // strmtyp = 2 (converted from AC-3)
-        w.put(3, 0); // substreamid
-        w.put(11, 64); // frmsiz
-        w.put(2, 0); // fscod 48 kHz
-        w.put(2, 3); // numblkscod 6
-        w.put(3, 2); // acmod 2/0
-        w.put(1, 0); // lfeon
-        w.put(5, 16); // bsid
-        w.put(5, 31); // dialnorm
-        w.put(1, 0); // compre
+        let mut w = BitWriter::new();
+        w.u(16, AC3_SYNCWORD as u64);
+        w.u(2, 2); // strmtyp = 2 (converted from AC-3)
+        w.u(3, 0); // substreamid
+        w.u(11, 64); // frmsiz
+        w.u(2, 0); // fscod 48 kHz
+        w.u(2, 3); // numblkscod 6
+        w.u(3, 2); // acmod 2/0
+        w.u(1, 0); // lfeon
+        w.u(5, 16); // bsid
+        w.u(5, 31); // dialnorm
+        w.u(1, 0); // compre
         // strmtyp != 1, so no chanmape/chanmap.
         // mixmdate = 1, exercising the prefix that *is* present for strmtyp 2
         // (dmixmod/mixlevs/lfemixlevcode) — then, because strmtyp != 0x0, no
         // programme-mix block at all: infomdate follows immediately after that
         // prefix. A `!dependent` gate would go looking for pgmscle/mixdef here.
-        w.put(1, 1); // mixmdate
-        w.put(1, 1); // acmod -> only one front channel means no mixlevs
-        w.put(3, 6); // bsmod
-        w.align();
-        let mut es = w.take();
+        w.u(1, 1); // mixmdate
+        w.u(1, 1); // acmod -> only one front channel means no mixlevs
+        w.u(3, 6); // bsmod
+        w.align_zero();
+        let mut es = w.finish();
         es.resize(130, 0);
 
         let info = Ec3SyncframeInfo::from_es(&es).unwrap();
@@ -2427,63 +2393,63 @@ pub(crate) mod tests {
             (false, true, false, false),
         ] {
             for mixdeflen in [0u64, 1, 7] {
-                let mut w = BitBuf::default();
-                w.put(16, AC3_SYNCWORD as u64);
-                w.put(2, 0); // strmtyp independent
-                w.put(3, 0);
-                w.put(11, 64);
-                w.put(2, 0); // fscod
-                w.put(2, 3); // numblkscod
-                w.put(3, 7); // acmod 3/2 (three front + surrounds)
-                w.put(1, 1); // lfeon
-                w.put(5, 16); // bsid
-                w.put(5, 31); // dialnorm
-                w.put(1, 0); // compre
-                w.put(1, 1); // mixmdate
-                w.put(2, 0); // dmixmod
-                w.put(3, 0); // ltrtcmixlev
-                w.put(3, 0); // lorocmixlev
-                w.put(3, 0); // ltrtsurmixlev
-                w.put(3, 0); // lorosurmixlev
-                w.put(1, 0); // lfemixlevcode
-                w.put(1, 0); // pgmscle
-                w.put(1, 0); // extpgmscle
-                w.put(2, 3); // mixdef = 0x3 (option 4)
-                w.put(5, mixdeflen);
-                w.put(1, u64::from(mixdata2e));
+                let mut w = BitWriter::new();
+                w.u(16, AC3_SYNCWORD as u64);
+                w.u(2, 0); // strmtyp independent
+                w.u(3, 0);
+                w.u(11, 64);
+                w.u(2, 0); // fscod
+                w.u(2, 3); // numblkscod
+                w.u(3, 7); // acmod 3/2 (three front + surrounds)
+                w.u(1, 1); // lfeon
+                w.u(5, 16); // bsid
+                w.u(5, 31); // dialnorm
+                w.u(1, 0); // compre
+                w.u(1, 1); // mixmdate
+                w.u(2, 0); // dmixmod
+                w.u(3, 0); // ltrtcmixlev
+                w.u(3, 0); // lorocmixlev
+                w.u(3, 0); // ltrtsurmixlev
+                w.u(3, 0); // lorosurmixlev
+                w.u(1, 0); // lfemixlevcode
+                w.u(1, 0); // pgmscle
+                w.u(1, 0); // extpgmscle
+                w.u(2, 3); // mixdef = 0x3 (option 4)
+                w.u(5, mixdeflen);
+                w.u(1, u64::from(mixdata2e));
                 if mixdata2e {
-                    w.put(1, 0); // premixcmpsel
-                    w.put(1, 0); // drcsrc
-                    w.put(3, 0); // premixcmpscl
+                    w.u(1, 0); // premixcmpsel
+                    w.u(1, 0); // drcsrc
+                    w.u(3, 0); // premixcmpscl
                     for _ in 0..7 {
-                        w.put(1, 0); // the seven *scle flags
+                        w.u(1, 0); // the seven *scle flags
                     }
-                    w.put(1, 0); // addche
+                    w.u(1, 0); // addche
                 }
-                w.put(1, u64::from(mixdata3e));
+                w.u(1, u64::from(mixdata3e));
                 if mixdata3e {
-                    w.put(5, 0); // spchdat
-                    w.put(1, u64::from(addspchdate));
+                    w.u(5, 0); // spchdat
+                    w.u(1, u64::from(addspchdate));
                     if addspchdate {
-                        w.put(5, 0); // spchdat1
-                        w.put(2, 0); // spchan1att
-                        w.put(1, u64::from(addspchdat1e));
+                        w.u(5, 0); // spchdat1
+                        w.u(2, 0); // spchan1att
+                        w.u(1, u64::from(addspchdat1e));
                         if addspchdat1e {
-                            w.put(5, 0); // spchdat2
-                            w.put(3, 0); // spchan2att
+                            w.u(5, 0); // spchdat2
+                            w.u(3, 0); // spchan2att
                         }
                     }
                 }
                 // mixdata: 8 * (mixdeflen + 2) bits, then implicit byte fill.
                 for _ in 0..8 * (mixdeflen + 2) {
-                    w.put(1, 0);
+                    w.u(1, 0);
                 }
-                w.align(); // mixdatafill
-                w.put(1, 0); // frmmixcfginfoe
-                w.put(1, 1); // infomdate
-                w.put(3, 5); // bsmod
-                w.align();
-                let mut es = w.take();
+                w.align_zero(); // mixdatafill
+                w.u(1, 0); // frmmixcfginfoe
+                w.u(1, 1); // infomdate
+                w.u(3, 5); // bsmod
+                w.align_zero();
+                let mut es = w.finish();
                 es.resize(130, 0);
 
                 let info = Ec3SyncframeInfo::from_es(&es).unwrap();

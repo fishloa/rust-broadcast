@@ -335,7 +335,6 @@ fn parse_clock_time(input: &str, ctx: &TimeContext) -> Result<TimeExpression, cr
         reason: reason.into(),
     };
 
-    // Split on ':'
     let parts: Vec<&str> = input.split(':').collect();
 
     // Must have at least 3 parts (HH:MM:SS) or 4 (HH:MM:SS:FF) or 5 (HH:MM:SS:FF.SF)

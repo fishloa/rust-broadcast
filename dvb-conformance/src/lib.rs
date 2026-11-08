@@ -1372,7 +1372,6 @@ impl ConformanceMonitor {
     /// section's length in one instant (issue #1035). Drains at 1 Mbit/s
     /// (125 000 bytes/s). Overflow fires Buffer_error (3.3).
     fn feed_tbsys_bytes(&mut self, n_bytes: u64, pid: Pid, t: Duration) {
-        // Drain TBsys to current time using the fixed 1 Mbit/s leak rate.
         self.tstd.drain_tb_sys(t);
 
         // A new overflow episode may be reported once the buffer has fully
@@ -2133,7 +2132,6 @@ impl ConformanceMonitor {
             entry.first_incomplete_at = Some(t);
         }
 
-        // If both sections have now arrived, clear the incomplete marker.
         if entry.has_section_0 && entry.has_section_1 {
             entry.first_incomplete_at = None;
         }

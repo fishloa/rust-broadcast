@@ -366,6 +366,14 @@ fn trick_mode_dangling_reference_errors() {
         ..DashPackager::default()
     };
     let err = pkg.package(&media).unwrap_err();
-    let msg = format!("{err}");
-    assert!(msg.contains("unknown main AdaptationSet"), "got: {msg}");
+    assert!(
+        matches!(
+            err,
+            transmux::Error::TrickModeMainAdaptationSetNotFound {
+                trick_adaptation_set_id: 7,
+                main_adaptation_set_id: 999,
+            }
+        ),
+        "got: {err:?}"
+    );
 }

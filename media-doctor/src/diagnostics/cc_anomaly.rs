@@ -97,7 +97,6 @@ impl Diagnostic for CcAnomalyCheck {
             });
 
             if !state.initialized {
-                // First payload-bearing packet for this PID — just record state.
                 state.initialized = true;
                 state.last_cc = cc;
                 state.last_packet = snapshot(raw);

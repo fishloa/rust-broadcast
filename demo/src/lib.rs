@@ -828,7 +828,6 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
         }
     }
 
-    // Flush any PES packet still buffered at end of stream.
     let clock_seconds = clock.as_secs_f64();
     for (&pid, asm) in pes_pids.iter_mut() {
         if let Some(completed) = asm.flush() {

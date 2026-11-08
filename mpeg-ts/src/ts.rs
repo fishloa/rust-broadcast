@@ -1218,8 +1218,6 @@ impl SectionReassembler {
             let exp =
                 section_total_len(&self.buf).expect("checked len >= SECTION_HEADER_LEN above");
             if self.buf.len() >= exp {
-                // split_to returns the first `exp` bytes as an owned BytesMut,
-                // leaving the remainder in self.buf — cheap (shifts pointers).
                 let section = self.buf.split_to(exp).freeze();
                 self.ready.push_back(section);
             } else {

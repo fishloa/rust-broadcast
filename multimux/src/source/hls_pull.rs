@@ -851,8 +851,8 @@ Content-Length: {over}
         server.abort();
         let err = result.expect_err("an over-cap body must be refused");
         assert!(
-            err.to_string().contains("exceeds") || err.to_string().contains("cap"),
-            "the error must name the cap: {err}"
+            matches!(&err, MultimuxError::Connect { reason } if reason.contains("exceeds")),
+            "the error must name the cap: {err:?}"
         );
     }
 

@@ -7,7 +7,7 @@
 //! topologically highest one.
 
 use broadcast_hls::{
-    CencScheme, DecimalSeconds, MasterPlaylist, MediaPlaylist, MediaSegment, Variant,
+    CencScheme, DecimalSeconds, Error, MasterPlaylist, MediaPlaylist, MediaSegment, Variant,
     cenc_ext_x_key,
 };
 
@@ -221,8 +221,8 @@ fn rendition_report_without_last_msn_is_rejected() {
               #EXT-X-RENDITION-REPORT:URI=\"b.m3u8\"\n#EXT-X-ENDLIST\n";
     let err = MediaPlaylist::parse(pl).expect_err("missing LAST-MSN must be an error");
     assert!(
-        err.to_string().contains("LAST-MSN"),
-        "error should name the missing attribute: {err}"
+        matches!(&err, Error::HlsParse { reason, .. } if reason.contains("LAST-MSN")),
+        "error should name the missing attribute: {err:?}"
     );
 
     // With LAST-MSN present it still parses.

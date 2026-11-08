@@ -292,7 +292,6 @@ impl PidFilterOp {
                     let Ok(pat) = PatSection::parse(&section) else {
                         continue;
                     };
-                    // Find the PMT PID for our program_number.
                     if let Some(entry) = pat.entries.iter().find(|e| e.program_number == pn) {
                         let pmt_pid = entry.pid;
                         *state = ServiceState::WaitingPmt {

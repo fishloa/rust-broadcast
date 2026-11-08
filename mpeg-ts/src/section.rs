@@ -220,7 +220,6 @@ impl<'a> Parse<'a> for Section<'a> {
         let payload_end = total - CRC_LEN;
         let payload = &section_bytes[payload_start..payload_end];
 
-        // Read declared CRC from last 4 bytes of the section (big-endian).
         let crc_offset = total - CRC_LEN;
         let crc32 = Some(
             ((section_bytes[crc_offset] as u32) << 24)

@@ -104,7 +104,6 @@ impl Diagnostic for Scte35Check {
             });
         }
 
-        // End of stream: report any remaining open events.
         for (&pid, state) in pid_states.iter() {
             for eid in state.open_events() {
                 report.push(Finding::new(

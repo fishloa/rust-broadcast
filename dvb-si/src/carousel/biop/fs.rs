@@ -205,7 +205,6 @@ fn extract_dir_entries(_self_module_id: u16, dm: &DirectoryMessage<'_>) -> Vec<D
             .first()
             .map(|nc| nc.id.to_vec())
             .unwrap_or_default();
-        // Get the module_id and object_key from the IOR BIOP profile.
         if let Some(bp) = binding.ior.biop_profile() {
             let module_id = bp.object_location.module_id;
             let object_key = bp.object_location.object_key.to_vec();

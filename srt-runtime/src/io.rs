@@ -1495,7 +1495,6 @@ impl Driver {
             }
         }
 
-        // Determine active key for this packet.
         #[cfg(feature = "crypto")]
         let (payload, key_flag) = {
             let active = self.km_refresh.active_parity();

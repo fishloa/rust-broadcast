@@ -66,8 +66,13 @@ fn zero_width_trun_with_hostile_sample_count_is_rejected_not_allocated() {
         let err = TrackFragmentRunBox::parse_body(&trun_box(count, 0))
             .expect_err("hostile sample_count must be rejected");
         assert!(
-            format!("{err}").contains("MAX_ZERO_WIDTH_TRUN_SAMPLES"),
-            "sample_count {count:#x}: unexpected error {err}"
+            matches!(
+                err,
+                transmux::Error::ZeroWidthTrunBudgetExceeded {
+                    limit: MAX_ZERO_WIDTH_TRUN_SAMPLES
+                }
+            ),
+            "sample_count {count:#x}: unexpected error {err:?}"
         );
     }
 }

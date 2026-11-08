@@ -37,8 +37,6 @@ pub fn scramble(cw: &ControlWord, data: &mut [u8]) {
 
     let nblocks = len / 8;
 
-    // Phase 1: Block cipher, reverse CBC
-    // Encrypt the last block first (ECB)
     bc.encrypt_block(&mut data[(nblocks - 1) * 8..nblocks * 8]);
 
     // Work backward: XOR (already-encrypted) block i+1 INTO block i, then encrypt block i

@@ -11,12 +11,13 @@
 //! 4. Sample fidelity + FLV.as_slice() round-trip: demux→mux→demux byte-identical AUs.
 //! 5. Cross-hub: FLV.as_slice() → IR → CmafMux carries avc1/avcC + mp4a and matching NALs.
 
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use test_fixtures::ffprobe;
 use transmux::TrackId;
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
-use transmux::{CmafMux, CodecConfig, FlvDemux, FlvMux};
+use transmux::{CmafMux, CodecConfig, FlvDemux, FlvError, FlvMux};
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
@@ -592,8 +593,13 @@ fn package_rejects_oversized_composition_time() {
     // Bites: before the fix the value was truncated to its low 24 bits and
     // `package` returned `Ok`.
     assert!(
-        format!("{err}").contains("CompositionTime"),
-        "expected a CompositionTime error, got {err}"
+        matches!(
+            err,
+            FlvError::Codec(transmux::Error::InvalidInput(
+                "FLV CompositionTime does not fit the signed 24-bit field"
+            ))
+        ),
+        "expected a CompositionTime error, got {err:?}"
     );
 }
 
@@ -724,8 +730,14 @@ fn incomplete_first_tag_still_errors() {
         .unpackage(&bytes)
         .expect_err("an incomplete first tag must be reported");
     assert!(
-        format!("{err}").contains("tag body"),
-        "expected TagOverrun, got {err}"
+        matches!(
+            err,
+            FlvError::Codec(transmux::Error::BufferTooShort(BufferTooShort {
+                what: "FLV tag body",
+                ..
+            }))
+        ),
+        "expected TagOverrun, got {err:?}"
     );
 }
 
@@ -847,8 +859,13 @@ fn oversized_avc_dimensions_are_rejected() {
         .expect_err("a 65 536-wide SPS must be rejected, not truncated");
     // Bites: `as u16` folded 65536 to 0 and `unpackage` returned `Ok`.
     assert!(
-        format!("{err}").contains("width does not fit 16 bits"),
-        "expected a width-overflow error, got {err}"
+        matches!(
+            err,
+            FlvError::Codec(transmux::Error::InvalidInput(
+                "FLV avcC width does not fit 16 bits"
+            ))
+        ),
+        "expected a width-overflow error, got {err:?}"
     );
 }
 
@@ -864,8 +881,13 @@ fn streaming_oversized_avc_dimensions_are_rejected() {
         .feed(OVERSIZE.as_slice())
         .expect_err("a 65 536-wide SPS must be rejected, not truncated");
     assert!(
-        format!("{err}").contains("width does not fit 16 bits"),
-        "expected a width-overflow error, got {err}"
+        matches!(
+            err,
+            FlvError::Codec(transmux::Error::InvalidInput(
+                "FLV avcC width does not fit 16 bits"
+            ))
+        ),
+        "expected a width-overflow error, got {err:?}"
     );
 }
 
@@ -1037,7 +1059,12 @@ fn zero_timescale_is_rejected_not_flattened_to_zero() {
         .expect_err("a zero timescale must be rejected");
     // Bites: before the fix this returned `Ok` with every tag timestamped 0.
     assert!(
-        format!("{err}").contains("non-zero track timescale"),
-        "expected a timescale error, got {err}"
+        matches!(
+            err,
+            FlvError::Codec(transmux::Error::InvalidInput(
+                "FLV mux requires a non-zero track timescale"
+            ))
+        ),
+        "expected a timescale error, got {err:?}"
     );
 }

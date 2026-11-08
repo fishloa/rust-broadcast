@@ -2,66 +2,37 @@
 //! (`private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md`), never from production code.
 
 use super::*;
+use crate::test_bits::BitWriter;
 use alloc::vec::Vec;
 
-/// Bit writer for the hand-built vectors.
-struct W {
-    bits: Vec<bool>,
-}
-
-impl W {
-    fn new() -> Self {
-        Self { bits: Vec::new() }
-    }
-    fn n(&mut self, value: u64, width: usize) -> &mut Self {
-        for i in (0..width).rev() {
-            self.bits.push((value >> i) & 1 == 1);
-        }
-        self
-    }
-    fn bytes(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        for chunk in self.bits.chunks(8) {
-            let mut b = 0u8;
-            for (i, bit) in chunk.iter().enumerate() {
-                if *bit {
-                    b |= 0x80 >> i;
-                }
-            }
-            out.push(b);
-        }
-        out
-    }
-}
-
 fn sequence_header(width: u64, height: u64, aspect: u64) -> Vec<u8> {
-    let mut w = W::new();
-    w.n(width, 12)
-        .n(height, 12)
-        .n(aspect, 4)
-        .n(3, 4) // frame_rate_code
-        .n(0x3FFFF, 18) // bit_rate_value
-        .n(1, 1) // marker_bit
-        .n(112, 10) // vbv_buffer_size_value
-        .n(0, 1) // constrained_parameters_flag
-        .n(0, 1) // load_intra_quantiser_matrix
-        .n(0, 1); // load_non_intra_quantiser_matrix
+    let mut w = BitWriter::new();
+    w.u(12, width)
+        .u(12, height)
+        .u(4, aspect)
+        .u(4, 3) // frame_rate_code
+        .u(18, 0x3FFFF) // bit_rate_value
+        .u(1, 1) // marker_bit
+        .u(10, 112) // vbv_buffer_size_value
+        .u(1, 0) // constrained_parameters_flag
+        .u(1, 0) // load_intra_quantiser_matrix
+        .u(1, 0); // load_non_intra_quantiser_matrix
     let mut out = SEQUENCE_HEADER_CODE.to_vec();
-    out.extend_from_slice(&w.bytes());
+    out.extend_from_slice(&w.finish());
     out
 }
 
 fn sequence_extension(hx: u64, vx: u64) -> Vec<u8> {
-    let mut w = W::new();
-    w.n(u64::from(SEQUENCE_EXTENSION_ID), 4)
-        .n(0x48, 8) // profile_and_level_indication: Main @ Main
-        .n(0, 1) // progressive_sequence
-        .n(1, 2) // chroma_format: 4:2:0
-        .n(hx, 2)
-        .n(vx, 2)
-        .n(0, 12); // bit_rate_extension
+    let mut w = BitWriter::new();
+    w.u(4, u64::from(SEQUENCE_EXTENSION_ID))
+        .u(8, 0x48) // profile_and_level_indication: Main @ Main
+        .u(1, 0) // progressive_sequence
+        .u(2, 1) // chroma_format: 4:2:0
+        .u(2, hx)
+        .u(2, vx)
+        .u(12, 0); // bit_rate_extension
     let mut out = vec![0x00, 0x00, 0x01, EXTENSION_START_CODE_BYTE];
-    out.extend_from_slice(&w.bytes());
+    out.extend_from_slice(&w.finish());
     out
 }
 
@@ -71,16 +42,16 @@ fn sequence_display_extension(
     width: u64,
     height: u64,
 ) -> Vec<u8> {
-    let mut w = W::new();
-    w.n(u64::from(SEQUENCE_DISPLAY_EXTENSION_ID), 4)
-        .n(video_format, 3)
-        .n(u64::from(colour.is_some()), 1);
+    let mut w = BitWriter::new();
+    w.u(4, u64::from(SEQUENCE_DISPLAY_EXTENSION_ID))
+        .u(3, video_format)
+        .u(1, u64::from(colour.is_some()));
     if let Some((p, t, m)) = colour {
-        w.n(p, 8).n(t, 8).n(m, 8);
+        w.u(8, p).u(8, t).u(8, m);
     }
-    w.n(width, 14).n(1, 1).n(height, 14);
+    w.u(14, width).u(1, 1).u(14, height);
     let mut out = vec![0x00, 0x00, 0x01, EXTENSION_START_CODE_BYTE];
-    out.extend_from_slice(&w.bytes());
+    out.extend_from_slice(&w.finish());
     out
 }
 

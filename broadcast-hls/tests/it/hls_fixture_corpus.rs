@@ -77,7 +77,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use broadcast_hls::{MasterPlaylist, MediaPlaylist, SignedDecimalSeconds};
+use broadcast_hls::{Error, MasterPlaylist, MediaPlaylist, SignedDecimalSeconds};
 
 /// `fixtures/hls/`, resolved from this crate's own manifest dir — never a
 /// bare relative path (that depends on the caller's cwd).
@@ -180,10 +180,9 @@ fn assert_case(case: &Case) {
                 "{} is a known-unparsable spec excerpt (see module docs) and must still fail",
                 case.path
             ));
-            let msg = err.to_string();
             assert!(
-                msg.contains(reason_substr),
-                "{}: expected error containing {reason_substr:?}, got {msg:?}",
+                matches!(&err, Error::HlsParse { reason, .. } if reason.contains(reason_substr)),
+                "{}: expected HlsParse with reason containing {reason_substr:?}, got {err:?}",
                 case.path
             );
         }
@@ -192,10 +191,9 @@ fn assert_case(case: &Case) {
                 "{} is a known-unparsable spec excerpt and must still fail",
                 case.path
             ));
-            let msg = err.to_string();
             assert!(
-                msg.contains(reason_substr),
-                "{}: expected error containing {reason_substr:?}, got {msg:?}",
+                matches!(&err, Error::HlsParse { reason, .. } if reason.contains(reason_substr)),
+                "{}: expected HlsParse with reason containing {reason_substr:?}, got {err:?}",
                 case.path
             );
         }

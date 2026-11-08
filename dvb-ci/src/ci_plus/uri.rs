@@ -105,8 +105,6 @@ impl<'a> Parse<'a> for UriMessage {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, URI_MESSAGE_LEN, "uri_message")?;
         let protocol_version = bytes[0];
-        // Assemble the 56 bits following protocol_version into a u64 (in the low
-        // 56 bits), MSB-first, so we can index bit positions from the top.
         let mut acc: u64 = 0;
         for &b in &bytes[1..URI_MESSAGE_LEN] {
             acc = (acc << 8) | b as u64;

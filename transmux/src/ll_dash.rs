@@ -351,8 +351,6 @@ impl LlSegmenter {
     /// samples (and every non-anchor sample) as chunks, then open the next
     /// segment. The final chunk of a segment carries any trailing samples.
     fn finish_segment(&mut self) -> Result<()> {
-        // Emit whole chunks of anchor samples first, then a final chunk for the
-        // remainder (which also carries all non-anchor buffered samples).
         while self.tracks[self.anchor].pending.len() > self.chunk_samples {
             self.emit_chunk(false)?;
         }

@@ -578,9 +578,15 @@ fn ll_dash_without_publish_time_is_rejected() {
         .expect("packager")
         .package(&media)
         .unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "invalid field MPD@publishTime: shall be present for MPD@type='dynamic' (ISO/IEC 23009-1 §5.3.1.2 Table 3)"
+    assert!(
+        matches!(
+            err,
+            transmux::Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "MPD@publishTime",
+                ..
+            })
+        ),
+        "{err:?}"
     );
 }
 
