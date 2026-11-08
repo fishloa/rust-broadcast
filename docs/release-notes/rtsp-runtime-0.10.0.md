@@ -8,16 +8,34 @@ Version: 0.9.0 -> 0.10.0.
 
 ## Breaking changes and migration
 
-Four variants carried a `String` made with `to_string()`, which lost the original error, its `kind()` and its `source()` chain (#1726). They now carry the source:
+Variants that carried a `String` made with `to_string()` lost the original error, its `kind()` and its `source()` chain (#1726). They now carry the source, with a typed label next to it, and `Display` prints only the error's own context so a reporter that walks `source()` prints each message once:
 
 ```text
-Error::MessageParse(String)  ->  Error::MessageParse(Box<dyn std::error::Error + Send + Sync>)
+Error::MessageParse(String)  ->  Error::MessageParse { what: MessageKind, source: Box<dyn Error + Send + Sync> }
 Error::MessageWrite(String)  ->  Error::MessageWrite(rtsp_types::WriteError)
-Error::Tls(String)           ->  Error::Tls(Box<dyn std::error::Error + Send + Sync>)
-Error::Io(String)            ->  Error::Io { context: &'static str, source: std::io::Error }
+Error::Tls(String)           ->  Error::Tls { server_name: String, source: Box<dyn Error + Send + Sync> }
+Error::Io(String)            ->  Error::Io { context: IoContext, source: std::io::Error }
+Error::Auth(..)              ->  same shape; Display no longer repeats the broadcast_auth::Error
 ```
 
-`Io::context` names the operation that failed (`"connect"`, `"TLS handshake"`, `"read"`, `"write"`, or `"socket"` for a plain `From<std::io::Error>` conversion). `Display` of `Io` changes from `socket IO error: ...` to `socket IO error during <context>: ...`; the other three keep their message text.
+`MessageKind` is `Request`, `Response` or `Framing` (the codec's or the framing check's error). `IoContext` is the closed set `Connect`, `TlsHandshake`, `Read` and `Socket` (the last for a plain `From<std::io::Error>` conversion). Both enums, and `Error`, are `#[non_exhaustive]`, have `name()` and `Display`, and are re-exported at the crate root.
+
+Messages change. `Io` was `socket IO error: <detail>` and is now `socket IO error during <context>`; the underlying `std::io::Error` is `source()`. `MessageParse` is `failed to parse RTSP <request|response|message framing>`, `MessageWrite` is `failed to serialize RTSP message`, `Tls` is `TLS error: invalid server name "<name>"` and `Auth` is `authentication failure`. Code that logged `{err}` and relied on the detail being in that text must print the chain:
+
+```rust
+// before: the detail was inside the message
+log::warn!("rtsp: {err}");
+
+// after: walk source() (or use an error reporter) to see the detail
+let mut line = err.to_string();
+let mut cause = std::error::Error::source(&err);
+while let Some(c) = cause {
+    line.push_str(": ");
+    line.push_str(&c.to_string());
+    cause = c.source();
+}
+log::warn!("rtsp: {line}");
+```
 
 Matching on the new shapes:
 
@@ -26,15 +44,16 @@ Matching on the new shapes:
 match err {
     Error::Io(msg) => log_io(&msg),
     Error::MessageParse(msg) => log_parse(&msg),
+    Error::Tls(msg) => log_tls(&msg),
     _ => {}
 }
 
 // after
 match err {
-    Error::Io { context, source } => {
-        log_io(context, source.kind());
-    }
-    Error::MessageParse(source) => log_parse(&source.to_string()),
+    Error::Io { context: IoContext::Connect, source } => retry_connect(source.kind()),
+    Error::Io { context, source } => log_io(context.name(), source.kind()),
+    Error::MessageParse { what, source } => log_parse(what.name(), &source.to_string()),
+    Error::Tls { server_name, source } => log_tls(&server_name, &source.to_string()),
     _ => {}
 }
 ```

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-11-08
 ### Added
 - Opt-in buffering input log for offline replay: `Config::record_buffer_inputs` (default off; nothing is recorded or allocated when off) and `Config::max_recorded_buffer_inputs` (default 1 000 000, must be non-zero), `Session::drain_buffer_inputs()`, `Session::dropped_buffer_inputs()`, `Session::buffer_input_log_config()`, `Session::buffer_input_log_seed()` and `Config::controller_config()` (the exact `ControllerConfig` the session's controller is built from). Inputs are `buffering_runtime::input_log::Input` (re-exported as `BufferInput`, with `InputLog`), written and replayed by `buffering-runtime`'s `input_log` module. A full queue drops new inputs, counts them and emits one non-fatal `ErrorKind::BufferInputsDropped`.
 ### Changed
@@ -13,8 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BufferInput` was a `doc(hidden)` type behind the `__test-seams` feature; it is now the public `buffering_runtime::input_log::Input`, and its `Register`/`Unregister` variants are struct variants carrying `now_us` and `track`. Not a public break (it was never public).
 ### Fixed
 - A track the host drops from an explicit rendered set before the first `Start` keeps holding the start (it stays registered with the buffer controller and its ends are still reported) until that `Start` or until `Config::start_pending_track_wait_us` (default 1.5 s) after the drop, whichever comes first. A host that declared `[video]` and then `[video, audio]` a few ms later had audio unregistered in between, got a `Start` judged on video alone at the next tick, and audio was re-registered after the fact (tf-1 on tvOS, 2026-11-08: a `DataArriving` pause on audio 0.4 s after the start). A host that really renders video only waits at most that bound for the dropped audio, not the controller's silence timeout; after the first `Start` a dropped track is released at once, as before. `start_pending_track_hard_cap_us` does not apply: it extends the wait only for a PMT-declared audio stream that has no track yet.
-
-## [0.4.0] - 2026-11-08
 ### Dependencies
 - Sibling crates move to a new epoch: `rtsp-runtime` 0.9 -> 0.10. The `Cargo.toml` requirements name the new version; `rtsp-runtime`'s `Error` carries its source errors and no longer derives `Clone`/`PartialEq` (#1726), which this crate's public API does not expose.
 

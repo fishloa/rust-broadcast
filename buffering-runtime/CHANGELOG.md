@@ -6,15 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.1] - 2026-11-08
 ### Added
 - `input_log` module: record what a host fed a `BufferController` and replay it offline with one format and one implementation. `Input` (typed, `#[non_exhaustive]`, one variant per controller call) with `apply` (the single place a recorded input becomes a controller call), `write_row`/`parse_row` (symmetric, typed `InputLogError` carrying the row), and `InputLog` (`ControllerConfig` as one `config` row per field via `ConfigKey`, an optional stall-memory `seed` row, then the inputs) with `write`, `parse`, `parse_with_config` (logs recorded before `config` rows existed, such as the Apple TV goldens), `rebase`, `controller` and `replay`. `hint` rows carry the hint's `name()` token. New example `replay_input_log` replays a log from the command line.
 ### Tests
 - `reregistered_track_start`: a track re-registered after `unregister_track` holds the start until it delivers, like a first registration; a tick between the unregister and the register releases the start (the documented rule). Goldens on the tf-1 tvOS logs of 2026-11-08: the field start came from a tick while audio was unregistered (lead 1.000 s); without the two churn rows the same log starts at +0.681 s with lead 0.688 s covered by audio; the passing log is unchanged (+1.734 s, lead 0.544 s). No behaviour change: the controller was correct for its inputs (DESIGN 0.7e).
-
-## [0.2.1] - 2026-11-08
-
-### Changed
-- Dependency/epoch bump only; no functional change.
 
 ## [0.2.0] - 2026-11-07
 ### Documented
