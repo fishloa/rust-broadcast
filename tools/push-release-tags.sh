@@ -288,10 +288,15 @@ fi
 command -v gh >/dev/null || { echo "gh not found: cannot confirm the release workflows; refusing to push."; exit 1; }
 
 # ---- the loop ------------------------------------------------------------------
-# State of this tag's "Release*" workflow run(s): "<status> <conclusion>" lines.
+# State of this tag's "Release*" workflow run(s) AT THE COMMIT THE TAG POINTS AT:
+# "<status> <conclusion>" lines. A deleted-and-repushed tag keeps the old tag's
+# runs under the same branch name, so runs at any other headSha are ignored.
 run_states() {
-    gh run list --branch "$1" --limit 20 --json workflowName,status,conclusion \
-        --jq '.[] | select(.workflowName | startswith("Release")) | "\(.status) \(.conclusion)"' 2>/dev/null
+    local sha
+    sha=$(git rev-parse -q --verify "$1^{commit}" 2>/dev/null) || return 0
+    gh run list --branch "$1" --limit 20 --json workflowName,status,conclusion,headSha \
+        --jq '.[] | select(.workflowName | startswith("Release")) | "\(.status) \(.conclusion) \(.headSha)"' 2>/dev/null \
+        | awk -v sha="$sha" '$NF == sha { sub(/ [^ ]*$/, ""); print }'
 }
 
 summary=()

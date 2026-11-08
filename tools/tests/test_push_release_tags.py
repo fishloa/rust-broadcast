@@ -135,7 +135,12 @@ def env(tmp_path):
         (fake / "index" / crate).write_text(lines)
 
     c.index = index
-    c.gh = lambda tag, text: (fake / "gh" / tag).write_text(text)
+    def gh(tag, text, sha=None):
+        sha = sha or git(repo, "rev-parse", f"{tag}^{{commit}}").strip()
+        (fake / "gh" / tag).write_text("".join(f"{ln} {sha}\n" for ln in text.splitlines()))
+
+    c.gh = gh
+    c.gh_raw = lambda tag, text: (fake / "gh" / tag).write_text(text)
     return c
 
 
@@ -440,3 +445,22 @@ def test_remote_tag_with_a_release_run_resumes_without_pushing(env):
     r = env.run("crateb-v1.0.0")
     assert r.returncode == 2 and "resuming without a push" in r.stdout and "approval gate" in r.stdout
     assert not (env.fake / "pushed.log").exists()
+
+
+def test_stale_failed_run_at_another_sha_is_ignored(env):
+    env.gh("cratea-v1.0.0", "completed success\n")
+    env.gh_raw(
+        "cratea-v1.0.0",
+        "completed failure " + "0" * 40 + "\n" + (env.fake / "gh" / "cratea-v1.0.0").read_text(),
+    )
+    env.gh("crateb-v1.0.0", "completed success\n")
+    env.gh("cratec-v1.0.0", "completed success\n")
+    r = env.run("cratea-v1.0.0", "crateb-v1.0.0", "cratec-v1.0.0")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "FAILED" not in r.stdout
+
+
+def test_only_stale_run_at_another_sha_is_nothing_ran(env):
+    env.gh_raw("cratea-v1.0.0", "completed failure " + "0" * 40 + "\n")
+    r = env.run("cratea-v1.0.0", "crateb-v1.0.0", "cratec-v1.0.0")
+    assert r.returncode != 0
