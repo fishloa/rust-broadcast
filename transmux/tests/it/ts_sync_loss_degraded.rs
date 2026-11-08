@@ -272,9 +272,9 @@ fn all_ts() -> Vec<std::path::PathBuf> {
     v
 }
 
-/// No false positives: report (never assert on) what every committed TS says,
-/// but a capture must never report a sync loss unless it is in the allowlist
-/// of captures that really contain broken sync.
+/// No false positives: no committed TS capture may report a sync loss or a
+/// truncated packet, so every fixture must be whole 188-byte packets (or a
+/// deliberately non-188 stride the demuxer follows).
 #[test]
 fn committed_fixtures_have_no_unexpected_sync_loss() {
     for p in all_ts() {
