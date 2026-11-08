@@ -9,12 +9,14 @@ mod client_state;
 mod closed_captions;
 mod frame_rate;
 mod golden_client;
+#[cfg(feature = "std")]
 mod hls_skip_delta;
 mod iframe_master;
 mod iframe_playlist;
 mod map_runs;
 mod master_bandwidth;
 mod master_playlist;
+#[cfg(feature = "std")]
 mod origin_hardening;
 mod origin_loop;
 mod pdt_arrival;

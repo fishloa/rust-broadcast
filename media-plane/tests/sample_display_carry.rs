@@ -7,6 +7,8 @@
 //! the subscriber side (`Arc::ptr_eq`), not merely an equal value. A pair of
 //! samples with different geometries pins that the tag is read per sample.
 
+#![cfg(feature = "std")]
+
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 

@@ -2944,6 +2944,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn next_wait_reports_the_queued_wait_hint_without_consuming_it() {
         use core::time::Duration;
         let mut c = HlsClient::new("http://h/p.m3u8");
