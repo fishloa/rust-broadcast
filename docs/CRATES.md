@@ -98,13 +98,13 @@ builds (see the table above against the in-tree versions below).
 | [`dvb-t2mi`](#dvb-t2mi) | DVB service information, physical-layer framing and conformance | 13.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-t2mi.svg)](https://crates.io/crates/dvb-t2mi) | yes | 2 | on crates.io |
 | [`dvb-conformance`](#dvb-conformance) | DVB service information, physical-layer framing and conformance | 13.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance) | yes | 3 | on crates.io |
 | [`dvb-simulcrypt`](#dvb-simulcrypt) | Common Interface, conditional access, scrambling, SimulCrypt | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/dvb-simulcrypt.svg)](https://crates.io/crates/dvb-simulcrypt) | yes | 1 | on crates.io |
-| [`dvb-csa`](#dvb-csa) | Common Interface, conditional access, scrambling, SimulCrypt | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/dvb-csa.svg)](https://crates.io/crates/dvb-csa) | yes | 2 | on crates.io |
+| [`dvb-csa`](#dvb-csa) | Common Interface, conditional access, scrambling, SimulCrypt | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/dvb-csa.svg)](https://crates.io/crates/dvb-csa) | yes | 2 | on crates.io |
 | [`dvb-ci`](#dvb-ci) | Common Interface, conditional access, scrambling, SimulCrypt | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/dvb-ci.svg)](https://crates.io/crates/dvb-ci) | yes | 3 | on crates.io |
 | [`dvb-ci-runtime`](#dvb-ci-runtime) | Common Interface, conditional access, scrambling, SimulCrypt | 0.19.0 | [![crates.io](https://img.shields.io/crates/v/dvb-ci-runtime.svg)](https://crates.io/crates/dvb-ci-runtime) | no | 4 | on crates.io |
 | [`cc-data`](#cc-data) | Subtitles, captions, teletext, VBI and ancillary data | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/cc-data.svg)](https://crates.io/crates/cc-data) | yes | 1 | on crates.io |
 | [`dvb-subtitle`](#dvb-subtitle) | Subtitles, captions, teletext, VBI and ancillary data | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/dvb-subtitle.svg)](https://crates.io/crates/dvb-subtitle) | yes | 1 | on crates.io |
 | [`dvb-vbi`](#dvb-vbi) | Subtitles, captions, teletext, VBI and ancillary data | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/dvb-vbi.svg)](https://crates.io/crates/dvb-vbi) | yes | 1 | on crates.io |
-| [`ttml-subtitle`](#ttml-subtitle) | Subtitles, captions, teletext, VBI and ancillary data | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/ttml-subtitle.svg)](https://crates.io/crates/ttml-subtitle) | yes | 1 | on crates.io |
+| [`ttml-subtitle`](#ttml-subtitle) | Subtitles, captions, teletext, VBI and ancillary data | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/ttml-subtitle.svg)](https://crates.io/crates/ttml-subtitle) | yes | 1 | on crates.io |
 | [`st291`](#st291) | Subtitles, captions, teletext, VBI and ancillary data | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/st291.svg)](https://crates.io/crates/st291) | yes | 2 | on crates.io |
 | [`caption-convert`](#caption-convert) | Subtitles, captions, teletext, VBI and ancillary data | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/caption-convert.svg)](https://crates.io/crates/caption-convert) | yes | 3 | on crates.io |
 | [`mp4-emsg`](#mp4-emsg) | Metadata and ad-insertion signalling | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/mp4-emsg.svg)](https://crates.io/crates/mp4-emsg) | yes | 1 | on crates.io |
@@ -117,14 +117,14 @@ builds (see the table above against the in-tree versions below).
 | [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.2.0 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | no | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
-| [`rtsp-runtime`](#rtsp-runtime) | Live transport protocols | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) | no | 1 | on crates.io |
+| [`rtsp-runtime`](#rtsp-runtime) | Live transport protocols | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) | no | 1 | on crates.io |
 | [`srt-runtime`](#srt-runtime) | Live transport protocols | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/srt-runtime.svg)](https://crates.io/crates/srt-runtime) | yes | 1 | on crates.io |
 | [`st2022`](#st2022) | Live transport protocols | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/st2022.svg)](https://crates.io/crates/st2022) | yes | 1 | on crates.io |
 | [`rist-runtime`](#rist-runtime) | Live transport protocols | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/rist-runtime.svg)](https://crates.io/crates/rist-runtime) | yes | 2 | on crates.io |
-| [`webrtc-runtime`](#webrtc-runtime) | Live transport protocols | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) | no | 2 | on crates.io |
+| [`webrtc-runtime`](#webrtc-runtime) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/webrtc-runtime.svg)](https://crates.io/crates/webrtc-runtime) | no | 2 | on crates.io |
 | [`dash-runtime`](#dash-runtime) | Live transport protocols | 0.3.0 | — | no | 4 | not on crates.io |
 | [`hls-runtime`](#hls-runtime) | Live transport protocols | 0.12.0 | [![crates.io](https://img.shields.io/crates/v/hls-runtime.svg)](https://crates.io/crates/hls-runtime) | yes | 5 | on crates.io |
-| [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.3.0 | — | no | 6 | not on crates.io |
+| [`broadcast-client`](#broadcast-client) | Live transport protocols | 0.4.0 | — | no | 6 | not on crates.io |
 | [`ssai-runtime`](#ssai-runtime) | Servers, runtimes and tools | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/ssai-runtime.svg)](https://crates.io/crates/ssai-runtime) | yes | 2 | on crates.io |
 | [`dvb-tools`](#dvb-tools) | Servers, runtimes and tools | 13.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | no | 3 | on crates.io |
 | [`playout-runtime`](#playout-runtime) | Servers, runtimes and tools | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/playout-runtime.svg)](https://crates.io/crates/playout-runtime) | yes | 3 | on crates.io |
@@ -132,8 +132,8 @@ builds (see the table above against the in-tree versions below).
 | [`media-plane`](#media-plane) | Servers, runtimes and tools | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/media-plane.svg)](https://crates.io/crates/media-plane) | yes | 4 | on crates.io |
 | [`ts-fix`](#ts-fix) | Servers, runtimes and tools | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/ts-fix.svg)](https://crates.io/crates/ts-fix) | yes | 4 | on crates.io |
 | [`compliance-probe`](#compliance-probe) | Servers, runtimes and tools | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/compliance-probe.svg)](https://crates.io/crates/compliance-probe) | yes | 5 | on crates.io |
-| [`multimux`](#multimux) | Servers, runtimes and tools | 0.16.0 | [![crates.io](https://img.shields.io/crates/v/multimux.svg)](https://crates.io/crates/multimux) | no | 7 | on crates.io |
-| [`multimux-cli`](#multimux-cli) | Servers, runtimes and tools | 0.14.0 | [![crates.io](https://img.shields.io/crates/v/multimux-cli.svg)](https://crates.io/crates/multimux-cli) | no | 8 | on crates.io |
+| [`multimux`](#multimux) | Servers, runtimes and tools | 0.17.0 | [![crates.io](https://img.shields.io/crates/v/multimux.svg)](https://crates.io/crates/multimux) | no | 7 | on crates.io |
+| [`multimux-cli`](#multimux-cli) | Servers, runtimes and tools | 0.15.0 | [![crates.io](https://img.shields.io/crates/v/multimux-cli.svg)](https://crates.io/crates/multimux-cli) | no | 8 | on crates.io |
 | [`rdd29`](#rdd29) | Professional media (SMPTE / AES / Dolby) | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rdd29.svg)](https://crates.io/crates/rdd29) | yes | 1 | on crates.io |
 | [`st12-1`](#st12-1) | Professional media (SMPTE / AES / Dolby) | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/st12-1.svg)](https://crates.io/crates/st12-1) | yes | 1 | on crates.io |
 | [`st337`](#st337) | Professional media (SMPTE / AES / Dolby) | 0.5.0 | [![crates.io](https://img.shields.io/crates/v/st337.svg)](https://crates.io/crates/st337) | yes | 1 | on crates.io |
@@ -143,7 +143,7 @@ builds (see the table above against the in-tree versions below).
 | [`rmt-flute`](#rmt-flute) | IP and multicast delivery over broadcast | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/rmt-flute.svg)](https://crates.io/crates/rmt-flute) | yes | 1 | on crates.io |
 | [`ule`](#ule) | IP and multicast delivery over broadcast | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/ule.svg)](https://crates.io/crates/ule) | yes | 1 | on crates.io |
 | [`atsc3-route`](#atsc3-route) | IP and multicast delivery over broadcast | 0.4.0 | [![crates.io](https://img.shields.io/crates/v/atsc3-route.svg)](https://crates.io/crates/atsc3-route) | yes | 2 | archived, on crates.io |
-| [`broadcast-loudness`](#broadcast-loudness) | Measurement | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) | yes | 1 | on crates.io |
+| [`broadcast-loudness`](#broadcast-loudness) | Measurement | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) | yes | 1 | on crates.io |
 | [`test-alloc`](#test-alloc) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`test-fixtures`](#test-fixtures) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
 | [`workspace-guards`](#workspace-guards) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
@@ -291,7 +291,7 @@ Scrambles and descrambles TS packet payloads with an 8-byte control word. There 
 
 - **Standards:** DVB-CSA2 (no public normative specification; validated against libdvbcsa known-answer vectors)
 - **Cargo description:** DVB Common Scrambling Algorithm (CSA2) — pure-Rust, with an optional bitsliced 64-payload batch fast path, validated against libdvbcsa known-answer vectors.
-- **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
+- **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** none
 - **Links:** [README](../dvb-csa/README.md) · [CHANGELOG](../dvb-csa/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-csa) · [docs.rs](https://docs.rs/dvb-csa)
@@ -361,7 +361,7 @@ Parses TTML2 documents into typed structures and validates them, as a separate p
 
 - **Standards:** W3C TTML2 (REC 2018-11-08); W3C IMSC 1.1 (REC 2018-11-08)
 - **Cargo description:** TTML2 / IMSC 1.1 timed-text subtitle parser — W3C TTML2 + IMSC 1.1 profile validation.
-- **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
+- **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
 - **Links:** [README](../ttml-subtitle/README.md) · [CHANGELOG](../ttml-subtitle/CHANGELOG.md) · [crates.io](https://crates.io/crates/ttml-subtitle) · [docs.rs](https://docs.rs/ttml-subtitle)
@@ -516,7 +516,7 @@ Driveable client and server state machines with CSeq correlation, Transport nego
 
 - **Standards:** RFC 2326 (RTSP 1.0) incl. Appendix A state machines, §10.12 interleaving, §12.39 Transport, §14 auth
 - **Cargo description:** Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types codec; optional tokio (+ rustls) socket adapter.
-- **Version (in-tree):** 0.9.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
+- **Version (in-tree):** 0.10.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
@@ -560,7 +560,7 @@ WHIP ingest and WHEP egress session establishment as state machines over `http` 
 
 - **Standards:** RFC 9725 (WHIP); draft-ietf-wish-whep-04; optional ICE/DTLS-SRTP transport (`media`)
 - **Cargo description:** Sans-IO WHIP (RFC 9725) + WHEP (draft-ietf-wish-whep) HTTP signalling engine — SDP offer/answer, Trickle ICE, ICE restart, session lifecycle. No IO adapter; caller drives HTTP.
-- **Version (in-tree):** 0.5.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 2
+- **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`multimux`](#multimux)
 - **Links:** [README](../webrtc-runtime/README.md) · [CHANGELOG](../webrtc-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/webrtc-runtime) · [docs.rs](https://docs.rs/webrtc-runtime)
@@ -593,7 +593,7 @@ Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (`t
 
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
 - **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH, RTSP, UDP/RTP and SRT sources.
-- **Version (in-tree):** 0.3.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
+- **Version (in-tree):** 0.4.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`transmux`](#transmux)
 - **Used by (workspace):** [`multimux`](#multimux)
 - **Links:** [README](../broadcast-client/README.md) · [CHANGELOG](../broadcast-client/CHANGELOG.md) · [docs + spec pointer](../broadcast-client/docs/)
@@ -685,7 +685,7 @@ Ingest RTSP, RTP/UDP, TS over UDP or HTTP, SRT, HLS/DASH/Smooth pull, RTMP push 
 
 - **Standards:** Composes the live and container crates (RTSP, RTP, SRT, RTMP, HLS, DASH, Smooth, WHIP/WHEP)
 - **Cargo description:** Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP/file), multi-output (LL-HLS/DASH/LL-DASH/Smooth/TS-HLS/catch-up + SRT/RTMP/RTSP push) just-in-time repackaging HTTP origin (library: tokio + axum), with shared output auth and an external scheme plugin registry.
-- **Version (in-tree):** 0.16.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 7
+- **Version (in-tree):** 0.17.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 7
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-client`](#broadcast-client), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`caption-convert`](#caption-convert), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
 - **Used by (workspace):** [`multimux-cli`](#multimux-cli)
 - **Links:** [README](../multimux/README.md) · [CHANGELOG](../multimux/CHANGELOG.md) · [docs + spec pointer](../multimux/docs/) · [crates.io](https://crates.io/crates/multimux) · [docs.rs](https://docs.rs/multimux)
@@ -696,7 +696,7 @@ Runs a `multimux` origin. The quick-start flags accept RTSP input and LL-HLS/DAS
 
 - **Standards:** see multimux
 - **Cargo description:** CLI for multimux — a config-driven, multi-input/multi-output (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP/file -> LL-HLS/DASH/LL-DASH/Smooth/TS-HLS/catch-up + SRT/RTMP/RTSP push) just-in-time repackaging HTTP origin.
-- **Version (in-tree):** 0.14.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 8
+- **Version (in-tree):** 0.15.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 8
 - **Depends on (workspace):** [`multimux`](#multimux)
 - **Used by (workspace):** none
 - **Links:** [README](../multimux-cli/README.md) · [CHANGELOG](../multimux-cli/CHANGELOG.md) · [crates.io](https://crates.io/crates/multimux-cli)
@@ -818,7 +818,7 @@ K-weighting at any non-zero sample rate (coefficients derived by bilinear transf
 
 - **Standards:** ITU-R BS.1770-5 (11/2023); EBU R 128, Tech 3341, Tech 3342 (all November 2023); GY/T 282-2014, GY/T 377-2023, GY/T 379-2023 target profiles
 - **Cargo description:** EBU R 128 / ITU-R BS.1770-5 loudness measurement: K-weighting, integrated/short-term/momentary loudness (LUFS), loudness range (LRA), and true-peak (dBTP). no_std + alloc.
-- **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
+- **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** none
 - **Links:** [README](../broadcast-loudness/README.md) · [CHANGELOG](../broadcast-loudness/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-loudness) · [docs.rs](https://docs.rs/broadcast-loudness)
