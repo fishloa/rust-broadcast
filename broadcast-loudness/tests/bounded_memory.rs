@@ -53,6 +53,19 @@ fn loudness_meter_is_bounded_and_correct_over_a_long_run() {
 }
 
 #[test]
+fn loudness_gating_history_is_bounded_over_twenty_hours() {
+    const LOW_RATE: u32 = 500;
+    const TWO_DAYS_FRAMES: usize = LOW_RATE as usize * 3600 * 20;
+    let mut m = LoudnessMeter::new(LOW_RATE, ChannelLayout::Mono).unwrap();
+    for n in 0..TWO_DAYS_FRAMES {
+        let s = if n % 10 < 5 { 0.1f32 } else { -0.1 };
+        m.push_f32(&[s]).unwrap();
+    }
+    m.finish();
+    assert!(m.integrated_lufs().is_finite(), "{}", m.integrated_lufs());
+}
+
+#[test]
 fn true_peak_meter_is_bounded_over_a_long_run() {
     let mut tp = TruePeakMeter::new();
     for n in 0..frames() {

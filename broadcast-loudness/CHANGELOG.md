@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `LoudnessMeter` no longer keeps one value per 100 ms block for gated integrated loudness and LRA (unbounded on a long-running stream, #1729). Blocks accumulate into fixed-size 0.01 LU histograms with exact per-bin energy sums; memory is constant in stream length.
+
 ## [0.6.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `integrated_lu`.
