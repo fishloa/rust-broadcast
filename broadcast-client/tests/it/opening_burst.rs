@@ -466,7 +466,7 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
         if declare_at == Some(now) {
             declare_at = None;
             let ids: Vec<TrackId> = rendered.iter().map(|t| TrackId::new(*t)).collect();
-            s.set_rendered_tracks(&ids);
+            s.set_rendered_tracks(now, &ids);
         } else if now == chunk_at {
             let (_, bytes) = deliveries.next().unwrap();
             s.on_data(conn, bytes, now);
