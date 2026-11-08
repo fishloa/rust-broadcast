@@ -148,15 +148,6 @@ pub struct ManifestGrouping {
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IngestError {
-    #[error("auth required (§5.3.4)")]
-    Auth,
-
-    #[error("unknown publishing point (§5.3.5a)")]
-    UnknownPublishingPoint,
-
-    #[error("unsupported media (§5.3.5b)")]
-    UnsupportedMedia,
-
     #[error("segment without a usable header (§5.3.5c)")]
     SegmentWithoutHeader,
 
@@ -191,10 +182,7 @@ pub enum IngestError {
 impl IngestError {
     pub fn status(&self) -> StatusCode {
         match self {
-            IngestError::Auth => StatusCode::FORBIDDEN,
-            IngestError::UnknownPublishingPoint => StatusCode::NOT_FOUND,
             IngestError::SegmentWithoutHeader => StatusCode::PRECONDITION_FAILED,
-            IngestError::UnsupportedMedia => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             IngestError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             IngestError::SegmentInProgress => StatusCode::CONFLICT,
             _ => StatusCode::BAD_REQUEST,
@@ -482,10 +470,7 @@ mod tests {
         // Exhaustive match (no wildcard): adding a variant breaks compile.
         fn expected(e: &IngestError) -> u16 {
             match e {
-                IngestError::Auth => 403,
-                IngestError::UnknownPublishingPoint => 404,
                 IngestError::SegmentWithoutHeader => 412,
-                IngestError::UnsupportedMedia => 415,
                 IngestError::Internal => 500,
                 IngestError::BadRequest => 400,
                 IngestError::NoManifest => 400,
@@ -498,10 +483,7 @@ mod tests {
             }
         }
         let variants = [
-            IngestError::Auth,
-            IngestError::UnknownPublishingPoint,
             IngestError::SegmentWithoutHeader,
-            IngestError::UnsupportedMedia,
             IngestError::Internal,
             IngestError::BadRequest,
             IngestError::NoManifest,

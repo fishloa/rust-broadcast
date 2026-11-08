@@ -122,8 +122,8 @@ fn now() -> std::time::Instant {
 }
 
 /// Maps a tokio IO error into the crate error type.
-fn io_err(context: &str, e: std::io::Error) -> Error {
-    Error::Io(format!("{context}: {e}"))
+fn io_err(context: &'static str, source: std::io::Error) -> Error {
+    Error::Io { context, source }
 }
 
 // ===========================================================================
@@ -440,7 +440,13 @@ where
         self.write(request).await?;
         loop {
             let Some(event) = self.next_event().await? else {
-                return Err(Error::Io("peer closed connection before response".into()));
+                return Err(io_err(
+                    "read",
+                    std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "peer closed connection before response",
+                    ),
+                ));
             };
             match event {
                 // Only the response whose CSeq matches the request THIS call
@@ -510,7 +516,13 @@ where
             match woke {
                 Woke::Frame(r) => match r? {
                     None if self.framed.codec().session.has_buffered_input() => {
-                        return Err(Error::Io("peer closed connection mid-message".into()));
+                        return Err(io_err(
+                            "read",
+                            std::io::Error::new(
+                                std::io::ErrorKind::UnexpectedEof,
+                                "peer closed connection mid-message",
+                            ),
+                        ));
                     }
                     None => return Ok(None),
                     Some(ev @ ClientEvent::MediaData { .. }) => return Ok(Some(ev)),
@@ -603,7 +615,7 @@ where
     let tcp = bounded(timeouts.connect, "connect", dial).await?;
     let connector = TlsConnector::from(Arc::new(config));
     let dns = rustls::pki_types::ServerName::try_from(server_name.to_string())
-        .map_err(|e| Error::Tls(format!("invalid server name {server_name:?}: {e}")))?;
+        .map_err(|e| Error::Tls(Box::new(e)))?;
     let stream = bounded(timeouts.handshake, "handshake", async {
         connector
             .connect(dns, tcp)

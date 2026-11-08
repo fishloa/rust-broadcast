@@ -78,15 +78,6 @@ pub enum MultimuxError {
         reason: String,
     },
 
-    /// A wire-level RTP validation failure on the ingest path (for example an
-    /// `rtp_version` other than 2). Demux and depayload failures keep their
-    /// `transmux` error as the source ([`Self::Flv`], [`Self::Transmux`]).
-    #[error("depayload error: {reason}")]
-    Depay {
-        /// The underlying depayload/demux failure.
-        reason: String,
-    },
-
     /// An ingest FLV tag stream (the `rtmp::RtmpRoute` publisher's media)
     /// failed to demux; the `transmux::FlvError` is kept as the source.
     #[error("rtmp/flv: {0}")]

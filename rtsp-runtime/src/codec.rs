@@ -147,7 +147,7 @@ impl Decoder for ServerCodec {
                 if want > MAX_MESSAGE_BYTES {
                     return Err(Error::MessageParse(format!(
                         "request of at least {want} bytes exceeds the {MAX_MESSAGE_BYTES}-byte maximum"
-                    )));
+                    ).into()));
                 }
                 self.skip_until = want;
                 Ok(None)
@@ -155,7 +155,7 @@ impl Decoder for ServerCodec {
             // Terminator present yet no length: rtsp_types wants more input.
             Err(rtsp_types::ParseError::Incomplete(None)) => Ok(None),
             Err(rtsp_types::ParseError::Error) => {
-                Err(Error::MessageParse("malformed RTSP request".into()))
+                Err(Error::MessageParse(Box::new(rtsp_types::ParseError::Error)))
             }
         }
     }

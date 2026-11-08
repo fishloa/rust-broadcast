@@ -271,9 +271,8 @@ mod tests {
 
     /// r11-W-CSA-3: a packet with no payload at all (adaptation-field-only,
     /// `adaptation_field_control = 10`) must fail with the dedicated
-    /// [`Error::NoPayload`], not a fabricated [`Error::BufferTooShort`] —
-    /// the 188-byte buffer is not short; there is simply nothing to
-    /// (de)scramble.
+    /// [`Error::NoPayload`]: the 188-byte buffer is not short; there is
+    /// simply nothing to (de)scramble.
     #[test]
     fn no_payload_packet_reports_no_payload_not_buffer_too_short() {
         let cw = ControlWord::from_bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);

@@ -154,7 +154,7 @@ impl ServerSession {
     /// the events produced.
     pub fn handle_request(&mut self, data: &[u8]) -> Result<(Vec<u8>, Vec<ServerEvent>)> {
         let (message, _consumed) =
-            Message::<Body>::parse(data).map_err(|e| Error::MessageParse(format!("{e:?}")))?;
+            Message::<Body>::parse(data).map_err(|e| Error::MessageParse(Box::new(e)))?;
         let request = match message {
             Message::Request(r) => r,
             _ => return Err(Error::MessageParse("expected an RTSP request".into())),
@@ -292,9 +292,7 @@ fn header_value(h: Option<&headers::HeaderValue>) -> Option<&str> {
 
 fn serialize(message: &Message<Body>) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    message
-        .write(&mut out)
-        .map_err(|e| Error::MessageWrite(e.to_string()))?;
+    message.write(&mut out).map_err(Error::MessageWrite)?;
     Ok(out)
 }
 
@@ -317,11 +315,10 @@ mod tests {
     #[test]
     fn a_request_without_cseq_is_rejected() {
         let mut s = test_session();
-        assert_eq!(
-            s.handle_request(&req("OPTIONS rtsp://h/s RTSP/1.0\n\n"))
-                .unwrap_err(),
-            Error::MissingCSeq
-        );
+        let err = s
+            .handle_request(&req("OPTIONS rtsp://h/s RTSP/1.0\n\n"))
+            .unwrap_err();
+        assert!(matches!(err, Error::MissingCSeq), "{err:?}");
     }
 
     #[test]

@@ -7,20 +7,11 @@ use thiserror::Error;
 #[non_exhaustive]
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// The provided buffer is too short for the requested operation.
-    #[error("buffer too short: need {need} bytes, have {have}")]
-    BufferTooShort {
-        /// The number of bytes required.
-        need: usize,
-        /// The number of bytes available.
-        have: usize,
-    },
-
     /// The packet carries no payload at all — `adaptation_field_control`
     /// selects adaptation-field-only (ISO/IEC 13818-1 Table 2-5), or the
     /// declared `adaptation_field_length` consumes the whole packet. This is
     /// a structurally ordinary packet (e.g. a PCR-only stuffing packet), not
-    /// a truncated buffer, so it is distinct from [`Self::BufferTooShort`].
+    /// a truncated buffer.
     #[error("packet carries no payload to (de)scramble")]
     NoPayload,
 

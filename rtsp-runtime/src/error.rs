@@ -16,15 +16,15 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Errors produced by the RTSP session engine.
 #[non_exhaustive]
-#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// The RTSP message could not be parsed by the underlying `rtsp-types` codec.
     #[error("failed to parse RTSP message: {0}")]
-    MessageParse(String),
+    MessageParse(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// The RTSP message could not be serialized by the underlying codec.
     #[error("failed to serialize RTSP message: {0}")]
-    MessageWrite(String),
+    MessageWrite(#[source] rtsp_types::WriteError),
 
     /// A method was invoked (client) or received (server) that is not permitted
     /// in the current session state. The server maps this to `455 Method Not
@@ -69,8 +69,14 @@ pub enum Error {
     MissingAuthChallenge,
 
     /// A socket IO operation failed in the async adapter (feature `tokio`).
-    #[error("socket IO error: {0}")]
-    Io(String),
+    #[error("socket IO error during {context}: {source}")]
+    Io {
+        /// The operation that failed: `"connect"`, `"TLS handshake"`, `"read"`, `"write"`.
+        context: &'static str,
+        /// The underlying socket error.
+        #[source]
+        source: std::io::Error,
+    },
 
     /// A bounded wait in the async adapter expired (feature `tokio`).
     #[error("timed out waiting for {what}")]
@@ -82,7 +88,7 @@ pub enum Error {
     /// A TLS operation failed in the async adapter (feature `tls`): bad server
     /// name, handshake, or certificate configuration (`rtsps://`).
     #[error("TLS error: {0}")]
-    Tls(String),
+    Tls(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// The server answered `454 Session Not Found` (RFC 2326 §11.3.5) to a
     /// request on our session — the session is gone (timed out, or torn down
@@ -98,6 +104,46 @@ pub enum Error {
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        Error::Io(e.to_string())
+        Error::Io {
+            context: "socket",
+            source: e,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error as _;
+
+    #[test]
+    fn io_keeps_its_source_and_kind() {
+        let err = Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        let src = err
+            .source()
+            .and_then(|s| s.downcast_ref::<std::io::Error>());
+        assert_eq!(
+            src.map(std::io::Error::kind),
+            Some(std::io::ErrorKind::ConnectionReset)
+        );
+    }
+
+    #[test]
+    fn message_parse_keeps_the_codec_error() {
+        let err = Error::MessageParse(Box::new(rtsp_types::ParseError::Error));
+        assert!(
+            err.source()
+                .is_some_and(|s| s.downcast_ref::<rtsp_types::ParseError>().is_some())
+        );
+    }
+
+    #[test]
+    fn message_write_keeps_the_codec_error() {
+        let io = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let err = Error::MessageWrite(rtsp_types::WriteError::IoError(io));
+        assert!(
+            err.source()
+                .is_some_and(|s| s.downcast_ref::<rtsp_types::WriteError>().is_some())
+        );
     }
 }

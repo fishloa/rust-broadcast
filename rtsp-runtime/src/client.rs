@@ -541,11 +541,14 @@ impl ClientSession {
     fn handle_data_into(&mut self, data: &[u8], events: &mut Vec<ClientEvent>) -> Result<()> {
         self.inbound.extend_from_slice(data);
         if self.inbound.len() > MAX_INBOUND_BYTES {
-            return Err(Error::MessageParse(format!(
-                "inbound buffer of {} bytes exceeds the {MAX_INBOUND_BYTES}-byte maximum \
+            return Err(Error::MessageParse(
+                format!(
+                    "inbound buffer of {} bytes exceeds the {MAX_INBOUND_BYTES}-byte maximum \
                  (unterminated header or an unfulfilled Content-Length)",
-                self.inbound.len()
-            )));
+                    self.inbound.len()
+                )
+                .into(),
+            ));
         }
         // Parse with a cursor and drop the consumed prefix ONCE, whatever the
         // outcome: a per-message `drain(..n)` memmoves the whole remainder for
@@ -603,7 +606,7 @@ impl ClientSession {
                     break;
                 }
                 Err(rtsp_types::ParseError::Error) => {
-                    return Err(Error::MessageParse("malformed RTSP message".into()));
+                    return Err(Error::MessageParse(Box::new(rtsp_types::ParseError::Error)));
                 }
             }
         }
@@ -846,9 +849,7 @@ fn header_value(h: Option<&headers::HeaderValue>) -> Option<&str> {
 /// Serializes an RTSP message to bytes.
 fn serialize(message: &Message<Body>) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    message
-        .write(&mut out)
-        .map_err(|e| Error::MessageWrite(e.to_string()))?;
+    message.write(&mut out).map_err(Error::MessageWrite)?;
     Ok(out)
 }
 
@@ -958,18 +959,18 @@ mod tests {
         c.authenticate_with(Credentials::new("u", "p"), Some("Basic realm=\"x\""))
             .unwrap();
         c.describe("rtsp://h/s").unwrap();
-        assert_eq!(
-            c.handle_data_strict(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\n\r\n")
-                .unwrap_err(),
-            Error::MissingAuthChallenge
-        );
+        let err = c
+            .handle_data_strict(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\n\r\n")
+            .unwrap_err();
+        assert!(matches!(err, Error::MissingAuthChallenge), "{err:?}");
     }
 
     #[test]
     fn a_broadcast_auth_failure_keeps_its_source() {
-        assert_eq!(
-            Error::from(broadcast_auth::Error::InvalidBearerToken),
-            Error::Auth(broadcast_auth::Error::InvalidBearerToken)
+        let err = Error::from(broadcast_auth::Error::InvalidBearerToken);
+        assert!(
+            matches!(err, Error::Auth(broadcast_auth::Error::InvalidBearerToken)),
+            "{err:?}"
         );
     }
 

@@ -34,30 +34,6 @@ pub enum Error {
     #[error("expected root element <tt> in namespace http://www.w3.org/ns/ttml, got {0}")]
     NotTtmlRoot(String),
 
-    /// A required element is missing.
-    #[error("missing required element: {0}")]
-    MissingElement(&'static str),
-
-    /// A required attribute is missing.
-    #[error("missing required attribute '{attr}' on element '{element}'")]
-    MissingAttribute {
-        /// The element name.
-        element: &'static str,
-        /// The attribute name.
-        attr: &'static str,
-    },
-
-    /// A required attribute value is malformed.
-    #[error("invalid value for attribute '{attr}' on element '{element}': {reason}")]
-    InvalidAttribute {
-        /// The element name.
-        element: &'static str,
-        /// The attribute name.
-        attr: &'static str,
-        /// Why the value is invalid.
-        reason: String,
-    },
-
     /// A `time-expression` could not be parsed.
     #[error("invalid time expression '{value}': {reason}")]
     InvalidTimeExpression {
@@ -66,10 +42,6 @@ pub enum Error {
         /// Why it's invalid.
         reason: String,
     },
-
-    /// IMSC profile validation failed.
-    #[error("IMSC validation error: {0}")]
-    Validation(String),
 
     /// A generic constraint violation.
     #[error("{constraint}: {detail}")]

@@ -621,8 +621,8 @@ mod tests {
 
     /// PRE-FIX FAILURE OBSERVED: `assert!(matches!(driver.health(),
     /// HealthState::Live), ..)` panicked after the malformed packet with
-    /// `Failed(Depay { reason: "invalid rtp_version: must be 2 (value:
-    /// 0x1)" })` — the old code mapped the depayload error straight to
+    /// `Failed(..)` with "invalid rtp_version: must be 2 (value:
+    /// 0x1)" — the old code mapped the depayload error straight to
     /// `Err`, and `IngestDriver::feed` turns that into a permanent freeze
     /// (`feed` becomes a no-op once `!health.is_running()`), so the two
     /// packets fed afterward were silently dropped instead of depayloaded.
@@ -683,7 +683,8 @@ mod tests {
         assert!(terminal_error_if_not_running(&HealthState::Live).is_none());
         assert!(terminal_error_if_not_running(&HealthState::Ended).is_some());
         assert!(
-            terminal_error_if_not_running(&HealthState::Failed(MultimuxError::Depay {
+            terminal_error_if_not_running(&HealthState::Failed(MultimuxError::Protocol {
+                phase: "PLAY",
                 reason: "boom".to_string(),
             }))
             .is_some()

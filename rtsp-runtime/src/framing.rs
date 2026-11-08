@@ -32,9 +32,9 @@ pub(crate) fn head_end(buf: &[u8], scanned: usize) -> Result<Option<usize>> {
     };
     let head_len = end.unwrap_or(buf.len());
     if head_len > MAX_HEAD_BYTES {
-        return Err(Error::MessageParse(format!(
-            "header block over {MAX_HEAD_BYTES} bytes without a terminator"
-        )));
+        return Err(Error::MessageParse(
+            format!("header block over {MAX_HEAD_BYTES} bytes without a terminator").into(),
+        ));
     }
     Ok(end)
 }

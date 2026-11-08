@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- BREAKING: `Error::MessageParse` and `Error::Tls` carry a boxed source error, `Error::MessageWrite` carries the `rtsp_types::WriteError`, and `Error::Io` is `Io { context, source: std::io::Error }` (they were flattened `String`s that lost the source). `Error` no longer derives `Clone`, `PartialEq` or `Eq` (#1726).
 
 ## [0.9.0] - 2026-11-07
 ### Changed
