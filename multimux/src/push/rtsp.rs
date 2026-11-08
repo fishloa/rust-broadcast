@@ -593,7 +593,10 @@ mod tests {
             "a 454 must map to SessionLost, got {err:?}"
         );
         // A different rtsp error stays a plain protocol error.
-        let other = map_rtsp_error(rtsp_runtime::Error::MessageParse("x".into()));
+        let other = map_rtsp_error(rtsp_runtime::Error::MessageParse {
+            what: rtsp_runtime::MessageKind::Response,
+            source: "x".into(),
+        });
         assert!(matches!(other, RtspPushError::Protocol(_)), "{other:?}");
     }
 
