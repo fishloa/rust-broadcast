@@ -10,6 +10,7 @@ pub mod ice;
 #[cfg(feature = "media")]
 #[cfg_attr(docsrs, doc(cfg(feature = "media")))]
 pub mod media;
+pub mod session;
 mod session_common;
 pub mod whep;
 pub mod whip;

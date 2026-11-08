@@ -71,7 +71,7 @@ impl SessionCore {
         self.origin().request(
             Method::POST,
             self.endpoint_url.clone(),
-            Some(crate::whep::content_type::SDP),
+            Some(crate::session::content_type::SDP),
             sdp_offer,
         )
     }
@@ -167,7 +167,7 @@ impl Origin<'_> {
         let mut req = self.request(
             Method::PATCH,
             session_url,
-            Some(crate::whep::content_type::TRICKLE_ICE),
+            Some(crate::session::content_type::TRICKLE_ICE),
             fragment,
         )?;
         if let Some(etag) = etag {
@@ -186,7 +186,7 @@ impl Origin<'_> {
         let mut req = self.request(
             Method::PATCH,
             session_url,
-            Some(crate::whep::content_type::TRICKLE_ICE),
+            Some(crate::session::content_type::TRICKLE_ICE),
             fragment,
         )?;
         req.headers.typed_insert(IfMatch::any());

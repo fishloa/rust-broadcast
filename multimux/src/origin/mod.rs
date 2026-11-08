@@ -68,6 +68,7 @@ use tower_http::timeout::TimeoutLayer;
 use crate::output::Output;
 use crate::registry::{AuthCtx, InputCtx, OutputCtx, SchemeRegistry};
 use crate::route::RouteHandle;
+use crate::source::pull_target::{PullDrive, PullRoute};
 use supervisor::Backoff;
 
 /// Realm advertised by the shared output-auth `Verifier`'s Basic/Digest
@@ -1935,23 +1936,8 @@ fn spawn_ingest(
 
     Ok(match &route.input {
         crate::config::InputSpec::Rtsp { url, auth } => {
-            let route_cfg = crate::source::rtsp::RtspRoute::new(name, url.clone())
-                .with_timeouts(timeouts)
-                .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised(
-                route_cfg,
-                ctx,
-                |cfg, trunk_config, handshake, handle, cancel| async move {
-                    Err(crate::source::rtsp::run_rtsp(
-                        &cfg,
-                        trunk_config,
-                        handshake,
-                        &handle,
-                        cancel,
-                    )
-                    .await)
-                },
-            )
+            let route_cfg = pull_route::<crate::source::rtsp::RtspKind>(name, url, timeouts, auth);
+            spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::Rtp {
             addr,
@@ -2025,23 +2011,9 @@ fn spawn_ingest(
             )
         }
         crate::config::InputSpec::TsHttp { url, auth } => {
-            let route_cfg = crate::source::ts_http::TsHttpRoute::new(name, url.clone())
-                .with_timeouts(timeouts)
-                .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised(
-                route_cfg,
-                ctx,
-                |cfg, trunk_config, handshake, handle, cancel| async move {
-                    crate::source::ts_http::run_ts_http(
-                        &cfg,
-                        trunk_config,
-                        handshake,
-                        &handle,
-                        cancel,
-                    )
-                    .await
-                },
-            )
+            let route_cfg =
+                pull_route::<crate::source::ts_http::TsHttpKind>(name, url, timeouts, auth);
+            spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::Srt {
             listen,
@@ -2100,53 +2072,24 @@ fn spawn_ingest(
             )
         }
         crate::config::InputSpec::HlsPull { url, auth } => {
-            let route_cfg = crate::source::hls_pull::HlsPullRoute::new(name, url.clone())
-                .with_timeouts(timeouts)
-                .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised_pull(
-                route_cfg,
-                ctx,
-                |cfg, trunk_config, handshake, handle, _cancel| async move {
-                    crate::source::hls_pull::run_hls_pull(&cfg, trunk_config, handshake, &handle)
-                        .await
-                },
-            )
+            let route_cfg =
+                pull_route::<crate::source::hls_pull::HlsPullKind>(name, url, timeouts, auth);
+            spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::DashPull {
             url,
             auth,
             allow_cross_origin,
         } => {
-            let route_cfg = crate::source::dash_pull::DashPullRoute::new(name, url.clone())
-                .with_timeouts(timeouts)
-                .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials))
-                .with_cross_origin_urls(*allow_cross_origin);
-            spawn_supervised_pull(
-                route_cfg,
-                ctx,
-                |cfg, trunk_config, handshake, handle, _cancel| async move {
-                    crate::source::dash_pull::run_dash_pull(&cfg, trunk_config, handshake, &handle)
-                        .await
-                },
-            )
+            let route_cfg =
+                pull_route::<crate::source::dash_pull::DashPullKind>(name, url, timeouts, auth)
+                    .with_cross_origin_urls(*allow_cross_origin);
+            spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::SmoothPull { url, auth } => {
-            let route_cfg = crate::source::smooth_pull::SmoothPullRoute::new(name, url.clone())
-                .with_timeouts(timeouts)
-                .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-            spawn_supervised_pull(
-                route_cfg,
-                ctx,
-                |cfg, trunk_config, handshake, handle, _cancel| async move {
-                    crate::source::smooth_pull::run_smooth_pull(
-                        &cfg,
-                        trunk_config,
-                        handshake,
-                        &handle,
-                    )
-                    .await
-                },
-            )
+            let route_cfg =
+                pull_route::<crate::source::smooth_pull::SmoothPullKind>(name, url, timeouts, auth);
+            spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::Rtmp {
             listen,
@@ -2332,27 +2275,39 @@ where
     spawn_supervised_with(crate::source::driver_trunk_config, route_cfg, ctx, run)
 }
 
-/// [`spawn_supervised`] for a segment-pulling input, whose `Trunk` needs a
-/// timed ring deep enough for one fetched segment.
-fn spawn_supervised_pull<R, F, Fut>(
-    route_cfg: R,
+/// Spawn a pull route's supervised ingest loop; every [`PullDrive`] kind
+/// shares this one path, differing only in its `Trunk` shape and drive loop.
+fn spawn_pull<K: PullDrive>(
+    route_cfg: PullRoute<K>,
     ctx: IngestSpawn,
-    run: F,
 ) -> tokio::task::JoinHandle<()>
 where
-    R: Send + Sync + 'static,
-    F: Fn(
-            Arc<R>,
-            media_plane::trunk::TrunkConfig,
-            media_plane::ingress::HandshakePolicy,
-            Arc<RouteHandle>,
-            tokio_util::sync::CancellationToken,
-        ) -> Fut
-        + Send
-        + 'static,
-    Fut: std::future::Future<Output = crate::Result<()>> + Send + 'static,
+    PullRoute<K>: Send + Sync,
 {
-    spawn_supervised_with(crate::source::pull_trunk_config, route_cfg, ctx, run)
+    let trunk_config_for = if K::SEGMENTED {
+        crate::source::pull_trunk_config
+    } else {
+        crate::source::driver_trunk_config
+    };
+    spawn_supervised_with(
+        trunk_config_for,
+        route_cfg,
+        ctx,
+        |cfg, trunk_config, handshake, handle, cancel| {
+            K::drive(cfg, trunk_config, handshake, handle, cancel)
+        },
+    )
+}
+
+fn pull_route<K: PullDrive>(
+    name: String,
+    url: &str,
+    timeouts: crate::source::IngestTimeouts,
+    auth: &Option<crate::config::AuthSpec>,
+) -> PullRoute<K> {
+    PullRoute::new(name, url)
+        .with_timeouts(timeouts)
+        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials))
 }
 
 fn spawn_supervised_with<R, F, Fut>(

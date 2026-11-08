@@ -131,6 +131,20 @@ impl PullKind for SmoothPullKind {
     type Extra = ();
 }
 
+impl crate::source::pull_target::PullDrive for SmoothPullKind {
+    const SEGMENTED: bool = true;
+
+    async fn drive(
+        route: std::sync::Arc<crate::source::pull_target::PullRoute<Self>>,
+        trunk_config: media_plane::trunk::TrunkConfig,
+        handshake: media_plane::ingress::HandshakePolicy,
+        route_handle: std::sync::Arc<crate::route::RouteHandle>,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::Result<()> {
+        run_smooth_pull(&route, trunk_config, handshake, &route_handle).await
+    }
+}
+
 /// Identifies one selected `StreamIndex` by its position in this session's
 /// resolved-stream order — stable for the session's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

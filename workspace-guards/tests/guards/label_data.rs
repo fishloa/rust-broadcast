@@ -1759,7 +1759,7 @@ pub const TABLE: &[Crate] = &[
     // Drift-guard for the spec/field-enum label convention (issue #204).
     //
     // webrtc-runtime's public enums are state-machine types (State, Event) and a
-    // structured error — those are skipped from the label convention. The HTTP
+    // structured error — those are skipped from the label convention, as are the uninhabited `Whip`/`Whep` direction markers of the shared session engine. The HTTP
     // `Method` the WHIP/WHEP state machines used to declare themselves is now
     // `http::Method` (re-exported), so no wire-token enum of that kind is left in
     // this crate.
@@ -1778,7 +1778,7 @@ pub const TABLE: &[Crate] = &[
         name: "webrtc-runtime",
         scope: Scope::PerFile,
         matcher: Matcher::Loose,
-        skip: &["Error", "Event", "State", "MediaEvent"],
+        skip: &["Error", "Event", "State", "MediaEvent", "Whip", "Whep"],
         expected: Some(&["SetupRole"]),
         min_enums: None,
     },

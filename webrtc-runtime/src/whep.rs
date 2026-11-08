@@ -7,14 +7,7 @@ pub mod player;
 pub mod server;
 
 /// Content types used in WHEP signalling.
-pub mod content_type {
-    /// SDP offer/answer body (`Content-Type` on the initial POST/response).
-    pub const SDP: &str = "application/sdp";
-    /// Trickle ICE SDP fragment body (`Content-Type` on a PATCH).
-    pub const TRICKLE_ICE: &str = "application/trickle-ice-sdpfrag";
-    /// RFC 9457 problem-details error body.
-    pub const PROBLEM_JSON: &str = "application/problem+json";
-}
+pub use crate::session::content_type;
 
 /// HTTP status codes specific to WHEP (superset of WHIP).
 pub mod status {

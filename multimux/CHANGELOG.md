@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The RTSP, TS-HTTP, HLS-pull, DASH-pull and Smooth-pull inputs share one `spawn_pull::<K>` supervised spawn path and one `pull_route::<K>` constructor over a crate-private `PullDrive` trait, replacing five per-input spawn closures in `spawn_ingest` (#1725).
 
 ## [0.16.0] - 2026-11-07
 ### Fixed

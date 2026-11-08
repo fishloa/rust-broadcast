@@ -3,6 +3,8 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- **BREAKING:** WHIP and WHEP run on one engine, `session::client::Client<P>` and `session::server::Session<P>`, generic over a sealed `session::Profile` (`Whip`, `Whep`). `WhipClient`, `WhepPlayer`, `WhipSession` and `WhepSession` are aliases of it, so construction and method calls read the same. The `State` and `Event` enums are now shared per role: `whip::client::State`/`Event` gain the WHEP-only `CounterOffered`/`CounterOffer` variants, `whip::server::State`/`Event` gain `CounterOffered`/`SdpAnswer`; a WHIP session never enters or emits them. `whep::player::State`/`Event` and `whep::server::State`/`Event` are the same types as the WHIP ones. `whip::content_type` and `whep::content_type` are one `session::content_type`. What stays direction-specific is selected by `Profile::EGRESS`: client `406` counter-offer and `409` no-publisher, server `PATCH` without `If-Match` (WHIP `428`, WHEP accepted), and the WHEP-only `counter_offer`, `ack_answer`, `no_publisher`, `answer_counter_offer`, `trickle_ice` (WHIP: `flush_candidates`) methods (#1725).
 
 ## [0.5.0] - 2026-11-07
 ### Changed

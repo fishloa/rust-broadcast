@@ -228,6 +228,20 @@ impl PullKind for HlsPullKind {
     type Extra = ();
 }
 
+impl crate::source::pull_target::PullDrive for HlsPullKind {
+    const SEGMENTED: bool = true;
+
+    async fn drive(
+        route: std::sync::Arc<crate::source::pull_target::PullRoute<Self>>,
+        trunk_config: media_plane::trunk::TrunkConfig,
+        handshake: media_plane::ingress::HandshakePolicy,
+        route_handle: std::sync::Arc<crate::route::RouteHandle>,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::Result<()> {
+        run_hls_pull(&route, trunk_config, handshake, &route_handle).await
+    }
+}
+
 /// This session's own request/response identity — see the module doc's
 /// "Correlating a fetch response".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

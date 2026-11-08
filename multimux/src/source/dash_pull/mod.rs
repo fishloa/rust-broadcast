@@ -86,6 +86,20 @@ impl PullKind for DashPullKind {
     }
 }
 
+impl crate::source::pull_target::PullDrive for DashPullKind {
+    const SEGMENTED: bool = true;
+
+    async fn drive(
+        route: std::sync::Arc<crate::source::pull_target::PullRoute<Self>>,
+        trunk_config: media_plane::trunk::TrunkConfig,
+        handshake: media_plane::ingress::HandshakePolicy,
+        route_handle: std::sync::Arc<crate::route::RouteHandle>,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::Result<()> {
+        run_dash_pull(&route, trunk_config, handshake, &route_handle).await
+    }
+}
+
 impl DashPullRoute {
     /// Lets the MPD name `BaseURL`, segment and `UTCTiming` URLs on another
     /// origin than its own. Off by default; see the module documentation.

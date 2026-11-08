@@ -3,8 +3,15 @@
 //! config-supplied credentials (which take precedence over URL userinfo, see
 //! `crate::source::http_auth::resolve_credentials`).
 
-use broadcast_auth::Credentials;
+use std::future::Future;
+use std::sync::Arc;
 
+use broadcast_auth::Credentials;
+use media_plane::ingress::HandshakePolicy;
+use media_plane::trunk::TrunkConfig;
+use tokio_util::sync::CancellationToken;
+
+use crate::route::RouteHandle;
 use crate::source::IngestTimeouts;
 
 #[derive(Clone)]
@@ -126,4 +133,22 @@ impl<K: PullKind> crate::source::Source for PullRoute<K> {
     fn stream_name(&self) -> &str {
         &self.target.name
     }
+}
+
+/// How the supervisor drives one [`PullKind`]: the `Trunk` shape its ingest
+/// needs and the one async drive loop. [`spawn_pull`](crate::origin) is
+/// generic over this, so the five pull routes share a single spawn path.
+pub(crate) trait PullDrive: PullKind + Sized + 'static {
+    /// `true` for a segment-pulling kind, whose `Trunk` needs a timed ring
+    /// deep enough for one fetched segment.
+    const SEGMENTED: bool;
+
+    /// Runs one ingest attempt; resolves only when the attempt ends.
+    fn drive(
+        route: Arc<PullRoute<Self>>,
+        trunk_config: TrunkConfig,
+        handshake: HandshakePolicy,
+        route_handle: Arc<RouteHandle>,
+        cancel: CancellationToken,
+    ) -> impl Future<Output = crate::Result<()>> + Send;
 }
