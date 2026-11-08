@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Opt-in buffering input log for offline replay: `Config::record_buffer_inputs` (default off; nothing is recorded or allocated when off) and `Config::max_recorded_buffer_inputs` (default 1 000 000, must be non-zero), `Session::drain_buffer_inputs()`, `Session::dropped_buffer_inputs()`, `Session::buffer_input_log_config()`, `Session::buffer_input_log_seed()` and `Config::controller_config()` (the exact `ControllerConfig` the session's controller is built from). Inputs are `buffering_runtime::input_log::Input` (re-exported as `BufferInput`, with `InputLog`), written and replayed by `buffering-runtime`'s `input_log` module. A full queue drops new inputs, counts them and emits one non-fatal `ErrorKind::BufferInputsDropped`.
+### Changed
+- `BufferInput` was a `doc(hidden)` type behind the `__test-seams` feature; it is now the public `buffering_runtime::input_log::Input`, and its `Register`/`Unregister` variants are struct variants carrying `now_us` and `track`. Not a public break (it was never public).
 
 ## [0.3.0] - 2026-11-07
 ### Added

@@ -161,6 +161,8 @@ variant switch or `reconnect()` resets the gate and `Start` fires again from the
 smaller value would pause and resume on every update). A `set_rendered_tracks` made before the gate
 engages (finite TS) is applied when it does. Separate audio renditions join the minimum.
 
+Offline replay: set `Config::record_buffer_inputs` and drain `Session::drain_buffer_inputs()` (bounded by `max_recorded_buffer_inputs`, drops counted by `dropped_buffer_inputs()`); with `buffer_input_log_config()` and `buffer_input_log_seed()` the inputs form a `buffering_runtime::input_log::InputLog` whose text replays through `InputLog::replay`.
+
 ## Timeline jumps
 
 A new timeline that no TS discontinuity flag announces (origin restart, a recorder looping a file, a
