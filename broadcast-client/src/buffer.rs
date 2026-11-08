@@ -4,6 +4,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use broadcast_common::timescale::{Rounding, rescale};
+use buffering_runtime::input_log::Input;
 use buffering_runtime::{
     BufferController, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
 };
@@ -14,74 +15,67 @@ use crate::join::VideoJoin;
 
 const SILENCE_MARGIN_US: u64 = 500_000;
 
-/// One input the session fed to the buffering controller.
-#[cfg(feature = "__test-seams")]
-#[doc(hidden)]
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BufferInput {
-    /// `on_chunk`.
-    Chunk {
-        /// Arrival time.
-        now_us: u64,
-        /// Chunk length.
-        bytes: u32,
-        /// Last PCR of the chunk.
-        pcr: Option<u64>,
-    },
-    /// `on_track_media`.
-    TrackMedia {
-        /// Report time.
-        now_us: u64,
-        /// Controller track key.
-        track: u32,
-        /// Media end, 27 MHz.
-        end: u64,
-    },
-    /// `on_tick`.
-    Tick {
-        /// Tick time.
-        now_us: u64,
-        /// Playback position, 27 MHz.
-        pts: Option<u64>,
-    },
-    /// `on_hint`.
-    Hint {
-        /// Hint time.
-        now_us: u64,
-        /// The hint.
-        hint: Hint,
-    },
-    /// `register_track`.
-    Register(u32),
-    /// `unregister_track`.
-    Unregister(u32),
+pub(crate) struct InputLog {
+    enabled: bool,
+    cap: usize,
+    queue: Vec<Input>,
+    dropped: u64,
+    last_now_us: u64,
 }
 
-#[cfg(feature = "__test-seams")]
-impl BufferInput {
-    /// Spec label.
-    #[must_use]
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Chunk { .. } => "chunk",
-            Self::TrackMedia { .. } => "track media",
-            Self::Tick { .. } => "tick",
-            Self::Hint { .. } => "hint",
-            Self::Register(_) => "register",
-            Self::Unregister(_) => "unregister",
+impl InputLog {
+    fn new() -> Self {
+        Self {
+            enabled: false,
+            cap: 0,
+            queue: Vec::new(),
+            dropped: 0,
+            last_now_us: 0,
         }
+    }
+
+    pub(crate) fn now(&mut self, now_us: u64) -> u64 {
+        self.last_now_us = self.last_now_us.max(now_us);
+        self.last_now_us
+    }
+
+    pub(crate) fn last_now(&self) -> u64 {
+        self.last_now_us
+    }
+
+    pub(crate) fn record(&mut self, input: Input) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        if self.queue.len() >= self.cap {
+            self.dropped = self.dropped.saturating_add(1);
+            return self.dropped == 1;
+        }
+        self.queue.push(input);
+        false
+    }
+
+    #[cfg(feature = "__test-seams")]
+    pub(crate) fn peek(&self) -> &[Input] {
+        &self.queue
+    }
+
+    pub(crate) fn drain(&mut self) -> alloc::vec::Drain<'_, Input> {
+        self.queue.drain(..)
+    }
+
+    pub(crate) fn dropped(&self) -> u64 {
+        self.dropped
     }
 }
 
-#[cfg(feature = "__test-seams")]
-broadcast_common::impl_spec_display!(BufferInput);
-
 macro_rules! rec {
     ($s:expr, $e:expr) => {
-        #[cfg(feature = "__test-seams")]
-        {
-            $s.log.push($e);
+        if $s.log.record($e) {
+            $s.pending_events.push(Event::Error {
+                kind: ErrorKind::BufferInputsDropped,
+                fatal: false,
+            });
         }
     };
 }
@@ -138,8 +132,21 @@ pub(crate) fn lowest_id_per_kind(
     (video, audio)
 }
 
+pub(crate) fn effective_controller_config(
+    mut cfg: ControllerConfig,
+    start_pending_track_wait_us: u64,
+    start_pending_track_hard_cap_us: u64,
+) -> ControllerConfig {
+    let floor = start_pending_track_wait_us
+        .max(start_pending_track_hard_cap_us)
+        .saturating_add(SILENCE_MARGIN_US);
+    cfg.track_silence_timeout_us = cfg.track_silence_timeout_us.max(floor);
+    cfg
+}
+
 pub(crate) struct Feeder {
     config: ControllerConfig,
+    initial_seed: Option<StallMemorySnapshot>,
     seed: Option<StallMemorySnapshot>,
     controller: Option<BufferController>,
     finite: bool,
@@ -168,8 +175,7 @@ pub(crate) struct Feeder {
     cap_notice_emitted: bool,
     holding: bool,
     audio_pending: bool,
-    #[cfg(feature = "__test-seams")]
-    pub(crate) log: Vec<BufferInput>,
+    pub(crate) log: InputLog,
 }
 
 impl Feeder {
@@ -181,6 +187,7 @@ impl Feeder {
     ) -> Self {
         Self {
             config,
+            initial_seed: seed,
             seed,
             controller: None,
             finite: false,
@@ -209,9 +216,21 @@ impl Feeder {
             cap_notice_emitted: false,
             holding: false,
             audio_pending: false,
-            #[cfg(feature = "__test-seams")]
-            log: Vec::new(),
+            log: InputLog::new(),
         }
+    }
+
+    pub(crate) fn set_recording(&mut self, enabled: bool, cap: usize) {
+        self.log.enabled = enabled;
+        self.log.cap = cap;
+    }
+
+    pub(crate) fn replay_config(&self) -> ControllerConfig {
+        self.controller_config()
+    }
+
+    pub(crate) fn replay_seed(&self) -> Option<StallMemorySnapshot> {
+        self.initial_seed
     }
 
     pub(crate) fn set_finite(&mut self) {
@@ -257,6 +276,7 @@ impl Feeder {
     }
 
     fn sync_pending(&mut self, now_us: u64) {
+        self.log.now(now_us);
         let effective = self.effective_wait_us();
         let waited = self.first_media_us.map(|f| now_us.saturating_sub(f));
         let want = self.expecting && !self.started && waited.is_some_and(|w| w < effective);
@@ -285,10 +305,22 @@ impl Feeder {
         };
         if want && !self.pending_registered {
             c.register_track(PENDING_TRACK_KEY);
-            rec!(self, BufferInput::Register(PENDING_TRACK_KEY));
+            rec!(
+                self,
+                Input::Register {
+                    now_us: self.log.last_now(),
+                    track: PENDING_TRACK_KEY
+                }
+            );
         } else if !want && self.pending_registered {
             c.unregister_track(PENDING_TRACK_KEY);
-            rec!(self, BufferInput::Unregister(PENDING_TRACK_KEY));
+            rec!(
+                self,
+                Input::Unregister {
+                    now_us: self.log.last_now(),
+                    track: PENDING_TRACK_KEY
+                }
+            );
         }
         self.pending_registered = want;
     }
@@ -333,7 +365,13 @@ impl Feeder {
             && let Some(c) = &mut self.controller
         {
             c.unregister_track(t.value());
-            rec!(self, BufferInput::Unregister(t.value()));
+            rec!(
+                self,
+                Input::Unregister {
+                    now_us: self.log.last_now(),
+                    track: t.value()
+                }
+            );
         }
     }
 
@@ -381,7 +419,13 @@ impl Feeder {
             self.pending_zero.remove(&t);
             if let Some(c) = &mut self.controller {
                 c.unregister_track(t.value());
-                rec!(self, BufferInput::Unregister(t.value()));
+                rec!(
+                    self,
+                    Input::Unregister {
+                        now_us: self.log.last_now(),
+                        track: t.value()
+                    }
+                );
             }
         }
         if !self
@@ -396,7 +440,13 @@ impl Feeder {
             self.rendered.insert(*t);
             if let Some(c) = &mut self.controller {
                 c.register_track(t.value());
-                rec!(self, BufferInput::Register(t.value()));
+                rec!(
+                    self,
+                    Input::Register {
+                        now_us: self.log.last_now(),
+                        track: t.value()
+                    }
+                );
             }
             self.seed_from_history(*t);
         }
@@ -548,13 +598,11 @@ impl Feeder {
     }
 
     fn controller_config(&self) -> ControllerConfig {
-        let mut cfg = self.config;
-        let floor = self
-            .start_pending_track_wait_us
-            .max(self.start_pending_track_hard_cap_us)
-            .saturating_add(SILENCE_MARGIN_US);
-        cfg.track_silence_timeout_us = cfg.track_silence_timeout_us.max(floor);
-        cfg
+        effective_controller_config(
+            self.config,
+            self.start_pending_track_wait_us,
+            self.start_pending_track_hard_cap_us,
+        )
     }
 
     fn ensure_controller(&mut self) {
@@ -566,7 +614,13 @@ impl Feeder {
         {
             for t in &self.rendered {
                 c.register_track(t.value());
-                rec!(self, BufferInput::Register(t.value()));
+                rec!(
+                    self,
+                    Input::Register {
+                        now_us: self.log.last_now(),
+                        track: t.value()
+                    }
+                );
             }
             self.controller = Some(c);
             self.pending_registered = false;
@@ -589,13 +643,14 @@ impl Feeder {
     }
 
     fn report_media(&mut self, now_us: u64, t: TrackId, end: u64) {
+        self.log.now(now_us);
         self.first_media_us.get_or_insert(now_us);
         self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
             c.on_track_media(now_us, t.value(), end);
             rec!(
                 self,
-                BufferInput::TrackMedia {
+                Input::TrackMedia {
                     now_us,
                     track: t.value(),
                     end
@@ -610,6 +665,7 @@ impl Feeder {
             self.pending_zero.clear();
             return;
         }
+        self.log.now(now_us);
         self.ensure_controller();
         self.last_chunk_us = Some(now_us);
         self.sync_pending(now_us);
@@ -620,7 +676,7 @@ impl Feeder {
         c.on_chunk(now_us, len, pcr);
         rec!(
             self,
-            BufferInput::Chunk {
+            Input::Chunk {
                 now_us,
                 bytes: len,
                 pcr
@@ -638,10 +694,11 @@ impl Feeder {
         if self.finite {
             return;
         }
+        self.log.now(now_us);
         self.ensure_controller();
         if let Some(c) = &mut self.controller {
             c.on_hint(now_us, h);
-            rec!(self, BufferInput::Hint { now_us, hint: h });
+            rec!(self, Input::Hint { now_us, hint: h });
         }
     }
 
@@ -652,7 +709,7 @@ impl Feeder {
         self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
             c.on_tick(now_us, pts);
-            rec!(self, BufferInput::Tick { now_us, pts });
+            rec!(self, Input::Tick { now_us, pts });
         }
     }
 

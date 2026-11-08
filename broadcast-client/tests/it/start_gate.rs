@@ -138,6 +138,7 @@ fn config_with_lead(hold: Hold, len: usize, start_lead_us: u64) -> Config {
     };
     cfg.buffer.policy.initial_us = start_lead_us;
     cfg.start_pending_track_hard_cap_us = 0;
+    cfg.record_buffer_inputs = true;
     cfg
 }
 

@@ -139,7 +139,9 @@ struct Host {
 
 impl Host {
     fn open(seed: Option<StallMemorySnapshot>) -> Option<Self> {
-        let mut session = Session::open_with_memory(URL, Config::default(), 0, seed).unwrap();
+        let mut config = Config::default();
+        config.record_buffer_inputs = true;
+        let mut session = Session::open_with_memory(URL, config, 0, seed).unwrap();
         let (status, headers) = support::read_tf1_headers()?;
         let conn = match session.poll(0).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
@@ -282,7 +284,12 @@ fn chunk_count(log: &[BufferInput]) -> usize {
 
 fn without_registration(log: &[BufferInput]) -> Vec<BufferInput> {
     log.iter()
-        .filter(|l| !matches!(l, BufferInput::Register(_) | BufferInput::Unregister(_)))
+        .filter(|l| {
+            !matches!(
+                l,
+                BufferInput::Register { .. } | BufferInput::Unregister { .. }
+            )
+        })
         .cloned()
         .collect()
 }
@@ -973,7 +980,9 @@ fn source_ended_and_error_hints() {
         [Hint::SourceError]
     );
 
-    let mut forbidden = Session::open(URL, Config::default(), 0).unwrap();
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    let mut forbidden = Session::open(URL, config, 0).unwrap();
     let conn = match forbidden.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
@@ -1055,25 +1064,17 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     let n = 1_400;
     h.run(&bytes[..n * CHUNK], CHUNK, &realtime(n), 0);
     let ids = h.track_ids();
-    let registers = |h: &Host| -> Vec<BufferInput> {
-        h.log()
-            .iter()
-            .filter(|l| matches!(l, BufferInput::Register(_) | BufferInput::Unregister(_)))
-            .cloned()
-            .collect()
-    };
-    assert_eq!(
-        registers(&h),
-        [BufferInput::Register(VIDEO), BufferInput::Register(AUDIO)]
-    );
+    let registers =
+        |h: &Host| -> Vec<(bool, u32)> { h.log().iter().filter_map(register_change).collect() };
+    assert_eq!(registers(&h), [(true, VIDEO), (true, AUDIO)]);
     let base = h.log().len();
 
     h.session
         .set_rendered_tracks(&[ids[&VIDEO], ids[&OTHER_AUDIO]]);
     let after = &h.log()[base..];
     assert_eq!(after.len(), 3, "{after:?}");
-    assert_eq!(after[0], BufferInput::Unregister(AUDIO));
-    assert_eq!(after[1], BufferInput::Register(OTHER_AUDIO));
+    assert_eq!(register_change(&after[0]), Some((false, AUDIO)));
+    assert_eq!(register_change(&after[1]), Some((true, OTHER_AUDIO)));
     assert!(
         matches!(after[2], BufferInput::TrackMedia { track, .. } if track == OTHER_AUDIO),
         "{after:?}"
@@ -1087,7 +1088,7 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
         .set_rendered_tracks(&[ids[&VIDEO], ids[&AUDIO], ids[&OTHER_AUDIO]]);
     let after = &h.log()[base..];
     assert_eq!(after.len(), 2, "{after:?}");
-    assert_eq!(after[0], BufferInput::Register(AUDIO));
+    assert_eq!(register_change(&after[0]), Some((true, AUDIO)));
     assert!(
         matches!(after[1], BufferInput::TrackMedia { track, .. } if track == AUDIO),
         "{after:?}"
@@ -1145,12 +1146,22 @@ fn stall_memory_roundtrip_seeds_next_session() {
     assert_eq!(fresh.session.stall_memory().peak_us, 0);
 }
 
+fn register_change(input: &BufferInput) -> Option<(bool, u32)> {
+    match input {
+        BufferInput::Register { track, .. } => Some((true, *track)),
+        BufferInput::Unregister { track, .. } => Some((false, *track)),
+        _ => None,
+    }
+}
+
 #[test]
 fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
     let bytes = tf1_bytes!();
     let (status, mut headers) = tf1_headers!();
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
-    let mut session = Session::open(URL, Config::default(), 0).unwrap();
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    let mut session = Session::open(URL, config, 0).unwrap();
     let conn = match session.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
@@ -1418,7 +1429,7 @@ fn rejoin_rearms_join_without_pcr_discontinuity_hint_or_controller_reset() {
     let after = &h.log()[mark..];
     assert!(!after.iter().any(|l| matches!(
         l,
-        BufferInput::Hint { .. } | BufferInput::Register(_) | BufferInput::Unregister(_)
+        BufferInput::Hint { .. } | BufferInput::Register { .. } | BufferInput::Unregister { .. }
     )));
     let joins = join_points(&h);
     assert_eq!(joins.len(), 2, "{joins:?}");

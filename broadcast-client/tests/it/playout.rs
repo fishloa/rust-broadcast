@@ -662,7 +662,9 @@ fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Even
 
 #[test]
 fn finite_ts_vod_gate_events_not_buffering_runtime() {
-    let mut s = finite_session(Config::default());
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    let mut s = finite_session(config);
     let events = feed_finite(&mut s, 1316, true);
     let list = nb(&events);
     assert!(list.iter().any(|e| matches!(e, Event::Finite { .. })));
@@ -686,7 +688,9 @@ fn finite_ts_vod_gate_events_not_buffering_runtime() {
 fn live_ts_http_still_uses_buffering_runtime() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut s = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    let mut s = Session::open("http://example/live.ts", config, 0).unwrap();
     let conn = match s.poll(0).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),

@@ -36,6 +36,9 @@ serde = ["dep:serde"]
 name = "replay_trace"
 
 [[example]]
+name = "replay_input_log"
+
+[[example]]
 name = "live_loop"
 
 [[example]]

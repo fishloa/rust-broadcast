@@ -109,6 +109,7 @@ Full design and evidence: [`docs/buffering-runtime/DESIGN.md`](https://github.co
 
 ## Examples
 
+- `input_log` records every call a host makes into the controller as a self-describing text log (`config` rows, then one row per `Input`) and replays it with `InputLog::replay`; `cargo run -p buffering-runtime --example replay_input_log -- <log.csv>` prints the decisions.
 - `cargo run -p buffering-runtime --example replay_trace` replays a built-in synthetic trace (clean link, one 1.4 s stall, a burst); pass a CSV path (`arrival_ns,bytes,pcr_27mhz`) to replay a real trace.
 - `cargo run -p buffering-runtime --example live_loop` shows the caller loop and the pause/resume contract with a mock renderer.
 

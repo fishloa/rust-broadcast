@@ -4,7 +4,7 @@
 //! `kind,now_us,a,b` with `chunk` (a = bytes, b = PCR 27 MHz or empty),
 //! `media` (a = track 1 video / 2 audio, b = media end 27 MHz), `tick`
 //! (a = has_pos, b = playback 27 MHz), `register` (a = track), `hint`
-//! (a = code). The logs are replayed verbatim through the CURRENT controller
+//! (a = hint token). The logs are parsed by `buffering_runtime::input_log` and replayed verbatim through the CURRENT controller
 //! (`PolicyConfig::DEFAULT` with `initial_us` 500 ms, no seed), so unlike the
 //! per-chunk traces no renderer model is needed: the logged ticks ARE the
 //! renderer. The controller's decisions are therefore not what the device saw
@@ -14,23 +14,11 @@
 //! Loaded through `test_fixtures::require` (skips loudly without the private
 //! repo; fails under `REQUIRE_PRIVATE_FIXTURES=1`).
 
-use buffering_runtime::{
-    BufferController, ControllerConfig, Event, Hint, Micros, PolicyConfig, Reason, Ticks27,
-};
+use buffering_runtime::input_log::{Input, InputLog};
+use buffering_runtime::{ControllerConfig, Event, Micros, PolicyConfig, Reason, Ticks27};
 
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
-/// Hint codes as logged by zenith-tv (none occur in the committed logs; an
-/// unknown code is a test failure rather than a silent skip).
-const HINT_CODES: &[Hint] = &[
-    Hint::InputDegraded,
-    Hint::InputRecovered,
-    Hint::SyncLoss,
-    Hint::PcrDiscontinuity,
-    Hint::SourceEnded,
-    Hint::SourceError,
-    Hint::Reconnected,
-];
 
 struct Replay {
     events: Vec<(Micros, Event)>,
@@ -116,7 +104,9 @@ fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> 
         "buffering-runtime apple_tv_input_logs",
     )?;
     let text = std::fs::read_to_string(&path).unwrap();
-    let mut c = BufferController::new(cfg, None).unwrap();
+    let mut log = InputLog::parse_with_config(&text, cfg).unwrap();
+    log.rebase();
+    let mut c = log.controller().unwrap();
     let mut r = Replay {
         events: Vec::new(),
         final_target: 0,
@@ -124,43 +114,27 @@ fn replay_with(name: &str, cfg: ControllerConfig, pre: &[u32], closed: bool) -> 
         targets: Vec::new(),
         chunks: 0,
     };
-    let mut t0 = None::<u64>;
-    for line in text.lines().skip(1) {
-        let mut f = line.split(',');
-        let kind = f.next().unwrap();
-        let now_raw: u64 = f.next().unwrap().parse().unwrap();
-        let a = f.next().unwrap();
-        let b = f.next().unwrap_or("");
-        let first_row = t0.is_none();
-        let t0 = *t0.get_or_insert(now_raw);
-        let now = now_raw - t0;
-        if first_row {
+    for (n, input) in log.inputs.iter().enumerate() {
+        let now = input.now_us();
+        if n == 0 {
             for t in pre {
                 c.register_track(*t);
             }
         }
-        match kind {
-            "chunk" => {
-                r.chunks += 1;
-                let pcr: Option<Ticks27> = (!b.is_empty()).then(|| b.parse().unwrap());
-                c.on_chunk(now, a.parse().unwrap(), pcr);
+        match input {
+            Input::Chunk { .. } => r.chunks += 1,
+            Input::TrackMedia { track, .. } => {
+                assert!(*track == VIDEO || *track == AUDIO, "unknown track {track}");
             }
-            "media" => {
-                let track: u32 = a.parse().unwrap();
-                assert!(track == VIDEO || track == AUDIO, "unknown track {track}");
-                c.on_track_media(now, track, b.parse().unwrap());
+            _ => {}
+        }
+        match input {
+            Input::Tick { .. } if closed => Input::Tick {
+                now_us: now,
+                pts: Some(rend.pos(now)),
             }
-            "tick" => {
-                let pos = if closed {
-                    Some(rend.pos(now))
-                } else {
-                    (a == "1").then(|| b.parse::<Ticks27>().unwrap())
-                };
-                c.on_tick(now, pos);
-            }
-            "register" => c.register_track(a.parse().unwrap()),
-            "hint" => c.on_hint(now, HINT_CODES[a.parse::<usize>().unwrap()]),
-            other => panic!("unknown row kind {other}"),
+            .apply(&mut c),
+            other => other.apply(&mut c),
         }
         while let Some(e) = c.poll_event() {
             match e {
@@ -199,20 +173,19 @@ fn max_audio_gap_us(name: &str, from_us: u64) -> u64 {
     )
     .unwrap();
     let text = std::fs::read_to_string(path).unwrap();
-    let mut t0 = None::<u64>;
+    let mut log = InputLog::parse_with_config(&text, ControllerConfig::default()).unwrap();
+    log.rebase();
     let (mut last, mut max) = (None::<u64>, 0);
-    for line in text.lines().skip(1) {
-        let mut f = line.split(',');
-        let kind = f.next().unwrap();
-        let now: u64 = f.next().unwrap().parse().unwrap();
-        let now = now - *t0.get_or_insert(now);
-        if kind == "media" && f.next() == Some("2") {
+    for input in &log.inputs {
+        if let Input::TrackMedia { now_us, track, .. } = *input
+            && track == AUDIO
+        {
             if let Some(l) = last
-                && now >= from_us
+                && now_us >= from_us
             {
-                max = max.max(now - l);
+                max = max.max(now_us - l);
             }
-            last = Some(now);
+            last = Some(now_us);
         }
     }
     max

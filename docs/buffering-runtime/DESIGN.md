@@ -61,6 +61,10 @@ There is no separate "Starved" event: a starvation is a `Pause` with reason NoDa
 
 **0.6 Results at the owner-approved `initial = 1.8 s`** (independent oracle `analysis/golden_oracle.py`, 5 ms ticks, agrees with the Rust replay exactly): tf-1 and 6ter do not stall; the lowest lead left after the gap is **383 ms (tf-1)** and **350 ms (6ter)** (the sample-driven `controller_sim` reads 418/381 ms: it only looks at chunk instants); zap (first PCR to StartPlaying) 1815 / 1824 ms on tf-1 / 6ter and 3125 ms on servustv (the 1.33 s startup gap lifts the start target to max(1.8 s, 1.6 s) and delays the fill); the 5 gap-free traces never pause and keep the target at the 300 ms floor. With `initial = 500 ms` tf-1 and 6ter stall once at the gap (freeze 3.01 s and 3.07 s) and resume at ~2.1 s.
 
+## 0.8 Input log format
+
+`input_log` (own design, no standard) makes any host's run replayable. Text, header `kind,now_us,a,b`. First the controller: one `config,0,<token>,<value>` row per `ControllerConfig` field (`ConfigKey::name()`, e.g. `policy.initial_us`; flags are `true`/`false`) and, if a stall-memory seed was used, `seed,0,<peak_us>,<age_us>`. Then one row per call in call order: `chunk,<now>,<bytes>,<pcr|empty>`, `media,<now>,<track>,<end>`, `tick,<now>,<1|0>,<pos|empty>`, `register|unregister,<now>,<track>,`, `hint,<now>,<Hint::name()>,`. `Input::apply` is the only mapping from a row back to a controller call, so recording and replay cannot drift. A log without `config` rows is replayed with a caller-supplied configuration (the Apple TV goldens). Dropped inputs make a log unfaithful, so a recording host must count and report them.
+
 ## 1. Purpose and non-goals
 
 `buffering-runtime` decides **when a live-TS player should pause, wait, and resume**, and how deep the buffer must be to survive the delivery stalls of a real network. It turns "chunk arrived at time T carrying media time M" and "the playback clock reads P" into: a target buffer depth, a state (Buffering / Playing / Starved), and events telling the caller exactly when to start, pause and resume and at which media position.

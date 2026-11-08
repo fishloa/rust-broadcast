@@ -11,7 +11,7 @@ fn a_reconnect_to_another_stream_announces_only_the_new_connections_tracks() {
     let first = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "r6_ts_tracks");
     let Some(first) = first else { return };
     let second = test_fixtures::read("ts/h264-aac.ts");
-    let mut host = Host::open(Config::default());
+    let mut host = Host::open(recording());
     host.feed(&first[..PRIVATE_PREFIX_BYTES], CHUNK);
     let old = host.announced().expect("tracks announced");
     assert!(old.len() > 2, "{old:?}");
@@ -28,7 +28,7 @@ fn a_reconnect_to_another_stream_announces_only_the_new_connections_tracks() {
 fn a_track_that_vanishes_across_a_reconnect_is_no_longer_a_default_rendered_phantom() {
     let first = test_fixtures::read("ts/h264-aac-40s.ts");
     let second = test_fixtures::read("ts/h264/high-1080-cropped.ts");
-    let mut host = Host::open(Config::default());
+    let mut host = Host::open(recording());
     host.feed(&first[..first.len() / 3], CHUNK);
     assert_eq!(host.announced(), Some(vec![1, 2]));
     host.reconnect();
@@ -46,6 +46,12 @@ fn a_track_that_vanishes_across_a_reconnect_is_no_longer_a_default_rendered_phan
     assert!(stray.is_empty());
 }
 
+fn recording() -> Config {
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    config
+}
+
 fn registrations(host: &Host) -> Vec<String> {
     host.session
         .buffer_input_log()
@@ -53,11 +59,17 @@ fn registrations(host: &Host) -> Vec<String> {
         .filter(|i| {
             matches!(
                 i,
-                broadcast_client::BufferInput::Register(_)
-                    | broadcast_client::BufferInput::Unregister(_)
+                broadcast_client::BufferInput::Register { .. }
+                    | broadcast_client::BufferInput::Unregister { .. }
             )
         })
-        .map(|i| format!("{i:?}"))
+        .map(|i| match i {
+            broadcast_client::BufferInput::Register { track, .. } => format!("Register({track})"),
+            broadcast_client::BufferInput::Unregister { track, .. } => {
+                format!("Unregister({track})")
+            }
+            other => format!("{other:?}"),
+        })
         .collect()
 }
 
@@ -76,7 +88,7 @@ fn unknown_reports(host: &Host) -> Vec<u32> {
 
 fn run_declared(declared: Option<&[u32]>) -> Host {
     let bytes = test_fixtures::read("ts/h264-aac-40s.ts");
-    let mut host = Host::open(Config::default());
+    let mut host = Host::open(recording());
     host.feed_playing(&bytes[..CHUNK * 3], CHUNK);
     if let Some(ids) = declared {
         let ids: Vec<TrackId> = ids.iter().map(|i| TrackId::new(*i)).collect();
@@ -136,7 +148,7 @@ fn an_unknown_id_beside_a_real_one_is_ignored_and_reported_once() {
 #[test]
 fn a_declaration_made_before_the_first_announcement_applies_when_it_arrives_without_noise() {
     let bytes = test_fixtures::read("ts/h264-aac-40s.ts");
-    let mut host = Host::open(Config::default());
+    let mut host = Host::open(recording());
     host.session
         .set_rendered_tracks(&[TrackId::new(1), TrackId::new(2)]);
     host.settle();
@@ -172,7 +184,7 @@ fn flipped_h264_aac() -> Vec<u8> {
 #[test]
 fn an_explicit_video_audio_declaration_survives_a_pmt_drop_and_restore() {
     let bytes = flipped_h264_aac();
-    let mut host = Host::open(Config::default());
+    let mut host = Host::open(recording());
     host.feed_playing(&bytes[..CHUNK * 3], CHUNK);
     host.session
         .set_rendered_tracks(&[TrackId::new(1), TrackId::new(2)]);
@@ -200,7 +212,7 @@ fn an_explicit_video_audio_declaration_survives_a_pmt_drop_and_restore() {
 #[test]
 fn a_drop_and_restore_without_a_declaration_follows_the_default_set() {
     let bytes = flipped_h264_aac();
-    let mut host = Host::open(Config::default());
+    let mut host = Host::open(recording());
     host.feed_playing(&bytes, CHUNK);
     assert_eq!(
         host.session.default_rendered_tracks(),

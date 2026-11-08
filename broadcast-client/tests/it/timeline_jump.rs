@@ -93,7 +93,8 @@ impl Host {
         Self::open_with(config, (200, Vec::new()))
     }
 
-    fn open_with(config: Config, (status, headers): (u16, Vec<(String, String)>)) -> Self {
+    fn open_with(mut config: Config, (status, headers): (u16, Vec<(String, String)>)) -> Self {
+        config.record_buffer_inputs = true;
         let mut session = Session::open(URL, config, 0).unwrap();
         let conn = match session.poll(0).unwrap() {
             Action::HttpRequest { conn, .. } => conn,

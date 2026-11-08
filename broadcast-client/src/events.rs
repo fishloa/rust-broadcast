@@ -484,6 +484,10 @@ pub enum ErrorKind {
         /// The server's status code.
         code: String,
     },
+    /// The recorded-buffering-input queue reached [`Config::max_recorded_buffer_inputs`] and
+    /// inputs are being dropped (the count is [`crate::Session::dropped_buffer_inputs`]); a log
+    /// with drops no longer replays faithfully. Non-fatal, reported once per session.
+    BufferInputsDropped,
 }
 
 impl ErrorKind {
@@ -515,6 +519,7 @@ impl ErrorKind {
             Self::SrtHandshakeTimeout => "srt_handshake_timeout",
             Self::SmoothManifest { .. } => "smooth_manifest",
             Self::RtmpStatus { .. } => "rtmp_status",
+            Self::BufferInputsDropped => "buffer_inputs_dropped",
         }
     }
 }
@@ -957,6 +962,9 @@ pub const DEFAULT_START_PENDING_TRACK_HARD_CAP_US: u64 = 4_000_000;
 /// Default cap on events queued for the host, see [`Config::max_queued_events`].
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 
+/// Default cap on recorded buffering inputs, see [`Config::max_recorded_buffer_inputs`].
+pub const DEFAULT_MAX_RECORDED_BUFFER_INPUTS: usize = 1_000_000;
+
 /// Session configuration.
 #[derive(Clone, PartialEq)]
 #[non_exhaustive]
@@ -1049,6 +1057,17 @@ pub struct Config {
     /// statuses) is kept, so the queue is bounded by this cap plus the undroppable events a
     /// stalled host leaves unread. Must be non-zero (a zero cap would drop every sample).
     pub max_queued_events: usize,
+    /// Record every call the session makes into its buffering controller so the host can drain
+    /// them with [`crate::Session::drain_buffer_inputs`] and replay them offline through a
+    /// `buffering_runtime::BufferController` built from [`Config::controller_config`] (see
+    /// [`crate::BufferInput`] (`buffering_runtime::input_log::Input`)). Off by default; when off nothing is recorded and no memory is
+    /// used.
+    pub record_buffer_inputs: bool,
+    /// Cap on recorded buffering inputs held for the host while
+    /// [`Config::record_buffer_inputs`] is set. When the queue is full new inputs are dropped
+    /// and counted by [`crate::Session::dropped_buffer_inputs`], and the first drop emits
+    /// [`ErrorKind::BufferInputsDropped`]. Must be non-zero.
+    pub max_recorded_buffer_inputs: usize,
     /// Timeline-jump detector thresholds; `None` disables the detector. A jump of the media
     /// timeline without a TS discontinuity flag emits [`Event::Discontinuity`] before the first
     /// sample of the new timeline and re-arms the join, buffering and playout state as a
@@ -1108,10 +1127,26 @@ pub struct Config {
 }
 
 impl Config {
+    /// The exact controller configuration a session opened with this `Config` builds its
+    /// buffering controller from: [`Config::buffer`] with the track-silence timeout raised above
+    /// the start-pending wait. Build the replay `buffering_runtime::BufferController` from this,
+    /// not from [`Config::buffer`] alone, or the replay can diverge from the session.
+    #[must_use]
+    pub fn controller_config(&self) -> buffering_runtime::ControllerConfig {
+        crate::buffer::effective_controller_config(
+            self.buffer,
+            self.start_pending_track_wait_us,
+            self.start_pending_track_hard_cap_us,
+        )
+    }
+
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
         let invalid = |field| Err(crate::Error::InvalidConfig { field });
         if self.max_queued_events == 0 {
             return invalid("max_queued_events");
+        }
+        if self.max_recorded_buffer_inputs == 0 {
+            return invalid("max_recorded_buffer_inputs");
         }
         if self.max_manifest_bytes == 0 {
             return invalid("max_manifest_bytes");
@@ -1209,6 +1244,8 @@ impl Default for Config {
             preferred_audio_language: None,
             auto_select_audio: true,
             max_queued_events: DEFAULT_MAX_QUEUED_EVENTS,
+            record_buffer_inputs: false,
+            max_recorded_buffer_inputs: DEFAULT_MAX_RECORDED_BUFFER_INPUTS,
             timeline_jump: Some(crate::timeline::TimelineJumpConfig::default()),
             tracks_hold_max_input_bytes: DEFAULT_TRACKS_HOLD_MAX_INPUT_BYTES,
             tracks_hold_quiet_input_bytes: DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES,
@@ -1255,6 +1292,11 @@ impl core::fmt::Debug for Config {
             .field("preferred_audio_language", &self.preferred_audio_language)
             .field("auto_select_audio", &self.auto_select_audio)
             .field("max_queued_events", &self.max_queued_events)
+            .field("record_buffer_inputs", &self.record_buffer_inputs)
+            .field(
+                "max_recorded_buffer_inputs",
+                &self.max_recorded_buffer_inputs,
+            )
             .field("timeline_jump", &self.timeline_jump)
             .field(
                 "tracks_hold_max_input_bytes",
