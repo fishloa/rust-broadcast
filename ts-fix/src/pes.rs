@@ -108,7 +108,6 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[Pid]) -> Result<Vec<AccessUni
         }
     }
 
-    // Flush any remaining PES on each PID.
     for (&pid, asm) in assemblers.iter_mut() {
         if let Some(completed) = asm.flush() {
             let au = parse_au(pid, completed);

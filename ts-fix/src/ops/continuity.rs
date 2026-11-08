@@ -138,8 +138,6 @@ impl Op for ContinuityOp {
         // not falsely flagged as errors.
         let is_discontinuity = header.has_adaptation && Self::has_discontinuity(packet);
         if is_discontinuity {
-            // Remove existing per-PID state so the next packet starts
-            // fresh.  Pass through unchanged.
             self.per_pid.remove(&pid);
             out(packet);
             return;
@@ -198,8 +196,6 @@ impl Op for ContinuityOp {
             return;
         }
 
-        // Genuine CC error: unsignalled, non-duplicate gap.
-        // Rewrite the CC to the expected value.
         let correct_cc = state.expected;
         let mut buf = [0u8; TS_PACKET_SIZE];
         buf.copy_from_slice(packet);

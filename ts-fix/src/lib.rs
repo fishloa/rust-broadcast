@@ -97,7 +97,6 @@ impl TsFixBuilder {
             self.ops = alloc::vec![(OpKind::Identity, alloc::boxed::Box::new(ops::IdentityOp))];
         }
 
-        // Sort by canonical ordering, then discard the OpKind tag.
         self.ops.sort_by_key(|(kind, _)| *kind);
         let ops: alloc::vec::Vec<ops::BoxedOp> = self.ops.into_iter().map(|(_, op)| op).collect();
 
