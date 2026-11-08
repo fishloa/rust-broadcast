@@ -18,7 +18,7 @@
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use transmux::dash_parse::Mpd;
+use transmux::dash_parse::{DashParseError, Mpd};
 
 /// 6th-edition-only examples whose semantics we cannot implement without the paywalled text.
 const UNSUPPORTED_SIXTH_EDITION: &[&str] = &["example_G27.mpd"];
@@ -113,9 +113,13 @@ fn the_sixth_edition_segment_timeline_pattern_example_is_rejected_not_guessed() 
             .find(|(n, _)| n == name)
             .unwrap_or_else(|| panic!("{name} missing from the corpus"));
         let err = Mpd::parse(xml).expect_err("pattern timelines are not implemented");
-        assert!(
-            err.to_string().contains("@d"),
-            "{name}: expected the missing-@d rejection, got: {err}"
+        assert_eq!(
+            err,
+            DashParseError::MissingAttribute {
+                element: "S",
+                attr: "d"
+            },
+            "{name}: expected the missing-@d rejection"
         );
     }
 }
