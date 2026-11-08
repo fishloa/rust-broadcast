@@ -28,3 +28,21 @@ mod rfc_vectors;
 mod tokio_crypto_interop;
 mod trait_round_trip;
 mod tsbpd_delivery;
+
+/// A default handshake that does not advertise TLPKTDROP, for tests whose
+/// contract is that every loss is recovered by retransmission. Advertising it
+/// licenses a receiver to skip a gap once its latency passes and, per libsrt
+/// 1.5.5 `CUDT::sndDropTooLate` (gated on the *peer's* flag), a libsrt sender
+/// to drop what it has buffered for over max(latency, 1000 ms) + 20 ms and
+/// answer the NAK with a DROPREQ — both legitimate outcomes a host stall can
+/// trigger, neither of which those tests are about.
+#[cfg(feature = "tokio")]
+fn without_tlpktdrop() -> srt_runtime::handshake_sm::HandshakeConfig {
+    use srt_runtime::packet::HandshakeExtensionMessageFlags;
+    use srt_runtime::packet::handshake::HS_MSG_FLAG_TLPKTDROP;
+    let config = srt_runtime::handshake_sm::HandshakeConfig::default();
+    srt_runtime::handshake_sm::HandshakeConfig {
+        flags: HandshakeExtensionMessageFlags(config.flags.0 & !HS_MSG_FLAG_TLPKTDROP),
+        ..config
+    }
+}

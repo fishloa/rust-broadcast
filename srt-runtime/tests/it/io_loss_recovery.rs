@@ -24,7 +24,6 @@ use core::time::Duration;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{SrtListener, SrtSocket};
 use srt_runtime::packet::SrtPacket;
 
@@ -110,8 +109,10 @@ async fn loss_recovery_through_io_layer() {
         let listener_bind_addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
         // `initial_seq_number` is generated randomly per connection by
         // `io.rs` regardless of what `HandshakeConfig` carries (SRT-W11
-        // fix), so the default is as good as any explicit value here.
-        let listener_config = HandshakeConfig::default();
+        // fix). TLPKTDROP stays off on both sides: with it, a scheduling
+        // stall longer than the 120 ms latency lets the receiver skip a gap
+        // before its retransmission lands, and the 40th payload never comes.
+        let listener_config = crate::without_tlpktdrop();
         let mut listener = SrtListener::bind(listener_bind_addr, listener_config)
             .await
             .expect("listener bind");
@@ -138,7 +139,7 @@ async fn loss_recovery_through_io_layer() {
         ));
 
         // --- Caller connects THROUGH the relay, not directly to the listener ---
-        let caller_config = HandshakeConfig::default();
+        let caller_config = crate::without_tlpktdrop();
         let jh = tokio::spawn(async move { listener.accept().await.expect("listener accept") });
         let mut caller = SrtSocket::connect(relay_addr, caller_config)
             .await
