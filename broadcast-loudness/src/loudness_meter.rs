@@ -651,10 +651,10 @@ impl LoudnessMeter {
         self.current_sub_block_sum = 0.0;
         self.current_sub_block_count = 0;
 
-        self.sub_block_ring.push_back(mean_sq);
-        if self.sub_block_ring.len() > SHORT_TERM_SUB_BLOCKS {
+        if self.sub_block_ring.len() == SHORT_TERM_SUB_BLOCKS {
             self.sub_block_ring.pop_front();
         }
+        self.sub_block_ring.push_back(mean_sq);
 
         let n = self.sub_block_ring.len();
         if n >= MOMENTARY_SUB_BLOCKS {
