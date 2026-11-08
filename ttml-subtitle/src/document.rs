@@ -3816,8 +3816,6 @@ fn collect_namespaces(tt: &mut TtElement) -> NamespaceMap {
         ns.add_well_known(NS_TTS);
     }
 
-    // Preserved foreign attributes and unknown-subtree namespaces, walked
-    // iteratively from the root.
     let mut stack: Vec<WalkNode> = alloc::vec![WalkNode::Tt(tt)];
     while let Some(node) = stack.pop() {
         match node {
@@ -4189,7 +4187,6 @@ fn collect_namespaces(tt: &mut TtElement) -> NamespaceMap {
                 // scope must win over bindings inherited from ancestors
                 // (#1110/TT-W1).
                 register_scoped(&mut ns, u.scoped_namespaces.as_deref().unwrap_or_default());
-                // Record the subtree's own binding plus its whole subtree.
                 if let (Some(prefix), Some(uri)) = (u.prefix.as_deref(), u.namespace.as_deref()) {
                     ns.add_binding(prefix, uri);
                 }
