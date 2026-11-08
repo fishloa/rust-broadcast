@@ -152,6 +152,7 @@ pub(crate) struct Feeder {
     finite: bool,
     rendered: BTreeSet<TrackId>,
     rendered_explicit: bool,
+    held: BTreeSet<TrackId>,
     live_joins: BTreeMap<TrackId, VideoJoin>,
     track_specs: BTreeMap<TrackId, TrackSpec>,
     pending_ends: BTreeMap<TrackId, u64>,
@@ -193,6 +194,7 @@ impl Feeder {
             finite: false,
             rendered: BTreeSet::new(),
             rendered_explicit: false,
+            held: BTreeSet::new(),
             live_joins: BTreeMap::new(),
             track_specs: BTreeMap::new(),
             pending_ends: BTreeMap::new(),
@@ -361,6 +363,7 @@ impl Feeder {
         self.track_specs.remove(&t);
         self.live_joins.remove(&t);
         self.forget_progress(t);
+        self.held.remove(&t);
         if self.rendered.remove(&t)
             && let Some(c) = &mut self.controller
         {
@@ -411,30 +414,25 @@ impl Feeder {
         }
     }
 
+    /// A track the host drops from an explicit rendered set before the first `Start` keeps
+    /// holding the start (it stays registered and its ends are still reported) until that `Start`:
+    /// a host that declares `[video]` and then `[video, audio]` a few ms later must not get a
+    /// `Start` judged on video alone in between.
+    fn holds_start(&self) -> bool {
+        self.rendered_explicit && !self.started && !self.finite
+    }
+
     fn apply_rendered(&mut self, wanted: BTreeSet<TrackId>) {
         let removed: Vec<TrackId> = self.rendered.difference(&wanted).copied().collect();
-        for t in removed {
-            self.rendered.remove(&t);
-            self.pending_ends.remove(&t);
-            self.pending_zero.remove(&t);
-            if let Some(c) = &mut self.controller {
-                c.unregister_track(t.value());
-                rec!(
-                    self,
-                    Input::Unregister {
-                        now_us: self.log.last_now(),
-                        track: t.value()
-                    }
-                );
+        self.held.retain(|t| !wanted.contains(t));
+        if self.holds_start() {
+            self.held.extend(removed);
+        } else {
+            for t in removed {
+                self.unrender(t);
             }
         }
-        if !self
-            .rendered
-            .iter()
-            .any(|t| self.live_joins.contains_key(t))
-        {
-            self.video_join_pts_27 = None;
-        }
+        self.forget_join_without_video();
         let added: Vec<TrackId> = wanted.difference(&self.rendered).copied().collect();
         for t in &added {
             self.rendered.insert(*t);
@@ -454,6 +452,41 @@ impl Feeder {
             && let Some(now_us) = self.last_chunk_us
         {
             self.flush_pending(now_us);
+        }
+    }
+
+    fn unrender(&mut self, t: TrackId) {
+        self.held.remove(&t);
+        self.rendered.remove(&t);
+        self.pending_ends.remove(&t);
+        self.pending_zero.remove(&t);
+        if let Some(c) = &mut self.controller {
+            c.unregister_track(t.value());
+            rec!(
+                self,
+                Input::Unregister {
+                    now_us: self.log.last_now(),
+                    track: t.value()
+                }
+            );
+        }
+        self.forget_join_without_video();
+    }
+
+    fn forget_join_without_video(&mut self) {
+        if !self
+            .rendered
+            .iter()
+            .any(|t| self.live_joins.contains_key(t))
+        {
+            self.video_join_pts_27 = None;
+        }
+    }
+
+    fn release_held(&mut self) {
+        let held: Vec<TrackId> = core::mem::take(&mut self.held).into_iter().collect();
+        for t in held {
+            self.unrender(t);
         }
     }
 
@@ -758,6 +791,9 @@ impl Feeder {
                     _ => {}
                 }
             }
+        }
+        if self.started {
+            self.release_held();
         }
         if !self.pending_events.is_empty() {
             out.append(&mut self.pending_events);
