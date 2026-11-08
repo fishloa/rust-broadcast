@@ -10,6 +10,7 @@ pub mod controller;
 pub mod error;
 pub mod events;
 pub mod histogram;
+pub mod input_log;
 pub mod jitter;
 pub mod policy;
 pub mod stall_memory;
