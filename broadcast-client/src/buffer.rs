@@ -55,6 +55,7 @@ impl InputLog {
         false
     }
 
+    #[cfg(feature = "__test-seams")]
     pub(crate) fn peek(&self) -> &[Input] {
         &self.queue
     }

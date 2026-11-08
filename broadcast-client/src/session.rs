@@ -1656,7 +1656,11 @@ mod tests {
                 join: None,
             }
         };
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+        let config = Config {
+            record_buffer_inputs: true,
+            ..Config::default()
+        };
+        let mut session = Session::open("http://example/live.ts", config, 0).unwrap();
         session
             .source
             .inject(Some(Event::Tracks(vec![video.spec.clone()])));

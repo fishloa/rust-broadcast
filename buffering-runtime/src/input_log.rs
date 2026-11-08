@@ -350,6 +350,7 @@ impl Reason {
 broadcast_common::impl_spec_display!(Reason);
 
 /// A log row that could not be read.
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputLogError {
     /// The offending line.
@@ -456,6 +457,7 @@ broadcast_common::impl_spec_display!(ConfigKey);
 
 /// A complete, self-describing input log: the controller configuration, the optional stall-memory
 /// seed, and the inputs in call order.
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputLog {
     /// Configuration the controller was built from.
