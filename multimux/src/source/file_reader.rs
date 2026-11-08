@@ -557,8 +557,6 @@ impl FileReader {
             .map(|r| r.span_secs + r.frame_secs)
             .fold(0.0f64, f64::max);
 
-        // Announce the track set once, before the first sample, exactly like
-        // every other ingest announces a program's tracks.
         announce_tracks(&writer, &track_refs);
 
         let mut start = if self.config.pace {
@@ -938,7 +936,6 @@ fn demux_streaming_ts(bytes: &[u8]) -> Result<Media, DemuxError> {
 fn demux_streaming_flv(bytes: &[u8]) -> Result<Media, DemuxError> {
     let mut demux = StreamingFlvDemux::new();
     demux.feed(bytes).map_err(DemuxError::Flv)?;
-    // End of input: flush each track's held-back trailing sample.
     demux.finish();
     collect_streaming_media(&mut demux, |d| d.poll_event())
 }
