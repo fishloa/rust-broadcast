@@ -92,7 +92,7 @@ fn run_declared(declared: Option<&[u32]>) -> Host {
     host.feed_playing(&bytes[..CHUNK * 3], CHUNK);
     if let Some(ids) = declared {
         let ids: Vec<TrackId> = ids.iter().map(|i| TrackId::new(*i)).collect();
-        host.session.set_rendered_tracks(&ids);
+        host.session.set_rendered_tracks(host.now, &ids);
         host.settle();
     }
     host.feed_playing(&bytes[CHUNK * 3..], CHUNK);
@@ -150,7 +150,7 @@ fn a_declaration_made_before_the_first_announcement_applies_when_it_arrives_with
     let bytes = test_fixtures::read("ts/h264-aac-40s.ts");
     let mut host = Host::open(recording());
     host.session
-        .set_rendered_tracks(&[TrackId::new(1), TrackId::new(2)]);
+        .set_rendered_tracks(host.now, &[TrackId::new(1), TrackId::new(2)]);
     host.settle();
     host.feed_playing(&bytes, CHUNK);
     assert!(unknown_reports(&host).is_empty());
@@ -187,7 +187,7 @@ fn an_explicit_video_audio_declaration_survives_a_pmt_drop_and_restore() {
     let mut host = Host::open(recording());
     host.feed_playing(&bytes[..CHUNK * 3], CHUNK);
     host.session
-        .set_rendered_tracks(&[TrackId::new(1), TrackId::new(2)]);
+        .set_rendered_tracks(host.now, &[TrackId::new(1), TrackId::new(2)]);
     host.settle();
     host.feed_playing(&bytes[CHUNK * 3..], CHUNK);
 

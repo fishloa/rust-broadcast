@@ -1098,7 +1098,9 @@ pub struct Config {
     /// the tracks announced so far, which can be followed by a `Pause` when the late track
     /// arrives behind the playback position. A host with a short start lead and a tight
     /// first-frame budget lowers this; any value is accepted and `u64::MAX` waits until the
-    /// first `Start`.
+    /// first `Start`. It also bounds how long a track the host dropped with
+    /// [`Session::set_rendered_tracks`](crate::Session::set_rendered_tracks) before the first
+    /// `Start` keeps holding it, counted from the drop.
     pub start_pending_track_wait_us: u64,
     /// Live TS-over-HTTP: an extra cap on how long the first `Start` waits for an
     /// audio stream the PMT declares but that has no announced track yet, on top

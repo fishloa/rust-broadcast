@@ -9,6 +9,7 @@ mod oracles;
 mod properties;
 mod real_traces;
 mod registered_track_gate;
+mod reregistered_track_start;
 mod serde_round_trip;
 mod slate_start;
 mod start_granularity;

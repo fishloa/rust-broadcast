@@ -213,7 +213,7 @@ pub fn run_until(bytes: &[u8], cfg: Config, declare: Declare, stop: Stop) -> Out
     if declare == Declare::Explicit {
         let set = [TrackId::new(1), TrackId::new(2)];
         out.rendered = set.iter().map(|t| t.value()).collect();
-        s.set_rendered_tracks(&set);
+        s.set_rendered_tracks(0, &set);
     }
     let mut timescale: BTreeMap<u32, u32> = BTreeMap::new();
     let mut video: BTreeMap<u32, bool> = BTreeMap::new();

@@ -851,13 +851,23 @@ impl Session {
         self.drain_playout();
     }
 
-    /// Set rendered tracks.
-    pub fn set_rendered_tracks(&mut self, tracks: &[TrackId]) {
+    /// Set rendered tracks. `now_us` is the host clock at the call, as for every other input; it
+    /// stamps the buffer controller registrations this call makes.
+    ///
+    /// Before the first [`BufferEvent::Start`](crate::BufferEvent::Start), a track this call drops
+    /// from the rendered set keeps holding the start (the buffer controller still waits for it)
+    /// until it has had [`Config::start_pending_track_wait_us`] from the drop to deliver, or until
+    /// that `Start`, whichever comes first; naming it again before then cancels the drop. So a
+    /// host that declares `[video]` and then `[video, audio]` a few ms later never gets a `Start`
+    /// judged on video alone, and a host that renders video only waits at most that long. After
+    /// the first `Start` a dropped track stops counting at once.
+    pub fn set_rendered_tracks(&mut self, now_us: u64, tracks: &[TrackId]) {
         if self.closed {
             return;
         }
+        self.now_us = now_us;
         if self.adaptive.is_some() || self.rtsp.is_some() || self.rtmp.is_some() {
-            self.buffer.set_rendered(Some(tracks));
+            self.buffer.set_rendered(self.now_us, Some(tracks));
             self.jump.set_rendered(Some(tracks));
             self.playout.set_rendered(Some(tracks));
             self.drain_playout();
@@ -883,7 +893,7 @@ impl Session {
     fn apply_rendered(&mut self, resolution: crate::rendered::Resolution) {
         if resolution.changed {
             let rendered = resolution.rendered.as_deref();
-            self.buffer.set_rendered(rendered);
+            self.buffer.set_rendered(self.now_us, rendered);
             self.jump.set_rendered(rendered);
             self.playout.set_rendered(rendered);
         }
@@ -1098,9 +1108,9 @@ impl Session {
     }
 
     fn buffer_tracks(&mut self, specs: &[TrackSpec]) {
-        self.buffer.retain_tracks(specs);
+        self.buffer.retain_tracks(self.now_us, specs);
         for spec in specs {
-            self.buffer.on_track_added(spec);
+            self.buffer.on_track_added(self.now_us, spec);
         }
     }
 

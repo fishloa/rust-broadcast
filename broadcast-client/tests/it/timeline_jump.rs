@@ -1222,7 +1222,7 @@ fn play_rtsp_rendering(
     let mut host = rtsp_host::Host::new(BASE_URL, config, Server::new(&fix.sdp));
     host.connect();
     if let Some(r) = rendered {
-        host.session.set_rendered_tracks(r);
+        host.session.set_rendered_tracks(host.now, r);
     }
     let mut trace = Trace {
         events: Vec::new(),
