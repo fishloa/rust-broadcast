@@ -166,3 +166,17 @@ fn every_rate_from_1_hz_to_384_khz_is_rejected_or_yields_finite_results() {
     }
     assert!(accepted > 0 && rejected > 0);
 }
+
+#[test]
+fn k_weighting_coeffs_rejects_rates_below_the_minimum_without_panicking() {
+    use broadcast_loudness::kfilter::k_weighting_coeffs;
+    for bad in [0, 1, 2_000, MIN_SAMPLE_RATE - 1] {
+        assert!(
+            matches!(k_weighting_coeffs(bad), Err(Error::InvalidSampleRate { got }) if got == bad),
+            "rate {bad}"
+        );
+    }
+    for ok in [MIN_SAMPLE_RATE, 48_000, MAX_SAMPLE_RATE] {
+        assert!(k_weighting_coeffs(ok).is_ok(), "rate {ok}");
+    }
+}

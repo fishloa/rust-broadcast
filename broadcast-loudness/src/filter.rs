@@ -114,10 +114,10 @@ pub const MIN_SAMPLE_RATE: u32 = (2.0 * SHELF_FC) as u32 + 1;
 /// ITU‑R BS.1770‑5 Annex 1 tabulated coefficients to within floating‑point
 /// epsilon. Other rates use the same derivation (the approach in libebur128).
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `sample_rate < MIN_SAMPLE_RATE` (the caller validates the rate
-/// before calling).
+/// Returns [`crate::Error::InvalidSampleRate`] if `sample_rate <
+/// MIN_SAMPLE_RATE`, where the derived stage 1 filter is unstable.
 ///
 /// ## Stage 1 — head‑related high‑shelf filter
 ///
@@ -128,8 +128,7 @@ pub const MIN_SAMPLE_RATE: u32 = (2.0 * SHELF_FC) as u32 + 1;
 ///
 /// Analog prototype: 2nd‑order Butterworth high‑pass, corner
 /// 38.13547087602444 Hz, Q = 0.5003270373238773.
-#[must_use]
-pub fn k_weighting_coeffs(sample_rate: u32) -> (BiquadCoeffs, BiquadCoeffs) {
+pub fn k_weighting_coeffs(sample_rate: u32) -> crate::Result<(BiquadCoeffs, BiquadCoeffs)> {
     // --- Stage 1: head-related high-shelf filter ---
     // Gain in dB (libebur128: 3.999843853973347, ≈ +4 dB). The exact constant
     // reproduces the BS.1770-5 tabulated coefficients at 48 kHz exactly.
@@ -139,10 +138,9 @@ pub fn k_weighting_coeffs(sample_rate: u32) -> (BiquadCoeffs, BiquadCoeffs) {
     // not sqrt(Vh).
     const SHELF_VB_EXP: f64 = 0.499_666_774_154_541_6;
 
-    assert!(
-        sample_rate >= MIN_SAMPLE_RATE,
-        "sample rate below MIN_SAMPLE_RATE"
-    );
+    if sample_rate < MIN_SAMPLE_RATE {
+        return Err(crate::Error::InvalidSampleRate { got: sample_rate });
+    }
     let vh = libm::pow(10.0, SHELF_GAIN_DB / 20.0);
     let vb = libm::pow(vh, SHELF_VB_EXP);
     let k = libm::tan(core::f64::consts::PI * SHELF_FC / sample_rate as f64);
@@ -171,5 +169,5 @@ pub fn k_weighting_coeffs(sample_rate: u32) -> (BiquadCoeffs, BiquadCoeffs) {
         a2: (1.0 - k / HIGH_PASS_Q + k * k) / a0,
     };
 
-    (stage1, stage2)
+    Ok((stage1, stage2))
 }

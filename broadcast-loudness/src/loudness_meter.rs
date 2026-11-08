@@ -417,7 +417,7 @@ impl LoudnessMeter {
         if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate) {
             return Err(crate::Error::InvalidSampleRate { got: sample_rate });
         }
-        let (stage1, stage2) = k_weighting_coeffs(sample_rate);
+        let (stage1, stage2) = k_weighting_coeffs(sample_rate)?;
         let coeffs = BiquadCoeffsPair { stage1, stage2 };
         let channel_count = layout.channel_count();
         let sub_block_samples = ((SUB_BLOCK_S * f64::from(sample_rate)) as usize).max(1);
@@ -988,7 +988,7 @@ mod tests {
     fn coeffs_at_48k_match_tabulated() {
         // The bilinear transform at 48 kHz must reproduce the BS.1770-5 Annex 1
         // tabulated coefficients to within floating-point epsilon.
-        let (stage1, stage2) = crate::filter::k_weighting_coeffs(48_000);
+        let (stage1, stage2) = crate::filter::k_weighting_coeffs(48_000).unwrap();
 
         let shelf_ref = crate::filter::BiquadCoeffs {
             b0: 1.535_124_859_586_97,
