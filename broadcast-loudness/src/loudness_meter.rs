@@ -554,6 +554,11 @@ impl LoudnessMeter {
     /// `sample_rate > MAX_SAMPLE_RATE`.
     ///
     /// `layout` — channel configuration with per‑channel weights.
+    ///
+    /// Allocates all of the meter's state up front, whatever the measurement
+    /// length: 640 000 bytes of loudness histograms plus 3.4 s of `f64`s at
+    /// `sample_rate` for the sliding-window maxima. Pushing and finishing
+    /// allocate nothing.
     pub fn new(sample_rate: u32, layout: ChannelLayout) -> Result<Self, crate::Error> {
         if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate) {
             return Err(crate::Error::InvalidSampleRate { got: sample_rate });
