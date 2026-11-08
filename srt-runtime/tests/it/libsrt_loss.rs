@@ -222,7 +222,7 @@ async fn libsrt_listener_naks_are_served_by_our_sender() {
         let discard_port = discard.local_addr().unwrap().port();
         let (libsrt, listen_port) = spawn_libsrt_ready(&[LIBSRT_BOUND_LINE], |port| {
             vec![
-                format!("srt://:{port}"),
+                format!("srt://:{port}?tlpktdrop=0"),
                 format!("udp://127.0.0.1:{discard_port}"),
             ]
         });
@@ -237,7 +237,7 @@ async fn libsrt_listener_naks_are_served_by_our_sender() {
             format!("127.0.0.1:{}", relay.front_port)
                 .parse::<SocketAddr>()
                 .unwrap(),
-            HandshakeConfig::default(),
+            crate::without_tlpktdrop(),
         )
         .await
         .expect("connect through the relay");
@@ -343,9 +343,9 @@ async fn libsrt_sender_recovers_losses_reported_in_our_naks() {
         let (mut receiver, relay, _libsrt, src_port) = our_listener_behind_a_relay(
             HandshakeConfig {
                 latency_ms: 500,
-                ..HandshakeConfig::default()
+                ..crate::without_tlpktdrop()
             },
-            "latency=120",
+            "tlpktdrop=0&latency=120",
             None,
             drop_pattern,
             |_| false,
@@ -376,13 +376,13 @@ async fn libsrt_sender_recovers_a_hundreds_of_losses_list_from_our_periodic_nak(
         const SMALL_NAK_LIST_LEN: usize = 8;
         let periodic_nak_forwarded = Arc::new(AtomicBool::new(false));
         let (mut receiver, relay, _libsrt, src_port) = our_listener_behind_a_relay(
-            // TLPKTDROP is not negotiated: recovery here takes several
-            // periodic-NAK rounds, and a host stall inflates the RTT-derived
-            // NAK interval, so with the drop on a recovery that outlasts the
-            // latency skips the chunk (observed: a skipped chunk, or no
-            // retransmission at all, under load) instead of exercising the
-            // NAK path this test is about.
-            HandshakeConfig::default(),
+            // Neither side may advertise TLPKTDROP. libsrt's own
+            // `tlpktdrop=0` is not enough: its sender-side drop and its
+            // "regular packets before retransmissions" rule are both keyed on
+            // the flag *we* advertise, so a recovery that a host stall pushes
+            // past one second ended in a DROPREQ (a skipped chunk) or in no
+            // retransmission at all.
+            crate::without_tlpktdrop(),
             "tlpktdrop=0&latency=120",
             None,
             // Drop every other first-time chunk in the range (isolated
