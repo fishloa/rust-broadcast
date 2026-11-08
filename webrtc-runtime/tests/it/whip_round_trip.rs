@@ -532,3 +532,29 @@ fn whip_server_trickle_without_if_match_is_428() {
         .unwrap_err();
     assert!(matches!(err, Error::PreconditionRequired { .. }), "{err:?}");
 }
+
+#[test]
+fn whip_client_406_is_a_plain_http_error_not_a_counter_offer() {
+    let mut client = WhipClient::new(ENDPOINT.into(), None);
+    let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
+    let err = client
+        .on_response(
+            client::HttpResponse::new(StatusCode::NOT_ACCEPTABLE)
+                .with_location(SESSION)
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::Http { status: 406 }), "got {err:?}");
+    assert_eq!(*client.state(), client::State::OfferSent);
+}
+
+#[test]
+fn whip_client_409_is_a_plain_http_error_not_no_publisher() {
+    let mut client = WhipClient::new(ENDPOINT.into(), None);
+    let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
+    let err = client
+        .on_response(client::HttpResponse::new(StatusCode::CONFLICT))
+        .unwrap_err();
+    assert!(matches!(err, Error::Http { status: 409 }), "got {err:?}");
+}
