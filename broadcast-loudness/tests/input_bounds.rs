@@ -189,3 +189,72 @@ fn invalid_sample_rate_message_names_the_accepted_range() {
         format!("sample rate must be between {MIN_SAMPLE_RATE} and {MAX_SAMPLE_RATE} Hz, got 7 Hz")
     );
 }
+
+#[test]
+fn samples_up_to_the_measurable_magnitude_are_accepted_and_louder_ones_rejected() {
+    for (layout, dbfs) in [
+        (ChannelLayout::Mono, 19.8),
+        (ChannelLayout::Stereo, 16.8),
+        (ChannelLayout::Surround51, 12.2),
+    ] {
+        let mut m = LoudnessMeter::new(48_000, layout).unwrap();
+        let max = m.max_sample_magnitude();
+        assert!((20.0 * max.log10() - dbfs).abs() < 0.05, "{layout}: {max}");
+        let n = layout.channel_count();
+        let mut frame = vec![0.0; n];
+        frame[0] = max;
+        m.push_f64(&frame).unwrap();
+        frame[0] = -max;
+        m.push_f64(&frame).unwrap();
+        frame[n - 1] = max.next_up();
+        match m.push_f64(&frame) {
+            Err(Error::SampleTooLoud {
+                channel,
+                value,
+                max: reported,
+                ..
+            }) => {
+                assert_eq!((channel, value, reported), (n - 1, max.next_up(), max));
+            }
+            other => panic!("{layout}: {other:?}"),
+        }
+        let loud = (2.0 * max) as f32;
+        let mut frame = vec![0.0f32; n];
+        frame[0] = -loud;
+        assert!(matches!(
+            m.push_f32(&frame),
+            Err(Error::SampleTooLoud { .. })
+        ));
+    }
+    let mut m = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+    let loud = (2.0 * m.max_sample_magnitude()) as f32;
+    assert!(matches!(
+        m.push_stereo_planar_f32(&[0.0, 0.0], &[0.0, loud]),
+        Err(Error::SampleTooLoud {
+            index: 1,
+            channel: 1,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_loud_two_level_signal_inside_the_bound_keeps_its_loudness_range() {
+    let rate = 48_000u32;
+    let mut m = LoudnessMeter::new(rate, ChannelLayout::Mono).unwrap();
+    let loud = 0.99 * m.max_sample_magnitude();
+    let n = 10 * rate as usize;
+    for (amp, start) in [(loud, 0), (loud * 10f64.powf(-12.0 / 20.0), n)] {
+        for i in 0..n {
+            let t = (start + i) as f64 / f64::from(rate);
+            m.push_f64(&[amp * (2.0 * std::f64::consts::PI * 997.0 * t).sin()])
+                .unwrap();
+        }
+    }
+    m.finish();
+    assert!(
+        (m.loudness_range() - 12.0).abs() < 0.1,
+        "{}",
+        m.loudness_range()
+    );
+}

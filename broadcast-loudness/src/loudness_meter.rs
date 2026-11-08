@@ -74,7 +74,10 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 use crate::channel_layout::ChannelLayout;
-use crate::filter::{BiquadCoeffs, BiquadState, MIN_SAMPLE_RATE, apply_biquad, k_weighting_coeffs};
+use crate::filter::{
+    BiquadCoeffs, BiquadState, K_WEIGHTING_MAX_GAIN, MIN_SAMPLE_RATE, apply_biquad,
+    k_weighting_coeffs,
+};
 
 /// Highest accepted sample rate in Hz (768 kHz, the top PCM rate in use: 16 x
 /// 48 kHz). The sliding-window trackers hold `3.4 s * sample_rate` `f64`s, so
@@ -104,6 +107,22 @@ const SHORT_TERM_SUB_BLOCKS: usize = 30;
 /// The constant —0.691 in BS.1770‑5 eq. (2), cancelling the K‑weighting
 /// gain for a 997 Hz tone.
 const LOUDNESS_OFFSET: f64 = -0.691;
+
+/// Inverse of [`mean_sq_to_lkfs`].
+fn lkfs_to_mean_sq(lkfs: f64) -> f64 {
+    libm::pow(10.0, (lkfs - LOUDNESS_OFFSET) / 10.0)
+}
+
+/// Largest sample magnitude for `layout` that keeps every block below
+/// [`HISTOGRAM_CEILING_LKFS`]: a K‑weighted sample is at most
+/// [`K_WEIGHTING_MAX_GAIN`] times the largest input magnitude, so a block's
+/// weighted mean square is at most `sum(|G_i|) * (K_WEIGHTING_MAX_GAIN * x)^2`.
+fn max_sample_magnitude(layout: ChannelLayout) -> f64 {
+    let weight_sum: f64 = (0..layout.channel_count())
+        .map(|i| libm::fabs(layout.weight(i)))
+        .sum();
+    libm::sqrt(lkfs_to_mean_sq(HISTOGRAM_CEILING_LKFS) / weight_sum) / K_WEIGHTING_MAX_GAIN
+}
 
 /// BS.1770‑5 Annex 1 eq. (2): convert mean‑square to LKFS.
 ///
@@ -229,8 +248,8 @@ impl SlidingWindowMax {
 /// Bin width of [`LoudnessHistogram`] in LU.
 const BIN_WIDTH_LU: f64 = 0.01;
 
-/// Loudness above which blocks share the top bin of [`LoudnessHistogram`]
-/// (their energy still counts exactly).
+/// Upper edge of [`LoudnessHistogram`]; [`max_sample_magnitude`] keeps every
+/// block below it.
 const HISTOGRAM_CEILING_LKFS: f64 = 30.0;
 
 /// Number of bins spanning [`ABSOLUTE_GATE`] to [`HISTOGRAM_CEILING_LKFS`].
@@ -516,6 +535,9 @@ pub struct LoudnessMeter {
 
     /// Number of sample frames pushed.
     frame_count: usize,
+
+    /// See [`Self::max_sample_magnitude`].
+    max_sample_magnitude: f64,
 }
 
 impl LoudnessMeter {
@@ -566,6 +588,7 @@ impl LoudnessMeter {
             max_short_term: f64::NEG_INFINITY,
             finished: false,
             frame_count: 0,
+            max_sample_magnitude: max_sample_magnitude(layout),
         })
     }
 
@@ -650,6 +673,38 @@ impl LoudnessMeter {
         }
     }
 
+    /// Largest sample magnitude this meter accepts.
+    ///
+    /// The histograms span −70 to +30 LKFS, so a sample whose magnitude could
+    /// carry a block to or above +30 LKFS is rejected with
+    /// [`crate::Error::SampleTooLoud`]: about +19.8 dBFS for a mono
+    /// layout, +16.8 dBFS for stereo, +12.2 dBFS for 5.1, given by the
+    /// K‑weighting filter's largest gain over the accepted sample rates and
+    /// the sum of the layout's channel weights.
+    #[must_use]
+    pub fn max_sample_magnitude(&self) -> f64 {
+        self.max_sample_magnitude
+    }
+
+    fn check_sample(&self, index: usize, channel: usize, value: f64) -> Result<(), crate::Error> {
+        if !value.is_finite() {
+            return Err(crate::Error::NonFiniteSample {
+                index,
+                channel,
+                value,
+            });
+        }
+        if libm::fabs(value) > self.max_sample_magnitude {
+            return Err(crate::Error::SampleTooLoud {
+                index,
+                channel,
+                value,
+                max: self.max_sample_magnitude,
+            });
+        }
+        Ok(())
+    }
+
     /// Push one frame of planar f32 samples.
     ///
     /// `channels` must have length equal to `self.channel_count`.
@@ -667,13 +722,7 @@ impl LoudnessMeter {
         let mut sum_sq = 0.0f64;
         for (i, &sample) in channels.iter().enumerate() {
             let sample_f64 = f64::from(sample);
-            if !sample_f64.is_finite() {
-                return Err(crate::Error::NonFiniteSample {
-                    index: self.frame_count,
-                    channel: i,
-                    value: sample_f64,
-                });
-            }
+            self.check_sample(self.frame_count, i, sample_f64)?;
             let weight = self.layout.weight(i);
             if weight == 0.0 {
                 continue;
@@ -699,13 +748,7 @@ impl LoudnessMeter {
         }
         let mut sum_sq = 0.0f64;
         for (i, &sample) in channels.iter().enumerate() {
-            if !sample.is_finite() {
-                return Err(crate::Error::NonFiniteSample {
-                    index: self.frame_count,
-                    channel: i,
-                    value: sample,
-                });
-            }
+            self.check_sample(self.frame_count, i, sample)?;
             let weight = self.layout.weight(i);
             if weight == 0.0 {
                 continue;
@@ -766,20 +809,8 @@ impl LoudnessMeter {
         for (frame_idx, (&l, &r)) in left.iter().zip(right.iter()).enumerate() {
             let l_f64 = f64::from(l);
             let r_f64 = f64::from(r);
-            if !l_f64.is_finite() {
-                return Err(crate::Error::NonFiniteSample {
-                    index: self.frame_count + frame_idx,
-                    channel: 0,
-                    value: l_f64,
-                });
-            }
-            if !r_f64.is_finite() {
-                return Err(crate::Error::NonFiniteSample {
-                    index: self.frame_count + frame_idx,
-                    channel: 1,
-                    value: r_f64,
-                });
-            }
+            self.check_sample(self.frame_count + frame_idx, 0, l_f64)?;
+            self.check_sample(self.frame_count + frame_idx, 1, r_f64)?;
             let weight_l = self.layout.weight(0);
             let weight_r = self.layout.weight(1);
             let mut sum_sq = 0.0;
@@ -917,8 +948,8 @@ mod tests {
 
     mod gate_edge {
         use super::super::{
-            BIN_WIDTH_LU, LOUDNESS_OFFSET, LRA_HIGH_PERCENT, LRA_LOW_PERCENT, LRA_RELATIVE_GATE,
-            LoudnessHistogram, LoudnessMeter, RELATIVE_GATE, SUB_BLOCK_S, mean_sq_to_lkfs,
+            BIN_WIDTH_LU, LRA_HIGH_PERCENT, LRA_LOW_PERCENT, LRA_RELATIVE_GATE, LoudnessHistogram,
+            LoudnessMeter, RELATIVE_GATE, SUB_BLOCK_S, lkfs_to_mean_sq, mean_sq_to_lkfs,
         };
         use crate::channel_layout::ChannelLayout;
         use alloc::vec::Vec;
@@ -929,10 +960,6 @@ mod tests {
         const STEP_DB: f64 = 0.0001;
         const STEPS_BELOW: i32 = 110;
         const STEPS_ABOVE: i32 = 10;
-
-        fn lkfs_to_mean_sq(lkfs: f64) -> f64 {
-            libm::pow(10.0, (lkfs - LOUDNESS_OFFSET) / 10.0)
-        }
 
         /// 997 Hz: block loudness wanders over a few thousandths of an LU
         /// at this rate. The aligned tone repeats exactly every sub-block, so
@@ -1113,9 +1140,9 @@ mod tests {
     #[test]
     fn absolute_gate_keeps_a_block_at_exactly_minus_70_for_lra_only() {
         use super::{
-            ABSOLUTE_GATE, GateComparison, LOUDNESS_OFFSET, LoudnessHistogram, mean_sq_to_lkfs,
+            ABSOLUTE_GATE, GateComparison, LoudnessHistogram, lkfs_to_mean_sq, mean_sq_to_lkfs,
         };
-        let estimate = libm::pow(10.0, (ABSOLUTE_GATE - LOUDNESS_OFFSET) / 10.0);
+        let estimate = lkfs_to_mean_sq(ABSOLUTE_GATE);
         let at_gate = (-64i64..=64)
             .map(|ulps| f64::from_bits((estimate.to_bits() as i64 + ulps) as u64))
             .find(|&m| mean_sq_to_lkfs(m) == ABSOLUTE_GATE)

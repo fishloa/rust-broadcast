@@ -48,6 +48,23 @@ pub enum Error {
         /// The non-finite value received.
         value: f64,
     },
+
+    /// A sample whose magnitude exceeds
+    /// [`crate::LoudnessMeter::max_sample_magnitude`], which could carry a
+    /// block above the +30 LKFS top of the meter's loudness histograms.
+    #[error(
+        "sample {value} at index {index} (channel {channel}) exceeds the measurable magnitude {max}"
+    )]
+    SampleTooLoud {
+        /// The index of the sample in the push call.
+        index: usize,
+        /// The channel index (zero-based) of the sample.
+        channel: usize,
+        /// The value received.
+        value: f64,
+        /// The meter's largest accepted magnitude.
+        max: f64,
+    },
 }
 
 /// Result type for loudness operations.
