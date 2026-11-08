@@ -38,10 +38,12 @@ pub trait Profile: sealed::Sealed + 'static {
 
 /// WHIP direction marker (RFC 9725, ingest).
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum Whip {}
 
 /// WHEP direction marker (draft-ietf-wish-whep, egress).
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum Whep {}
 
 impl sealed::Sealed for Whip {}
