@@ -1217,8 +1217,6 @@ impl LlHlsSegmenter {
             self.emit_part(true)?;
         }
 
-        // Emit the whole segment from all buffered samples (byte-identical to the
-        // batch build for the same sample set).
         let seg_seq = self.next_seq;
         let seg_bytes = {
             let frags: Vec<FragmentTrackData<'_>> = self
@@ -1254,7 +1252,6 @@ impl LlHlsSegmenter {
             ));
         }
 
-        // Advance per-track decode times past the whole segment and clear buffers.
         for t in &mut self.tracks {
             let clock = &mut t.seg_clock;
             let dur: u64 = t.pending.iter().map(|s| clock.tick(s)).sum();

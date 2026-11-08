@@ -590,8 +590,6 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
 /// Re-slice the whole styp box (header + body) from the segment bytes so it can
 /// be parsed by [`SegmentTypeBox::parse_box`], which expects the full box.
 fn styp_whole<'a>(bytes: &'a [u8], bx: &BoxRef<'a>) -> Option<&'a [u8]> {
-    // Find the styp box in the top-level walk by matching the body slice's
-    // start against the original buffer, then take header_size + body.
     let hdr = bx.header.header_size();
     // The body slice is a sub-slice of `bytes`; compute its offset.
     let base = bytes.as_ptr() as usize;
@@ -822,8 +820,6 @@ const SAMPLE_FLAGS_IS_NON_SYNC: u32 = 1 << 16;
 /// takes the whole box (e.g. [`TrackHeaderBox`]).
 fn child_whole<'a>(owner: &'a [u8], parent_body: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     let bx_body = child_body(parent_body, fourcc)?;
-    // Locate the body inside the original buffer by pointer arithmetic, then
-    // step back over the header.
     let base = owner.as_ptr() as usize;
     let body_ptr = bx_body.as_ptr() as usize;
     if body_ptr < base {
@@ -851,8 +847,6 @@ fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
         if &t != b"trak" {
             continue;
         }
-        // Re-slice the whole `tkhd` box (header + body): `TrackHeaderBox::parse`
-        // expects the full box.
         if let Some(bytes) = child_whole(moov, trak.body, &TKHD)
             && let Ok(h) = TrackHeaderBox::parse(bytes)
         {

@@ -362,7 +362,6 @@ impl SampleGroupDescriptionBox {
             entry_count,
         ));
         for _ in 0..entry_count {
-            // Determine entry length
             let entry_len: usize = if version == 1 && default_length == 0 {
                 need_in(body, c + 4, "sgpd description_length")?;
                 let dl =

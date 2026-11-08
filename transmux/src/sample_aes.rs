@@ -291,7 +291,6 @@ fn h264_transform_pattern(
     nal: &mut [u8],
     encrypt: bool,
 ) {
-    // Clear prefix: 1 NAL header byte + 31 payload bytes.
     let mut offset = H264_CLEAR_PREFIX_LEN;
     // Running CBC state, seeded from the NAL's IV and updated with each
     // encrypted block's ciphertext (the chain input for the next block).

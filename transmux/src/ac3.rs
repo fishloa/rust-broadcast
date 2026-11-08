@@ -192,8 +192,6 @@ impl Ac3SyncframeInfo {
         let fscod = read_bits(es, &mut bit_pos, 2, "fscod")? as u8;
         // frmsizecod: 6 bits
         let frmsizecod = read_bits(es, &mut bit_pos, 6, "frmsizecod")? as u8;
-        // ---- bsi() starts here ----
-        // bsid: 5 bits
         let bsid = read_bits(es, &mut bit_pos, 5, "bsid")? as u8;
         // bsmod: 3 bits
         let bsmod = read_bits(es, &mut bit_pos, 3, "bsmod")? as u8;

@@ -593,8 +593,6 @@ impl Package for TsMux {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
-        // Mux every track over its full sample list — one PAT/PMT then the
-        // DTS-interleaved PES for all samples.
         let samples: Vec<&[Sample]> = media.tracks.iter().map(|t| t.samples.as_slice()).collect();
         let interval_ticks = self
             .psi_interval_ms
@@ -1197,8 +1195,6 @@ fn mux_tracks_timed_with_cc(
         // above, which only tracks the PES path) persists across samples.
         let mut section_packetiser = SectionPacketiser::with_continuity(plan.pid, cc);
         for (sample, &dts_local) in samples[track_idx].iter().zip(dts_ticks[track_idx]) {
-            // Rescale the sample's decode/composition time to the 90 kHz TS
-            // clock. composition_offset is (pts − dts) in the track scale.
             let dts_ticks_local = dts_local.max(0) as u64;
             let dts90 = rescale(dts_ticks_local, ts_scale) + PCR_LEAD_TICKS;
             // The interleave key is NOT wrapped at the 33-bit field (§2.4.3.7)
@@ -1527,7 +1523,6 @@ fn build_annexb_au(length_prefixed: &[u8], is_sync: bool, sps_pps: &[Vec<u8>]) -
     let mut inserted = false;
     for nal in &nals {
         let nal_type = nal.first().map(|b| b & H264_NAL_TYPE_MASK);
-        // Emit the parameter sets right before the first non-AUD NAL.
         if !inserted && nal_type != Some(H264_NAL_AUD) {
             append_param_sets(&mut out, sps_pps);
             inserted = true;
@@ -1575,7 +1570,6 @@ fn build_hevc_annexb_au(
     let mut inserted = false;
     for nal in &nals {
         let nal_type = nal_unit_type(NalCodec::Hevc, nal);
-        // Emit the parameter sets right before the first non-AUD NAL.
         if !inserted && nal_type != Some(HEVC_NAL_AUD) {
             append_param_sets(&mut out, vps_sps_pps);
             inserted = true;

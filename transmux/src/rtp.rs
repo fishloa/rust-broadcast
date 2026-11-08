@@ -528,7 +528,6 @@ impl RtpPacketiser {
             if nals.is_empty() {
                 continue;
             }
-            // Emit each NAL; the marker is set on the LAST packet of the AU.
             let last_nal = nals.len() - 1;
             for (n, nal) in nals.iter().enumerate() {
                 let is_last_nal = n == last_nal;
@@ -588,8 +587,6 @@ impl RtpPacketiser {
         } else {
             clock
         };
-        // Payload budget per packet after the fixed header and the two
-        // AAC-hbr header fields.
         let per_packet = self
             .mtu
             .checked_sub(RTP_HEADER_LEN + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN)
@@ -1666,8 +1663,6 @@ fn reassemble_video_impl(
     }
 
     'pkts: for (pkt_idx, pkt) in packets.iter().enumerate() {
-        // Strict mode propagates the error; lenient mode records the packet
-        // and moves on to the next one.
         macro_rules! bad {
             ($e:expr) => {{
                 match lenient.as_deref_mut() {
@@ -1885,8 +1880,6 @@ fn reassemble_audio_impl(
     }
 
     'pkts: for (pkt_idx, pkt) in packets.iter().enumerate() {
-        // Strict mode propagates the error; lenient mode records the packet
-        // and moves on to the next one.
         macro_rules! bad {
             ($e:expr) => {{
                 match lenient.as_deref_mut() {

@@ -882,8 +882,6 @@ impl DashPackager {
                 mpd_attrs.push(("suggestedPresentationDelay", spd.clone()));
             }
         } else {
-            // VOD: advertise the presentation duration (longest track), in
-            // tenths of a second computed with integer math.
             let max_tenths = reprs
                 .iter()
                 .map(|r| div_round(r.total_duration.saturating_mul(10), r.timescale as u64))
