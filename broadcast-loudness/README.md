@@ -106,13 +106,25 @@ and `--example measure_true_peak`. For interleaved or multichannel input use
   `ProfileReport`; GY/T 379 monitoring helpers (`MONITOR_OVER_LIMIT_LKFS`,
   `over_limit_ratio`, `consecutive_over_limit_ratio`, `classify_ratio`,
   `classify_units`, `ACCEPTABLE_MAX_RATIO`, `OVER_LIMIT_MAX_RATIO`).
-- **`Error`**: `Finished`, `ChannelMismatch`, `InvalidSampleRate` (only for 0),
-  `NonFiniteSample`.
+- **`Error`**: `Finished`, `ChannelMismatch`, `InvalidSampleRate` (outside
+  `MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE`), `NonFiniteSample`, `SampleTooLoud`.
 
 ## Design notes
 
-- Streaming and bounded-memory: 30 minutes of audio through both meters stays
-  under a 16 MiB live-allocation cap (`tests/bounded_memory.rs`).
+- Streaming and bounded-memory: a `LoudnessMeter` holds 640 000 bytes of
+  block history (plus the sliding-window trackers, 3.4 s of `f64`s at the
+  sample rate), allocated by `new` and by `clone`. For the first 40 000
+  blocks (66 min 40 s at the 100 ms hop) that history is the exact block list,
+  and integrated loudness and LRA are identical to 0.6.0 bit for bit. The next
+  block folds each list into a fixed 0.01 LU histogram of the same size, once
+  (peak 960 000 bytes while folding); pushing allocates nothing else, however
+  long the stream (`tests/no_allocation_while_metering.rs`).
+- In histogram form, gating is exact at the threshold except when the one
+  0.01 LU bin holding a relative-gate threshold contains blocks on both sides
+  of it; the crate source (`loudness_meter.rs`) states the bound.
+- Samples louder than `LoudnessMeter::max_sample_magnitude` (about +19.8 dBFS
+  mono, +16.8 dBFS stereo, +12.2 dBFS 5.1) are rejected: they could carry a
+  block past the +30 LKFS top of the histograms.
 - Non-finite input is rejected: one NaN would poison the IIR state permanently.
 - `no_std` + `alloc`, depends only on `broadcast-common` (plus `thiserror`,
   `libm`); builds for `thumbv7em-none-eabi`.

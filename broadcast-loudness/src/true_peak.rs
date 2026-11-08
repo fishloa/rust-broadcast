@@ -288,7 +288,7 @@ impl Default for TruePeakMeter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
 

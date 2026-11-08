@@ -100,10 +100,16 @@ const HIGH_PASS_FC: f64 = 38.135_470_876_024_44;
 /// leave the unit circle (radius 1.12 at 1 Hz, 2.14 at 1 kHz, 2.15 at 2 kHz),
 /// so the filter state grows without bound and the meter returns NaN/inf. The
 /// shelf corner (1681.97 Hz, ITU-R BS.1770-5 Annex 1, see
-/// `private/specs-verified/loudness/bs1770-algorithm.md`) is the highest of the
+/// `private/specs-verified/loudness/broadcast-loudness/bs1770-algorithm.md`) is the highest of the
 /// two, so the minimum is the smallest integer rate above twice that corner;
 /// the high-pass corner (38.1 Hz) is always valid at any such rate.
 pub const MIN_SAMPLE_RATE: u32 = (2.0 * SHELF_FC) as u32 + 1;
+
+/// Upper bound on the l1 norm of the cascaded K-weighting impulse response at
+/// every rate from [`MIN_SAMPLE_RATE`] to [`crate::MAX_SAMPLE_RATE`] (largest:
+/// 3.434 at 768 kHz), so a filtered sample is at most this multiple of the
+/// largest input magnitude.
+pub(crate) const K_WEIGHTING_MAX_GAIN: f64 = 3.5;
 
 /// Derive the two K‑weighting stage coefficients for a given sample rate.
 ///
@@ -114,10 +120,10 @@ pub const MIN_SAMPLE_RATE: u32 = (2.0 * SHELF_FC) as u32 + 1;
 /// ITU‑R BS.1770‑5 Annex 1 tabulated coefficients to within floating‑point
 /// epsilon. Other rates use the same derivation (the approach in libebur128).
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `sample_rate < MIN_SAMPLE_RATE` (the caller validates the rate
-/// before calling).
+/// Returns [`crate::Error::InvalidSampleRate`] if `sample_rate <
+/// MIN_SAMPLE_RATE`, where the derived stage 1 filter is unstable.
 ///
 /// ## Stage 1 — head‑related high‑shelf filter
 ///
@@ -128,8 +134,7 @@ pub const MIN_SAMPLE_RATE: u32 = (2.0 * SHELF_FC) as u32 + 1;
 ///
 /// Analog prototype: 2nd‑order Butterworth high‑pass, corner
 /// 38.13547087602444 Hz, Q = 0.5003270373238773.
-#[must_use]
-pub fn k_weighting_coeffs(sample_rate: u32) -> (BiquadCoeffs, BiquadCoeffs) {
+pub fn k_weighting_coeffs(sample_rate: u32) -> crate::Result<(BiquadCoeffs, BiquadCoeffs)> {
     // --- Stage 1: head-related high-shelf filter ---
     // Gain in dB (libebur128: 3.999843853973347, ≈ +4 dB). The exact constant
     // reproduces the BS.1770-5 tabulated coefficients at 48 kHz exactly.
@@ -139,10 +144,9 @@ pub fn k_weighting_coeffs(sample_rate: u32) -> (BiquadCoeffs, BiquadCoeffs) {
     // not sqrt(Vh).
     const SHELF_VB_EXP: f64 = 0.499_666_774_154_541_6;
 
-    assert!(
-        sample_rate >= MIN_SAMPLE_RATE,
-        "sample rate below MIN_SAMPLE_RATE"
-    );
+    if sample_rate < MIN_SAMPLE_RATE {
+        return Err(crate::Error::InvalidSampleRate { got: sample_rate });
+    }
     let vh = libm::pow(10.0, SHELF_GAIN_DB / 20.0);
     let vb = libm::pow(vh, SHELF_VB_EXP);
     let k = libm::tan(core::f64::consts::PI * SHELF_FC / sample_rate as f64);
@@ -171,5 +175,42 @@ pub fn k_weighting_coeffs(sample_rate: u32) -> (BiquadCoeffs, BiquadCoeffs) {
         a2: (1.0 - k / HIGH_PASS_Q + k * k) / a0,
     };
 
-    (stage1, stage2)
+    Ok((stage1, stage2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BiquadState, K_WEIGHTING_MAX_GAIN, MIN_SAMPLE_RATE, apply_biquad, k_weighting_coeffs,
+    };
+
+    fn impulse_response_l1(sample_rate: u32) -> f64 {
+        const DECAY_S: f64 = 0.25;
+        let (stage1, stage2) = k_weighting_coeffs(sample_rate).unwrap();
+        let (mut s1, mut s2) = (BiquadState::new(), BiquadState::new());
+        let n = (DECAY_S * f64::from(sample_rate)) as usize;
+        (0..n)
+            .map(|i| {
+                let x = if i == 0 { 1.0 } else { 0.0 };
+                libm::fabs(apply_biquad(
+                    apply_biquad(x, &stage1, &mut s1),
+                    &stage2,
+                    &mut s2,
+                ))
+            })
+            .sum()
+    }
+
+    #[test]
+    fn max_gain_bounds_the_impulse_response_l1_norm_at_every_rate() {
+        let mut largest = 0.0f64;
+        let mut rate = f64::from(MIN_SAMPLE_RATE);
+        while rate < f64::from(crate::MAX_SAMPLE_RATE) {
+            largest = largest.max(impulse_response_l1(rate as u32));
+            rate *= 1.25;
+        }
+        largest = largest.max(impulse_response_l1(crate::MAX_SAMPLE_RATE));
+        assert!(largest < K_WEIGHTING_MAX_GAIN, "{largest}");
+        assert!(largest > 3.4, "{largest}");
+    }
 }
