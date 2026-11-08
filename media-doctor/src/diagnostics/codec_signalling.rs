@@ -265,6 +265,7 @@ mod tests {
     /// clean-negative gate (mirrors the crate-wide hard gate this issue
     /// requires; see also `media-doctor/tests/it/codec_v2_real_captures.rs`).
     #[test]
+    #[cfg(feature = "std")]
     fn real_captures_not_flagged() {
         for rel in [
             "ts/h264/baseline.ts",
