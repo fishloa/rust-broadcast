@@ -26,8 +26,6 @@ pub mod udp;
 
 pub use crate::tshttp::StarveKind;
 pub use broadcast_auth::Credentials;
-#[cfg(feature = "__test-seams")]
-#[doc(hidden)]
 pub use buffer::BufferInput;
 pub use buffering_runtime::Hint;
 pub use buffering_runtime::Hint as BufferHint;

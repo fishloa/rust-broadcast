@@ -422,7 +422,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         std::collections::BTreeMap::new();
     let mut last_media_end_27: std::collections::BTreeMap<u32, u64> =
         std::collections::BTreeMap::new();
-    let mut session = Session::open(&url, Config::default(), 0).expect("open");
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    let mut session = Session::open(&url, config, 0).expect("open");
     let mut stream: Option<(u32, TcpStream)> = None;
     let mut events = Vec::new();
     let mut buf = vec![0u8; READ_CHUNK];
@@ -841,8 +843,8 @@ fn print_lead_series(label: &str, session: &Session) {
     let mut next_print = 0u64;
     for input in session.buffer_input_log() {
         match input {
-            BufferInput::Register(t) => eprintln!("LEAD[{label}] register track {t}"),
-            BufferInput::Unregister(t) => eprintln!("LEAD[{label}] unregister track {t}"),
+            BufferInput::Register { track: t, .. } => eprintln!("LEAD[{label}] register track {t}"),
+            BufferInput::Unregister { track: t, .. } => eprintln!("LEAD[{label}] unregister track {t}"),
             BufferInput::TrackMedia {
                 now_us,
                 track,

@@ -181,6 +181,8 @@ impl Session {
         let start_pending_hard_cap_us = config.start_pending_track_hard_cap_us;
         let jump = JumpDetector::new(config.timeline_jump);
         let event_cap = config.max_queued_events;
+        let record_inputs = config.record_buffer_inputs;
+        let record_cap = config.max_recorded_buffer_inputs;
         let mut playout = Playout::new(config.playout);
         let mut auth = AuthState::new(parsed.clone(), config.extra_headers.clone());
         auth.seed_cookies(&config.initial_cookies);
@@ -247,12 +249,16 @@ impl Session {
             ts_wake: None,
             actions: VecDeque::new(),
             events: EventQueue::new(event_cap),
-            buffer: crate::buffer::Feeder::new(
-                buffer_cfg,
-                seed,
-                start_pending_wait_us,
-                start_pending_hard_cap_us,
-            ),
+            buffer: {
+                let mut feeder = crate::buffer::Feeder::new(
+                    buffer_cfg,
+                    seed,
+                    start_pending_wait_us,
+                    start_pending_hard_cap_us,
+                );
+                feeder.set_recording(record_inputs, record_cap);
+                feeder
+            },
             playout,
             jump,
             declaration: crate::rendered::Declaration::default(),
@@ -924,11 +930,33 @@ impl Session {
         self.jump.clear();
     }
 
-    /// Inputs fed to the buffering controller so far.
+    /// Inputs recorded and not yet drained, without removing them. Empty unless
+    /// [`Config::record_buffer_inputs`] is set.
     #[cfg(feature = "__test-seams")]
     #[doc(hidden)]
     pub fn buffer_input_log(&self) -> &[crate::BufferInput] {
-        &self.buffer.log
+        self.buffer.log.peek()
+    }
+
+    /// Hands over, oldest first, and clears the inputs the session fed to its buffering
+    /// controller since the last drain. Empty unless [`Config::record_buffer_inputs`] is set.
+    ///
+    /// The queue holds at most [`Config::max_recorded_buffer_inputs`]; drain it regularly (it
+    /// fills at the rate of chunk, media and tick calls). Inputs that arrive while it is full
+    /// are dropped and counted by [`Session::dropped_buffer_inputs`].
+    ///
+    /// Write each with [`crate::BufferInput::csv_row`] to build a log that replays offline
+    /// through a `buffering_runtime::BufferController` built from [`Config::controller_config`].
+    pub fn drain_buffer_inputs(&mut self) -> impl Iterator<Item = crate::BufferInput> + '_ {
+        self.buffer.log.drain()
+    }
+
+    /// Buffering inputs dropped because the queue held [`Config::max_recorded_buffer_inputs`].
+    /// The first drop also emits a non-fatal [`Event::Error`] with
+    /// [`ErrorKind::BufferInputsDropped`]. A log with drops no longer replays faithfully.
+    #[must_use]
+    pub fn dropped_buffer_inputs(&self) -> u64 {
+        self.buffer.log.dropped()
     }
 
     /// Stall memory snapshot.
