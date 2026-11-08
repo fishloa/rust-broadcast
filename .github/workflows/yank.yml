@@ -42,6 +42,17 @@ jobs:
           IFS=',' read -ra VERSIONS <<< "${{ inputs.version }}"
           for c in "${CRATES[@]}"; do
             for v in "${VERSIONS[@]}"; do
-              cargo yank $FLAG --version "$v" "$c"
+              attempt=1
+              delay=60
+              until cargo yank $FLAG --version "$v" "$c"; do
+                if [ "$attempt" -ge 4 ]; then
+                  echo "yank of $c $v failed after $attempt attempts"
+                  exit 1
+                fi
+                echo "yank of $c $v failed (attempt $attempt); retrying in ${delay}s"
+                sleep "$delay"
+                attempt=$((attempt + 1))
+                delay=$((delay * 2))
+              done
             done
           done
