@@ -331,7 +331,6 @@ pub fn decode_seconds_since_2000_utc(
     utco: u16,
 ) -> Option<chrono::DateTime<chrono::Utc>> {
     use chrono::TimeZone;
-    // Convert to Unix timestamp: add the 2000-epoch offset, subtract utco.
     let unix_secs = SECS_2000_EPOCH
         .checked_add(i64::try_from(seconds_since_2000).ok()?)?
         .checked_sub(i64::from(utco))?;
