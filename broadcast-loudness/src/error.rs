@@ -23,7 +23,11 @@ pub enum Error {
     /// Below the minimum the K‑weighting shelf corner is at or above Nyquist
     /// and the derived filter is unstable; the upper bound keeps the
     /// sliding-window allocation finite.
-    #[error("sample rate must be between 3364 and 768000 Hz, got {got} Hz")]
+    #[error(
+        "sample rate must be between {} and {} Hz, got {got} Hz",
+        crate::MIN_SAMPLE_RATE,
+        crate::MAX_SAMPLE_RATE
+    )]
     InvalidSampleRate {
         /// The invalid sample rate requested.
         got: u32,

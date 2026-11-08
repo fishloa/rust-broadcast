@@ -41,12 +41,12 @@
 //!
 //! Blocks are binned by loudness at 0.01 LU resolution between the
 //! −70 LKFS absolute gate (BS.1770-5 Annex 1, eq. 6; transcription
-//! `private/specs-verified/loudness/bs1770-algorithm.md`) and a 30 LKFS
+//! `private/specs-verified/loudness/broadcast-loudness/bs1770-algorithm.md`) and a 30 LKFS
 //! ceiling. Each bin keeps its block count and the exact sum of block
 //! mean-square energies, so the gated mean of eq. (5)/(6) is computed from
 //! energies, not quantised loudness. The relative gates (−10 LU integrated,
 //! −20 LU LRA per EBU Tech 3342,
-//! `private/specs-verified/loudness/tech3342-lra.md`) and the Tech 3342
+//! `private/specs-verified/loudness/broadcast-loudness/tech3342-lra.md`) and the Tech 3342
 //! 10th/95th percentile ranks are resolved to a bin; a percentile reports
 //! the loudness of its bin's mean energy, so the error is below one bin
 //! width, far inside the Tech 3342 ±1 LU tolerance.

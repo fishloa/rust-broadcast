@@ -180,3 +180,12 @@ fn k_weighting_coeffs_rejects_rates_below_the_minimum_without_panicking() {
         assert!(k_weighting_coeffs(ok).is_ok(), "rate {ok}");
     }
 }
+
+#[test]
+fn invalid_sample_rate_message_names_the_accepted_range() {
+    let msg = Error::InvalidSampleRate { got: 7 }.to_string();
+    assert_eq!(
+        msg,
+        format!("sample rate must be between {MIN_SAMPLE_RATE} and {MAX_SAMPLE_RATE} Hz, got 7 Hz")
+    );
+}

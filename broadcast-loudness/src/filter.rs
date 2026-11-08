@@ -100,7 +100,7 @@ const HIGH_PASS_FC: f64 = 38.135_470_876_024_44;
 /// leave the unit circle (radius 1.12 at 1 Hz, 2.14 at 1 kHz, 2.15 at 2 kHz),
 /// so the filter state grows without bound and the meter returns NaN/inf. The
 /// shelf corner (1681.97 Hz, ITU-R BS.1770-5 Annex 1, see
-/// `private/specs-verified/loudness/bs1770-algorithm.md`) is the highest of the
+/// `private/specs-verified/loudness/broadcast-loudness/bs1770-algorithm.md`) is the highest of the
 /// two, so the minimum is the smallest integer rate above twice that corner;
 /// the high-pass corner (38.1 Hz) is always valid at any such rate.
 pub const MIN_SAMPLE_RATE: u32 = (2.0 * SHELF_FC) as u32 + 1;
