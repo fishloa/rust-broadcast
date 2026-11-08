@@ -36,6 +36,7 @@ use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
 include!("support/libsrt_spawn.rs");
+include!("support/run_tag.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PAYLOAD_LEN: usize = 1316;
@@ -87,13 +88,6 @@ async fn send_burst(socket: &mut SrtSocket, burst: &[u8]) {
     }
 }
 
-/// Numbered, self-describing chunk `index` of `PAYLOAD_LEN` bytes.
-fn numbered_chunk(index: u32) -> Vec<u8> {
-    let mut c = pattern(PAYLOAD_LEN, 7);
-    c[..4].copy_from_slice(&index.to_be_bytes());
-    c
-}
-
 /// Feed numbered chunks to a libsrt `udp://` source every 50 ms until `wanted`
 /// of them have come out of `receiver`, and return the indexes received.
 ///
@@ -104,6 +98,7 @@ fn numbered_chunk(index: u32) -> Vec<u8> {
 /// in order (checked by the caller via the returned indexes).
 async fn feed_until_received(src_port: u16, receiver: &mut SrtSocket, wanted: usize) -> Vec<u32> {
     let feed = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let tag = unique_run_tag();
     let mut next_to_feed = 0u32;
     let mut received: Vec<u32> = Vec::new();
     let mut feeder = tokio::time::interval(Duration::from_millis(50));
@@ -111,16 +106,19 @@ async fn feed_until_received(src_port: u16, receiver: &mut SrtSocket, wanted: us
     while received.len() < wanted {
         tokio::select! {
             _ = feeder.tick() => {
-                feed.send_to(&numbered_chunk(next_to_feed), ("127.0.0.1", src_port))
+                feed.send_to(&tagged_chunk(tag, next_to_feed, PAYLOAD_LEN), ("127.0.0.1", src_port))
                     .await
                     .unwrap();
                 next_to_feed += 1;
             }
             r = receiver.recv() => {
                 let payload = r.expect("recv").expect("connection ended");
+                if !chunk_tag_matches(&payload, tag) {
+                    continue;
+                }
                 assert_eq!(payload.len(), PAYLOAD_LEN);
-                let index = u32::from_be_bytes(payload[..4].try_into().unwrap());
-                assert_eq!(payload, numbered_chunk(index), "chunk {index} corrupted");
+                let index = u32::from_be_bytes(payload[TAG_LEN..2 * TAG_LEN].try_into().unwrap());
+                assert_eq!(payload, tagged_chunk(tag, index, PAYLOAD_LEN), "chunk {index} corrupted");
                 received.push(index);
             }
             _ = tokio::time::sleep_until(deadline) => {

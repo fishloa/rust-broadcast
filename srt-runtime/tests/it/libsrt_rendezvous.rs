@@ -30,6 +30,7 @@ use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
 include!("support/libsrt_spawn.rs");
+include!("support/run_tag.rs");
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(120);
 const PAYLOAD_LEN: usize = 1316;
@@ -75,12 +76,6 @@ async fn recv_at_least(discard: &TokioUdpSocket, want_len: usize, timeout: Durat
         }
     }
     out
-}
-
-fn numbered_chunk(index: u32) -> Vec<u8> {
-    let mut c = pattern(PAYLOAD_LEN, 7);
-    c[..4].copy_from_slice(&index.to_be_bytes());
-    c
 }
 
 /// Our Rendezvous side completes a real handshake with a genuine libsrt
@@ -184,6 +179,7 @@ async fn real_libsrt_rendezvous_sender_delivers_data_to_our_rendezvous_side() {
             // side is still connecting, and there is no "connected" signal
             // for it: feed every 50 ms until 6 chunks have come out.
             let feed = TokioUdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let tag = unique_run_tag();
             let mut next = 0u32;
             let mut received: Vec<u32> = Vec::new();
             let mut feeder = tokio::time::interval(Duration::from_millis(50));
@@ -191,16 +187,19 @@ async fn real_libsrt_rendezvous_sender_delivers_data_to_our_rendezvous_side() {
             while received.len() < 6 {
                 tokio::select! {
                     _ = feeder.tick() => {
-                        feed.send_to(&numbered_chunk(next), ("127.0.0.1", src_port))
+                        feed.send_to(&tagged_chunk(tag, next, PAYLOAD_LEN), ("127.0.0.1", src_port))
                             .await
                             .unwrap();
                         next += 1;
                     }
                     r = ours.recv() => {
                         let payload = r.expect("recv").expect("connection ended");
-                        assert_eq!(payload.len(), PAYLOAD_LEN);
-                        let index = u32::from_be_bytes(payload[..4].try_into().unwrap());
-                        assert_eq!(payload, numbered_chunk(index), "chunk {index} corrupted");
+                        if !chunk_tag_matches(&payload, tag) {
+                    continue;
+                }
+                assert_eq!(payload.len(), PAYLOAD_LEN);
+                        let index = u32::from_be_bytes(payload[TAG_LEN..2 * TAG_LEN].try_into().unwrap());
+                        assert_eq!(payload, tagged_chunk(tag, index, PAYLOAD_LEN), "chunk {index} corrupted");
                         received.push(index);
                     }
                     _ = tokio::time::sleep_until(deadline) => {

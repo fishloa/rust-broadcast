@@ -25,6 +25,7 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use test_fixtures::process::KillOnDrop;
 
@@ -48,10 +49,28 @@ const LATENCY_MS: u16 = 1_000;
 /// First byte of a synchronisation datagram (a TS packet starts `0x47`).
 const SYNC_MARKER: u8 = 0x00;
 
-fn work_dir(name: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("libsrt_media_{name}"));
-    std::fs::create_dir_all(&dir).expect("create work dir");
-    dir
+static WORK_DIR_SEQ: AtomicU32 = AtomicU32::new(0);
+
+struct WorkDir(PathBuf);
+
+impl WorkDir {
+    fn new(name: &str) -> Self {
+        let seq = WORK_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("libsrt_media_{name}_{}_{seq}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create work dir");
+        Self(dir)
+    }
+
+    fn join(&self, file: &str) -> PathBuf {
+        self.0.join(file)
+    }
+}
+
+impl Drop for WorkDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// Generate the test stream with ffmpeg: MPEG-2 video + MP2 audio, 2 s.
@@ -131,7 +150,7 @@ fn assert_media_equal(input: &Path, output: &Path, original: &[u8], received: &[
 async fn our_caller_to_libsrt_listener() {
     skip_unless_tools!("srt-live-transmit" => "-version", "ffmpeg" => "-version", "ffprobe" => "-version");
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let dir = work_dir("caller");
+        let dir = WorkDir::new("caller");
         let (input, output) = (dir.join("in.ts"), dir.join("out.ts"));
         let original = make_ts(&input);
 
@@ -180,7 +199,7 @@ async fn our_caller_to_libsrt_listener() {
 async fn libsrt_caller_to_our_listener() {
     skip_unless_tools!("srt-live-transmit" => "-version", "ffmpeg" => "-version", "ffprobe" => "-version");
     tokio::time::timeout(TEST_TIMEOUT, async {
-        let dir = work_dir("listener");
+        let dir = WorkDir::new("listener");
         let (input, output) = (dir.join("in.ts"), dir.join("out.ts"));
         let original = make_ts(&input);
 

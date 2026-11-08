@@ -24,7 +24,7 @@ use std::io;
 use std::net::{TcpListener, UdpSocket};
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use wait_timeout::ChildExt;
@@ -100,17 +100,34 @@ pub fn tool_available(tool: &str, arg: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// A UDP port that was free on loopback a moment ago.
+/// First port of the range [`free_udp_port`] hands out; below every OS
+/// ephemeral range (Linux 32768.., macOS 49152..), so a test's own
+/// `bind("127.0.0.1:0")` can never be given a port reserved here.
+const UDP_RANGE_START: u16 = 20_000;
+const UDP_RANGE_LEN: u16 = 12_000;
+const UDP_PID_STRIDE: u32 = 211;
+
+static UDP_NEXT: AtomicU32 = AtomicU32::new(0);
+
+/// A UDP port that was free on loopback a moment ago, never handed out twice
+/// within this process and never inside the OS ephemeral range, so neither a
+/// sibling test calling this nor one binding port 0 can be given it before the
+/// caller's external process binds it.
 ///
 /// # Panics
-/// If no loopback socket can be bound.
+/// If no port of the range can be bound.
 #[must_use]
 pub fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .expect("bind a free UDP port")
-        .local_addr()
-        .expect("local addr")
-        .port()
+    let span = u32::from(UDP_RANGE_LEN);
+    let seed = std::process::id().wrapping_mul(UDP_PID_STRIDE) % span;
+    for _ in 0..span {
+        let step = UDP_NEXT.fetch_add(1, Ordering::Relaxed);
+        let port = UDP_RANGE_START + u16::try_from((seed + step) % span).expect("below span");
+        if UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    panic!("no free UDP port in {UDP_RANGE_START}..+{UDP_RANGE_LEN}");
 }
 
 /// A TCP port that was free on loopback a moment ago.

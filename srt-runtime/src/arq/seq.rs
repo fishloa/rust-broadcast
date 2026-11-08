@@ -84,6 +84,7 @@ pub fn contiguous_runs(seqs: &[u32]) -> Vec<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn contiguous_runs_merge_across_the_wrap() {
