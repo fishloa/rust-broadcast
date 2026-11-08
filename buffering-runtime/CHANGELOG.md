@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tests
 - `reregistered_track_start`: a track re-registered after `unregister_track` holds the start until it delivers, like a first registration; a tick between the unregister and the register releases the start (the documented rule). Goldens on the tf-1 tvOS logs of 2026-11-08: the field start came from a tick while audio was unregistered (lead 1.000 s); without the two churn rows the same log starts at +0.681 s with lead 0.688 s covered by audio; the passing log is unchanged (+1.734 s, lead 0.544 s). No behaviour change: the controller was correct for its inputs (DESIGN 0.7e).
 
+## [0.2.1] - 2026-11-08
+
+### Changed
+- Dependency/epoch bump only; no functional change.
+
 ## [0.2.0] - 2026-11-07
 ### Documented
 - Start-fill cost of the granularity gate, measured (DESIGN 0.7d): on the Apple TV input logs (rai-3, rai-3 per-chunk, rai-3-stall, france-5; closed loop, tracks registered up front) the gate costs nothing at `initial_us` 500 ms and 1.8 s; the first frame is bound by the audio lead filling in one-PES lumps (lead 703 ms at the rai-3 start for a 500 ms fill) and by audio's first delivery arriving ~0.43-0.62 s after video's. A one-step gate would start 0.1-0.2 s earlier at 300 ms but stalls rai-3 and rai-3 per-chunk, so the two-step gate and its bound are unchanged. No behaviour change.

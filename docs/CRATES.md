@@ -114,7 +114,7 @@ builds (see the table above against the in-tree versions below).
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
 | [`transmux`](#transmux) | Containers and adaptive streaming | 0.30.0 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
-| [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.2.0 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
+| [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.2.1 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
 | [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | no | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
 | [`rtsp-runtime`](#rtsp-runtime) | Live transport protocols | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) | no | 1 | on crates.io |
@@ -483,7 +483,7 @@ Turns chunk arrivals, PCR and the PTS-domain media position into a target buffer
 
 - **Standards:** RFC 3550 s6.4.1/A.8 and RFC 5481 (measurement); the sizing policy is implementation-defined
 - **Cargo description:** Sans-IO live-TS playout buffer controller: measures delivery jitter (RFC 5481 PDV), keeps a stall memory, and decides when a player should start, pause and resume and how deep its buffer must be. Integer-only, no_std + alloc.
-- **Version (in-tree):** 0.2.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
+- **Version (in-tree):** 0.2.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client)
 - **Links:** [README](../buffering-runtime/README.md) · [CHANGELOG](../buffering-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/buffering-runtime) · [docs.rs](https://docs.rs/buffering-runtime)

@@ -1,6 +1,6 @@
 [package]
 name    = "buffering-runtime"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Sans-IO live-TS playout buffer controller: measures delivery jitter (RFC 5481 PDV), keeps a stall memory, and decides when a player should start, pause and resume and how deep its buffer must be. Integer-only, no_std + alloc."
 license      = "MIT OR Apache-2.0"
