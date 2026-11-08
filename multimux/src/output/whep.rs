@@ -2522,8 +2522,29 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             let mut client = TcpStream::connect(addr).await.unwrap();
             client.write_all(request_gen().as_bytes()).await.unwrap();
             let mut buf = Vec::new();
-            let _ =
-                tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut buf)).await;
+            let _ = tokio::time::timeout(Duration::from_secs(5), async {
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let n = client.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&buf[..end]).to_ascii_lowercase();
+                    let body_len = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if buf.len() >= end + 4 + body_len {
+                        break;
+                    }
+                }
+            })
+            .await;
             cancel.cancel();
             let _ = serve.await;
             let text = String::from_utf8_lossy(&buf).into_owned();

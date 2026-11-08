@@ -16,7 +16,8 @@
 //! reintroduces exactly the duplication this design exists to delete.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -205,14 +206,14 @@ where
 {
     let base = Instant::now();
     let deadline_instant = base + timeout;
-    let deadline = Timestamp::from_instant(base, deadline_instant);
+    let deadline = Timestamp::from_instant(base.into_std(), deadline_instant.into_std());
     let policy = AwaitPolicy::new(deadline);
 
     let mut on_enter_wait = Some(on_enter_wait);
     let mut _wait_guard: Option<G> = None;
 
     loop {
-        let now = Timestamp::from_instant(base, Instant::now());
+        let now = Timestamp::from_instant(base.into_std(), Instant::now().into_std());
         match egress.resolve(request.clone(), now, policy) {
             EgressResponse::Await { .. } => *waited = true,
             other => return other,
@@ -223,7 +224,7 @@ where
         // case the answer changed between the first `resolve` above and this
         // registration landing.
         let listener = trunk.listen();
-        let now = Timestamp::from_instant(base, Instant::now());
+        let now = Timestamp::from_instant(base.into_std(), Instant::now().into_std());
         match egress.resolve(request.clone(), now, policy) {
             EgressResponse::Await { .. } => *waited = true,
             other => return other,
@@ -234,7 +235,7 @@ where
             // Out of patience: one final resolve to get the honest
             // "gave up waiting" answer (`EgressResponse::pending`'s own
             // now-past-deadline path), rather than looping forever.
-            let now = Timestamp::from_instant(base, Instant::now());
+            let now = Timestamp::from_instant(base.into_std(), Instant::now().into_std());
             return egress.resolve(request.clone(), now, policy);
         }
 

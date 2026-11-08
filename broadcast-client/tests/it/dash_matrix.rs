@@ -7,6 +7,9 @@
 //! stating its request classes, and `every_fault_and_class_has_a_row` fails when a fault/class
 //! pair has no source and stage that can exercise it.
 
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
 use crate::support::dash_common;
 use crate::support::dash_matrix;
 use crate::support::dash_sim;
@@ -89,6 +92,16 @@ fn segment_url(urls: &[String], rep_prefix: &str, nth: usize) -> String {
         .clone()
 }
 
+fn probed_urls(source: &'static str, probe: impl FnOnce() -> Vec<String>) -> Vec<String> {
+    static CACHE: Mutex<BTreeMap<&'static str, Vec<String>>> = Mutex::new(BTreeMap::new());
+    if let Some(urls) = CACHE.lock().unwrap().get(source) {
+        return urls.clone();
+    }
+    let urls = probe();
+    CACHE.lock().unwrap().insert(source, urls.clone());
+    urls
+}
+
 fn static_src() -> Src {
     let config = matrix_config();
     Src {
@@ -136,11 +149,11 @@ fn static_fixture_src(name: &'static str, mpd_url: &'static str, pick: StaticPic
             Box::new(StaticBackend(Origin::new())),
         )
     };
-    let urls = {
+    let urls = probed_urls(name, || {
         let mut sim = base();
         sim.run_to_terminal(900 * SEC);
         distinct_urls(&sim.log)
-    };
+    });
     let stages = pick(&urls);
     Src {
         name,
@@ -308,12 +321,11 @@ fn live_src(spec: Live) -> Src {
             Box::new(WorldBackend(synth)),
         )
     };
-    let probe: Vec<Logged> = {
+    let urls = probed_urls(name, || {
         let mut sim = base();
         sim.run_for(PROBE_US);
-        sim.log
-    };
-    let urls = distinct_urls(&probe);
+        distinct_urls(&sim.log)
+    });
     let (video, audio) = if multi { ("V1", "A1") } else { ("V", "A") };
     let mut stages = vec![
         stage("mpd", Class::Mpd, Matcher::MpdAll),

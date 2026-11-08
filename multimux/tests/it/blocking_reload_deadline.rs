@@ -3,7 +3,8 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use crate::support::origin::get;
 use axum::http::{StatusCode, header};
@@ -115,7 +116,7 @@ async fn open_segment_msn(app: &axum::Router) -> u64 {
     first + body.matches("#EXTINF").count() as u64
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn blocking_reload_waits_beyond_five_seconds_when_target_is_longer() {
     let mut feeder = Feeder::new();
     feeder.frames(0..FRAMES_PER_SEGMENT * 2 + FRAMES_PER_SEGMENT / 2);
@@ -135,7 +136,7 @@ async fn blocking_reload_waits_beyond_five_seconds_when_target_is_longer() {
     assert_eq!(resp.unwrap().status(), StatusCode::OK);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn blocking_reload_past_three_target_durations_is_503() {
     let mut feeder = Feeder::new();
     feeder.frames(0..FRAMES_PER_SEGMENT * 2 + FRAMES_PER_SEGMENT / 2);

@@ -3502,7 +3502,7 @@ mod tests {
     async fn a_reload_flood_sheds_the_excess_with_503() {
         const BOUND: usize = 4;
         let mut streams = HashMap::new();
-        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        let store = Arc::new(RouteHandle::new(1.0, 500, 4));
         store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
         store
@@ -3510,7 +3510,7 @@ mod tests {
                 crate::route::SPTS_PROGRAM_ID,
                 transmux::ll_hls::SegmentInfo {
                     bytes: vec![0x20; 8],
-                    duration: 4.0,
+                    duration: 1.0,
                     segment_seq: 1,
                     part_count: 1,
                 },
