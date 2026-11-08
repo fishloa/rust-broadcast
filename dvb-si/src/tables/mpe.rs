@@ -369,6 +369,7 @@ impl<'a> crate::traits::TableDef<'a> for MpeDatagramSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     /// Build a syntactically valid MPE datagram_section.
     ///

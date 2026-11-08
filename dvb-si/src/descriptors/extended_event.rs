@@ -197,6 +197,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for ExtendedEventDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn build(
         descriptor_number: u8,

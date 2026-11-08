@@ -154,6 +154,7 @@ impl crate::traits::DescriptorDef<'_> for LogicalChannelDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_single_entry() {

@@ -496,6 +496,7 @@ impl crate::traits::DescriptorDef<'_> for Mpeg2ExtensionDescriptor {
 mod tests {
     use super::*;
     use crate::descriptors::mpegh_3d_audio::*;
+    use alloc::vec;
 
     fn d(body: &[u8]) -> Vec<u8> {
         let mut v = vec![TAG, body.len() as u8];

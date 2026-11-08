@@ -248,6 +248,7 @@ fn check_pes(
 mod tests {
     use super::*;
     use crate::report::Report;
+    use alloc::{vec, vec::Vec};
 
     /// Build a TS packet (188 bytes) containing a PES fragment with the given
     /// raw PES bytes at the start of its payload (payload_unit_start=true).

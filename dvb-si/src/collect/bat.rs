@@ -66,6 +66,7 @@ mod tests {
     use super::super::SectionSetCollector;
     use crate::descriptors::DescriptorLoop;
     use crate::tables::bat::BatSection;
+    use alloc::{vec, vec::Vec};
 
     fn build_bat_section(
         bouquet_id: u16,

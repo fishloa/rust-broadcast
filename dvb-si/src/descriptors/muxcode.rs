@@ -62,6 +62,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for MuxcodeDescriptor<'a> {
 mod tests {
     use super::*;
     use crate::error::Error;
+    use alloc::vec;
 
     #[test]
     fn parse_empty() {

@@ -71,6 +71,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for Mpeg4TextDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn round_trip_and_bounds() {

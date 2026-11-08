@@ -523,6 +523,7 @@ impl<'a> crate::traits::TableDef<'a> for UntSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// r03-W3 class: a 24-bit `OUI` wider than its field lost its top byte
     /// silently.

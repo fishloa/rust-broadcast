@@ -956,6 +956,7 @@ impl HevcSubregion {
 #[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // ── Table 2-131 spec vectors (hand-built) ──
 

@@ -637,6 +637,7 @@ impl<'a> crate::traits::TableDef<'a> for ProtectionMessageSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Wrap a body in the 8-byte common header + placeholder CRC.
     fn build_section(extension: u16, version: u8, body: &[u8]) -> Vec<u8> {

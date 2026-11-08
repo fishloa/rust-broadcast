@@ -115,6 +115,7 @@ impl crate::traits::TableDef<'_> for DitSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_transition_flag_set() {

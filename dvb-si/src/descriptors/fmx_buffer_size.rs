@@ -136,6 +136,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for FmxBufferSizeDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_default_only() {
@@ -162,7 +163,7 @@ mod tests {
         // `len % 4` heuristic reported these as "default absent" (r03-W15).
         for len in [0usize, 1, 2] {
             let mut bytes = vec![TAG, len as u8];
-            bytes.extend(std::iter::repeat_n(0u8, len));
+            bytes.extend(core::iter::repeat_n(0u8, len));
             assert!(matches!(
                 FmxBufferSizeDescriptor::parse(&bytes).unwrap_err(),
                 Error::InvalidDescriptor { tag: TAG, .. }

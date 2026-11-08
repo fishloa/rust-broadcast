@@ -93,6 +93,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for MessageDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_and_round_trip() {

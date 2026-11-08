@@ -418,6 +418,7 @@ impl crate::traits::DescriptorDef<'_> for AnnouncementSupportDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_entry_without_reference() {

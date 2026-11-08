@@ -389,6 +389,7 @@ mod tests {
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
     use crate::text::LangCode;
     use alloc::string::ToString;
+    use alloc::vec;
 
     #[test]
     fn parse_structured_round_trip_two_preselections() {

@@ -190,6 +190,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for EnhancedAc3Descriptor<'a> {
 mod tests {
     use super::*;
     use crate::descriptors::ac3::{Ac3ChannelMode, Ac3ServiceType};
+    use alloc::vec;
 
     #[test]
     fn parse_with_all_fields() {

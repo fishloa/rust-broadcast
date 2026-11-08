@@ -230,6 +230,7 @@ impl<'a> crate::traits::TableDef<'a> for DsmccSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     fn build_dsmcc(table_id: u8, extension_id: u16, version: u8, payload: &[u8]) -> Vec<u8> {
         let section_length: u16 = (EXTENSION_HEADER_LEN + payload.len() + CRC_LEN) as u16;

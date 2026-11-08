@@ -200,6 +200,7 @@ impl crate::traits::DescriptorDef<'_> for CellFrequencyLinkDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn frequency_hz_computes_correctly() {

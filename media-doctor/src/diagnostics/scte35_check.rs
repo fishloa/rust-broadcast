@@ -123,6 +123,7 @@ impl Diagnostic for Scte35Check {
 mod tests {
     use super::*;
     use crate::report::Report;
+    use alloc::{vec, vec::Vec};
 
     /// Build a TS packet with SCTE-35 sections on the given PID.
     /// PUSI is set in byte 1, payload starts at offset 4.

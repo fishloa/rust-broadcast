@@ -188,6 +188,7 @@ mod tests {
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
     #[cfg(feature = "serde")]
     use crate::text::DvbText;
+    use alloc::vec;
 
     #[cfg(feature = "serde")]
     #[test]

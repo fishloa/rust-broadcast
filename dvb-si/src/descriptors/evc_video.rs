@@ -196,6 +196,7 @@ impl_h222_descriptor!(EvcVideoDescriptor, TAG, "EvcVideoDescriptor", "EVC_VIDEO"
 #[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
+    use alloc::vec;
     use broadcast_common::{Parse, Serialize};
 
     #[test]

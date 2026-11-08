@@ -852,6 +852,7 @@ pub fn format_time_expression(expr: &TimeExpression) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn default_ctx() -> TimeContext {
         TimeContext::default()

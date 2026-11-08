@@ -157,6 +157,7 @@ impl<'a> crate::traits::TableDef<'a> for Iso14496Section<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     fn rt(s: &Iso14496Section<'_>) -> Vec<u8> {
         let mut out = vec![0u8; s.serialized_len()];

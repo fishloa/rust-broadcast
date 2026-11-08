@@ -600,6 +600,8 @@ pub(crate) const LOW_NIBBLE_MASK: u8 = 0x0F;
 /// Push the two `SECTION_B1_FLAGS_* | section_length` header bytes of a
 /// section; test/fixture helper counterpart of [`write_section_length`].
 #[cfg(test)]
+use alloc::vec::Vec;
+#[cfg(test)]
 pub(crate) fn push_section_header(v: &mut Vec<u8>, flags: u8, len: usize) {
     v.push(flags | ((len >> 8) as u8 & SECTION_LENGTH_HI_MASK));
     v.push((len & 0xFF) as u8);

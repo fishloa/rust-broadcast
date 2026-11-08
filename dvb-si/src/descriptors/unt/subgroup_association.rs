@@ -72,6 +72,7 @@ impl crate::traits::DescriptorDef<'_> for SsuSubgroupAssociationDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_oui_subgroup_and_round_trip() {

@@ -500,6 +500,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use alloc::vec;
 
     /// Regression for r03-W17: `SubstreamInfo::serialize_into` used to write
     /// `buf[0]` before checking the buffer was big enough, panicking

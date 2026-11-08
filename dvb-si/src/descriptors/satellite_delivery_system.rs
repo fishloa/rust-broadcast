@@ -455,6 +455,7 @@ fn round_half_away(x: f64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     /// Build a valid 13-byte descriptor (2 header + 11 body) and confirm
     /// parse extracts frequency and orbital position correctly.

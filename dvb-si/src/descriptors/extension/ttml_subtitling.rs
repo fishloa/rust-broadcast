@@ -283,6 +283,7 @@ mod tests {
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
     use crate::text::LangCode;
+    use alloc::vec;
 
     /// Full-featured parse: 2 profiles, qualifier present, 3 font_ids,
     /// short text, and a 2-byte reserved_tail.

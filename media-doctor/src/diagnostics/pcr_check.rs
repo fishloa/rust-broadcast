@@ -229,6 +229,7 @@ impl Diagnostic for PcrCheck {
 mod tests {
     use super::*;
     use crate::report::{Report, Severity};
+    use alloc::{vec, vec::Vec};
     use mpeg_ts::Pcr;
     use mpeg_ts::pid::Pid;
 

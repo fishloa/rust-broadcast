@@ -668,6 +668,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use alloc::vec;
     use broadcast_common::Serialize;
 
     // ── helper: construct a minimal USI (no conditional fields) ──────────────

@@ -62,6 +62,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for TypeDescriptor<'a> {
 mod tests {
     use super::*;
     use crate::error::Error;
+    use alloc::vec;
 
     #[test]
     fn parse_and_round_trip_spec_example_text_plain() {

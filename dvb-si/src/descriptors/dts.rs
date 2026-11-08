@@ -257,6 +257,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for DtsDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn bit_rate_bps_follows_table_g3_and_ignores_the_reserved_msb() {

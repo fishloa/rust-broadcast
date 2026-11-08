@@ -130,6 +130,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for PrefetchDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // Table 82: transport_protocol_label 1, entries ("img", 100) and ("", 1).
     const BYTES: [u8; 10] = [TAG, 8, 0x01, 3, b'i', b'm', b'g', 100, 0, 1];

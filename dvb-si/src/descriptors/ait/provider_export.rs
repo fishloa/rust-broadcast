@@ -144,6 +144,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for ProviderExportDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // Table 93 hand-built vector: tag 0x12, descriptor_length 14;
     //   03 'a' 'b' 'c'          provider_name_length=3 + "abc"

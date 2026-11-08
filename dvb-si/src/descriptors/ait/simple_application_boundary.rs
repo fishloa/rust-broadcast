@@ -128,6 +128,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for SimpleApplicationBoundaryDescripto
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Body: count(1) + len(1) + "foo"(3) + len(1) + "ba"(2) = 8.
     fn build_two_extensions() -> [u8; 10] {

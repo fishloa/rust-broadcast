@@ -170,6 +170,7 @@ impl crate::traits::DescriptorDef<'_> for PartialTransportStreamDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_fields_and_captures_reserved() {

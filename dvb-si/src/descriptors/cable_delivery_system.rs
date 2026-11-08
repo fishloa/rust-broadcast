@@ -421,6 +421,7 @@ impl crate::traits::DescriptorDef<'_> for CableDeliverySystemDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     #[test]
     fn fec_inner_from_u8_to_u8_roundtrip() {

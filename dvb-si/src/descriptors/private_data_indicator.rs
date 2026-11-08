@@ -83,6 +83,7 @@ impl crate::traits::DescriptorDef<'_> for PrivateDataIndicatorDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_private_data_specifier() {

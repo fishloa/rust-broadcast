@@ -2517,6 +2517,7 @@ impl HlsClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
     use transmux::sample_aes::aes128_encrypt_segment;
 
     const EMPTY_FRAGMENT: &[u8] = &[

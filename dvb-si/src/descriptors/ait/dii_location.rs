@@ -128,6 +128,7 @@ impl crate::traits::DescriptorDef<'_> for DiiLocationDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // Table 83: label 2; (reserved=1, id 0x0123, tag 0x0456); (reserved=0, id 0x7FFF, tag 0x0001).
     const BYTES: [u8; 11] = [TAG, 9, 0x02, 0x81, 0x23, 0x04, 0x56, 0x7F, 0xFF, 0x00, 0x01];

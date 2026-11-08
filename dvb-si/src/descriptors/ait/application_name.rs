@@ -97,6 +97,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for ApplicationNameDescriptor<'a> {
 mod tests {
     use super::*;
     use crate::error::Error;
+    use alloc::vec;
 
     /// Drift fix (#1141): the over-range name check is the shared
     /// `lang_text::write_text` one, exercised here through this former copy.

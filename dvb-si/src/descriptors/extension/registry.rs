@@ -169,6 +169,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::{ExtensionBodyDef, TAG, TAG_EXTENSION_LEN};
     use crate::error::Error;
+    use alloc::{vec, vec::Vec};
 
     const TEST_TAG_EXTENSION: u8 = 0x40;
 

@@ -475,6 +475,7 @@ impl<'a> crate::traits::TableDef<'a> for DownloadableFontInfoSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Wrap a font_info loop body in the 8-byte common header + placeholder CRC.
     fn build_section(font_id: u8, version: u8, loop_body: &[u8]) -> Vec<u8> {

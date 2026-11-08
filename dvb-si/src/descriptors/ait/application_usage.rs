@@ -81,6 +81,7 @@ impl crate::traits::DescriptorDef<'_> for ApplicationUsageDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_digital_text() {

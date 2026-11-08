@@ -71,6 +71,7 @@ impl crate::traits::DescriptorDef<'_> for RelatedContentDescriptor {
 mod tests {
     use super::*;
     use crate::error::Error;
+    use alloc::vec;
 
     #[test]
     fn parse_empty_marker() {

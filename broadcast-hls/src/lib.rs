@@ -4872,6 +4872,7 @@ pub fn mark_init_discontinuities(entries: &mut [(&[u8], &mut MediaSegment)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn seg(uri: &str, duration: f64) -> MediaSegment {
         MediaSegment {

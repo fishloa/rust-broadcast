@@ -150,6 +150,7 @@ impl crate::traits::TableDef<'_> for TdtSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_utc_time_raw() {

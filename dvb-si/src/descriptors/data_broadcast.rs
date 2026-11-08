@@ -162,6 +162,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for DataBroadcastDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     fn build(id: u16, ctag: u8, selector: &[u8], lang: [u8; 3], text: &[u8]) -> Vec<u8> {
         let body = ID_LEN

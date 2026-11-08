@@ -226,6 +226,7 @@ impl<'a> crate::traits::TableDef<'a> for MetadataSection<'a> {
 #[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     fn rt(s: &MetadataSection<'_>) -> Vec<u8> {
         let mut out = vec![0u8; s.serialized_len()];

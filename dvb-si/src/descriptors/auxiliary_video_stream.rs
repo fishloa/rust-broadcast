@@ -72,6 +72,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for AuxiliaryVideoStreamDescriptor<'a>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_minimal() {

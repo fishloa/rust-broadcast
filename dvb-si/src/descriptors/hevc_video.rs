@@ -388,6 +388,7 @@ impl crate::traits::DescriptorDef<'_> for HevcVideoDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn round_trip_no_temporal() {
@@ -628,7 +629,7 @@ mod tests {
         // accepted with the flags defaulted and then re-serialized as 13
         // bytes (r03-W12).
         let mut bytes = vec![TAG, 12];
-        bytes.extend(std::iter::repeat_n(0u8, 12));
+        bytes.extend(core::iter::repeat_n(0u8, 12));
         assert!(matches!(
             HevcVideoDescriptor::parse(&bytes).unwrap_err(),
             Error::InvalidDescriptor { tag: TAG, .. }
@@ -640,7 +641,7 @@ mod tests {
         // 14 bytes with temporal_layer_subset_flag = 0: two bytes past the
         // mandatory flags byte with nothing to carry them.
         let mut bytes = vec![TAG, 14];
-        bytes.extend(std::iter::repeat_n(0u8, 13));
+        bytes.extend(core::iter::repeat_n(0u8, 13));
         bytes.push(0x00);
         assert!(matches!(
             HevcVideoDescriptor::parse(&bytes).unwrap_err(),

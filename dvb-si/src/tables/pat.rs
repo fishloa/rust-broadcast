@@ -230,6 +230,7 @@ impl PatSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Build a PAT section with the given entries and a placeholder CRC.
     fn build_pat(tsid: u16, version: u8, entries: &[(u16, u16)]) -> Vec<u8> {

@@ -128,6 +128,7 @@ impl crate::traits::TableDef<'_> for StSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Build a minimal ST section byte vector.
     fn make_st_section(payload: &[u8]) -> Vec<u8> {

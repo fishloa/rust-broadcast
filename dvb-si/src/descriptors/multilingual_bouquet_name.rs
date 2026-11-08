@@ -91,6 +91,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for MultilingualBouquetNameDescriptor<
 mod tests {
     use super::*;
     use crate::error::Error;
+    use alloc::vec;
 
     fn build(entries: &[([u8; 3], &[u8])]) -> Vec<u8> {
         let body: usize = entries.iter().map(|(_, n)| LANG_LEN + 1 + n.len()).sum();

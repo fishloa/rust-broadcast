@@ -194,6 +194,7 @@ impl<'a> crate::traits::TableDef<'a> for TotSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     fn build_tot(desc: &[u8]) -> Vec<u8> {
         let section_length = (UTC_TIME_LEN + DESC_LOOP_LEN_FIELD + desc.len() + CRC_LEN) as u16;

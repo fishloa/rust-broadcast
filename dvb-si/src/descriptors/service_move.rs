@@ -82,6 +82,7 @@ impl crate::traits::DescriptorDef<'_> for ServiceMoveDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_triple() {

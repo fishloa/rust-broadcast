@@ -446,6 +446,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for DataBroadcastIdDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // ── DataBroadcastIdDescriptor (non-SSU raw path) ──────────────────────────
 

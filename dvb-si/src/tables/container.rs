@@ -218,6 +218,7 @@ impl<'a> crate::traits::TableDef<'a> for ContainerSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     /// Build a syntactically valid Container section. `container_data` is pasted
     /// verbatim; the CRC slot is filled by the serializer.

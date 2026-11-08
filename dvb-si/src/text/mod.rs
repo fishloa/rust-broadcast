@@ -657,6 +657,7 @@ fn decode_ucs2_be(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{format, string::ToString};
 
     #[test]
     fn decode_empty_input_returns_empty_string() {

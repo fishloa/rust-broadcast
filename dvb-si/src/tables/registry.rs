@@ -157,6 +157,7 @@ mod tests {
     use super::*;
     use crate::tables::AnyTableSection;
     use crate::traits::TableDef;
+    use alloc::{vec, vec::Vec};
     use broadcast_common::Parse;
 
     // -- A trivial custom table for a private table_id -------------------------

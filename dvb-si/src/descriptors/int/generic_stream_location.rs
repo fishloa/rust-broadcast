@@ -288,6 +288,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for IpMacGenericStreamLocationDescript
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{string::ToString, vec};
 
     #[test]
     fn parse_and_round_trip_flags_selector() {

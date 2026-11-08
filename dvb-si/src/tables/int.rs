@@ -378,6 +378,7 @@ impl<'a> crate::traits::TableDef<'a> for IntSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// r03-W3 class: a 24-bit `platform_id` wider than its field lost its top
     /// byte silently.

@@ -102,6 +102,7 @@ impl crate::traits::DescriptorDef<'_> for PrivateDataSpecifierDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// EN 300 468 v1.20.1 Annex O: the AVS3-P3 audio descriptor is preceded by a
     /// private_data_specifier_descriptor carrying `0x41565341` ('AVSA').

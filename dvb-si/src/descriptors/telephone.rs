@@ -269,6 +269,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for TelephoneDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn sample() -> TelephoneDescriptor<'static> {
         TelephoneDescriptor::new(

@@ -57,6 +57,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for BouquetNameDescriptor<'a> {
 mod tests {
     use super::*;
     use crate::error::Error;
+    use alloc::{vec, vec::Vec};
 
     /// Encode a 4-byte name, confirm parse extracts it.
     #[test]

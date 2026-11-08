@@ -193,6 +193,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for UpdateDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{string::ToString, vec};
 
     #[test]
     fn parse_fields_and_round_trip() {

@@ -110,6 +110,7 @@ mod tests {
     use super::*;
     use crate::error::Error;
     use crate::tables::CRC_LEN;
+    use alloc::{vec, vec::Vec};
 
     const EXTENSION_HEADER_LEN: usize = 5;
 

@@ -291,6 +291,7 @@ impl<'a> crate::traits::TableDef<'a> for MpeFecSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     fn build_mpe_fec(
         padding_columns: u8,

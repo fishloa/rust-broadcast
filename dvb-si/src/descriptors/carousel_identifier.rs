@@ -342,6 +342,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for CarouselIdentifierDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // ── byte-anchor constants for hand-built test vector ─────────────────────
     //
