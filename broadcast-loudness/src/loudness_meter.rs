@@ -909,7 +909,7 @@ impl LoudnessMeter {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoudnessMeter, SHORT_TERM_SUB_BLOCKS};
+    use super::{HISTOGRAM_BINS, LoudnessMeter, SHORT_TERM_SUB_BLOCKS};
     use crate::channel_layout::ChannelLayout;
 
     /// Issue #1072 (audit LOUD-C2): the bounded ring/tracker state must
@@ -946,8 +946,12 @@ mod tests {
                 "sample_rate {sample_rate}: short-term ring is not fixed-size"
             );
 
-            assert_eq!(meter.gating_blocks.bins.len(), super::HISTOGRAM_BINS);
-            assert_eq!(meter.short_term_blocks.bins.len(), super::HISTOGRAM_BINS);
+            assert_eq!(meter.gating_blocks.bins.len(), HISTOGRAM_BINS);
+            assert_eq!(meter.short_term_blocks.bins.len(), HISTOGRAM_BINS);
+            assert_eq!(
+                2 * HISTOGRAM_BINS * core::mem::size_of::<super::Bin>(),
+                640_000
+            );
         }
     }
 
