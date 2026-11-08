@@ -308,3 +308,20 @@ fn whip_patch_requires_the_trickle_ice_media_type() {
     let ev = s.on_patch(b"f".to_vec(), &headers).unwrap();
     assert!(matches!(ev, Event::TrickleIce { .. }));
 }
+
+#[test]
+fn whep_accepts_a_trickle_patch_without_if_match_where_whip_requires_it() {
+    let mut whep = established_whep();
+    let ev = whep
+        .on_patch(b"f".to_vec(), &trickle_headers(None))
+        .unwrap();
+    assert!(matches!(
+        ev,
+        webrtc_runtime::whep::server::Event::TrickleIce { if_match: None, .. }
+    ));
+    let mut whip = established_whip();
+    assert!(matches!(
+        whip.on_patch(b"f".to_vec(), &trickle_headers(None)),
+        Err(Error::PreconditionRequired { .. })
+    ));
+}

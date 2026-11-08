@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
 use crate::auth::{Authenticator, Credentials, RequestContext};
-use crate::error::{Error, Result};
+use crate::error::{Error, MessageKind, Result};
 use crate::interleaved::{self, MAGIC};
 use crate::state::{SessionState, client_next_state};
 use crate::transport::Transport;
@@ -541,14 +541,15 @@ impl ClientSession {
     fn handle_data_into(&mut self, data: &[u8], events: &mut Vec<ClientEvent>) -> Result<()> {
         self.inbound.extend_from_slice(data);
         if self.inbound.len() > MAX_INBOUND_BYTES {
-            return Err(Error::MessageParse(
-                format!(
+            return Err(Error::MessageParse {
+                what: MessageKind::Response,
+                source: format!(
                     "inbound buffer of {} bytes exceeds the {MAX_INBOUND_BYTES}-byte maximum \
                  (unterminated header or an unfulfilled Content-Length)",
                     self.inbound.len()
                 )
                 .into(),
-            ));
+            });
         }
         // Parse with a cursor and drop the consumed prefix ONCE, whatever the
         // outcome: a per-message `drain(..n)` memmoves the whole remainder for
@@ -606,7 +607,10 @@ impl ClientSession {
                     break;
                 }
                 Err(rtsp_types::ParseError::Error) => {
-                    return Err(Error::MessageParse(Box::new(rtsp_types::ParseError::Error)));
+                    return Err(Error::MessageParse {
+                        what: MessageKind::Response,
+                        source: Box::new(rtsp_types::ParseError::Error),
+                    });
                 }
             }
         }
@@ -1139,7 +1143,7 @@ mod tests {
             }
         }
         assert!(
-            matches!(last, Err(crate::error::Error::MessageParse(..))),
+            matches!(last, Err(crate::error::Error::MessageParse { .. })),
             "expected the oversized inbound buffer to be rejected, not grown forever"
         );
     }
@@ -1458,14 +1462,14 @@ mod tests {
         let mut c = ClientSession::new();
         assert!(matches!(
             c.handle_data_strict(&vec![b'A'; 70 * 1024]),
-            Err(Error::MessageParse(_))
+            Err(Error::MessageParse { .. })
         ));
         let mut c = ClientSession::new();
         let mut junk = b"RTSP/1.0 200 OK\r\n".to_vec();
         junk.extend(b"X-A: b\r\n".repeat(9000));
         assert!(matches!(
             c.handle_data_strict(&junk),
-            Err(Error::MessageParse(_))
+            Err(Error::MessageParse { .. })
         ));
     }
 
@@ -1489,7 +1493,7 @@ mod tests {
         let err = c
             .handle_data_strict(&junk)
             .expect_err("header phase is capped at 64 KiB");
-        assert!(matches!(err, Error::MessageParse(_)), "{err:?}");
+        assert!(matches!(err, Error::MessageParse { .. }), "{err:?}");
     }
 
     #[test]

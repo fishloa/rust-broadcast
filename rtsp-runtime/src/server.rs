@@ -18,7 +18,7 @@
 
 use rtsp_types::{Message, Method, Request, Response, StatusCode, Version, headers};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, MessageKind, Result};
 use crate::state::{SessionState, server_next_state};
 use crate::transport::Transport;
 
@@ -154,10 +154,18 @@ impl ServerSession {
     /// the events produced.
     pub fn handle_request(&mut self, data: &[u8]) -> Result<(Vec<u8>, Vec<ServerEvent>)> {
         let (message, _consumed) =
-            Message::<Body>::parse(data).map_err(|e| Error::MessageParse(Box::new(e)))?;
+            Message::<Body>::parse(data).map_err(|e| Error::MessageParse {
+                what: MessageKind::Request,
+                source: Box::new(e),
+            })?;
         let request = match message {
             Message::Request(r) => r,
-            _ => return Err(Error::MessageParse("expected an RTSP request".into())),
+            _ => {
+                return Err(Error::MessageParse {
+                    what: MessageKind::Request,
+                    source: "expected an RTSP request".into(),
+                });
+            }
         };
         self.handle_parsed(request)
     }

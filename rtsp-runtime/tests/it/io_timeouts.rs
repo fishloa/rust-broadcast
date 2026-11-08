@@ -123,7 +123,7 @@ async fn a_header_block_that_never_terminates_is_rejected_at_the_head_cap() {
         std::future::pending::<()>().await; // keep the pipe open: the cap, not EOF, must trip
     });
     let err = s.next_request().await.expect_err("64 KiB header cap");
-    assert!(matches!(err, Error::MessageParse(_)), "got {err:?}");
+    assert!(matches!(err, Error::MessageParse { .. }), "got {err:?}");
 }
 
 #[tokio::test(start_paused = true)]
@@ -142,7 +142,7 @@ async fn a_content_length_larger_than_the_message_cap_is_rejected_up_front() {
         .next_request()
         .await
         .expect_err("body larger than the 2 MiB cap");
-    assert!(matches!(err, Error::MessageParse(_)), "got {err:?}");
+    assert!(matches!(err, Error::MessageParse { .. }), "got {err:?}");
 }
 
 #[tokio::test(start_paused = true)]

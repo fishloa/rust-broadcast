@@ -33,7 +33,7 @@ use tokio_util::codec::Framed;
 
 use crate::client::{ClientEvent, ClientSession};
 use crate::codec::{ClientCodec, ServerCodec, ServerFrame, bounded};
-use crate::error::{Error, Result};
+use crate::error::{Error, IoContext, Result};
 use crate::server::{ServerEvent, ServerSession};
 use crate::transport::Transport;
 
@@ -122,7 +122,7 @@ fn now() -> std::time::Instant {
 }
 
 /// Maps a tokio IO error into the crate error type.
-fn io_err(context: &'static str, source: std::io::Error) -> Error {
+fn io_err(context: IoContext, source: std::io::Error) -> Error {
     Error::Io { context, source }
 }
 
@@ -178,7 +178,7 @@ impl AsyncRtspClient<TcpStream> {
         let stream = bounded(timeouts.connect, "connect", async {
             TcpStream::connect(addr)
                 .await
-                .map_err(|e| io_err("connect", e))
+                .map_err(|e| io_err(IoContext::Connect, e))
         })
         .await?;
         Ok(Self::with_stream_timeouts(stream, session, timeouts))
@@ -441,7 +441,7 @@ where
         loop {
             let Some(event) = self.next_event().await? else {
                 return Err(io_err(
-                    "read",
+                    IoContext::Read,
                     std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
                         "peer closed connection before response",
@@ -517,7 +517,7 @@ where
                 Woke::Frame(r) => match r? {
                     None if self.framed.codec().session.has_buffered_input() => {
                         return Err(io_err(
-                            "read",
+                            IoContext::Read,
                             std::io::Error::new(
                                 std::io::ErrorKind::UnexpectedEof,
                                 "peer closed connection mid-message",
@@ -585,7 +585,7 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
             async move {
                 TcpStream::connect(addr)
                     .await
-                    .map_err(|e| io_err("connect", e))
+                    .map_err(|e| io_err(IoContext::Connect, e))
             },
             server_name,
             config,
@@ -614,13 +614,17 @@ where
 
     let tcp = bounded(timeouts.connect, "connect", dial).await?;
     let connector = TlsConnector::from(Arc::new(config));
-    let dns = rustls::pki_types::ServerName::try_from(server_name.to_string())
-        .map_err(|e| Error::Tls(Box::new(e)))?;
+    let dns = rustls::pki_types::ServerName::try_from(server_name.to_string()).map_err(|e| {
+        Error::Tls {
+            server_name: server_name.to_string(),
+            source: Box::new(e),
+        }
+    })?;
     let stream = bounded(timeouts.handshake, "handshake", async {
         connector
             .connect(dns, tcp)
             .await
-            .map_err(|e| io_err("TLS handshake", e))
+            .map_err(|e| io_err(IoContext::TlsHandshake, e))
     })
     .await?;
     Ok(AsyncRtspClient::with_stream_timeouts(
@@ -728,7 +732,7 @@ where
         acceptor
             .accept(stream)
             .await
-            .map_err(|e| io_err("TLS handshake", e))
+            .map_err(|e| io_err(IoContext::TlsHandshake, e))
     })
     .await?;
     Ok(AsyncRtspServer::with_stream_timeouts(
