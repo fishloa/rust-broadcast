@@ -19,11 +19,12 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "broadcast-common"
-version = "10.0.0"
+version = "11.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "929cfb6b3467025a1bb59c716fb91d7a2cead89560e18160b3a550c37bf33a8f"
+checksum = "bd0f70ef9d36de67089e3a89f0630d9c38a791032249c5c34f1593f8143b6551"
 dependencies = [
  "chrono",
+ "erased-serde",
  "hex",
  "serde",
 ]
@@ -82,9 +83,9 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "dvb-bbframe"
-version = "12.1.0"
+version = "13.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb66975729b0b9746946316870197b78b8cce8192c39fbcf2408d5f03a46ab2f"
+checksum = "0774f72123006f8833886f3636949b38e3dcbc4a4f9ded23c553d6932d6daa56"
 dependencies = [
  "broadcast-common",
  "num_enum",
@@ -94,16 +95,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "12.1.0"
+version = "13.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "342badbd7a47721539e0b59785b93aa615ee11983739f1e84dbe3077ad529d44"
+checksum = "b951918aaba50ee250051142db7cf3993388e51763acf5b0e6f93b11d596d7ea"
 dependencies = [
  "broadcast-common",
  "bytes",
  "chrono",
  "encoding_rs",
- "erased-serde",
- "libm",
  "mpeg-ts",
  "num_enum",
  "serde",
@@ -112,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si-py"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dvb-si",
  "dvb-t2mi",
@@ -125,15 +124,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "12.1.0"
+version = "13.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16b4bbba994b045e9ed4a125674cab29e5c5d10a737d5322720997409b8c8c0b"
+checksum = "81062663a6886a239f702aa2ce4db01819eb9c68a950d18c772024b682128b68"
 dependencies = [
  "broadcast-common",
  "bytes",
  "chrono",
  "dvb-bbframe",
- "erased-serde",
  "mpeg-ts",
  "num_enum",
  "serde",
@@ -277,12 +275,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
-name = "libm"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
-
-[[package]]
 name = "log"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -296,9 +288,9 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mpeg-ts"
-version = "0.6.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58e29fe9663eaab1366e35fee07415500dca8fde1ba58df7cfa5a363920f0b97"
+checksum = "2223d5e0ac2b26a859046855b3531d818a7c85fd9ddeaca1294f41e498201571"
 dependencies = [
  "broadcast-common",
  "bytes",
