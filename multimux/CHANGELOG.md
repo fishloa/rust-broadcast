@@ -1,11 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.17.0] - 2026-11-08
 ### Changed
 - The RTSP, TS-HTTP, HLS-pull, DASH-pull and Smooth-pull inputs share one `spawn_pull::<K>` supervised spawn path and one `pull_route::<K>` constructor over a crate-private `PullDrive` trait, replacing five per-input spawn closures in `spawn_ingest` (#1725).
 ### Removed
 - BREAKING: `MultimuxError::Depay`, never constructed since a malformed RTP datagram is dropped without failing the route and demux/depayload failures keep their `transmux` source (#1726).
 - BREAKING: `dashif_ingest::IngestError::{Auth, UnknownPublishingPoint, UnsupportedMedia}`, never constructed: the listener answers those three statuses (output auth challenge, path mismatch 404, demux failure 415) directly (#1726).
+### Dependencies
+- Sibling crates move to a new epoch: `webrtc-runtime` 0.5 -> 0.6 (one WHIP/WHEP engine, #1725), `rtsp-runtime` 0.9 -> 0.10 (`Error` carries source errors, #1726) and `broadcast-client` 0.3 -> 0.4. The `Cargo.toml` requirements name the new versions.
 
 ## [0.16.0] - 2026-11-07
 ### Fixed

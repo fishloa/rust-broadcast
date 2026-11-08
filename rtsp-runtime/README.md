@@ -7,9 +7,9 @@ Sans-IO RTSP 1.0 (RFC 2326) session engine: a driveable client and a server stat
 
 ```toml
 [dependencies]
-rtsp-runtime = "0.9"                                       # sans-IO core
-rtsp-runtime = { version = "0.9", features = ["tokio"] }   # + real sockets
-rtsp-runtime = { version = "0.9", features = ["tls"] }     # + rtsps:// (TLS)
+rtsp-runtime = "0.10"                                       # sans-IO core
+rtsp-runtime = { version = "0.10", features = ["tokio"] }   # + real sockets
+rtsp-runtime = { version = "0.10", features = ["tls"] }     # + rtsps:// (TLS)
 ```
 
 ## What it does / what it does not

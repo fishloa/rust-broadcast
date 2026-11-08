@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.1] - 2026-11-08
 ### Added
 - `input_log` module: record what a host fed a `BufferController` and replay it offline with one format and one implementation. `Input` (typed, `#[non_exhaustive]`, one variant per controller call) with `apply` (the single place a recorded input becomes a controller call), `write_row`/`parse_row` (symmetric, typed `InputLogError` carrying the row), and `InputLog` (`ControllerConfig` as one `config` row per field via `ConfigKey`, an optional stall-memory `seed` row, then the inputs) with `write`, `parse`, `parse_with_config` (logs recorded before `config` rows existed, such as the Apple TV goldens), `rebase`, `controller` and `replay`. `hint` rows carry the hint's `name()` token. New example `replay_input_log` replays a log from the command line.
 ### Tests

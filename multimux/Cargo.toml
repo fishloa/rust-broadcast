@@ -1,6 +1,6 @@
 [package]
 name         = "multimux"
-version      = "0.16.0"
+version      = "0.17.0"
 edition      = "2024"
 rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
@@ -27,7 +27,7 @@ container-probe   = { path = "../container-probe", version = "0.3.0" }
 # HLS (M3U8) playlist syntax (issue #878): `source::hls_pull` builds/parses
 # playlists via this crate directly rather than through `transmux`.
 broadcast-hls     = { path = "../broadcast-hls", version = "0.6.0" }
-rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.9.0", features = ["tokio"] }
+rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.10.0", features = ["tokio"] }
 # RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls
 # `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket
 # adapter over the sans-IO `ServerSession`.
@@ -55,7 +55,7 @@ hls-runtime       = { path = "../hls-runtime",   version = "0.12.0", features = 
 dash-runtime      = { path = "../dash-runtime", version = "0.3.0" }
 # TS-over-HTTP pull policy core (`source::ts_http`): finite/VOD detection and
 # the post-establishment stall decision; the demuxer stays `ts_program`.
-broadcast-client  = { path = "../broadcast-client", version = "0.3.0" }
+broadcast-client  = { path = "../broadcast-client", version = "0.4.0" }
 # Needed directly (not just via hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
@@ -166,7 +166,7 @@ futures-util      = { workspace = true, features = ["std"] }
 # on it (feature off) never pulls `webrtc-runtime`'s own `media` feature —
 # only `multimux`'s `whip`/`whep` features below turn that on. See this
 # crate's `rust-version` note on those features for why the split matters.
-webrtc-runtime    = { path = "../webrtc-runtime", version = "0.5.0", optional = true, default-features = false }
+webrtc-runtime    = { path = "../webrtc-runtime", version = "0.6.0", optional = true, default-features = false }
 # WHEP output (`output::whep`, issue #743) only: builds the typed
 # `rtp_packet::RtpPacket` values `webrtc_runtime::media::MediaTransport::
 # encrypt_rtp` requires — see that method's own signature. Unlike
@@ -264,7 +264,7 @@ workspace-guards = { path = "../workspace-guards" }
 transmux = { path = "../transmux", version = "0.30.0", features = ["sample-aes"] }
 # `test-support`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).
-webrtc-runtime   = { path = "../webrtc-runtime", version = "0.5.0", default-features = false, features = ["test-support"] }
+webrtc-runtime   = { path = "../webrtc-runtime", version = "0.6.0", default-features = false, features = ["test-support"] }
 # `test-util`: the paused, manually advanced clock the push-flush tests use
 # instead of sleeping (feature-only; no new version in the lock).
 tokio            = { version = "1", features = ["test-util"] }
