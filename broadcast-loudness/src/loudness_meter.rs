@@ -55,7 +55,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 use crate::channel_layout::ChannelLayout;
-use crate::filter::{BiquadCoeffs, BiquadState, apply_biquad, k_weighting_coeffs};
+use crate::filter::{BiquadCoeffs, BiquadState, MIN_SAMPLE_RATE, apply_biquad, k_weighting_coeffs};
 
 /// Highest accepted sample rate in Hz (768 kHz, the top PCM rate in use: 16 x
 /// 48 kHz). The sliding-window trackers hold `3.4 s * sample_rate` `f64`s, so
@@ -402,19 +402,19 @@ pub struct LoudnessMeter {
 impl LoudnessMeter {
     /// Create a new loudness meter.
     ///
-    /// `sample_rate` — input sample rate in Hz. Any rate greater than zero is
-    /// up to [`MAX_SAMPLE_RATE`] is accepted (e.g. 44100, 48000, 96000, 192000). The K‑weighting filter
+    /// `sample_rate` — input sample rate in Hz. Any rate from
+    /// [`MIN_SAMPLE_RATE`] up to [`MAX_SAMPLE_RATE`] is accepted (e.g. 44100, 48000, 96000, 192000). The K‑weighting filter
     /// coefficients are derived for the given rate by a bilinear transform of
     /// the analog prototype filters with frequency pre‑warping (the same
     /// derivation libebur128 uses); at 48 kHz they match the ITU‑R BS.1770‑5
     /// Annex 1 tabulated coefficients to within floating‑point epsilon.
     ///
-    /// Returns `Error::InvalidSampleRate` if `sample_rate == 0` or
+    /// Returns `Error::InvalidSampleRate` if `sample_rate < MIN_SAMPLE_RATE` or
     /// `sample_rate > MAX_SAMPLE_RATE`.
     ///
     /// `layout` — channel configuration with per‑channel weights.
     pub fn new(sample_rate: u32, layout: ChannelLayout) -> Result<Self, crate::Error> {
-        if sample_rate == 0 || sample_rate > MAX_SAMPLE_RATE {
+        if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate) {
             return Err(crate::Error::InvalidSampleRate { got: sample_rate });
         }
         let (stage1, stage2) = k_weighting_coeffs(sample_rate);

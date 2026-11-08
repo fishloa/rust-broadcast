@@ -1,11 +1,23 @@
 //! Input validation of the two meters: the sample-rate range of
 //! `LoudnessMeter::new` (c5 R5-1) and the slice pushers of `TruePeakMeter` (c5 CV5).
 
-use broadcast_loudness::{ChannelLayout, Error, LoudnessMeter, MAX_SAMPLE_RATE, TruePeakMeter};
+use broadcast_loudness::{
+    ChannelLayout, Error, LoudnessMeter, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, TruePeakMeter,
+};
 
 #[test]
-fn sample_rate_zero_and_above_the_cap_are_rejected_with_the_offending_rate() {
-    for bad in [0, MAX_SAMPLE_RATE + 1, 4_000_000_000, u32::MAX] {
+fn sample_rate_below_the_minimum_and_above_the_cap_are_rejected_with_the_offending_rate() {
+    for bad in [
+        0,
+        1,
+        100,
+        1_000,
+        2_000,
+        MIN_SAMPLE_RATE - 1,
+        MAX_SAMPLE_RATE + 1,
+        4_000_000_000,
+        u32::MAX,
+    ] {
         match LoudnessMeter::new(bad, ChannelLayout::Stereo) {
             Err(Error::InvalidSampleRate { got }) => assert_eq!(got, bad),
             other => panic!(
@@ -17,14 +29,22 @@ fn sample_rate_zero_and_above_the_cap_are_rejected_with_the_offending_rate() {
 }
 
 #[test]
-fn sample_rates_up_to_the_cap_are_accepted() {
-    for ok in [1, 8_000, 44_100, 48_000, 192_000, MAX_SAMPLE_RATE] {
+fn sample_rates_from_the_minimum_to_the_cap_are_accepted() {
+    for ok in [
+        MIN_SAMPLE_RATE,
+        8_000,
+        44_100,
+        48_000,
+        192_000,
+        MAX_SAMPLE_RATE,
+    ] {
         assert!(
             LoudnessMeter::new(ok, ChannelLayout::Stereo).is_ok(),
             "rate {ok}"
         );
     }
     assert_eq!(MAX_SAMPLE_RATE, 768_000);
+    assert_eq!(MIN_SAMPLE_RATE, 3_364);
 }
 
 fn tone(n: usize) -> Vec<f32> {
@@ -80,4 +100,69 @@ fn pushing_after_finish_is_rejected_on_every_pusher() {
         meter.push_stereo_planar_f32(&[0.0], &[0.0]),
         Err(Error::Finished)
     );
+}
+
+#[test]
+fn every_rate_from_1_hz_to_384_khz_is_rejected_or_yields_finite_results() {
+    const SWEEP_POINTS: usize = 400;
+    const SWEEP_MAX_HZ: f64 = 384_000.0;
+    const TONE_HZ: f64 = 1_000.0;
+    const TONE_SECONDS: f64 = 5.0;
+    const TONE_AMPLITUDE: f64 = 0.5;
+
+    let mut rates: Vec<u32> = (0..SWEEP_POINTS)
+        .map(|i| {
+            SWEEP_MAX_HZ
+                .powf(i as f64 / (SWEEP_POINTS - 1) as f64)
+                .round() as u32
+        })
+        .collect();
+    rates.extend([
+        1,
+        MIN_SAMPLE_RATE - 1,
+        MIN_SAMPLE_RATE,
+        MIN_SAMPLE_RATE + 1,
+        MAX_SAMPLE_RATE,
+    ]);
+    rates.dedup();
+
+    let (mut accepted, mut rejected) = (0, 0);
+    for rate in rates {
+        let Ok(mut meter) = LoudnessMeter::new(rate, ChannelLayout::Stereo) else {
+            assert!(
+                rate < MIN_SAMPLE_RATE || rate > MAX_SAMPLE_RATE,
+                "rate {rate}"
+            );
+            assert!(matches!(
+                LoudnessMeter::new(rate, ChannelLayout::Stereo),
+                Err(Error::InvalidSampleRate { got }) if got == rate
+            ));
+            rejected += 1;
+            continue;
+        };
+        assert!((MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&rate));
+        accepted += 1;
+
+        let tone_hz = TONE_HZ.min(f64::from(rate) / 4.0);
+        let frames = (f64::from(rate) * TONE_SECONDS) as usize;
+        let mut peak = TruePeakMeter::new();
+        for i in 0..frames {
+            let t = i as f64 / f64::from(rate);
+            let v = TONE_AMPLITUDE * (2.0 * std::f64::consts::PI * tone_hz * t).sin();
+            meter.push_f64(&[v, v]).unwrap();
+            peak.push_f64(v).unwrap();
+        }
+        meter.finish();
+        let values = [
+            ("momentary", meter.max_momentary_lufs()),
+            ("short-term", meter.max_short_term_lufs()),
+            ("integrated", meter.integrated_lufs()),
+            ("lra", meter.loudness_range()),
+            ("true peak", peak.finish()),
+        ];
+        for (name, value) in values {
+            assert!(value.is_finite(), "rate {rate}: {name} = {value}");
+        }
+    }
+    assert!(accepted > 0 && rejected > 0);
 }
