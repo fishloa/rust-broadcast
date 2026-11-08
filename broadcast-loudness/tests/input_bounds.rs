@@ -130,7 +130,7 @@ fn every_rate_from_1_hz_to_384_khz_is_rejected_or_yields_finite_results() {
     for rate in rates {
         let Ok(mut meter) = LoudnessMeter::new(rate, ChannelLayout::Stereo) else {
             assert!(
-                rate < MIN_SAMPLE_RATE || rate > MAX_SAMPLE_RATE,
+                !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&rate),
                 "rate {rate}"
             );
             assert!(matches!(
