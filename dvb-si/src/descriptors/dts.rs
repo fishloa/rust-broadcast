@@ -151,7 +151,6 @@ impl<'a> Parse<'a> for DtsDescriptor<'a> {
                 reason: "DTS_descriptor body shorter than 5 bytes",
             });
         }
-        // Pack the 5 fixed bytes into a 40-bit big-endian value.
         let packed: u64 = (u64::from(body[0]) << 32)
             | (u64::from(body[1]) << 24)
             | (u64::from(body[2]) << 16)
