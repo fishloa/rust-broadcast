@@ -94,7 +94,7 @@ Runnable examples: `cargo run -p dvb-csa --example scramble_file` and
   mismatch on descramble (`Error::ParityMismatch`).
 - **Batch:** `bitsliced::scramble_batch` / `descramble_batch` over up to
   `bitsliced::LANES` (64) independent payloads (feature `bitsliced`).
-- **Errors:** `Error` (`BufferTooShort`, `NoPayload`, `AlreadyScrambled`,
+- **Errors:** `Error` (`NoPayload`, `AlreadyScrambled`,
   `ParityMismatch`), `#[non_exhaustive]`.
 
 ### Algorithm

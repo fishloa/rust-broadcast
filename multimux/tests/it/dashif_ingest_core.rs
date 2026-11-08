@@ -355,10 +355,7 @@ fn state_mark_last_restart() {
 fn status_mapping_table() {
     fn code(e: &IngestError) -> u16 {
         match e {
-            IngestError::Auth => 403,
-            IngestError::UnknownPublishingPoint => 404,
             IngestError::SegmentWithoutHeader => 412,
-            IngestError::UnsupportedMedia => 415,
             IngestError::Internal => 500,
             IngestError::BadRequest => 400,
             IngestError::NoManifest => 400,
@@ -370,11 +367,8 @@ fn status_mapping_table() {
             _ => 400,
         }
     }
-    let variants: [IngestError; 12] = [
-        IngestError::Auth,
-        IngestError::UnknownPublishingPoint,
+    let variants: [IngestError; 9] = [
         IngestError::SegmentWithoutHeader,
-        IngestError::UnsupportedMedia,
         IngestError::Internal,
         IngestError::BadRequest,
         IngestError::NoManifest,

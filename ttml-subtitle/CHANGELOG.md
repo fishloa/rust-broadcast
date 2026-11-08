@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- BREAKING: `Error::MissingElement`, `Error::MissingAttribute`, `Error::InvalidAttribute` and `Error::Validation`, never constructed. TTML2 `tt` content is `head?, body?` (both optional) and the transcribed syntax marks no element attribute required; profile validation reports through its own report, not `Error` (#1726).
 
 ## [0.5.0] - 2026-11-07
 ### Added

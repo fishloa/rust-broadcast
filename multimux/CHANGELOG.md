@@ -3,6 +3,9 @@
 ## [Unreleased]
 ### Changed
 - The RTSP, TS-HTTP, HLS-pull, DASH-pull and Smooth-pull inputs share one `spawn_pull::<K>` supervised spawn path and one `pull_route::<K>` constructor over a crate-private `PullDrive` trait, replacing five per-input spawn closures in `spawn_ingest` (#1725).
+### Removed
+- BREAKING: `MultimuxError::Depay`, never constructed since a malformed RTP datagram is dropped without failing the route and demux/depayload failures keep their `transmux` source (#1726).
+- BREAKING: `dashif_ingest::IngestError::{Auth, UnknownPublishingPoint, UnsupportedMedia}`, never constructed: the listener answers those three statuses (output auth challenge, path mismatch 404, demux failure 415) directly (#1726).
 
 ## [0.16.0] - 2026-11-07
 ### Fixed
