@@ -575,10 +575,13 @@ async fn run_no_credentials_fails() {
     let err = drive_and_collect(&mut session, &mut stream, |_| false)
         .await
         .expect_err("handshake must fail: no credentials to answer the server's 401 challenge");
-    let msg = err.to_string();
     assert!(
-        msg.contains("401") || msg.to_ascii_lowercase().contains("unauthorized"),
-        "error should report the 401/Unauthorized DESCRIBE status, got: {msg}"
+        matches!(
+            &err,
+            MultimuxError::Auth { reason }
+                if reason.contains("401") || reason.to_ascii_lowercase().contains("unauthorized")
+        ),
+        "error should report the 401/Unauthorized DESCRIBE status, got: {err:?}"
     );
 
     server.await.expect("server task");
@@ -783,10 +786,13 @@ async fn run_config_digest_auth_wrong_password() {
     let err = drive_and_collect(&mut session, &mut stream, |_| false)
         .await
         .expect_err("handshake must fail: wrong password must not authenticate");
-    let msg = err.to_string();
     assert!(
-        msg.contains("401") || msg.to_ascii_lowercase().contains("unauthorized"),
-        "error should report the 401/Unauthorized DESCRIBE status, got: {msg}"
+        matches!(
+            &err,
+            MultimuxError::Auth { reason }
+                if reason.contains("401") || reason.to_ascii_lowercase().contains("unauthorized")
+        ),
+        "error should report the 401/Unauthorized DESCRIBE status, got: {err:?}"
     );
 
     server.await.expect("server task");

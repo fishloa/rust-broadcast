@@ -620,7 +620,10 @@ mod tests {
                 ts(0),
             )
             .expect_err("there is nothing to keep playing");
-        assert!(err.to_string().contains("mpd rejected"), "{err}");
+        assert!(
+            matches!(&err, MultimuxError::Connect { reason } if reason.contains("mpd rejected")),
+            "{err:?}"
+        );
         assert!(!s.mpd_accepted());
     }
 
@@ -658,7 +661,10 @@ mod tests {
                 ts(now),
             )
             .expect_err("the eighth rejection in a row ends the attempt");
-        assert!(err.to_string().contains("mpd rejected"), "{err}");
+        assert!(
+            matches!(&err, MultimuxError::Connect { reason } if reason.contains("mpd rejected")),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -719,7 +725,10 @@ mod tests {
                 ts(now),
             )
             .expect_err("the eighth failure in a row ends the attempt");
-        assert!(err.to_string().contains("refresh failed"), "{err}");
+        assert!(
+            matches!(&err, MultimuxError::Connect { reason } if reason.contains("refresh failed")),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -821,7 +830,10 @@ mod tests {
         s.map_output(Output::Fatal(FatalKind::ClockUnavailable));
         assert!(s.failed());
         let err = s.finish().expect_err("fatal");
-        assert!(err.to_string().contains("UTC clock"), "{err}");
+        assert!(
+            matches!(&err, MultimuxError::Connect { reason } if reason.contains("UTC clock")),
+            "{err:?}"
+        );
         assert!(s.finish().is_ok(), "reported once");
         assert!(!s.failed());
     }

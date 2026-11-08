@@ -3349,8 +3349,12 @@ mod tests {
         };
         let err = mk("rtsp:cam").validate().unwrap_err();
         assert!(
-            format!("{err}").contains("no host"),
-            "a hostless rtsp push URL must be a config error: {err}"
+            matches!(
+                &err,
+                MultimuxError::ConfigInvalid { field: "routes.outputs[].url", reason }
+                    if reason.contains("no host")
+            ),
+            "a hostless rtsp push URL must be a config error: {err:?}"
         );
         assert!(
             mk("rtsp://cam/live").validate().is_ok(),
@@ -3655,10 +3659,15 @@ mod tests {
         let err = cfg
             .validate()
             .expect_err("ts_hls + llhls on one route must be rejected");
-        let message = err.to_string();
         assert!(
-            message.contains("ts_hls") && message.contains("llhls"),
-            "error must name both offending output kinds: {message}"
+            matches!(
+                &err,
+                MultimuxError::ConfigInvalid { field: "routes.outputs", reason }
+                    if reason.contains("\"cam1\"")
+                        && reason.contains("ts_hls")
+                        && reason.contains("llhls")
+            ),
+            "error must name the route and both offending output kinds: {err:?}"
         );
     }
 
@@ -3701,10 +3710,15 @@ mod tests {
         let err = cfg
             .validate()
             .expect_err("catchup without routes.dvr.enabled must be rejected");
-        let message = err.to_string();
         assert!(
-            message.contains("catchup") && message.contains("DVR"),
-            "error must name the offending output and explain why: {message}"
+            matches!(
+                &err,
+                MultimuxError::ConfigInvalid { field: "routes.outputs", reason }
+                    if reason.contains("\"cam1\"")
+                        && reason.contains("catchup")
+                        && reason.contains("DVR")
+            ),
+            "error must name the route, the offending output and why: {err:?}"
         );
     }
 

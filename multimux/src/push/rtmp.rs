@@ -439,10 +439,12 @@ mod tests {
         .expect("connect must return, not hang");
         server.abort();
         let err = result.expect_err("black-hole handshake must fail");
-        let msg = err.to_string();
         assert!(
-            msg.contains("timed out") || msg.contains("exceeded"),
-            "the failure must be the connect timeout: {err}"
+            matches!(
+                &err,
+                RtmpPushError::Connect(msg) if msg.contains("timed out") || msg.contains("exceeded")
+            ),
+            "the failure must be the connect timeout: {err:?}"
         );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(5),

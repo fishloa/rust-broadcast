@@ -458,8 +458,8 @@ mod body_cap_tests {
             .await
             .expect_err("declared-oversize body must be refused");
         assert!(
-            err.to_string().contains("exceeds"),
-            "error must name the cap: {err}"
+            matches!(&err, crate::error::MultimuxError::Connect { reason } if reason.contains("exceeds")),
+            "error must name the cap: {err:?}"
         );
         server.abort();
 
@@ -469,8 +469,8 @@ mod body_cap_tests {
             .await
             .expect_err("streamed-oversize body must be refused");
         assert!(
-            err.to_string().contains("exceeds"),
-            "error must name the cap: {err}"
+            matches!(&err, crate::error::MultimuxError::Connect { reason } if reason.contains("exceeds")),
+            "error must name the cap: {err:?}"
         );
         server.abort();
     }
