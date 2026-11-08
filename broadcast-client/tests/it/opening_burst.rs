@@ -446,6 +446,7 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
     let mut ends: BTreeMap<u32, u64> = BTreeMap::new();
     let mut rendered: Vec<u32> = Vec::new();
     let mut intended: Vec<u32> = vec![MISSING_TRACK];
+    let mut starved = std::collections::BTreeSet::new();
     let mut declare_at: Option<u64> = None;
     let mut r = Renderer {
         anchor: None,
@@ -554,7 +555,7 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
                 if lead < m.0 {
                     *m = (lead, now);
                 }
-                if lead < i64::try_from(starve_us).unwrap() {
+                if lead < i64::try_from(starve_us).unwrap() && starved.insert(*t) {
                     out.failures.push(format!(
                         "(d) track {t} lead {lead} us < starve threshold at {now} us while Playing"
                     ));
