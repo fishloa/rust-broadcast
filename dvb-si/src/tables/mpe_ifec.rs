@@ -284,6 +284,7 @@ impl<'a> crate::traits::TableDef<'a> for MpeIfecSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     #[allow(clippy::too_many_arguments)]
     fn build_mpe_ifec(

@@ -177,6 +177,7 @@ impl crate::traits::DescriptorDef<'_> for MvcExtensionDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_fields() {

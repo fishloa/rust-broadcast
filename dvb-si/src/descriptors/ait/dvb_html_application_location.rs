@@ -88,6 +88,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for DvbHtmlApplicationLocationDescript
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     /// TS 102 727 §10.10.2.2 example: physical root `application/`, initial
     /// path `main/index.htm`.

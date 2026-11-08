@@ -177,6 +177,7 @@ mod tests {
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
     use crate::text::LangCode;
+    use alloc::vec;
 
     #[test]
     fn parse_target_region_name_structured() {

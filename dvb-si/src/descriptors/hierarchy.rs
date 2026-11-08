@@ -315,6 +315,7 @@ impl crate::traits::DescriptorDef<'_> for HierarchyDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse() {

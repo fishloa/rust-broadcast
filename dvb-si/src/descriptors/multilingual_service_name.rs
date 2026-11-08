@@ -108,6 +108,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for MultilingualServiceNameDescriptor<
 mod tests {
     use super::*;
     use crate::error::Error;
+    use alloc::vec;
 
     fn build(entries: &[([u8; 3], &[u8], &[u8])]) -> Vec<u8> {
         let body: usize = entries

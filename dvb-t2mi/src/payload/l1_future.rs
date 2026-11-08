@@ -180,6 +180,7 @@ impl Serialize for L1FuturePayload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     #[test]
     fn parse_extracts_frame_idx() {

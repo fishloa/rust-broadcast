@@ -150,6 +150,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use alloc::vec;
 
     #[test]
     fn parse_c2_bundle_two_entries() {

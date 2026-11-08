@@ -488,6 +488,7 @@ impl crate::traits::DescriptorDef<'_> for MosaicDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_single_cell_undefined_linkage() {

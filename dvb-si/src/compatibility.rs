@@ -475,6 +475,7 @@ impl Serialize for CompatibilityDescriptor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn empty_round_trip() {

@@ -1371,6 +1371,7 @@ impl Serialize for Ior<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
     use broadcast_common::Parse;
 
     fn sample_ior() -> Vec<u8> {

@@ -257,6 +257,7 @@ impl CommandDef<'_> for SpliceInsert {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn rt(cmd: &SpliceInsert) {
         let bytes = cmd.try_to_bytes().unwrap();

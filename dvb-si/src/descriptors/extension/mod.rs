@@ -568,6 +568,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for ExtensionDescriptor<'a> {
 mod tests {
     use super::test_support::*;
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_rejects_wrong_tag() {

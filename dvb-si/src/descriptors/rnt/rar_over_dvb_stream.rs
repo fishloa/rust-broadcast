@@ -170,6 +170,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for RarOverDvbStreamDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     fn sample(scheduled: bool) -> Vec<u8> {
         let mut v = vec![TAG, 0];

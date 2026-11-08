@@ -206,6 +206,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for AssociationTagDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // ── real fixture: ETSI Hot Bird MHP mux (private/fixtures/ts/hotbird-mhp-si.ts) ────
     //

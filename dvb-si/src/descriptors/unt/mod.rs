@@ -62,6 +62,7 @@ declare_scoped_namespace! {'a;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn dispatched_tags_are_the_table_19_set() {

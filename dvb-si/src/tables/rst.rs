@@ -191,6 +191,7 @@ impl crate::traits::TableDef<'_> for RstSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn build_rst(entries: &[RstEntry]) -> Vec<u8> {
         let section_length = (entries.len() * ENTRY_LEN) as u16;

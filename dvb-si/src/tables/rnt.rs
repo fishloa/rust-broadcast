@@ -610,6 +610,7 @@ impl<'a> crate::traits::TableDef<'a> for RntSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_happy_path() {

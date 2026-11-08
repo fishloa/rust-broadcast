@@ -249,6 +249,7 @@ impl fmt::Display for FefSubPartPayload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_fields() {

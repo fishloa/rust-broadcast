@@ -589,6 +589,7 @@ mod tests {
     use crate::descriptors::private_data_specifier;
     use crate::descriptors::private_data_specifier::{PDS_EACEM, PDS_NORDIG};
     use crate::traits::DescriptorDef;
+    use alloc::{vec, vec::Vec};
 
     #[test]
     fn pds_constants_match_the_register() {

@@ -182,6 +182,7 @@ impl crate::traits::DescriptorDef<'_> for GraphicsConstraintsDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // Table 27: reserved 0x1F, can_run=1, changed=0, ext_video=1; SD + 1920x1080.
     const BYTES: [u8; 5] = [TAG, 3, 0xFD, 0x01, 0x04];

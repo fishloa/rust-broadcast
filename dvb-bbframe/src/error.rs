@@ -76,6 +76,7 @@ pub enum Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     #[test]
     fn buffer_too_short_message_contains_values() {

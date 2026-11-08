@@ -176,6 +176,7 @@ mod tests {
     use super::*;
     use crate::tables::CRC_LEN;
     use crate::tables::ts_loop_section::{EXTENSION_HEADER_LEN, POST_EXTENSION_LEN, TS_HEADER_LEN};
+    use alloc::vec;
 
     type TestTs = (u16, u16, Vec<u8>);
 

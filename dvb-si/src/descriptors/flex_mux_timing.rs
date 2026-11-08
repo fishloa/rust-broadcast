@@ -80,6 +80,7 @@ impl crate::traits::DescriptorDef<'_> for FlexMuxTimingDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_fields() {

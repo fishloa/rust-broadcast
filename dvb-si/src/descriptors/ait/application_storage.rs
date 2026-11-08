@@ -179,6 +179,7 @@ impl crate::traits::DescriptorDef<'_> for ApplicationStorageDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // Table 37 layout: property=1 (stand alone), flags 0b101 + reserved 0x1F,
     // reserved bit 1 + version 0x0000_0102, priority 7.

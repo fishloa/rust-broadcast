@@ -62,7 +62,7 @@
 
 use crate::TrackId;
 use alloc::collections::VecDeque;
-#[cfg(any(feature = "std", test))]
+#[cfg(feature = "std")]
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;

@@ -461,6 +461,7 @@ impl EitEvent<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     type TestEvent = (u16, [u8; 5], [u8; 3], u8, bool, Vec<u8>);
 

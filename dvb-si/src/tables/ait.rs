@@ -540,6 +540,7 @@ impl<'a> crate::traits::TableDef<'a> for AitSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn build_ait(
         application_type: u16,

@@ -385,6 +385,7 @@ impl crate::traits::DescriptorDef<'_> for ContentDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_single_entry_extracts_nibbles_and_user_byte() {

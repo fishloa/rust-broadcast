@@ -88,6 +88,7 @@ impl crate::traits::DescriptorDef<'_> for ServiceListDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_single_entry() {

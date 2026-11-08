@@ -404,6 +404,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for Ac3Descriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_with_all_fields() {

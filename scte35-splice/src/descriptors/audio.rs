@@ -146,6 +146,7 @@ impl SpliceDescriptorDef<'_> for AudioDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn round_trip() {

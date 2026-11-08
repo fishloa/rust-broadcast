@@ -265,6 +265,7 @@ impl crate::traits::DescriptorDef<'_> for FrequencyListDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// [TAG, 1, 0xFC] → zero entries, coding=Undefined
     #[test]

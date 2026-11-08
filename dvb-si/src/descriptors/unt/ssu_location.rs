@@ -104,6 +104,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for SsuLocationDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn ssu_carousel_with_association_tag_round_trip() {

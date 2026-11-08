@@ -113,6 +113,7 @@ pub fn fit_u32(value: usize, field: &'static str) -> Result<u32, FieldOverflow> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn need_in_boundaries() {

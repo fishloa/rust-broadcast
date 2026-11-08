@@ -1,4 +1,5 @@
 use super::ExtensionDescriptor;
+use alloc::{vec, vec::Vec};
 use broadcast_common::{Parse, Serialize};
 
 pub(crate) fn wrap(tag_ext: u8, sel: &[u8]) -> Vec<u8> {

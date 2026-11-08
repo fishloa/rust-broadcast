@@ -147,6 +147,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for RarOverIpDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     fn sample(flags: u8) -> Vec<u8> {
         let mut v = vec![TAG, 0];

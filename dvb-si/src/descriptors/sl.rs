@@ -66,6 +66,7 @@ impl crate::traits::DescriptorDef<'_> for SlDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_es_id() {

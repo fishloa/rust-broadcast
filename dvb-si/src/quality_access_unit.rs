@@ -264,6 +264,7 @@ impl Serialize for QualityAccessUnit<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // Hand-computed from Table 2-164 (spec vector only: no real instance in the
     // committed corpus).

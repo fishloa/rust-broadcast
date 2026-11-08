@@ -84,6 +84,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for DvbHtmlApplicationBoundaryDescript
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     // Table 89: label "img", regular expression "http://a/.*".
     fn sample() -> Vec<u8> {

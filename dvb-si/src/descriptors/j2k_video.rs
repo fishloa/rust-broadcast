@@ -673,6 +673,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for J2kVideoDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn serialize_round_trip(d: &J2kVideoDescriptor<'_>) {
         let mut buf = vec![0u8; d.serialized_len()];

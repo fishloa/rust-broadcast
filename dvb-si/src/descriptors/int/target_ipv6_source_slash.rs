@@ -94,6 +94,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for TargetIpv6SourceSlashDescriptor<'a
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn serialize_rejects_entry_sized_trailing() {

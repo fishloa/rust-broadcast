@@ -175,6 +175,7 @@ impl<'a> crate::traits::TableDef<'a> for BatSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{string::ToString, vec};
 
     type TestTs = (u16, u16, Vec<u8>);
 

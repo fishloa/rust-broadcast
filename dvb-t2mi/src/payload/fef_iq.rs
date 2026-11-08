@@ -120,6 +120,7 @@ impl fmt::Display for FefIqPayload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_fields_and_data() {

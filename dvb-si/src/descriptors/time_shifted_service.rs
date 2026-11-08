@@ -71,6 +71,7 @@ impl crate::traits::DescriptorDef<'_> for TimeShiftedServiceDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_reference_service_id() {

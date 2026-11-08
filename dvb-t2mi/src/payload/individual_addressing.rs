@@ -1330,6 +1330,7 @@ impl fmt::Display for IndividualAddressingPayload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{string::ToString, vec};
 
     #[test]
     fn addressing_function_tag_try_from_valid() {

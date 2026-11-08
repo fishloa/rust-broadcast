@@ -670,6 +670,7 @@ impl serde::Serialize for DescriptorLoop<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{format, vec, vec::Vec};
 
     #[test]
     fn contains_tag_detects_present_tag_regardless_of_body() {

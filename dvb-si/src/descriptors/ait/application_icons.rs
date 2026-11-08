@@ -239,6 +239,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for ApplicationIconsDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     /// Spec example, TS 102 809 §5.2.8.2: `icon_flags` = 0x0005 signals the
     /// 24 x 32 (0x0004) and 32 x 32 (0x0001) icon files.

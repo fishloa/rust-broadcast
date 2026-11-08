@@ -226,6 +226,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for DeferredAssociationTagsDescriptor<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // Spec vector only (no real instance exists in the committed corpus).
     // Hand-built from Tables 64/65:

@@ -318,6 +318,7 @@ impl<'a> SpliceDescriptorDef<'a> for DvbDasDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn round_trip_hand_computed_wire() {

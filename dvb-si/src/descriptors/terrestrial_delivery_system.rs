@@ -581,6 +581,7 @@ impl crate::traits::DescriptorDef<'_> for TerrestrialDeliverySystemDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_centre_frequency_10hz() {

@@ -763,6 +763,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use alloc::vec;
 
     #[test]
     fn s2x_mode_roundtrip() {

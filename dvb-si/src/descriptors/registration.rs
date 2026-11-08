@@ -82,6 +82,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for RegistrationDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// TS 101 154 V2.10.1 AVS3 HDR signalling: registration_descriptor with
     /// format_identifier 0x41565356 ('AVSV'); T/AI 109.7 8.1.3.3: AVS3 audio

@@ -258,6 +258,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use alloc::vec;
 
     #[test]
     fn c2_tuning_frequency_type_roundtrip() {

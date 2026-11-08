@@ -333,6 +333,7 @@ impl<'a> crate::traits::TableDef<'a> for SdtSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     type TestService = (u16, bool, bool, u8, bool, Vec<u8>);
 

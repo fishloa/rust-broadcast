@@ -775,6 +775,7 @@ impl JxsVideo {
 #[allow(clippy::unusual_byte_groupings)] // bit-field-wise literals mirror the syntax tables
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // ── Table 2-129 spec vectors (hand-built; bit layout in each comment) ──
 

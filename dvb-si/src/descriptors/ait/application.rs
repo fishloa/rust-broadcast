@@ -268,6 +268,7 @@ impl crate::traits::DescriptorDef<'_> for ApplicationDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Body layout: profiles_length(1) + 1 profile(5) + flags(1) + priority(1) + 2 labels(2) = 10.
     fn build_single_profile_two_labels() -> [u8; 12] {

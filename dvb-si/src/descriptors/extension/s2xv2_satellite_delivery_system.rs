@@ -717,6 +717,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+    use alloc::vec;
 
     /// Build a minimal valid 18-byte selector for S2Xv2 mode 1 (no optional fields).
     fn minimal_mode1_sel() -> Vec<u8> {

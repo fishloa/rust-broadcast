@@ -858,6 +858,7 @@ impl Serialize for DownloadDataBlock<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn sample_dsi() -> UnMessage<'static> {
         UnMessage::Dsi(Dsi {

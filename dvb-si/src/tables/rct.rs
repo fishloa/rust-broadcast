@@ -1233,6 +1233,7 @@ impl<'a> crate::traits::TableDef<'a> for RctSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_no_links_no_descriptors() {

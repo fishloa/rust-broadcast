@@ -373,6 +373,7 @@ impl crate::traits::DescriptorDef<'_> for S2SatelliteDeliverySystemDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn ts_gs_mode_from_u8_to_u8_roundtrip() {

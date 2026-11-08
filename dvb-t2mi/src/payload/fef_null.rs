@@ -252,6 +252,7 @@ impl fmt::Display for FefNullPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn parse_extracts_fields() {

@@ -125,6 +125,7 @@ impl crate::traits::DescriptorDef<'_> for DataStreamAlignmentDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_slice_or_video_access_unit() {

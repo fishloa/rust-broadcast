@@ -96,6 +96,7 @@ impl crate::traits::DescriptorDef<'_> for ParentalRatingDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_single_entry_extracts_country_and_rating() {

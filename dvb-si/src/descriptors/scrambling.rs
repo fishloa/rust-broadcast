@@ -124,6 +124,7 @@ impl crate::traits::DescriptorDef<'_> for ScramblingDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_scrambling_mode() {

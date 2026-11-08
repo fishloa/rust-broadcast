@@ -856,6 +856,7 @@ impl<'a> crate::traits::TableDef<'a> for PmtSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{string::ToString, vec};
 
     /// Build a PMT section with given fields. Placeholder CRC.
     fn build_pmt(

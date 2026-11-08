@@ -267,6 +267,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for TransportProtocolDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Body: protocol_id(2) + label(1) + remote_conn_rfu(1) + component_tag(1) = 5.
     fn build_oc_local() -> [u8; 7] {

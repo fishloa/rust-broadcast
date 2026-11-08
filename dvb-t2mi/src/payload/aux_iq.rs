@@ -107,6 +107,7 @@ impl Serialize for AuxIqPayload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     #[test]
     fn parse_extracts_frame_idx_and_aux_id() {

@@ -306,6 +306,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for ApplicationRecordingDescriptor<'a>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // Table 21: flags scheduled+dynamic (0x90) + reserved 0b11 => 0x93; one
     // label "ab" with storage_properties=1 (critical) + reserved 0x3F => 0x7F;

@@ -226,6 +226,7 @@ impl serde::Serialize for CarouselDescriptorLoop<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn walk_typed_and_unknown() {

@@ -328,6 +328,7 @@ impl<'a> crate::traits::TableDef<'a> for CitSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_happy_path_no_crid_entries() {

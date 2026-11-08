@@ -93,6 +93,7 @@ impl crate::traits::DescriptorDef<'_> for IbpDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse() {

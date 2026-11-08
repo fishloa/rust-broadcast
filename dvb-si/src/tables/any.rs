@@ -258,6 +258,7 @@ macro_rules! declare_tables {
 
         #[cfg(test)]
         mod macro_drift {
+            use alloc::{vec, vec::Vec};
             #[test]
             fn ranges_match_tabledef() {
                 use crate::traits::TableDef;

@@ -61,6 +61,7 @@ mod tests {
     use crate::descriptors::teletext::TeletextType;
     use crate::error::Error;
     use crate::text::LangCode;
+    use alloc::vec;
 
     #[test]
     fn parse_single_entry() {

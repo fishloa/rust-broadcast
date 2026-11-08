@@ -90,6 +90,7 @@ impl Serialize for BbframePayload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     #[test]
     fn parse_extracts_frame_idx_and_plp_id() {

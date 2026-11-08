@@ -52,6 +52,7 @@ pub trait Serialize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
     use core::fmt;
 
     #[derive(Debug, PartialEq)]

@@ -167,6 +167,7 @@ impl Serialize for L1CurrentPayload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn frequency_source_try_from_valid() {

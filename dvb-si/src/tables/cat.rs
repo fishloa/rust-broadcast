@@ -177,6 +177,7 @@ impl<'a> crate::traits::TableDef<'a> for CatSection<'a> {
 mod tests {
     use super::*;
     use crate::tables::CRC_LEN;
+    use alloc::vec;
 
     const EXTENSION_HEADER_LEN: usize = 5;
 

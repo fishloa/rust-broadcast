@@ -227,6 +227,7 @@ impl serde::Serialize for AitDescriptorLoop<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     /// Regression for r03-W13: a parse error inside the loop must be
     /// surfaced in the serde output (as `{"parseError": ...}`), not

@@ -106,6 +106,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for MultilingualComponentDescriptor<'a
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn build(component_tag: u8, entries: &[([u8; 3], &[u8])]) -> Vec<u8> {
         let body: usize = COMPONENT_TAG_LEN

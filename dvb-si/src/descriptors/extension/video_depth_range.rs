@@ -237,6 +237,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+    use alloc::vec;
 
     #[test]
     fn parse_video_depth_range_two_entries_round_trip() {

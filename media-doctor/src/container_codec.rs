@@ -369,6 +369,7 @@ mod tests {
     /// produces (it always writes 4-byte prefixes) and therefore could not
     /// previously be exercised.
     #[test]
+    #[cfg(feature = "std")]
     fn two_byte_nal_length_prefix_is_not_a_violation() {
         let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
         let bytes = std::fs::read(path).expect("read h264-aac-prog.mp4");
@@ -414,6 +415,7 @@ mod tests {
     /// `nal_length_size` maps each `lengthSizeMinusOne` to its byte count
     /// (ISO/IEC 14496-15 5.3.3.1.1) and rejects a non-AVC/HEVC config.
     #[test]
+    #[cfg(feature = "std")]
     fn nal_length_size_comes_from_the_record() {
         let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
         let bytes = std::fs::read(path).expect("read h264-aac-prog.mp4");

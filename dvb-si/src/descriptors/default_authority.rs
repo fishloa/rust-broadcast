@@ -60,6 +60,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for DefaultAuthorityDescriptor<'a> {
 mod tests {
     use super::*;
     use crate::error::Error;
+    use alloc::vec;
 
     #[test]
     fn parse_extracts_authority_text() {

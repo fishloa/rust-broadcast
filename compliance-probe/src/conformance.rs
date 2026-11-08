@@ -142,6 +142,7 @@ impl PcrTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
     use broadcast_common::clock33::PCR_WRAP_27MHZ;
 
     /// A perfectly steady 27 MHz PCR advancing in lock-step with wall-clock

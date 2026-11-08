@@ -371,6 +371,7 @@ impl crate::traits::DescriptorDef<'_> for NordigLogicalChannelV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     // -----------------------------------------------------------------------
     // V1 tests

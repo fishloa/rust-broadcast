@@ -69,6 +69,7 @@ impl crate::traits::DescriptorDef<'_> for Mpeg4VideoDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn round_trip() {

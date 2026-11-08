@@ -40,6 +40,7 @@ mod damaged_unit_resync;
 mod damaged_unit_resync_flv;
 mod damaged_unit_resync_webm;
 mod dash;
+#[cfg(feature = "std")]
 mod dash_duration;
 mod dash_iso_examples;
 mod dash_mpd;
@@ -83,6 +84,7 @@ mod golden;
 mod golden_wire;
 mod hdr10;
 mod hdr10plus;
+#[cfg(feature = "std")]
 mod heaac_signalling;
 mod hevc_sps;
 mod hevc_vps_timing;
@@ -102,6 +104,7 @@ mod largesize_truncation;
 mod live_join_fixtures;
 mod ll_dash;
 mod ll_hls;
+#[cfg(feature = "std")]
 #[path = "support/ll_packager.rs"]
 mod ll_packager;
 mod mkv_mux;
@@ -140,7 +143,9 @@ mod sei_caption_real_capture;
 mod serializer_length_truncation;
 mod skipped_track_id;
 mod smooth;
+#[cfg(feature = "std")]
 mod smooth_fragment_inspect;
+#[cfg(feature = "std")]
 mod smooth_text_roundtrip;
 mod splice;
 mod sps_profile_matrix;
@@ -159,10 +164,13 @@ mod streaming_tshls_config_change;
 mod streaming_tshls_late_track;
 mod streaming_tshls_pmt_version;
 mod subtitle_ac4_strictness;
+#[cfg(feature = "std")]
 mod subtitle_manifests;
+#[cfg(feature = "std")]
 mod subtitle_real_producers;
 mod subtitle_remux;
 mod sweep_output_golden;
+#[cfg(feature = "std")]
 mod template_match;
 mod timeline_oracle;
 mod timing;

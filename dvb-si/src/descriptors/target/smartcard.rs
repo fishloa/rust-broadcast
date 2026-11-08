@@ -72,6 +72,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for TargetSmartcardDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn parse_fields_and_round_trip() {

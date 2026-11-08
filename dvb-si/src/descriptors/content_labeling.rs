@@ -454,6 +454,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for ContentLabelingDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// r03-W3 class: a 33-bit time-base value wider than its field used to be
     /// masked down silently into a different timestamp.

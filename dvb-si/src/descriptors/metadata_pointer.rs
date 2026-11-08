@@ -335,6 +335,7 @@ impl<'a> crate::traits::DescriptorDef<'a> for MetadataPointerDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn serialize_round_trip(d: &MetadataPointerDescriptor<'_>) {
         let mut buf = vec![0u8; d.serialized_len()];

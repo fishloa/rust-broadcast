@@ -316,6 +316,7 @@ impl<'a> crate::traits::TableDef<'a> for SitSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn build_sit(
         table_id_extension: u16,
