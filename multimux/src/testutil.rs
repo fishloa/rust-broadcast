@@ -96,11 +96,13 @@ async fn auth_gate(State(verifier): State<Arc<Verifier>>, req: Request, next: Ne
     let headers: Vec<(&str, &str)> = req
         .headers()
         .iter()
-        .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str(), v)))
+        .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or_default()))
         .collect();
     let ctx = RequestContext::new(&method, &uri).with_headers(&headers);
-    if verifier.verify(&ctx) == AuthResult::Ok {
-        return next.run(req).await;
+    match verifier.verify(&ctx) {
+        AuthResult::Ok => return next.run(req).await,
+        AuthResult::BadRequest => return StatusCode::BAD_REQUEST.into_response(),
+        _ => {}
     }
     // `challenge_for` (not `challenge`): matches the real production gate
     // (`crate::origin::output_auth_gate`) this mock stands in for, so an

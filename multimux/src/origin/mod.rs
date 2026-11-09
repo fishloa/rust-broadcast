@@ -843,7 +843,7 @@ pub(crate) fn check_output_auth(verifier: &Verifier, req: &Request) -> Option<Re
     let headers: Vec<(&str, &str)> = req
         .headers()
         .iter()
-        .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str(), v)))
+        .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or_default()))
         .collect();
     let peer_addr = req
         .extensions()
@@ -861,6 +861,7 @@ pub(crate) fn check_output_auth(verifier: &Verifier, req: &Request) -> Option<Re
     }
     match verifier.verify(&ctx) {
         AuthResult::Ok => None,
+        AuthResult::BadRequest => Some(StatusCode::BAD_REQUEST.into_response()),
         AuthResult::Unauthorized => {
             let mut resp = StatusCode::UNAUTHORIZED.into_response();
             // `challenge_for` (not `challenge`): an expired nonce must be
@@ -3959,19 +3960,29 @@ mod tests {
     /// mechanism is trusting a fronting reverse proxy to have set it.
     #[tokio::test]
     async fn output_auth_forwarded_with_user_header_200() {
-        let app = app_with_output_auth(Verifier::forwarded(
+        let app = app_with_output_auth(Verifier::forwarded_from(
             "X-Forwarded-User",
             Some("X-Forwarded-For".to_string()),
+            broadcast_auth::TrustedProxy::loopback(),
         ));
         let resp = app
-            .oneshot(get_with_header(
+            .oneshot(from_loopback(get_with_header(
                 "/cam1/master.m3u8",
                 "X-Forwarded-User",
                 "alice",
-            ))
+            )))
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    fn from_loopback(
+        mut req: axum::http::Request<axum::body::Body>,
+    ) -> axum::http::Request<axum::body::Body> {
+        req.extensions_mut().insert(axum::extract::ConnectInfo(
+            "127.0.0.1:1".parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        req
     }
 
     fn forwarded_spec(trusted_proxies: Option<Vec<&str>>) -> crate::config::OutputAuthSpec {
@@ -4044,9 +4055,10 @@ mod tests {
     /// directly (bypassing the trusted proxy) must not get in.
     #[tokio::test]
     async fn output_auth_forwarded_without_user_header_401() {
-        let app = app_with_output_auth(Verifier::forwarded(
+        let app = app_with_output_auth(Verifier::forwarded_from(
             "X-Forwarded-User",
             Some("X-Forwarded-For".to_string()),
+            broadcast_auth::TrustedProxy::loopback(),
         ));
         let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
@@ -4057,15 +4069,38 @@ mod tests {
     /// grant access).
     #[tokio::test]
     async fn output_auth_forwarded_empty_user_header_401() {
-        let app = app_with_output_auth(Verifier::forwarded(
+        let app = app_with_output_auth(Verifier::forwarded_from(
             "X-Forwarded-User",
             Some("X-Forwarded-For".to_string()),
+            broadcast_auth::TrustedProxy::loopback(),
         ));
         let resp = app
-            .oneshot(get_with_header("/cam1/master.m3u8", "X-Forwarded-User", ""))
+            .oneshot(from_loopback(get_with_header(
+                "/cam1/master.m3u8",
+                "X-Forwarded-User",
+                "",
+            )))
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Two `Authorization` headers are ambiguous: `400`, not the first one
+    /// silently winning.
+    #[tokio::test]
+    async fn output_auth_duplicate_authorization_headers_are_400() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::bearer("secrettoken"),
+            OUTPUT_AUTH_REALM,
+        ));
+        let req = axum::http::Request::builder()
+            .uri("/cam1/master.m3u8")
+            .header("Authorization", "Bearer secrettoken")
+            .header("Authorization", "Bearer other")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
     /// Biting test: `output_auth_gate` reads `X-Forwarded-For` via
@@ -4077,7 +4112,11 @@ mod tests {
     /// trust decision).
     #[tokio::test]
     async fn output_auth_forwarded_reads_x_forwarded_for() {
-        let verifier = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let verifier = Verifier::forwarded_from(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+            broadcast_auth::TrustedProxy::loopback(),
+        );
         let headers: &[(&str, &str)] = &[
             ("X-Forwarded-User", "alice"),
             ("X-Forwarded-For", "203.0.113.7"),
@@ -4089,14 +4128,14 @@ mod tests {
         // `X-Forwarded-For` is read for observability, never gates access.
         let app = app_with_output_auth(verifier);
         let resp = app
-            .oneshot(
+            .oneshot(from_loopback(
                 axum::http::Request::builder()
                     .uri("/cam1/master.m3u8")
                     .header("X-Forwarded-User", "alice")
                     .header("X-Forwarded-For", "203.0.113.7")
                     .body(axum::body::Body::empty())
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);

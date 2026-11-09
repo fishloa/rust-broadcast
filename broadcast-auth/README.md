@@ -77,7 +77,7 @@ Runnable programs: `cargo run -p broadcast-auth --example client_respond` and `-
 ## What is implemented
 
 - **Client:** `Credentials::new` (answers whichever of Basic or Digest the challenge advertises) and `Credentials::bearer`; `Authenticator::from_challenge` plus `authorization` for session reuse; one-shot `respond`.
-- **Server:** `Verifier::new` (scheme chosen by the `Credentials` variant: Basic, Digest or Bearer), `Verifier::forwarded`, `Verifier::signed_url`, `challenge` / `challenge_for`, `verify` returning `AuthResult`, `with_clock` and `with_digest_nc_capacity` for tests and tuning.
+- **Server:** `Verifier::new` (scheme chosen by the `Credentials` variant: Basic, Digest or Bearer), `Verifier::forwarded_from`, `Verifier::signed_url`, `challenge` / `challenge_for`, `verify` returning `AuthResult`, `with_clock` and `with_digest_nc_capacity` for tests and tuning.
 - **`RequestContext`:** method, URI, optional body and headers (case-insensitive `header` lookup), peer address.
 - **Security properties:** `Credentials`, `Verifier`, nonce keys and `SignedUrlKeySet` zeroize on drop; comparisons use `subtle::ConstantTimeEq`; Digest nonces are stateless-signed and replay-windowed; a `secret_debug_guard` test forbids derived `Debug` over secrets.
 

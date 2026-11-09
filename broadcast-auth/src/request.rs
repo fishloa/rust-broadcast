@@ -73,6 +73,14 @@ impl<'a> RequestContext<'a> {
         self
     }
 
+    /// How many entries of [`Self::headers`] carry `name` (case-insensitive).
+    pub fn header_count(&self, name: &str) -> usize {
+        self.headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+            .count()
+    }
+
     /// Looks up a header by name, case-insensitively (RFC 7230 §3.2). Returns
     /// the first match if [`Self::headers`] carries more than one with the
     /// same name.

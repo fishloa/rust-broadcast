@@ -50,16 +50,19 @@
 //!   authenticates through the RFC 7616 §3.4.4 `username*` extended parameter
 //!   (RFC 8187 `UTF-8''<pct-encoded>`); a raw non-ASCII `username` and
 //!   `userhash=true` are rejected.
-//! - **Forwarded** ([`Self::forwarded`], issue #663 extensibility wave part
+//! - **Forwarded** ([`Self::forwarded_from`], issue #663 extensibility wave part
 //!   1): not an RFC 7235 challenge scheme at all — trusts that a fronting
 //!   reverse proxy has already authenticated the caller and forwards the
 //!   authenticated username in a configured header (conventionally
 //!   `X-Forwarded-User`). Authenticated iff that header is present and
-//!   non-empty. **Safe ONLY behind a trusted reverse proxy that strips any
-//!   client-supplied copies of that header (and of the forwarded-for header,
-//!   if configured) before forwarding** — this crate performs no such
-//!   stripping and trusts [`crate::RequestContext::headers`] completely; a
-//!   direct or spoofed client could otherwise set the header itself and
+//!   non-empty **and** the transport peer ([`crate::RequestContext::peer_addr`])
+//!   lies in the configured trusted-proxy list; a request from any other
+//!   peer, or with no peer address, is refused, because that peer could set
+//!   the header itself. **The listed proxies must strip any client-supplied
+//!   copies of that header (and of the forwarded-for header, if configured)
+//!   before forwarding** — this crate performs no such stripping and trusts
+//!   [`crate::RequestContext::headers`] from a listed peer completely; a
+//!   spoofed header from a listed proxy could otherwise set the header itself and
 //!   bypass authentication entirely. [`Self::challenge`] returns just the
 //!   bare scheme name for diagnostics (there is no challenge/response
 //!   round-trip a direct client could answer).
@@ -131,6 +134,10 @@ pub enum AuthResult {
     /// Missing, malformed, or wrong-credential `Authorization` — the caller
     /// should respond `401` with [`Verifier::challenge`].
     Unauthorized,
+    /// The request carries more than one `Authorization` header, so which
+    /// credential it means is ambiguous; the caller should respond `400`
+    /// (RFC 9110 §5.3: `Authorization` is a single-value field).
+    BadRequest,
 }
 
 /// Per-scheme state a [`Verifier`] holds — mirrors [`Credentials`] but adds
@@ -157,7 +164,7 @@ enum VerifierScheme {
     Forwarded {
         user_header: String,
         forwarded_for_header: Option<String>,
-        trusted_proxies: Option<Vec<TrustedProxy>>,
+        trusted_proxies: Vec<TrustedProxy>,
     },
     /// HMAC signed-URL (see the module docs / [`crate::signed_url`]) — no
     /// `Credentials`/realm/nonce either: the token lives in the request's own
@@ -514,26 +521,14 @@ impl Verifier {
     ///
     /// `user_header` (conventionally `X-Forwarded-User`) is the header whose
     /// presence (non-empty) [`Self::verify`] treats as "the proxy already
-    /// authenticated this caller". `forwarded_for_header` (conventionally
-    /// `Some("X-Forwarded-For".to_string())`), if configured, is read back by
-    /// [`Self::forwarded_for`] for observability only — this crate makes no
-    /// trust decision based on it.
-    pub fn forwarded(user_header: impl Into<String>, forwarded_for_header: Option<String>) -> Self {
-        Verifier {
-            scheme: VerifierScheme::Forwarded {
-                user_header: user_header.into(),
-                forwarded_for_header,
-                trusted_proxies: None,
-            },
-            clock: default_clock(),
-        }
-    }
-
-    /// Like [`Self::forwarded`], but the user header counts only when the
-    /// transport peer (`ctx.peer_addr`, IPv4-mapped addresses canonicalised)
-    /// lies in `trusted_proxies`. A request with no peer address, or from a
-    /// peer outside the list, is `Unauthorized`: any other peer could set the
-    /// header itself. An empty list trusts no peer.
+    /// authenticated this caller", and only when the transport peer
+    /// (`ctx.peer_addr`, IPv4-mapped addresses canonicalised) lies in
+    /// `trusted_proxies`. A request with no peer address, or from a peer
+    /// outside the list, is `Unauthorized`: any other peer could set the
+    /// header itself. An empty list trusts no peer. `forwarded_for_header`
+    /// (conventionally `Some("X-Forwarded-For".to_string())`), if configured,
+    /// is read back by [`Self::forwarded_for`] for observability only — this
+    /// crate makes no trust decision based on it.
     pub fn forwarded_from(
         user_header: impl Into<String>,
         forwarded_for_header: Option<String>,
@@ -543,7 +538,7 @@ impl Verifier {
             scheme: VerifierScheme::Forwarded {
                 user_header: user_header.into(),
                 forwarded_for_header,
-                trusted_proxies: Some(trusted_proxies),
+                trusted_proxies,
             },
             clock: default_clock(),
         }
@@ -562,7 +557,7 @@ impl Verifier {
     /// The `WWW-Authenticate` header value to send on a `401` in response to
     /// a missing/failed [`Self::verify`] call.
     ///
-    /// `Forwarded` (built via [`Self::forwarded`]) has no real RFC 7235
+    /// `Forwarded` (built via [`Self::forwarded_from`]) has no real RFC 7235
     /// challenge (a direct client cannot answer it — see the module docs);
     /// this just names the scheme for diagnostics.
     ///
@@ -644,6 +639,15 @@ impl Verifier {
     /// the per-request allocation cost, but is not a substitute for a
     /// transport-level cap on header size, which callers should also enforce.
     pub fn verify(&self, ctx: &RequestContext<'_>) -> AuthResult {
+        let reads_authorization = matches!(
+            self.scheme,
+            VerifierScheme::Basic { .. }
+                | VerifierScheme::Digest { .. }
+                | VerifierScheme::Bearer { .. }
+        );
+        if reads_authorization && ctx.header_count("authorization") > 1 {
+            return AuthResult::BadRequest;
+        }
         let ok = match &self.scheme {
             VerifierScheme::Basic {
                 username, password, ..
@@ -679,7 +683,7 @@ impl Verifier {
                 user_header,
                 trusted_proxies,
                 ..
-            } => verify_forwarded(ctx, user_header, trusted_proxies.as_deref()),
+            } => verify_forwarded(ctx, user_header, trusted_proxies),
             VerifierScheme::SignedUrl { keys } => signed_url::verify(ctx, keys),
         };
         if ok {
@@ -689,7 +693,7 @@ impl Verifier {
         }
     }
 
-    /// For a [`Self::forwarded`] verifier with a configured
+    /// For a [`Self::forwarded_from`] verifier with a configured
     /// `forwarded_for_header`, returns that header's value from `ctx` — for
     /// tracing/observability only; this crate makes no trust decision with
     /// it (the module docs' trust assumption is what actually matters).
@@ -1025,12 +1029,11 @@ fn authority_is_host(parsed: &Url, host: &str) -> bool {
 fn verify_forwarded(
     ctx: &RequestContext<'_>,
     user_header: &str,
-    trusted_proxies: Option<&[TrustedProxy]>,
+    trusted_proxies: &[TrustedProxy],
 ) -> bool {
-    let peer_trusted = trusted_proxies.is_none_or(|nets| {
-        ctx.peer_addr
-            .is_some_and(|peer| nets.iter().any(|net| net.contains(peer.ip())))
-    });
+    let peer_trusted = ctx
+        .peer_addr
+        .is_some_and(|peer| trusted_proxies.iter().any(|net| net.contains(peer.ip())));
     peer_trusted
         && ctx
             .header(user_header)
@@ -1057,6 +1060,7 @@ mod tests {
     use crate::{Credentials, RequestContext, respond};
 
     const REALM: &str = "cameras";
+    const PROXY_PEER: &str = "127.0.0.1:1";
 
     /// Eviction order is least-recently-USED, not least-recently-inserted:
     /// touching an old pair must protect it.
@@ -1535,7 +1539,11 @@ mod tests {
 
     #[test]
     fn forwarded_challenge_is_bare_scheme_name() {
-        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let v = Verifier::forwarded_from(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+            TrustedProxy::loopback(),
+        );
         assert_eq!(v.challenge(), "Forwarded");
     }
 
@@ -1544,9 +1552,15 @@ mod tests {
     /// ever compared.
     #[test]
     fn forwarded_with_user_header_present_is_ok() {
-        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let v = Verifier::forwarded_from(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+            TrustedProxy::loopback(),
+        );
         let headers: &[(&str, &str)] = &[("X-Forwarded-User", "alice")];
-        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        let ctx = RequestContext::new("GET", "/stream")
+            .with_headers(headers)
+            .with_peer_addr(PROXY_PEER.parse().unwrap());
         assert_eq!(v.verify(&ctx), AuthResult::Ok);
     }
 
@@ -1596,8 +1610,12 @@ mod tests {
 
     #[test]
     fn forwarded_without_user_header_is_unauthorized() {
-        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
-        let ctx = RequestContext::new("GET", "/stream");
+        let v = Verifier::forwarded_from(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+            TrustedProxy::loopback(),
+        );
+        let ctx = RequestContext::new("GET", "/stream").with_peer_addr(PROXY_PEER.parse().unwrap());
         assert_eq!(v.verify(&ctx), AuthResult::Unauthorized);
     }
 
@@ -1606,9 +1624,15 @@ mod tests {
     /// access.
     #[test]
     fn forwarded_with_empty_user_header_is_unauthorized() {
-        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let v = Verifier::forwarded_from(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+            TrustedProxy::loopback(),
+        );
         let headers: &[(&str, &str)] = &[("X-Forwarded-User", "")];
-        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        let ctx = RequestContext::new("GET", "/stream")
+            .with_headers(headers)
+            .with_peer_addr(PROXY_PEER.parse().unwrap());
         assert_eq!(v.verify(&ctx), AuthResult::Unauthorized);
     }
 
@@ -1616,9 +1640,11 @@ mod tests {
     /// semantics (RFC 7230 §3.2) rather than a literal-string match.
     #[test]
     fn forwarded_user_header_lookup_is_case_insensitive() {
-        let v = Verifier::forwarded("X-Forwarded-User", None);
+        let v = Verifier::forwarded_from("X-Forwarded-User", None, TrustedProxy::loopback());
         let headers: &[(&str, &str)] = &[("x-forwarded-user", "alice")];
-        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        let ctx = RequestContext::new("GET", "/stream")
+            .with_headers(headers)
+            .with_peer_addr(PROXY_PEER.parse().unwrap());
         assert_eq!(v.verify(&ctx), AuthResult::Ok);
     }
 
@@ -1627,12 +1653,18 @@ mod tests {
     /// to surface the proxy-forwarded client IP to tracing.
     #[test]
     fn forwarded_for_reads_configured_header() {
-        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let v = Verifier::forwarded_from(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+            TrustedProxy::loopback(),
+        );
         let headers: &[(&str, &str)] = &[
             ("X-Forwarded-User", "alice"),
             ("X-Forwarded-For", "203.0.113.7"),
         ];
-        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        let ctx = RequestContext::new("GET", "/stream")
+            .with_headers(headers)
+            .with_peer_addr(PROXY_PEER.parse().unwrap());
         assert_eq!(v.forwarded_for(&ctx), Some("203.0.113.7"));
     }
 
@@ -1640,9 +1672,11 @@ mod tests {
     /// `None`, even if an `X-Forwarded-For` header happens to be present.
     #[test]
     fn forwarded_for_is_none_when_not_configured() {
-        let v = Verifier::forwarded("X-Forwarded-User", None);
+        let v = Verifier::forwarded_from("X-Forwarded-User", None, TrustedProxy::loopback());
         let headers: &[(&str, &str)] = &[("X-Forwarded-For", "203.0.113.7")];
-        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        let ctx = RequestContext::new("GET", "/stream")
+            .with_headers(headers)
+            .with_peer_addr(PROXY_PEER.parse().unwrap());
         assert_eq!(v.forwarded_for(&ctx), None);
     }
 
@@ -1652,7 +1686,9 @@ mod tests {
     fn forwarded_for_is_none_for_non_forwarded_verifier() {
         let v = Verifier::new(Credentials::bearer("tok"), REALM);
         let headers: &[(&str, &str)] = &[("X-Forwarded-For", "203.0.113.7")];
-        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        let ctx = RequestContext::new("GET", "/stream")
+            .with_headers(headers)
+            .with_peer_addr(PROXY_PEER.parse().unwrap());
         assert_eq!(v.forwarded_for(&ctx), None);
     }
 
@@ -1660,9 +1696,45 @@ mod tests {
     /// involved), but must still not panic and must name the scheme.
     #[test]
     fn forwarded_debug_names_scheme() {
-        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let v = Verifier::forwarded_from(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+            TrustedProxy::loopback(),
+        );
         let debug = format!("{v:?}");
         assert!(debug.contains("Forwarded"), "debug: {debug}");
+    }
+
+    #[test]
+    fn a_duplicate_authorization_header_is_a_bad_request_for_every_header_scheme() {
+        let verifiers = [
+            Verifier::new(Credentials::bearer("tok"), REALM),
+            Verifier::new(
+                Credentials::Basic {
+                    username: "u".into(),
+                    password: "p".into(),
+                },
+                REALM,
+            ),
+            Verifier::new(
+                Credentials::Digest {
+                    username: "u".into(),
+                    password: "p".into(),
+                },
+                REALM,
+            ),
+        ];
+        let headers: &[(&str, &str)] = &[
+            ("Authorization", "Bearer tok"),
+            ("authorization", "Bearer other"),
+        ];
+        for v in &verifiers {
+            let ctx = RequestContext::new("GET", "/x").with_headers(headers);
+            assert_eq!(v.verify(&ctx), AuthResult::BadRequest, "{v:?}");
+        }
+        let one: &[(&str, &str)] = &[("Authorization", "Bearer tok")];
+        let ctx = RequestContext::new("GET", "/x").with_headers(one);
+        assert_eq!(verifiers[0].verify(&ctx), AuthResult::Ok);
     }
 
     // --- SignedUrl (issue #747) — the scheme's own biting tests (sign/

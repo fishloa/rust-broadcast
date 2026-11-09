@@ -5,8 +5,11 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- BREAKING: `Verifier::forwarded` is removed. It trusted `X-Forwarded-User` from any transport peer, so a client reaching the origin directly could forge it; `Verifier::forwarded_from(user_header, forwarded_for_header, trusted_proxies)` is the only constructor, and an empty list trusts nobody. Every in-workspace caller moved to `forwarded_from`.
+- BREAKING: `AuthResult::BadRequest` (the enum is `#[non_exhaustive]`, so the variant is additive; a caller that treats every non-`Ok` result as a 401 now has to map it to 400): a Basic, Digest or Bearer verifier returns it when the request carries more than one `Authorization` header, where the first used to win silently. New `RequestContext::header_count`.
 ### Added
-- `Verifier::forwarded_from` and `TrustedProxy` (IP/CIDR, IPv4-mapped peers canonicalised, `TrustedProxy::loopback()`): the `forwarded` scheme can now require the transport peer to be a listed proxy, so a client reaching the origin directly cannot forge `X-Forwarded-User`. `Verifier::forwarded` is unchanged and still trusts any peer. `Error::InvalidTrustedProxy` (`Error` is `#[non_exhaustive]`).
+- `Verifier::forwarded_from` and `TrustedProxy` (IP/CIDR, IPv4-mapped peers canonicalised, `TrustedProxy::loopback()`): the `forwarded` scheme can now require the transport peer to be a listed proxy, so a client reaching the origin directly cannot forge `X-Forwarded-User`. `Error::InvalidTrustedProxy` (`Error` is `#[non_exhaustive]`).
 ### Fixed
 - `RequestContext`'s `Debug` redacts the signed-URL `sig` query value and the `Cookie`, `Set-Cookie` and `X-Api-Key` header values (previously only `Authorization`/`Proxy-Authorization`).
 - An IP-bound signed URL accepts an IPv4-mapped IPv6 peer (`::ffff:a.b.c.d`) for the same IPv4 address, in both directions; both sides are compared after `to_canonical()`.
