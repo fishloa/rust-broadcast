@@ -1223,3 +1223,84 @@ fn token_less_names_resolve_but_are_never_immutable() {
         }
     }
 }
+
+#[test]
+fn a_segmenter_numbering_from_above_one_renders_the_open_segments_parts() {
+    let (trunk, w) = trunk_with(8, 64);
+    let o = HlsOrigin::builder(Arc::clone(&trunk))
+        .target_duration_secs(4.0)
+        .window_segments(nz(6))
+        .low_latency(500)
+        .hold_cold_playlist(false)
+        .build()
+        .expect("origin builds");
+    publish_part(&w, 5, 0);
+    publish_part(&w, 5, 1);
+    let rendered = playlist(&o);
+    assert_eq!(rendered.matches("#EXT-X-PART:").count(), 2, "{rendered}");
+}
+
+fn bare_msn_reload(o: &HlsOrigin, msn: u64) -> EgressResponse<HlsBody> {
+    let (now, policy) = patient();
+    o.resolve(
+        HlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery {
+                hls_msn: Some(msn),
+                ..BlockingQuery::default()
+            },
+        },
+        now,
+        policy,
+    )
+}
+
+#[test]
+fn a_bare_msn_reload_is_answered_only_with_a_playlist_that_lists_that_segment() {
+    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let w = trunk.segment_writer().expect("segment writer");
+    publish_seg(&w, 1, 4, false);
+    let o = origin(&trunk, 4, false);
+    let before = bare_msn_reload(&o, 1);
+    assert!(
+        is_await(&before),
+        "segment 1 predates the origin and is not in its window: {before:?}"
+    );
+    publish_seg(&w, 2, 4, false);
+    match bare_msn_reload(&o, 2) {
+        EgressResponse::Ready {
+            body: HlsBody::Playlist(m),
+            ..
+        } => assert!(m.contains("-2.m4s"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A blocking reload for a part that already exists in a just-closed segment
+/// (the closing publish follows the last part immediately) must be answered
+/// from the playlist that already lists it, not parked until the next
+/// segment's first part appears.
+#[test]
+fn a_blocking_reload_for_an_existing_part_of_the_just_closed_segment_is_answered() {
+    let (_t, w, o) = fresh_origin(0);
+    publish_part(&w, 1, 0);
+    publish_part(&w, 1, 1);
+    publish_seg(&w, 1, 4, false);
+    let (now, policy) = patient();
+    let response = o.resolve(
+        HlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery {
+                hls_msn: Some(1),
+                hls_part: Some(1),
+                ..BlockingQuery::default()
+            },
+        },
+        now,
+        policy,
+    );
+    assert!(
+        matches!(response, EgressResponse::Ready { .. }),
+        "got {response:?}"
+    );
+}

@@ -3073,27 +3073,22 @@ impl HlsOrigin {
     /// resident live parts)` — the `Trunk`-only replacement for the deleted
     /// `MediaStore::latest_progress`.
     ///
-    /// Derivation: the only segment that can possibly have live, not-yet-
-    /// closed parts is the one immediately after
-    /// [`Trunk::last_closed_segment`] (a segmenter never opens segment N+2's
-    /// parts before N+1 closes) — so probing exactly that one candidate via
-    /// [`Trunk::parts_in_segment`] is exact, not a heuristic. If that probe
-    /// is empty (nothing has started for the next segment yet — e.g. the
-    /// instant after a close, before its successor's first part lands), the
-    /// answer falls back to `last_closed_segment` itself, with an empty part
-    /// list — exactly the degenerate state `MediaStore::latest_progress`
-    /// also returned right after `add_segment` cleared `live_parts`.
+    /// Derivation: the open segment is [`Trunk::open_segment`], the lowest
+    /// segment above [`Trunk::last_closed_segment`] that has resident parts
+    /// (not simply `last_closed + 1`, which a segmenter whose first segment is
+    /// numbered above 1 never reaches). If there is none (nothing has started
+    /// for the next segment yet — e.g. the instant after a close, before its
+    /// successor's first part lands), the answer falls back to
+    /// `last_closed_segment` itself, with an empty part list — exactly the
+    /// degenerate state `MediaStore::latest_progress` also returned right after `add_segment` cleared `live_parts`.
     fn live_edge(&self) -> (SegmentSeq, Vec<PartEntry>) {
         let last_closed = self
             .trunk
             .last_closed_segment()
             .unwrap_or(SegmentSeq::new(0));
-        let candidate = last_closed.saturating_next();
-        let parts = self.trunk.parts_in_segment(candidate);
-        if parts.is_empty() {
-            (last_closed, Vec::new())
-        } else {
-            (candidate, parts)
+        match self.trunk.open_segment() {
+            Some(open) => (open, self.trunk.parts_in_segment(open)),
+            None => (last_closed, Vec::new()),
         }
     }
 
@@ -3538,6 +3533,11 @@ impl HlsOrigin {
         if let Some(msn) = query.hls_msn {
             let (in_progress_seg, live_parts) = self.live_edge();
             let in_progress = self.public_msn(in_progress_seg);
+            let edge_parts = if live_parts.is_empty() {
+                self.trunk.parts_in_segment(in_progress_seg).len()
+            } else {
+                live_parts.len()
+            };
             if msn > in_progress.saturating_add(ABUSE_MSN_FUTURE_BOUND) {
                 return EgressResponse::BadRequest {
                     reason: "_HLS_msn unreasonably far beyond the live edge",
@@ -3552,7 +3552,7 @@ impl HlsOrigin {
                 && msn >= in_progress
             {
                 let existing = if msn == in_progress {
-                    u64::try_from(live_parts.len()).unwrap_or(u64::MAX)
+                    u64::try_from(edge_parts).unwrap_or(u64::MAX)
                 } else {
                     0
                 };
@@ -3569,16 +3569,9 @@ impl HlsOrigin {
                 Some(part) => {
                     in_progress > msn
                         || (in_progress == msn
-                            && u64::try_from(live_parts.len()).unwrap_or(u64::MAX)
-                                > u64::from(part))
+                            && u64::try_from(edge_parts).unwrap_or(u64::MAX) > u64::from(part))
                 }
-                None => {
-                    self.public_msn(
-                        self.trunk
-                            .last_closed_segment()
-                            .unwrap_or(SegmentSeq::new(0)),
-                    ) >= msn
-                }
+                None => self.window_reaches(msn),
             };
             if !satisfied {
                 return EgressResponse::pending(await_policy, now, now);
@@ -3598,6 +3591,14 @@ impl HlsOrigin {
             // malformed data-driven field must not take the origin down.
             Err(_) => EgressResponse::NotFound,
         }
+    }
+
+    fn window_reaches(&self, msn: u64) -> bool {
+        self.drain();
+        locked(&self.window)
+            .segments
+            .back()
+            .is_some_and(|newest| self.public_msn(newest.sequence_number) >= msn)
     }
 
     fn has_closed_segment(&self) -> bool {
@@ -3637,8 +3638,7 @@ impl HlsOrigin {
                     reason: "_HLS_msn unreasonably far beyond the live edge",
                 };
             }
-            let satisfied = self.public_msn(last_closed) >= msn;
-            if !satisfied {
+            if !self.window_reaches(msn) {
                 return EgressResponse::pending(await_policy, now, now);
             }
         }

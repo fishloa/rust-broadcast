@@ -1783,20 +1783,19 @@ impl HlsClient {
             // second time. Caught by `multimux/tests/it/glass_to_glass.rs`
             // (issue #717 slice 5): every sample was double-delivered for
             // the first two segments of a real, live-paced run.
-            let already_have_parts = self
-                .delivered_parts
-                .range((msn, 0)..=(msn, u64::MAX))
-                .next()
-                .is_some();
-            if already_have_parts {
-                self.delivered_segments.insert(msn);
+            if self.has_delivered_part(msn) {
+                self.begin_ts_resource(ResourceId::Segment { msn }, msn)?;
+                self.retry_undelivered_parts(msn);
+                if self.undelivered_parts(msn).is_empty() {
+                    self.delivered_segments.insert(msn);
+                }
                 return Ok(());
             }
             let id = ResourceId::Segment { msn };
             if !self.requested.contains(&id) {
                 self.bind_init(msn, seg.map.as_ref())?;
                 let url = url::resolve(self.base(), &seg.uri);
-                let byte_range = self.resolve_byte_range(&url, &seg.byte_range)?;
+                let byte_range = self.request_byte_range(id, &url, &seg.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
             return Ok(());
@@ -1813,7 +1812,7 @@ impl HlsClient {
             if !self.requested.contains(&id) {
                 self.bind_init(msn, seg.map.as_ref())?;
                 let url = url::resolve(self.base(), &part.uri);
-                let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
+                let byte_range = self.request_byte_range(id, &url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
         }
@@ -1821,6 +1820,39 @@ impl HlsClient {
             self.delivered_segments.insert(msn);
         }
         Ok(())
+    }
+
+    fn undelivered_parts(&self, msn: u64) -> Vec<ResourceId> {
+        self.resource_requests
+            .range(
+                ResourceId::Part { msn, part: 0 }..=ResourceId::Part {
+                    msn,
+                    part: u64::MAX,
+                },
+            )
+            .map(|(id, _)| *id)
+            .filter(|id| match id {
+                ResourceId::Part { part, .. } => !self.delivered_parts.contains(&(msn, *part)),
+                _ => false,
+            })
+            .collect()
+    }
+
+    fn retry_undelivered_parts(&mut self, msn: u64) {
+        for id in self.undelivered_parts(msn) {
+            self.retry_resource(id);
+        }
+    }
+
+    fn has_delivered_part(&self, msn: u64) -> bool {
+        self.delivered_parts
+            .range((msn, 0)..=(msn, u64::MAX))
+            .next()
+            .is_some()
+    }
+
+    fn covered_by_parts(&self, msn: u64) -> bool {
+        self.has_delivered_part(msn) && self.undelivered_parts(msn).is_empty()
     }
 
     fn process_open_segment(&mut self, msn: u64, open: &OpenSegment) -> Result<()> {
@@ -1833,7 +1865,7 @@ impl HlsClient {
             if !self.requested.contains(&id) {
                 self.bind_init(msn, open.map.as_ref())?;
                 let url = url::resolve(self.base(), &part.uri);
-                let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
+                let byte_range = self.request_byte_range(id, &url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
         }
@@ -1855,6 +1887,21 @@ impl HlsClient {
             url,
             byte_range,
         });
+    }
+
+    /// The range to fetch for `id`: the one already resolved when it was first
+    /// requested, so a re-request after a failure cannot continue from a
+    /// cursor the first request advanced.
+    fn request_byte_range(
+        &mut self,
+        id: ResourceId,
+        url: &str,
+        br: &Option<ByteRange>,
+    ) -> Result<Option<(u64, u64)>> {
+        if let Some((_, stored)) = self.resource_requests.get(&id) {
+            return Ok(*stored);
+        }
+        self.resolve_byte_range(url, br)
     }
 
     /// Resolve a `PartSpec`/`MediaSegment`/`MapTag` `BYTERANGE` into an
@@ -2245,6 +2292,9 @@ impl HlsClient {
     /// byte-range cursor exactly as fetching it would have (a segment with
     /// parts is addressed by its parts' ranges, a plain one by its own).
     fn skip_segment(&mut self, msn: u64, seg: &MediaSegment) -> Result<()> {
+        if self.delivered_segments.contains(&msn) {
+            return Ok(());
+        }
         if seg.parts.is_empty() {
             let url = url::resolve(self.base(), &seg.uri);
             self.resolve_byte_range(&url, &seg.byte_range)?;
@@ -2472,6 +2522,8 @@ impl HlsClient {
         self.discontinuous_msns.clear();
         self.discontinuity_emitted.clear();
         self.byte_range_cursor.clear();
+        self.resource_requests.clear();
+        self.last_media_sequence = None;
         self.outstanding_fetches = 0;
         self.last_full_playlist = None;
         self.inits.clear();
@@ -2493,6 +2545,7 @@ impl HlsClient {
             let msn = playlist.media_sequence.saturating_add(i);
             self.delivered_segments.contains(&msn)
                 || self.fulfilled.contains(&ResourceId::Segment { msn })
+                || self.covered_by_parts(msn)
         })
     }
 

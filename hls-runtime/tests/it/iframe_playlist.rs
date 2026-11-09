@@ -717,3 +717,52 @@ fn iframe_rendition_report_defaults_to_media_m3u8() {
         "playlist: {text}"
     );
 }
+
+#[test]
+fn a_bare_msn_iframe_reload_waits_for_a_segment_the_window_holds() {
+    let (trunk, writer) = trunk_with();
+    let publish = |seq: u32| {
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(fixture_bytes("index0.m4s")),
+                SegmentSeq::new(seq),
+                Duration::from_secs(1),
+                Timestamp::from_nanos(0),
+                SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish");
+    };
+    publish(1);
+    let origin = HlsOrigin::builder(Arc::clone(&trunk))
+        .target_duration_secs(4.0)
+        .window_segments(nz(4))
+        .instance(7)
+        .build()
+        .expect("origin");
+    origin.set_init(Bytes::from(fixture_bytes("init.mp4")));
+    let reload = |msn: u64| {
+        let (now, policy) = patient();
+        origin.resolve(
+            HlsRequest::IFramePlaylist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery {
+                    hls_msn: Some(msn),
+                    ..BlockingQuery::default()
+                },
+                media_playlist_name: "media.m3u8".to_string(),
+            },
+            now,
+            policy,
+        )
+    };
+    let before = reload(1);
+    assert!(
+        matches!(before, EgressResponse::Await { .. }),
+        "segment 1 predates the origin: {before:?}"
+    );
+    publish(2);
+    let after = reload(2);
+    assert!(matches!(after, EgressResponse::Ready { .. }), "{after:?}");
+}

@@ -1386,6 +1386,15 @@ impl PartLog {
             .collect()
     }
 
+    /// The lowest segment number above `after` that has a resident part.
+    fn first_segment_after(&self, after: Option<SegmentSeq>) -> Option<SegmentSeq> {
+        self.by_segment
+            .keys()
+            .copied()
+            .filter(|seq| after.is_none_or(|closed| *seq > closed))
+            .min()
+    }
+
     /// The most recently published resident part for the pair.
     fn part_bytes(&self, segment_number: SegmentSeq, part_index: PartIndex) -> Option<Bytes> {
         self.by_segment
@@ -1983,6 +1992,17 @@ impl Trunk {
     /// survived in the ring.
     pub fn parts_in_segment(&self, segment_number: SegmentSeq) -> Vec<PartEntry> {
         self.lock_state().parts.in_segment(segment_number)
+    }
+
+    /// The segment that is still open: the lowest segment number above
+    /// [`Trunk::last_closed_segment`] (any, when none has closed) that has a
+    /// resident part, or `None` when no part is waiting on its segment to
+    /// close. Unlike probing `last_closed_segment() + 1`, this holds for a
+    /// segmenter whose first segment is not numbered `1`.
+    pub fn open_segment(&self) -> Option<SegmentSeq> {
+        let state = self.lock_state();
+        let closed = state.segments.entries.back().map(|e| e.sequence_number);
+        state.parts.first_segment_after(closed)
     }
 
     /// Diagnostic: entries currently resident in the live-part log. Never
@@ -2831,6 +2851,10 @@ impl SampleCursor {
         } else {
             None
         };
+        // Hand-offs with no data between them coalesce into one marker; one at
+        // or before this cursor's subscribe point is suppressed (see
+        // `Trunk::subscribe`'s doc).
+        let mut reported = false;
         while let Some(handover) = pending_handover {
             if !(self.timed_consumed >= handover.timed_at
                 && self.sparse_consumed >= handover.sparse_at)
@@ -2841,13 +2865,8 @@ impl SampleCursor {
             if handover.timed_at > self.subscribe_timed_at
                 || handover.sparse_at > self.subscribe_sparse_at
             {
-                return Some(SampleCursorItem::Discontinuity);
+                reported = true;
             }
-            // Suppressed (see `Trunk::subscribe`'s doc): this cursor started
-            // at or after this exact hand-off, so it never had continuity
-            // to lose across it. Check the next pending one, if any — a
-            // back-to-back reconnect with no data published in between can
-            // stack more than one such suppressed marker.
             pending_handover = if self.handovers_consumed < state.handovers.published {
                 let idx = ring_offset(self.handovers_consumed, state.handovers.base)
                     .unwrap_or(usize::MAX);
@@ -2855,6 +2874,9 @@ impl SampleCursor {
             } else {
                 None
             };
+        }
+        if reported {
+            return Some(SampleCursorItem::Discontinuity);
         }
 
         let sparse_blocked = pending_handover.is_some_and(|h| self.sparse_consumed >= h.sparse_at);
@@ -5878,6 +5900,29 @@ mod tests {
             cursor.poll().is_none(),
             "no extra Discontinuity or data beyond what was published"
         );
+    }
+
+    #[test]
+    fn back_to_back_writer_reissues_with_no_data_between_report_one_discontinuity() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
+        let mut cursor = trunk.subscribe();
+        {
+            let a = trunk.writer().expect("first take succeeds");
+            a.publish(TrackId::new(1), RetentionClass::Timed, sample(0xAA, 4));
+        }
+        drop(trunk.writer().expect("second take succeeds"));
+        let c = trunk.writer().expect("third take succeeds");
+        c.publish(TrackId::new(1), RetentionClass::Timed, sample(0xCC, 4));
+
+        let mut seq = Vec::new();
+        while let Some(it) = cursor.poll() {
+            seq.push(match it {
+                SampleCursorItem::Timed { .. } => "timed",
+                SampleCursorItem::Discontinuity => "DISC",
+                other => panic!("unexpected item: {other:?}"),
+            });
+        }
+        assert_eq!(seq, vec!["timed", "DISC", "timed"], "got {seq:?}");
     }
 
     /// Adversarial-review finding: a writer hand-off gates BOTH classes on

@@ -883,3 +883,189 @@ fn a_failed_segment_under_endlist_defers_end_of_stream_until_it_is_delivered() {
         "{outputs:?}"
     );
 }
+
+fn drain(client: &mut HlsClient) -> Vec<Action> {
+    std::iter::from_fn(|| client.poll()).collect()
+}
+
+fn fetches(actions: &[Action]) -> Vec<ResourceId> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::FetchResource { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
+const OPEN_WITH_TWO_PARTS: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n\
+#EXT-X-PART:DURATION=0.5,URI=\"p0.0.m4s\",INDEPENDENT=YES\n#EXT-X-PART:DURATION=0.5,URI=\"p0.1.m4s\"\n";
+
+const SEGMENT_CLOSED_WITHOUT_PARTS: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:1.0,\nseg0.m4s\n";
+
+/// A part whose fetch failed (`on_error`) while its segment was open is
+/// silently abandoned once the segment closes without listing parts: the
+/// segment is marked delivered because *another* part of it arrived.
+#[test]
+fn a_failed_part_is_retried_when_its_segment_closes_without_parts() {
+    let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
+    let fragment = test_fixtures::read("hls/cmaf-fmp4/index0.m4s");
+    let mut client = HlsClient::new(URL);
+    drain(&mut client);
+    client.on_playlist(OPEN_WITH_TWO_PARTS.as_bytes()).unwrap();
+    let first = fetches(&drain(&mut client));
+    assert!(first.contains(&ResourceId::Part { msn: 0, part: 0 }));
+    assert!(first.contains(&ResourceId::Part { msn: 0, part: 1 }));
+    client.on_resource(ResourceId::Init, &init).unwrap();
+    client
+        .on_resource(ResourceId::Part { msn: 0, part: 0 }, &fragment)
+        .unwrap();
+    let samples = std::iter::from_fn(|| client.next_output())
+        .filter(|o| matches!(o, Output::Samples { .. }))
+        .count();
+    assert!(samples > 0, "part 0 must have been delivered");
+    client.on_error(Some(ResourceId::Part { msn: 0, part: 1 }));
+
+    client
+        .on_playlist(SEGMENT_CLOSED_WITHOUT_PARTS.as_bytes())
+        .unwrap();
+    let second = fetches(&drain(&mut client));
+    assert!(
+        second.contains(&ResourceId::Part { msn: 0, part: 1 }),
+        "part 1 failed and its segment closed: it must be re-requested, got {second:?}"
+    );
+}
+
+const MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000000\nhi.m3u8\n\
+#EXT-X-STREAM-INF:BANDWIDTH=500000\nlo.m3u8\n";
+
+fn live(first_msn: u64, uri_prefix: &str) -> String {
+    let mut text = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{first_msn}\n"
+    );
+    for i in 0..3 {
+        text.push_str(&format!("#EXTINF:2.0,\n{uri_prefix}{}.ts\n", first_msn + i));
+    }
+    text
+}
+
+/// One variant switch is one discontinuity. `select_variant` already
+/// restarts the timeline, but leaves the old variant's media-sequence
+/// high-water mark, so the first playlist of a variant numbered lower is
+/// judged a second restart and a second `Discontinuity` is emitted.
+#[test]
+fn a_variant_switch_emits_exactly_one_discontinuity() {
+    let mut client = HlsClient::new(URL);
+    drain(&mut client);
+    client.on_playlist(MASTER.as_bytes()).unwrap();
+    drain(&mut client);
+    client.on_playlist(live(1000, "hi").as_bytes()).unwrap();
+    drain(&mut client);
+    let _ = std::iter::from_fn(|| client.next_output()).count();
+
+    client.select_variant(1).unwrap();
+    drain(&mut client);
+    client.on_playlist(live(10, "lo").as_bytes()).unwrap();
+    let discontinuities = std::iter::from_fn(|| client.next_output())
+        .filter(|o| matches!(o, Output::Discontinuity))
+        .count();
+    assert_eq!(discontinuities, 1);
+}
+
+const OPEN_WITH_ONE_PART: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n\
+#EXT-X-PART:DURATION=0.5,URI=\"p0.0.m4s\",INDEPENDENT=YES\n";
+
+const DISCONTINUOUS_SEGMENT_CLOSED: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-DISCONTINUITY\n#EXTINF:1.0,\nseg0.m4s\n";
+
+/// A discontinuity that is only revealed when its segment closes, after
+/// every part of the segment was already delivered while it was open, is
+/// documented as "signalled late". It is never signalled: the only
+/// emission site is the delivery of a resource of that segment.
+#[test]
+fn a_discontinuity_revealed_at_segment_close_is_signalled_late() {
+    let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
+    let fragment = test_fixtures::read("hls/cmaf-fmp4/index0.m4s");
+    let mut client = HlsClient::new(URL);
+    drain(&mut client);
+    client.on_playlist(OPEN_WITH_ONE_PART.as_bytes()).unwrap();
+    drain(&mut client);
+    client.on_resource(ResourceId::Init, &init).unwrap();
+    client
+        .on_resource(ResourceId::Part { msn: 0, part: 0 }, &fragment)
+        .unwrap();
+    client
+        .on_playlist(DISCONTINUOUS_SEGMENT_CLOSED.as_bytes())
+        .unwrap();
+    let fetched = fetches(&drain(&mut client));
+    assert!(fetched.is_empty(), "nothing left to fetch: {fetched:?}");
+    let discontinuities = std::iter::from_fn(|| client.next_output())
+        .filter(|o| matches!(o, Output::Discontinuity))
+        .count();
+    assert_eq!(discontinuities, 1);
+}
+
+const BYTERANGE_VOD: &str = "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:2\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000@0\nmain.ts\n\
+#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000\nmain.ts\n#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000\nmain.ts\n\
+#EXT-X-ENDLIST\n";
+
+fn range_of(actions: &[Action], wanted: ResourceId) -> Option<Option<(u64, u64)>> {
+    actions.iter().find_map(|a| match a {
+        Action::FetchResource { id, byte_range, .. } if *id == wanted => Some(*byte_range),
+        _ => None,
+    })
+}
+
+/// A sub-range segment whose offset is omitted continues the previous
+/// sub-range of the same resource. Re-requesting a failed segment on the
+/// next playlist load recomputes that offset from a cursor the first
+/// request already advanced, so the retry asks for another segment's bytes.
+#[test]
+fn a_re_requested_byterange_segment_asks_for_its_own_bytes() {
+    let mut client = HlsClient::new(URL);
+    drain(&mut client);
+    client.on_playlist(BYTERANGE_VOD.as_bytes()).unwrap();
+    let first = drain(&mut client);
+    let id = ResourceId::Segment { msn: 1 };
+    assert_eq!(range_of(&first, id), Some(Some((1000, 1000))));
+
+    client.on_error(Some(id));
+    client.on_playlist(BYTERANGE_VOD.as_bytes()).unwrap();
+    let second = drain(&mut client);
+    assert_eq!(
+        range_of(&second, id),
+        Some(Some((1000, 1000))),
+        "the retry must fetch the same bytes"
+    );
+}
+
+const SKIPPED_THEN_FRESH_RANGE: &str = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"k\"\n#EXT-X-MAP:URI=\"bad.mp4\"\n\
+#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000@0\nmain.m4s\n#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000\nmain.m4s\n\
+#EXT-X-KEY:METHOD=NONE\n#EXT-X-MAP:URI=\"good.mp4\"\n#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000\nmain.m4s\n";
+
+#[test]
+fn reloading_a_playlist_with_skipped_segments_does_not_drift_later_byte_ranges() {
+    let mut client = HlsClient::new(URL);
+    drain(&mut client);
+    let _ = client.on_playlist(SKIPPED_THEN_FRESH_RANGE.as_bytes());
+    drain(&mut client);
+    let _ = client.on_playlist(SKIPPED_THEN_FRESH_RANGE.as_bytes());
+    drain(&mut client);
+    let grown =
+        format!("{SKIPPED_THEN_FRESH_RANGE}#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000\nmain.m4s\n");
+    let _ = client.on_playlist(grown.as_bytes());
+    let actions = drain(&mut client);
+    assert_eq!(
+        range_of(&actions, ResourceId::Segment { msn: 3 }),
+        Some(Some((3000, 1000)))
+    );
+}

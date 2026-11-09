@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `Trunk::open_segment`: the lowest segment above the last closed one that has resident parts.
+### Fixed
+- `SampleCursor`: back-to-back writer re-issues with no data between them report exactly one `Discontinuity`, as documented.
 
 ## [0.10.0] - 2026-11-07
 ### Added
