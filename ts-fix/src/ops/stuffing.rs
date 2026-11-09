@@ -52,6 +52,21 @@ pub enum Stuffing {
 }
 
 impl Stuffing {
+    /// Largest accepted `packets_per_input`; bounds the nulls emitted per
+    /// input packet.
+    pub const MAX_PACKETS_PER_INPUT: f64 = 4096.0;
+
+    pub(crate) fn validate(&self) -> Result<(), crate::Error> {
+        match self {
+            Self::PadTo { packets_per_input }
+                if !(1.0..=Self::MAX_PACKETS_PER_INPUT).contains(packets_per_input) =>
+            {
+                Err(crate::Error::InvalidPadRate)
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Drop all null packets from the output.
     ///
     /// # Example
@@ -69,6 +84,10 @@ impl Stuffing {
     /// total output is approximately `packets_per_input × number_of_input_packets`.
     ///
     /// The rate is accumulated across the stream; fractional rates are smoothed.
+    /// A rate that is not finite or lies outside
+    /// `1.0..=`[`Stuffing::MAX_PACKETS_PER_INPUT`] makes
+    /// [`TsFixBuilder::build`](crate::TsFixBuilder::build) fail with
+    /// [`Error::InvalidPadRate`](crate::Error::InvalidPadRate).
     ///
     /// # Example — double the packet count
     /// ```

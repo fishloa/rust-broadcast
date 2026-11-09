@@ -34,4 +34,9 @@ pub enum Error {
         /// Length of the buffer supplied by the caller.
         len: usize,
     },
+
+    /// The rate given to [`crate::Stuffing::pad_to`] is not a finite number
+    /// within `1.0..=`[`crate::Stuffing::MAX_PACKETS_PER_INPUT`].
+    #[error("invalid pad_to rate: must be finite and within 1.0..={max}", max = crate::Stuffing::MAX_PACKETS_PER_INPUT)]
+    InvalidPadRate,
 }

@@ -38,21 +38,27 @@ fn legal_duplicate_after_repaired_packet_is_not_renumbered_into_new_payload() {
 }
 
 #[test]
-fn pad_to_infinite_rate_terminates() {
-    let mut engine = TsFix::builder()
-        .stuffing(Stuffing::pad_to(f64::INFINITY))
-        .build()
-        .unwrap();
-    let mut n = 0u64;
-    engine
-        .push(&payload_packet(0x100, 0, 0x11), |_| {
-            n += 1;
-            assert!(
-                n < 100_000,
-                "pad_to(inf) emitted {n} packets for one input packet and never terminates"
-            );
-        })
-        .unwrap();
+fn pad_to_rejects_rates_that_are_not_finite_or_out_of_range() {
+    for rate in [
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        0.5,
+        -1.0,
+        Stuffing::MAX_PACKETS_PER_INPUT * 2.0,
+    ] {
+        let err = TsFix::builder()
+            .stuffing(Stuffing::pad_to(rate))
+            .build()
+            .err();
+        assert_eq!(err, Some(ts_fix::Error::InvalidPadRate), "rate {rate}");
+    }
+    assert!(
+        TsFix::builder()
+            .stuffing(Stuffing::pad_to(Stuffing::MAX_PACKETS_PER_INPUT))
+            .build()
+            .is_ok()
+    );
 }
 
 #[test]
