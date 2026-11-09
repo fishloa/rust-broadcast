@@ -651,8 +651,8 @@ pub enum NormCmdBody<'a> {
         /// `acking_node_list`).
         fec_payload_id: &'a [u8],
     },
-    /// NORM_CMD(EOT) sub-type=2 (Figure 11). The 24-bit `reserved` word MUST be
-    /// 0 and carries no meaning.
+    /// NORM_CMD(EOT) sub-type=2 (Figure 11). The 24-bit `reserved` word is kept
+    /// in [`NormCmd::reserved`].
     Eot,
     /// NORM_CMD(SQUELCH) sub-type=3 (Figure 12).
     Squelch {
@@ -707,9 +707,9 @@ impl<'a> NormCmdBody<'a> {
         }
     }
 
-    /// The sub-type word's trailing 3 bytes (reserved fields forced to 0 per
-    /// spec, never round-tripped from unstructured input).
-    fn head_bytes(&self) -> [u8; 3] {
+    /// The sub-type word's trailing 3 bytes; bytes this variant leaves
+    /// reserved come from `reserved`, the rest from the typed fields.
+    fn head_bytes(&self, reserved: [u8; 3]) -> [u8; 3] {
         match self {
             NormCmdBody::Flush {
                 fec_id,
@@ -724,13 +724,13 @@ impl<'a> NormCmdBody<'a> {
                 let oti = object_transport_id.to_be_bytes();
                 [*fec_id, oti[0], oti[1]]
             }
-            NormCmdBody::Eot | NormCmdBody::Application => [0, 0, 0],
+            NormCmdBody::Eot | NormCmdBody::Application => reserved,
             NormCmdBody::Cc { cc_sequence, .. } => {
                 let seq = cc_sequence.to_be_bytes();
-                [0, seq[0], seq[1]]
+                [reserved[0], seq[0], seq[1]]
             }
-            NormCmdBody::RepairAdv { flags } => [*flags, 0, 0],
-            NormCmdBody::AckReq { ack_type, ack_id } => [0, ack_type.to_u8(), *ack_id],
+            NormCmdBody::RepairAdv { flags } => [*flags, reserved[1], reserved[2]],
+            NormCmdBody::AckReq { ack_type, ack_id } => [reserved[0], ack_type.to_u8(), *ack_id],
             NormCmdBody::Other(b) => *b,
         }
     }
@@ -750,6 +750,12 @@ pub struct NormCmd<'a> {
     /// an unrecognized wire value round-trips even though `body` collapses it
     /// to `NormCmdBody::Other`.
     pub sub_type: NormCmdType,
+    /// The bytes of the sub-type word that `body` leaves reserved (RFC 5740
+    /// §4.2.3, Figures 11/13-16): all three for EOT and APPLICATION, byte 0
+    /// for CC and ACK_REQ, bytes 1-2 for REPAIR_ADV; ignored for the other
+    /// sub-types. Kept so a message with them set re-serializes byte-exact;
+    /// senders write 0.
+    pub reserved: [u8; 3],
     /// The sub-type-specific fixed body (RFC 5740 §4.2.3, Figures 10-16).
     pub body: NormCmdBody<'a>,
     /// Header-extension chain (e.g. EXT_RATE in CC, EXT_CC in REPAIR_ADV).
@@ -797,6 +803,7 @@ impl<'a> NormCmd<'a> {
         let (b1, b2, b3) = (data[off + 1], data[off + 2], data[off + 3]);
         off += WORD;
 
+        let mut reserved = [0u8; 3];
         let body = match sub_type {
             NormCmdType::Flush | NormCmdType::Squelch => {
                 let fec_id = b1;
@@ -822,8 +829,12 @@ impl<'a> NormCmd<'a> {
                     }
                 }
             }
-            NormCmdType::Eot => NormCmdBody::Eot,
+            NormCmdType::Eot => {
+                reserved = [b1, b2, b3];
+                NormCmdBody::Eot
+            }
             NormCmdType::Cc => {
+                reserved[0] = b1;
                 need_in(data, off + 8, "NORM_CMD(CC) send_time_sec/send_time_usec")?;
                 let cc_sequence = u16::from_be_bytes([b2, b3]);
                 let send_time_sec = u32::from_be_bytes(data[off..off + 4].try_into().unwrap());
@@ -835,12 +846,21 @@ impl<'a> NormCmd<'a> {
                     send_time_usec,
                 }
             }
-            NormCmdType::RepairAdv => NormCmdBody::RepairAdv { flags: b1 },
-            NormCmdType::AckReq => NormCmdBody::AckReq {
-                ack_type: NormAckType::from_u8(b2),
-                ack_id: b3,
-            },
-            NormCmdType::Application => NormCmdBody::Application,
+            NormCmdType::RepairAdv => {
+                reserved = [0, b2, b3];
+                NormCmdBody::RepairAdv { flags: b1 }
+            }
+            NormCmdType::AckReq => {
+                reserved[0] = b1;
+                NormCmdBody::AckReq {
+                    ack_type: NormAckType::from_u8(b2),
+                    ack_id: b3,
+                }
+            }
+            NormCmdType::Application => {
+                reserved = [b1, b2, b3];
+                NormCmdBody::Application
+            }
             NormCmdType::Other(_) => NormCmdBody::Other([b1, b2, b3]),
         };
 
@@ -858,6 +878,7 @@ impl<'a> NormCmd<'a> {
             common,
             sender,
             sub_type,
+            reserved,
             body,
             extensions,
             content,
@@ -872,7 +893,7 @@ impl<'a> NormCmd<'a> {
         let mut off = self.common.serialize_into(out, words)?;
         off += self.sender.serialize_into(&mut out[off..])?;
         out[off] = self.sub_type.to_u8();
-        out[off + 1..off + 4].copy_from_slice(&self.body.head_bytes());
+        out[off + 1..off + 4].copy_from_slice(&self.body.head_bytes(self.reserved));
         off += WORD;
         match &self.body {
             NormCmdBody::Flush { fec_payload_id, .. }
@@ -1160,6 +1181,7 @@ mod tests {
             common: common(NormMessageType::Cmd),
             sender: sender(),
             sub_type: NormCmdType::Eot,
+            reserved: [0; 3],
             body: NormCmdBody::Eot,
             extensions: vec![],
             content: &[],
@@ -1330,6 +1352,7 @@ mod tests {
             common: common(NormMessageType::Cmd),
             sender: s,
             sub_type: NormCmdType::Eot,
+            reserved: [0; 3],
             body: NormCmdBody::Eot,
             extensions: vec![],
             content: &[],

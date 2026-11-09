@@ -44,6 +44,7 @@ use rmt_flute::{LctHeader, LCT_VERSION};
 let cci = [0u8; 4]; // C = 0
 let tsi = [0u8; 4]; // S = 1, H = 0
 let hdr = LctHeader {
+    reserved: 0,
     version: LCT_VERSION,
     psi: 0,
     close_session: false,

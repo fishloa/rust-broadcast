@@ -167,6 +167,7 @@ mod tests {
         let tsi = 3000u32.to_be_bytes();
         let toi = 6034u32.to_be_bytes();
         let lct = LctHeader {
+            reserved: 0,
             version: ROUTE_VERSION,
             psi: ROUTE_PSI_SOURCE,
             close_session: false,
@@ -202,6 +203,7 @@ mod tests {
         let tsi = 0u32.to_be_bytes();
         let toi = 0u32.to_be_bytes();
         let lct = LctHeader {
+            reserved: 0,
             version: ROUTE_VERSION,
             psi: ROUTE_PSI_SOURCE,
             close_session: false,
@@ -235,6 +237,7 @@ mod tests {
         let tsi = 0u32.to_be_bytes();
         let toi = 0u32.to_be_bytes();
         let lct = LctHeader {
+            reserved: 0,
             version: ROUTE_VERSION,
             psi: 0b11,
             close_session: false,
@@ -268,6 +271,7 @@ mod tests {
         let tsi = 9000u32.to_be_bytes();
         let toi = 42u32.to_be_bytes();
         let lct = LctHeader {
+            reserved: 0,
             version: ROUTE_VERSION,
             psi: 0b01,
             close_session: false,
@@ -302,6 +306,7 @@ mod tests {
             &fti_content,
         )];
         let lct = LctHeader {
+            reserved: 0,
             version: ROUTE_VERSION,
             psi: ROUTE_PSI_SOURCE,
             close_session: false,
@@ -334,6 +339,7 @@ mod tests {
         let tsi = 3000u32.to_be_bytes();
         let toi = 6034u32.to_be_bytes();
         let lct = LctHeader {
+            reserved: 0,
             version: ROUTE_VERSION,
             psi: ROUTE_PSI_SOURCE,
             close_session: false,

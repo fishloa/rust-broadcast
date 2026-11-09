@@ -54,7 +54,8 @@ impl SeqSpace {
 
     /// Signed circular distance `a - b`, in `(-half, half]` where `half` is
     /// half the space. Positive means `a` is ahead of `b`. Inputs are masked
-    /// to the space.
+    /// to the space. At exactly half the space apart the result is `+half` for
+    /// both orders; the predicates treat that as no ordering at all.
     #[must_use]
     pub const fn diff(self, a: u32, b: u32) -> i32 {
         let modulus = self.modulus() as i64;
@@ -76,16 +77,27 @@ impl SeqSpace {
         self.diff(a, b) <= 0
     }
 
-    /// `a` follows `b` in circular order.
+    /// `a` follows `b` in circular order. Exactly half the space apart
+    /// neither follows nor precedes the other (see [`SeqSpace::is_tie`]).
     #[must_use]
     pub const fn gt(self, a: u32, b: u32) -> bool {
-        self.diff(a, b) > 0
+        self.diff(a, b) > 0 && !self.is_tie(a, b)
     }
 
-    /// `a` follows or equals `b`.
+    /// `a` follows or equals `b`; `false` at the half-space tie.
     #[must_use]
     pub const fn geq(self, a: u32, b: u32) -> bool {
-        self.diff(a, b) >= 0
+        self.diff(a, b) >= 0 && !self.is_tie(a, b)
+    }
+
+    /// `a` and `b` are exactly half the space apart, so the shorter direction
+    /// is undefined: [`diff`](Self::diff) reports `+half` for both orders, and
+    /// `lt`/`leq`/`gt`/`geq` all answer `false` so ordering stays antisymmetric.
+    #[must_use]
+    pub const fn is_tie(self, a: u32, b: u32) -> bool {
+        let half = (self.modulus() / 2) as i64;
+        ((a & self.mask()) as i64 - (b & self.mask()) as i64).rem_euclid(self.modulus() as i64)
+            == half
     }
 
     /// `seq` lies within the inclusive circular range `first..=last`,
@@ -125,9 +137,22 @@ mod tests {
         for (a, b) in [(0u32, 0u32), (5, 100), (0xFFFF, 3), (12345, 12340)] {
             assert_eq!(S16.diff(a, b), -S16.diff(b, a));
         }
-        // Half the space is the tie point: positive by convention.
         assert_eq!(S16.diff(0x8000, 0), 0x8000);
         assert_eq!(S16.diff(0, 0x8000), 0x8000);
+        assert!(S16.is_tie(0x8000, 0) && S16.is_tie(0, 0x8000));
+    }
+
+    #[test]
+    fn ordering_is_antisymmetric_at_exactly_half_the_space() {
+        for bits in [8u32, 16, 31] {
+            let s = SeqSpace::new(bits);
+            let half = (s.modulus() / 2) as u32;
+            assert!(!(s.gt(half, 0) && s.gt(0, half)), "bits={bits}");
+            assert!(!(s.lt(half, 0) && s.lt(0, half)), "bits={bits}");
+            assert!(!s.geq(half, 0) && !s.geq(0, half), "bits={bits}");
+            assert!(!s.leq(half, 0) && !s.leq(0, half), "bits={bits}");
+            assert!(s.gt(half - 1, 0) && s.lt(0, half - 1), "bits={bits}");
+        }
     }
 
     #[test]

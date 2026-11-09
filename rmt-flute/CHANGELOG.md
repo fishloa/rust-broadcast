@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `LctHeader` keeps the two reserved `Res` bits (RFC 5651 §5.1) so parse then serialize is byte-exact; a value over 2 bits is rejected on serialize (#1937).
+- `NormCmd` keeps the sub-type word bytes that EOT, CC, REPAIR_ADV, ACK_REQ and APPLICATION leave reserved (RFC 5740 §4.2.3), so parse then serialize is byte-exact (#1938).
+- `ExtTime::to_content` and `to_extension` no longer emit SCT-Low without SCT-High, which `ExtTime::parse` rejects; they return `Error::InvalidField` instead (#1939).
+### Changed
+- BREAKING: `LctHeader` gained the `reserved: u8` field and `NormCmd` the `reserved: [u8; 3]` field (struct literals need them; senders write 0); `ExtTime::to_content` returns `Result<Vec<u8>>` and `ExtTime::to_extension` returns `Result<HeaderExtension>`.
 
 ## [0.8.0] - 2026-11-07
 ### Changed

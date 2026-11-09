@@ -231,9 +231,11 @@ impl Receiver {
                 self.highest_received = Some(seq_number);
                 self.next_expected = Some(seq_number);
             }
-            Some(highest) if seq::seq_gt(seq_number, highest) => {
-                // seq_gt above guarantees seq_diff is in (0, SEQ_HALF], so
-                // this always fits in a u16 — the cast is not lossy.
+            Some(highest) if seq::seq_diff(seq_number, highest) > 0 => {
+                // A positive diff is in (0, SEQ_HALF], so this always fits in
+                // a u16 — the cast is not lossy. Exactly half the space
+                // reports positive, so it is a forward jump, never a late
+                // duplicate.
                 let gap = seq::seq_diff(seq_number, highest) as u16;
                 if gap > self.max_gap {
                     // r08-RIST-C2: a jump this large is handled by the
@@ -259,6 +261,15 @@ impl Receiver {
                     s = seq::seq_next(s);
                 }
                 self.highest_received = Some(seq_number);
+            }
+            Some(highest)
+                if seq::seq_diff(seq_number, highest).unsigned_abs() > u32::from(self.max_gap) =>
+            {
+                // A sender restarting at a lower sequence on the same SSRC:
+                // further behind than any reordering or retransmission the
+                // buffer covers, so confirm it as a resync run instead of
+                // dropping it as a late duplicate.
+                return self.feed_resync_candidate(seq_number);
             }
             _ => {}
         }
@@ -849,6 +860,44 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// S1 regression (#1947): a sender restarting at a lower sequence on the
+    /// same SSRC, further behind than `max_gap`, resyncs once the run is
+    /// confirmed instead of being dropped as duplicates.
+    #[test]
+    fn a_backward_sequence_restart_beyond_max_gap_resyncs_after_confirmation() {
+        let mut r = Receiver::new(cfg());
+        let highest = 40_000u16;
+        r.feed(highest, Duration::ZERO);
+        let restart = 20_000u16;
+        assert!(seq::seq_lt(restart, highest));
+        assert!(u32::from(highest - restart) > u32::from(r.max_gap));
+
+        for i in 0..(RESYNC_CONFIRM_COUNT - 1) {
+            let out = r.feed(restart + i as u16, Duration::ZERO);
+            assert!(out.delivered.is_empty());
+        }
+        assert_eq!(r.next_expected(), Some(highest + 1));
+
+        let last = restart + (RESYNC_CONFIRM_COUNT - 1) as u16;
+        let confirmed = r.feed(last, Duration::ZERO);
+        assert_eq!(confirmed.delivered.len(), RESYNC_CONFIRM_COUNT as usize);
+        assert_eq!(confirmed.delivered[0], restart);
+        assert_eq!(r.next_expected(), Some(last + 1));
+    }
+
+    /// A late arrival within `max_gap` behind the highest stays a duplicate
+    /// and never opens a resync candidate.
+    #[test]
+    fn a_late_arrival_within_max_gap_is_not_a_resync_candidate() {
+        let mut r = Receiver::new(cfg());
+        r.feed(1000, Duration::ZERO);
+        let late = 1000 - r.max_gap;
+        for _ in 0..RESYNC_CONFIRM_COUNT {
+            assert!(r.feed(late, Duration::ZERO).delivered.is_empty());
+        }
+        assert_eq!(r.next_expected(), Some(1001));
     }
 
     /// #978 regression: a gap right at the receiver's `max_gap` boundary
