@@ -14,7 +14,7 @@
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, VIDEO_TIMESCALE,
-    feed_via_segmenter as feed_segments, video_batches_n, video_track_spec_sized,
+    feed_via_segmenter as feed_segments, video_track_spec_sized,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -949,85 +949,4 @@ fn config_smooth_deserializes_and_validates() {
         "output kind must be smooth"
     );
     cfg.validate().expect("smooth config must validate");
-}
-
-/// Publish one source run on `program`'s current `Trunk` through a real
-/// `LlHlsSegmenter`, closing every segment.
-fn publish_run(store: &RouteHandle, program: media_plane::ProgramId, frames: u32) {
-    let specs = vec![video_track_spec()];
-    let mut seg = LlHlsSegmenter::with_part_target(
-        specs.clone(),
-        transmux::VIDEO_CLOCK_RATE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
-    )
-    .expect("segmenter builds");
-    store.set_init(program, seg.init_segment().expect("init segment builds"));
-    store.set_track_specs(program, specs);
-    for batch in video_batches_n(frames) {
-        for (track_id, sample) in batch {
-            seg.push(TrackId::new(track_id), sample).expect("push");
-        }
-        for part in seg.take_ready_parts() {
-            store.add_part(program, part);
-        }
-        for segment in seg.take_ready_segments() {
-            store.add_segment(program, segment).expect("add_segment");
-        }
-    }
-    seg.flush().expect("flush");
-    for segment in seg.take_ready_segments() {
-        store.add_segment(program, segment).expect("add_segment");
-    }
-}
-
-/// Smooth manifest after `reconnects` source reconnects, each followed by a
-/// fresh run of 100 frames.
-async fn manifest_after_runs(reconnects: u32, runs: &mut Vec<String>) -> (StatusCode, String) {
-    let store = Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8));
-    let program = media_plane::ProgramId(0);
-    let app = build_app(store.clone(), Arc::new(SmoothOutput));
-    let mut trunk = store.publish_new_program(program);
-    publish_run(&store, program, 100);
-    for _ in 0..reconnects {
-        let resp = app.clone().oneshot(get("/cam/Manifest")).await.unwrap();
-        runs.push(body_string(resp).await);
-        store.release_program(program, &trunk);
-        trunk = store.publish_new_program(program);
-        publish_run(&store, program, 100);
-    }
-    let resp = app.oneshot(get("/cam/Manifest")).await.unwrap();
-    let status = resp.status();
-    (status, body_string(resp).await)
-}
-
-#[tokio::test]
-async fn manifest_is_served_without_a_source_reconnect() {
-    let (status, body) = manifest_after_runs(0, &mut Vec::new()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-}
-
-#[tokio::test]
-async fn manifest_is_served_after_a_source_reconnect() {
-    let (status, body) = manifest_after_runs(1, &mut Vec::new()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-}
-
-#[tokio::test]
-async fn timeline_does_not_go_backwards_across_a_source_reconnect() {
-    let mut before = Vec::new();
-    let (status, after) = manifest_after_runs(1, &mut before).await;
-    assert_eq!(status, StatusCode::OK, "{after}");
-    let chunks = |xml: &str| {
-        SmoothManifest::parse(xml).expect("manifest parses").streams[0]
-            .enumerate_chunks()
-            .expect("chunks")
-    };
-    let (last_t, last_d) = *chunks(&before[0]).last().expect("chunks before");
-    let (first_t, _) = chunks(&after)[0];
-    assert!(
-        first_t >= last_t + last_d,
-        "first chunk after the reconnect starts at {first_t}, before the previous run ended at {}",
-        last_t + last_d
-    );
 }

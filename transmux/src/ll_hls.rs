@@ -1128,6 +1128,25 @@ impl LlHlsSegmenter {
         self.record_cuts = true;
     }
 
+    /// Start every track's decode clock at `start_ns` nanoseconds instead of
+    /// zero: the first segment's `tfdt` (and its first part's) is
+    /// `start_ns` in the track's own timescale, so a run that continues an
+    /// earlier one (a source reconnect) carries on from where it ended. Call
+    /// before the first [`push`](Self::push); a no-op for a segmenter that
+    /// already holds samples.
+    pub fn set_start_time_ns(&mut self, start_ns: u64) {
+        for t in &mut self.tracks {
+            if !t.pending.is_empty() {
+                return;
+            }
+        }
+        for t in &mut self.tracks {
+            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale) / 1_000_000_000;
+            t.seg_base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
+            t.part_base_decode = t.seg_base_decode;
+        }
+    }
+
     /// Align a follower's timeline with its leader's (issue #1428 slice 2b).
     ///
     /// The first segment each track emits in follower mode starts its

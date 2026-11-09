@@ -164,6 +164,13 @@ enum AnySegmenter {
 }
 
 impl AnySegmenter {
+    fn set_start_time_ns(&mut self, start_ns: u64) {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.set_start_time_ns(start_ns),
+            AnySegmenter::Ts(seg) => seg.set_start_time_ns(start_ns),
+        }
+    }
+
     fn push(&mut self, track_id: TrackId, sample: Sample) -> transmux::Result<()> {
         match self {
             AnySegmenter::Fmp4(seg) => seg.push(track_id, sample),
@@ -389,6 +396,8 @@ pub struct ProgramSegmenter {
     /// `next_timeline_ns`, kept per-program here since each program's
     /// timeline is independent.
     next_timeline_ns: u64,
+    /// Where this run stands on the route's media timeline.
+    media_end: MediaEnd,
     /// Last-seen [`Trunk::track_generation`] — compared each pump to detect
     /// a mid-stream track-set change (issue #781). When the trunk's
     /// generation advances past this, [`Self::apply_track_change`] admits
@@ -685,6 +694,18 @@ pub(super) fn drain_publish_queue(
 }
 
 impl ProgramSegmenter {
+    /// Continue the route's media timeline from `end_ns`, the end of the
+    /// program this run replaces: the segmenter's decode clock and the
+    /// segment timeline start there instead of at zero.
+    pub(crate) fn continue_media_timeline(&mut self, end_ns: u64) {
+        if end_ns > 0 {
+            self.seg.set_start_time_ns(end_ns);
+            self.next_timeline_ns = end_ns;
+            self.media_end.start_ns = end_ns;
+            self.media_end.end_ns = end_ns;
+        }
+    }
+
     /// Attempt to start segmenting `trunk`. `None` if its track set hasn't
     /// landed yet (a `NewProgram` announcement with samples pending is
     /// unusual but not impossible — retried on the next call), if its
@@ -823,6 +844,7 @@ impl ProgramSegmenter {
             segment_writer,
             seg,
             next_timeline_ns: 0,
+            media_end: MediaEnd::default(),
             track_generation: trunk.track_generation(),
             pending: VecDeque::new(),
             pending_since: None,
@@ -1126,6 +1148,8 @@ impl ProgramSegmenter {
             .find(|f| f.source_track_id == track_id)
         {
             let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
+            let ticks = declared_timescale(&self.timescale_moves, track_id, trunk);
+            self.media_end.note(&sample, ticks);
             follower.push(sample, &self.leader_durations);
             return;
         }
@@ -1186,6 +1210,8 @@ impl ProgramSegmenter {
             }
         }
         let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
+        let ticks = declared_timescale(&self.timescale_moves, track_id, trunk);
+        self.media_end.note(&sample, ticks);
         if let Err(e) = self.seg.push(track_id, sample) {
             tracing::warn!(error = %e, "driver-backed segmenter push failed");
         }
@@ -1670,6 +1696,57 @@ impl ProgramSegmenter {
     }
 }
 
+/// Where a run stands on the route's media timeline: it starts at `start_ns`
+/// (the end of the program a reconnect replaced, `0` for the first run) and
+/// advances with the samples pushed, measured from the first timed sample.
+#[derive(Debug, Clone, Copy, Default)]
+struct MediaEnd {
+    start_ns: u64,
+    origin_ns: Option<i128>,
+    end_ns: u64,
+}
+
+impl MediaEnd {
+    fn note(&mut self, sample: &Sample, timescale: u32) {
+        let Some(start) = sample.dts.or(sample.pts) else {
+            return;
+        };
+        if timescale == 0 {
+            return;
+        }
+        let end_ns = ticks_to_ns(
+            start.saturating_add(i64::from(sample.duration.unwrap_or(0))),
+            timescale,
+        );
+        let origin = *self
+            .origin_ns
+            .get_or_insert_with(|| ticks_to_ns(start, timescale));
+        let run_ns = u64::try_from((end_ns - origin).max(0)).unwrap_or(u64::MAX);
+        self.end_ns = self.end_ns.max(self.start_ns.saturating_add(run_ns));
+    }
+}
+
+fn ticks_to_ns(ticks: i64, timescale: u32) -> i128 {
+    i128::from(ticks) * i128::from(NANOS_PER_SEC) / i128::from(timescale)
+}
+
+fn declared_timescale(
+    moves: &HashMap<TrackId, (u32, u32)>,
+    track_id: TrackId,
+    trunk: &Trunk,
+) -> u32 {
+    moves.get(&track_id).map_or_else(
+        || {
+            trunk
+                .tracks()
+                .iter()
+                .find(|t| t.track_id == track_id)
+                .map_or(0, |t| t.timescale)
+        },
+        |&(_, to)| to,
+    )
+}
+
 fn in_declared_timescale(
     moves: &HashMap<TrackId, (u32, u32)>,
     track_id: TrackId,
@@ -1756,7 +1833,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         let Some(trunk) = driver.trunk(program) else {
             continue;
         };
-        let Some(segmenter) = ProgramSegmenter::try_new(
+        let Some(mut segmenter) = ProgramSegmenter::try_new(
             trunk,
             route_handle,
             route_handle.target_duration_secs(),
@@ -1764,6 +1841,9 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         ) else {
             continue;
         };
+        if let Some(epoch) = route_handle.epoch(program) {
+            segmenter.continue_media_timeline(epoch.media_end_ns);
+        }
         // Push the fMP4 init segment for every program — DVR recording
         // needs it regardless of whether HTTP egress addresses this
         // program yet (issue #805 task 6's MPTS-addressing doc).
@@ -1782,6 +1862,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
             continue;
         };
         let (parts, segments) = segmenter.pump(program, trunk, route_handle);
+        route_handle.note_media_end(program, segmenter.media_end.end_ns);
         parts_total += parts;
         segments_total += segments;
     }
@@ -3248,6 +3329,7 @@ mod tests {
             segment_writer,
             seg,
             next_timeline_ns: 0,
+            media_end: MediaEnd::default(),
             track_generation: trunk.track_generation(),
             pending: VecDeque::new(),
             pending_since: None,

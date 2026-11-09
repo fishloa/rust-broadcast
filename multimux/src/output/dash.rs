@@ -431,6 +431,15 @@ mod tests {
     use crate::testutil::video_spec;
     use transmux::CodecConfig;
 
+    #[tokio::test]
+    async fn dash_continues_across_a_source_reconnect() {
+        crate::testutil::assert_dash_continues_across_a_reconnect(
+            Arc::new(DashOutput),
+            "/cam/manifest.mpd",
+        )
+        .await;
+    }
+
     /// Howard Hinnant's `civil_from_days` — the PRE-jiff algorithm, retained
     /// only to prove the old spelling and `jiff` agree (SP5). Not used by any
     /// production path.

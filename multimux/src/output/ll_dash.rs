@@ -234,6 +234,15 @@ mod tests {
     use super::*;
     use crate::output::dash::DASH_MANIFEST_CONTENT_TYPE;
     use crate::testutil::video_spec;
+
+    #[tokio::test]
+    async fn ll_dash_continues_across_a_source_reconnect() {
+        crate::testutil::assert_dash_continues_across_a_reconnect(
+            Arc::new(LlDashOutput),
+            "/cam/manifest-ll.mpd",
+        )
+        .await;
+    }
     use axum::http::{StatusCode, header};
 
     use transmux::ll_hls::PartInfo;

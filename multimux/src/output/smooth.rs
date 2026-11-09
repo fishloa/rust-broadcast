@@ -306,16 +306,6 @@ fn mfhd_sequence(public_seq: u64) -> u32 {
     u32::try_from(public_seq).unwrap_or(u32::MAX)
 }
 
-/// The program timeline base a reconnect carries over
-/// ([`crate::route::ProgramEpoch::timeline_base_ns`]) in
-/// [`SMOOTH_TIMESCALE`] ticks, rounded up so the first chunk of the new run
-/// never starts before the previous run's last chunk ended.
-fn timeline_base_ticks(base_ns: u64) -> u64 {
-    rescale_u64(base_ns, NANOS_PER_SEC, SMOOTH_TIMESCALE, Rounding::Ceil)
-}
-
-const NANOS_PER_SEC: u32 = 1_000_000_000;
-
 /// Rescale a media-timescale tick count to [`SMOOTH_TIMESCALE`] with
 /// round-to-nearest, using `u128` so the multiply cannot overflow for any
 /// realistic timeline.
@@ -335,7 +325,6 @@ fn track_chunks(
     segments: &std::collections::HashMap<u64, bytes::Bytes>,
     stream_type: SmoothStreamType,
     quality_index: u32,
-    base_ticks: u64,
 ) -> Option<TrackChunks> {
     let init = init?;
     let mut chunks: Vec<ChunkTiming> = Vec::with_capacity(window.len());
@@ -362,7 +351,7 @@ fn track_chunks(
         // is stable as the window slides. Every later chunk's start is derived
         // cumulatively (`start(n) = start(n-1) + d(n-1)`) so the timeline never
         // drifts, and `tfxd(n)+d(n) == tfxd(n+1)` holds to the tick.
-        let absolute_start = to_smooth_ticks(start_media_ticks, ts).saturating_add(base_ticks);
+        let absolute_start = to_smooth_ticks(start_media_ticks, ts);
         let chain_start = chunks
             .last()
             .map(|c| c.start_ticks.saturating_add(c.duration_ticks))
@@ -415,9 +404,6 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
         return None;
     }
     let init = route.init_bytes(crate::route::SPTS_PROGRAM_ID)?;
-    let base_ticks = route
-        .epoch(crate::route::SPTS_PROGRAM_ID)
-        .map_or(0, |epoch| timeline_base_ticks(epoch.timeline_base_ns));
     let ll_hls = serving.ll_hls();
     let mut segments: std::collections::HashMap<u64, bytes::Bytes> =
         std::collections::HashMap::with_capacity(window.len());
@@ -460,14 +446,9 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
             "audio" => SmoothStreamType::Audio,
             _ => SmoothStreamType::Video,
         };
-        let Some(chunks) = track_chunks(
-            Some(&init),
-            &window,
-            &segments,
-            stream_type,
-            quality_index,
-            base_ticks,
-        ) else {
+        let Some(chunks) =
+            track_chunks(Some(&init), &window, &segments, stream_type, quality_index)
+        else {
             continue;
         };
         let bitrate = advertised_bitrate(&params);
@@ -942,6 +923,60 @@ fn smooth_codec_params(config: &CodecConfig) -> Option<SmoothCodecParams> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn manifest_chunks(
+        app: &axum::Router,
+    ) -> (transmux::smooth_parse::StreamIndex, Vec<(u64, u64)>) {
+        let (status, body) = crate::testutil::get_bytes(app, "/cam/Manifest").await;
+        assert_eq!(status, StatusCode::OK);
+        let manifest = transmux::SmoothManifest::parse(&String::from_utf8(body).expect("utf8"))
+            .expect("manifest parses");
+        let stream = manifest.streams[0].clone();
+        let chunks = stream.enumerate_chunks().expect("chunks");
+        (stream, chunks)
+    }
+
+    /// A source reconnect continues the Smooth timeline: the first chunk of
+    /// the new run starts at or after the end of the previous run's last
+    /// chunk, and every advertised chunk is served with a `tfxd` equal to the
+    /// `c@t` the manifest advertises for it.
+    #[tokio::test]
+    async fn smooth_continues_across_a_source_reconnect() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let app = crate::testutil::app_with(&route, Arc::new(SmoothOutput));
+
+        let first = crate::testutil::ingest_run(&route, 8).await;
+        let (_, before) = manifest_chunks(&app).await;
+        let (last_t, last_d) = *before.last().expect("chunks before");
+
+        crate::source::release_route(&first, &route);
+        let _second = crate::testutil::ingest_run(&route, 8).await;
+        let (stream, after) = manifest_chunks(&app).await;
+        assert!(
+            after[0].0 >= last_t + last_d,
+            "first chunk after the reconnect starts at {}, before the previous run ended at {}",
+            after[0].0,
+            last_t + last_d
+        );
+        assert!(
+            after[0].0 < last_t + last_d + 2 * SMOOTH_TIMESCALE,
+            "the gap across the reconnect is the lost open segment, not more"
+        );
+
+        let bitrate = stream.qualities.first().map_or(0, |q| q.bitrate);
+        for (start, _) in &after {
+            let url = format!("/cam/{}", stream.resolve_fragment_url(bitrate, *start));
+            let (status, fragment) = crate::testutil::get_bytes(&app, &url).await;
+            assert_eq!(status, StatusCode::OK, "{url}");
+            let at = fragment
+                .windows(transmux::smooth::TFXD_UUID.len())
+                .position(|w| w == transmux::smooth::TFXD_UUID)
+                .expect("tfxd box");
+            let body = at + transmux::smooth::TFXD_UUID.len() + 4;
+            let tfxd = u64::from_be_bytes(fragment[body..body + 8].try_into().expect("8 bytes"));
+            assert_eq!(tfxd, *start, "{url}: tfxd is not the advertised c@t");
+        }
+    }
     use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     use transmux::nalu_types::{AvcPps, AvcSps};
 

@@ -343,7 +343,10 @@ pub struct DashWindowSegment {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ProgramEpoch {
     pub(crate) seq_offset: u64,
-    pub(crate) timeline_base_ns: u64,
+    /// Where the route's media timeline stood when the program this one
+    /// replaces ended (`0` for the first program): the new run's samples
+    /// continue from it.
+    pub(crate) media_end_ns: u64,
     /// The first public number the route ever served: DASH `startNumber`.
     pub(crate) first_number: u64,
     /// The route's first presentation start: DASH `availabilityStartTime`,
@@ -372,14 +375,12 @@ pub(crate) struct DashState {
     /// construction time, which precedes ingest (#1187).
     presentation_origin: SystemTime,
     epoch: ProgramEpoch,
-    timeline_end_ns: AtomicU64,
 }
 
 impl DashState {
     fn new(trunk: &Arc<Trunk>, window_segments: NonZeroUsize, epoch: ProgramEpoch) -> Self {
         DashState {
             epoch,
-            timeline_end_ns: AtomicU64::new(epoch.timeline_base_ns),
             cursor: Mutex::new(trunk.subscribe_segments()),
             window: Mutex::new(VecDeque::new()),
             capacity: window_segments.get(),
@@ -410,28 +411,14 @@ impl DashState {
                 window.push_back(DashWindowSegment {
                     segment_seq: entry.sequence_number,
                     duration_secs: entry.duration.as_secs_f64(),
-                    timeline_position_ns: self
-                        .epoch
-                        .timeline_base_ns
-                        .saturating_add(entry.timeline_position.as_nanos()),
+                    timeline_position_ns: entry.timeline_position.as_nanos(),
                     public_seq: self
                         .epoch
                         .seq_offset
                         .saturating_add(u64::from(entry.sequence_number.value())),
                 });
-                let end = self
-                    .epoch
-                    .timeline_base_ns
-                    .saturating_add(entry.timeline_position.as_nanos())
-                    .saturating_add(u64::try_from(entry.duration.as_nanos()).unwrap_or(u64::MAX));
-                self.timeline_end_ns.fetch_max(end, Ordering::SeqCst);
             }
         }
-    }
-
-    fn timeline_end_ns(&self) -> u64 {
-        self.drain();
-        self.timeline_end_ns.load(Ordering::SeqCst)
     }
 
     fn window_segments(&self) -> Vec<DashWindowSegment> {
@@ -489,6 +476,9 @@ pub(crate) struct ProgramServing {
     /// segment it starts at, so the recorder archives each pending segment
     /// under the init it was closed under.
     init_log: Mutex<Vec<crate::dvr::InitGeneration>>,
+    /// End of the newest sample the program's segmenter has pushed, on the
+    /// route's media timeline (see [`ProgramEpoch::media_end_ns`]).
+    media_end_ns: AtomicU64,
     /// The program this one replaced on a reconnect, until the first persist
     /// of this program's recorder has flushed the segments it had closed but
     /// not yet archived (see [`Self::flush_predecessor`]).
@@ -707,9 +697,7 @@ impl ProgramServing {
             match DvrRecorder::new(route_name.to_string(), cfg, ext, &trunk) {
                 Ok(recorder) => {
                     // Index under the same numbers the origin shows.
-                    let recorder = recorder
-                        .with_seq_offset(media_sequence_offset)
-                        .with_timeline_base(epoch.timeline_base_ns);
+                    let recorder = recorder.with_seq_offset(media_sequence_offset);
                     tracing::info!(
                         route = %route_name,
                         "DVR recording started"
@@ -737,9 +725,10 @@ impl ProgramServing {
             dvr_recording: std::sync::atomic::AtomicBool::new(dvr.is_some()),
             dvr: Mutex::new(dvr),
             init_log: Mutex::new(Vec::new()),
+            media_end_ns: AtomicU64::new(epoch.media_end_ns),
             predecessor: Mutex::new(None),
             segment_writer: Mutex::new(None),
-            next_timeline_ns: AtomicU64::new(0),
+            next_timeline_ns: AtomicU64::new(epoch.media_end_ns),
             audio_rendition_servings: audio_servings,
             subtitle_servings: Mutex::new(Vec::new()),
             sibling_params: SiblingParams {
@@ -960,6 +949,10 @@ impl ProgramServing {
         self.dash.presentation_origin
     }
 
+    fn media_end_ns(&self) -> u64 {
+        self.media_end_ns.load(Ordering::SeqCst)
+    }
+
     fn epoch(&self) -> ProgramEpoch {
         self.dash.epoch
     }
@@ -1014,6 +1007,10 @@ impl ProgramServing {
         let duration = Duration::from_secs_f64(info.duration);
         let start_ns = self.next_timeline_ns.fetch_add(
             u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
+            Ordering::SeqCst,
+        );
+        self.media_end_ns.fetch_max(
+            start_ns.saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)),
             Ordering::SeqCst,
         );
         let published = self.with_segment_writer(|writer| {
@@ -1673,9 +1670,9 @@ impl RouteHandle {
         let previous_epoch = programs.get(&program).map(|previous| previous.epoch());
         let epoch = ProgramEpoch {
             seq_offset,
-            timeline_base_ns: programs
+            media_end_ns: programs
                 .get(&program)
-                .map_or(0, |previous| previous.dash.timeline_end_ns()),
+                .map_or(0, |previous| previous.media_end_ns()),
             first_number: previous_epoch.map_or(seq_offset.saturating_add(1), |e| e.first_number),
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
@@ -2076,6 +2073,12 @@ impl RouteHandle {
     /// [`Self::created_at`] it starts with ingest, not with the route.
     pub fn presentation_origin(&self, program: ProgramId) -> Option<SystemTime> {
         self.serving(program).map(|s| s.presentation_origin())
+    }
+
+    pub(crate) fn note_media_end(&self, program: ProgramId, end_ns: u64) {
+        if let Some(serving) = self.serving(program) {
+            serving.media_end_ns.fetch_max(end_ns, Ordering::SeqCst);
+        }
     }
 
     pub(crate) fn epoch(&self, program: ProgramId) -> Option<ProgramEpoch> {
