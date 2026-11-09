@@ -475,6 +475,7 @@ struct SiblingParams {
     window_segments: NonZeroUsize,
     media_sequence_offset: u64,
     program_date_time: crate::config::ProgramDateTimeSource,
+    hold_cold_playlist: bool,
 }
 
 /// Slots a program can serve subtitle renditions in. The media playlist
@@ -557,12 +558,14 @@ impl ProgramServing {
         audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
         closed_caption_overrides: Vec<hls_runtime::server::ClosedCaptionDecl>,
         split_audio: bool,
+        hold_cold_playlist: bool,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
             .window_segments(window_segments)
             .container(container)
-            .media_sequence_offset(media_sequence_offset);
+            .media_sequence_offset(media_sequence_offset)
+            .hold_cold_playlist(hold_cold_playlist);
         if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
             builder = builder
                 .program_date_time_arrival(Arc::new(|| jiff::Timestamp::now().as_millisecond()));
@@ -602,7 +605,8 @@ impl ProgramServing {
                 .target_duration_secs(target_duration_secs)
                 .window_segments(window_segments)
                 .container(Container::Fmp4)
-                .media_sequence_offset(media_sequence_offset);
+                .media_sequence_offset(media_sequence_offset)
+                .hold_cold_playlist(hold_cold_playlist);
             if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
                 ab = ab.program_date_time_arrival(Arc::new(|| {
                     jiff::Timestamp::now().as_millisecond()
@@ -681,6 +685,7 @@ impl ProgramServing {
                 window_segments,
                 media_sequence_offset,
                 program_date_time,
+                hold_cold_playlist,
             },
         }))
     }
@@ -764,6 +769,7 @@ impl ProgramServing {
                 .window_segments(params.window_segments)
                 .container(Container::WebVtt)
                 .media_sequence_offset(params.media_sequence_offset)
+                .hold_cold_playlist(params.hold_cold_playlist)
                 .low_latency(params.part_target_ms)
                 .playlist_uri(decl.uri.clone());
             if params.program_date_time == crate::config::ProgramDateTimeSource::Arrival {
@@ -1163,6 +1169,8 @@ pub struct RouteHandle {
     /// [`Self::new`] (tests), so existing test behaviour is unchanged;
     /// production routes set it from [`crate::config::Config::program_date_time`].
     program_date_time: crate::config::ProgramDateTimeSource,
+    /// See [`Self::with_hold_cold_playlist`].
+    hold_cold_playlist: bool,
     /// Operator-declared peak bitrate (bits/second) for this route's HLS
     /// master playlist (see [`HlsOriginBuilder::declared_bandwidth_bps`]).
     /// `None` means none.
@@ -1218,6 +1226,7 @@ impl RouteHandle {
             dvr_config: None,
             archive_floor: 0,
             program_date_time: crate::config::ProgramDateTimeSource::Off,
+            hold_cold_playlist: hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT,
             declared_bandwidth_bps: None,
             audio_renditions: Vec::new(),
             audio_rendition_sources: Vec::new(),
@@ -1336,6 +1345,16 @@ impl RouteHandle {
     #[must_use]
     pub fn with_archive_floor(mut self, floor: u32) -> Self {
         self.archive_floor = floor;
+        self
+    }
+
+    /// Sets whether a media-playlist request without `_HLS_msn`/`_HLS_part`
+    /// is held until the first segment closes; defaults to
+    /// [`hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT`] and production
+    /// routes set it from [`crate::config::Config::hold_cold_playlist`].
+    #[must_use]
+    pub fn with_hold_cold_playlist(mut self, hold: bool) -> Self {
+        self.hold_cold_playlist = hold;
         self
     }
 
@@ -1553,6 +1572,7 @@ impl RouteHandle {
             self.audio_renditions.clone(),
             self.closed_caption_overrides.clone(),
             !self.audio_rendition_sources.is_empty(),
+            self.hold_cold_playlist,
         ) {
             Ok(serving) => serving,
             Err(e) => {

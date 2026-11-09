@@ -369,6 +369,7 @@ impl RouteRegistry {
             // the admin-API (`POST /admin/routes`/reload) equivalent.
             .with_dvr(route.dvr.clone())
             .with_program_date_time(self.ctx.base_config.program_date_time)
+            .with_hold_cold_playlist(self.ctx.base_config.hold_cold_playlist)
             .with_declared_bandwidth_bps(route.declared_bandwidth_bps)
             .with_audio_renditions(route.audio_renditions.clone())
             .with_closed_caption_overrides(route.closed_caption_overrides.clone())

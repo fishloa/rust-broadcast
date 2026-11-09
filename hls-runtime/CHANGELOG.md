@@ -6,6 +6,10 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `HlsOriginBuilder::hold_cold_playlist(bool)` and `HOLD_COLD_PLAYLIST_DEFAULT` (`true`).
+### Changed
+- A Media Playlist request without `_HLS_msn`/`_HLS_part` made before the playlist holds a closed segment is answered `EgressResponse::Await` until the first segment closes, then with the playlist, and `NotFound` once the caller's `AwaitPolicy` expires (the adapter's 503, RFC 8216bis section 6.2.5.2). Clients that ignore Partial Segments (ffmpeg, VLC) cannot open a playlist with no `EXTINF` and do not retry (#1754). `hold_cold_playlist(false)` restores the previous immediate answer; `_HLS_msn`/`_HLS_part` requests are unchanged.
 
 ## [0.12.0] - 2026-11-07
 ### Changed

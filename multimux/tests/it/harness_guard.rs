@@ -82,6 +82,9 @@ const SLEEP_ALLOW: &[&str] = &[
     // Blocking reload test paces a segment arrival past the old 5 s cap to
     // prove the new 3-Target-Duration wait (issue #1651); no condition to await.
     "blocking_reload_deadline.rs",
+    // Cold-hold test: a paused-clock publish delay (virtual time, no condition to await)
+    // and a 20 ms hang-guarded poll for a file route to leave 503 once it has announced.
+    "cold_playlist_hold.rs",
 ];
 
 fn test_files() -> Vec<(String, String)> {

@@ -11,6 +11,19 @@
 //! Sequence Number/part is available, bounded by the caller's own
 //! [`AwaitPolicy`] so the origin never hangs indefinitely.
 //!
+//! # Cold playlist hold
+//!
+//! A Media Playlist request without `_HLS_msn`/`_HLS_part` made before the
+//! window holds a closed segment is answered [`EgressResponse::Await`], like a
+//! blocking reload, until the first segment closes (see
+//! [`HlsOriginBuilder::hold_cold_playlist`]): clients that ignore Partial
+//! Segments cannot open a playlist with no `EXTINF`. The hold shares the
+//! blocking-reload bound; once the caller's [`AwaitPolicy`] expires the answer
+//! is [`EgressResponse::NotFound`], which the adapter turns into `503 Service
+//! Unavailable`. Spec: RFC 8216bis §4
+//! (`private/specs-verified/hls/ietf/rfc8216bis-playlists.md`) and §6.2.5.2
+//! (`private/specs-verified/hls/ietf/rfc8216bis-server-requirements.md`).
+//!
 //! # What comes straight from the `Trunk`, with no cache at all
 //!
 //! Every part-availability and blocking-reload decision reads the `Trunk`
@@ -246,6 +259,9 @@ const MILLIS_PER_SEC: u64 = 1_000;
 /// after the one it already has, so anything more than two segments beyond
 /// the current last closed segment is either a malfunctioning client or abuse.
 const ABUSE_MSN_FUTURE_BOUND: u64 = 2;
+
+/// Default of [`HlsOriginBuilder::hold_cold_playlist`].
+pub const HOLD_COLD_PLAYLIST_DEFAULT: bool = true;
 
 /// RFC 8216bis / Apple LL-HLS §4.4.3.7: `#EXT-X-SERVER-CONTROL`'s
 /// `PART-HOLD-BACK` attribute MUST be at least 3x the part target duration
@@ -1510,6 +1526,7 @@ pub struct HlsOriginBuilder {
     rendition_siblings: Vec<RenditionSibling>,
     closed_captions_none: bool,
     closed_caption_overrides: Vec<ClosedCaptionDecl>,
+    hold_cold_playlist: bool,
 }
 
 impl HlsOriginBuilder {
@@ -1532,7 +1549,23 @@ impl HlsOriginBuilder {
             rendition_siblings: Vec::new(),
             closed_captions_none: false,
             closed_caption_overrides: Vec::new(),
+            hold_cold_playlist: HOLD_COLD_PLAYLIST_DEFAULT,
         }
+    }
+
+    /// Whether a Media Playlist request without `_HLS_msn`/`_HLS_part` is held
+    /// (answered [`EgressResponse::Await`], bounded by the caller's
+    /// [`AwaitPolicy`]) until the playlist holds its first closed segment
+    /// instead of being answered at once with a playlist that carries no
+    /// `EXTINF`. Clients that ignore Partial Segments (ffmpeg, VLC) cannot open
+    /// such a playlist and do not retry. Requests that carry `_HLS_msn` keep
+    /// their blocking-reload semantics either way, and nothing changes once a
+    /// segment exists. Default [`HOLD_COLD_PLAYLIST_DEFAULT`] (`true`); turn it
+    /// off for a deployment that serves only Low-Latency clients, whose cold
+    /// start then no longer waits one segment.
+    pub fn hold_cold_playlist(mut self, hold_cold_playlist: bool) -> Self {
+        self.hold_cold_playlist = hold_cold_playlist;
+        self
     }
 
     /// `#EXT-X-TARGETDURATION`'s configured floor (RFC 8216bis §4.4.3.1) —
@@ -1803,6 +1836,7 @@ impl HlsOriginBuilder {
             track_specs: Mutex::new(Vec::new()),
             closed_captions_none: self.closed_captions_none,
             closed_caption_overrides: self.closed_caption_overrides,
+            hold_cold_playlist: self.hold_cold_playlist,
             detected_closed_captions: Mutex::new(None),
             declared_closed_caption_languages: Mutex::new(Vec::new()),
             frozen_target_duration_secs: Mutex::new(None),
@@ -1904,6 +1938,8 @@ pub struct HlsOrigin {
     /// Emit `CLOSED-CAPTIONS=NONE` (issue #1428 slice 1).
     closed_captions_none: bool,
     closed_caption_overrides: Vec<ClosedCaptionDecl>,
+    /// See [`HlsOriginBuilder::hold_cold_playlist`].
+    hold_cold_playlist: bool,
     /// Caption streams the video has been seen to carry, in advertising
     /// order. Taken alone (never while `window` or `codecs` is held).
     detected_closed_captions: Mutex<Option<Vec<broadcast_hls::InstreamId>>>,
@@ -3547,6 +3583,8 @@ impl HlsOrigin {
             if !satisfied {
                 return EgressResponse::pending(await_policy, now, now);
             }
+        } else if self.hold_cold_playlist && !self.has_closed_segment() {
+            return EgressResponse::pending(await_policy, now, now);
         }
         match self.render_playlist(track_id, query.hls_skip) {
             Ok(playlist) => EgressResponse::Ready {
@@ -3560,6 +3598,11 @@ impl HlsOrigin {
             // malformed data-driven field must not take the origin down.
             Err(_) => EgressResponse::NotFound,
         }
+    }
+
+    fn has_closed_segment(&self) -> bool {
+        self.drain();
+        !locked(&self.window).segments.is_empty()
     }
 
     fn resolve_iframe_playlist(
@@ -4088,6 +4131,181 @@ mod tests {
             Timestamp::from_nanos(0),
             AwaitPolicy::new(Timestamp::from_nanos(0)),
         )
+    }
+
+    // --- cold Media Playlist hold ---------------------------------------
+
+    fn make_cold_origin(hold: bool) -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let writer = trunk.segment_writer().expect("first segment writer");
+        let origin = HlsOrigin::builder(Arc::clone(&trunk))
+            .target_duration_secs(4.0)
+            .window_segments(nz(4))
+            .low_latency(500)
+            .instance(7)
+            .hold_cold_playlist(hold)
+            .build()
+            .expect("both required fields set");
+        origin.set_init(vec![0xAAu8; 8]);
+        (trunk, origin, writer)
+    }
+
+    fn playlist_request(query: BlockingQuery) -> HlsRequest {
+        HlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query,
+        }
+    }
+
+    fn resolve_with_deadline(
+        origin: &HlsOrigin,
+        request: HlsRequest,
+        now_ns: u64,
+        deadline_ns: u64,
+    ) -> EgressResponse<HlsBody> {
+        origin.resolve(
+            request,
+            Timestamp::from_nanos(now_ns),
+            AwaitPolicy::new(Timestamp::from_nanos(deadline_ns)),
+        )
+    }
+
+    const COLD_HOLD_DEADLINE_NS: u64 = 5_000_000_000;
+
+    #[test]
+    fn hold_cold_playlist_defaults_on() {
+        const { assert!(HOLD_COLD_PLAYLIST_DEFAULT) };
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let origin = HlsOrigin::builder(trunk)
+            .target_duration_secs(4.0)
+            .window_segments(nz(4))
+            .build()
+            .expect("both required fields set");
+        assert!(origin.hold_cold_playlist);
+    }
+
+    #[test]
+    fn cold_playlist_request_without_msn_awaits() {
+        let (_trunk, origin, writer) = make_cold_origin(true);
+        part(&writer, 1, 0, true);
+        let response = resolve_with_deadline(
+            &origin,
+            playlist_request(BlockingQuery::default()),
+            0,
+            COLD_HOLD_DEADLINE_NS,
+        );
+        assert!(
+            matches!(response, EgressResponse::Await { .. }),
+            "got {response:?}"
+        );
+    }
+
+    #[test]
+    fn cold_playlist_request_is_answered_once_a_segment_closes() {
+        let (_trunk, origin, writer) = make_cold_origin(true);
+        part(&writer, 1, 0, true);
+        part(&writer, 1, 1, false);
+        seg(&writer, 1, 4.0, false);
+        let response = resolve_with_deadline(
+            &origin,
+            playlist_request(BlockingQuery::default()),
+            0,
+            COLD_HOLD_DEADLINE_NS,
+        );
+        let EgressResponse::Ready {
+            body: HlsBody::Playlist(body),
+            ..
+        } = response
+        else {
+            panic!("expected Ready(Playlist), got {response:?}");
+        };
+        assert!(body.contains("#EXTINF:"), "body: {body}");
+    }
+
+    #[test]
+    fn cold_playlist_hold_gives_up_at_the_deadline() {
+        let (_trunk, origin, _writer) = make_cold_origin(true);
+        let response = resolve_with_deadline(
+            &origin,
+            playlist_request(BlockingQuery::default()),
+            COLD_HOLD_DEADLINE_NS,
+            COLD_HOLD_DEADLINE_NS,
+        );
+        assert!(
+            matches!(response, EgressResponse::NotFound),
+            "got {response:?}"
+        );
+    }
+
+    #[test]
+    fn cold_hold_off_answers_at_once() {
+        let (_trunk, origin, writer) = make_cold_origin(false);
+        part(&writer, 1, 0, true);
+        let response = resolve_with_deadline(
+            &origin,
+            playlist_request(BlockingQuery::default()),
+            0,
+            COLD_HOLD_DEADLINE_NS,
+        );
+        let EgressResponse::Ready {
+            body: HlsBody::Playlist(body),
+            ..
+        } = response
+        else {
+            panic!("expected Ready(Playlist), got {response:?}");
+        };
+        assert!(!body.contains("#EXTINF:"), "body: {body}");
+    }
+
+    #[test]
+    fn msn_requests_on_a_cold_stream_keep_their_semantics() {
+        let (_trunk, origin, writer) = make_cold_origin(true);
+        part(&writer, 1, 0, true);
+        let query = BlockingQuery {
+            hls_msn: Some(1),
+            hls_part: Some(0),
+            ..Default::default()
+        };
+        let satisfied =
+            resolve_with_deadline(&origin, playlist_request(query), 0, COLD_HOLD_DEADLINE_NS);
+        assert!(
+            matches!(
+                satisfied,
+                EgressResponse::Ready {
+                    body: HlsBody::Playlist(_),
+                    ..
+                }
+            ),
+            "a requested part that exists is served at once: {satisfied:?}"
+        );
+
+        let waiting = resolve_with_deadline(
+            &origin,
+            playlist_request(BlockingQuery {
+                hls_msn: Some(1),
+                ..Default::default()
+            }),
+            0,
+            COLD_HOLD_DEADLINE_NS,
+        );
+        assert!(
+            matches!(waiting, EgressResponse::Await { .. }),
+            "got {waiting:?}"
+        );
+
+        let bad = resolve_with_deadline(
+            &origin,
+            playlist_request(BlockingQuery {
+                hls_part: Some(0),
+                ..Default::default()
+            }),
+            0,
+            COLD_HOLD_DEADLINE_NS,
+        );
+        assert!(
+            matches!(bad, EgressResponse::BadRequest { .. }),
+            "got {bad:?}"
+        );
     }
 
     // --- EXT-X-DATERANGE rendering from the trunk event ring (#965) -----

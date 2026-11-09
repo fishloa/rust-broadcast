@@ -360,6 +360,7 @@ fn webvtt_part_resource_is_served_and_awaited() {
         .window_segments(nz(4))
         .low_latency(500)
         .instance(9)
+        .hold_cold_playlist(false)
         .build()
         .expect("builds");
     let writer = trunk.segment_writer().expect("writer");

@@ -104,6 +104,7 @@ fn config_with(
         target_duration_secs: 0.5,
         part_target_ms: 100,
         window_segments: 8,
+        hold_cold_playlist: false,
         routes: vec![Route {
             name: "cam".to_string(),
             input: InputSpec::DashifIngest {
