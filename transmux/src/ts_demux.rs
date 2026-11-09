@@ -5324,13 +5324,16 @@ impl StreamingTsDemux {
                     // before the diff, never re-processed.
                     continue;
                 }
-                pmt_state.last_applied_version = Some(header.version);
-                // Record the PCR_PID the program just declared: it is the PID
-                // on which a system time-base discontinuity for this program is
-                // signalled (§2.4.3.5), and the key for scoping a rebase to
-                // this program's streams (r04-W50 review).
-                pmt_state.pcr_pid = Some(header.pcr_pid);
+                // The version is consumed only by a body that parses: a
+                // CRC-valid but unparseable section must not suppress the
+                // intact repeat of the same version.
                 if let Ok(es_list) = parse_pmt(section) {
+                    pmt_state.last_applied_version = Some(header.version);
+                    // Record the PCR_PID the program just declared: it is the
+                    // PID on which a system time-base discontinuity for this
+                    // program is signalled (§2.4.3.5), and the key for scoping
+                    // a rebase to this program's streams (r04-W50 review).
+                    pmt_state.pcr_pid = Some(header.pcr_pid);
                     to_apply = Some(es_list);
                 }
             }
@@ -8325,6 +8328,45 @@ pub(crate) mod tests {
         assert_eq!(
             before, k,
             "every whole PES, including the held final AU, is emitted before removal: {seen:?}"
+        );
+    }
+
+    /// A CRC-valid PMT whose body does not parse must not consume its
+    /// `version_number`: the intact repeat of that same version still applies.
+    #[test]
+    fn unparseable_pmt_version_is_retried_when_its_intact_repeat_arrives() {
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        let no_program_info = [0xE0u8, 0x00];
+        input.extend_from_slice(&psi_section_packets_versioned(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            PROGRAM_NUMBER_UNDER_TEST,
+            1,
+            &no_program_info,
+        ));
+        input.extend_from_slice(&psi_section_packets_versioned(
+            PMT_PID_UNDER_TEST,
+            1,
+            TABLE_ID_PMT,
+            PROGRAM_NUMBER_UNDER_TEST,
+            1,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
+        ));
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        assert!(
+            demux.es_seen.contains(&ES_PID_UNDER_TEST),
+            "the intact repeat of the unparseable version must be applied"
         );
     }
 
