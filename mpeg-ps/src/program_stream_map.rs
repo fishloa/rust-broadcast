@@ -106,15 +106,15 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         }
 
         let map_length = u16::from_be_bytes([b[4], b[5]]) as usize;
-        let crc_end = PREFIX_LEN + map_length + 4;
-        if b.len() < crc_end {
+        let crc_end = PREFIX_LEN + map_length;
+        if map_length < FIXED_BODY_LEN + CRC_LEN || b.len() < crc_end {
             return Err(Error::MapLengthOverflow {
                 map_length,
                 available: b.len().saturating_sub(PREFIX_LEN),
             });
         }
 
-        let crc_data_end = crc_end - 4;
+        let crc_data_end = crc_end - CRC_LEN;
         let crc_data = &b[0..crc_data_end];
         let stored_crc = u32::from_be_bytes([
             b[crc_data_end],
@@ -300,8 +300,8 @@ impl Serialize for ProgramStreamMap<'_> {
         let prog_info_len = self.program_stream_info.len();
         let es_loop_len: usize = self.elementary_stream_map.iter().map(es_entry_len).sum();
 
-        // map_length = flags(1) + reserved(1) + prog_info_len(2) + es_loop_len(2) + prog_info + es_loop
-        let map_length = FIXED_BODY_LEN + prog_info_len + es_loop_len;
+        // map_length counts every byte after the field, CRC_32 included (Table 2-41)
+        let map_length = FIXED_BODY_LEN + prog_info_len + es_loop_len + CRC_LEN;
         // program_stream_map_length max is 1018 (0x3FA) per Table 2-41 — checked
         // in usize before any narrowing (#1129).
         if map_length > MAP_LENGTH_MAX {
@@ -537,7 +537,7 @@ mod tests {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 0,
-            program_stream_info: &[0u8; 1019],
+            program_stream_info: &[0u8; 1009],
             elementary_stream_map: vec![],
             crc: 0,
         };
@@ -551,19 +551,19 @@ mod tests {
     /// The boundary: exactly the spec max still serializes and round-trips.
     #[test]
     fn program_stream_map_length_at_spec_max_round_trips() {
-        // map_length = 6 + prog_info_len + es_loop_len; want map_length == 1018.
+        // map_length = 6 + prog_info_len + es_loop_len + CRC(4); want 1018.
         let psm = ProgramStreamMap {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 0,
-            program_stream_info: &[0u8; 1012],
+            program_stream_info: &[0u8; 1008],
             elementary_stream_map: vec![],
             crc: 0,
         };
         let mut buf = vec![0u8; psm.serialized_len()];
         psm.serialize_into(&mut buf).unwrap();
         let parsed = ProgramStreamMap::parse(&buf).unwrap();
-        assert_eq!(parsed.program_stream_info.len(), 1012);
+        assert_eq!(parsed.program_stream_info.len(), 1008);
     }
 
     /// #1050 regression: a conformant PSM with a non-empty program
@@ -663,5 +663,72 @@ mod tests {
             ProgramStreamMap::parse(&buf),
             Err(Error::CrcMismatch(..))
         ));
+    }
+
+    fn spec_conformant_psm() -> Vec<u8> {
+        let mut b = vec![
+            0x00, 0x00, 0x01, 0xBC, 0x00, 0x0E, 0xE1, 0xFF, 0x00, 0x00, 0x00, 0x04, 0x1B, 0xE0,
+            0x00, 0x00,
+        ];
+        let crc = crc32_mpeg2::compute(&b);
+        b.extend_from_slice(&crc.to_be_bytes());
+        b
+    }
+
+    #[test]
+    fn parse_counts_the_crc_in_program_stream_map_length() {
+        let b = spec_conformant_psm();
+        assert_eq!(usize::from(u16::from_be_bytes([b[4], b[5]])), b.len() - 6);
+        let psm = ProgramStreamMap::parse(&b).unwrap();
+        assert_eq!(psm.elementary_stream_map.len(), 1);
+        assert_eq!(psm.elementary_stream_map[0].stream_type, 0x1B);
+    }
+
+    #[test]
+    fn serialize_counts_the_crc_in_program_stream_map_length() {
+        let psm = ProgramStreamMap {
+            current_next_indicator: true,
+            single_extension_stream_flag: true,
+            version: 1,
+            program_stream_info: &[],
+            elementary_stream_map: vec![EsMapEntry {
+                stream_type: 0x1B,
+                elementary_stream_id: 0xE0,
+                stream_id_extension: None,
+                descriptors: &[],
+            }],
+            crc: 0,
+        };
+        let mut o = vec![0u8; psm.serialized_len()];
+        psm.serialize_into(&mut o).unwrap();
+        assert_eq!(usize::from(u16::from_be_bytes([o[4], o[5]])), o.len() - 6);
+        assert_eq!(o, spec_conformant_psm());
+    }
+
+    #[test]
+    fn map_length_below_the_fixed_body_and_crc_is_rejected() {
+        let mut b = spec_conformant_psm();
+        b[4] = 0;
+        b[5] = 9;
+        assert!(matches!(
+            ProgramStreamMap::parse(&b),
+            Err(Error::MapLengthOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn psm_in_a_pack_does_not_swallow_the_following_pes() {
+        let mut pack = vec![
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x43, 0x36, 0x3B, 0xF8,
+        ];
+        pack.extend_from_slice(&spec_conformant_psm());
+        pack.extend_from_slice(&[
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x08, 0x80, 0x00, 0x00, 1, 2, 3, 4, 5,
+        ]);
+        let (p, consumed) = crate::program_stream::parse_pack(&pack).unwrap();
+        let p = p.unwrap();
+        assert!(p.psm.is_some());
+        assert_eq!(p.pes_packets.len(), 1);
+        assert_eq!(consumed, pack.len());
     }
 }
