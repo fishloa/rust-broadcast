@@ -3,6 +3,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
+use broadcast_common::clock33::pcr_signed_distance;
 use broadcast_common::timescale::{Rounding, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
@@ -571,7 +572,7 @@ impl Feeder {
         let first = self.first_seen.get(&t).copied().unwrap_or(end);
         self.arm_origin(first, timescale);
         let end_27 = self.conv(end, timescale);
-        if join_pts.is_none_or(|j| end_27 > j) {
+        if join_pts.is_none_or(|j| pcr_signed_distance(j, end_27) > 0) {
             self.pending_ends.insert(t, end_27);
         }
     }
