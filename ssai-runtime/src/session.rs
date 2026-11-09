@@ -255,7 +255,7 @@ mod tests {
             .begin_break("s1", BreakState::new(decision, splice_point()))
             .unwrap();
         let first = condition_splice_point(2_000, &[2_000], 0).unwrap();
-        store.resume("s1", first.clone()).unwrap();
+        store.resume("s1", first).unwrap();
         let err = store.resume("s1", splice_point()).unwrap_err();
         assert!(matches!(err, Error::BreakAlreadyResumed(ref s) if s == "s1"));
         assert_eq!(store.get("s1").unwrap().resumed_at, Some(first));
