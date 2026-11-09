@@ -9,7 +9,7 @@
 use broadcast_common::impl_spec_display;
 
 use super::TimingError;
-use super::datetime::{parse_http_date, parse_ntp_timestamp, parse_xs_datetime};
+use super::datetime::{XsDateTime, parse_http_date, parse_ntp_timestamp, parse_xs_datetime};
 
 /// 5.8.5.7: `urn:mpeg:dash:utc:ntp:2014`.
 pub const SCHEME_NTP: &str = "urn:mpeg:dash:utc:ntp:2014";
@@ -192,8 +192,7 @@ pub fn sample_from_body(
     match scheme {
         UtcScheme::HttpXsdate | UtcScheme::HttpIso => {
             let text = core::str::from_utf8(body).map_err(|_| TimingError::NotUtf8)?;
-            let dt = parse_xs_datetime(text)?;
-            sample_from_exchange(exchange, dt.unix_us, dt.resolution_us(), max_rtt_us)
+            sample_from_datetime(parse_xs_datetime(text)?, exchange, max_rtt_us)
         }
         UtcScheme::HttpNtp => {
             let utc = parse_ntp_timestamp(body)?;
@@ -233,6 +232,22 @@ pub fn sample_from_direct(
     mpd_exchange: Exchange,
     max_rtt_us: u64,
 ) -> Result<UtcSample, TimingError> {
-    let dt = parse_xs_datetime(value)?;
-    sample_from_exchange(mpd_exchange, dt.unix_us, dt.resolution_us(), max_rtt_us)
+    sample_from_datetime(parse_xs_datetime(value)?, mpd_exchange, max_rtt_us)
+}
+
+fn sample_from_datetime(
+    dt: XsDateTime,
+    exchange: Exchange,
+    max_rtt_us: u64,
+) -> Result<UtcSample, TimingError> {
+    if dt.fraction_digits > 0 {
+        return sample_from_exchange(exchange, dt.unix_us, dt.resolution_us(), max_rtt_us);
+    }
+    let half_second = i64::try_from(DATE_HEADER_HALF_SECOND_US).unwrap_or(MICROS_PER_SECOND / 2);
+    sample_from_exchange(
+        exchange,
+        dt.unix_us.saturating_add(half_second),
+        DATE_HEADER_HALF_SECOND_US,
+        max_rtt_us,
+    )
 }

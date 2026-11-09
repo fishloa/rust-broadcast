@@ -4,6 +4,7 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 ### Fixed
+- A whole-second `xs:dateTime` (an `http-xsdate`/`http-iso` body or a `direct` value) is centred half a second later with a half-second uncertainty, as a whole-second HTTP `Date` already was; a server that floors the time left the clock up to 0.5 s behind. A value with a fraction is taken as stated.
 - A `sidx` reference of size 0 still advances the subsegment timeline by its `subsegment_duration`; every later subsegment used to start early by the skipped duration.
 
 ## [0.3.0] - 2026-11-07
