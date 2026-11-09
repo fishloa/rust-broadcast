@@ -261,21 +261,25 @@ impl RtspSource {
         }
     }
 
-    pub(crate) fn on_closed(&mut self, conn: u32, now: u64) {
+    /// Whether the live connection ended and the next connection's media will be preceded by
+    /// [`Event::Discontinuity`].
+    pub(crate) fn on_closed(&mut self, conn: u32, now: u64) -> bool {
         if self.conn != Some(conn) {
-            return;
+            return false;
         }
         match self.phase {
             Phase::WaitingAuth(_) => {
                 self.conn = None;
+                false
             }
             Phase::Connecting | Phase::Awaiting(_) | Phase::Playing => {
                 self.flush_depacketiser(now);
                 self.conn = None;
                 self.forget_connection_state();
                 self.after_connection_end(now);
+                self.discontinuity_pending
             }
-            Phase::Backoff(_) | Phase::Closed => {}
+            Phase::Backoff(_) | Phase::Closed => false,
         }
     }
 

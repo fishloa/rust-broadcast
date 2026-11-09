@@ -552,18 +552,29 @@ impl Session {
         if self.closed {
             return;
         }
+        let hint = if error.is_some() {
+            Hint::SourceError
+        } else {
+            Hint::SourceEnded
+        };
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
-            r.on_closed(conn, now_us);
+            let ended = r.on_closed(conn, now_us);
             self.flush_rtsp();
             self.settle_buffer();
+            if ended {
+                self.hint(hint);
+            }
             return;
         }
         if let Some(r) = self.rtmp.as_mut() {
             self.now_us = now_us;
-            r.on_closed(conn, error.as_deref(), now_us);
+            let ended = r.on_closed(conn, error.as_deref(), now_us);
             self.flush_rtmp();
             self.settle_buffer();
+            if ended {
+                self.hint(hint);
+            }
             return;
         }
         if let Some(h) = self.adaptive.as_mut() {
@@ -587,11 +598,6 @@ impl Session {
             self.live_conn = None;
         }
         self.now_us = now_us;
-        let hint = if error.is_some() {
-            Hint::SourceError
-        } else {
-            Hint::SourceEnded
-        };
         self.buffer.hint(now_us, hint);
         self.source.on_closed(error, now_us);
         self.drain_source();
