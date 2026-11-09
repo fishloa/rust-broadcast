@@ -361,8 +361,7 @@ const MIN_HANDSHAKE_TICK: Duration = Duration::from_millis(1);
 const KEEPALIVE_PERIOD: Duration = Duration::from_secs(1);
 /// How often an unconfirmed refresh KMREQ is re-sent until its KMRSP arrives
 /// (`private/specs-verified/ietf/specs/ietf_draft_sharabayko_srt_01.txt`
-/// §6.1.6: the sender switches keys only once the receiver has confirmed it
-/// can decrypt them; the draft fixes no interval).
+/// §6.1.6; the interval is this crate's choice).
 #[cfg(feature = "crypto")]
 const KM_RESEND_INTERVAL: Duration = Duration::from_millis(500);
 /// SEK length used when the connection's own key length is unknown: AES-128.
@@ -1088,7 +1087,7 @@ type SekSlot = Option<(zeroize::Zeroizing<Vec<u8>>, [u8; crate::crypto::SALT_LEN
 /// own KM Refresh) and `rx_keys` for what it decrypts with (installed from the
 /// peer's Key Material), because each side rotates its own SEKs
 /// (`private/specs-verified/ietf/specs/ietf_draft_sharabayko_srt_01.txt`
-/// §6.1.6 — the sender announces, the receiver confirms).
+/// §6.1.6).
 #[cfg(feature = "crypto")]
 #[derive(Default)]
 struct KeySet {
