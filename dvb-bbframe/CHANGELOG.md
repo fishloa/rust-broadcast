@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `CarryOverExtractor`/`BbframePump` reset the NM CRC-8 chain and any pending partial UP when a frame is skipped (bad BBHEADER, wrong mode, invalid UPL, non-TS), so the next intact UP is no longer emitted with the transport error indicator set (#1944).
+- A `SYNCD=0xFFFF` frame no longer drops the data-field bytes that follow the UP it completes; whole UPs and a trailing partial are kept, in both NM and HEM (#1949).
 
 ## [13.0.0] - 2026-11-07
 ### Removed
