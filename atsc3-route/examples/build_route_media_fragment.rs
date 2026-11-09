@@ -22,6 +22,7 @@ fn main() {
     let extensions = vec![HeaderExtension::new(rmt_flute::ALC_HET_EXT_FTI, &fti_hec)];
 
     let lct = LctHeader {
+        reserved: 0,
         version: rmt_flute::LCT_VERSION,
         psi: rmt_flute::PSI_SPI, // source flow
         close_session: false,

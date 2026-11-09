@@ -71,3 +71,18 @@ fn short_output_is_output_buffer_too_small() {
         ))
     );
 }
+
+const LCT_RES_MASK: u8 = 0x0C;
+
+#[test]
+fn lct_header_with_reserved_bits_set_serializes_byte_identically() {
+    let mut data = fixture();
+    data[1] |= LCT_RES_MASK;
+    let pkt = AlcPacket::parse(&data, FEC_PAYLOAD_ID_128_LEN).unwrap();
+    assert_eq!(pkt.lct.reserved, 0x03);
+    let hdr_bytes = pkt.lct.hdr_len() * 4;
+    assert_eq!(
+        Serialize::try_to_bytes(&pkt.lct).unwrap(),
+        &data[..hdr_bytes]
+    );
+}
