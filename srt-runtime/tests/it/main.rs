@@ -1,4 +1,5 @@
 mod arq_recovery;
+mod audit_d;
 mod crypto_handshake;
 mod crypto_vectors;
 mod error_variants;

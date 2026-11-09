@@ -3978,6 +3978,50 @@ mod adapter_tests {
         assert_eq!(seqs, vec![0, 2, 3], "DROPREQ must unblock the gap");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn audit_d_dropreq_ahead_of_the_ack_point_must_not_stall_the_flow_window() {
+        const WINDOW: u32 = 64;
+        let (mut driver, mut rx) = test_driver(WINDOW).await;
+        for seq in [0u32, 5] {
+            driver
+                .ingress(Bytes::from(data_bytes(seq, 0, &[u8::try_from(seq).unwrap()])))
+                .expect("ingress");
+        }
+        driver
+            .ingress(Bytes::from(dropreq_bytes(3, 4)))
+            .expect("ingress dropreq");
+        for seq in [1u32, 2] {
+            driver
+                .ingress(Bytes::from(data_bytes(seq, 0, &[u8::try_from(seq).unwrap()])))
+                .expect("ingress");
+        }
+        tokio::time::advance(Duration::from_millis(130)).await;
+        driver.tick_engines();
+        let first: Vec<u8> = drain_deliveries(&mut rx).iter().map(|p| p[0]).collect();
+        assert_eq!(first, vec![0, 1, 2, 5]);
+
+        let far = 3 + WINDOW + 1;
+        for seq in 6..=far {
+            driver
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    130_000,
+                    &[u8::try_from(seq).unwrap()],
+                )))
+                .expect("ingress");
+        }
+        tokio::time::advance(Duration::from_millis(130)).await;
+        driver.tick_engines();
+        let second: Vec<u8> = drain_deliveries(&mut rx).iter().map(|p| p[0]).collect();
+        let expected: Vec<u8> = (6..=far).map(|s| u8::try_from(s).unwrap()).collect();
+        assert_eq!(
+            second, expected,
+            "ARQ ack point stuck at {} while TSBPD cursor is at {}",
+            driver.receiver.ack_point(),
+            driver.tsbpd.next_release()
+        );
+    }
+
     #[tokio::test]
     async fn staged_never_exceeds_the_flow_window() {
         const WINDOW: u32 = 64;
