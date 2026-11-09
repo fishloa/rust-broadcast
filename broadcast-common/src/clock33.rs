@@ -52,7 +52,8 @@ pub const WRAP_33BIT_HALF: u64 = WRAP_33BIT / 2;
 /// value, correcting for a single wrap in either direction.
 ///
 /// The delta is computed on the wrapped clock (a signed value in
-/// `(-2^32, 2^32]`), then applied to the unwrapped accumulator — so an
+/// `(-2^32, 2^32]`; a step of exactly half the range resolves forward, the
+/// same tie rule as [`signed_distance`]), then applied to the unwrapped accumulator — so an
 /// ordinary small backward step (e.g. B-frame PTS reordering) is preserved
 /// as-is, and only a near-full-range jump is treated as a wrap.
 /// `prev_unwrapped` need not itself be in `[0, 2^33)`; after the first wrap
@@ -72,7 +73,7 @@ pub fn unwrap_delta(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
     let mut delta = raw as i128 - prev_raw as i128;
     if delta > WRAP_33BIT_HALF as i128 {
         delta -= WRAP_33BIT as i128; // wrapped backward across 2^33
-    } else if delta < -(WRAP_33BIT_HALF as i128) {
+    } else if delta <= -(WRAP_33BIT_HALF as i128) {
         delta += WRAP_33BIT as i128; // wrapped forward across 2^33
     }
     prev_unwrapped + delta
@@ -263,6 +264,14 @@ pub fn pack_marked(timestamp: u64, prefix: u8) -> [u8; 5] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unwrap_delta_half_range_step_agrees_with_signed_distance() {
+        let step = signed_distance(WRAP_33BIT_HALF, 0);
+        assert_eq!(step, WRAP_33BIT_HALF as i64);
+        assert_eq!(unwrap_delta(0, WRAP_33BIT_HALF, 0), i128::from(step));
+        assert_eq!(unwrap_delta(0, 0, WRAP_33BIT_HALF), i128::from(step));
+    }
 
     #[test]
     fn unwrap_delta_forward_wrap_advances_by_one_modulus() {
