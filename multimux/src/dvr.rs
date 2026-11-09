@@ -1510,27 +1510,23 @@ impl DvrRecorder {
         // racing catch-up request). Removing the index first makes that
         // window impossible — the period disappears from the archive
         // atomically (issue #1083, item 3).
-        if let Err(e) = fs::remove_file(&idx_path)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(
-                route = %self.route_name,
-                period = num,
-                path = %idx_path.display(),
-                error = %e,
-                "failed to remove evicted period index"
-            );
-        }
-        if let Err(e) = fs::remove_file(&file_path)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(
-                route = %self.route_name,
-                period = num,
-                path = %file_path.display(),
-                error = %e,
-                "failed to remove evicted period file"
-            );
+        let sidecar_path = self.archive_dir.join(format!("p{num}.event.json"));
+        for (path, what) in [
+            (&idx_path, "index"),
+            (&file_path, "file"),
+            (&sidecar_path, "programme sidecar"),
+        ] {
+            if let Err(e) = fs::remove_file(path)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(
+                    route = %self.route_name,
+                    period = num,
+                    path = %path.display(),
+                    error = %e,
+                    "failed to remove evicted period {what}"
+                );
+            }
         }
 
         self.total_bytes = self.total_bytes.saturating_sub(file_bytes);

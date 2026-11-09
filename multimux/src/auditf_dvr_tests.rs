@@ -53,7 +53,10 @@ fn a_period_opened_after_a_failed_roll_still_starts_with_the_init() {
     let dir = root.join("r");
     fs::create_dir(dir.join("p1.m4s")).expect("blocker");
     rec.period_opened_at = Some(SystemTime::now() - Duration::from_secs(7200));
-    assert!(rec.poll_and_persist(Some(b"INIT")).is_err(), "roll must fail");
+    assert!(
+        rec.poll_and_persist(Some(b"INIT")).is_err(),
+        "roll must fail"
+    );
     fs::remove_dir(dir.join("p1.m4s")).expect("unblock");
 
     writer.publish_segment(entry(2)).expect("publish");
