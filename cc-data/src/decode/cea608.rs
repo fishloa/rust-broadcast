@@ -1179,4 +1179,44 @@ mod tests {
         ];
         dec.push_triplets(&triplets);
     }
+
+    fn pair(d: &mut Cea608Decoder, a: u8, b: u8) {
+        d.push_pair(false, set_odd_parity(a), set_odd_parity(b));
+    }
+
+    #[test]
+    fn text_restart_does_not_erase_the_caption_screen() {
+        let mut d = Cea608Decoder::new();
+        pair(&mut d, 0x14, 0x20);
+        pair(&mut d, 0x14, 0x70);
+        pair(&mut d, b'H', b'I');
+        pair(&mut d, 0x14, 0x2F);
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "HI");
+        pair(&mut d, 0x14, 0x2A);
+        pair(&mut d, b'T', b'X');
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "HI");
+    }
+
+    #[test]
+    fn a_control_pair_after_a_null_pair_is_not_a_doubled_control() {
+        let mut d = Cea608Decoder::new();
+        pair(&mut d, 0x14, 0x25);
+        pair(&mut d, b'A', b'B');
+        pair(&mut d, 0x14, 0x2D);
+        pair(&mut d, b'C', b'D');
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "AB\nCD");
+        pair(&mut d, 0x14, 0x2D);
+        d.push_pair(false, 0x80, 0x80);
+        pair(&mut d, 0x14, 0x2D);
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "");
+    }
+
+    #[test]
+    fn a_field1_pair_with_first_byte_in_the_xds_range_prints_no_text() {
+        let mut d = Cea608Decoder::new();
+        pair(&mut d, 0x14, 0x29);
+        pair(&mut d, 0x14, 0x70);
+        pair(&mut d, 0x01, b'X');
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "");
+    }
 }

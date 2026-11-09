@@ -996,4 +996,20 @@ mod tests {
             txt_data_block: block.map(u8::reverse_bits),
         }
     }
+
+    #[test]
+    fn two_boxes_on_one_row_are_separated_by_a_space() {
+        let mut asm = PageAssembler::new(8, 0x88);
+        asm.push(&field_from_block(
+            build_header_block(8, 0x88, true, true, false, NationalOption::English),
+            0,
+        ));
+        let mut row = vec![START_BOX, START_BOX];
+        row.extend_from_slice(b"Hi");
+        row.extend_from_slice(&[END_BOX, END_BOX, b' ', b' ', b' ', START_BOX, START_BOX]);
+        row.extend_from_slice(b"Yo");
+        row.extend_from_slice(&[END_BOX, END_BOX]);
+        asm.push(&field_from_block(build_row_bytes(8, 20, &row), 20));
+        assert_eq!(asm.display_text(), "Hi Yo");
+    }
 }

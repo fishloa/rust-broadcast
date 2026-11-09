@@ -365,4 +365,20 @@ mod tests {
         assert!(!parsed.lossy);
         assert_eq!(parsed.cues, cues);
     }
+
+    #[test]
+    fn a_cue_identifier_starting_with_note_is_not_a_note_block() {
+        let doc = "WEBVTT\n\nNOTES1\n00:00:01.000 --> 00:00:02.000\nhello\n";
+        let parsed = parse_webvtt(doc).unwrap();
+        assert_eq!(parsed.cues.len(), 1);
+        assert_eq!(parsed.cues[0].text, "hello");
+    }
+
+    #[test]
+    fn note_followed_by_space_or_tab_or_alone_is_still_a_note_block() {
+        for head in ["NOTE", "NOTE text", "NOTE\ttext"] {
+            let doc = alloc::format!("WEBVTT\n\n{head}\n\n00:00:01.000 --> 00:00:02.000\nhello\n");
+            assert_eq!(parse_webvtt(&doc).unwrap().cues.len(), 1, "{head:?}");
+        }
+    }
 }

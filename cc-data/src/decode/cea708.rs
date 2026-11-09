@@ -1313,4 +1313,14 @@ mod tests {
             .collect();
         dec2.push_triplets(&triplets);
     }
+
+    #[test]
+    fn set_pen_location_back_over_existing_text_overwrites() {
+        let mut d = Cea708Decoder::new();
+        d.push_packet(&[0x05, 0x27, 0x9A, 0x38, 0x4A, 0xD1, 0x8B, 0x0F, 0x11, 0x00]);
+        d.push_packet(&[0x45, 0x26, b'A', b'B', b'C', 0x92, 0x00, 0x00, 0x00, 0x00]);
+        d.push_packet(&[0x82, 0x22, b'X', 0x00]);
+        let w = d.windows(1)[2].as_ref().unwrap();
+        assert_eq!(w.text(), "XBC");
+    }
 }
