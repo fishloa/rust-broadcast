@@ -44,10 +44,6 @@ pub enum Error {
         state: SessionState,
     },
 
-    /// A response arrived with no parseable `CSeq` header.
-    #[error("response is missing a CSeq header")]
-    MissingCSeq,
-
     /// The `Transport` header value could not be parsed per RFC 2326 §12.39.
     #[error("invalid Transport header: {0}")]
     TransportParse(String),

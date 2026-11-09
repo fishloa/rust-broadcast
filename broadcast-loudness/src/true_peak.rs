@@ -165,17 +165,18 @@ impl TruePeakMeter {
     }
 
     /// Push a slice of f32 samples.
+    ///
+    /// A rejected slice leaves the meter exactly as it was.
     pub fn push_f32_slice(&mut self, samples: &[f32]) -> Result<(), Error> {
-        for (i, &s) in samples.iter().enumerate() {
-            let v = f64::from(s);
-            if !v.is_finite() {
-                return Err(Error::NonFiniteSample {
-                    index: self.sample_count + i,
-                    channel: 0,
-                    value: v,
-                });
-            }
-            self.push_into_history(v);
+        if let Some((i, &s)) = samples.iter().enumerate().find(|(_, s)| !s.is_finite()) {
+            return Err(Error::NonFiniteSample {
+                index: self.sample_count + i,
+                channel: 0,
+                value: f64::from(s),
+            });
+        }
+        for &s in samples {
+            self.push_into_history(f64::from(s));
             self.update_max_for_current_window();
         }
         self.sample_count += samples.len();
@@ -183,15 +184,17 @@ impl TruePeakMeter {
     }
 
     /// Push a slice of f64 samples.
+    ///
+    /// A rejected slice leaves the meter exactly as it was.
     pub fn push_f64_slice(&mut self, samples: &[f64]) -> Result<(), Error> {
-        for (i, &s) in samples.iter().enumerate() {
-            if !s.is_finite() {
-                return Err(Error::NonFiniteSample {
-                    index: self.sample_count + i,
-                    channel: 0,
-                    value: s,
-                });
-            }
+        if let Some((i, &s)) = samples.iter().enumerate().find(|(_, s)| !s.is_finite()) {
+            return Err(Error::NonFiniteSample {
+                index: self.sample_count + i,
+                channel: 0,
+                value: s,
+            });
+        }
+        for &s in samples {
             self.push_into_history(s);
             self.update_max_for_current_window();
         }

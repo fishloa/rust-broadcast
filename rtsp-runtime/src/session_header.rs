@@ -95,10 +95,10 @@ impl SessionHeader {
             if name.eq_ignore_ascii_case(PARAM_TIMEOUT) {
                 let parsed = value
                     .as_deref()
-                    .and_then(|v| lex::digits(v, DELTA_SECONDS_DIGITS, PARAM_TIMEOUT).ok());
+                    .and_then(|v| lex::digits_u64(v, DELTA_SECONDS_DIGITS, PARAM_TIMEOUT).ok());
                 match parsed {
                     // 0 is invalid too: it would make the keepalive deadline "now".
-                    Some(n) if n > 0 => out.timeout = Some(Duration::from_secs(n.into())),
+                    Some(n) if n > 0 => out.timeout = Some(Duration::from_secs(n)),
                     _ => {
                         warnings.push(format!(
                             "malformed or zero timeout {value:?}; using the 60 s default"

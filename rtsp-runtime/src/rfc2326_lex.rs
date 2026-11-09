@@ -237,6 +237,18 @@ pub(crate) fn digits(s: &str, max_digits: usize, what: &str) -> Result<u32, LexE
         .or_else(|_| err(format!("{what}: {s:?} out of range")))
 }
 
+/// `1*<max_digits>DIGIT` into a `u64` (`delta-seconds`, RFC 2326 §12.37).
+pub(crate) fn digits_u64(s: &str, max_digits: usize, what: &str) -> Result<u64, LexError> {
+    let s = trim_lws(s);
+    if s.is_empty() || s.len() > max_digits || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return err(format!(
+            "{what}: expected 1 to {max_digits} digits, got {s:?}"
+        ));
+    }
+    s.parse::<u64>()
+        .or_else(|_| err(format!("{what}: {s:?} out of range")))
+}
+
 /// Exactly `digits` hex digits (`ssrc = 8*8(HEX)`), as a `u32`.
 pub(crate) fn hex_exact(s: &str, digits: usize, what: &str) -> Result<u32, LexError> {
     let s = trim_lws(s);

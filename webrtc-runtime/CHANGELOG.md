@@ -3,6 +3,11 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- The client and player track every in-flight request in send order, so a trickle PATCH's `204` can no longer be taken for the answer to a `DELETE` sent after it (the session closed and emitted `Terminated` before the server answered the `DELETE`).
+- A non-2xx answer to the offer `POST` (a `503`, a `307` the engine does not follow, a `409`) returns the client to `Idle`, so it can send the offer again; it used to stay in `OfferSent`, where `offer` is refused.
+- `Session::accept`, `ack_restart` and `ack_answer` no longer reopen a closed session: a `DELETE` that wins the race against an in-flight restart stays final, and the late response is a `404` with the state unchanged (`ack_restart` needs `Established`, `ack_answer` needs `CounterOffered`).
+- `WhepSession::ack_answer` validates the entity-tag like `accept` and `ack_restart` do (a bad tag is a `500` and leaves the state unchanged) and sends it as the `ETag` of the `204`, which is what the player's counter-offer path already read.
 
 ## [0.6.0] - 2026-11-08
 ### Changed

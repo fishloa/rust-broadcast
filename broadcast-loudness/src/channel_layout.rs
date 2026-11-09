@@ -77,6 +77,17 @@ impl ChannelLayout {
         }
     }
 
+    pub(crate) fn validate(&self) -> Result<(), crate::Error> {
+        if let Self::Custom { weights } = self {
+            let usable = weights.iter().all(|w| w.is_finite() && *w >= 0.0)
+                && weights.iter().any(|w| *w > 0.0);
+            if !usable {
+                return Err(crate::Error::InvalidChannelWeights);
+            }
+        }
+        Ok(())
+    }
+
     /// Display name for this layout.
     #[must_use]
     pub fn name(&self) -> &'static str {

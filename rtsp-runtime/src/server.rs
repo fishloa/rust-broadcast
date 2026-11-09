@@ -172,9 +172,19 @@ impl ServerSession {
 
     fn handle_parsed(&mut self, request: Request<Body>) -> Result<(Vec<u8>, Vec<ServerEvent>)> {
         let method = request.method().clone();
-        let cseq = header_value(request.header(&headers::CSEQ))
-            .and_then(|s| s.trim().parse::<u32>().ok())
-            .ok_or(Error::MissingCSeq)?;
+        let Some(cseq) =
+            header_value(request.header(&headers::CSEQ)).and_then(|s| s.trim().parse::<u32>().ok())
+        else {
+            let resp = Response::builder(Version::V1_0, StatusCode::BadRequest)
+                .header(headers::SERVER, self.server_header.clone())
+                .build(Vec::new());
+            return Ok((serialize(&Message::from(resp))?, Vec::new()));
+        };
+
+        if !is_implemented(&method) {
+            let resp = self.build_response(StatusCode::NotImplemented, cseq, |b| b);
+            return Ok((serialize(&Message::from(resp))?, Vec::new()));
+        }
 
         if !self.session_header_matches(&method, header_value(request.header(&headers::SESSION))) {
             let resp = self.build_response(StatusCode::SessionNotFound, cseq, |b| b);
@@ -202,8 +212,7 @@ impl ServerSession {
         // SETUP: allocate session + negotiate transport.
         if method == Method::Setup {
             let chosen = header_value(request.header(&headers::TRANSPORT))
-                .and_then(|t| Transport::parse(t).ok())
-                .and_then(|t| t.first().cloned());
+                .and_then(Transport::first_supported);
             let Some(chosen) = chosen else {
                 let resp = self.build_response(StatusCode::UnsupportedTransport, cseq, |b| b);
                 return Ok((serialize(&Message::from(resp))?, events));
@@ -294,6 +303,22 @@ impl ServerSession {
     }
 }
 
+fn is_implemented(method: &Method) -> bool {
+    matches!(
+        method,
+        Method::Options
+            | Method::Describe
+            | Method::Announce
+            | Method::GetParameter
+            | Method::SetParameter
+            | Method::Setup
+            | Method::Play
+            | Method::Pause
+            | Method::Teardown
+            | Method::Record
+    )
+}
+
 fn header_value(h: Option<&headers::HeaderValue>) -> Option<&str> {
     h.map(|v| v.as_str())
 }
@@ -321,12 +346,13 @@ mod tests {
     }
 
     #[test]
-    fn a_request_without_cseq_is_rejected() {
+    fn a_request_without_cseq_is_answered_400() {
         let mut s = test_session();
-        let err = s
+        let (resp, events) = s
             .handle_request(&req("OPTIONS rtsp://h/s RTSP/1.0\n\n"))
-            .unwrap_err();
-        assert!(matches!(err, Error::MissingCSeq), "{err:?}");
+            .unwrap();
+        assert!(String::from_utf8_lossy(&resp).starts_with("RTSP/1.0 400"));
+        assert!(events.is_empty());
     }
 
     #[test]

@@ -258,3 +258,78 @@ fn a_loud_two_level_signal_inside_the_bound_keeps_its_loudness_range() {
         m.loudness_range()
     );
 }
+
+const RATE: u32 = 48_000;
+
+fn quiet_tone(i: usize) -> f32 {
+    (0.2 * (2.0 * core::f64::consts::PI * 997.0 * i as f64 / f64::from(RATE)).sin()) as f32
+}
+
+#[test]
+fn a_frame_rejected_on_a_later_channel_does_not_advance_earlier_channels_filter_state() {
+    let mut clean = LoudnessMeter::new(RATE, ChannelLayout::Stereo).unwrap();
+    let mut dirty = LoudnessMeter::new(RATE, ChannelLayout::Stereo).unwrap();
+    assert!(dirty.push_f32(&[0.9, f32::NAN]).is_err());
+    assert!(dirty.push_f64(&[0.9, f64::NAN]).is_err());
+    assert_eq!(dirty.frame_count(), 0);
+    for _ in 0..RATE as usize {
+        clean.push_f32(&[0.0, 0.0]).unwrap();
+        dirty.push_f32(&[0.0, 0.0]).unwrap();
+    }
+    clean.finish();
+    dirty.finish();
+    assert_eq!(clean.max_momentary_lufs(), dirty.max_momentary_lufs());
+}
+
+#[test]
+fn a_rejected_stereo_planar_slice_commits_no_frames() {
+    let n = 3 * RATE as usize;
+    let good: Vec<f32> = (0..n).map(quiet_tone).collect();
+    let mut bad = good.clone();
+    bad[1000] = f32::NAN;
+
+    let mut clean = LoudnessMeter::new(RATE, ChannelLayout::Stereo).unwrap();
+    let mut dirty = LoudnessMeter::new(RATE, ChannelLayout::Stereo).unwrap();
+    assert!(dirty.push_stereo_planar_f32(&bad, &good).is_err());
+    assert_eq!(dirty.frame_count(), 0);
+    clean.push_stereo_planar_f32(&good, &good).unwrap();
+    dirty.push_stereo_planar_f32(&good, &good).unwrap();
+    clean.finish();
+    dirty.finish();
+    assert_eq!(clean.max_momentary_lufs(), dirty.max_momentary_lufs());
+    assert_eq!(clean.max_short_term_lufs(), dirty.max_short_term_lufs());
+}
+
+#[test]
+fn a_rejected_true_peak_slice_commits_no_samples() {
+    let mut s: Vec<f32> = (0..64).map(quiet_tone).collect();
+    s[40] = f32::INFINITY;
+    let mut dirty = TruePeakMeter::new();
+    assert!(dirty.push_f32_slice(&s).is_err());
+    let wide: Vec<f64> = s.iter().map(|&v| f64::from(v)).collect();
+    assert!(dirty.push_f64_slice(&wide).is_err());
+    let mut clean = TruePeakMeter::new();
+    assert_eq!(clean.finish(), dirty.finish());
+}
+
+#[test]
+fn custom_weights_that_are_non_finite_negative_or_all_zero_are_rejected() {
+    static NAN: [f64; 2] = [1.0, f64::NAN];
+    static INF: [f64; 1] = [f64::INFINITY];
+    static NEGATIVE: [f64; 2] = [1.0, -1.0];
+    static ZEROS: [f64; 2] = [0.0, 0.0];
+    static EMPTY: [f64; 0] = [];
+    for weights in [&NAN[..], &INF, &NEGATIVE, &ZEROS, &EMPTY] {
+        assert_eq!(
+            LoudnessMeter::new(RATE, ChannelLayout::Custom { weights }).err(),
+            Some(Error::InvalidChannelWeights),
+            "{weights:?}"
+        );
+    }
+}
+
+#[test]
+fn custom_weights_with_a_zero_channel_and_a_positive_one_are_accepted() {
+    static LFE_LAST: [f64; 2] = [1.0, 0.0];
+    assert!(LoudnessMeter::new(RATE, ChannelLayout::Custom { weights: &LFE_LAST }).is_ok());
+}

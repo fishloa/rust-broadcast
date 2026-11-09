@@ -666,7 +666,8 @@ impl LoudnessMeter {
     /// Annex 1 tabulated coefficients to within floating‑point epsilon.
     ///
     /// Returns `Error::InvalidSampleRate` if `sample_rate < MIN_SAMPLE_RATE` or
-    /// `sample_rate > MAX_SAMPLE_RATE`.
+    /// `sample_rate > MAX_SAMPLE_RATE`, and `Error::InvalidChannelWeights` for a
+    /// `ChannelLayout::Custom` whose weights are non-finite, negative or all zero.
     ///
     /// `layout` — channel configuration with per‑channel weights.
     ///
@@ -680,6 +681,7 @@ impl LoudnessMeter {
         if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate) {
             return Err(crate::Error::InvalidSampleRate { got: sample_rate });
         }
+        layout.validate()?;
         let (stage1, stage2) = k_weighting_coeffs(sample_rate)?;
         let coeffs = BiquadCoeffsPair { stage1, stage2 };
         let channel_count = layout.channel_count();
@@ -849,10 +851,12 @@ impl LoudnessMeter {
                 got: channels.len(),
             });
         }
+        for (i, &sample) in channels.iter().enumerate() {
+            self.check_sample(self.frame_count, i, f64::from(sample))?;
+        }
         let mut sum_sq = 0.0f64;
         for (i, &sample) in channels.iter().enumerate() {
             let sample_f64 = f64::from(sample);
-            self.check_sample(self.frame_count, i, sample_f64)?;
             let weight = self.layout.weight(i);
             if weight == 0.0 {
                 continue;
@@ -876,9 +880,11 @@ impl LoudnessMeter {
                 got: channels.len(),
             });
         }
-        let mut sum_sq = 0.0f64;
         for (i, &sample) in channels.iter().enumerate() {
             self.check_sample(self.frame_count, i, sample)?;
+        }
+        let mut sum_sq = 0.0f64;
+        for (i, &sample) in channels.iter().enumerate() {
             let weight = self.layout.weight(i);
             if weight == 0.0 {
                 continue;
@@ -937,10 +943,12 @@ impl LoudnessMeter {
             });
         }
         for (frame_idx, (&l, &r)) in left.iter().zip(right.iter()).enumerate() {
+            self.check_sample(self.frame_count + frame_idx, 0, f64::from(l))?;
+            self.check_sample(self.frame_count + frame_idx, 1, f64::from(r))?;
+        }
+        for (&l, &r) in left.iter().zip(right.iter()) {
             let l_f64 = f64::from(l);
             let r_f64 = f64::from(r);
-            self.check_sample(self.frame_count + frame_idx, 0, l_f64)?;
-            self.check_sample(self.frame_count + frame_idx, 1, r_f64)?;
             let weight_l = self.layout.weight(0);
             let weight_r = self.layout.weight(1);
             let mut sum_sq = 0.0;
