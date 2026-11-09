@@ -4269,12 +4269,8 @@ mod tests {
             hls_part: Some(0),
             ..Default::default()
         };
-        let satisfied = resolve_with_deadline(
-            &origin,
-            playlist_request(query),
-            0,
-            COLD_HOLD_DEADLINE_NS,
-        );
+        let satisfied =
+            resolve_with_deadline(&origin, playlist_request(query), 0, COLD_HOLD_DEADLINE_NS);
         assert!(
             matches!(
                 satisfied,
