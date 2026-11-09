@@ -65,6 +65,13 @@ pub struct AvcPps(pub Vec<u8>);
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AvcSpsExt(pub Vec<u8>);
 
+/// One AVC NAL unit of an `AVCParameterSample` (ISO/IEC 14496-15:2017
+/// §5.4.3.2) — raw bytes, NAL header included: a parameter set or a declarative
+/// SEI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct AvcNalUnit(pub Vec<u8>);
+
 // ---------------------------------------------------------------------------
 // HEVC: typed NAL array entry
 // ---------------------------------------------------------------------------

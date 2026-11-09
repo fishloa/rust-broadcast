@@ -1249,6 +1249,9 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
         SampleEntryVariant::Unknown(entry) => Err(Error::UnsupportedSampleEntry {
             fourcc: String::from_utf8_lossy(&entry.box_type).into_owned(),
         }),
+        SampleEntryVariant::AvcParameterSet(entry) => Err(Error::UnsupportedSampleEntry {
+            fourcc: String::from_utf8_lossy(&entry.entry.codec_type).into_owned(),
+        }),
     }
 }
 
