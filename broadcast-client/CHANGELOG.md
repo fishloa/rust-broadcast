@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- The join-point screen compares audio ends with the video join point wrap-safely (`clock33::pcr_signed_distance`). transmux unrolls each PID's PTS from its own first value, so a 2^33 wrap between the first audio and the first video PES put audio a whole wrap above video, every pre-join audio end passed, and `Start` came up to the audio-behind-video skew early.
+- Every sample handed to the host has its end reported to the buffer controller in the same call. Samples released by `on_closed` (the TS demux tail, the RTSP depacketiser flush), `poll` (RTSP/RTMP timers, the TS track hold), `reconnect` and `next_event` used to be reported only at the next `on_data` chunk, so the controller judged the lead short of what the host held.
+- An RTSP or RTMP connection loss is hinted to the buffer controller as `SourceEnded` / `SourceError`, as the TS path already did; a starvation right after the close was charged to the stall memory as `DataArriving`, ratcheting the target. The hint is sent only when the source will announce a `Discontinuity` (and so `Reconnected`) before the next connection's media.
+- A live connection after a finite (VOD) one starts under the same rules as the first: the new controller keeps the previous controller's stall memory (aged by the time in between) and the pending-track placeholder and the explicit-rendered-set start hold apply again (the session's "started" flag stayed set, and the seed was lost).
 
 ## [0.4.0] - 2026-11-08
 ### Added

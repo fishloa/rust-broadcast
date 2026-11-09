@@ -3,6 +3,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
+use broadcast_common::clock33::pcr_signed_distance;
 use broadcast_common::timescale::{Rounding, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
@@ -148,6 +149,7 @@ pub(crate) struct Feeder {
     config: ControllerConfig,
     initial_seed: Option<StallMemorySnapshot>,
     seed: Option<StallMemorySnapshot>,
+    seed_at_us: Option<u64>,
     controller: Option<BufferController>,
     finite: bool,
     rendered: BTreeSet<TrackId>,
@@ -190,6 +192,7 @@ impl Feeder {
             config,
             initial_seed: seed,
             seed,
+            seed_at_us: None,
             controller: None,
             finite: false,
             rendered: BTreeSet::new(),
@@ -235,10 +238,19 @@ impl Feeder {
         self.initial_seed
     }
 
+    /// A finite connection drops the controller; a later live connection builds a new one that
+    /// starts from this one's stall memory and under the same first-start rules.
     pub(crate) fn set_finite(&mut self) {
         self.finite = true;
-        self.controller = None;
+        if let Some(c) = self.controller.take() {
+            self.seed = Some(c.snapshot_memory());
+            self.seed_at_us = Some(self.log.last_now());
+        }
         self.pending_registered = false;
+        self.started = false;
+        self.first_media_us = None;
+        self.holding = false;
+        self.cap_notice_emitted = false;
     }
 
     pub(crate) fn has_audio(&self) -> bool {
@@ -571,7 +583,7 @@ impl Feeder {
         let first = self.first_seen.get(&t).copied().unwrap_or(end);
         self.arm_origin(first, timescale);
         let end_27 = self.conv(end, timescale);
-        if join_pts.is_none_or(|j| end_27 > j) {
+        if join_pts.is_none_or(|j| pcr_signed_distance(j, end_27) > 0) {
             self.pending_ends.insert(t, end_27);
         }
     }
@@ -660,12 +672,16 @@ impl Feeder {
     }
 
     fn ensure_controller(&mut self) {
-        if self.finite {
+        if self.finite || self.controller.is_some() {
             return;
         }
-        if self.controller.is_none()
-            && let Ok(mut c) = BufferController::new(self.controller_config(), self.seed.take())
-        {
+        let now = self.log.last_now();
+        let seed = self
+            .seed
+            .map(|s| s.aged(self.seed_at_us.map_or(0, |at| now.saturating_sub(at))));
+        if let Ok(mut c) = BufferController::new(self.controller_config(), seed) {
+            self.seed = None;
+            self.seed_at_us = None;
             for t in &self.rendered {
                 c.register_track(t.value());
                 rec!(
@@ -681,7 +697,7 @@ impl Feeder {
         }
     }
 
-    fn flush_pending(&mut self, now_us: u64) {
+    pub(crate) fn flush_pending(&mut self, now_us: u64) {
         if self.finite || self.controller.is_none() {
             return;
         }
@@ -933,6 +949,42 @@ mod tests {
         assert_eq!(join, Some(JoinDecision::Keep));
         f.on_sample(id, &next, join);
         assert_eq!(f.pending_ends.get(&id), Some(&u64::MAX));
+    }
+
+    #[test]
+    fn a_live_connection_after_a_finite_one_starts_under_the_first_start_rules() {
+        const PEAK_US: u64 = 2_000_000;
+        const CHUNK: usize = 1316;
+        const LATER_US: u64 = 1_000_000;
+        let st = streams();
+        let mut f = Feeder::new(
+            ControllerConfig::default(),
+            Some(StallMemorySnapshot::new(PEAK_US, 0)),
+            crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
+            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
+        );
+        f.set_recording(true, usize::MAX);
+        f.on_chunk(0, CHUNK, None);
+        f.started = true;
+        f.set_finite();
+        f.new_connection();
+        f.set_expecting(LATER_US, true, false);
+        f.on_track_added(LATER_US, &st.audio.0);
+        f.on_sample(st.audio.0.track_id, &st.audio.1[0], None);
+        f.on_chunk(LATER_US, CHUNK, None);
+        assert_eq!(
+            f.stall_memory().peak_us,
+            PEAK_US,
+            "the live controller after a finite connection lost the stall memory"
+        );
+        let placeholder = f
+            .log
+            .drain()
+            .any(|i| matches!(i, Input::Register { track, .. } if track == PENDING_TRACK_KEY));
+        assert!(
+            placeholder,
+            "the live controller after a finite connection skipped the pending-track placeholder"
+        );
     }
 
     #[test]

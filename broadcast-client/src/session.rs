@@ -295,6 +295,7 @@ impl Session {
                 }
                 self.drain_source();
             }
+            self.settle_buffer();
         }
         while let Some(mut action) = self.actions.pop_front() {
             if matches!(action, Action::WakeAt(at) if at <= now_us) {
@@ -313,6 +314,7 @@ impl Session {
         }
         if !self.closed && self.adaptive.is_none() && self.rtsp.is_none() && self.rtmp.is_none() {
             self.drain_source();
+            self.settle_buffer();
         }
         self.events.pop_front()
     }
@@ -550,16 +552,29 @@ impl Session {
         if self.closed {
             return;
         }
+        let hint = if error.is_some() {
+            Hint::SourceError
+        } else {
+            Hint::SourceEnded
+        };
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
-            r.on_closed(conn, now_us);
+            let ended = r.on_closed(conn, now_us);
             self.flush_rtsp();
+            self.settle_buffer();
+            if ended {
+                self.hint(hint);
+            }
             return;
         }
         if let Some(r) = self.rtmp.as_mut() {
             self.now_us = now_us;
-            r.on_closed(conn, error.as_deref(), now_us);
+            let ended = r.on_closed(conn, error.as_deref(), now_us);
             self.flush_rtmp();
+            self.settle_buffer();
+            if ended {
+                self.hint(hint);
+            }
             return;
         }
         if let Some(h) = self.adaptive.as_mut() {
@@ -583,18 +598,10 @@ impl Session {
             self.live_conn = None;
         }
         self.now_us = now_us;
-        let hint = if error.is_some() {
-            Hint::SourceError
-        } else {
-            Hint::SourceEnded
-        };
         self.buffer.hint(now_us, hint);
         self.source.on_closed(error, now_us);
         self.drain_source();
-        let evs = self.buffer.drain();
-        for e in evs {
-            self.events.push_back(e);
-        }
+        self.settle_buffer();
     }
 
     /// The host established the TCP connection requested by [`Action::TcpConnect`] (RTSP).
@@ -771,11 +778,13 @@ impl Session {
         if let Some(r) = self.rtsp.as_mut() {
             r.reconnect(now_us);
             self.flush_rtsp();
+            self.settle_buffer();
             return;
         }
         if let Some(r) = self.rtmp.as_mut() {
             r.reconnect(now_us);
             self.flush_rtmp();
+            self.settle_buffer();
             return;
         }
         if let Some(h) = self.adaptive.as_mut() {
@@ -785,6 +794,7 @@ impl Session {
         }
         self.source.reconnect(now_us);
         self.drain_source();
+        self.settle_buffer();
     }
 
     /// Switch to another variant of the last [`Event::Variants`]: an HLS variant of the master
@@ -1112,6 +1122,15 @@ impl Session {
         for spec in specs {
             self.buffer.on_track_added(self.now_us, spec);
         }
+    }
+
+    /// Every sample handed to the host has its end reported to the controller in the same call;
+    /// `on_data` does it at its chunk boundary, every other entry point that releases samples
+    /// ends here.
+    fn settle_buffer(&mut self) {
+        self.buffer.flush_pending(self.now_us);
+        let evs = self.buffer.drain();
+        self.events.extend(evs);
     }
 
     fn buffer_reconnected(&mut self) {

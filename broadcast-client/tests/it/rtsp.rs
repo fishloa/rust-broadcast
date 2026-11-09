@@ -1092,3 +1092,30 @@ fn garbage_after_play_reconnects_at_once() {
     );
     assert!(reconnecting_attempts(&host.events()).is_empty());
 }
+
+/// A lost RTSP connection is a source outage for the buffer controller, not starvation with data
+/// arriving: the close is hinted as `SourceEnded` / `SourceError`.
+#[test]
+fn a_closed_connection_is_hinted_to_the_buffer() {
+    use broadcast_client::{BufferInput, Hint};
+
+    for (error, want) in [
+        (None, Hint::SourceEnded),
+        (Some("reset".to_string()), Hint::SourceError),
+    ] {
+        let mut config = Config::default();
+        config.record_buffer_inputs = true;
+        let mut host = connected(config, server());
+        host.deliver_all(&fixture().frames());
+        let conn = host.conn.expect("live connection");
+        let _ = host.session.drain_buffer_inputs();
+        host.session.on_closed(conn, error, host.now);
+        let inputs: Vec<BufferInput> = host.session.drain_buffer_inputs().collect();
+        assert!(
+            inputs
+                .iter()
+                .any(|i| matches!(i, BufferInput::Hint { hint, .. } if *hint == want)),
+            "close sent no {want:?} hint: {inputs:?}"
+        );
+    }
+}

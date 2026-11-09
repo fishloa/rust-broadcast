@@ -575,3 +575,52 @@ fn caller_reconnect_restarts_the_connection() {
         "the new connection plays"
     );
 }
+
+/// A lost RTMP connection is a source outage for the buffer controller (`SourceEnded` /
+/// `SourceError`), not starvation with data arriving; the reconnect clears it with `Reconnected`
+/// before the new connection's first media.
+#[test]
+fn a_closed_connection_is_hinted_to_the_buffer_and_cleared_on_reconnect() {
+    use broadcast_client::{BufferInput, Hint};
+
+    for (error, want) in [
+        (None, Hint::SourceEnded),
+        (Some("reset"), Hint::SourceError),
+    ] {
+        let mut config = rtmp_config();
+        config.record_buffer_inputs = true;
+        let mut h = RtmpHost::new(URL, config, peer_config());
+        connect_and_play(&mut h);
+        h.play_all();
+        h.now = 10 * SEC;
+        let _ = h.session.drain_buffer_inputs();
+        h.peer_closes(error);
+        assert!(h.peer.as_ref().unwrap().is_playing());
+        h.play_all();
+        let inputs: Vec<BufferInput> = h.session.drain_buffer_inputs().collect();
+        let close = inputs
+            .iter()
+            .position(|i| matches!(i, BufferInput::Hint { hint, .. } if *hint == want));
+        let reconnected = inputs.iter().position(|i| {
+            matches!(
+                i,
+                BufferInput::Hint {
+                    hint: Hint::Reconnected,
+                    ..
+                }
+            )
+        });
+        assert!(close.is_some(), "close sent no {want:?} hint: {inputs:?}");
+        let first_media = close.and_then(|c| {
+            inputs
+                .iter()
+                .skip(c)
+                .position(|i| matches!(i, BufferInput::TrackMedia { .. }))
+                .map(|p| p + c)
+        });
+        assert!(
+            close < reconnected && reconnected < first_media,
+            "close hint {close:?}, Reconnected {reconnected:?}, first new media {first_media:?}"
+        );
+    }
+}

@@ -253,9 +253,11 @@ impl RtmpSource {
         self.pump_policy(now_us);
     }
 
-    pub(crate) fn on_closed(&mut self, conn: u32, error: Option<&str>, now_us: u64) {
+    /// Whether the live connection ended and the next connection's media will be preceded by
+    /// [`Event::Discontinuity`].
+    pub(crate) fn on_closed(&mut self, conn: u32, error: Option<&str>, now_us: u64) -> bool {
         if self.closed || self.ended || self.conn != Some(conn) {
-            return;
+            return false;
         }
         self.now_us = now_us;
         self.conn = None;
@@ -267,6 +269,7 @@ impl RtmpSource {
             self.policy.on_eof(now_us / MICROS_PER_MILLI);
         }
         self.pump_policy(now_us);
+        self.connection_count > 0
     }
 
     pub(crate) fn reconnect(&mut self, now_us: u64) {
