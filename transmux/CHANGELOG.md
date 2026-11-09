@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `LlHlsSegmenter::set_start_time_ns` and `StreamingTsHlsSegmenter::set_start_time_ns` start the decode clock (`tfdt`, TS PES times) at a given time instead of zero, so a segmenter for a reconnected source continues the previous run's timeline.
 - `SubSampleInformationBoxV2` and `SubSampleReferenceTableBox` (`ssrt`): `subs` version 2 and the new `ssrt` box of ISO/IEC 14496-12:2026 §8.7.7.2 / §8.7.10, byte-exact round trip (#1905).
+- `DataEntry` (`url `, `urn `, `imdt`, `snim`, plus `Other` for an unmodelled type such as QuickTime `alis`) with `DataEntryUrnBox`, `DataEntryImdaBox` and `DataEntrySeqNumImdaBox` (ISO/IEC 14496-12:2026 §8.7.2.2) (#1908).
 
 ### Fixed
 - A signalled TS time-base discontinuity lifts every stream of the program by one common offset (the first stream to reach the new base fixes it), so the new base's own A/V skew survives the splice; each PID used to be lifted independently to its own last stamp plus one period, replacing the new skew with the old one (up to one frame). A stream the shared offset would not keep monotonic falls back to its own lift.
@@ -16,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SubSampleInformationBox` rejects `subs` version 2 with a typed error instead of silently reading it with the version 0 layout; parse it with `SubSampleInformationBoxV2` (#1905).
 - `SampleGroupDescriptionBox` reads and writes `sgpd` version 2 and 3 per ISO/IEC 14496-12:2026 §8.9.3.2: `default_length` for every version >= 1 plus `default_group_description_index` for version >= 2, so `entry_count` and the entries are read from the right offset; per-entry `description_length` applies to every version >= 1. `SampleGroupDescriptionBox::is_essential` reports a version 3 (essential) group (#1906).
 - `SampleAuxInfoSizesBox` reads and writes `saiz` versions 1 and 2 (16- and 32-bit `default_sample_info_size` / `sample_info_size[]`, ISO/IEC 14496-12:2026 §8.7.8.2) instead of reading every version as 8-bit sizes; a version above 2 is rejected with a typed error (#1907).
+- `DataReferenceBox` keeps each entry's four-CC: a `urn `, `imdt` or `snim` entry was parsed as `url ` and re-serialized with the type rewritten, so the round trip was not byte-identical and the entry changed meaning (#1908).
 ### Added
 - `InputDegradation::Scrambled` (on the `#[non_exhaustive]` enum, so not breaking): reported once per payload packet with `transport_scrambling_control != 0` on a PES-carried PID.
 
@@ -31,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **BREAKING:** `SampleGroupDescriptionBox::default_sample_description_index` is renamed `default_group_description_index`, the 2026 name; the old name read as a sample-entry index, which is a different thing (#1906).
 - **BREAKING:** `SampleAuxInfoSizesBox::default_sample_info_size` and `sample_info_sizes` are `u32` / `Vec<u32>` (were `u8` / `Vec<u8>`) so one struct holds the 8-, 16- and 32-bit forms of `saiz` versions 0 to 2 (#1907).
+- **BREAKING:** `DataReferenceBox::entries` is `Vec<DataEntry>` (was `Vec<DataEntryUrlBox>`), so an entry other than `url ` can be held without being rewritten; wrap an existing url entry as `DataEntry::Url(..)` (#1908).
 
 ## [0.30.0] - 2026-11-07
 ### Added

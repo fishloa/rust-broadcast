@@ -28,7 +28,7 @@ use crate::dts::DDTS_FOURCC;
 use crate::error::{Error, Result};
 use crate::flac::DFLA_FOURCC;
 use crate::init_segment::{
-    Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
+    Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntry, DataEntryUrlBox, DataInformationBox,
     DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox,
     MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox, MovieHeaderBox,
     Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
@@ -650,11 +650,11 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             version: 0,
             flags: 0,
             // A single self-contained URL entry (flags bit 0 = media in this file).
-            entries: vec![DataEntryUrlBox {
+            entries: vec![DataEntry::Url(DataEntryUrlBox {
                 version: 0,
                 flags: 1,
                 location: vec![],
-            }],
+            })],
         }),
         vec![],
     );
