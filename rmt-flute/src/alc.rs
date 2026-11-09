@@ -190,6 +190,7 @@ mod tests {
     fn alc_packet_round_trip() {
         let (cci, tsi) = lct_with_tsi();
         let lct = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: PSI_SPI,
             close_session: false,
@@ -219,6 +220,7 @@ mod tests {
     fn data_less_packet_has_no_fpid_or_payload() {
         let (cci, tsi) = lct_with_tsi();
         let lct = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: 0,
             close_session: true,
@@ -256,6 +258,7 @@ mod tests {
         let (cci, tsi) = lct_with_tsi();
         let mk = |p: &[u8]| {
             let lct = LctHeader {
+                reserved: 0,
                 version: LCT_VERSION,
                 psi: 0,
                 close_session: false,

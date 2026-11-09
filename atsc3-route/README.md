@@ -48,6 +48,7 @@ let cci = [0u8; 4];
 let tsi = 3000u32.to_be_bytes();
 let toi = 6034u32.to_be_bytes();
 let lct = rmt_flute::LctHeader {
+    reserved: 0,
     version: rmt_flute::LCT_VERSION,
     psi: rmt_flute::PSI_SPI,
     close_session: false,

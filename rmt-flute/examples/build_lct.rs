@@ -26,6 +26,7 @@ fn main() {
     let ext = ext_fdt.to_extension(&mut fdt_scratch).unwrap();
 
     let lct = LctHeader {
+        reserved: 0,
         version: LCT_VERSION,
         psi: 0,
         close_session: false,

@@ -211,7 +211,18 @@ impl ExtTime {
 
     /// Encode the EXT_TIME content (Use field + present time values) into a
     /// freshly allocated buffer suitable for [`HeaderExtension::content`].
-    pub fn to_content(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidField`] when `sct_low` is set without `sct_high`
+    /// (RFC 5651 §5.2.2), the combination [`ExtTime::parse`] rejects.
+    pub fn to_content(&self) -> Result<Vec<u8>> {
+        if self.sct_low.is_some() && self.sct_high.is_none() {
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "EXT_TIME Use",
+                reason: "SCT-Low set without SCT-High",
+            }));
+        }
         let mut out = Vec::with_capacity(self.serialized_len());
         out.extend_from_slice(&self.use_field().to_be_bytes());
         // Pad the Use field's word to 4 bytes? No — RFC 5651 packs the Use into
@@ -226,14 +237,18 @@ impl ExtTime {
             out.extend_from_slice(&v.to_be_bytes());
         }
         out.extend_from_slice(&self.trailing);
-        out
+        Ok(out)
     }
 
     /// Build a generic [`HeaderExtension`] (HET = 2) carrying this EXT_TIME,
     /// borrowing from `scratch` (which must outlive the returned extension).
-    pub fn to_extension<'a>(&self, scratch: &'a mut Vec<u8>) -> HeaderExtension<'a> {
-        *scratch = self.to_content();
-        HeaderExtension::new(HET_EXT_TIME, scratch)
+    ///
+    /// # Errors
+    ///
+    /// As [`ExtTime::to_content`].
+    pub fn to_extension<'a>(&self, scratch: &'a mut Vec<u8>) -> Result<HeaderExtension<'a>> {
+        *scratch = self.to_content()?;
+        Ok(HeaderExtension::new(HET_EXT_TIME, scratch))
     }
 }
 
@@ -268,7 +283,7 @@ mod tests {
         };
         // Use = SCT_HIGH | SCT_LOW = 0xC000. Content = 2 + 8 = 10 bytes.
         assert_eq!(t.use_field(), 0xC000);
-        let content = t.to_content();
+        let content = t.to_content().unwrap();
         assert_eq!(content.len(), 10);
         assert_eq!(&content[0..2], &[0xC0, 0x00]);
         assert_eq!(&content[2..6], &[0x11, 0x22, 0x33, 0x44]);
@@ -279,7 +294,7 @@ mod tests {
 
         // As a whole extension: HET=2, HEL = (2 + 2 + 8)/4 = 3.
         let mut scratch = vec![];
-        let ext = t.to_extension(&mut scratch);
+        let ext = t.to_extension(&mut scratch).unwrap();
         assert_eq!(ext.het, 2);
         assert_eq!(ext.serialized_len(), 12);
         assert_eq!(ext.hel(), 3);
@@ -296,7 +311,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(t.use_field(), 0xF000 | 0x00AB);
-        let content = t.to_content();
+        let content = t.to_content().unwrap();
         let re = ExtTime::parse(&content).unwrap();
         assert_eq!(re, t);
         // Values follow in order.
@@ -316,6 +331,37 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn ext_time_serialize_rejects_sct_low_without_high() {
+        let t = ExtTime {
+            sct_low: Some(1),
+            ..Default::default()
+        };
+        assert!(matches!(t.to_content(), Err(Error::InvalidField(..))));
+        let mut scratch = vec![];
+        assert!(matches!(
+            t.to_extension(&mut scratch),
+            Err(Error::InvalidField(..))
+        ));
+    }
+
+    #[test]
+    fn ext_time_serialize_output_always_parses() {
+        for mask in 0u8..16 {
+            let t = ExtTime {
+                sct_high: (mask & 1 != 0).then_some(1),
+                sct_low: (mask & 2 != 0).then_some(2),
+                ert: (mask & 4 != 0).then_some(3),
+                slc: (mask & 8 != 0).then_some(4),
+                ..Default::default()
+            };
+            match t.to_content() {
+                Ok(content) => assert_eq!(ExtTime::parse(&content).unwrap(), t),
+                Err(_) => assert!(t.sct_low.is_some() && t.sct_high.is_none()),
+            }
+        }
+    }
+
     // Regression (audit run-09 RMT-W1): non-zero reserved-by-LCT Use bits
     // are RFC 5651 sender-MUST-zero / receiver-MUST-ignore, not
     // receiver-MUST-reject — `parse` must accept them (preserving them for
@@ -328,7 +374,7 @@ mod tests {
         assert_eq!(t.ert, Some(0x2A));
         assert_eq!(t.use_reserved, 0x0300);
         assert_eq!(t.use_field(), 0x2300);
-        assert_eq!(t.to_content(), content);
+        assert_eq!(t.to_content().unwrap(), content);
     }
 
     // Regression (audit run-09 RMT-W1): a HEL larger than the values the
@@ -341,6 +387,6 @@ mod tests {
         let t = ExtTime::parse(&content).unwrap();
         assert_eq!(t.slc, Some(7));
         assert_eq!(t.trailing, vec![0xDE, 0xAD, 0xBE, 0xEF]);
-        assert_eq!(t.to_content(), content);
+        assert_eq!(t.to_content().unwrap(), content);
     }
 }

@@ -32,6 +32,10 @@ pub const FIXED_HEADER_LEN: usize = 4;
 const FLAG_A: u16 = 0x0002;
 /// Bit mask for the `B` (Close Object) flag in the first header word.
 const FLAG_B: u16 = 0x0001;
+/// Position of the two `Res` bits (2..3) in the first header word.
+const RES_SHIFT: u16 = 2;
+/// Mask of the two `Res` bits once shifted down.
+const RES_MASK: u16 = 0x03;
 
 /// A decoded LCT header (RFC 5651 §5.1).
 ///
@@ -45,6 +49,9 @@ pub struct LctHeader<'a> {
     pub version: u8,
     /// Protocol-Specific Indication (`PSI`, 2 bits). Meaning is per instantiation.
     pub psi: u8,
+    /// The two reserved `Res` bits (RFC 5651 §5.1), kept so a header with
+    /// them set re-serializes byte-exact. Senders write 0.
+    pub reserved: u8,
     /// Close Session flag (`A`).
     pub close_session: bool,
     /// Close Object flag (`B`).
@@ -196,7 +203,7 @@ impl<'a> LctHeader<'a> {
         let s = (w >> 7) as u8 & 0x01;
         let o = (w >> 5) as u8 & 0x03;
         let h = (w >> 4) as u8 & 0x01;
-        // Res = bits 2..3 (ignored). A = bit 1, B = bit 0.
+        let reserved = ((w >> RES_SHIFT) & RES_MASK) as u8;
         let close_session = (w & FLAG_A) != 0;
         let close_object = (w & FLAG_B) != 0;
         let hdr_len = data[2];
@@ -234,6 +241,7 @@ impl<'a> LctHeader<'a> {
 
         Ok((
             LctHeader {
+                reserved,
                 version,
                 psi,
                 close_session,
@@ -255,6 +263,7 @@ impl<'a> LctHeader<'a> {
         need_out(out, total)?;
         broadcast_common::len::fit_bits(self.version as u64, 4, "version")?;
         broadcast_common::len::fit_bits(self.psi as u64, 2, "PSI")?;
+        broadcast_common::len::fit_bits(self.reserved as u64, 2, "Res")?;
         // Validate the flag-derived widths (also yields C/S/O/H).
         let (c, s, o, h) = flags_from_lengths(self.cci.len(), self.tsi.len(), self.toi.len())?;
 
@@ -268,7 +277,7 @@ impl<'a> LctHeader<'a> {
         broadcast_common::len::fit_bits(words as u64, 8, "HDR_LEN")?;
 
         // Pack the first 16-bit word MSB-first:
-        // V(4) C(2) PSI(2) S(1) O(2) H(1) Res(2)=0 A(1) B(1).
+        // V(4) C(2) PSI(2) S(1) O(2) H(1) Res(2) A(1) B(1).
         let mut w: u16 = 0;
         w |= (self.version as u16 & 0x0F) << 12;
         w |= (c as u16 & 0x03) << 10;
@@ -276,7 +285,7 @@ impl<'a> LctHeader<'a> {
         w |= (s as u16 & 0x01) << 7;
         w |= (o as u16 & 0x03) << 5;
         w |= (h as u16 & 0x01) << 4;
-        // Res (bits 2..3) = 0.
+        w |= (self.reserved as u16 & RES_MASK) << RES_SHIFT;
         if self.close_session {
             w |= FLAG_A;
         }
@@ -322,6 +331,7 @@ mod tests {
     fn minimal_header_exact_wire_bytes() {
         let cci = [0x00u8, 0x00, 0x00, 0x01];
         let hdr = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: 0,
             close_session: false,
@@ -361,6 +371,7 @@ mod tests {
         let cci = [0u8; 4];
         let toi = [0u8; 16]; // o = 4, which the 2-bit O field cannot express
         let hdr = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: 0,
             close_session: false,
@@ -391,6 +402,7 @@ mod tests {
         let tsi = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06]; // 4*1 + 2*1 = 6 bytes
         let toi = [0x10u8, 0x20, 0x30, 0x40, 0x50, 0x60]; // 4*1 + 2*1 = 6 bytes
         let hdr = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: 0b10,
             close_session: true,
@@ -439,6 +451,7 @@ mod tests {
         let tsi = [0xABu8, 0xCD];
         let toi = [0x12u8, 0x34];
         let hdr = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: 0,
             close_session: false,
@@ -467,6 +480,7 @@ mod tests {
         let mk = |cp: u8| {
             let mut out = vec![0u8; 8];
             LctHeader {
+                reserved: 0,
                 version: LCT_VERSION,
                 psi: 0,
                 close_session: false,
@@ -500,6 +514,7 @@ mod tests {
             HeaderExtension::new(200, &ext_content),
         ];
         let hdr = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: 0,
             close_session: false,
@@ -525,6 +540,7 @@ mod tests {
     fn rejects_bad_cci_length() {
         let cci = [0u8; 3]; // not a multiple of 4
         let hdr = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: 0,
             close_session: false,
@@ -549,6 +565,7 @@ mod tests {
         let tsi = [0u8; 2]; // H=1
         let toi = [0u8; 4]; // H=0
         let hdr = LctHeader {
+            reserved: 0,
             version: LCT_VERSION,
             psi: 0,
             close_session: false,
