@@ -779,7 +779,7 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
     let spec = TrackSpec::new(track_id, timescale, config);
     // Overlay container-level display geometry (pasp / colr nclx) from the
     // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2026
-    // §12.1.4 (pasp) / §12.1.5 (colr). AVC/HEVC entries only; see
+    // §12.1.4.1 (pasp) / §12.1.5.1 (colr). AVC/HEVC entries only; see
     // `overlay_sample_entry_display`.
     let spec = match entry {
         SampleEntryVariant::Avc1(e) => overlay_sample_entry_display(spec, &e.extra_boxes),
@@ -792,12 +792,12 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
 /// Overlay container-level display geometry (a `pasp` / `colr nclx` box found
 /// in an AVC/HEVC sample entry) onto an SPS-derived [`DisplayGeometry`].
 ///
-/// ISO/IEC 14496-12:2026 §12.1.4 (`pasp`) / §12.1.5 (`colr`): `colr nclx`
-/// overrides the bitstream colour description (§12.1.5.1); `pasp` fills in an
-/// unspecified VUI sample aspect ratio. On a disagreement between two
-/// *specified* sample aspect ratios the VUI SAR is kept, although §12.1.4.1 gives
-/// `pasp` precedence over codec-level structures (issue #1909).
-/// Returns the input unchanged when neither box applies.
+/// ISO/IEC 14496-12:2026 §12.1.4.1 (`pasp`) / §12.1.5.1 (`colr`)
+/// (private/specs-verified/mpeg/isobmff/sample-entry-ext.md): both boxes
+/// over-ride the declarations in the video codec's own structures. `pasp`
+/// replaces the VUI sample aspect ratio, specified or not; `colr nclx`
+/// replaces the bitstream colour description. Returns the input unchanged when
+/// neither box applies.
 pub(crate) fn overlay_sample_entry_geometry(
     display: Option<DisplayGeometry>,
     config: &CodecConfig,
@@ -806,7 +806,7 @@ pub(crate) fn overlay_sample_entry_geometry(
     // First `pasp` in entry order.
     let pasp = extra_boxes
         .iter()
-        .filter(|b| b.box_type == *b"pasp")
+        .filter(|b| b.box_type == PASP_FOURCC)
         .find_map(|b| PixelAspectRatioBox::parse(&b.data).ok());
 
     // First `colr` whose colour_type is 'nclx' (§12.1.5.1: listed from most to
@@ -866,9 +866,8 @@ pub(crate) fn overlay_sample_entry_geometry(
         .and_then(|g| g.video_signal.map(|v| v.video_format));
     let mut display = display.unwrap_or_else(|| DisplayGeometry::new(visual_w, visual_h, None));
 
-    // pasp only fills in; two specified ratios that disagree keep the VUI one.
     if let Some(ratio) = pasp_ratio
-        && display.sample_aspect_ratio().is_none()
+        && ratio.sample_aspect_ratio().map(<(u16, u16)>::from) != display.sample_aspect_ratio()
     {
         display.aspect_ratio = Some(ratio);
     }
@@ -946,8 +945,16 @@ fn track_entry_inband_and_extras(trak: &TrackBox) -> (bool, Vec<crate::sample_en
     }
 }
 
+const PASP_FOURCC: [u8; 4] = *b"pasp";
+
 /// Tag an in-band (avc3/avc4/hev1) track's samples with per-AU display state,
 /// mirroring the TS demux path (`SpsTracker`).
+///
+/// The sample entry's `pasp` over-rides the sample aspect ratio its own
+/// parameter sets declare (ISO/IEC 14496-12:2026 §12.1.4.1), so it applies to
+/// every access unit whose SPS declares that same ratio. An in-band SPS that
+/// declares a different ratio is a later declaration than the sample entry and
+/// is reported as it is; a conforming file starts a new sample entry there.
 fn tag_fmp4_inband_display(b: &mut TrackBuilder) {
     let config = b.spec.config.clone();
     let codec = match &config {
@@ -958,9 +965,15 @@ fn tag_fmp4_inband_display(b: &mut TrackBuilder) {
     let mut tracker = SpsTracker::new(codec);
     // Seed from the track's raw SPS geometry (before the container overlay).
     let raw_seed = DisplayGeometry::from_codec_config(&config);
+    let seed_sar = raw_seed.as_ref().and_then(|g| g.sample_aspect_ratio());
     tracker.seed_state(raw_seed);
 
     let extra = b.entry_extra_boxes.clone();
+    let extra_without_pasp: Vec<_> = extra
+        .iter()
+        .filter(|x| x.box_type != PASP_FOURCC)
+        .cloned()
+        .collect();
     let mut cached_raw: Option<Arc<DisplayInfo>> = None;
     let mut cached_overlaid: Option<Arc<DisplayInfo>> = None;
 
@@ -981,22 +994,24 @@ fn tag_fmp4_inband_display(b: &mut TrackBuilder) {
         let display_arc = match raw_state {
             None => None,
             Some(raw) => {
-                let overlaid =
-                    if let (Some(prev_raw), Some(prev_ov)) = (&cached_raw, &cached_overlaid) {
-                        if Arc::ptr_eq(prev_raw, &raw) {
-                            prev_ov.clone()
-                        } else {
-                            let ov = overlay_display_info(&raw, &config, &extra);
-                            cached_raw = Some(raw.clone());
-                            cached_overlaid = Some(ov.clone());
-                            ov
-                        }
+                let overlaid = if let (Some(prev_raw), Some(prev_ov)) =
+                    (&cached_raw, &cached_overlaid)
+                    && Arc::ptr_eq(prev_raw, &raw)
+                {
+                    prev_ov.clone()
+                } else {
+                    let pasp_in_force =
+                        raw.geometry.as_ref().and_then(|g| g.sample_aspect_ratio()) == seed_sar;
+                    let boxes = if pasp_in_force {
+                        &extra
                     } else {
-                        let ov = overlay_display_info(&raw, &config, &extra);
-                        cached_raw = Some(raw.clone());
-                        cached_overlaid = Some(ov.clone());
-                        ov
+                        &extra_without_pasp
                     };
+                    let ov = overlay_display_info(&raw, &config, boxes);
+                    cached_raw = Some(raw.clone());
+                    cached_overlaid = Some(ov.clone());
+                    ov
+                };
                 Some(overlaid)
             }
         };

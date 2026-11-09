@@ -6,13 +6,14 @@
 //!
 //! - [`ts_structure`]: MPEG-2 TS (ISO/IEC 13818-1 §2.4.3.2, 188-byte packets, `sync_byte` 0x47
 //!   first) at some packet phase.
-//! - [`media_fragment`]: a complete `moof` followed by its complete `mdat` (ISO/IEC 14496-12:2026
-//!   §8.8.4, §8.1.1), what every fMP4/CMAF media segment or part carries.
-//! - [`progressive_movie`]: a `moov` with no `moof`, a progressive MP4 rather than a fragmented one.
+//! - [`media_fragment`]: a complete `moof` (or compressed `!mof`, §8.16.7) followed by its complete
+//!   `mdat` (ISO/IEC 14496-12:2026 §8.8.4, §8.1.1), what every fMP4/CMAF media segment or part carries.
+//! - [`progressive_movie`]: a `moov` (or compressed `!mov`, §8.16.6) with no `moof`, a progressive MP4
+//!   rather than a fragmented one.
 
 use crate::isobmff::{
     BOX_HEADER_LARGESIZE_SIZE, BOX_HEADER_MIN_SIZE, SIZE_INDICATES_LARGESIZE, SIZE_TO_EOF,
-    TYPE_MDAT, TYPE_MOOF, TYPE_MOOV,
+    TYPE_COMPRESSED_MOOF, TYPE_COMPRESSED_MOOV, TYPE_MDAT, TYPE_MOOF, TYPE_MOOV,
 };
 use crate::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
@@ -57,7 +58,7 @@ pub fn media_fragment(bytes: &[u8]) -> bool {
     for step in TopLevelBoxes::new(bytes) {
         let Some(box_type) = step else { return false };
         match box_type {
-            TYPE_MOOF => fragment = true,
+            TYPE_MOOF | TYPE_COMPRESSED_MOOF => fragment = true,
             TYPE_MDAT if fragment => return true,
             _ => {}
         }
@@ -73,8 +74,8 @@ pub fn progressive_movie(bytes: &[u8]) -> bool {
     for step in TopLevelBoxes::new(bytes) {
         let Some(box_type) = step else { break };
         match box_type {
-            TYPE_MOOF => return false,
-            TYPE_MOOV => movie = true,
+            TYPE_MOOF | TYPE_COMPRESSED_MOOF => return false,
+            TYPE_MOOV | TYPE_COMPRESSED_MOOV => movie = true,
             _ => {}
         }
     }

@@ -1551,6 +1551,13 @@ pub const TABLE: &[Crate] = &[
         // a data-carrying ADT whose variants hold arbitrary payloads (a static label
         // would be lossy and add nothing — use the typed variant instead).
         skip: &[
+            // `init_segment::DataEntry` (#1908): dispatch enum over the `dref` entry
+            // boxes (`url `, `urn `, `imdt`, `snim`), each variant wrapping a full
+            // structured box, not a flat spec code.
+            "DataEntry",
+            // `sample_groups::SubsV2Source` (#1905): a data-carrying ADT
+            // (`Reference { reference_idx }` / `Explicit(SubsampleProperties)`).
+            "SubsV2Source",
             // `slice_header::AvcPicture` (issue #1161): a data-carrying classification
             // ADT (`Field(AvcFieldInfo)`), not a spec-token label.
             "AvcPicture",

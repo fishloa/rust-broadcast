@@ -55,8 +55,11 @@ fn pasp_fills_unspecified_sar() {
     assert_eq!(got.sample_aspect_ratio(), Some((64u16, 45u16)));
 }
 
+/// ISO/IEC 14496-12:2026 §12.1.4.1: `pasp`, when present, over-rides the
+/// declarations in the video codec's own structures. This fixture's SPS VUI
+/// carries 16:11 and the sample entry is built with a `pasp` of 64:45.
 #[test]
-fn pasp_conflict_keeps_vui_sar() {
+fn pasp_conflict_overrides_vui_sar() {
     let Some(mut spec) = avc_spec("ts/krone-anamorphic-sar-16-11-zenith-tv.ts") else {
         return;
     };
@@ -65,7 +68,7 @@ fn pasp_conflict_keeps_vui_sar() {
     spec = spec.with_display(Some(g));
     let bytes = build(spec);
     let got = demux_display(&bytes).expect("display");
-    assert_eq!(got.sample_aspect_ratio(), Some((16u16, 11u16)));
+    assert_eq!(got.sample_aspect_ratio(), Some((64u16, 45u16)));
 }
 
 #[test]

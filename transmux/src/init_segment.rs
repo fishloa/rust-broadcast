@@ -1197,14 +1197,83 @@ impl Serialize for SoundMediaHeaderBox {
 // DataReferenceBox — dref (ISO/IEC 14496-12:2026 §8.7.2)
 // ---------------------------------------------------------------------------
 
+const URL_ENTRY_TYPE: [u8; 4] = *b"url ";
+const URN_ENTRY_TYPE: [u8; 4] = *b"urn ";
+const IMDA_ENTRY_TYPE: [u8; 4] = *b"imdt";
+const SEQ_NUM_IMDA_ENTRY_TYPE: [u8; 4] = *b"snim";
+
 /// Data Reference Box (`dref`) — §8.7.2.
-/// Contains a list of DataEntryUrlBox entries.
+/// Contains a list of data entry boxes ([`DataEntry`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DataReferenceBox {
     pub version: u8,
     pub flags: u32,
-    pub entries: Vec<DataEntryUrlBox>,
+    pub entries: Vec<DataEntry>,
+}
+
+/// One entry of a `dref` (§8.7.2.2): the entry four-CC is preserved, so a
+/// `urn `, `imdt` or `snim` entry round-trips as itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum DataEntry {
+    /// `url ` — [`DataEntryUrlBox`].
+    Url(DataEntryUrlBox),
+    /// `urn ` — [`DataEntryUrnBox`].
+    Urn(DataEntryUrnBox),
+    /// `imdt` (2026) — [`DataEntryImdaBox`].
+    Imda(DataEntryImdaBox),
+    /// `snim` (2026) — [`DataEntrySeqNumImdaBox`].
+    SeqNumImda(DataEntrySeqNumImdaBox),
+    /// An entry type this crate does not model (for example QuickTime
+    /// `alis`), kept with its body.
+    Other(OpaqueBox),
+}
+
+impl From<DataEntryUrlBox> for DataEntry {
+    fn from(b: DataEntryUrlBox) -> Self {
+        Self::Url(b)
+    }
+}
+
+impl DataEntry {
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        need_in(bytes, BOX_HDR, "dref entry")?;
+        let ty = [bytes[4], bytes[5], bytes[6], bytes[7]];
+        match ty {
+            URL_ENTRY_TYPE => Ok(Self::Url(DataEntryUrlBox::parse(bytes)?)),
+            URN_ENTRY_TYPE => Ok(Self::Urn(DataEntryUrnBox::parse(bytes)?)),
+            IMDA_ENTRY_TYPE => Ok(Self::Imda(DataEntryImdaBox::parse(bytes)?)),
+            SEQ_NUM_IMDA_ENTRY_TYPE => Ok(Self::SeqNumImda(DataEntrySeqNumImdaBox::parse(bytes)?)),
+            _ => {
+                let compact = crate::box_types::compact_form(bytes)?;
+                Ok(Self::Other(OpaqueBox::new(ty, compact[BOX_HDR..].to_vec())))
+            }
+        }
+    }
+}
+
+impl Serialize for DataEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        match self {
+            Self::Url(b) => b.serialized_len(),
+            Self::Urn(b) => b.serialized_len(),
+            Self::Imda(b) => b.serialized_len(),
+            Self::SeqNumImda(b) => b.serialized_len(),
+            Self::Other(b) => b.serialized_len(),
+        }
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        match self {
+            Self::Url(b) => b.serialize_into(buf),
+            Self::Urn(b) => b.serialize_into(buf),
+            Self::Imda(b) => b.serialize_into(buf),
+            Self::SeqNumImda(b) => b.serialize_into(buf),
+            Self::Other(b) => b.serialize_into(buf),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for DataReferenceBox {
@@ -1231,7 +1300,7 @@ impl<'a> Parse<'a> for DataReferenceBox {
                 break;
             };
             let end = off + sz;
-            entries.push(DataEntryUrlBox::parse(&bytes[off..end])?);
+            entries.push(DataEntry::parse(&bytes[off..end])?);
             off = end;
         }
         Ok(Self {
@@ -1326,6 +1395,178 @@ impl Serialize for DataEntryUrlBox {
             c += self.location.len();
         }
         Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DataEntryUrnBox / DataEntryImdaBox / DataEntrySeqNumImdaBox — urn , imdt, snim
+// (ISO/IEC 14496-12:2026 §8.7.2.2)
+// ---------------------------------------------------------------------------
+
+fn parse_data_entry_header(
+    bytes: &[u8],
+    expected: [u8; 4],
+    what: &'static str,
+) -> Result<(u8, u32, Vec<u8>)> {
+    let compact = crate::box_types::compact_form(bytes)?;
+    need_in(&compact, BOX_HDR + FULL_HDR, what)?;
+    if compact[4..8] != expected {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "box_type",
+            value: u64::from(u32::from_be_bytes([
+                compact[4], compact[5], compact[6], compact[7],
+            ])),
+            reason: what,
+        }));
+    }
+    let flags = u32::from_be_bytes([0, compact[9], compact[10], compact[11]]);
+    Ok((compact[8], flags, compact[BOX_HDR + FULL_HDR..].to_vec()))
+}
+
+fn write_data_entry_header(
+    buf: &mut [u8],
+    ty: &[u8; 4],
+    need: usize,
+    version: u8,
+    flags: u32,
+) -> Result<usize> {
+    let mut c = crate::box_types::write_box_header(buf, ty, need)?;
+    buf[c] = version;
+    buf[c + 1..c + 4].copy_from_slice(&flags.to_be_bytes()[1..]);
+    c += FULL_HDR;
+    Ok(c)
+}
+
+/// Data Entry URN Box (`urn `) — §8.7.2.2: `utf8string name; utf8string
+/// location`. `name` is required; `location` is optional and kept with its
+/// terminator exactly as on the wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct DataEntryUrnBox {
+    pub version: u8,
+    pub flags: u32,
+    /// `name` without its NUL terminator.
+    pub name: Vec<u8>,
+    /// Everything after the `name` terminator (`location`, usually with its
+    /// own terminator).
+    pub location: Vec<u8>,
+}
+
+impl<'a> Parse<'a> for DataEntryUrnBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (version, flags, rest) =
+            parse_data_entry_header(bytes, URN_ENTRY_TYPE, "expected urn ")?;
+        let nul = rest
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or(Error::InvalidInput(
+                "urn entry: name is not NUL-terminated (ISO/IEC 14496-12:2026 §8.7.2.2)",
+            ))?;
+        Ok(Self {
+            version,
+            flags,
+            name: rest[..nul].to_vec(),
+            location: rest[nul + 1..].to_vec(),
+        })
+    }
+}
+
+impl Serialize for DataEntryUrnBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + self.name.len() + 1 + self.location.len())
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        if self.name.contains(&0) {
+            return Err(Error::InvalidInput("urn entry: name contains a NUL byte"));
+        }
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = write_data_entry_header(buf, &URN_ENTRY_TYPE, need, self.version, self.flags)?;
+        buf[c..c + self.name.len()].copy_from_slice(&self.name);
+        c += self.name.len();
+        buf[c] = 0;
+        c += 1;
+        buf[c..c + self.location.len()].copy_from_slice(&self.location);
+        c += self.location.len();
+        Ok(c)
+    }
+}
+
+/// Data Entry IMDA Box (`imdt`, 2026) — §8.7.2.2: references the
+/// IdentifiedMediaDataBox whose `imda_identifier` equals `imda_ref_identifier`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct DataEntryImdaBox {
+    pub version: u8,
+    pub flags: u32,
+    pub imda_ref_identifier: u32,
+}
+
+impl<'a> Parse<'a> for DataEntryImdaBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (version, flags, rest) =
+            parse_data_entry_header(bytes, IMDA_ENTRY_TYPE, "expected imdt")?;
+        need_in(&rest, 4, "imdt imda_ref_identifier")?;
+        Ok(Self {
+            version,
+            flags,
+            imda_ref_identifier: u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]),
+        })
+    }
+}
+
+impl Serialize for DataEntryImdaBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = write_data_entry_header(buf, &IMDA_ENTRY_TYPE, need, self.version, self.flags)?;
+        buf[c..c + 4].copy_from_slice(&self.imda_ref_identifier.to_be_bytes());
+        c += 4;
+        Ok(c)
+    }
+}
+
+/// Data Entry Sequence-Number IMDA Box (`snim`, 2026) — §8.7.2.2: no fields;
+/// the IdentifiedMediaDataBox is the one whose `imda_identifier` equals the
+/// enclosing movie fragment's `sequence_number`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct DataEntrySeqNumImdaBox {
+    pub version: u8,
+    pub flags: u32,
+}
+
+impl<'a> Parse<'a> for DataEntrySeqNumImdaBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (version, flags, _) =
+            parse_data_entry_header(bytes, SEQ_NUM_IMDA_ENTRY_TYPE, "expected snim")?;
+        Ok(Self { version, flags })
+    }
+}
+
+impl Serialize for DataEntrySeqNumImdaBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(BOX_HDR + FULL_HDR)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        write_data_entry_header(
+            buf,
+            &SEQ_NUM_IMDA_ENTRY_TYPE,
+            need,
+            self.version,
+            self.flags,
+        )
     }
 }
 
@@ -4312,6 +4553,62 @@ mod tests {
         assert_eq!(parsed, s);
     }
 
+    /// A `dref` of `urn `, `imdt` and `snim` entries (ISO/IEC 14496-12:2026
+    /// §8.7.2.2): re-serializing must keep each entry's four-CC and body.
+    fn dref_with_urn_imdt_snim() -> Vec<u8> {
+        let mut body = alloc::vec![0, 0, 0, 0, 0, 0, 0, 3];
+        body.extend_from_slice(&[0, 0, 0, 18, b'u', b'r', b'n', b' ', 0, 0, 0, 0]);
+        body.extend_from_slice(b"nm\0lc\0");
+        body.extend_from_slice(&[0, 0, 0, 16, b'i', b'm', b'd', b't', 0, 0, 0, 0, 0, 0, 0, 7]);
+        body.extend_from_slice(&[0, 0, 0, 12, b's', b'n', b'i', b'm', 0, 0, 0, 0]);
+        let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(b"dref");
+        out.extend_from_slice(&body);
+        out
+    }
+
+    #[test]
+    fn dref_keeps_urn_imdt_snim_entry_types() {
+        let bytes = dref_with_urn_imdt_snim();
+        let parsed = DataReferenceBox::parse(&bytes).unwrap();
+        assert_eq!(
+            parsed.entries,
+            alloc::vec![
+                DataEntry::Urn(DataEntryUrnBox {
+                    version: 0,
+                    flags: 0,
+                    name: b"nm".to_vec(),
+                    location: b"lc\0".to_vec(),
+                }),
+                DataEntry::Imda(DataEntryImdaBox {
+                    version: 0,
+                    flags: 0,
+                    imda_ref_identifier: 7,
+                }),
+                DataEntry::SeqNumImda(DataEntrySeqNumImdaBox {
+                    version: 0,
+                    flags: 0
+                }),
+            ]
+        );
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn dref_unmodelled_entry_type_round_trips_and_urn_without_name_terminator_errors() {
+        let mut body = alloc::vec![0, 0, 0, 0, 0, 0, 0, 1];
+        body.extend_from_slice(&[0, 0, 0, 14, b'a', b'l', b'i', b's', 0, 0, 0, 1, 0xAB, 0xCD]);
+        let mut bytes = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        bytes.extend_from_slice(b"dref");
+        bytes.extend_from_slice(&body);
+        let parsed = DataReferenceBox::parse(&bytes).unwrap();
+        assert!(matches!(parsed.entries[0], DataEntry::Other(_)));
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+
+        let urn = [0, 0, 0, 14, b'u', b'r', b'n', b' ', 0, 0, 0, 0, b'a', b'b'];
+        assert!(DataEntryUrnBox::parse(&urn).is_err());
+    }
+
     #[test]
     fn dref_url_round_trip() {
         let url = DataEntryUrlBox {
@@ -4322,7 +4619,7 @@ mod tests {
         let dref = DataReferenceBox {
             version: 0,
             flags: 0,
-            entries: alloc::vec![url],
+            entries: alloc::vec![DataEntry::Url(url)],
         };
         let bytes = dref.try_to_bytes().unwrap();
         let parsed = DataReferenceBox::parse(&bytes).unwrap();
