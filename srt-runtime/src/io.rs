@@ -4022,6 +4022,49 @@ mod adapter_tests {
         );
     }
 
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn audit_d_km_refresh_with_both_keys_installs_the_odd_key() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.crypto_passphrase = b"audit-d-passphrase".to_vec().into();
+        let salt = [0x5Au8; crate::crypto::SALT_LEN];
+        let (even, odd) = ([0x11u8; 16], [0x22u8; 16]);
+        let kek = crate::crypto::derive_kek(&driver.crypto_passphrase, &salt, 16).unwrap();
+        let mut both = even.to_vec();
+        both.extend_from_slice(&odd);
+        let (icv, wrapped) = crate::crypto::wrap_sek(&kek, &both).unwrap();
+        let km = crate::packet::KeyMaterial {
+            kk: crate::packet::KmKeyFlag::Both,
+            keki: 0,
+            cipher: crate::packet::Cipher::AesCtr,
+            auth: crate::packet::KmAuth::None,
+            se: crate::packet::StreamEncapsulation::MpegTsSrt,
+            salt: &salt,
+            icv,
+            x_sek: &wrapped[..16],
+            o_sek: Some(&wrapped[16..]),
+        };
+        let mut km_buf = vec![0u8; km.serialized_len()];
+        km.serialize_into(&mut km_buf).unwrap();
+        let ud = ControlPacket::UserDefined(crate::packet::UserDefinedPacket {
+            control_type: crate::packet::control::CONTROL_TYPE_USER_DEFINED,
+            subtype: 3,
+            type_specific_info: 0,
+            timestamp: 0,
+            dest_socket_id: 1,
+            cif: &km_buf,
+        });
+        let mut out = vec![0u8; ud.serialized_len()];
+        ud.serialize_into(&mut out).unwrap();
+        driver.ingress(Bytes::from(out)).expect("ingress KM");
+        assert!(
+            driver.crypto_even_sek.is_some() && driver.crypto_odd_sek.is_some(),
+            "KK=Both carries both SEKs: even installed = {}, odd installed = {}",
+            driver.crypto_even_sek.is_some(),
+            driver.crypto_odd_sek.is_some()
+        );
+    }
+
     #[tokio::test]
     async fn staged_never_exceeds_the_flow_window() {
         const WINDOW: u32 = 64;
