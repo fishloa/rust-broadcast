@@ -1,4 +1,4 @@
-//! Bug audit B reproductions. Each test asserts the correct behaviour and fails on main.
+//! Session edge cases: Transport selection, redirects, 454, stale auth, large reads, unknown methods.
 
 use rtsp_runtime::{ClientEvent, ClientSession, ServerSession, SessionHeader, SessionState, Transport, TransportSpec};
 
@@ -21,7 +21,7 @@ fn client_in_ready() -> ClientSession {
 }
 
 #[test]
-fn server_picks_the_first_supported_transport_spec_not_461() {
+fn server_picks_the_first_supported_transport_spec_instead_of_answering_461() {
     let mut s = ServerSession::new(|| 7);
     let req = wire(
         "SETUP rtsp://h/s/t RTSP/1.0\nCSeq: 1\nTransport: RTP/SAVP;unicast;client_port=5000-5001, RTP/AVP;unicast;client_port=5002-5003\n\n",
@@ -101,7 +101,7 @@ fn a_large_read_of_valid_interleaved_frames_is_not_a_terminal_error() {
 }
 
 #[test]
-fn endless_stale_401_challenges_are_not_retried_forever() {
+fn endless_stale_401_challenges_end_in_the_401_response() {
     let mut c = ClientSession::new().with_credentials(rtsp_runtime::Credentials::new("u", "p"));
     c.options(BASE).unwrap();
     let mut cseq = 1;
@@ -112,17 +112,40 @@ fn endless_stale_401_challenges_are_not_retried_forever() {
         ))).unwrap();
         match &out[0] {
             ClientEvent::AuthRetry { cseq: n, .. } => cseq = *n,
-            _ => {
+            ClientEvent::Response { status, .. } => {
+                assert_eq!(*status, rtsp_runtime::StatusCode::Unauthorized);
                 gave_up = true;
                 break;
             }
+            other => panic!("{other:?}"),
         }
     }
     assert!(gave_up, "client kept re-sending after 50 consecutive stale=true 401s");
 }
 
 #[test]
-fn unknown_method_is_501_not_455() {
+fn a_session_timeout_beyond_the_u64_digit_bound_is_a_warned_default_not_a_silent_one() {
+    let (h, warnings) =
+        SessionHeader::parse_with_warnings("abc;timeout=99999999999999999999").unwrap();
+    assert_eq!(h.timeout, Some(std::time::Duration::from_secs(60)));
+    assert_eq!(warnings.len(), 1);
+}
+
+#[test]
+fn a_request_without_cseq_is_answered_400_and_the_session_continues() {
+    let mut s = ServerSession::new(|| 7);
+    let (resp, _) = s
+        .handle_request(&wire("OPTIONS rtsp://h/s RTSP/1.0\n\n"))
+        .unwrap();
+    assert!(String::from_utf8_lossy(&resp).starts_with("RTSP/1.0 400"));
+    let (resp, _) = s
+        .handle_request(&wire("OPTIONS rtsp://h/s RTSP/1.0\nCSeq: 1\n\n"))
+        .unwrap();
+    assert!(String::from_utf8_lossy(&resp).starts_with("RTSP/1.0 200"));
+}
+
+#[test]
+fn an_unknown_method_is_answered_501() {
     let mut s = ServerSession::new(|| 7);
     let (resp, _) = s
         .handle_request(&wire("FROBNICATE rtsp://h/s RTSP/1.0\nCSeq: 1\n\n"))

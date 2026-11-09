@@ -1,5 +1,5 @@
 #![cfg(feature = "tokio")]
-//! Bug audit B: the push drain must not turn a decode error into a clean EOF.
+//! The push drain must not turn a decode error into a clean EOF.
 
 use rtsp_runtime::{AsyncRtspClient, ClientSession, Error};
 use tokio::io::AsyncWriteExt;

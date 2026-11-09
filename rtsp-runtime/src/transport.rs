@@ -511,6 +511,16 @@ impl Transport {
             .join(&lex::LIST_SEP.to_string()))
     }
 
+    /// The first spec of `value` this crate models, skipping specs it does not
+    /// (a different profile, an unsupported parameter): RFC 2326 §12.39 lists
+    /// specs in preference order and the receiver picks one it can serve.
+    pub(crate) fn first_supported(value: &str) -> Option<TransportSpec> {
+        lex::split_outside_quotes(value, lex::LIST_SEP)
+            .into_iter()
+            .filter(|s| !lex::trim_lws(s).is_empty())
+            .find_map(|s| TransportSpec::parse(s).ok())
+    }
+
     /// The first spec, if any (the negotiated/preferred transport).
     pub fn first(&self) -> Option<&TransportSpec> {
         self.specs.first()

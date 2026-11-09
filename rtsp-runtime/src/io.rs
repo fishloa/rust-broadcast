@@ -148,6 +148,7 @@ pub struct AsyncRtspClient<S> {
     /// Media events surfaced while awaiting a response (e.g. interleaved frames
     /// arriving between control messages), buffered for `recv_interleaved`.
     pending_media: VecDeque<ClientEvent>,
+    deferred_error: Option<Error>,
     timeouts: RtspTimeouts,
 }
 
@@ -200,6 +201,7 @@ where
         AsyncRtspClient {
             framed: Framed::new(stream, ClientCodec::new(session)),
             pending_media: VecDeque::new(),
+            deferred_error: None,
             timeouts,
         }
     }
@@ -237,6 +239,9 @@ where
         // activity: the server's session timeout is refreshed by RTSP *requests*
         // (RFC 2326 §12.37), so a busy interleaved stream must not postpone the
         // GET_PARAMETER keepalive.
+        if let Some(e) = self.deferred_error.take() {
+            return Err(e);
+        }
         match tokio::time::timeout(self.timeouts.read_idle, self.framed.next()).await {
             Err(_) => Err(Error::Timeout { what: "read" }),
             Ok(None) => Ok(None),
@@ -370,8 +375,8 @@ where
     /// pusher learns of the loss on its next call instead of only via a later
     /// write error. Any other response is applied by the codec and dropped
     /// (a pusher has no outstanding request of its own to correlate). A read
-    /// error (other than a 454) is swallowed: the next `next_event`/
-    /// `recv_interleaved` call surfaces it.
+    /// or decode error (other than a 454) is kept, not reported here: the next
+    /// `next_event`/`recv_interleaved` call returns it as itself.
     ///
     /// At most [`MAX_DRAIN_ITEMS`] items are consumed per call, so a peer that
     /// floods interleaved frames cannot make this loop unbounded — the excess
@@ -385,10 +390,12 @@ where
             match self.framed.next().now_or_never() {
                 None => return Ok(()),       // nothing ready — non-blocking
                 Some(None) => return Ok(()), // EOF
-                // A read/decode error is not the push path's to report; the
-                // next real read surfaces it, and `send_interleaved`'s write
-                // is what a pusher must see fail.
-                Some(Some(Err(_))) => return Ok(()),
+                // A read/decode error is not the push path's to report, and
+                // `Framed` yields it once: keep it for the next real read.
+                Some(Some(Err(e))) => {
+                    self.deferred_error = Some(e);
+                    return Ok(());
+                }
                 Some(Some(Ok(ClientEvent::Response { method, status, .. }))) => {
                     if status == rtsp_types::StatusCode::SessionNotFound {
                         return Err(Error::SessionNotFound { method });

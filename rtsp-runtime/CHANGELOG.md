@@ -5,6 +5,16 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- BREAKING: `Error::MissingCSeq` is removed. `ServerSession::handle_request` answers a request with no parseable `CSeq` with a `400 Bad Request` (RFC 2326 §12.17 makes `CSeq` mandatory, and nothing can be echoed) and carries on, instead of returning an error that ended the connection; the variant had no other user.
+- The server picks the first `Transport` spec in the list it can serve and answers `461` only when none is supported; one unmodelled spec (`RTP/SAVP`) used to fail the whole header.
+- The server answers a method it does not implement (an extension method, `REDIRECT`, `PLAY_NOTIFY`) with `501 Not Implemented` (RFC 2326 §11.3 / Table 2 note) instead of `455`.
+- The client forgets the Session id, timeout, negotiated transport and authenticator on a `3xx` (the redirect target never saw that session) and on a `454 Session Not Found` to any request, returning to `Init`; the keepalive stops and the next `SETUP` carries no stale `Session`.
+- A non-2xx `SETUP` response no longer records a `Session` or `negotiated_transport`. A 2xx `SETUP` whose `Transport` is a profile the crate does not model still delivers the `Response` event (no negotiated transport, a session warning) instead of a terminal error that lost it.
+- A `401` with `stale=true` is retried at most once per logical request (`MAX_AUTH_RETRIES`); a server that keeps answering stale now ends in the `401` response reaching the caller instead of an endless re-signing loop.
+- `ClientSession::handle_data` applies the 1 MiB inbound cap to the bytes left buffered after decoding, so one read of many valid frames is processed frame by frame; a single frame or message over the bound is still rejected.
+- `Session` `timeout=` is parsed as `delta-seconds` in a `u64` (up to 19 digits); a value above `u32::MAX` used to fall to the 60 s default.
+- `AsyncRtspClient`'s send-side drain keeps a decode error and returns it from the next read as itself; it used to be swallowed, and the next read reported a bogus `UnexpectedEof`.
 
 ## [0.10.0] - 2026-11-08
 ### Changed

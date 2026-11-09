@@ -60,6 +60,11 @@ pub const MIN_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 /// for RTSP headers plus an SDP body (audit run-09 W6).
 const MAX_INBOUND_BYTES: usize = 1024 * 1024;
 
+/// Most 401 replays of one logical request: the first answers a challenge, the
+/// second a `stale=true` nonce refresh (RFC 2617 §3.2.1); a server that keeps
+/// answering stale is refused further signing and its 401 reaches the caller.
+const MAX_AUTH_RETRIES: u8 = 2;
+
 /// Record of a request the client has sent and is awaiting a response for.
 #[derive(Debug, Clone)]
 struct Pending {
@@ -67,8 +72,8 @@ struct Pending {
     uri: String,
     /// The full request, retained so it can be re-signed and re-sent on a 401.
     request: Request<Body>,
-    /// Whether an auth retry has already been attempted for this logical request.
-    auth_retried: bool,
+    /// Auth retries already attempted for this logical request.
+    auth_retries: u8,
 }
 
 /// One stream's entry of a PLAY response `RTP-Info` header (RFC 2326 12.33).
@@ -467,7 +472,7 @@ impl ClientSession {
                 method,
                 uri: uri.to_string(),
                 request,
-                auth_retried: false,
+                auth_retries: 0,
             },
         );
         Ok(bytes)
@@ -540,6 +545,14 @@ impl ClientSession {
 
     fn handle_data_into(&mut self, data: &[u8], events: &mut Vec<ClientEvent>) -> Result<()> {
         self.inbound.extend_from_slice(data);
+        // Parse with a cursor and drop the consumed prefix ONCE, whatever the
+        // outcome: a per-message `drain(..n)` memmoves the whole remainder for
+        // every frame, O(n^2) over a buffer of many small frames (audit
+        // run-09 O3).
+        let mut pos = 0;
+        let result = self.decode_from(&mut pos, events);
+        self.inbound.drain(..pos);
+        result?;
         if self.inbound.len() > MAX_INBOUND_BYTES {
             return Err(Error::MessageParse {
                 what: MessageKind::Response,
@@ -551,14 +564,7 @@ impl ClientSession {
                 .into(),
             });
         }
-        // Parse with a cursor and drop the consumed prefix ONCE, whatever the
-        // outcome: a per-message `drain(..n)` memmoves the whole remainder for
-        // every frame, O(n^2) over a buffer of many small frames (audit
-        // run-09 O3).
-        let mut pos = 0;
-        let result = self.decode_from(&mut pos, events);
-        self.inbound.drain(..pos);
-        result
+        Ok(())
     }
 
     /// Decodes messages/frames from `self.inbound[*pos..]`, advancing `*pos`
@@ -661,7 +667,9 @@ impl ClientSession {
                 // Capture Session id + timeout (typically from SETUP). Recoverable
                 // problems (a malformed or zero timeout) are kept in
                 // `session_warnings()`; an unusable header is recorded there and ignored.
-                if let Some(session_hdr) = header_value(response.header(&headers::SESSION)) {
+                if status.is_success()
+                    && let Some(session_hdr) = header_value(response.header(&headers::SESSION))
+                {
                     match crate::session_header::SessionHeader::parse_with_warnings(session_hdr) {
                         Ok((parsed, warnings)) => {
                             for w in warnings {
@@ -680,9 +688,17 @@ impl ClientSession {
                 }
                 // Capture negotiated transport from SETUP response.
                 if pending.method == Method::Setup
+                    && status.is_success()
                     && let Some(t) = header_value(response.header(&headers::TRANSPORT))
                 {
-                    self.negotiated_transport = Some(Transport::parse(t)?);
+                    match Transport::parse(t) {
+                        Ok(parsed) => self.negotiated_transport = Some(parsed),
+                        Err(e) => {
+                            self.negotiated_transport = None;
+                            let w = format!("unusable Transport header {t:?}: {e}");
+                            self.record_session_warning(w);
+                        }
+                    }
                 }
 
                 if pending.method == Method::Play && status.is_success() {
@@ -726,10 +742,14 @@ impl ClientSession {
                         self.session_timeout = None;
                         self.authenticator = None;
                     }
-                } else if status.is_redirection() {
+                } else if status.is_redirection() || status == StatusCode::SessionNotFound {
                     self.state = SessionState::Init;
+                    self.session_id = None;
+                    self.session_timeout = None;
+                    self.negotiated_transport = None;
+                    self.authenticator = None;
                 }
-                // 4xx (other than the handled 401) / 5xx: no state change.
+                // 3xx and 454 drop the session; other 4xx / 5xx change nothing.
 
                 events.push(ClientEvent::Response {
                     cseq,
@@ -768,7 +788,7 @@ impl ClientSession {
         };
         // Only retry if the original request is still pending and hasn't retried.
         let (method, uri, already) = match self.pending.get(&cseq) {
-            Some(p) => (p.method.clone(), p.uri.clone(), p.auth_retried),
+            Some(p) => (p.method.clone(), p.uri.clone(), p.auth_retries),
             None => return Ok(None),
         };
 
@@ -787,8 +807,8 @@ impl ClientSession {
         // still a 401 with no `stale=true`, give up so the caller sees it
         // (wrong credentials). `stale=true` is the server's explicit signal
         // that the credentials were fine and only the nonce needs refreshing,
-        // so it's allowed one more retry even after an earlier one.
-        if already && !stale {
+        // so it earns one more retry, never an unbounded series.
+        if already >= MAX_AUTH_RETRIES || (already > 0 && !stale) {
             return Ok(None);
         }
 
@@ -809,7 +829,7 @@ impl ClientSession {
                 method: method.clone(),
                 uri,
                 request,
-                auth_retried: true,
+                auth_retries: already + 1,
             },
         );
         Ok(Some(ClientEvent::AuthRetry {

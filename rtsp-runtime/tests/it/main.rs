@@ -2,6 +2,8 @@ mod client_push_methods;
 mod golden_wire;
 mod integration;
 mod io_loopback;
+mod io_push_drain;
 mod io_timeouts;
 mod no_handroll_guard;
+mod session_edge_cases;
 mod transport_session;
