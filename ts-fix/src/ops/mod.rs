@@ -102,16 +102,16 @@ pub(crate) trait Op: Send {
 pub(crate) type BoxedOp = Box<dyn Op>;
 
 /// Canonical operation-kind discriminant used by the builder to enforce
-/// engine ordering (filter → regen_psi → cc_repair → pcr_restamp/pcr_honor →
-/// stuffing).
+/// engine ordering (filter → regen_psi → cc_repair → stuffing →
+/// pcr_restamp/pcr_honor).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum OpKind {
     PidFilter,
     PsiRegen,
     Continuity,
+    Stuffing,
     PcrRestamp,
     PcrHonor,
-    Stuffing,
     Identity,
 }
 

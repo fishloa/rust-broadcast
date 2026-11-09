@@ -165,8 +165,8 @@ pub(crate) struct PcrRestampOp {
     /// This op's OWN count of packets it has processed (W-TF-1) — distinct
     /// from `model.packet_count`, which counts packets at engine entry,
     /// *before* any earlier op in the canonical pipeline
-    /// (`filter_pids → regen_psi → repair_continuity → restamp_pcr →
-    /// stuffing`) has run. A packet `filter_pids` drops never reaches this
+    /// (`filter_pids → regen_psi → repair_continuity → stuffing →
+    /// restamp_pcr`) has run. A packet `filter_pids` drops never reaches this
     /// op, so `model.packet_count` overcounts relative to the position this
     /// op's output actually occupies; this op's own tally does not.
     packets_seen: u64,

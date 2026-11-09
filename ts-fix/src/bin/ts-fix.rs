@@ -24,7 +24,7 @@ use ts_fix::{PcrRestamp, PidFilter, Stuffing, TsFix};
     about = "MPEG-2 TS repair / remux engine (ISO/IEC 13818-1 §2.4)",
     long_about = "Reads an input .ts file, applies repair operations, writes the repaired stream.\n\
                    Operations are applied in the engine's canonical order (filter → psi-regen → \n\
-                   continuity → restamp-pcr/honor-pcr-discontinuity → stuffing) regardless of \n\
+                   continuity → stuffing → restamp-pcr/honor-pcr-discontinuity) regardless of \n\
                    flag order.  All operations are opt-in."
 )]
 struct Cli {
