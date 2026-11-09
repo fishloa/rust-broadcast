@@ -25,6 +25,11 @@
 //!   to step over and drop; a video head now blocks until it resolves, so it is track 1.
 //!   Both are real PMT-declared elementary streams (ISO/IEC 13818-1 Table 2-33,
 //!   `elementary_PID`). Both captures are mirrored in `private/fixtures/suites/tsduck/`.
+//! - `private/fixtures/ts/france-tnt-uhf32-video-head-6-mb.ts` track 1 `1x63` -> `1x62` and
+//!   `private/fixtures/ts/france-tnt-uhf32-video-w30-mb-10-mb.ts` track 8 `8x66` -> `8x65`
+//!   (bug audit E). Both are lossy live captures: a continuity-counter gap at the
+//!   `payload_unit_start` after a packet that filled its whole payload marks an unbounded PES
+//!   that lost its tail, and the truncated access unit is now dropped instead of emitted.
 //!
 //! Regenerate (only for an intentional behaviour change):
 //! `RUST_BROADCAST_SOAK=1 TRACK_ID_BLESS=1 cargo test -p transmux --all-features --test track_id_baseline`

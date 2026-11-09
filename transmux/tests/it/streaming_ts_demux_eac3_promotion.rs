@@ -89,7 +89,7 @@ fn real_tnt_eac3_capture_promotes_video_three_eac3_and_data() {
     // 0.26.0 (and every build since) abandons two unrelated PIDs at finish();
     // pinned so a change in that count is noticed, not because it is desired.
     assert_eq!(abandoned, 2, "abandoned-PID count changed");
-    for (pid, min) in [(0x78u16, 46usize), (0x82, 7), (0x83, 6), (0x84, 3)] {
+    for (pid, min) in [(0x78u16, 45usize), (0x82, 7), (0x83, 6), (0x84, 3)] {
         assert!(
             counts.get(&pid).copied().unwrap_or(0) >= min,
             "PID {pid:#x}: {counts:?}"

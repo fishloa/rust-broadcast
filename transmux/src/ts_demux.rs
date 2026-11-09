@@ -2094,6 +2094,12 @@ struct StreamState {
     /// packet in the same unit; only the next `payload_unit_start` starts a
     /// fresh, whole unit. Unused for a non-PES carrier.
     current_pes_intact: bool,
+    /// Whether the last packet delivered on this PID filled its whole
+    /// 184-byte payload. The final packet of an unbounded PES is normally
+    /// short (adaptation-field stuffing), so a full one directly before a
+    /// continuity gap at the next `payload_unit_start` is the only evidence an
+    /// unbounded PES lost its tail rather than ended at a seam.
+    last_payload_full: bool,
     /// The `PES_packet_length` this PID's in-progress PES declared, once its
     /// header bytes have been received; `0` while unknown or for an unbounded
     /// PES (ISO/IEC 13818-1 §2.4.3.7 — `0` means unbounded, the ordinary
@@ -2158,6 +2164,7 @@ impl StreamState {
         self.recent_steps.clear();
         self.pending_rebase = false;
         self.current_pes_intact = true;
+        self.last_payload_full = false;
         self.pes_declared_len = 0;
         self.pes_received = 0;
         match &mut self.track {
@@ -5350,7 +5357,11 @@ impl StreamingTsDemux {
             // or a bounded PES that arrived short of its declared length. A
             // `discontinuity_indicator` is *not* such evidence on its own —
             // see the rule above.
-            let completed_intact = stream.current_pes_intact && !short_of_declared;
+            let tail_lost = gap_here
+                && pusi
+                && stream.pes_declared_len == 0
+                && stream.last_payload_full;
+            let completed_intact = stream.current_pes_intact && !short_of_declared && !tail_lost;
             let mut completed_pes = None;
             if gap_here
                 && !pusi
@@ -5393,6 +5404,7 @@ impl StreamingTsDemux {
                 // payload (issue #1160).
                 clear_audio_carry(stream, &mut self.events);
             }
+            stream.last_payload_full = payload.len() == TS_MAX_PAYLOAD_BYTES;
             if matches!(stream.carrier, Carrier::Pes(_)) {
                 if pusi {
                     // A new unit begins whole from its first byte.
@@ -5678,6 +5690,7 @@ impl StreamingTsDemux {
             recent_steps: Vec::new(),
             pending_rebase: false,
             current_pes_intact: true,
+            last_payload_full: false,
             pes_declared_len: 0,
             pes_received: 0,
             pes_bytes: 0,
@@ -7454,6 +7467,41 @@ pub(crate) mod tests {
         out
     }
 
+    /// Like [`pes_packets`], but the final packet is stuffed with an
+    /// adaptation field the way a real muxer ends a PES, so a payload that does
+    /// not fill 184 bytes marks the unit's end.
+    fn pes_packets_af_stuffed(pid: Pid, cc0: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut off = 0usize;
+        let mut first = true;
+        let mut cc = cc0;
+        while off < payload.len() {
+            let take = (payload.len() - off).min(TS_PACKET_SIZE - 4);
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = ((pid.value() >> 8) as u8 & PID_HI_MASK) | if first { 0x40 } else { 0x00 };
+            p[2] = (pid.value() & 0xFF) as u8;
+            if take == TS_PACKET_SIZE - 4 {
+                p[3] = 0x10 | (cc & 0x0F);
+                p[4..4 + take].copy_from_slice(&payload[off..off + take]);
+            } else {
+                let af_len = TS_PACKET_SIZE - 4 - 1 - take;
+                p[3] = 0x30 | (cc & 0x0F);
+                p[4] = af_len as u8;
+                if af_len > 0 {
+                    p[5] = 0x00;
+                }
+                let start = 5 + af_len;
+                p[start..start + take].copy_from_slice(&payload[off..off + take]);
+            }
+            out.extend_from_slice(&p);
+            off += take;
+            first = false;
+            cc = cc.wrapping_add(1);
+        }
+        out
+    }
+
     /// Mux a never-resolving head PID (rank 0) followed by `data_pids` opaque
     /// data PIDs (each resolves on its first access unit), `video_aus` access
     /// units on the head and `data_aus` on each data PID. The head is H.264
@@ -8183,12 +8231,9 @@ pub(crate) mod tests {
             .iter()
             .filter(|e| matches!(e, Seen::Sample(_)))
             .count();
-        // PES k-1 never completes (the PID is removed under it); every earlier
-        // PES is delivered, and the last of those was held back.
         assert_eq!(
-            before,
-            k - 1,
-            "held final AU emitted before removal: {seen:?}"
+            before, k,
+            "every whole PES, including the held final AU, is emitted before removal: {seen:?}"
         );
     }
 
@@ -10605,7 +10650,7 @@ pub(crate) mod tests {
 
         let pes1 = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au1);
         let pes2 = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au2);
-        let pkt1 = pes_packets(ES_PID_UNDER_TEST, 0, &pes1);
+        let pkt1 = pes_packets_af_stuffed(ES_PID_UNDER_TEST, 0, &pes1);
         assert_eq!(pkt1.len(), 2 * TS_PACKET_SIZE, "unit 1 spans two packets");
         // Unit 2's counter restarts at 0, as an independently muxed segment's
         // does.
@@ -10815,21 +10860,16 @@ pub(crate) mod tests {
         }
     }
 
-    /// The documented tradeoff at a seam, on an **unbounded** PES. A
-    /// `payload_unit_start` ends the previous unit, so a counter restart there
-    /// is the ordinary segment-concatenation shape and is *not* damage — which
-    /// also means an unbounded unit that really did lose its tail is
-    /// indistinguishable from one that ended cleanly, and is delivered
-    /// (H.222.0 carries no length to tell them apart; §2.4.3.3/§2.4.3.7).
-    ///
-    /// This test pins that tradeoff explicitly, so the behaviour is a recorded
-    /// decision rather than an accident, and so a future change that starts
-    /// dropping here has to change this test deliberately. A **bounded** PES
-    /// has no such tradeoff — its declared length settles it, which
-    /// [`cc_jump_at_a_pes_start_keeps_the_previous_complete_access_unit`] and
-    /// [`cc_gap_on_a_continuation_drops_only_that_access_unit`] cover.
+    /// An **unbounded** unit that lost its tail packet is not delivered
+    /// truncated. H.222.0 gives an unbounded PES no length to prove the loss
+    /// (§2.4.3.3/§2.4.3.7), but a counter gap at the next `payload_unit_start`
+    /// after a packet that filled its whole payload is the signature of a lost
+    /// tail: an ended PES stops on a stuffed packet (see
+    /// [`cc_restart_at_a_pes_start_keeps_an_unbounded_unit`]). A **bounded**
+    /// PES is settled by its declared length instead
+    /// ([`cc_jump_at_a_pes_start_keeps_the_previous_complete_access_unit`]).
     #[test]
-    fn unbounded_unit_ended_by_a_counter_restart_is_delivered_by_design() {
+    fn unbounded_unit_missing_its_tail_packet_is_dropped_not_delivered_truncated() {
         let au1 = data_au(0x20);
         let au2 = data_au(0xA0);
 
@@ -10851,7 +10891,7 @@ pub(crate) mod tests {
         ));
 
         // Unit 1's packet 1 is lost; unit 2 starts on a counter that therefore
-        // jumps. Unbounded units, so nothing proves unit 1 was short.
+        // jumps. Unit 1 stopped on a full packet.
         let pes1 = unbounded_pes(ES_STREAM_ID_PRIVATE_DATA, &au1);
         let pkt1 = pes_packets(ES_PID_UNDER_TEST, 0, &pes1);
         input.extend_from_slice(&pkt1[..TS_PACKET_SIZE]);
@@ -10867,11 +10907,8 @@ pub(crate) mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            got.len(),
-            2,
-            "both the truncated-tail unit and the whole one are delivered: an              unbounded PES gives no way to tell them apart at a seam"
-        );
+        assert_eq!(got.len(), 1, "only the whole unit is delivered");
+        assert!(got[0].starts_with(&au2), "the surviving unit is unit 2");
     }
 
     // ── r04-W48: a PES with no PTS/DTS is interpolated, not re-stamped ─────
