@@ -437,3 +437,33 @@ fn constructed_header_carries_spec_fill() {
     assert_eq!(out[16], 0x8A, "marker bit set");
     round_trip(&out);
 }
+
+fn expect_bad_marker(b: &[u8], what: &'static str) {
+    assert_eq!(PesPacket::parse(b), Err(mpeg_pes::Error::BadMarker(what)));
+}
+
+#[test]
+fn escr_with_a_cleared_marker_bit_is_rejected() {
+    let mut b = vec![0x00, 0x00, 0x01, 0xE0, 0x00, 0x0B, 0x80, 0x20, 0x06];
+    let mut escr = mpeg_pes::Escr::from_27mhz(12345).to_field_bytes();
+    escr[2] &= !0x04;
+    b.extend_from_slice(&escr);
+    b.extend_from_slice(&[0xAA, 0xBB]);
+    expect_bad_marker(&b, "ESCR");
+}
+
+#[test]
+fn p_std_buffer_with_a_wrong_fixed_prefix_is_rejected() {
+    let b = [
+        0x00, 0x00, 0x01, 0xE0, 0x00, 0x08, 0x80, 0x01, 0x03, 0x10, 0x97, 0x04, 0xAA, 0xBB,
+    ];
+    expect_bad_marker(&b, "P-STD_buffer");
+}
+
+#[test]
+fn program_packet_sequence_counter_with_cleared_markers_is_rejected() {
+    let b = [
+        0x00, 0x00, 0x01, 0xE0, 0x00, 0x08, 0x80, 0x01, 0x03, 0x20, 0x05, 0x01, 0xAA, 0xBB,
+    ];
+    expect_bad_marker(&b, "program_packet_sequence_counter");
+}
