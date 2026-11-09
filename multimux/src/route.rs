@@ -473,6 +473,18 @@ pub(crate) struct ProgramServing {
     /// does not have DVR enabled. Owns a pinning `SegmentCursor`, drained
     /// by [`Self::poll_dvr`].
     dvr: Mutex<Option<DvrRecorder>>,
+    /// Whether `dvr` still holds a recorder; cleared when a persist panic
+    /// drops it, so [`Self::set_init`] stops logging init changes nobody
+    /// will archive.
+    dvr_recording: std::sync::atomic::AtomicBool,
+    /// Every init change since the recorder last archived under it, with the
+    /// segment it starts at, so the recorder archives each pending segment
+    /// under the init it was closed under.
+    init_log: Mutex<Vec<crate::dvr::InitGeneration>>,
+    /// The program this one replaced on a reconnect, until the first persist
+    /// of this program's recorder has flushed the segments it had closed but
+    /// not yet archived (see [`Self::flush_predecessor`]).
+    predecessor: Mutex<Option<Arc<ProgramServing>>>,
     /// Lazily-acquired write handle for [`RouteHandle::add_segment`]/
     /// [`RouteHandle::add_part`] (this crate's own direct-`Trunk`-write test
     /// helpers, standing in for a real `crate::source::segment::ProgramSegmenter`).
@@ -714,7 +726,10 @@ impl ProgramServing {
             route_name: route_name.to_string(),
             #[cfg(test)]
             panic_on_persist: std::sync::atomic::AtomicBool::new(false),
+            dvr_recording: std::sync::atomic::AtomicBool::new(dvr.is_some()),
             dvr: Mutex::new(dvr),
+            init_log: Mutex::new(Vec::new()),
+            predecessor: Mutex::new(None),
             segment_writer: Mutex::new(None),
             next_timeline_ns: AtomicU64::new(0),
             audio_rendition_servings: audio_servings,
@@ -742,7 +757,44 @@ impl ProgramServing {
     }
 
     fn set_init(&self, bytes: impl Into<Bytes>) {
+        let bytes = bytes.into();
+        if self.dvr_recording.load(Ordering::SeqCst)
+            && self.ll_hls.init_bytes().as_ref() != Some(&bytes)
+        {
+            let first_seq = self
+                .trunk
+                .last_closed_segment()
+                .unwrap_or(media_plane::ids::SegmentSeq::new(0))
+                .saturating_next();
+            self.init_log.lock().push(crate::dvr::InitGeneration {
+                first_seq,
+                init: bytes.clone(),
+            });
+        }
         self.ll_hls.set_init(bytes);
+    }
+
+    /// The init changes the recorder has yet to archive under, oldest first;
+    /// with none logged, the current init applies to every pending segment.
+    fn init_generations(&self) -> Vec<crate::dvr::InitGeneration> {
+        let logged = self.init_log.lock().clone();
+        if !logged.is_empty() {
+            return logged;
+        }
+        self.init_bytes()
+            .map(|init| crate::dvr::InitGeneration {
+                first_seq: media_plane::ids::SegmentSeq::new(0),
+                init,
+            })
+            .into_iter()
+            .collect()
+    }
+
+    fn flush_predecessor(&self) {
+        let predecessor = self.predecessor.lock().take();
+        if let Some(predecessor) = predecessor {
+            predecessor.poll_dvr_blocking();
+        }
     }
 
     pub(crate) fn set_audio_init(&self, index: usize, bytes: impl Into<Bytes>) {
@@ -1050,12 +1102,13 @@ impl ProgramServing {
     fn poll_dvr_blocking(&self) {
         use std::panic::{AssertUnwindSafe, catch_unwind};
 
+        self.flush_predecessor();
         let mut dvr_guard = self.dvr.lock();
         let Some(recorder) = dvr_guard.as_mut() else {
             return;
         };
-        let init_bytes = self.init_bytes();
-        let init_slice = init_bytes.as_deref();
+        let inits = self.init_generations();
+        let logged = self.init_log.lock().len();
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             #[cfg(test)]
             if self
@@ -1064,10 +1117,15 @@ impl ProgramServing {
             {
                 panic!("injected DVR persist panic (test)");
             }
-            recorder.poll_and_persist(init_slice)
+            recorder.poll_and_persist_inits(&inits)
         }));
         match outcome {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => {
+                let mut log = self.init_log.lock();
+                if logged > 1 {
+                    log.drain(..logged - 1);
+                }
+            }
             Ok(Err(e)) => {
                 tracing::error!(
                     "DVR poll_and_persist failed: {e}; \
@@ -1080,6 +1138,8 @@ impl ProgramServing {
                 // archive (fail closed).
                 let _ = payload;
                 *dvr_guard = None;
+                self.dvr_recording.store(false, Ordering::SeqCst);
+                self.init_log.lock().clear();
                 tracing::error!(
                     route = %self.route_name,
                     "DVR persist panicked; recording stopped for this program \
@@ -1642,6 +1702,12 @@ impl RouteHandle {
                 return;
             }
         };
+        if let Some(previous) = programs.get(&program)
+            && previous.dvr_recording.load(Ordering::SeqCst)
+            && serving.dvr_recording.load(Ordering::SeqCst)
+        {
+            *serving.predecessor.lock() = Some(Arc::clone(previous));
+        }
         programs.insert(program, serving);
         self.program_notify.notify_waiters();
     }

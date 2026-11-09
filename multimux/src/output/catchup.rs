@@ -591,7 +591,6 @@ mod tests {
                     .with_dvr(dvr_config(&tmp)),
             );
             route.publish_new_program(SPTS_PROGRAM_ID);
-            route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
             const SEG_LEN: usize = 4096;
             route
                 .add_segment(

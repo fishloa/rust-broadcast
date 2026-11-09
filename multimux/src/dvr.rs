@@ -456,6 +456,14 @@ pub struct IndexEntry {
     pub discontinuous: bool,
 }
 
+/// An fMP4 init segment and the first `Trunk` segment number closed under it
+/// (see [`DvrRecorder::poll_and_persist_inits`]).
+#[derive(Debug, Clone)]
+pub struct InitGeneration {
+    pub first_seq: SegmentSeq,
+    pub init: bytes::Bytes,
+}
+
 /// In-memory record of one stored period file.
 struct PeriodRecord {
     /// Period number (0-based).
@@ -956,28 +964,32 @@ impl DvrRecorder {
     }
 
     pub fn poll_and_persist(&mut self, init_bytes: Option<&[u8]>) -> Result<(), String> {
+        let inits: Vec<InitGeneration> = init_bytes
+            .map(|init| InitGeneration {
+                first_seq: SegmentSeq::new(0),
+                init: bytes::Bytes::copy_from_slice(init),
+            })
+            .into_iter()
+            .collect();
+        self.poll_and_persist_inits(&inits)
+    }
+
+    /// [`Self::poll_and_persist`] for a route that records every init change
+    /// ([`InitGeneration`], oldest first): a pending segment is archived under
+    /// the init it was closed under, and the period rolls to the next init
+    /// only when the first segment closed under it (or the end of the
+    /// pending segments) is reached, so the last segment before a track
+    /// change never lands in the new init's period.
+    pub fn poll_and_persist_inits(&mut self, inits: &[InitGeneration]) -> Result<(), String> {
         if !self.seeded {
             self.seed_from_disk()?;
         }
-        // --- fMP4 init management ---
-        if self.ext == ".m4s" {
-            match (init_bytes, &self.last_init) {
-                // Init is available for the first time — start period 0.
-                (Some(new), None) => {
-                    self.start_period(Some(new))?;
-                }
-                // Init changed mid-stream — roll the period.
-                (Some(new), Some(old)) if new != old.as_slice() => {
-                    tracing::info!(
-                        route = %self.route_name,
-                        "DVR init segment changed — rolling period"
-                    );
-                    self.start_period(Some(new))?;
-                }
-                // No init yet — segments arriving before init are skipped
-                // (they'd be undecodable without it).
-                _ => {}
-            }
+        let mut upcoming = inits.iter().peekable();
+        if self.ext == ".m4s"
+            && self.last_init.is_none()
+            && let Some(first) = upcoming.next()
+        {
+            self.start_period(Some(&first.init))?;
         }
 
         // --- Time-based period rollover ---
@@ -1007,9 +1019,30 @@ impl DvrRecorder {
 
         // --- Draining the cursor ---
         while let Some(item) = self.cursor.poll() {
+            if let SegmentCursorItem::Segment(entry) = &item {
+                while let Some(generation) =
+                    upcoming.next_if(|g| g.first_seq.value() <= entry.sequence_number.value())
+                {
+                    self.roll_to_init(&generation.init)?;
+                }
+            }
             self.on_segment(&item)?;
         }
+        for generation in upcoming {
+            self.roll_to_init(&generation.init)?;
+        }
         Ok(())
+    }
+
+    fn roll_to_init(&mut self, init: &[u8]) -> Result<(), String> {
+        if self.ext != ".m4s" || self.last_init.as_deref() == Some(init) {
+            return Ok(());
+        }
+        tracing::info!(
+            route = %self.route_name,
+            "DVR init segment changed — rolling period"
+        );
+        self.start_period(Some(init))
     }
 
     /// Open a new period container file. If `init_bytes` is `Some` and the
