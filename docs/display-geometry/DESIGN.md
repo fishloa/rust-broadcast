@@ -35,7 +35,7 @@ tkhd presentation size) landed (`[Unreleased]`).**
   (signalled colour description) for AVC/HEVC init segments from
   `TrackSpec::display`; square-pixel/colour-unsignalled input stays
   byte-identical. fMP4 in-band `avc3`/`hev1` tagging (2b) is implemented;
-  demux-side `pasp`/`colr` overlay through the IR is not implemented.
+  demux-side `pasp`/`colr` overlay is implemented (4a-2).
 - **4b landed**: HLS master playlist advertises `VIDEO-RANGE` (HLG/PQ only; SDR and unmapped/absent colour omitted) from the track VUI transfer characteristics (broadcast-hls `VideoRange`, hls-runtime `HlsOrigin`).
   **Phase 4c landed**: `DashPackager`/`LlDashPackager` write `@sar` on video
   Representations and `@par` on video AdaptationSets per ETSI TS 103 285 §4.4.
@@ -466,15 +466,16 @@ cares about shape listens to `DisplayChanged` alone.
 1. ISO BMFF `colr` (`nclx`) over the VUI colour description:
    "this box takes precedence, and over-rides the information in the
    bitstream" (ISO/IEC 14496-12 §12.1.5.1, SN §6). `source = SampleEntry`.
-2. `pasp` vs VUI SAR: **unknown.** The §12.1.4.1 definition text that would say
-   it is not transcribed (gap G3). Until it is, the VUI SAR is what
-   `aspect_ratio` reports and a `pasp` is not read into the model at all;
-   Phase 4 settles precedence after the transcription (owner question Q7).
-   *Phase 4a-2 status:* `colr nclx` override of the VUI colour is implemented
-   (container wins). `pasp` is applied as fill-in only (unspecified VUI SAR);
-   on a specified-vs-specified conflict the VUI SAR is kept, because the
-   available ISO/IEC 14496-12 §12.1.4.1 text does not define precedence
-   (gap G3). See `transmux/CHANGELOG.md` [Unreleased].
+2. `pasp` over the VUI SAR: "`pasp` and `clap`, if present, over-ride the
+   declarations, if any, in structures specific to the video codec"
+   (ISO/IEC 14496-12:2026 §12.1.4.1; gap G3 and question Q7 closed by that
+   text, issue #1909). The demux overlay (`overlay_sample_entry_geometry`)
+   replaces the VUI sample aspect ratio with `pasp`'s, specified or not.
+   For an in-band (`avc3`/`hev1`) track `pasp` applies to every access unit
+   whose own SPS declares the sample entry's SAR; an in-band SPS declaring a
+   different SAR is a later declaration than the sample entry and is reported
+   as it is (`sarswitch-avc3.mp4`). `clap` crop precedence is not applied:
+   `output_rect` stays the codec's crop (follow-up issue).
 3. AFD never overrides geometry: it is interpreted *against* it (TS 101 154
    §B.3.0 "The AFD itself does not describe the aspect ratio of the coded
    frame"). `DisplayInfo` carries both; the player composes them.
@@ -559,7 +560,7 @@ This is also the fix for the existing `TrackUpdated` ordering defect (§2).
 | `StreamingTsDemux` (MPEG-2 video) | Phase 1b if approved (Q6) | Phase 3 AFD; Phase 1b sequence geometry |
 | Batch `TsDemux` -> `Media` | same (final spec, last wins) | per-AU tags only (no event list in `Media`) |
 | `PsDemux` -> `Media` | Phase 1 (H.264 from avcC; MPEG-2 from first sequence header) | per-AU tags only (no event list in `Media`): H.264 via `SpsTracker`, MPEG-2 via `Mpeg2DisplayTracker` |
-| `Fmp4Demux` (avc1/hvc1: params out of band) | Phase 1 from avcC/hvcC; `colr` overlay Phase 1, `pasp` Phase 4 (Q7) | a change needs a new sample entry = new init = new `Media`; no in-segment change possible |
+| `Fmp4Demux` (avc1/hvc1: params out of band) | Phase 1 from avcC/hvcC; `colr` and `pasp` overlay (§6.3) | a change needs a new sample entry = new init = new `Media`; no in-segment change possible |
 | `Fmp4Demux` (avc3/hev1: in-band params) | Phase 1 | Phase 2b: scan in-band SPS in samples, tag samples. `tfhd.sample_description_index` (multiple entries) stays unsupported (existing gap) |
 | `StreamingFlvDemux` (RTMP) | Phase 1 via `TrackSpec::new` on each sequence header | Phase 2 must verify FLV's `TrackUpdated` is not also one sample early (not checked here) |
 | `rtp_stream` | Phase 1 via `TrackSpec::new` | Phase 2 audit, same check |
@@ -807,7 +808,7 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
 | Q4 | AFD persistence order for AVC/HEVC with B-pictures: decode order (what the player's DTS stamping implies) or output order? | decode order |
 | Q5 | AVC/HEVC AFD persistence policy. **RESOLVED 2026-10-20:** A/72 -> ANSI/SCTE 128-1 §8.2.4 and ST 2016-1/-3 are now transcribed (`afd-bar-data.md`). ATSC/SCTE: sticky until the next SRAP or a new AFD, absence at an SRAP = `1000`; DVB: unspecified. Both are offered through an `AfdPersistence` policy (`UntilReplaced` default, `ResetAtRandomAccess`), see §6.4. | resolved: policy enum |
 | Q6 | Include MPEG-2 video sequence geometry (Phase 1b) given the player is H.264/H.265? | defer; MPEG-2 AFD still in Phase 3 |
-| Q7 | `pasp` vs VUI SAR precedence: blocked on transcribing ISO/IEC 14496-12 §12.1.4.1 into `private/specs-md`. Approve that transcription? | VUI wins until then |
+| Q7 | `pasp` vs VUI SAR precedence. **Answered**: ISO/IEC 14496-12:2026 §12.1.4.1, `pasp` over-rides the codec structures (issue #1909) | `pasp` wins |
 | Q8 | HLS `RESOLUTION` for anamorphic video: coded size, cropped size, or display size after SAR? | **Resolved 2026-10-21: square-pixel presentation size** (cropped output rect, width rescaled by SAR, rounded to nearest) — the same value as `tkhd` (§tkhd). RFC 8216bis §4.4.6.2 defines RESOLUTION as "the optimal pixel resolution at which to display all the video" and §6.3.x tells clients to display within "a rectangle with the same proportions as that resolution", so it is a display size, not a coded size. Experiment: Apple `mediastreamvalidator` 1.25.36 accepts both 720x576 and 1024x576 for a 720x576 SAR 64:45 stream (no resolution-vs-stream check), so it is no oracle here; the decision rests on the spec text. Apple authoring 9.2/9.4 make RESOLUTION a MUST for video variants and I-frame variants. |
 | Q9 | Phase 4 changes init-segment/manifest bytes for anamorphic input: patch or minor? | minor-class note in CHANGELOG, still 0.27.x |
 | Q10 | Out-of-range crop: accept with full-picture `output_rect`, and raise `InputDegraded`? | accept, no event |

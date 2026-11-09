@@ -37,6 +37,30 @@ fn melodie_avc3_all_samples_sar_64_45() {
     }
 }
 
+/// ISO/IEC 14496-12:2026 §12.1.4.1: the sample entry's `pasp` over-rides the
+/// SAR its own parameter sets declare. `melodie-avc3.mp4`'s SPS declares
+/// 64:45; its `pasp` is rewritten to 16:11, so every access unit reads 16:11.
+#[test]
+fn pasp_overrides_the_in_band_sps_sar() {
+    let Some(mut bytes) =
+        test_fixtures::require_bytes("mp4/melodie-avc3.mp4", "display_fmp4_inband")
+    else {
+        return;
+    };
+    let at = bytes
+        .windows(4)
+        .position(|w| w == b"pasp")
+        .expect("pasp box");
+    assert_eq!(&bytes[at + 4..at + 12], [0, 0, 0, 64, 0, 0, 0, 45]);
+    bytes[at + 4..at + 12].copy_from_slice(&[0, 0, 0, 16, 0, 0, 0, 11]);
+    let media = Fmp4Demux::new().unpackage(&bytes).unwrap();
+    let track = inband_track(&media);
+    assert!(!track.samples.is_empty());
+    for s in &track.samples {
+        assert_eq!(sar(s), (16, 11));
+    }
+}
+
 #[test]
 fn sarswitch_avc3_switch_at_sps_change() {
     let Some(bytes) = test_fixtures::require_bytes("mp4/sarswitch-avc3.mp4", "display_fmp4_inband")
