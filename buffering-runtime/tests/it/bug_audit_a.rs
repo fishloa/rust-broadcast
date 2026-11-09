@@ -168,3 +168,29 @@ fn restored_stall_memory_keeps_its_age_when_the_clock_starts_small() {
         peak / 2
     );
 }
+
+/// PCR-less: once the track feeding the estimator is removed, the next track
+/// takes over with a fresh baseline; its media clock 1.2 s behind is not a
+/// discontinuity, so playback goes on without a rebaseline.
+#[test]
+fn pcr_less_estimator_track_removed_hands_over_without_a_discontinuity() {
+    let mut s = Sim::new();
+    let video_ahead = 1_200_000;
+    while s.now < 4_000_000 {
+        s.c.on_chunk(s.now, 1316, None);
+        s.c.on_track_media(s.now, VIDEO, t27(s.now + video_ahead));
+        s.c.on_track_media(s.now, AUDIO, t27(s.now));
+        s.tick();
+        s.now += STEP_US;
+    }
+    assert_eq!(s.starts(), 1, "precondition: playing");
+    s.c.unregister_track(VIDEO);
+    while s.now < 8_000_000 {
+        s.c.on_chunk(s.now, 1316, None);
+        s.c.on_track_media(s.now, AUDIO, t27(s.now));
+        s.tick();
+        s.now += STEP_US;
+    }
+    assert_eq!(s.rebaselines(), 0, "events: {:?}", s.log);
+    assert_eq!(s.c.stats().discontinuities, 0);
+}

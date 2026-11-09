@@ -10,8 +10,10 @@
 //! what can play; every position in an [`Event`] is in the PTS domain.
 //!
 //! **PCR-less fallback.** If no chunk with a PCR has ever been fed, the
-//! estimator is fed from `on_media` (its `media_end` is the media time). The
-//! first PCR seen switches the estimator to PCR for good (its baseline is
+//! estimator is fed from `on_media` (its `media_end` is the media time), one
+//! track's own series: the first track to deliver, until it is removed or
+//! silent. Never the minimum over tracks, which jumps whenever a track joins
+//! behind or the limiting track changes. The first PCR seen switches the estimator to PCR for good (its baseline is
 //! reset once because the two clocks differ); from then on `on_media` never
 //! feeds the estimator.
 //!
@@ -68,6 +70,7 @@ pub struct BufferController {
     degraded: bool,
     pcr_seen: bool,
     fed_media: bool,
+    media_ref: Option<u32>,
     below_since: Option<u64>,
     over_armed: bool,
     reported_target: Micros,
@@ -111,6 +114,7 @@ impl BufferController {
             degraded: false,
             pcr_seen: false,
             fed_media: false,
+            media_ref: None,
             below_since: None,
             over_armed: true,
             reported_target: cfg.policy.min_us,
@@ -257,11 +261,9 @@ impl BufferController {
             // not at the next PCR chunk
             self.after_sample(now_us);
         }
-        if !self.pcr_seen
-            && let Some(e) = self.effective()
-        {
+        if !self.pcr_seen && self.effective().is_some() && self.feeds_estimator(track) {
             self.fed_media = true;
-            self.feed(now_us, e.end, 0);
+            self.feed(now_us, media_end_27mhz, 0);
         }
         match self.queue_start {
             None => self.queue_start = Some(media_end_27mhz),
@@ -270,6 +272,27 @@ impl BufferController {
             }
             Some(_) => {}
         }
+    }
+
+    /// A track taking over the PCR-less feed starts a fresh baseline: its
+    /// media clock is offset from the previous track's.
+    fn feeds_estimator(&mut self, track: u32) -> bool {
+        if self.media_ref == Some(track) {
+            return true;
+        }
+        if let Some(r) = self.media_ref {
+            if self
+                .tracks
+                .is_live(r, self.latest, self.cfg.track_silence_timeout_us)
+            {
+                return false;
+            }
+            if self.fed_media {
+                self.jitter.reset_baseline();
+            }
+        }
+        self.media_ref = Some(track);
+        true
     }
 
     fn step_rules(&self) -> StepRules {
@@ -663,6 +686,7 @@ impl BufferController {
         self.degraded = false;
         self.pcr_seen = false;
         self.fed_media = false;
+        self.media_ref = None;
         self.below_since = None;
         self.over_armed = true;
         self.lead_us = 0;

@@ -329,6 +329,14 @@ impl TrackSet {
         clock.is_some_and(|l| l.saturating_sub(since) >= silence_us)
     }
 
+    /// Is `id` known and not excluded by the relative-silence rule at `now`?
+    pub(crate) fn is_live(&self, id: u32, now: Micros, silence_us: Micros) -> bool {
+        let clock = self.silence_clock(now);
+        self.v
+            .iter()
+            .any(|t| t.id == id && !self.is_silent(t, silence_us, clock))
+    }
+
     /// Largest held delivery step over the non-excluded tracks at `now`.
     pub(crate) fn granularity_us(&self, now: Micros, silence_us: Micros) -> Micros {
         let clock = self.silence_clock(now);
