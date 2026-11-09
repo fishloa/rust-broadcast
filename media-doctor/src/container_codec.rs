@@ -14,7 +14,8 @@
 //! - **`avcc-sps-mismatch`** / **`hvcc-sps-mismatch`** (Error): the config
 //!   record's `profile_indication`/`level_indication` (AVC) or
 //!   `general_profile_idc`/`general_level_idc` (HEVC) disagrees with the
-//!   same fields re-decoded from the record's own embedded SPS
+//!   same fields re-decoded from the record's own embedded SPS (a level
+//!   at or above the SPS level is conformant)
 //!   ([`transmux::decode_avc_sps`]/[`transmux::decode_hevc_sps`] — reused,
 //!   never re-implemented) — ISO/IEC 14496-15:2017 §5.3.3.1/§8.3.3.1.
 //! - **`container-sps-dimension-mismatch`** (Error): the sample entry's
@@ -206,13 +207,13 @@ fn check_avc_track(
             ),
         ));
     }
-    if record.level_indication != info.level_idc {
+    if record.level_indication < info.level_idc {
         report.push(Finding::new(
             Severity::Error,
             Location::at_track(0, track_id),
             "avcc-sps-mismatch",
             alloc::format!(
-                "avcC AVCLevelIndication 0x{:02X} on track {track_id} disagrees with the \
+                "avcC AVCLevelIndication 0x{:02X} on track {track_id} is below the \
                  embedded SPS level_idc 0x{:02X} — ISO/IEC 14496-15:2017 §5.3.3.1.1",
                 record.level_indication,
                 info.level_idc,
@@ -292,13 +293,13 @@ fn check_hevc_track(
             ),
         ));
     }
-    if record.general_level_idc != info.general_level_idc {
+    if record.general_level_idc < info.general_level_idc {
         report.push(Finding::new(
             Severity::Error,
             Location::at_track(0, track_id),
             "hvcc-sps-mismatch",
             alloc::format!(
-                "hvcC general_level_idc {} on track {track_id} disagrees with the embedded SPS \
+                "hvcC general_level_idc {} on track {track_id} is below the embedded SPS \
                  general_level_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1",
                 record.general_level_idc,
                 info.general_level_idc,
