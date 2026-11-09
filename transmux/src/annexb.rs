@@ -1,4 +1,4 @@
-//! Annex B ↔ length-prefixed NAL conversion — ITU-T H.264 Annex B / ISO/IEC 14496-15 §5.3.4.
+//! Annex B ↔ length-prefixed NAL conversion — ITU-T H.264 Annex B / ISO/IEC 14496-15:2017 §4.3.3.
 //!
 //! MPEG-2 TS carries H.264/HEVC as an **Annex B** byte stream: NAL units are
 //! separated by start-code prefixes (`00 00 01`, optionally preceded by extra
@@ -21,13 +21,13 @@ use crate::error::{Error, Result};
 /// Length in bytes of the fixed NAL length prefix used in `mdat` (4 → `lengthSizeMinusOne = 3`).
 pub const NAL_LENGTH_SIZE: usize = 4;
 
-/// The NAL length-prefix sizes ISO/IEC 14496-15 §5.3.3 defines:
+/// The NAL length-prefix sizes ISO/IEC 14496-15:2017 §4.3.3.1 and §5.3.3.1.3 define:
 /// `lengthSizeMinusOne` 0/1/3 → 1/2/4-byte lengths. The value 2 (3-byte
 /// lengths) is reserved, so 3 is absent.
 pub const VALID_NAL_LENGTH_SIZES: [usize; 3] = [1, 2, NAL_LENGTH_SIZE];
 
 /// The `lengthSizeMinusOne` an `avcC`/`hvcC` must declare for the length size
-/// this crate's IR uses ([`NAL_LENGTH_SIZE`] = 4 → 3; ISO/IEC 14496-15 §5.3.3).
+/// this crate's IR uses ([`NAL_LENGTH_SIZE`] = 4 → 3; ISO/IEC 14496-15:2017 §5.3.3.1.3).
 /// A demuxer that normalises a sample's NAL prefixes with
 /// [`normalise_nal_length_size`] must set this on the config record it emits,
 /// or the init segment will describe lengths the samples do not have.
@@ -151,12 +151,12 @@ pub fn iter_length_prefixed_nals(lp: &[u8]) -> Result<Vec<&[u8]>> {
 }
 
 /// Iterate the NAL units of a length-prefixed buffer whose prefix size is
-/// `length_size` bytes (ISO/IEC 14496-15 §5.3.3: `lengthSizeMinusOne + 1`).
+/// `length_size` bytes (ISO/IEC 14496-15:2017 §4.3.3.1, §5.3.3.1.3: `lengthSizeMinusOne + 1`).
 ///
 /// `lengthSizeMinusOne` is a 2-bit field, but only 0, 1 and 3 are defined —
 /// 1-, 2- and 4-byte lengths; the value 2 (a 3-byte length) is reserved, so a
 /// `length_size` of 3 is rejected rather than interpreted (the transcription at
-/// `private/specs-verified/mpeg/transmux/codec/avcC-hvcC-14496-15.md` states `0/1/3 → 1/2/4-byte
+/// `private/specs-verified/mpeg/isobmff/iso-iec-14496-15-2017-avc-hevc-config.md` §5.3.3.1.3 states `0/1/3 → 1/2/4-byte
 /// NALUnitLength`).
 ///
 /// Returns an error if `length_size` is not 1, 2 or 4, or if a declared length
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(iter_length_prefixed_nals(&out).unwrap().len(), 2);
     }
 
-    /// A 3-byte length-prefix source is rejected: ISO/IEC 14496-15 §5.3.3
+    /// A 3-byte length-prefix source is rejected: ISO/IEC 14496-15:2017 §5.3.3.1.3
     /// defines `lengthSizeMinusOne` 0/1/3 (1/2/4-byte) and reserves the value 2,
     /// so a 3-byte length has no defined meaning and must not be guessed at.
     #[test]

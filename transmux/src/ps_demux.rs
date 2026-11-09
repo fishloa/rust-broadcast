@@ -163,7 +163,7 @@ const AC3_SYNCWORD_LEN: usize = AC3_SYNCWORD.len();
 /// is skipped without probing.
 const SUBSTREAM_ID_AUDIO_LO: u8 = 0x80;
 
-// ── H.264 NAL / config constants (ISO/IEC 14496-10 / 14496-15) ───────────────
+// ── H.264 NAL / config constants (ISO/IEC 14496-10 / 14496-15:2017) ───────────────
 
 /// NAL length-field width for `mdat` samples: 4-byte prefixes → `lengthSizeMinusOne = 3`.
 const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
@@ -819,7 +819,7 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     let record = AVCDecoderConfigurationRecord {
         configuration_version: 1,
         // profile_idc / constraint_flags / level_idc live at SPS bytes 1..=3
-        // (after the 1-byte NAL header) — ISO/IEC 14496-15 §5.3.3.1.
+        // (after the 1-byte NAL header) — ISO/IEC 14496-15:2017 §5.3.3.1.
         profile_indication: sps[1],
         profile_compatibility: sps[2],
         level_indication: sps[3],

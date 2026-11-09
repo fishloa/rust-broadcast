@@ -646,7 +646,7 @@ impl Hdr10PlusMetadata {
         crate::annexb::iter_annexb_nals(access_unit).any(Self::hevc_sei_nal_carries_hdr10plus)
     }
 
-    /// Whether a 4-byte length-prefixed (ISO/IEC 14496-15) sample holds an
+    /// Whether a 4-byte length-prefixed (ISO/IEC 14496-15:2017) sample holds an
     /// HDR10+ prefix SEI NAL unit.
     pub fn sample_carries_hdr10plus(sample: &[u8]) -> bool {
         let mut at = 0usize;

@@ -96,6 +96,7 @@ SPEC_FILE_NAME = re.compile(
     r"(?<![\w/.-])((?:en|ts|tr|etsi|ansi|iso|itu|smpte|scte|atsc)_[0-9][\w.-]*\.(?:md|pdf|txt))"
 )
 ISOBMFF_EDITION = re.compile(r"14496-12(?!:2026)(?![\w-])")
+ISO15_UNDATED = re.compile(r"(?<![\w/.-])14496-15(?!:(?:2017|2022)(?![\w]))")
 CRATE_RELATIVE_ROOTS = ("src", "tests", "examples", "benches", "docs")
 EXTERNAL_PATH_DOCS = {"docs/migration-notes-downstream.md"}
 GLOB_CHARS = set("*?[")
@@ -490,6 +491,14 @@ def main() -> int:
         if rel not in RETIRED_EXEMPT:
             for m in ISOBMFF_EDITION.finditer(text):
                 errors.append(f"{rel}: ISO/IEC 14496-12 citation must name the 2026 edition (14496-12:2026): ...{text[max(0, m.start() - 12):m.end() + 8]!r}")
+
+        # l. ISO/IEC 14496-15 citations name the edition checked (2017; 2022 for VVC)
+        if rel not in RETIRED_EXEMPT:
+            for m in ISO15_UNDATED.finditer(text):
+                errors.append(
+                    f"{rel}: ISO/IEC 14496-15 citation must name its edition "
+                    f"(14496-15:2017, or :2022 for VVC): {text[m.start():m.start() + 30]!r}"
+                )
 
         # h. relative and helper-call fixture citations must resolve
         if rel not in RETIRED_EXEMPT:

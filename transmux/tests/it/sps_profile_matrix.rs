@@ -279,7 +279,7 @@ fn h264_matrix_decode_matches_ffprobe_oracle() {
         );
 
         // Profile/level bytes are copied verbatim from the SPS into the avcC
-        // header (ISO/IEC 14496-15 §5.3.3.1.2) — verify both agree with ffprobe.
+        // header (ISO/IEC 14496-15:2017 §5.3.3.1.2) — verify both agree with ffprobe.
         assert_eq!(
             config.config.profile_indication, oracle.profile,
             "{}: avcC AVCProfileIndication must match ffprobe profile_idc",

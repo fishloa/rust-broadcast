@@ -1802,7 +1802,7 @@ const HVC1_CODEC_STRING_CAPACITY: usize = 48;
 /// `general_profile_space` 1..=3 as the codec-string prefix letters.
 const HEVC_PROFILE_SPACE_LETTERS: [char; 3] = ['A', 'B', 'C'];
 
-/// Build the `hvc1.…` codec string of ISO/IEC 14496-15 (the HEVC registration
+/// Build the `hvc1.…` codec string of ISO/IEC 14496-15:2017 Annex E.3 (the HEVC registration
 /// under RFC 6381): `hvc1.<space letter><profile_idc>.<compat>.<tier><level>
 /// [.<constraint byte>…]`, where `general_profile_idc` and `general_level_idc`
 /// are decimal, `<compat>` is the bit-reversed 32-bit compatibility word in hex

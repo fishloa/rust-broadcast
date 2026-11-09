@@ -14,9 +14,9 @@ Regenerate: see the "Regeneration" section below.
 
 ## avcC / hvcC value-verification (the #425 follow-up — clean reference)
 
-The vendored ISO/IEC 14496-15 is image-only **scanned** (unusable). The clean
-reference is ffmpeg's own muxer (movenc.c) — the byte oracle here + a text-layer
-14496-15 fetched into `docs/codec/`.
+The vendored ISO/IEC 14496-15:2017 is an image-only scan, so its syntax is read from the rendered pages (`private/specs-verified/mpeg/isobmff/iso-iec-14496-15-2017-avc-hevc-config.md`). The clean
+reference is ffmpeg's own muxer (movenc.c) — the byte oracle here, read
+against that 2017 transcription.
 
 | box | source mp4 | body (hex) |
 |---|---|---|

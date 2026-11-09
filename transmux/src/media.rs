@@ -1295,7 +1295,7 @@ pub(crate) fn refine_legacy_config(config: &mut CodecConfig, samples: &[Sample])
 }
 
 /// The NAL length-prefix size (bytes) an AVC/HEVC config declares, or `None`
-/// for a codec that is not length-prefixed. ISO/IEC 14496-15 §5.3.3:
+/// for a codec that is not length-prefixed. ISO/IEC 14496-15:2017 §4.3.3.1, §5.3.3.1.3:
 /// `lengthSizeMinusOne + 1`.
 fn config_nal_length_size(config: &CodecConfig) -> Option<usize> {
     match config {
@@ -1311,7 +1311,7 @@ fn config_nal_length_size(config: &CodecConfig) -> Option<usize> {
 
 /// Rewrite a track's samples to the crate's canonical 4-byte NAL prefixes and
 /// set the config's `lengthSizeMinusOne` to match, when the source declared a
-/// different size (ISO/IEC 14496-15 §5.3.3: 1, 2 or 4 bytes).
+/// different size (ISO/IEC 14496-15:2017 §4.3.3.1, §5.3.3.1.3: 1, 2 or 4 bytes).
 ///
 /// The rest of the pipeline — [`crate::annexb::iter_length_prefixed_nals`],
 /// keyframe detection, the TS/RTP writers — is fixed at 4 bytes, so a 1- or

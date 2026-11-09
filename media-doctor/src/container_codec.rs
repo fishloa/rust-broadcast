@@ -16,7 +16,7 @@
 //!   `general_profile_idc`/`general_level_idc` (HEVC) disagrees with the
 //!   same fields re-decoded from the record's own embedded SPS
 //!   ([`transmux::decode_avc_sps`]/[`transmux::decode_hevc_sps`] — reused,
-//!   never re-implemented) — ISO/IEC 14496-15:2017 §5.3.3/§8.3.3.
+//!   never re-implemented) — ISO/IEC 14496-15:2017 §5.3.3.1/§8.3.3.1.
 //! - **`container-sps-dimension-mismatch`** (Error): the sample entry's
 //!   `width`/`height` disagrees with the SPS-decoded coded dimensions
 //!   (ITU-T H.264 §7.4.2.1.1 / H.265 §7.4.3.2.1 cropped geometry).
@@ -32,7 +32,7 @@
 //!   parse as a well-formed 4-byte length-prefixed NAL sequence
 //!   ([`transmux::iter_length_prefixed_nals`]) — the structural signature of
 //!   an Annex B start code smuggled into an MP4 sample in place of a length
-//!   prefix (ISO/IEC 14496-15:2017 §5.4.3.2.3 "no Annex B start codes").
+//!   prefix (ISO/IEC 14496-15:2017 §4.3.2 "no start codes", §4.3.3).
 //!
 //! Non-ISOBMFF input, or input that fails to demux (e.g. a bare `sidx`-only
 //! stub with no `moov`), yields no findings — this function has nothing to
@@ -96,8 +96,8 @@ fn looks_like_isobmff(bytes: &[u8]) -> bool {
 }
 
 /// The NAL length-prefix width a track's codec configuration declares, in
-/// bytes — `lengthSizeMinusOne + 1` (ISO/IEC 14496-15 §5.3.3.1.1 `avcC`,
-/// §8.3.3.1.2 `hvcC`). `None` for a track that is not AVC/HEVC.
+/// bytes — `lengthSizeMinusOne + 1` (ISO/IEC 14496-15:2017 §5.3.3.1.3 `avcC`,
+/// §8.3.3.1.3 `hvcC`). `None` for a track that is not AVC/HEVC.
 ///
 /// `Sample::data` is length-prefixed NAL data only for those two codecs, so
 /// this is also what gates the length-prefix check.
@@ -118,7 +118,7 @@ fn check_media(media: &Media, report: &mut Report) {
         // `track_ID` is a full 32-bit field (ISO/IEC 14496-12:2026 §8.3.2) — never
         // narrowed, or every id above 65535 aliases onto a lower one.
         let track_id = track.track_id();
-        // Length-prefixed NAL framing (ISO/IEC 14496-15:2017 §5.4.3.2.3) only
+        // Length-prefixed NAL framing (ISO/IEC 14496-15:2017 §4.3.2, §4.3.3) only
         // applies to AVC/HEVC video samples — `transmux::pipeline::Sample`
         // documents its `data` field as "length-prefixed NAL data for
         // AVC/HEVC, or the raw frame for AAC [and every other codec]".
@@ -150,8 +150,8 @@ fn check_media(media: &Media, report: &mut Report) {
             continue;
         }
 
-        // The record's own `lengthSizeMinusOne` (ISO/IEC 14496-15 5.3.3.1.1
-        // for `avcC`, 8.3.3.1.2 for `hvcC`) declares the prefix width —
+        // The record's own `lengthSizeMinusOne` (ISO/IEC 14496-15:2017 §5.3.3.1.3
+        // for `avcC`, §8.3.3.1.3 for `hvcC`) declares the prefix width —
         // 1-, 2- and 4-byte prefixes are all conformant. Assuming 4 bytes
         // reported a false `length-prefix-violation` on every conformant
         // AVC/HEVC track that uses a narrower prefix.
@@ -168,7 +168,7 @@ fn check_media(media: &Media, report: &mut Report) {
                         "Sample {idx} on track {track_id} is not a well-formed {length_size}-byte \
                          length-prefixed NAL sequence (declared length runs past the sample's \
                          own end) — a hallmark of an Annex B start code left in place of a \
-                         length prefix (ISO/IEC 14496-15:2017 §5.4.3.2.3)",
+                         length prefix (ISO/IEC 14496-15:2017 §4.3.2)",
                     ),
                 ));
                 // One finding per track is enough signal; do not spam every
@@ -228,7 +228,7 @@ fn check_avc_track(
             "avcc-sps-mismatch",
             alloc::format!(
                 "avcC chroma_format {chroma} on track {track_id} disagrees with the \
-                 embedded SPS chroma_format_idc {} — ISO/IEC 14496-15:2017 §5.3.3.1.2",
+                 embedded SPS chroma_format_idc {} — ISO/IEC 14496-15:2017 §5.3.3.1.1",
                 info.chroma_format_idc,
             ),
         ));
@@ -286,7 +286,7 @@ fn check_hevc_track(
             "hvcc-sps-mismatch",
             alloc::format!(
                 "hvcC general_profile_idc {} on track {track_id} disagrees with the embedded \
-                 SPS general_profile_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1",
+                 SPS general_profile_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1",
                 record.general_profile_idc,
                 info.general_profile_idc,
             ),
@@ -299,7 +299,7 @@ fn check_hevc_track(
             "hvcc-sps-mismatch",
             alloc::format!(
                 "hvcC general_level_idc {} on track {track_id} disagrees with the embedded SPS \
-                 general_level_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1",
+                 general_level_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1",
                 record.general_level_idc,
                 info.general_level_idc,
             ),
@@ -312,7 +312,7 @@ fn check_hevc_track(
             "hvcc-sps-mismatch",
             alloc::format!(
                 "hvcC chroma_format_idc {} on track {track_id} disagrees with the embedded SPS \
-                 chroma_format_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1",
+                 chroma_format_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1",
                 record.chroma_format_idc,
                 info.chroma_format_idc,
             ),
@@ -369,7 +369,7 @@ mod tests {
     }
 
     /// Audit MD-W6: the NAL length-prefix width comes from the track's own
-    /// `avcC`/`hvcC` `lengthSizeMinusOne` (ISO/IEC 14496-15 5.3.3.1.1), not
+    /// `avcC`/`hvcC` `lengthSizeMinusOne` (ISO/IEC 14496-15:2017 §5.3.3.1.3), not
     /// an assumed 4. A conformant stream with 2-byte prefixes must produce no
     /// `length-prefix-violation`.
     ///
@@ -424,7 +424,7 @@ mod tests {
 
     /// The width the check uses is read from the record, not assumed:
     /// `nal_length_size` maps each `lengthSizeMinusOne` to its byte count
-    /// (ISO/IEC 14496-15 5.3.3.1.1) and rejects a non-AVC/HEVC config.
+    /// (ISO/IEC 14496-15:2017 §5.3.3.1.3) and rejects a non-AVC/HEVC config.
     #[test]
     #[cfg(feature = "std")]
     fn nal_length_size_comes_from_the_record() {
