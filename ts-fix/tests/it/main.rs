@@ -15,3 +15,4 @@ mod scte35_preserve;
 mod stuffing;
 mod support;
 mod tsduck_oracle;
+mod audit_g;
