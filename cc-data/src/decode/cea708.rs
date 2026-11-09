@@ -301,7 +301,7 @@ impl Window {
         (self.column_count as usize).clamp(1, MAX_WINDOW_COLS)
     }
 
-    /// Append a character at the current pen position, advancing the pen.
+    /// Write a character at the current pen position (overwriting any cell there), advancing the pen.
     fn put_char(&mut self, ch: char) {
         self.ensure_grid();
         let cols = self.cols();
@@ -314,7 +314,12 @@ impl Window {
             row.push(' ');
         }
         if self.pen_col < cols {
-            row.push(ch);
+            match row.char_indices().nth(self.pen_col) {
+                Some((at, old)) => {
+                    row.replace_range(at..at + old.len_utf8(), ch.encode_utf8(&mut [0; 4]))
+                }
+                None => row.push(ch),
+            }
             self.pen_col += 1;
         }
     }
@@ -1307,5 +1312,15 @@ mod tests {
             })
             .collect();
         dec2.push_triplets(&triplets);
+    }
+
+    #[test]
+    fn set_pen_location_back_over_existing_text_overwrites() {
+        let mut d = Cea708Decoder::new();
+        d.push_packet(&[0x05, 0x27, 0x9A, 0x38, 0x4A, 0xD1, 0x8B, 0x0F, 0x11, 0x00]);
+        d.push_packet(&[0x45, 0x26, b'A', b'B', b'C', 0x92, 0x00, 0x00, 0x00, 0x00]);
+        d.push_packet(&[0x82, 0x22, b'X', 0x00]);
+        let w = d.windows(1)[2].as_ref().unwrap();
+        assert_eq!(w.text(), "XBC");
     }
 }

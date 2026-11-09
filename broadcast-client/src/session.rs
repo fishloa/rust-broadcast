@@ -481,7 +481,7 @@ impl Session {
         }
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
-            r.on_data(conn, bytes, now_us, &mut self.auth);
+            let lost = r.on_data(conn, bytes, now_us, &mut self.auth);
             self.flush_rtsp();
             if !bytes.is_empty() {
                 self.buffer.on_chunk(now_us, bytes.len(), None);
@@ -489,6 +489,9 @@ impl Session {
                 for e in evs {
                     self.events.push_back(e);
                 }
+            }
+            if lost {
+                self.hint(Hint::SourceError);
             }
             return;
         }
@@ -983,7 +986,7 @@ impl Session {
         self.buffer.replay_config()
     }
 
-    /// The stall-memory seed the session's controller started from (the `seed` row of an
+    /// The stall-memory seed the session's current controller was built with (the `seed` row of an
     /// [`InputLog`](buffering_runtime::input_log::InputLog)); `None` for a session opened without
     /// [`Session::open_with_memory`].
     #[must_use]

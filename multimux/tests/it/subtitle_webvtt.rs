@@ -127,7 +127,20 @@ struct Driver {
     next: usize,
 }
 
+fn fresh_route(subtitles: bool) -> Arc<RouteHandle> {
+    Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
+            .with_hold_cold_playlist(false)
+            .with_declared_bandwidth_bps(DECLARED_BPS)
+            .with_subtitles(subtitles),
+    )
+}
+
 fn start_rig(media: transmux::Media, subtitles: bool) -> Driver {
+    start_rig_on(media, fresh_route(subtitles), false)
+}
+
+fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool) -> Driver {
     let trunk = Trunk::new(TrunkConfig::new(
         nz(RING),
         nz(SIDE_RINGS),
@@ -137,16 +150,14 @@ fn start_rig(media: transmux::Media, subtitles: bool) -> Driver {
     ));
     let writer = trunk.writer().expect("trunk writer");
     writer.set_tracks(media.tracks.iter().map(|t| t.spec.clone()).collect());
-    let route = Arc::new(
-        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
-            .with_hold_cold_playlist(false)
-            .with_declared_bandwidth_bps(DECLARED_BPS)
-            .with_subtitles(subtitles),
-    );
     route.publish_program(ProgramId(0), Arc::clone(&trunk));
     route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
-    let segmenter = ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
-        .expect("segmenter");
+    let mut segmenter =
+        ProgramSegmenter::try_new(&trunk, &route, TARGET_DURATION_SECS, PART_TARGET_MS)
+            .expect("segmenter");
+    if reconnect {
+        segmenter.continue_after_reconnect(&route, ProgramId(0));
+    }
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
     }
@@ -222,6 +233,19 @@ fn teletext_rig_unshared(subtitles: bool, who: &str) -> Option<Rig> {
         .expect("read teletext fixture");
     let video = test_fixtures::require_bytes(VIDEO_FIXTURE, who)?;
     Some(build_from(compose(&video, &teletext), subtitles))
+}
+
+fn reconnected_teletext_rig(who: &str) -> Option<Rig> {
+    let teletext = std::fs::read(test_fixtures::tsduck(TELETEXT_FIXTURE, who)?)
+        .expect("read teletext fixture");
+    let video = test_fixtures::require_bytes(VIDEO_FIXTURE, who)?;
+    let media = compose(&video, &teletext);
+    let route = fresh_route(true);
+    let first = start_rig_on(media.clone(), Arc::clone(&route), false);
+    let first_trunk = Arc::clone(&first.trunk);
+    first.finish();
+    route.release_program(ProgramId(0), &first_trunk);
+    Some(start_rig_on(media, route, true).finish())
 }
 
 fn no_teletext_rig_unshared(subtitles: bool, who: &str) -> Option<Rig> {
@@ -725,6 +749,37 @@ async fn cue_times_line_up_with_the_video_timeline() {
     let (Some(rig), Some(reference)) = (teletext_rig(true, who), reference_cues(who)) else {
         return;
     };
+    assert_cues_line_up(rig, &reference).await;
+}
+
+/// After a source reconnect the run continues the earlier numbering, so its video segments start
+/// at the number-derived time; the subtitle follower shifts its `X-TIMESTAMP-MAP` and segment
+/// timeline to match, and the cues still land where the reference puts them on the video timeline.
+#[tokio::test]
+async fn cue_times_line_up_with_the_video_timeline_after_a_source_reconnect() {
+    let who = "cue_times_line_up_with_the_video_timeline_after_a_source_reconnect";
+    let (Some(rig), Some(reference)) = (reconnected_teletext_rig(who), reference_cues(who)) else {
+        return;
+    };
+    let (_, video) = rig.playlist("media.m3u8").await;
+    let number = seq_of(&video.segments[0].uri);
+    assert!(number > 1, "the run continues the earlier numbering");
+    let uri = rig.subtitle_uri(false).await;
+    let (_, subs) = rig.playlist(&uri).await;
+    let maps: BTreeSet<u64> = fetch_vtt_segments(&rig, &subs)
+        .await
+        .iter()
+        .map(|s| s.mpegts)
+        .collect();
+    let derived = (number - 1) as f64 * TARGET_DURATION_SECS * TICKS_PER_SEC;
+    assert!(
+        maps.iter().all(|m| *m as f64 >= derived - TICKS_PER_SEC),
+        "MPEGTS {maps:?} does not start at the derived {derived}"
+    );
+    assert_cues_line_up(&rig, &reference).await;
+}
+
+async fn assert_cues_line_up(rig: &Rig, reference: &[VttCue]) {
     let map = OutputMap::new(rig).await;
     let uri = rig.subtitle_uri(false).await;
     let (_, subs) = rig.playlist(&uri).await;
@@ -737,7 +792,7 @@ async fn cue_times_line_up_with_the_video_timeline() {
         }
     }
     assert_eq!(starts.len(), reference.len(), "{starts:?}");
-    for want in &reference {
+    for want in reference {
         let expected = map.reference_secs(want.start_ms);
         let got = starts
             .get(&want.text)

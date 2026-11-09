@@ -46,7 +46,7 @@ impl Cea608ToWebVtt {
     pub fn push_cc_data(&mut self, pts_90k: u64, cc_data_bytes: &[u8]) -> Result<(), Error> {
         use broadcast_common::Parse;
         let cc = cc_data::CcData::parse(cc_data_bytes)?;
-        self.extractor.push_frame(pts_90k, &cc.triplets);
+        self.extractor.push_frame(pts_90k, cc.processed_triplets());
         Ok(())
     }
 
@@ -79,7 +79,7 @@ impl Cea708ToWebVtt {
     pub fn push_cc_data(&mut self, pts_90k: u64, cc_data_bytes: &[u8]) -> Result<(), Error> {
         use broadcast_common::Parse;
         let cc = cc_data::CcData::parse(cc_data_bytes)?;
-        self.extractor.push_frame(pts_90k, &cc.triplets);
+        self.extractor.push_frame(pts_90k, cc.processed_triplets());
         Ok(())
     }
 
@@ -167,5 +167,24 @@ mod tests {
         assert_eq!(conv.cues().len(), 0);
         conv.finalize(0);
         assert_eq!(conv.into_cues().len(), 0);
+    }
+
+    #[test]
+    fn cc_data_with_process_cc_data_flag_clear_is_discarded() {
+        let mut conv = Cea608ToWebVtt::new(Cea608Channel::Cc1);
+        let frames: [(u8, u8); 4] = [(0x14, 0x20), (0x14, 0x70), (b'H', b'I'), (0x14, 0x2F)];
+        for (i, (a, b)) in frames.into_iter().enumerate() {
+            let cc = CcData {
+                process_em_data_flag: true,
+                process_cc_data_flag: false,
+                additional_data_flag: false,
+                reserved_byte1: 0xFF,
+                triplets: alloc::vec![t608(a, b)],
+            };
+            conv.push_cc_data(i as u64, &cc.try_to_bytes().unwrap())
+                .unwrap();
+        }
+        conv.finalize(10);
+        assert!(conv.cues().is_empty(), "{:?}", conv.cues());
     }
 }

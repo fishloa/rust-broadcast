@@ -87,10 +87,21 @@ macro_rules! declare_commands {
             /// Parse a command `body` by its `splice_command_type`. Reserved /
             /// unimplemented types yield [`AnyCommand::Unknown`].
             pub fn dispatch(command_type: u8, body: &$lt [u8]) -> Result<Self> {
-                use broadcast_common::Parse;
+                use broadcast_common::{Parse, Serialize};
                 match command_type {
                     $(
-                        $ct => <$($path)::+>::parse(body).map(Self::$variant),
+                        $ct => {
+                            let command = <$($path)::+>::parse(body)?;
+                            if command.serialized_len() != body.len() {
+                                return Err(crate::error::Error::InvalidField(
+                                    broadcast_common::error::InvalidField {
+                                        field: "splice_info_section.splice_command_length",
+                                        reason: "bytes remain after the command structure",
+                                    },
+                                ));
+                            }
+                            Ok(Self::$variant(command))
+                        }
                     )+
                     _ => Ok(Self::Unknown { command_type, body }),
                 }

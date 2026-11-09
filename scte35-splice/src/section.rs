@@ -190,6 +190,10 @@ fn derive_command_length(command_type: u8, payload: &[u8]) -> Result<usize> {
     }))
 }
 
+/// `section_syntax_indicator` (bit 7) and `private_indicator` (bit 6) of the byte after
+/// `table_id`; both are fixed at 0 and the serializer always writes 0.
+const SYNTAX_AND_PRIVATE_INDICATOR_MASK: u8 = 0xC0;
+
 impl<'a> Parse<'a> for SpliceInfoSection<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -200,6 +204,12 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         )?;
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId { table_id: bytes[0] });
+        }
+        if bytes[1] & SYNTAX_AND_PRIVATE_INDICATOR_MASK != 0 {
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "splice_info_section.section_syntax_indicator/private_indicator",
+                reason: "must be 0 (§9.6.1, Table 5)",
+            }));
         }
         let sap_type = (bytes[1] >> 4) & 0x03;
         let section_length = (u16::from(bytes[1] & 0x0F) << 8) | u16::from(bytes[2]);

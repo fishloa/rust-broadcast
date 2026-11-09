@@ -168,6 +168,66 @@ async fn msn_requests_on_a_cold_stream_keep_their_semantics() {
     assert_eq!(resp.unwrap().status(), StatusCode::OK);
 }
 
+fn unannounced_route() -> Arc<RouteHandle> {
+    Arc::new(RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8))
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_request_before_the_program_is_announced_is_held_until_the_first_segment_closes() {
+    let store = unannounced_route();
+    let app = app(&store);
+
+    let started = Instant::now();
+    let request = app.clone().oneshot(get("/cam/media.m3u8"));
+    let announce = async {
+        tokio::time::sleep(PUBLISH_DELAY).await;
+        let mut seg = feed_open_segment(
+            &store,
+            vec![video_track_spec()],
+            video_batches_n(COLD_FRAMES),
+        );
+        push_frames(&store, &mut seg, COLD_FRAMES..SEGMENT_CLOSING_FRAMES);
+    };
+    let (resp, ()) = tokio::join!(request, announce);
+    let resp = resp.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        started.elapsed() >= PUBLISH_DELAY,
+        "answered after {:?}, before the program existed",
+        started.elapsed()
+    );
+    assert!(body_string(resp).await.contains("#EXTINF:"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_request_for_a_program_that_never_appears_is_503_with_retry_after() {
+    let store = unannounced_route();
+    let app = app(&store);
+
+    let started = Instant::now();
+    let resp = app.clone().oneshot(get("/cam/media.m3u8")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(resp.headers().contains_key(header::RETRY_AFTER));
+    assert!(
+        started.elapsed() >= MIN_BLOCKING_TIMEOUT - Duration::from_millis(100),
+        "gave up after {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn with_the_hold_off_a_request_before_the_program_is_an_immediate_503() {
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8).with_hold_cold_playlist(false),
+    );
+    let app = app(&store);
+
+    let started = Instant::now();
+    let resp = app.clone().oneshot(get("/cam/media.m3u8")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(started.elapsed(), Duration::ZERO);
+}
+
 const FIXTURE_TARGET_SECS: f64 = 2.0;
 const FIXTURE_PART_TARGET_MS: u32 = 200;
 const FIXTURE_WINDOW_SEGMENTS: usize = 8;

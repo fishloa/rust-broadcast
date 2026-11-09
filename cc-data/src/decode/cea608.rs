@@ -317,6 +317,7 @@ impl Default for Pen {
 struct ChannelState {
     displayed: Cea608Screen,
     nondisplayed: Cea608Screen,
+    text: Cea608Screen,
     mode: Cea608Mode,
     rollup_rows: u8,
     cursor_row: usize,
@@ -330,6 +331,7 @@ impl ChannelState {
     fn active_mut(&mut self) -> &mut Cea608Screen {
         match self.mode {
             Cea608Mode::PopOn => &mut self.nondisplayed,
+            Cea608Mode::Text => &mut self.text,
             _ => &mut self.displayed,
         }
     }
@@ -416,8 +418,10 @@ impl Cea608Decoder {
         let b2 = raw2 & 0x7F;
         let field_idx = usize::from(field2);
 
-        // Null filler (0x00 0x00): nothing to do.
+        // Null filler (0x00 0x00): separates control pairs, so a control after it
+        // is not a doubled copy (CTA-608-E Annex B.14; private/specs-verified/captions/cc-data/decode/cea608-decode.md).
         if b1 == 0x00 && b2 == 0x00 {
+            self.last_control[field_idx] = None;
             return;
         }
 
@@ -450,6 +454,13 @@ impl Cea608Decoder {
         // Any pair while an XDS sub-packet is open (field 2) is XDS payload
         // (informational chars 0x20–0x7F or null) until the End control closes it.
         if field2 && self.xds_active {
+            return;
+        }
+
+        // First bytes 0x01–0x0F are reserved for XDS (field 2 only) and never
+        // carry caption text on field 1 (CTA-608-E §8.6.1; private/specs-verified/captions/cc-data/decode/cea608-decode.md).
+        if (0x01..=0x0F).contains(&b1) {
+            self.last_control[field_idx] = None;
             return;
         }
 
@@ -591,7 +602,7 @@ impl Cea608Decoder {
             }
             MC_TR => {
                 st.mode = Cea608Mode::Text;
-                st.displayed = Cea608Screen::default();
+                st.text = Cea608Screen::default();
                 st.cursor_row = 0;
                 st.cursor_col = 0;
             }
@@ -1167,5 +1178,45 @@ mod tests {
             },
         ];
         dec.push_triplets(&triplets);
+    }
+
+    fn pair(d: &mut Cea608Decoder, a: u8, b: u8) {
+        d.push_pair(false, set_odd_parity(a), set_odd_parity(b));
+    }
+
+    #[test]
+    fn text_restart_does_not_erase_the_caption_screen() {
+        let mut d = Cea608Decoder::new();
+        pair(&mut d, 0x14, 0x20);
+        pair(&mut d, 0x14, 0x70);
+        pair(&mut d, b'H', b'I');
+        pair(&mut d, 0x14, 0x2F);
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "HI");
+        pair(&mut d, 0x14, 0x2A);
+        pair(&mut d, b'T', b'X');
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "HI");
+    }
+
+    #[test]
+    fn a_control_pair_after_a_null_pair_is_not_a_doubled_control() {
+        let mut d = Cea608Decoder::new();
+        pair(&mut d, 0x14, 0x25);
+        pair(&mut d, b'A', b'B');
+        pair(&mut d, 0x14, 0x2D);
+        pair(&mut d, b'C', b'D');
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "AB\nCD");
+        pair(&mut d, 0x14, 0x2D);
+        d.push_pair(false, 0x80, 0x80);
+        pair(&mut d, 0x14, 0x2D);
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "");
+    }
+
+    #[test]
+    fn a_field1_pair_with_first_byte_in_the_xds_range_prints_no_text() {
+        let mut d = Cea608Decoder::new();
+        pair(&mut d, 0x14, 0x29);
+        pair(&mut d, 0x14, 0x70);
+        pair(&mut d, 0x01, b'X');
+        assert_eq!(d.channel_text(Cea608Channel::Cc1), "");
     }
 }

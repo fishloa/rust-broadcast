@@ -20,6 +20,7 @@ pub mod ts_probe;
 pub mod ts_shift;
 pub mod ts_split;
 pub mod udp_host;
+pub mod video_run;
 pub mod wire_host;
 
 use broadcast_client::{Action, Event, Session};

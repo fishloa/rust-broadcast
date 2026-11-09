@@ -1,4 +1,5 @@
 use crate::support;
+use crate::support::video_run::VideoRun;
 
 use broadcast_client::{Action, Config, Event, Session, TrackId};
 use support::replay::{TS_PACKET, bitrate_bps, open_live, replay_paced};
@@ -229,6 +230,8 @@ fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
     let mut now = 0;
     let mut wake = None;
     let mut timescale: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut video: BTreeMap<u32, VideoRun> = BTreeMap::new();
+    let mut is_video: BTreeMap<u32, bool> = BTreeMap::new();
     let mut host_end: BTreeMap<u32, u64> = BTreeMap::new();
     let mut reported: BTreeMap<u32, u64> = BTreeMap::new();
     let mut released = false;
@@ -245,14 +248,22 @@ fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
                     got_tracks = true;
                     for t in specs {
                         timescale.insert(t.track_id.value(), t.timescale);
+                        is_video.insert(t.track_id.value(), t.config.is_video());
                     }
                 }
                 Event::Sample { track, sample, .. } => {
                     let ts = u64::from(timescale[&track.value()]);
-                    let end = u64::try_from(
-                        sample.pts.unwrap() + i64::from(sample.duration.unwrap_or(0)),
-                    )
-                    .unwrap();
+                    let pts = sample.pts.unwrap();
+                    let dur = i64::from(sample.duration.unwrap_or(0));
+                    let end = if is_video[&track.value()] {
+                        video
+                            .entry(track.value())
+                            .or_insert_with(VideoRun::new)
+                            .push(pts, sample.dts.unwrap_or(pts), dur)
+                    } else {
+                        pts + dur
+                    };
+                    let end = u64::try_from(end).unwrap();
                     let slot = host_end.entry(track.value()).or_insert(0);
                     *slot = (*slot).max(end * 27_000_000 / ts);
                 }

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Internal: the service-extract filter state is boxed (clippy `large_enum_variant` after `SectionReassembler` grew a continuity-counter field).
 
 ### Fixed
 - Stuffing now runs before `restamp_pcr` and `honor_pcr_discontinuity` (it was last), so a PCR describes the byte position of the packet in the output instead of its position before nulls were inserted or dropped; `restamp_pcr(from_bitrate)` combined with `pad_to` or `drop_nulls` produced PCRs off by the stuffing ratio.

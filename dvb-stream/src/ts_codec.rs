@@ -12,12 +12,9 @@ use bytes::{Buf, Bytes, BytesMut};
 use tokio_util::codec::Decoder;
 
 use crate::ResyncStats;
-use crate::resync::{TS_PACKET_SIZE, TS_SYNC_BYTE, resync};
-
-/// Most bytes dropped per mid-stream desync in byte-stream mode: 7 x 188 = 1316,
-/// the read size of the framer this decoder replaced (so loss on a corrupt sync
-/// byte stays bounded however large `FramedRead`'s buffer grows).
-const DESYNC_DROP_MAX: usize = TS_PACKET_SIZE * 7;
+use crate::resync::{
+    TS_PACKET_SIZE, TS_SYNC_BYTE, resync, resync_confirmed, unconfirmed_candidate,
+};
 
 /// If `datagram` is an RTP packet (RFC 3550 §5.1) whose payload is a whole
 /// number of 188-byte TS packets starting on a sync byte (RFC 2250 §2: an
@@ -79,11 +76,11 @@ impl TsDecoder {
     }
 }
 
-impl Decoder for TsDecoder {
-    type Item = Bytes;
-    type Error = io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Bytes>> {
+impl TsDecoder {
+    /// `lenient` accepts a lone sync byte that cannot yet be confirmed by a
+    /// second one a packet later: always for a datagram (no more bytes will
+    /// ever follow it) and at end of input, never mid-byte-stream.
+    fn decode_with(&mut self, src: &mut BytesMut, lenient: bool) -> io::Result<Option<Bytes>> {
         loop {
             if !self.synced {
                 if src.is_empty() {
@@ -100,8 +97,12 @@ impl Decoder for TsDecoder {
                     src.advance(off);
                     src.truncate(len);
                 }
-                // On first use (or after a loss of alignment), resync to the nearest 0x47.
-                match resync(src) {
+                let found = if lenient {
+                    resync(src)
+                } else {
+                    resync_confirmed(src)
+                };
+                match found {
                     Some(off) => {
                         src.advance(off);
                         self.synced = true;
@@ -109,9 +110,16 @@ impl Decoder for TsDecoder {
                         self.stats.bytes_discarded += off as u64;
                     }
                     None => {
-                        // No sync byte at all: discard the chunk (counted).
-                        self.stats.bytes_discarded += src.len() as u64;
-                        src.clear();
+                        // Keep a trailing sync byte that more input may confirm;
+                        // everything before it is unalignable and discarded.
+                        let keep = if lenient {
+                            None
+                        } else {
+                            unconfirmed_candidate(src)
+                        };
+                        let drop = keep.unwrap_or(src.len());
+                        self.stats.bytes_discarded += drop as u64;
+                        src.advance(drop);
                         return Ok(None);
                     }
                 }
@@ -120,26 +128,32 @@ impl Decoder for TsDecoder {
                 return Ok(None);
             }
             if src[0] != TS_SYNC_BYTE {
-                // Mid-stream desync: drop at most one read's worth (the old `TsFramer` dropped
-                // the rest of its 7 x 188 = 1316-byte read), then resync on what remains.
-                // A datagram is dropped whole (its remainder is never stitched on).
+                // Mid-stream desync. A datagram is dropped whole (its remainder
+                // is never stitched on); a byte stream skips one byte and
+                // re-locks on the next sync byte confirmed one packet later, so
+                // a single corrupt sync byte costs only its own packet.
                 self.stats.desyncs += 1;
-                let drop = if self.datagram {
-                    src.len()
-                } else {
-                    src.len().min(DESYNC_DROP_MAX)
-                };
+                let drop = if self.datagram { src.len() } else { 1 };
                 self.stats.bytes_discarded += drop as u64;
                 src.advance(drop);
                 self.synced = false;
-                continue; // resync on what remains, in this same call
+                continue;
             }
             return Ok(Some(src.split_to(TS_PACKET_SIZE).freeze()));
         }
     }
+}
+
+impl Decoder for TsDecoder {
+    type Item = Bytes;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Bytes>> {
+        self.decode_with(src, self.datagram)
+    }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> io::Result<Option<Bytes>> {
-        if let Some(p) = self.decode(src)? {
+        if let Some(p) = self.decode_with(src, true)? {
             return Ok(Some(p));
         }
         // End of input (stream mode) or end of datagram (datagram mode): a trailing

@@ -249,8 +249,12 @@ impl BufferController {
     /// anywhere) excludes nobody: the minimum of the last ends is kept, so a
     /// reconnect does not make the controller resume on stale data. A `Pause` for starvation names the
     /// limiting track in [`Event::Pause::track`] and [`Stats::limiting_track`].
+    ///
+    /// A `now_us` earlier than the latest instant seen on any call is clamped to it, as
+    /// [`on_hint`](Self::on_hint) does, so a stepped-back clock cannot stamp a delivery in the past.
     pub fn on_track_media(&mut self, now_us: Micros, track: u32, media_end_27mhz: Ticks27) {
-        self.latest = self.latest.max(now_us);
+        let now_us = now_us.max(self.latest);
+        self.latest = now_us;
         self.jitter.anchor(now_us);
         let rules = self.step_rules();
         let Some(first) = self.tracks.deliver(track, now_us, media_end_27mhz, rules) else {

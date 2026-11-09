@@ -245,20 +245,30 @@ impl RtspSource {
         }
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
+    /// Whether a protocol error ended the live connection and the next connection's media will
+    /// be preceded by [`Event::Discontinuity`].
+    pub(crate) fn on_data(
+        &mut self,
+        conn: u32,
+        bytes: &[u8],
+        now: u64,
+        auth: &mut AuthState,
+    ) -> bool {
         if self.conn != Some(conn) {
-            return;
+            return false;
         }
         let outcome = self.client.handle_data(bytes);
         for event in outcome.events {
             if self.conn != Some(conn) {
-                return;
+                return false;
             }
             self.on_client_event(event, now, auth);
         }
         if outcome.error.is_some() && self.conn == Some(conn) {
             self.connection_lost(now);
+            return self.discontinuity_pending;
         }
+        false
     }
 
     /// Whether the live connection ended and the next connection's media will be preceded by

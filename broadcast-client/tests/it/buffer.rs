@@ -1,4 +1,5 @@
 use crate::support;
+use crate::support::video_run::VideoRun;
 
 use std::collections::BTreeMap;
 
@@ -353,7 +354,7 @@ struct Oracle {
     audio: Option<TrackId>,
     joined: bool,
     join_27: u64,
-    max_pts: i64,
+    video_run: VideoRun,
     audio_max_end: u64,
     declared_tracks: usize,
     released: bool,
@@ -376,7 +377,7 @@ impl Oracle {
             audio: None,
             joined: false,
             join_27: 0,
-            max_pts: 0,
+            video_run: VideoRun::new(),
             audio_max_end: 0,
             declared_tracks,
             released: false,
@@ -460,13 +461,14 @@ impl Oracle {
                 Some(JoinDecision::JoinPoint(_)) if !self.joined => {
                     self.joined = true;
                     self.join_27 = pts27(pts, ts);
-                    self.max_pts = pts;
+                    self.video_run = VideoRun::new();
+                    let end = self.video_run.push(pts, sample.dts.unwrap_or(pts), dur);
                     *zero = Some((track_id, pts27(pts, ts)));
-                    ends.insert(track_id, pts27(pts + dur, ts));
+                    ends.insert(track_id, pts27(end, ts));
                 }
                 Some(JoinDecision::Keep) if self.joined => {
-                    self.max_pts = self.max_pts.max(pts);
-                    ends.insert(track_id, pts27(self.max_pts + dur, ts));
+                    let end = self.video_run.push(pts, sample.dts.unwrap_or(pts), dur);
+                    ends.insert(track_id, pts27(end, ts));
                 }
                 _ => {}
             }
@@ -1238,7 +1240,7 @@ fn video_expectations(h: &Host) -> Vec<ChunkVideo> {
             last_decoded_end: None,
         })
         .collect();
-    let mut max_pts: Option<i64> = None;
+    let mut run: Option<VideoRun> = None;
     for (i, t, s, j) in h.samples() {
         if t.value() != VIDEO {
             continue;
@@ -1246,21 +1248,24 @@ fn video_expectations(h: &Host) -> Vec<ChunkVideo> {
         let pts = s.pts.unwrap();
         let dur = i64::from(s.duration.unwrap());
         let c = h.chunk_of_event(i);
-        match j {
-            Some(JoinDecision::JoinPoint(_)) if max_pts.is_none() => max_pts = Some(pts),
-            Some(JoinDecision::Keep) if max_pts.is_some() => {
-                max_pts = max_pts.map(|m| m.max(pts));
+        let end = match j {
+            Some(JoinDecision::JoinPoint(_)) if run.is_none() => {
+                run.insert(VideoRun::new())
+                    .push(pts, s.dts.unwrap_or(pts), dur)
+            }
+            Some(JoinDecision::Keep) if run.is_some() => {
+                run.as_mut().unwrap().push(pts, s.dts.unwrap_or(pts), dur)
             }
             _ => continue,
-        }
-        per_chunk[c].expected_end = Some(pts27(max_pts.unwrap() + dur, ts));
+        };
+        per_chunk[c].expected_end = Some(pts27(end, ts));
         per_chunk[c].last_decoded_end = Some(pts27(pts + dur, ts));
     }
     per_chunk
 }
 
 #[test]
-fn video_end_uses_max_pts_not_last_decoded() {
+fn video_end_is_the_contiguous_presentation_run_not_last_decoded() {
     let bytes = tf1_bytes!();
     let h = run_realtime(&bytes);
     let expect = video_expectations(&h);

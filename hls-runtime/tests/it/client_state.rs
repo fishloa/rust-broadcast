@@ -976,6 +976,35 @@ fn a_variant_switch_emits_exactly_one_discontinuity() {
     assert_eq!(discontinuities, 1);
 }
 
+/// After a genuine restart the media-sequence high-water mark is the new numbering's, so a
+/// later forward jump without overlap and without PROGRAM-DATE-TIME is the client falling behind,
+/// not a second restart.
+#[test]
+fn a_forward_jump_after_a_restart_is_not_a_second_restart() {
+    let mut client = HlsClient::new(URL);
+    drain(&mut client);
+    client.on_playlist(live(1000, "old").as_bytes()).unwrap();
+    drain(&mut client);
+    let _ = std::iter::from_fn(|| client.next_output()).count();
+
+    client.on_playlist(live(10, "new").as_bytes()).unwrap();
+    drain(&mut client);
+    let restart = std::iter::from_fn(|| client.next_output())
+        .filter(|o| matches!(o, Output::Discontinuity))
+        .count();
+    assert_eq!(restart, 1, "the renumbered window is one restart");
+
+    client.on_playlist(live(40, "new").as_bytes()).unwrap();
+    drain(&mut client);
+    let again = std::iter::from_fn(|| client.next_output())
+        .filter(|o| matches!(o, Output::Discontinuity))
+        .count();
+    assert_eq!(
+        again, 0,
+        "a forward jump after the restart read as another restart"
+    );
+}
+
 const OPEN_WITH_ONE_PART: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:4\n\
 #EXT-X-PART-INF:PART-TARGET=0.5\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
 #EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n\
