@@ -232,6 +232,12 @@ pub(crate) fn classify_established(
                 }
                 Ok(Established::Acknowledged)
             }
+            StatusCode::PRECONDITION_FAILED => {
+                if let Some(current) = http_util::etag_of(&resp.headers) {
+                    *etag = Some(current);
+                }
+                Err(http_error(&resp))
+            }
             _ => Err(http_error(&resp)),
         },
         None => Err(Error::WrongState {
