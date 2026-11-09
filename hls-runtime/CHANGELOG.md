@@ -18,6 +18,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Client: a variant switch emits one `Discontinuity`, not two (the media-sequence high-water mark is reset with the restart).
 - Client: a skipped segment is skipped once; reloading the playlist no longer rewinds the byte-range cursor of later omitted-offset segments.
 - Origin: a blocking reload for an existing part of the just-closed segment is answered instead of parked.
+- Origin: a segment keeps its `EXT-X-PROGRAM-DATE-TIME` when the playlist window holds more segments than the trunk's `event_capacity`. The start the writer reported is read when the segment drains into the window (the window's own bound), not from `Trunk::segment_start_time` at render time, whose boundary table is bounded by `event_capacity`; older segments lost their date time (or fell back to the arrival clock, if configured).
 - Origin: the open segment is found when the segmenter's first segment is numbered above 1.
 - Origin: a bare `_HLS_msn` reload (media and I-frame playlists) is satisfied from the rendered window, so a playlist answered as satisfied lists that segment.
 ### Tests
