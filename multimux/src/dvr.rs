@@ -1016,23 +1016,9 @@ impl DvrRecorder {
     /// extension is `.m4s`, writes the init as the first bytes. The
     /// previous period file (if any) is left as-is on disk.
     fn start_period(&mut self, init_bytes: Option<&[u8]>) -> Result<(), String> {
-        // Close the current file if open.
-        if let Some(file) = self.current_file.take() {
-            drop(file);
-        }
-
-        // If we already have a period, record it before advancing.
-        if !self.index.is_empty() || self.write_offset > 0 {
-            let file_bytes = self.write_offset;
-            self.periods.push(PeriodRecord {
-                num: self.period,
-                file_bytes,
-            });
-            self.total_bytes += file_bytes;
-            self.period += 1;
-        }
-
-        let path = self.period_path();
+        let rolls = !self.index.is_empty() || self.write_offset > 0;
+        let next_period = if rolls { self.period + 1 } else { self.period };
+        let path = self.period_path_for(next_period);
         fs::create_dir_all(&self.archive_dir).map_err(|e| format!("creating archive dir: {e}"))?;
 
         let mut file = OpenOptions::new()
@@ -1041,28 +1027,48 @@ impl DvrRecorder {
             .open(&path)
             .map_err(|e| format!("opening period file {}: {e}", path.display()))?;
 
-        self.write_offset = file.metadata().map(|m| m.len()).unwrap_or(0);
-
-        self.init_len = 0;
+        let mut write_offset = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut init_len = 0;
+        let mut written_init = None;
         if let Some(init) = init_bytes
             && self.ext == ".m4s"
             && !init.is_empty()
-            && self.write_offset == 0
+            && write_offset == 0
         {
-            file.write_all(init)
-                .map_err(|e| format!("writing init: {e}"))?;
-            file.flush().map_err(|e| format!("flushing init: {e}"))?;
-            self.init_len = u64::try_from(init.len()).unwrap_or(u64::MAX);
-            self.write_offset = self.init_len;
-            self.last_init = Some(init.to_vec());
+            if let Err(e) = file.write_all(init).and_then(|()| file.flush()) {
+                drop(file);
+                let _ = fs::remove_file(&path);
+                return Err(format!("writing init: {e}"));
+            }
+            init_len = u64::try_from(init.len()).unwrap_or(u64::MAX);
+            write_offset = init_len;
+            written_init = Some(init.to_vec());
             tracing::debug!(
                 route = %self.route_name,
-                period = self.period,
+                period = next_period,
                 len = init.len(),
                 "wrote fMP4 init at period file head"
             );
         }
 
+        // Everything above can fail; nothing below can, so a failed roll
+        // leaves the recorder exactly as it was and the next attempt starts
+        // from the same period number.
+        drop(self.current_file.take());
+        if rolls {
+            let file_bytes = self.write_offset;
+            self.periods.push(PeriodRecord {
+                num: self.period,
+                file_bytes,
+            });
+            self.total_bytes += file_bytes;
+            self.period = next_period;
+        }
+        self.write_offset = write_offset;
+        self.init_len = init_len;
+        if written_init.is_some() {
+            self.last_init = written_init;
+        }
         self.current_file = Some(file);
         self.period_opened_at = Some(SystemTime::now());
         self.index.clear();
@@ -1423,8 +1429,12 @@ impl DvrRecorder {
 
     /// Period container file path: `pN.<ext>`.
     fn period_path(&self) -> PathBuf {
+        self.period_path_for(self.period)
+    }
+
+    fn period_path_for(&self, period: u32) -> PathBuf {
         self.archive_dir
-            .join(format!("p{}.{}", self.period, &self.ext[1..]))
+            .join(format!("p{period}.{}", &self.ext[1..]))
     }
 
     /// Period index sidecar path: `pN.idx`.

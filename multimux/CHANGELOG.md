@@ -9,6 +9,7 @@
 ### Fixed
 - DASH, LL-DASH and Smooth answered `404` for every segment after a source reconnect: the MPD `startNumber` and the Smooth fragment names used the new `Trunk`'s numbers while the resource route serves the HLS playlist's. They now use the same public segment numbers, Smooth's `c@t` and the DVR archive's `start_pts_ns` continue the previous program's timeline instead of restarting at `0`, and the MPD signals the reconnect through its new `availabilityStartTime` and `startNumber` pair (`DashPackager` writes a single Period).
 - Retention removed an evicted period's index and data file but left its `pN.event.json` programme sidecar behind, one small file per period for the life of the archive on an EIT-tracked route; it is removed with the period.
+- A DVR period roll that failed to open the new file (a transient I/O error) had already advanced the period number and recorded the old period, so the next period started with no init and one period number was skipped; the roll now opens the new file first and only then commits, leaving the recorder unchanged on failure.
 
 ## [0.17.0] - 2026-11-08
 ### Changed
