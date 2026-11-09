@@ -326,6 +326,24 @@ pub struct DashWindowSegment {
     /// follow-up): the window-relative cumulative sum changes on every slide,
     /// this does not.
     pub timeline_position_ns: u64,
+    /// The number the shared resource route and the HLS playlist show this
+    /// segment under: the `Trunk`'s own number plus the route's
+    /// [`ProgramEpoch::seq_offset`], so it keeps counting up across a source
+    /// reconnect.
+    pub public_seq: u64,
+}
+
+/// What a replacement program continues from its predecessor on the same
+/// route: the public segment numbering ([`HlsOrigin`]'s media sequence
+/// offset, the DVR archive's index, DASH `startNumber`, Smooth fragment
+/// names) and the program timeline ([`DashState`]'s window and the DVR's
+/// `start_pts_ns`), which a fresh `Trunk` would otherwise restart from
+/// segment 1 and position 0. One value per published program, computed once
+/// in [`RouteHandle::publish_program`] so no output keeps its own copy.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ProgramEpoch {
+    pub(crate) seq_offset: u64,
+    pub(crate) timeline_base_ns: u64,
 }
 
 /// The small `Trunk`-drained state DASH/LL-DASH rendering needs beyond any
@@ -348,11 +366,15 @@ pub(crate) struct DashState {
     /// construction time, which precedes ingest and does not move when a
     /// reconnect mints a fresh `Trunk` that restarts at segment 1 (#1187).
     presentation_origin: SystemTime,
+    epoch: ProgramEpoch,
+    timeline_end_ns: AtomicU64,
 }
 
 impl DashState {
-    fn new(trunk: &Arc<Trunk>, window_segments: NonZeroUsize) -> Self {
+    fn new(trunk: &Arc<Trunk>, window_segments: NonZeroUsize, epoch: ProgramEpoch) -> Self {
         DashState {
+            epoch,
+            timeline_end_ns: AtomicU64::new(epoch.timeline_base_ns),
             cursor: Mutex::new(trunk.subscribe_segments()),
             window: Mutex::new(VecDeque::new()),
             capacity: window_segments.get(),
@@ -384,9 +406,24 @@ impl DashState {
                     segment_seq: entry.sequence_number,
                     duration_secs: entry.duration.as_secs_f64(),
                     timeline_position_ns: entry.timeline_position.as_nanos(),
+                    public_seq: self
+                        .epoch
+                        .seq_offset
+                        .saturating_add(u64::from(entry.sequence_number.value())),
                 });
+                let end = self
+                    .epoch
+                    .timeline_base_ns
+                    .saturating_add(entry.timeline_position.as_nanos())
+                    .saturating_add(u64::try_from(entry.duration.as_nanos()).unwrap_or(u64::MAX));
+                self.timeline_end_ns.fetch_max(end, Ordering::SeqCst);
             }
         }
+    }
+
+    fn timeline_end_ns(&self) -> u64 {
+        self.drain();
+        self.timeline_end_ns.load(Ordering::SeqCst)
     }
 
     fn window_segments(&self) -> Vec<DashWindowSegment> {
@@ -552,7 +589,7 @@ impl ProgramServing {
         container: Container,
         dvr_config: Option<crate::dvr::DvrConfig>,
         route_name: &str,
-        media_sequence_offset: u64,
+        epoch: ProgramEpoch,
         program_date_time: crate::config::ProgramDateTimeSource,
         declared_bandwidth_bps: Option<u64>,
         audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
@@ -560,6 +597,7 @@ impl ProgramServing {
         split_audio: bool,
         hold_cold_playlist: bool,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
+        let media_sequence_offset = epoch.seq_offset;
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
             .window_segments(window_segments)
@@ -638,7 +676,7 @@ impl ProgramServing {
             .collect();
         wire_rendition_siblings(&ll_hls, &audio_entries);
 
-        let dash = Arc::new(DashState::new(&trunk, window_segments));
+        let dash = Arc::new(DashState::new(&trunk, window_segments, epoch));
 
         let ext = match container {
             Container::Fmp4 => ".m4s",
@@ -649,7 +687,9 @@ impl ProgramServing {
             match DvrRecorder::new(route_name.to_string(), cfg, ext, &trunk) {
                 Ok(recorder) => {
                     // Index under the same numbers the origin shows.
-                    let recorder = recorder.with_seq_offset(media_sequence_offset);
+                    let recorder = recorder
+                        .with_seq_offset(media_sequence_offset)
+                        .with_timeline_base(epoch.timeline_base_ns);
                     tracing::info!(
                         route = %route_name,
                         "DVR recording started"
@@ -858,6 +898,10 @@ impl ProgramServing {
 
     fn presentation_origin(&self) -> SystemTime {
         self.dash.presentation_origin
+    }
+
+    fn epoch(&self) -> ProgramEpoch {
+        self.dash.epoch
     }
 
     /// Runs `f` against this program's `Trunk` segment writer, acquiring it
@@ -1541,7 +1585,7 @@ impl RouteHandle {
         // fresh `Trunk`, which numbers its segments from 1 again) continues
         // the previous origin's Media Sequence Number, so clients never see
         // it decrease (RFC 8216bis §6.2.2).
-        let media_sequence_offset = programs
+        let seq_offset = programs
             .get(&program)
             .map_or(0, |previous| {
                 previous
@@ -1558,6 +1602,12 @@ impl RouteHandle {
             // ...and never at or below what the DVR archive already holds
             // (a previous process's numbers).
             .max(u64::from(self.archive_floor));
+        let epoch = ProgramEpoch {
+            seq_offset,
+            timeline_base_ns: programs
+                .get(&program)
+                .map_or(0, |previous| previous.dash.timeline_end_ns()),
+        };
         let serving = match ProgramServing::new(
             Arc::clone(&trunk),
             self.target_duration_secs,
@@ -1566,7 +1616,7 @@ impl RouteHandle {
             self.container,
             self.dvr_config.clone(),
             &self.name,
-            media_sequence_offset,
+            epoch,
             self.program_date_time,
             self.declared_bandwidth_bps,
             self.audio_renditions.clone(),
@@ -1950,6 +2000,10 @@ impl RouteHandle {
     /// reconnect (#1187).
     pub fn presentation_origin(&self, program: ProgramId) -> Option<SystemTime> {
         self.serving(program).map(|s| s.presentation_origin())
+    }
+
+    pub(crate) fn epoch(&self, program: ProgramId) -> Option<ProgramEpoch> {
+        self.serving(program).map(|s| s.epoch())
     }
 
     /// When this route was constructed (admin status only; NOT the DASH

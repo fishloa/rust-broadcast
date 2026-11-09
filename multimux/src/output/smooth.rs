@@ -285,20 +285,36 @@ struct TrackChunks {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ChunkTiming {
-    segment_seq: u32,
+    segment_seq: u64,
     start_ticks: u64,
     duration_ticks: u64,
 }
 
 impl TrackChunks {
     /// The segment whose chunk starts at `start_ticks`, if any.
-    fn segment_for_start(&self, start_ticks: u64) -> Option<u32> {
+    fn segment_for_start(&self, start_ticks: u64) -> Option<u64> {
         self.chunks
             .iter()
             .find(|c| c.start_ticks == start_ticks)
             .map(|c| c.segment_seq)
     }
 }
+
+/// `mfhd.sequence_number` for the public segment number `public_seq`, held at
+/// `u32::MAX` once the number outgrows the box field.
+fn mfhd_sequence(public_seq: u64) -> u32 {
+    u32::try_from(public_seq).unwrap_or(u32::MAX)
+}
+
+/// The program timeline base a reconnect carries over
+/// ([`crate::route::ProgramEpoch::timeline_base_ns`]) in
+/// [`SMOOTH_TIMESCALE`] ticks, rounded up so the first chunk of the new run
+/// never starts before the previous run's last chunk ended.
+fn timeline_base_ticks(base_ns: u64) -> u64 {
+    rescale_u64(base_ns, NANOS_PER_SEC, SMOOTH_TIMESCALE, Rounding::Ceil)
+}
+
+const NANOS_PER_SEC: u32 = 1_000_000_000;
 
 /// Rescale a media-timescale tick count to [`SMOOTH_TIMESCALE`] with
 /// round-to-nearest, using `u128` so the multiply cannot overflow for any
@@ -316,14 +332,15 @@ fn to_smooth_ticks(ticks: u64, timescale: u32) -> u64 {
 fn track_chunks(
     init: Option<&[u8]>,
     window: &[DashWindowSegment],
-    segments: &std::collections::HashMap<media_plane::ids::SegmentSeq, bytes::Bytes>,
+    segments: &std::collections::HashMap<u64, bytes::Bytes>,
     stream_type: SmoothStreamType,
     quality_index: u32,
+    base_ticks: u64,
 ) -> Option<TrackChunks> {
     let init = init?;
     let mut chunks: Vec<ChunkTiming> = Vec::with_capacity(window.len());
     for seg in window {
-        let Some(bytes) = segments.get(&seg.segment_seq) else {
+        let Some(bytes) = segments.get(&seg.public_seq) else {
             continue;
         };
         let mut combined = Vec::with_capacity(init.len() + bytes.len());
@@ -345,7 +362,7 @@ fn track_chunks(
         // is stable as the window slides. Every later chunk's start is derived
         // cumulatively (`start(n) = start(n-1) + d(n-1)`) so the timeline never
         // drifts, and `tfxd(n)+d(n) == tfxd(n+1)` holds to the tick.
-        let absolute_start = to_smooth_ticks(start_media_ticks, ts);
+        let absolute_start = to_smooth_ticks(start_media_ticks, ts).saturating_add(base_ticks);
         let chain_start = chunks
             .last()
             .map(|c| c.start_ticks.saturating_add(c.duration_ticks))
@@ -357,11 +374,11 @@ fn track_chunks(
         let duration_ticks = SmoothPackager {
             target_duration_secs: SINGLE_SEGMENT_FRAGMENT_TARGET_SECS,
         }
-        .package_track_fragment(track, seg.segment_seq.value(), chain_start)
+        .package_track_fragment(track, mfhd_sequence(seg.public_seq), chain_start)
         .map(|f| f.duration)
         .unwrap_or(0);
         chunks.push(ChunkTiming {
-            segment_seq: seg.segment_seq.value(),
+            segment_seq: seg.public_seq,
             start_ticks: chain_start,
             duration_ticks,
         });
@@ -398,11 +415,14 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
         return None;
     }
     let init = route.init_bytes(crate::route::SPTS_PROGRAM_ID)?;
+    let base_ticks = route
+        .epoch(crate::route::SPTS_PROGRAM_ID)
+        .map_or(0, |epoch| timeline_base_ticks(epoch.timeline_base_ns));
     let ll_hls = serving.ll_hls();
-    let mut segments: std::collections::HashMap<media_plane::ids::SegmentSeq, bytes::Bytes> =
+    let mut segments: std::collections::HashMap<u64, bytes::Bytes> =
         std::collections::HashMap::with_capacity(window.len());
     for seg in &window {
-        let name = format!("seg-{DEFAULT_TRACK_ID}-{}.m4s", seg.segment_seq);
+        let name = format!("seg-{DEFAULT_TRACK_ID}-{}.m4s", seg.public_seq);
         if let EgressResponse::Ready {
             body: HlsBody::Resource(bytes),
             ..
@@ -411,7 +431,7 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
             Timestamp::from_nanos(0),
             AwaitPolicy::new(Timestamp::from_nanos(u64::MAX)),
         ) {
-            segments.insert(seg.segment_seq, bytes);
+            segments.insert(seg.public_seq, bytes);
         }
     }
     if segments.is_empty() {
@@ -440,9 +460,14 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
             "audio" => SmoothStreamType::Audio,
             _ => SmoothStreamType::Video,
         };
-        let Some(chunks) =
-            track_chunks(Some(&init), &window, &segments, stream_type, quality_index)
-        else {
+        let Some(chunks) = track_chunks(
+            Some(&init),
+            &window,
+            &segments,
+            stream_type,
+            quality_index,
+            base_ticks,
+        ) else {
             continue;
         };
         let bitrate = advertised_bitrate(&params);
@@ -513,7 +538,7 @@ impl WindowLayout {
 /// sequence number `segment_seq`.
 #[derive(Debug, Clone, Copy)]
 struct SegmentRequest {
-    segment_seq: u32,
+    segment_seq: u64,
 }
 
 /// Build the per-track Smooth fragment for `segment` (the muxed programme
@@ -530,7 +555,7 @@ fn build_track_fragment(
     segment: &[u8],
     request: &SmoothFragmentRequest,
     start_ticks: u64,
-    segment_seq: u32,
+    segment_seq: u64,
     ordinal: u32,
 ) -> Option<Vec<u8>> {
     let init = init?;
@@ -555,7 +580,7 @@ fn build_track_fragment(
     // number is the segment's, so `mfhd.sequence_number` is monotonic rather
     // than a constant track ordinal.
     let fragment = packager
-        .package_track_fragment(wanted, segment_seq, start_ticks)
+        .package_track_fragment(wanted, mfhd_sequence(segment_seq), start_ticks)
         .ok()?;
     if fragment.data.is_empty() {
         return None;
@@ -929,7 +954,7 @@ mod tests {
             TrackChunks {
                 chunks: (0..n)
                     .map(|i| ChunkTiming {
-                        segment_seq: i as u32,
+                        segment_seq: i,
                         start_ticks: i * dur,
                         duration_ticks: dur,
                     })

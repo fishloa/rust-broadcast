@@ -564,6 +564,10 @@ pub struct DvrRecorder {
     /// archive indexes it under: the Media Sequence Number the route's
     /// `HlsOrigin` shows for it (see [`Self::with_seq_offset`]).
     seq_offset: u64,
+    /// Added to a segment's `Trunk` timeline position for its indexed
+    /// `start_pts_ns`, so the archive's timeline keeps counting up across a
+    /// source reconnect (see [`Self::with_timeline_base`]).
+    timeline_base_ns: u64,
     /// Whether the archive directory has been scanned for periods already on
     /// disk (done once, lazily, on the first poll — which runs on the
     /// blocking pool — see [`Self::seed_from_disk`]).
@@ -691,6 +695,7 @@ impl DvrRecorder {
             si_carry: Vec::new(),
             si_events: Vec::new(),
             seq_offset: 0,
+            timeline_base_ns: 0,
             seeded: false,
             next_segment_starts_run: false,
             index_file: None,
@@ -710,6 +715,16 @@ impl DvrRecorder {
     #[must_use]
     pub fn with_seq_offset(mut self, offset: u64) -> Self {
         self.seq_offset = offset;
+        self
+    }
+
+    /// Index segments at `Trunk` timeline position + `base_ns` (default `0`):
+    /// a fresh `Trunk` restarts its timeline at `0`, so the route passes the
+    /// end of the previous program's timeline here and `start_pts_ns` never
+    /// goes backwards across a reconnect.
+    #[must_use]
+    pub fn with_timeline_base(mut self, base_ns: u64) -> Self {
+        self.timeline_base_ns = base_ns;
         self
     }
 
@@ -1188,7 +1203,9 @@ impl DvrRecorder {
         self.next_segment_starts_run = false;
         self.index.push(IndexEntry {
             seq,
-            start_pts_ns: entry.timeline_position.as_nanos(),
+            start_pts_ns: self
+                .timeline_base_ns
+                .saturating_add(entry.timeline_position.as_nanos()),
             byte_offset,
             byte_len,
             duration_ns: u64::try_from(entry.duration.as_nanos()).unwrap_or(u64::MAX),

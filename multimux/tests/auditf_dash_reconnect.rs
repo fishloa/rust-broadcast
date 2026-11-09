@@ -213,3 +213,34 @@ async fn ll_dash_numbers_derived_from_the_mpd_are_served_after_a_reconnect() {
     )
     .await;
 }
+
+fn video_chunks(xml: &str) -> Vec<(u64, u64)> {
+    let manifest = transmux::SmoothManifest::parse(xml).expect("Smooth manifest parse");
+    manifest.streams[0].enumerate_chunks().expect("chunks")
+}
+
+#[tokio::test]
+async fn smooth_timeline_does_not_go_backwards_across_a_reconnect() {
+    let track = video_track();
+    let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
+    let program = media_plane::ProgramId(0);
+    let first = route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    let app = app_with(
+        route.clone(),
+        Arc::new(multimux::output::smooth::SmoothOutput),
+    );
+    let before = body_string(app.clone().oneshot(get("/cam/Manifest")).await.unwrap()).await;
+    let (last_t, last_d) = *video_chunks(&before).last().expect("chunks before");
+
+    route.release_program(program, &first);
+    route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    let after = body_string(app.oneshot(get("/cam/Manifest")).await.unwrap()).await;
+    let (first_t, _) = video_chunks(&after)[0];
+    assert!(
+        first_t >= last_t + last_d,
+        "first chunk after the reconnect starts at {first_t}, before the previous run ended at {}",
+        last_t + last_d
+    );
+}

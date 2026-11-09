@@ -173,6 +173,23 @@ impl ServedEgress for MpdOrigin {
 /// §5.3.9.5.3 requires (issue #1058).
 pub(crate) const FIRST_SEGMENT_NUMBER: u64 = 1;
 
+/// `SegmentTemplate@startNumber` for `route`'s current program: the public
+/// number of its first segment, [`FIRST_SEGMENT_NUMBER`] shifted by the
+/// route's [`crate::route::ProgramEpoch::seq_offset`]. After a source
+/// reconnect the new program's `Trunk` numbers from `1` again while the
+/// resource route, the HLS playlist and the DVR archive keep counting, so the
+/// MPD names the numbers they actually serve. The single-`Period` packager has
+/// no Period boundary to draw there; the reconnect shows as the program's new
+/// `availabilityStartTime` together with this `startNumber`, a self-consistent
+/// pair that makes the client re-derive its live edge.
+pub(crate) fn start_number(route: &RouteHandle) -> u64 {
+    route
+        .epoch(crate::route::SPTS_PROGRAM_ID)
+        .map_or(FIRST_SEGMENT_NUMBER, |epoch| {
+            epoch.seq_offset.saturating_add(FIRST_SEGMENT_NUMBER)
+        })
+}
+
 /// Select the first of `specs` that produces a derivable RFC 6381 codec
 /// string, preferring a video-shaped codec over any other kind (audio,
 /// or a future codec this classifier doesn't recognise) — see this
@@ -235,7 +252,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
     // live edge from `availabilityStartTime` + `startNumber`. A startNumber
     // that slid with the window while AST stayed fixed made it request
     // segments that do not exist (404) once the window slid (issue #1058).
-    let start_number = FIRST_SEGMENT_NUMBER;
+    let start_number = start_number(route);
     // `@duration` is the nominal target, constant across MPD refreshes (the
     // window's own first-segment duration changes as it slides, which would
     // change the client's whole number<->time mapping).

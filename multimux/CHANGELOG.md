@@ -3,8 +3,11 @@
 ## [Unreleased]
 ### Added
 - `Config::hold_cold_playlist` (default `true`) and `RouteHandle::with_hold_cold_playlist`.
+- `DashWindowSegment::public_seq` (the number a window segment is served under; a new public field, so code that builds a `DashWindowSegment` by struct literal must set it) and `DvrRecorder::with_timeline_base`.
 ### Changed
 - A media-playlist request without `_HLS_msn`/`_HLS_part` made before the playlist holds a closed segment is held, through the blocking-reload wait and its timeout, until the first segment closes, then answered with at least one `EXTINF`; after the timeout it answers `503` with `Retry-After`. Clients that ignore Partial Segments (ffmpeg, VLC, Frigate, go2rtc) failed to open a cold stream; a Low-Latency client's cold start now waits about one segment unless `hold_cold_playlist` is `false` (#1754). A request before the route announces its program is still an immediate `503`.
+### Fixed
+- DASH, LL-DASH and Smooth answered `404` for every segment after a source reconnect: the MPD `startNumber` and the Smooth fragment names used the new `Trunk`'s numbers while the resource route serves the HLS playlist's. They now use the same public segment numbers, Smooth's `c@t` and the DVR archive's `start_pts_ns` continue the previous program's timeline instead of restarting at `0`, and the MPD signals the reconnect through its new `availabilityStartTime` and `startNumber` pair (`DashPackager` writes a single Period).
 
 ## [0.17.0] - 2026-11-08
 ### Changed

@@ -44,7 +44,11 @@ fn archived(dir: &std::path::Path) -> Vec<(u32, u32)> {
 #[tokio::test]
 async fn segments_closed_under_the_old_init_are_archived_with_the_old_init() {
     let root = temp_dir("initchange");
-    let route = Arc::new(RouteHandle::new(2.0, 500, 8).with_name("r").with_dvr(dvr(&root)));
+    let route = Arc::new(
+        RouteHandle::new(2.0, 500, 8)
+            .with_name("r")
+            .with_dvr(dvr(&root)),
+    );
     let p = ProgramId(0);
     route.publish_new_program(p);
     route.set_init(p, b"INIT_A".to_vec());
@@ -70,7 +74,11 @@ async fn segments_closed_under_the_old_init_are_archived_with_the_old_init() {
 #[tokio::test]
 async fn segments_closed_before_a_reconnect_are_archived() {
     let root = temp_dir("reconnect");
-    let route = Arc::new(RouteHandle::new(2.0, 500, 8).with_name("r").with_dvr(dvr(&root)));
+    let route = Arc::new(
+        RouteHandle::new(2.0, 500, 8)
+            .with_name("r")
+            .with_dvr(dvr(&root)),
+    );
     let p = ProgramId(0);
     let first = route.publish_new_program(p);
     route.set_init(p, b"INIT_A".to_vec());
@@ -89,6 +97,38 @@ async fn segments_closed_before_a_reconnect_are_archived() {
         seqs,
         vec![1, 2, 4],
         "segment 2 was closed on the old Trunk before the reconnect and never archived"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn archive_timeline_does_not_go_backwards_across_a_reconnect() {
+    let root = temp_dir("timeline");
+    let route = Arc::new(
+        RouteHandle::new(2.0, 500, 8)
+            .with_name("r")
+            .with_dvr(dvr(&root)),
+    );
+    let p = ProgramId(0);
+    let first = route.publish_new_program(p);
+    route.set_init(p, b"INIT_A".to_vec());
+    route.add_segment(p, seg(1, 0xA1)).expect("add");
+    route.add_segment(p, seg(2, 0xA2)).expect("add");
+    route.drain_dvr().await;
+
+    route.release_program(p, &first);
+    route.publish_new_program(p);
+    route.set_init(p, b"INIT_A".to_vec());
+    route.add_segment(p, seg(1, 0xB1)).expect("add");
+    route.drain_dvr().await;
+
+    let starts: Vec<u64> = crate::catchup::scan_archive(&root.join("r"))
+        .iter()
+        .map(|s| s.start_pts_ns)
+        .collect();
+    assert!(
+        starts.windows(2).all(|w| w[0] < w[1]),
+        "archived start_pts_ns must increase across the reconnect: {starts:?}"
     );
     let _ = std::fs::remove_dir_all(&root);
 }
