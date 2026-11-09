@@ -178,6 +178,35 @@ impl Validator {
                     self.validate_time_expr(img.dur.as_deref(), &ctx);
                     self.validate_time_expr(img.end.as_deref(), &ctx);
                 }
+                for nested in &div.unknown_children {
+                    self.validate_nested_content_timing(nested, &ctx);
+                }
+            }
+        }
+    }
+
+    /// A `<div>` nested in a `<div>` is kept as an unmodelled subtree; its
+    /// own and its descendants' `begin`/`dur`/`end` are still §12.3.1 time
+    /// expressions.
+    fn validate_nested_content_timing(
+        &mut self,
+        el: &crate::foreign::UnknownElement,
+        ctx: &crate::time::TimeContext,
+    ) {
+        if el.namespace.as_deref() == Some(document::NS_TT)
+            && matches!(el.local_name.as_str(), "div" | "p" | "image")
+        {
+            for attr in &el.attributes {
+                if attr.namespace.is_none()
+                    && matches!(attr.local_name.as_str(), "begin" | "dur" | "end")
+                {
+                    self.validate_time_expr(Some(&attr.value), ctx);
+                }
+            }
+        }
+        for child in &el.children {
+            if let crate::foreign::UnknownNode::Element(c) = child {
+                self.validate_nested_content_timing(c, ctx);
             }
         }
     }
