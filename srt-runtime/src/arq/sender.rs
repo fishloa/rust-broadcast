@@ -331,6 +331,11 @@ impl Sender {
             | AckCif::Small { last_ack_seq, .. }
             | AckCif::Light { last_ack_seq } => last_ack_seq,
         };
+        if let Some(back) = self.buffer.back()
+            && seq::seq_gt(last_ack_seq, seq::seq_next(back.seq))
+        {
+            return None;
+        }
         // rule 8: every seq strictly before `last_ack_seq` is acknowledged.
         while self
             .buffer
