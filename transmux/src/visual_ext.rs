@@ -71,20 +71,81 @@ impl Serialize for PixelAspectRatioBox {
 
 /// Clean Aperture Box (`clap`) — ISO/IEC 14496-12:2026 §12.1.4.2.
 ///
-/// Defines the clean aperture width, height, and offset as fractions (N/D).
-/// For horizOff and vertOff, D must be positive and N may be positive or negative.
-/// For cleanApertureWidth and cleanApertureHeight, both N and D must be positive.
+/// The clean aperture width, height and centre offsets as fractions N/D; all
+/// eight fields are `signed int(32)`. For `horizOff` and `vertOff` D shall be
+/// strictly positive and N may be negative; for the width and height both N and
+/// D shall be strictly positive. Parsing keeps whatever is on the wire (it
+/// round-trips); [`Self::aperture_within`] is where the constraints apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CleanApertureBox {
-    pub clean_aperture_width_n: u32,
-    pub clean_aperture_width_d: u32,
-    pub clean_aperture_height_n: u32,
-    pub clean_aperture_height_d: u32,
-    pub horiz_off_n: u32,
-    pub horiz_off_d: u32,
-    pub vert_off_n: u32,
-    pub vert_off_d: u32,
+    pub clean_aperture_width_n: i32,
+    pub clean_aperture_width_d: i32,
+    pub clean_aperture_height_n: i32,
+    pub clean_aperture_height_d: i32,
+    pub horiz_off_n: i32,
+    pub horiz_off_d: i32,
+    pub vert_off_n: i32,
+    pub vert_off_d: i32,
+}
+
+/// The `/ 2` of `pcX = horizOff + (width - 1)/2` and the clean aperture edges
+/// `pcX ± (cleanApertureWidth - 1)/2` (ISO/IEC 14496-12:2026 §12.1.4.1).
+const HALF: i128 = 2;
+
+/// One axis of [`CleanApertureBox::aperture_within`]: the first sample and the
+/// length of the aperture inside a frame of `frame` samples.
+///
+/// The aperture's first sample is `pc - (size - 1)/2` with
+/// `pc = off + (frame - 1)/2`, which is `off + (frame - size)/2`; the `- 1`
+/// terms cancel. `None` when a constraint of the box is broken, when the size
+/// or the first sample is not a whole number of samples, or when the aperture
+/// leaves the frame.
+fn aperture_axis(size: (i32, i32), offset: (i32, i32), frame: u32) -> Option<(u32, u32)> {
+    let (size_n, size_d) = (i128::from(size.0), i128::from(size.1));
+    let (off_n, off_d) = (i128::from(offset.0), i128::from(offset.1));
+    if size_n <= 0 || size_d <= 0 || off_d <= 0 || size_n % size_d != 0 {
+        return None;
+    }
+    let size = size_n / size_d;
+    let frame = i128::from(frame);
+    let first_num = HALF * off_n + off_d * (frame - size);
+    let first_den = HALF * off_d;
+    if first_num % first_den != 0 {
+        return None;
+    }
+    let first = first_num / first_den;
+    if first < 0 || first + size > frame {
+        return None;
+    }
+    Some((u32::try_from(first).ok()?, u32::try_from(size).ok()?))
+}
+
+impl CleanApertureBox {
+    /// The aperture as `(left, top, width, height)` in samples of a decoded
+    /// picture `frame_width` x `frame_height` (the sample entry's `width` and
+    /// `height`, §12.1.4.1), or `None` when it cannot be a rectangle of whole
+    /// samples inside that picture: a constraint of the box is broken
+    /// (non-positive width, height or denominator), the width, height or an
+    /// edge is fractional (centre/offset arithmetic gives half samples for an
+    /// odd width), or the aperture leaves the picture.
+    pub fn aperture_within(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+    ) -> Option<(u32, u32, u32, u32)> {
+        let (left, width) = aperture_axis(
+            (self.clean_aperture_width_n, self.clean_aperture_width_d),
+            (self.horiz_off_n, self.horiz_off_d),
+            frame_width,
+        )?;
+        let (top, height) = aperture_axis(
+            (self.clean_aperture_height_n, self.clean_aperture_height_d),
+            (self.vert_off_n, self.vert_off_d),
+            frame_height,
+        )?;
+        Some((left, top, width, height))
+    }
 }
 
 impl<'a> Parse<'a> for CleanApertureBox {
@@ -92,25 +153,18 @@ impl<'a> Parse<'a> for CleanApertureBox {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, 32, "clap body")?;
-        let clean_aperture_width_n = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let clean_aperture_width_d = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let clean_aperture_height_n =
-            u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
-        let clean_aperture_height_d =
-            u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
-        let horiz_off_n = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
-        let horiz_off_d = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-        let vert_off_n = u32::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
-        let vert_off_d = u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]);
+        let field = |at: usize| {
+            i32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+        };
         Ok(Self {
-            clean_aperture_width_n,
-            clean_aperture_width_d,
-            clean_aperture_height_n,
-            clean_aperture_height_d,
-            horiz_off_n,
-            horiz_off_d,
-            vert_off_n,
-            vert_off_d,
+            clean_aperture_width_n: field(0),
+            clean_aperture_width_d: field(4),
+            clean_aperture_height_n: field(8),
+            clean_aperture_height_d: field(12),
+            horiz_off_n: field(16),
+            horiz_off_d: field(20),
+            vert_off_n: field(24),
+            vert_off_d: field(28),
         })
     }
 }
@@ -394,6 +448,64 @@ mod tests {
             ..clap
         };
         assert_ne!(clap.try_to_bytes().unwrap(), clap2.try_to_bytes().unwrap());
+    }
+
+    #[test]
+    fn clap_fields_are_signed() {
+        let body = [
+            0x00, 0x00, 0x07, 0x70, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x04, 0x30, 0x00, 0x00,
+            0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFB, 0x00, 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFE,
+            0x00, 0x00, 0x00, 0x01,
+        ];
+        let clap = CleanApertureBox::parse(&body).unwrap();
+        assert_eq!(clap.horiz_off_n, -5);
+        assert_eq!(clap.vert_off_n, -2);
+        assert_eq!(clap.try_to_bytes().unwrap(), body);
+        assert_eq!(clap.aperture_within(1920, 1080), Some((3, 2, 1904, 1072)));
+    }
+
+    #[test]
+    fn clap_aperture_arithmetic() {
+        let clap = |w: (i32, i32), h: (i32, i32), x: (i32, i32), y: (i32, i32)| CleanApertureBox {
+            clean_aperture_width_n: w.0,
+            clean_aperture_width_d: w.1,
+            clean_aperture_height_n: h.0,
+            clean_aperture_height_d: h.1,
+            horiz_off_n: x.0,
+            horiz_off_d: x.1,
+            vert_off_n: y.0,
+            vert_off_d: y.1,
+        };
+        let centred = clap((100, 1), (50, 1), (0, 1), (0, 1));
+        assert_eq!(centred.aperture_within(100, 50), Some((0, 0, 100, 50)));
+        assert_eq!(centred.aperture_within(200, 100), Some((50, 25, 100, 50)));
+        assert_eq!(
+            centred.aperture_within(99, 50),
+            None,
+            "wider than the frame"
+        );
+        assert_eq!(
+            clap((101, 1), (50, 1), (0, 1), (0, 1)).aperture_within(100, 50),
+            None
+        );
+        assert_eq!(
+            clap((99, 1), (50, 1), (0, 1), (0, 1)).aperture_within(100, 50),
+            None,
+            "half-sample edge"
+        );
+        assert_eq!(
+            clap((100, 1), (50, 1), (i32::MIN, 1), (0, 1)).aperture_within(100, 50),
+            None
+        );
+        assert_eq!(
+            clap((i32::MAX, 1), (50, 1), (0, 1), (0, 1)).aperture_within(100, 50),
+            None
+        );
+        assert_eq!(
+            clap((100, 1), (50, 1), (i32::MAX, i32::MAX), (0, 1)).aperture_within(200, 50),
+            Some((51, 0, 100, 50)),
+            "offset N/D = 1 with extreme operands does not overflow"
+        );
     }
 
     // ---- colr (nclx) -----------------------------------------------------

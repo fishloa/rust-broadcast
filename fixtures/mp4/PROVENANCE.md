@@ -316,3 +316,39 @@ Track 1 (video) is PIFF-CBC encrypted: the fragment's `traf` carries the PIFF
 "UUID Sample Encryption Box" (`A2394F52-5A9B-4F14-A244-6C427C648DF4`), which
 `fragment_looks_encrypted` must recognise. The key/IV are a throwaway
 test vector, not secret. Own work — MIT OR Apache-2.0.
+
+
+## `tref-avcp.mp4`
+
+A progressive MP4 carrying real `tref` (TrackReferenceBox) boxes written by an
+independent tool, for the `TrackReferenceBox` round-trip tests (ISO/IEC
+14496-12:2026 §8.3.3; the `avcp` reference type is ISO/IEC 14496-15:2017
+§5.4.3.3). Generated from this workspace's own `fixtures/ts/h264-aac.ts`:
+
+```bash
+ffmpeg -y -i fixtures/ts/h264-aac.ts -t 0.5 -c copy base.mp4
+cp base.mp4 fixtures/mp4/tref-avcp.mp4
+MP4Box -ref 1:avcp:2 -ref 2:cdsc:1 fixtures/mp4/tref-avcp.mp4   # GPAC 26.07
+```
+
+Track 1 (video) carries `tref`>`avcp` -> track 2; track 2 (audio) carries
+`tref`>`cdsc` -> track 1. The references are arbitrary (track 2 is not a
+parameter set stream); only the box wire form is under test. Own work —
+MIT OR Apache-2.0.
+
+
+## `clap-vs-crop.mp4`
+
+A 1920x1080 H.264 progressive MP4 whose `clap` disagrees with the codec's own
+crop, for the `clap` precedence tests (ISO/IEC 14496-12:2026 §12.1.4: `clap`
+over-rides the codec-level declarations). The SPS crops 1088 to 1080 rows; the
+`clap` written by GPAC is a 1904x1072 aperture at offset 0/0 (so its left/top
+edges fall at 8 and 4 within the 1920x1080 sample entry).
+
+```bash
+ffmpeg -y -f lavfi -i testsrc=size=1920x1080:rate=25 -frames:v 4 \
+  -c:v libx264 -pix_fmt yuv420p -g 2 v.mp4
+MP4Box -add v.mp4#video:clap=1904,1,1072,1,0,1,0,1 -new fixtures/mp4/clap-vs-crop.mp4   # GPAC 26.07
+```
+
+Synthetic `testsrc` picture, own work — MIT OR Apache-2.0.

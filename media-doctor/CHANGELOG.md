@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `check_container_codec` reports `hvcc-array-nal-type` (an `hvcC` array that is not VPS/SPS/PPS/prefix SEI/suffix SEI) and `hvc1-array-completeness` (an `hvc1` entry whose `array_completeness` is not 1 on parameter-set arrays and 0 elsewhere) as warnings, ISO/IEC 14496-15:2017 §8.3.3.1.1 and §8.4.1.1.1 (#1915).
 
 ### Fixed
 - No false `dash-static-mpd-missing-duration` when the last `Period` carries `@duration` or the MPD carries `@minimumUpdatePeriod` (ISO/IEC 23009-1 Table 3) (#1925).

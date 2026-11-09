@@ -98,6 +98,17 @@ impl HEVCDecoderConfigurationRecord {
         (v == 0) | (v == 1) | (v == 3)
     }
 
+    /// Arrays whose `NAL_unit_type` is not VPS, SPS, PPS, prefix SEI or suffix
+    /// SEI. ISO/IEC 14496-15:2017 §8.3.3.1.1 restricts the arrays to those types
+    /// and tells readers to ignore the others, so [`Parse`] keeps them (the
+    /// record round-trips byte for byte) and this is how a caller, or a
+    /// conformance checker, finds them.
+    pub fn unpermitted_arrays(&self) -> impl Iterator<Item = &HevcNalArray> {
+        self.arrays
+            .iter()
+            .filter(|a| !a.has_permitted_nal_unit_type())
+    }
+
     /// RFC 6381 codec string (`hvc1.A.B.C.constraints`) built from the profile/
     /// tier/level fields carried in this record — ISO/IEC 14496-15:2017 §E.3.
     ///
