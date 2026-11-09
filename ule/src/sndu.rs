@@ -114,6 +114,13 @@ impl<'a> Sndu<'a> {
         let raw_type = u16::from_be_bytes([data[2], data[3]]);
         let type_field = TypeField::from_u16(raw_type);
 
+        if first == END_INDICATOR {
+            return Err(Error::InvalidLength {
+                length,
+                reason: "D=1 with Length=0x7FFF is the reserved End Indicator, not a real SNDU",
+            });
+        }
+
         // The Length-counted region is `length` bytes starting at byte 4.
         let region_end = BASE_HEADER_LEN + length as usize;
         if length as usize > data.len() - BASE_HEADER_LEN {
@@ -384,6 +391,18 @@ mod tests {
             sndu.serialize_into(&mut out),
             Err(Error::InvalidLength { .. })
         ));
+    }
+
+    #[test]
+    fn parse_rejects_the_end_indicator_header() {
+        let total = BASE_HEADER_LEN + usize::from(END_INDICATOR_LENGTH);
+        let mut d = vec![0u8; total];
+        d[..2].copy_from_slice(&END_INDICATOR.to_be_bytes());
+        d[2..4].copy_from_slice(&0x0800u16.to_be_bytes());
+        let crc_at = total - CRC_LEN;
+        let crc = broadcast_common::crc32_mpeg2::compute(&d[..crc_at]);
+        d[crc_at..].copy_from_slice(&crc.to_be_bytes());
+        assert!(matches!(Sndu::parse(&d), Err(Error::InvalidLength { .. })));
     }
 
     // type_field() accessor returns the chain's base type, which is the value
