@@ -140,9 +140,21 @@ use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, pcr_forward_distance};
 
 const MICROS_PER_SEC: u64 = 1_000_000;
 
+/// Upper bound on tracked EIT P/F sub-tables, so a noisy or hostile EIT PID
+/// cannot grow the pairing map without limit; further sub-tables go unpaired.
+const MAX_EIT_PF_SUBTABLES: usize = 1024;
+
 /// EIT P/F sections that carry a presence requirement: '0' (present) and '1'
 /// (following).
 const EIT_PF_SECTIONS: usize = 2;
+
+/// `stream_id`s whose PES packet has no optional header after
+/// `PES_packet_length` (ISO/IEC 13818-1 §2.4.3.7): program_stream_map,
+/// padding_stream, private_stream_2, ECM, EMM, DSMCC_stream,
+/// ITU-T H.222.1 type E and program_stream_directory.
+const PES_STREAM_IDS_WITHOUT_HEADER: [u8; 8] = [0xBC, 0xBE, 0xBF, 0xF0, 0xF1, 0xF2, 0xF8, 0xFF];
+/// Offset of `stream_id` within a PES packet.
+const PES_STREAM_ID_OFFSET: usize = 3;
 
 /// PES start-code prefix byte 0 (ISO/IEC 13818-1 §2.4.3.6, Table 2-21).
 const PES_PREFIX_0: u8 = 0x00;
@@ -663,6 +675,9 @@ struct PcrState {
     last_pcr_27mhz: u64,
     last_pcr_time: Duration,
     initialised: bool,
+    /// 2.3a already raised for the current silent stretch; the next PCR
+    /// clears it.
+    silence_reported: bool,
 }
 
 /// Per-PID PTS tracking state (indicator 2.5).
@@ -978,6 +993,8 @@ impl ConformanceMonitor {
             && let Some(pcr) = af.pcr
         {
             self.check_pcr(pid, pcr.as_27mhz(), af.discontinuity_indicator, t);
+        } else {
+            self.check_pcr_silence(pid, t);
         }
 
         // ── 2.5: PTS check (Table 5.0b indicator 2.5) ───────────────────
@@ -1870,6 +1887,7 @@ impl ConformanceMonitor {
             last_pcr_27mhz: 0,
             last_pcr_time: Duration::ZERO,
             initialised: false,
+            silence_reported: false,
         });
 
         if !state.initialised {
@@ -1886,7 +1904,8 @@ impl ConformanceMonitor {
         // 2.3a: PCR_repetition_error — interval between consecutive PCR
         // values exceeds the configured limit.
         let rep_interval = t.saturating_sub(last_pcr_time);
-        let should_emit_rep = rep_interval > self.config.pcr_repetition_limit;
+        let should_emit_rep =
+            rep_interval > self.config.pcr_repetition_limit && !state.silence_reported;
 
         // 2.3b: PCR_discontinuity_indicator_error — PCR delta exceeds 100 ms
         // without a signalled discontinuity.
@@ -1925,6 +1944,32 @@ impl ConformanceMonitor {
         let state = self.pcr_states.get_mut(&pid).unwrap();
         state.last_pcr_27mhz = pcr_27mhz;
         state.last_pcr_time = t;
+        state.silence_reported = false;
+    }
+
+    /// 2.3a for a PCR PID that keeps sending packets but no longer carries a
+    /// PCR: the repetition limit is judged at every packet of the PID, not
+    /// only when the next PCR finally arrives.
+    fn check_pcr_silence(&mut self, pid: Pid, t: Duration) {
+        let limit = self.config.pcr_repetition_limit;
+        let Some(state) = self.pcr_states.get_mut(&pid) else {
+            return;
+        };
+        let interval = t.saturating_sub(state.last_pcr_time);
+        if !state.initialised || state.silence_reported || interval <= limit {
+            return;
+        }
+        state.silence_reported = true;
+        self.emit(
+            Indicator::PcrRepetitionError,
+            Some(pid),
+            t,
+            format!(
+                "no PCR for {} ms (limit {} ms) while PID 0x{pid:04X} keeps sending",
+                interval.as_millis(),
+                limit.as_millis(),
+            ),
+        );
     }
 
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.5 — PTS_error.
@@ -1937,6 +1982,10 @@ impl ConformanceMonitor {
             return;
         }
         if payload[0] != PES_PREFIX_0 || payload[1] != PES_PREFIX_1 || payload[2] != PES_PREFIX_2 {
+            return;
+        }
+
+        if PES_STREAM_IDS_WITHOUT_HEADER.contains(&payload[PES_STREAM_ID_OFFSET]) {
             return;
         }
 
@@ -2172,6 +2221,11 @@ impl ConformanceMonitor {
             transport_stream_id: eit.transport_stream_id,
             original_network_id: eit.original_network_id,
         };
+
+        if self.eit_pf_pairs.len() >= MAX_EIT_PF_SUBTABLES && !self.eit_pf_pairs.contains_key(&key)
+        {
+            return;
+        }
 
         let entry = self
             .eit_pf_pairs

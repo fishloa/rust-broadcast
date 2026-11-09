@@ -2613,3 +2613,89 @@ fn epoch_based_caller_clock_anchors_all_timers() {
          observed t, not Duration::ZERO: {events:#?}"
     );
 }
+
+#[test]
+fn pcr_pid_that_keeps_sending_without_pcr_raises_repetition_error() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pcr_pid: u16 = 0x0200;
+    let af = make_pcr_adaptation(90_000, 0, false, false);
+    monitor.feed(
+        &make_ts_packet(pcr_pid, 0, false, true, &af, &[0xAB]),
+        ms(0),
+    );
+    let mut silent = Vec::new();
+    for i in 1..=5u8 {
+        let pkt = make_ts_packet(pcr_pid, i, false, false, &[], &[0xAB]);
+        silent.extend(monitor.feed(&pkt, ms(u64::from(i) * 50)).to_vec());
+    }
+    assert_eq!(
+        silent
+            .iter()
+            .filter(|e| e.indicator == Indicator::PcrRepetitionError)
+            .count(),
+        1,
+        "250 ms without a PCR on a PID that keeps sending: {silent:#?}"
+    );
+    let af = make_pcr_adaptation(90_000 + 22_500, 0, false, false);
+    let events = monitor.feed(
+        &make_ts_packet(pcr_pid, 6, false, true, &af, &[0xAB]),
+        ms(300),
+    );
+    assert!(
+        !has_indicator(events, Indicator::PcrRepetitionError),
+        "the stretch already reported must not be reported again when the PCR returns: {events:#?}"
+    );
+}
+
+#[test]
+fn pts_check_ignores_stream_ids_without_an_optional_pes_header() {
+    let es_pid: u16 = 0x0200;
+    for stream_id in [0xBCu8, 0xBE, 0xBF, 0xF0, 0xF1, 0xF2, 0xF8, 0xFF] {
+        let mut monitor = ConformanceMonitor::new();
+        setup_monitor_with_es(&mut monitor, es_pid);
+        let pes = make_pes_header_with_pts(stream_id, 10);
+        monitor.feed(&make_ts_packet(es_pid, 0, true, false, &[], &pes), ms(20));
+        let events = monitor.feed(
+            &make_ts_packet(es_pid, 1, true, false, &[], &pes),
+            ms(1_000),
+        );
+        assert!(
+            !has_indicator(events, Indicator::PtsError),
+            "stream_id 0x{stream_id:02X} has no PTS to check: {events:#?}"
+        );
+    }
+}
+
+#[test]
+fn eit_pf_pairing_state_is_bounded() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let distinct = 1_024u16 + 64;
+    let mut pz = SectionPacketiser::new(Pid::new(PID_EIT));
+    let mut t = 5u64;
+    let mut pf_errors = 0;
+    for service_id in 1..=distinct {
+        let section = build_eit_pf_actual_section_keyed(0, service_id, 1, 1);
+        for pkt in pz.packetise(&[&section[..]]) {
+            pf_errors += monitor
+                .feed(&pkt, ms(t))
+                .iter()
+                .filter(|e| e.indicator == Indicator::EitPfError)
+                .count();
+        }
+        t += 30;
+    }
+    for i in 0..100u8 {
+        let pkt = make_ts_packet(PID_NULL, i, false, false, &[], &[]);
+        pf_errors += monitor
+            .feed(&pkt, ms(t + 4_000 + u64::from(i) * 10))
+            .iter()
+            .filter(|e| e.indicator == Indicator::EitPfError)
+            .count();
+    }
+    assert_eq!(
+        pf_errors, 1_024,
+        "only the first 1024 sub-tables are tracked; the rest cannot raise 3.6.c"
+    );
+}
