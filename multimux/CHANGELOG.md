@@ -13,6 +13,7 @@
 - The DVR archived the last segment closed under an fMP4 init in the period of the next init: the init change was applied before the pending segments were drained. Each pending segment is now archived under the init it was closed under (`DvrRecorder::poll_and_persist_inits`, `InitGeneration`).
 - Segments a program had closed but the DVR had not yet archived were lost when a source reconnect replaced the program; the replacement's recorder now archives them first.
 - The push `ReconnectEngine` reset its backoff and attempt counter as soon as a connection was established, so a destination that accepted the connection and then dropped it was never backed off or given up on. The series now restarts only after the connection stayed up for `push::HEALTHY_CONNECTION` (30 s); `ReconnectEngine::on_connect` no longer resets the counter.
+- A catch-up request dropped mid-scan (a client disconnect) released its scan permit while the archive scan kept running on the blocking pool, so aborted requests could exceed `MAX_CONCURRENT_SCANS`; the permit now moves into the blocking task.
 
 ## [0.17.0] - 2026-11-08
 ### Changed

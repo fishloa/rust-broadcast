@@ -111,28 +111,8 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/catchup.rs",
-        167,
-        "spawn_blocking archive scan; awaited inline",
-    ),
-    (
-        "output/catchup.rs",
-        250,
-        "spawn_blocking archive scan; awaited inline",
-    ),
-    (
-        "output/catchup.rs",
-        353,
-        "spawn_blocking archived-segment lookup; awaited inline",
-    ),
-    (
-        "output/catchup.rs",
-        366,
-        "spawn_blocking archived-segment read; awaited inline",
-    ),
-    (
-        "output/catchup.rs",
-        448,
-        "spawn_blocking archived-segment read; awaited inline",
+        343,
+        "spawn_blocking catch-up scan under an owned scan permit; awaited inline, and the permit rides the blocking task",
     ),
     (
         "output/smooth.rs",
