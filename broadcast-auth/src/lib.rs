@@ -10,6 +10,7 @@ mod error;
 mod request;
 mod server;
 pub mod signed_url;
+mod trusted_proxy;
 mod userinfo;
 
 pub use authenticator::{Authenticator, respond};
@@ -20,6 +21,7 @@ pub use error::{Error, Result};
 pub use request::RequestContext;
 pub use server::{AuthResult, DIGEST_NC_TRACK_CAP, DIGEST_NONCE_LIFETIME, NC_WINDOW, Verifier};
 pub use signed_url::SignedUrlKeySet;
+pub use trusted_proxy::TrustedProxy;
 pub use userinfo::{credentials_from_url, strip_userinfo};
 
 #[cfg(test)]

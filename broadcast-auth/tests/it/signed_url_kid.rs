@@ -123,3 +123,30 @@ fn legacy_literal_plus_in_kid_is_no_longer_accepted() {
         AuthResult::Unauthorized
     );
 }
+
+#[test]
+fn ip_bound_url_accepts_the_same_client_as_a_v4_mapped_v6_peer() {
+    let ip: IpAddr = "192.0.2.5".parse().unwrap();
+    let query = keys("k").sign("k", "/a", far_future(), Some(ip)).unwrap();
+    let verifier = Verifier::signed_url(keys("k"));
+    let uri = format!("/a?{query}");
+    let mapped: SocketAddr = "[::ffff:192.0.2.5]:1234".parse().unwrap();
+    let other: SocketAddr = "[::ffff:192.0.2.6]:1234".parse().unwrap();
+    assert_eq!(verify(&verifier, &uri, Some(mapped)), AuthResult::Ok);
+    assert_eq!(
+        verify(&verifier, &uri, Some(other)),
+        AuthResult::Unauthorized
+    );
+}
+
+#[test]
+fn v4_mapped_bound_ip_accepts_the_plain_v4_peer() {
+    let ip: IpAddr = "::ffff:192.0.2.5".parse().unwrap();
+    let query = keys("k").sign("k", "/a", far_future(), Some(ip)).unwrap();
+    let verifier = Verifier::signed_url(keys("k"));
+    let peer: SocketAddr = "192.0.2.5:1234".parse().unwrap();
+    assert_eq!(
+        verify(&verifier, &format!("/a?{query}"), Some(peer)),
+        AuthResult::Ok
+    );
+}

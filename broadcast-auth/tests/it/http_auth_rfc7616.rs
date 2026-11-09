@@ -147,3 +147,28 @@ fn own_digest_nonces_are_unique_and_correct_length() {
         assert!(seen.insert(nonce), "duplicate nonce issued");
     }
 }
+
+#[test]
+fn digest_response_computed_for_another_origin_is_not_replayable() {
+    use broadcast_auth::{AuthResult, RequestContext, respond};
+    let v = Verifier::new(Credentials::new("u", "p"), "r");
+    let header = respond(
+        &v.challenge(),
+        &RequestContext::new("GET", "http://other-host.example/x"),
+        Credentials::new("u", "p"),
+    )
+    .unwrap();
+    let no_host = [("authorization", header.as_str())];
+    let own_host = [
+        ("authorization", header.as_str()),
+        ("host", "this-host.example"),
+    ];
+    let same_host = [
+        ("authorization", header.as_str()),
+        ("host", "other-host.example"),
+    ];
+    let verify = |h: &[(&str, &str)]| v.verify(&RequestContext::new("GET", "/x").with_headers(h));
+    assert_eq!(verify(&no_host), AuthResult::Unauthorized);
+    assert_eq!(verify(&own_host), AuthResult::Unauthorized);
+    assert_eq!(verify(&same_host), AuthResult::Ok);
+}

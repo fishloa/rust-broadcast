@@ -86,6 +86,36 @@ impl<'a> RequestContext<'a> {
     }
 }
 
+const REDACTED_HEADERS: [&str; 5] = [
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+];
+
+const SIGNED_URL_SIG_PARAM: &str = "sig";
+const REDACTED: &str = "<redacted>";
+
+struct RedactedUri<'a>(&'a str);
+
+impl core::fmt::Debug for RedactedUri<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some((path, query)) = self.0.split_once('?') else {
+            return core::fmt::Debug::fmt(self.0, f);
+        };
+        let redacted = query
+            .split('&')
+            .map(|pair| match pair.split_once('=') {
+                Some((SIGNED_URL_SIG_PARAM, _)) => format!("{SIGNED_URL_SIG_PARAM}={REDACTED}"),
+                _ => pair.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        core::fmt::Debug::fmt(&format!("{path}?{redacted}"), f)
+    }
+}
+
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`Self::headers`] carries
 /// whatever the caller attached, which — server-side — includes the real
 /// `Authorization`/`Proxy-Authorization` header the request was authenticated
@@ -101,16 +131,17 @@ impl core::fmt::Debug for RequestContext<'_> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 f.debug_list()
                     .entries(self.0.iter().map(|(name, value)| {
-                        let redact = name.eq_ignore_ascii_case("authorization")
-                            || name.eq_ignore_ascii_case("proxy-authorization");
-                        (*name, if redact { "<redacted>" } else { value })
+                        let redact = REDACTED_HEADERS
+                            .iter()
+                            .any(|secret| name.eq_ignore_ascii_case(secret));
+                        (*name, if redact { REDACTED } else { value })
                     }))
                     .finish()
             }
         }
         f.debug_struct("RequestContext")
             .field("method", &self.method)
-            .field("uri", &self.uri)
+            .field("uri", &RedactedUri(self.uri))
             .field("body", &self.body)
             .field("headers", &Headers(self.headers))
             .field("peer_addr", &self.peer_addr)
@@ -143,6 +174,20 @@ mod tests {
         let addr: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
         let ctx = RequestContext::new("GET", "/x").with_peer_addr(addr);
         assert_eq!(ctx.peer_addr, Some(addr));
+    }
+
+    #[test]
+    fn debug_redacts_signed_url_sig_and_cookie_but_keeps_the_rest_of_the_uri() {
+        let headers: &[(&str, &str)] = &[("Cookie", "session=abcSECRET")];
+        let ctx = RequestContext::new("GET", "/a?exp=99&kid=k&sig=ZB7C4Csecretsig&ip=1.2.3.4")
+            .with_headers(headers);
+        let debug = format!("{ctx:?}");
+        assert!(!debug.contains("ZB7C4Csecretsig"), "sig leaked: {debug}");
+        assert!(!debug.contains("abcSECRET"), "cookie leaked: {debug}");
+        assert!(
+            debug.contains("/a?exp=99&kid=k&sig=<redacted>&ip=1.2.3.4"),
+            "{debug}"
+        );
     }
 
     // Security-blocker regression (pre-release audit): `RequestContext` must
