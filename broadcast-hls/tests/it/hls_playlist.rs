@@ -664,13 +664,14 @@ fn discontinuity_before_the_open_segment_survives_a_round_trip() {
 }
 
 #[test]
-fn master_parse_rejects_a_stream_inf_group_that_has_no_ext_x_media() {
+fn a_stream_inf_group_with_no_ext_x_media_round_trips_byte_identical() {
     let src = "#EXTM3U\n\
 #EXT-X-STREAM-INF:BANDWIDTH=1000,AUDIO=\"aud\"\n\
 v.m3u8\n";
-    let parsed = MasterPlaylist::parse(src);
-    assert!(
-        matches!(parsed, Err(Error::HlsParse { .. })),
-        "parse must refuse what render refuses, got {parsed:?}"
+    let pl = MasterPlaylist::parse(src).unwrap();
+    assert_eq!(pl.to_m3u8().unwrap(), src);
+    assert_eq!(
+        pl.dangling_group_references(),
+        vec![(broadcast_hls::MediaType::Audio, "aud".to_string())]
     );
 }

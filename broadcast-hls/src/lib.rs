@@ -3947,76 +3947,50 @@ impl MasterPlaylist {
         Ok(s)
     }
 
+    /// Every `AUDIO`/`VIDEO`/`SUBTITLES`/`CLOSED-CAPTIONS` group an
+    /// `#EXT-X-STREAM-INF` names that no `#EXT-X-MEDIA` of the same `TYPE`
+    /// declares (RFC 8216bis §4.4.6.2), as `(type, GROUP-ID)` in variant order.
+    /// Parse and [`Self::to_m3u8`] both keep such a reference unchanged so a
+    /// slightly non-conformant third-party playlist still round-trips; a
+    /// validator reports it from here.
+    #[must_use]
+    pub fn dangling_group_references(&self) -> Vec<(MediaType, String)> {
+        let group_exists = |gid: &str, mt: MediaType| -> bool {
+            self.media
+                .iter()
+                .any(|m| m.group_id == gid && m.media_type == mt)
+        };
+        let mut dangling = Vec::new();
+        for v in &self.variants {
+            let named = [
+                (MediaType::Audio, v.audio.as_ref()),
+                (MediaType::Video, v.video.as_ref()),
+                (MediaType::Subtitles, v.subtitles.as_ref()),
+                (
+                    MediaType::ClosedCaptions,
+                    match &v.closed_captions {
+                        Some(ClosedCaptionsRef::Group(g)) => Some(g),
+                        _ => None,
+                    },
+                ),
+            ];
+            for (mt, group) in named {
+                if let Some(g) = group
+                    && !group_exists(g, mt)
+                {
+                    dangling.push((mt, g.clone()));
+                }
+            }
+        }
+        dangling
+    }
+
     /// Reject any field that would be rendered inside an RFC 8216 §4.2
     /// quoted-string or as a URI but contains `"`, CR or LF (audit BH-W7,
     /// issue #1111) — a tag/attribute-list injection vector for a playlist
     /// assembled from external data. Covers every field [`Self::to_m3u8`]
     /// emits; the per-tag renderers re-check the same values, so a caller
     /// that bypasses this method still cannot emit a malformed line.
-    fn validate_group_references(&self) -> Result<()> {
-        let none_used = self
-            .variants
-            .iter()
-            .any(|v| matches!(v.closed_captions, Some(ClosedCaptionsRef::None)));
-        if none_used {
-            for v in &self.variants {
-                if !matches!(v.closed_captions, Some(ClosedCaptionsRef::None)) {
-                    return Err(Error::HlsParse {
-                        line_no: 0,
-                        line: String::new(),
-                        reason:
-                            "EXT-X-STREAM-INF CLOSED-CAPTIONS=NONE must be used on all variants"
-                                .to_string(),
-                    });
-                }
-            }
-        }
-        let group_exists = |gid: &str, mt: MediaType| -> bool {
-            self.media
-                .iter()
-                .any(|m| m.group_id == gid && m.media_type == mt)
-        };
-        for v in &self.variants {
-            if let Some(g) = &v.audio
-                && !group_exists(g, MediaType::Audio)
-            {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("EXT-X-STREAM-INF AUDIO group {g:?} not found"),
-                });
-            }
-            if let Some(g) = &v.video
-                && !group_exists(g, MediaType::Video)
-            {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("EXT-X-STREAM-INF VIDEO group {g:?} not found"),
-                });
-            }
-            if let Some(g) = &v.subtitles
-                && !group_exists(g, MediaType::Subtitles)
-            {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("EXT-X-STREAM-INF SUBTITLES group {g:?} not found"),
-                });
-            }
-            if let Some(ClosedCaptionsRef::Group(g)) = &v.closed_captions
-                && !group_exists(g, MediaType::ClosedCaptions)
-            {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("EXT-X-STREAM-INF CLOSED-CAPTIONS group {g:?} not found"),
-                });
-            }
-        }
-        Ok(())
-    }
-
     fn validate_for_render(&self) -> Result<()> {
         validate_tag_body("playlist-level extra tag", &self.extra_tags)?;
         for def in &self.defines {
@@ -4136,7 +4110,24 @@ impl MasterPlaylist {
                 validate_quoted_string(ch, "EXT-X-MEDIA CHANNELS")?;
             }
         }
-        self.validate_group_references()?;
+        // CLOSED-CAPTIONS=NONE consistency.
+        let none_used = self
+            .variants
+            .iter()
+            .any(|v| matches!(v.closed_captions, Some(ClosedCaptionsRef::None)));
+        if none_used {
+            for v in &self.variants {
+                if !matches!(v.closed_captions, Some(ClosedCaptionsRef::None)) {
+                    return Err(Error::HlsParse {
+                        line_no: 0,
+                        line: String::new(),
+                        reason:
+                            "EXT-X-STREAM-INF CLOSED-CAPTIONS=NONE must be used on all variants"
+                                .to_string(),
+                    });
+                }
+            }
+        }
         for sk in &self.session_keys {
             push_session_key_line(&mut String::new(), sk)?;
         }
@@ -4398,7 +4389,7 @@ impl MasterPlaylist {
 
         check_rendition_groups(&media)?;
 
-        let playlist = MasterPlaylist {
+        Ok(MasterPlaylist {
             version,
             media,
             variants,
@@ -4410,9 +4401,7 @@ impl MasterPlaylist {
             session_data,
             session_keys,
             content_steering,
-        };
-        playlist.validate_group_references()?;
-        Ok(playlist)
+        })
     }
 
     /// Compute the minimum `#EXT-X-VERSION` this Multivariant Playlist's
