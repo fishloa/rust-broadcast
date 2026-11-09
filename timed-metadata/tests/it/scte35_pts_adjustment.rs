@@ -4,9 +4,14 @@
 //! see `fixtures/scte35/PROVENANCE.md` for the exact command and the oracle
 //! values read from `tstabcomp --decompile`'s own output, not from this
 //! crate's parser or serializer.
+use broadcast_common::Serialize;
 use broadcast_common::traits::Parse;
+use scte35_splice::SpliceInfoSection;
+use scte35_splice::commands::{AnyCommand, SpliceInsert};
+use scte35_splice::time::SpliceTime;
 use std::fs;
 use timed_metadata::event::{EventKind, MediaDuration, MediaTime, TimedEvent};
+use timed_metadata::{TimeAnchor, Timeline};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = test_fixtures::path(&format!("scte35/{name}"));
@@ -75,5 +80,33 @@ fn time_signal_without_id_errors_on_daterange_conversion() {
     assert!(
         matches!(result, Err(timed_metadata::Error::MissingEventId)),
         "a time_signal with no id must error, not silently emit ID=\"\""
+    );
+}
+
+fn splice_at_pts(pts: u64) -> Vec<u8> {
+    let cmd = SpliceInsert {
+        splice_event_id: 7,
+        out_of_network_indicator: true,
+        splice_time: Some(SpliceTime::with_pts(pts)),
+        ..Default::default()
+    };
+    SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(cmd), &[])
+        .try_to_bytes()
+        .unwrap()
+}
+
+#[test]
+fn a_cue_just_after_the_33_bit_wrap_starts_just_after_an_anchor_just_before_it() {
+    const WRAP: u64 = 1 << 33;
+    let anchor = TimeAnchor {
+        pts_90k: WRAP - 90_000,
+        utc_epoch_ms: 1_700_000_000_000,
+    };
+    let mut tl = Timeline::with_anchor(anchor);
+    let ev = tl.push_scte35(&splice_at_pts(90_000)).unwrap();
+    let dr = tl.to_daterange(&ev).unwrap();
+    assert_eq!(
+        dr.start_date, "2023-11-14T22:13:22.000Z",
+        "cue 2 s after the anchor (across the PTS wrap) must start 2 s after the anchor UTC"
     );
 }

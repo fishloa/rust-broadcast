@@ -288,7 +288,9 @@ pub(crate) fn verify(ctx: &RequestContext<'_>, keys: &SignedUrlKeySet) -> bool {
     let sig_ok = constant_time_eq(decoded_sig.as_slice(), expected.as_slice());
     let not_expired = current_unix_time() <= exp;
     let ip_ok = match ip {
-        Some(bound_ip) => ctx.peer_addr.map(|p| p.ip()) == Some(bound_ip),
+        Some(bound_ip) => {
+            ctx.peer_addr.map(|p| p.ip().to_canonical()) == Some(bound_ip.to_canonical())
+        }
         None => true,
     };
 

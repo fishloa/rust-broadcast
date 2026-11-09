@@ -5,6 +5,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `Verifier::forwarded_from` and `TrustedProxy` (IP/CIDR, IPv4-mapped peers canonicalised, `TrustedProxy::loopback()`): the `forwarded` scheme can now require the transport peer to be a listed proxy, so a client reaching the origin directly cannot forge `X-Forwarded-User`. `Verifier::forwarded` is unchanged and still trusts any peer. `Error::InvalidTrustedProxy` (`Error` is `#[non_exhaustive]`).
+### Fixed
+- `RequestContext`'s `Debug` redacts the signed-URL `sig` query value and the `Cookie`, `Set-Cookie` and `X-Api-Key` header values (previously only `Authorization`/`Proxy-Authorization`).
+- An IP-bound signed URL accepts an IPv4-mapped IPv6 peer (`::ffff:a.b.c.d`) for the same IPv4 address, in both directions; both sides are compared after `to_canonical()`.
+- Digest: an absolute-form `uri` must name the request's own `Host` (RFC 7616 §3.4 `uri`, RFC 9110 §7.2); a response computed for another origin no longer authenticates here, and an absolute-form `uri` with no `Host` is refused.
+- A blank (empty or whitespace-only) configured Bearer token never verifies a blank `Authorization: Bearer` credential.
 
 ## [0.5.2] - 2026-11-07
 ### Changed

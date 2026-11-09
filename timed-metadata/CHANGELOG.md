@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Fixed
+- `Timeline` now seeds its 33-bit PTS unroller from the anchor, so a cue just after a PTS wrap that follows an anchor just before it is placed 2 s after the anchor instead of ~26.5 h before it (wrong `START-DATE`).
 
 ## [0.9.0] - 2026-11-07
 ### Removed

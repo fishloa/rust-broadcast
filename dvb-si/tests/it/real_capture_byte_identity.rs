@@ -58,10 +58,8 @@ const TOLERATED: &[(&str, &str)] = &[
     ("test-062.", "PROGRAM_ASSOCIATION (tid 0x00)"),
     ("test-062.", "CONDITIONAL_ACCESS (tid 0x01)"),
     ("test-062.", "CONTAINER (tid 0x75)"),
-    ("test-062.", "MPE_FEC (tid 0x78)"),
     ("test-062.", "MPE_IFEC (tid 0x7A)"),
     ("test-062.", "PROTECTION_MESSAGE (tid 0x7B)"),
-    ("test-062.", "ISO_IEC_14496 (tid 0x08)"),
     ("test-062.", "METADATA (tid 0x06)"),
 ];
 

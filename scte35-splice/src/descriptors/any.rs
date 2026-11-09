@@ -75,10 +75,21 @@ macro_rules! declare_splice_descriptors {
             /// Parse one full descriptor (2-byte header included) by its tag.
             /// Unknown tags yield [`AnySpliceDescriptor::Unknown`].
             pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Result<Self> {
-                use broadcast_common::Parse;
+                use broadcast_common::{Parse, Serialize};
                 match tag {
                     $(
-                        $tag => <$($path)::+>::parse(full).map(Self::$variant),
+                        $tag => {
+                            let descriptor = <$($path)::+>::parse(full)?;
+                            if descriptor.serialized_len() != full.len() {
+                                return Err(crate::error::Error::InvalidField(
+                                    broadcast_common::error::InvalidField {
+                                        field: "splice_descriptor.descriptor_length",
+                                        reason: "bytes remain after the descriptor structure",
+                                    },
+                                ));
+                            }
+                            Ok(Self::$variant(descriptor))
+                        }
                     )+
                     _ => Ok(Self::Unknown { tag, body: &full[2..] }),
                 }

@@ -1114,6 +1114,7 @@ impl<'a> AdaptationField<'a> {
 pub struct SectionReassembler {
     buf: bytes::BytesMut,
     ready: alloc::collections::VecDeque<bytes::Bytes>,
+    last_continuity_counter: Option<u8>,
 }
 
 impl SectionReassembler {
@@ -1125,6 +1126,29 @@ impl SectionReassembler {
     /// (EN 300 468 §5.1.4; common on EMM PIDs). Drain with a
     /// `while let Some(s) = r.pop_section()` loop, not a single `if let`.
     pub fn feed(&mut self, payload: &[u8], pusi: bool) {
+        self.last_continuity_counter = None;
+        self.feed_payload(payload, pusi);
+    }
+
+    /// Like [`feed`](Self::feed), additionally taking the packet's
+    /// `continuity_counter` so a legally retransmitted continuation packet is
+    /// discarded rather than appended twice.
+    ///
+    /// ISO/IEC 13818-1 §2.4.3.3 (`continuity_counter` semantics, see
+    /// `private/specs/`) permits a packet to be repeated once with the same
+    /// counter; such a duplicate of the previous packet on this PID is dropped
+    /// when it is a continuation (non-PUSI) packet. Call this for payload-bearing
+    /// packets only: the counter does not advance on packets without payload.
+    pub fn feed_with_continuity(&mut self, payload: &[u8], pusi: bool, continuity_counter: u8) {
+        let duplicate = self.last_continuity_counter == Some(continuity_counter);
+        self.last_continuity_counter = Some(continuity_counter);
+        if duplicate && !pusi {
+            return;
+        }
+        self.feed_payload(payload, pusi);
+    }
+
+    fn feed_payload(&mut self, payload: &[u8], pusi: bool) {
         if pusi {
             // A PUSI packet whose adaptation field consumed the whole body is
             // malformed but constructible — drop sync rather than panic.
@@ -1584,6 +1608,26 @@ mod tests {
         v.push(tail.len() as u8);
         v.extend_from_slice(tail);
         v
+    }
+
+    #[test]
+    fn reassembler_discards_a_retransmitted_continuation_packet() {
+        let mut section = vec![0x4Eu8, 0xB0, 0x00];
+        section.resize(300, 0x5A);
+        section[1] = 0xB0 | (((300 - 3) >> 8) as u8);
+        section[2] = ((300 - 3) & 0xFF) as u8;
+        let mut first = vec![0x00u8];
+        first.extend_from_slice(&section[..183]);
+
+        let mut reasm = SectionReassembler::default();
+        reasm.feed_with_continuity(&first, true, 0);
+        reasm.feed_with_continuity(&section[183..250], false, 1);
+        reasm.feed_with_continuity(&section[183..250], false, 1);
+        reasm.feed_with_continuity(&section[250..], false, 2);
+
+        let out = reasm.pop_section().expect("section survives the duplicate");
+        assert_eq!(out.as_ref(), &section[..]);
+        assert!(reasm.pop_section().is_none());
     }
 
     #[test]

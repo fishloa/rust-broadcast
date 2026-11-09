@@ -119,6 +119,7 @@ use crate::constant_time_eq;
 use crate::credentials::Credentials;
 use crate::request::RequestContext;
 use crate::signed_url::{self, SignedUrlKeySet};
+use crate::trusted_proxy::TrustedProxy;
 
 /// The outcome of [`Verifier::verify`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +157,7 @@ enum VerifierScheme {
     Forwarded {
         user_header: String,
         forwarded_for_header: Option<String>,
+        trusted_proxies: Option<Vec<TrustedProxy>>,
     },
     /// HMAC signed-URL (see the module docs / [`crate::signed_url`]) — no
     /// `Credentials`/realm/nonce either: the token lives in the request's own
@@ -521,6 +523,27 @@ impl Verifier {
             scheme: VerifierScheme::Forwarded {
                 user_header: user_header.into(),
                 forwarded_for_header,
+                trusted_proxies: None,
+            },
+            clock: default_clock(),
+        }
+    }
+
+    /// Like [`Self::forwarded`], but the user header counts only when the
+    /// transport peer (`ctx.peer_addr`, IPv4-mapped addresses canonicalised)
+    /// lies in `trusted_proxies`. A request with no peer address, or from a
+    /// peer outside the list, is `Unauthorized`: any other peer could set the
+    /// header itself. An empty list trusts no peer.
+    pub fn forwarded_from(
+        user_header: impl Into<String>,
+        forwarded_for_header: Option<String>,
+        trusted_proxies: Vec<TrustedProxy>,
+    ) -> Self {
+        Verifier {
+            scheme: VerifierScheme::Forwarded {
+                user_header: user_header.into(),
+                forwarded_for_header,
+                trusted_proxies: Some(trusted_proxies),
             },
             clock: default_clock(),
         }
@@ -573,6 +596,7 @@ impl Verifier {
                         nonces,
                         ctx.method,
                         ctx.uri,
+                        ctx.header("host"),
                         nonces.now(self.now_secs()),
                     ),
                     DigestCheck::Stale
@@ -637,13 +661,25 @@ impl Verifier {
             } => ctx.header("authorization").is_some_and(|header| {
                 let now = nonces.now(self.now_secs());
                 match check_digest(
-                    header, username, password, realm, nonces, ctx.method, ctx.uri, now,
+                    header,
+                    username,
+                    password,
+                    realm,
+                    nonces,
+                    ctx.method,
+                    ctx.uri,
+                    ctx.header("host"),
+                    now,
                 ) {
                     DigestCheck::Accept { key, stamp, nc } => nonces.record(key, stamp, nc, now),
                     DigestCheck::Stale | DigestCheck::Reject => false,
                 }
             }),
-            VerifierScheme::Forwarded { user_header, .. } => verify_forwarded(ctx, user_header),
+            VerifierScheme::Forwarded {
+                user_header,
+                trusted_proxies,
+                ..
+            } => verify_forwarded(ctx, user_header, trusted_proxies.as_deref()),
             VerifierScheme::SignedUrl { keys } => signed_url::verify(ctx, keys),
         };
         if ok {
@@ -808,8 +844,12 @@ fn verify_basic(header: &str, username: &str, password: &str) -> bool {
     user_ok & pass_ok
 }
 
-/// RFC 6750 §2.1: compare the bearer token, in constant time.
+/// RFC 6750 §2.1: compare the bearer token, in constant time. A blank
+/// (empty or whitespace-only) configured token never verifies.
 fn verify_bearer(header: &str, token: &str) -> bool {
+    if token.trim().is_empty() {
+        return false;
+    }
     let Some(auth) = decode::<Bearer>(header) else {
         return false;
     };
@@ -852,6 +892,7 @@ fn check_digest(
     nonces: &DigestNonces,
     method: &str,
     request_uri: &str,
+    host: Option<&str>,
     now_secs: u64,
 ) -> DigestCheck {
     let Some(fields) = parse_digest_fields(header) else {
@@ -879,7 +920,7 @@ fn check_digest(
         return DigestCheck::Reject;
     };
     let client_uri = get("uri");
-    if !digest_uri_matches(client_uri, request_uri) {
+    if !digest_uri_matches(client_uri, request_uri, host) {
         return DigestCheck::Reject;
     }
     let nc_text = get("nc");
@@ -942,7 +983,11 @@ fn parse_nc(nc: &str) -> Option<u32> {
 ///   the parser's normalised spelling (`Url::as_str() == client_uri`: no
 ///   dot-segments, no upper-case scheme/host, no default port, a root `/`),
 ///   and whose path+query+fragment (`Position::BeforePath..`) is
-///   byte-identical to `request_uri`.
+///   byte-identical to `request_uri`, and whose authority is the request's
+///   `Host` (`host`; RFC 7616 §3.4 `uri` is the effective request URI, whose
+///   authority is the `Host` field, RFC 9110 §7.2). With no `Host` an
+///   absolute-form `uri` is refused, so a response computed for another
+///   origin cannot be replayed here.
 ///
 /// Anything else is rejected. The normalised-spelling requirement is the
 /// substitution guard: `Url::parse` removes `.`/`..` segments (also when
@@ -950,23 +995,46 @@ fn parse_nc(nc: &str) -> Option<u32> {
 /// for a response hashed over `http://h/a/../b`. This is not a prefix/suffix
 /// check either: a `client_uri` that merely contains or is suffixed by
 /// `request_uri` (or vice versa) does NOT match.
-fn digest_uri_matches(client_uri: &str, request_uri: &str) -> bool {
+fn digest_uri_matches(client_uri: &str, request_uri: &str, host: Option<&str>) -> bool {
     if client_uri == request_uri {
         return true;
     }
     let Ok(parsed) = Url::parse(client_uri) else {
         return false;
     };
-    parsed.as_str() == client_uri && &parsed[Position::BeforePath..] == request_uri
+    parsed.as_str() == client_uri
+        && &parsed[Position::BeforePath..] == request_uri
+        && host.is_some_and(|host| authority_is_host(&parsed, host))
+}
+
+fn authority_is_host(parsed: &Url, host: &str) -> bool {
+    let Ok(from_host) = Url::parse(&format!("{}://{host}", parsed.scheme())) else {
+        return false;
+    };
+    matches!(from_host.path(), "" | "/")
+        && from_host.query().is_none()
+        && from_host.fragment().is_none()
+        && from_host[Position::BeforeHost..Position::AfterPort]
+            == parsed[Position::BeforeHost..Position::AfterPort]
 }
 
 /// Reverse-proxy forwarded-auth (see the module docs): authenticated iff
 /// `user_header` is present in `ctx` and non-empty (after trimming) — the
 /// proxy having already verified the caller's identity. No credential/secret
 /// is compared here, so no constant-time comparison is needed.
-fn verify_forwarded(ctx: &RequestContext<'_>, user_header: &str) -> bool {
-    ctx.header(user_header)
-        .is_some_and(|v| !v.trim().is_empty())
+fn verify_forwarded(
+    ctx: &RequestContext<'_>,
+    user_header: &str,
+    trusted_proxies: Option<&[TrustedProxy]>,
+) -> bool {
+    let peer_trusted = trusted_proxies.is_none_or(|nets| {
+        ctx.peer_addr
+            .is_some_and(|peer| nets.iter().any(|net| net.contains(peer.ip())))
+    });
+    peer_trusted
+        && ctx
+            .header(user_header)
+            .is_some_and(|v| !v.trim().is_empty())
 }
 
 /// Lowercase-hex MD5 digest of `input`.
@@ -1075,6 +1143,16 @@ mod tests {
         };
         let ctx = RequestContext::new(method, uri).with_headers(headers);
         v.verify(&ctx)
+    }
+
+    fn verify_auth_with_host(
+        v: &Verifier,
+        authorization: &str,
+        uri: &str,
+        host: &str,
+    ) -> AuthResult {
+        let headers = [("authorization", authorization), ("host", host)];
+        v.verify(&RequestContext::new("GET", uri).with_headers(&headers))
     }
 
     // --- challenge() shape ---
@@ -1279,8 +1357,16 @@ mod tests {
             "expected the client to hash the absolute-form uri, got: {header}"
         );
         assert_eq!(
-            verify_auth(&v, Some(&header), "GET", "/stream/media.m3u8"),
+            verify_auth_with_host(&v, &header, "/stream/media.m3u8", "cam.local"),
             AuthResult::Ok
+        );
+        assert_eq!(
+            verify_auth_with_host(&v, &header, "/stream/media.m3u8", "other-host.example"),
+            AuthResult::Unauthorized
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", "/stream/media.m3u8"),
+            AuthResult::Unauthorized
         );
     }
 
@@ -1342,39 +1428,64 @@ mod tests {
     #[test]
     fn digest_uri_matches_unit_cases() {
         // Origin-form, identical.
-        assert!(digest_uri_matches("/a/b", "/a/b"));
+        assert!(digest_uri_matches("/a/b", "/a/b", Some("host")));
         // Absolute-form whose path matches.
-        assert!(digest_uri_matches("http://host/a/b", "/a/b"));
-        assert!(digest_uri_matches("https://host:8080/a/b?q=1", "/a/b?q=1"));
+        assert!(digest_uri_matches("http://host/a/b", "/a/b", Some("host")));
+        assert!(digest_uri_matches(
+            "https://host:8080/a/b?q=1",
+            "/a/b?q=1",
+            Some("host:8080")
+        ));
         // Wrong path in either form.
-        assert!(!digest_uri_matches("/a/c", "/a/b"));
-        assert!(!digest_uri_matches("http://host/a/c", "/a/b"));
+        assert!(!digest_uri_matches("/a/c", "/a/b", Some("host")));
+        assert!(!digest_uri_matches("http://host/a/c", "/a/b", Some("host")));
         // Not a suffix/prefix rubber stamp.
-        assert!(!digest_uri_matches("http://host/x/a/b", "/a/b"));
-        assert!(!digest_uri_matches("/a/b/extra", "/a/b"));
+        assert!(!digest_uri_matches(
+            "http://host/x/a/b",
+            "/a/b",
+            Some("host")
+        ));
+        assert!(!digest_uri_matches("/a/b/extra", "/a/b", Some("host")));
         // Absolute-form with no path at all never matches a non-empty path.
-        assert!(!digest_uri_matches("http://host", "/a/b"));
+        assert!(!digest_uri_matches("http://host", "/a/b", Some("host")));
     }
 
     #[test]
     fn digest_uri_match_is_not_loosened_by_url_normalisation() {
         // The client hashed a spelling that is NOT the request-target, even
         // though the url crate would normalise it to one.
-        assert!(!digest_uri_matches("http://h/a/../b", "/b"));
-        assert!(!digest_uri_matches("http://h/%2e%2e/b", "/b"));
-        assert!(!digest_uri_matches("http://h/./b", "/b"));
-        assert!(!digest_uri_matches("HTTP://H/b", "/b"));
-        assert!(!digest_uri_matches("http://h:80/b", "/b"));
-        assert!(!digest_uri_matches("http://h", "/"));
-        assert!(!digest_uri_matches("http://h/b#frag", "/b"));
-        assert!(!digest_uri_matches("http://[::1/b", "/b"));
+        assert!(!digest_uri_matches("http://h/a/../b", "/b", Some("h")));
+        assert!(!digest_uri_matches("http://h/%2e%2e/b", "/b", Some("h")));
+        assert!(!digest_uri_matches("http://h/./b", "/b", Some("h")));
+        assert!(!digest_uri_matches("HTTP://H/b", "/b", Some("host")));
+        assert!(!digest_uri_matches("http://h:80/b", "/b", Some("h:80")));
+        assert!(!digest_uri_matches("http://h", "/", Some("h")));
+        assert!(!digest_uri_matches("http://h/b#frag", "/b", Some("h")));
+        assert!(!digest_uri_matches("http://[::1/b", "/b", Some("[::1")));
         // Normalised absolute-form still matches.
-        assert!(digest_uri_matches("http://h/b?x=1&y=2", "/b?x=1&y=2"));
-        assert!(digest_uri_matches("http://[2001:db8::1]:8080/b", "/b"));
-        assert!(digest_uri_matches("rtsp://cam:554/live/ch1", "/live/ch1"));
+        assert!(!digest_uri_matches("http://h/b", "/b", None));
+        assert!(!digest_uri_matches("http://h/b", "/b", Some("other")));
+        assert!(!digest_uri_matches("http://h/b", "/b", Some("h/x")));
+        assert!(digest_uri_matches("http://h/b", "/b", Some("H:80")));
+        assert!(digest_uri_matches(
+            "http://h/b?x=1&y=2",
+            "/b?x=1&y=2",
+            Some("h")
+        ));
+        assert!(digest_uri_matches(
+            "http://[2001:db8::1]:8080/b",
+            "/b",
+            Some("[2001:db8::1]:8080")
+        ));
+        assert!(digest_uri_matches(
+            "rtsp://cam:554/live/ch1",
+            "/live/ch1",
+            Some("cam:554")
+        ));
         assert!(digest_uri_matches(
             "rtsp://cam/live/ch1",
-            "rtsp://cam/live/ch1"
+            "rtsp://cam/live/ch1",
+            None
         ));
     }
 
@@ -1442,6 +1553,47 @@ mod tests {
     /// Biting test: a request with no user header at all must `Unauthorized`
     /// — the whole point of the scheme is that only a trusted proxy having
     /// authenticated the caller sets it.
+    #[test]
+    fn forwarded_from_accepts_only_listed_peers() {
+        let v = Verifier::forwarded_from(
+            "X-Forwarded-User",
+            None,
+            [
+                TrustedProxy::loopback(),
+                vec!["198.51.100.0/24".parse().unwrap()],
+            ]
+            .concat(),
+        );
+        let headers: &[(&str, &str)] = &[("X-Forwarded-User", "alice")];
+        let from = |peer: Option<&str>| {
+            let mut ctx = RequestContext::new("GET", "/x").with_headers(headers);
+            if let Some(peer) = peer {
+                ctx = ctx.with_peer_addr(peer.parse().unwrap());
+            }
+            v.verify(&ctx)
+        };
+        assert_eq!(from(Some("127.0.0.1:1")), AuthResult::Ok);
+        assert_eq!(from(Some("[::1]:1")), AuthResult::Ok);
+        assert_eq!(from(Some("[::ffff:127.0.0.1]:1")), AuthResult::Ok);
+        assert_eq!(from(Some("198.51.100.77:1")), AuthResult::Ok);
+        assert_eq!(from(Some("203.0.113.9:1")), AuthResult::Unauthorized);
+        assert_eq!(
+            from(Some("[::ffff:203.0.113.9]:1")),
+            AuthResult::Unauthorized
+        );
+        assert_eq!(from(None), AuthResult::Unauthorized);
+    }
+
+    #[test]
+    fn forwarded_from_with_no_proxies_trusts_nobody() {
+        let v = Verifier::forwarded_from("X-Forwarded-User", None, Vec::new());
+        let headers: &[(&str, &str)] = &[("X-Forwarded-User", "alice")];
+        let ctx = RequestContext::new("GET", "/x")
+            .with_headers(headers)
+            .with_peer_addr("127.0.0.1:1".parse().unwrap());
+        assert_eq!(v.verify(&ctx), AuthResult::Unauthorized);
+    }
+
     #[test]
     fn forwarded_without_user_header_is_unauthorized() {
         let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));

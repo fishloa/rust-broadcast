@@ -619,12 +619,11 @@ pub enum OutputAuthSpec {
     ///
     /// # Trust assumption
     ///
-    /// **Safe ONLY behind a trusted reverse proxy that strips any
-    /// client-supplied copies of `user_header` (and `forwarded_for_header`,
-    /// if set) before forwarding.** multimux performs no such stripping and
-    /// trusts every inbound header completely — if the origin is reachable
-    /// directly (not exclusively through the proxy), any client can set
-    /// these headers itself and bypass authentication entirely.
+    /// **The proxy must strip any client-supplied copies of `user_header`
+    /// (and `forwarded_for_header`, if set) before forwarding.** multimux
+    /// performs no such stripping, but it only honours `user_header` from a
+    /// peer listed in `trusted_proxies` (default: loopback), so a client
+    /// reaching the origin directly cannot forge it.
     Forwarded {
         /// Header naming the proxy-authenticated username. Defaults to
         /// `"X-Forwarded-User"` when omitted.
@@ -636,6 +635,15 @@ pub enum OutputAuthSpec {
         /// `null` to disable reading it at all.
         #[serde(default = "default_forwarded_for_header")]
         forwarded_for_header: Option<String>,
+        /// IPs and CIDR blocks (`"10.0.0.0/8"`, `"192.0.2.7"`, `"::1"`) of the
+        /// reverse proxies allowed to set `user_header`. A request whose
+        /// transport peer is not listed is `401` even with the header set;
+        /// IPv4-mapped IPv6 peers match their IPv4 block. Omitted (`null`)
+        /// means loopback only (`127.0.0.0/8` and `::1`), so a proxy on the
+        /// same host needs no configuration. An explicit list must not be
+        /// empty.
+        #[serde(default)]
+        trusted_proxies: Option<Vec<String>>,
     },
     /// HMAC signed-URL (issue #747, `broadcast_auth::Verifier::signed_url`):
     /// a CDN-style, short-lived, tamper-proof token carried in the request's
@@ -734,10 +742,12 @@ impl std::fmt::Debug for OutputAuthSpec {
             OutputAuthSpec::Forwarded {
                 user_header,
                 forwarded_for_header,
+                trusted_proxies,
             } => f
                 .debug_struct("Forwarded")
                 .field("user_header", user_header)
                 .field("forwarded_for_header", forwarded_for_header)
+                .field("trusted_proxies", trusted_proxies)
                 .finish(),
             OutputAuthSpec::SignedUrl { keys } => f
                 .debug_struct("SignedUrl")
@@ -761,7 +771,7 @@ impl OutputAuthSpec {
     /// preserved exactly: unlike [`AuthSpec::to_credentials`], this is the
     /// server side, so it must issue the challenge for the scheme it was
     /// actually configured with, not whichever the client's challenge
-    /// implies); `Forwarded` via [`broadcast_auth::Verifier::forwarded`]
+    /// implies); `Forwarded` via [`broadcast_auth::Verifier::forwarded_from`]
     /// (no credential/challenge round-trip at all — see that variant's
     /// trust-assumption docs); `SignedUrl` via
     /// [`broadcast_auth::Verifier::signed_url`].
@@ -795,10 +805,25 @@ impl OutputAuthSpec {
             OutputAuthSpec::Forwarded {
                 user_header,
                 forwarded_for_header,
-            } => broadcast_auth::Verifier::forwarded(
-                user_header.clone(),
-                forwarded_for_header.clone(),
-            ),
+                trusted_proxies,
+            } => {
+                let proxies = match trusted_proxies {
+                    Some(entries) => entries
+                        .iter()
+                        .map(|entry| {
+                            entry
+                                .parse()
+                                .expect("trusted_proxies entries are checked by validate()")
+                        })
+                        .collect(),
+                    None => broadcast_auth::TrustedProxy::loopback(),
+                };
+                broadcast_auth::Verifier::forwarded_from(
+                    user_header.clone(),
+                    forwarded_for_header.clone(),
+                    proxies,
+                )
+            }
             OutputAuthSpec::SignedUrl { keys } => {
                 let key_pairs = keys
                     .iter()
@@ -834,10 +859,10 @@ impl OutputAuthSpec {
                     reason: "must not be empty".into(),
                 })
             }
-            OutputAuthSpec::Bearer { token } if token.is_empty() => {
+            OutputAuthSpec::Bearer { token } if token.trim().is_empty() => {
                 Err(MultimuxError::ConfigInvalid {
                     field: "output_auth.token",
-                    reason: "must not be empty".into(),
+                    reason: "must not be empty or blank".into(),
                 })
             }
             OutputAuthSpec::Forwarded { user_header, .. } if user_header.is_empty() => {
@@ -853,6 +878,26 @@ impl OutputAuthSpec {
                 field: "output_auth.forwarded_for_header",
                 reason: "must not be empty (use null to disable)".into(),
             }),
+            OutputAuthSpec::Forwarded {
+                trusted_proxies: Some(proxies),
+                ..
+            } => {
+                if proxies.is_empty() {
+                    return Err(MultimuxError::ConfigInvalid {
+                        field: "output_auth.trusted_proxies",
+                        reason: "must not be empty (omit it for loopback only)".into(),
+                    });
+                }
+                for entry in proxies {
+                    if let Err(e) = entry.parse::<broadcast_auth::TrustedProxy>() {
+                        return Err(MultimuxError::ConfigInvalid {
+                            field: "output_auth.trusted_proxies",
+                            reason: e.to_string(),
+                        });
+                    }
+                }
+                Ok(())
+            }
             OutputAuthSpec::SignedUrl { keys } if keys.is_empty() => {
                 Err(MultimuxError::ConfigInvalid {
                     field: "output_auth.keys",
@@ -1275,10 +1320,10 @@ fn validate_auth(auth: &Option<AuthSpec>) -> Result<()> {
                 reason: "must not be empty".into(),
             })
         }
-        Some(AuthSpec::Bearer { bearer_token }) if bearer_token.is_empty() => {
+        Some(AuthSpec::Bearer { bearer_token }) if bearer_token.trim().is_empty() => {
             Err(MultimuxError::ConfigInvalid {
                 field: "routes.input.auth.bearer_token",
-                reason: "must not be empty".into(),
+                reason: "must not be empty or blank".into(),
             })
         }
         Some(_) => Ok(()),
@@ -5010,6 +5055,7 @@ mod tests {
             Some(OutputAuthSpec::Forwarded {
                 user_header,
                 forwarded_for_header,
+                ..
             }) => {
                 assert_eq!(user_header, "X-Auth-User");
                 assert_eq!(forwarded_for_header.as_deref(), Some("X-Real-IP"));
@@ -5034,6 +5080,7 @@ mod tests {
             Some(OutputAuthSpec::Forwarded {
                 user_header,
                 forwarded_for_header,
+                ..
             }) => {
                 assert_eq!(user_header, "X-Forwarded-User");
                 assert_eq!(forwarded_for_header.as_deref(), Some("X-Forwarded-For"));
@@ -5067,11 +5114,70 @@ mod tests {
     }
 
     #[test]
+    fn output_auth_forwarded_trusted_proxies_parse_and_validate() {
+        let json = |list: &str| {
+            format!(
+                r#"{{
+                "output_auth": {{ "scheme": "forwarded", "trusted_proxies": {list} }},
+                "routes": [
+                    {{ "name": "cam1", "input": {{ "type": "rtsp", "url": "rtsp://host/stream1" }} }}
+                ]
+            }}"#
+            )
+        };
+        let ok: Config = serde_json::from_str(&json(r#"["10.0.0.0/8", "::1"]"#)).unwrap();
+        ok.validate().unwrap();
+        for bad in ["[]", r#"["not-an-ip"]"#, r#"["10.0.0.0/40"]"#] {
+            let cfg: Config = serde_json::from_str(&json(bad)).unwrap();
+            assert!(
+                matches!(
+                    cfg.validate(),
+                    Err(crate::error::MultimuxError::ConfigInvalid {
+                        field: "output_auth.trusted_proxies",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_blank_bearer_tokens() {
+        for blank in ["", "   ", "\t"] {
+            let output = Config {
+                output_auth: Some(OutputAuthSpec::Bearer {
+                    token: blank.into(),
+                }),
+                ..cfg_with_one_route()
+            };
+            assert!(
+                matches!(
+                    output.validate(),
+                    Err(crate::error::MultimuxError::ConfigInvalid {
+                        field: "output_auth.token",
+                        ..
+                    })
+                ),
+                "{blank:?}"
+            );
+            assert!(
+                validate_auth(&Some(AuthSpec::Bearer {
+                    bearer_token: blank.into()
+                }))
+                .is_err(),
+                "{blank:?}"
+            );
+        }
+    }
+
+    #[test]
     fn validate_rejects_output_auth_forwarded_empty_user_header() {
         let cfg = Config {
             output_auth: Some(OutputAuthSpec::Forwarded {
                 user_header: String::new(),
                 forwarded_for_header: None,
+                trusted_proxies: None,
             }),
             ..cfg_with_one_route()
         };
@@ -5087,6 +5193,7 @@ mod tests {
             output_auth: Some(OutputAuthSpec::Forwarded {
                 user_header: "X-Forwarded-User".into(),
                 forwarded_for_header: Some(String::new()),
+                trusted_proxies: None,
             }),
             ..cfg_with_one_route()
         };
@@ -5190,6 +5297,7 @@ mod tests {
         let forwarded = OutputAuthSpec::Forwarded {
             user_header: "X-Forwarded-User".into(),
             forwarded_for_header: Some("X-Forwarded-For".into()),
+            trusted_proxies: None,
         };
         assert_eq!(forwarded.build_verifier("realm").challenge(), "Forwarded");
     }
@@ -5221,6 +5329,7 @@ mod tests {
         let forwarded = OutputAuthSpec::Forwarded {
             user_header: "X-Forwarded-User".into(),
             forwarded_for_header: Some("X-Forwarded-For".into()),
+            trusted_proxies: None,
         };
         let debug = format!("{forwarded:?}");
         assert!(debug.contains("X-Forwarded-User"), "debug: {debug}");

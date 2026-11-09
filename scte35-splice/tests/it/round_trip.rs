@@ -280,3 +280,65 @@ fn section_length_zero_no_underflow() {
     let err = SpliceInfoSection::parse(&data).unwrap_err();
     assert!(matches!(err, scte35_splice::Error::BufferTooShort(..)));
 }
+
+fn with_crc(mut v: Vec<u8>) -> Vec<u8> {
+    let crc = broadcast_common::crc32_mpeg2::compute(&v);
+    v.extend_from_slice(&crc.to_be_bytes());
+    v
+}
+
+fn null_section_with(byte1_flags: u8, command_body: &[u8]) -> Vec<u8> {
+    let mut v = vec![
+        0xFC,
+        0x30 | byte1_flags,
+        0x00,
+        0x00,
+        0x00,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0xFF,
+        0xF0 | (command_body.len() >> 8) as u8,
+        command_body.len() as u8,
+        0x00,
+    ];
+    v.extend_from_slice(command_body);
+    v.extend_from_slice(&[0x00, 0x00]);
+    v[2] = (v.len() + 4 - 3) as u8;
+    with_crc(v)
+}
+
+#[test]
+fn a_splice_null_with_excess_command_bytes_is_rejected_not_shrunk() {
+    let wire = null_section_with(0, &[0xDE, 0xAD, 0xBE, 0xEF]);
+    assert!(SpliceInfoSection::parse(&wire).is_err());
+}
+
+#[test]
+fn a_splice_null_with_an_exact_command_still_round_trips() {
+    let wire = null_section_with(0, &[]);
+    let parsed = SpliceInfoSection::parse(&wire).unwrap();
+    assert_eq!(parsed.try_to_bytes().unwrap(), wire);
+}
+
+#[test]
+fn an_avail_descriptor_with_excess_bytes_is_rejected_not_shrunk() {
+    let raw = [
+        0x00, 0x0A, b'C', b'U', b'E', b'I', 0x00, 0x00, 0x00, 0x01, 0xAA, 0xBB,
+    ];
+    let mut it = scte35_splice::descriptors::parse_loop(&raw);
+    assert!(it.next().unwrap().is_err());
+}
+
+#[test]
+fn a_set_section_syntax_or_private_indicator_is_rejected_not_cleared() {
+    for flags in [0x80u8, 0x40, 0xC0] {
+        let wire = null_section_with(flags, &[]);
+        assert!(
+            SpliceInfoSection::parse(&wire).is_err(),
+            "byte1 flags {flags:#04x}"
+        );
+    }
+}
