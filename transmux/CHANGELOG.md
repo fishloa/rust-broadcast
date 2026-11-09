@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Fixed
+- `StreamingTsDemux::finish` demuxes the aligned packets at the end of input that `TsResync` could not yet confirm (up to four after a corrupt sync byte) instead of dropping them.
 ### Added
 - `InputDegradation::Scrambled` (on the `#[non_exhaustive]` enum, so not breaking): reported once per payload packet with `transport_scrambling_control != 0` on a PES-carried PID.
 

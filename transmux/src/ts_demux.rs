@@ -5045,8 +5045,15 @@ impl StreamingTsDemux {
     /// [`with_max_degraded_events`](Self::with_max_degraded_events).
     pub fn feed(&mut self, data: &[u8]) {
         let packets = self.resync.feed(data);
+        self.process_resynced(&packets);
+        self.enforce_degraded_cap();
+    }
+
+    /// Process `packets` the resynchroniser just emitted, interleaving the
+    /// losses it recorded with them.
+    fn process_resynced(&mut self, packets: &[[u8; TS_PACKET_SIZE]]) {
         let mut losses = self.resync.take_losses().into_iter().peekable();
-        for raw in &packets {
+        for raw in packets {
             // A loss sits *between* two packets: report it before the first
             // intact packet that follows it.
             while let Some(loss) = losses.next_if(|l| l.packet_index <= self.packet_index) {
@@ -5057,7 +5064,6 @@ impl StreamingTsDemux {
         for loss in losses {
             self.push_resync_loss(loss);
         }
-        self.enforce_degraded_cap();
     }
 
     /// Surface one [`mpeg_ts::resync::ResyncLoss`] as a
@@ -6494,9 +6500,8 @@ impl StreamingTsDemux {
     /// Complete every PID's buffered PES payload at end of a timeline.
     fn flush_pes_tails(&mut self) {
         self.resync.finish();
-        for loss in self.resync.take_losses() {
-            self.push_resync_loss(loss);
-        }
+        let tail = self.resync.take_tail_packets();
+        self.process_resynced(&tail);
         for (&pid, stream) in self.streams.iter_mut() {
             let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
             flush_stream_pes_tail(pid, stream, epoch, &mut self.events);

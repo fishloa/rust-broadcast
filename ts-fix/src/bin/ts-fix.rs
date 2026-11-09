@@ -185,7 +185,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut resync = TsResync::new();
     let tail = {
         let mut packets = resync.feed(&input);
-        packets.extend(resync.finish());
+        resync.finish();
+        packets.extend(resync.take_tail_packets());
         packets
     };
     for pkt in tail {

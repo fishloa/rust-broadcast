@@ -214,9 +214,10 @@ fn build_pmt_section_versioned(
 
 /// Packetise a section into 188-byte TS packets.
 fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
-    thread_local! {
-        static NEXT_CC: std::cell::RefCell<alloc::collections::BTreeMap<u16, u8>> =
-            const { std::cell::RefCell::new(alloc::collections::BTreeMap::new()) };
+    extern crate std;
+    std::thread_local! {
+        static NEXT_CC: core::cell::RefCell<alloc::collections::BTreeMap<u16, u8>> =
+            const { core::cell::RefCell::new(alloc::collections::BTreeMap::new()) };
     }
     let cc = NEXT_CC.with(|m| m.borrow().get(&pid).copied().unwrap_or(0));
     let mut pktizer = SectionPacketiser::with_continuity(Pid::new(pid), cc);

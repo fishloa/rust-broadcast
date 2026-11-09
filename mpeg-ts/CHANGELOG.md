@@ -3,9 +3,9 @@
 ## [Unreleased]
 
 ### Fixed
-- `TsResync::finish` emits the aligned packets that never reached a full `LOCK_CONFIRMATIONS` window (the tail after a corrupt sync byte, or a whole stream shorter than the window) instead of dropping them.
-### Changed
-- BREAKING: `TsResync::finish` returns `Vec<[u8; 188]>` (the tail packets) instead of `()`; a caller that discarded the unit result must now take or drop the packets.
+- `TsResync::finish` keeps the aligned packets that never reached a full `LOCK_CONFIRMATIONS` window (the tail after a corrupt sync byte, or a whole stream shorter than the window) instead of dropping them.
+### Added
+- `TsResync::take_tail_packets`: drains the aligned packets `finish` recovered at end of input (`finish` keeps its signature).
 
 ## [0.7.0] - 2026-11-07
 ### Removed

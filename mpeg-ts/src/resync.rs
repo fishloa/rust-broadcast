@@ -126,6 +126,9 @@ pub struct TsResync {
     open_loss: Option<u64>,
     /// Closed losses not yet drained by [`take_losses`](Self::take_losses).
     losses: Vec<ResyncLoss>,
+    /// Aligned packets recovered by [`finish`](Self::finish), not yet drained
+    /// by [`take_tail_packets`](Self::take_tail_packets).
+    tail: Vec<[u8; TS_PACKET_SIZE]>,
 }
 
 impl TsResync {
@@ -239,21 +242,24 @@ impl TsResync {
         }
     }
 
-    /// Declare end of input and return the packets that were still waiting
-    /// for a full [`LOCK_CONFIRMATIONS`] window: no more bytes can arrive to
-    /// confirm them, so the aligned packets that fill the rest of the input
-    /// are emitted (a stream shorter than the window included).
+    /// Declare end of input. Packets that were still waiting for a full
+    /// [`LOCK_CONFIRMATIONS`] window cannot be confirmed by more bytes, so the
+    /// aligned packets that fill the rest of the input (a stream shorter than
+    /// the window included) are kept; drain them with
+    /// [`take_tail_packets`](Self::take_tail_packets), like
+    /// [`take_losses`](Self::take_losses) for the losses.
     ///
     /// Also closes a sync loss that never re-locked and records a truncated
     /// trailing packet, both retrievable with
     /// [`take_losses`](Self::take_losses). The buffer is discarded.
-    pub fn finish(&mut self) -> Vec<[u8; TS_PACKET_SIZE]> {
-        let mut emitted = Vec::new();
+    pub fn finish(&mut self) {
         if self.stride.is_none()
             && let Some((offset, s)) = find_tail_sync(&self.buf[self.head..])
         {
             self.lock(offset, s);
+            let mut emitted = core::mem::take(&mut self.tail);
             self.feed_into(&[], &mut emitted);
+            self.tail = emitted;
         }
         let end = self.consumed + self.buf.len() as u64;
         if let Some(start) = self.open_loss.take() {
@@ -274,7 +280,13 @@ impl TsResync {
         self.stats.dropped_bytes += (self.buf.len() - self.head) as u64;
         self.head = self.buf.len();
         self.compact();
-        emitted
+    }
+
+    /// Drain the aligned packets [`finish`](Self::finish) recovered at end of
+    /// input. Call it after `finish` and process the result like the output
+    /// of [`feed`](Self::feed).
+    pub fn take_tail_packets(&mut self) -> Vec<[u8; TS_PACKET_SIZE]> {
+        core::mem::take(&mut self.tail)
     }
 
     /// Accumulated statistics.
@@ -685,7 +697,8 @@ mod tests {
             10,
             "three packets cannot lock before the end"
         );
-        packets.extend(r.finish());
+        r.finish();
+        packets.extend(r.take_tail_packets());
         let tags: Vec<u8> = packets.iter().map(|p| p[1]).collect();
         assert_eq!(tags, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14]);
         let stats = r.stats();
@@ -702,7 +715,9 @@ mod tests {
         let packets: Vec<_> = (1u8..=4).map(ts_packet).collect();
         let mut r = TsResync::new();
         assert!(r.feed(&concat_ts(&packets)).is_empty());
-        assert_eq!(r.finish(), packets);
+        r.finish();
+        assert_eq!(r.take_tail_packets(), packets);
+        assert!(r.take_tail_packets().is_empty());
         assert_eq!(r.stride(), Some(PacketStride::Ts188));
         assert_eq!(r.stats().dropped_bytes, 0);
     }
@@ -715,7 +730,8 @@ mod tests {
         }
         let mut r = TsResync::new();
         assert!(r.feed(&stream).is_empty());
-        let packets = r.finish();
+        r.finish();
+        let packets = r.take_tail_packets();
         assert_eq!(packets, [ts_packet(1), ts_packet(2), ts_packet(3)]);
         assert_eq!(r.stride(), Some(PacketStride::Rs204));
     }
@@ -726,7 +742,8 @@ mod tests {
         junk[40] = TS_SYNC_BYTE;
         let mut r = TsResync::new();
         assert!(r.feed(&junk).is_empty());
-        assert!(r.finish().is_empty());
+        r.finish();
+        assert!(r.take_tail_packets().is_empty());
         assert_eq!(r.stats().dropped_bytes, 100);
     }
 }

@@ -82,3 +82,19 @@ fn pids_m6_single() {
         "pids m6-single produced empty stdout: stderr={stderr}"
     );
 }
+
+#[test]
+fn pids_counts_a_capture_shorter_than_the_lock_window() {
+    let whole = std::fs::read(fixture("/ts/m6-single.ts")).expect("fixture");
+    let short = &whole[..4 * 188];
+    let path = std::env::temp_dir().join(format!("dvb-tools-short-{}.ts", std::process::id()));
+    std::fs::write(&path, short).expect("write short capture");
+    let (ok, stdout, stderr) = run(&["pids", &path.display().to_string()]);
+    std::fs::remove_file(&path).ok();
+    assert!(ok, "pids failed: stderr={stderr}");
+    let text = String::from_utf8_lossy(&stdout);
+    assert!(
+        text.contains("pid=0x0083  packets=2"),
+        "all four aligned packets must be counted: {text}"
+    );
+}
