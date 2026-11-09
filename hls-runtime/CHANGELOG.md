@@ -10,6 +10,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `HlsOriginBuilder::hold_cold_playlist(bool)` and `HOLD_COLD_PLAYLIST_DEFAULT` (`true`).
 ### Changed
 - A Media Playlist request without `_HLS_msn`/`_HLS_part` made before the playlist holds a closed segment is answered `EgressResponse::Await` until the first segment closes, then with the playlist, and `NotFound` once the caller's `AwaitPolicy` expires (the adapter's 503, RFC 8216bis section 6.2.5.2). Clients that ignore Partial Segments (ffmpeg, VLC) cannot open a playlist with no `EXTINF` and do not retry (#1754). `hold_cold_playlist(false)` restores the previous immediate answer; `_HLS_msn`/`_HLS_part` requests are unchanged.
+### Fixed
+- Client: a failed omitted-offset `EXT-X-BYTERANGE` segment or part is re-requested with its own range, not one continued from a cursor the first request advanced; a restart clears the stored ranges.
+- Client: a discontinuity revealed when a segment closes after all its parts were delivered is signalled late instead of dropped.
+- Client: a part whose fetch failed is re-requested when its segment closes without listing parts, and the segment is not marked delivered until every requested part is.
+- Client: a variant switch emits one `Discontinuity`, not two (the media-sequence high-water mark is reset with the restart).
+- Client: a skipped segment is skipped once; reloading the playlist no longer rewinds the byte-range cursor of later omitted-offset segments.
+- Origin: a blocking reload for an existing part of the just-closed segment is answered instead of parked.
+- Origin: the open segment is found when the segmenter's first segment is numbered above 1.
+- Origin: a bare `_HLS_msn` reload is satisfied from the rendered window, so a playlist answered as satisfied lists that segment.
 
 ## [0.12.0] - 2026-11-07
 ### Changed
