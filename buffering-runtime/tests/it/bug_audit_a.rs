@@ -144,3 +144,27 @@ fn pcr_less_second_track_joining_behind_is_not_a_discontinuity() {
         s.starts()
     );
 }
+
+/// A restored stall memory is anchored at the first clock reading as
+/// `at = now - age` (`MaxHold::anchor`, saturating). When the new
+/// controller's clock starts below the snapshot's age (a host clock that
+/// starts at 0 per session) the age is clamped to `now`, so the peak is
+/// treated as that much younger and is held and decayed far too late.
+#[test]
+fn restored_stall_memory_keeps_its_age_when_the_clock_starts_small() {
+    use buffering_runtime::StallMemorySnapshot;
+    let peak = 1_000_000;
+    let age = 59_000_000;
+    let seed = StallMemorySnapshot::new(peak, age);
+    let mut c = BufferController::new(ControllerConfig::default(), Some(seed)).unwrap();
+    // first clock reading 1 s; 30 s later the peak is 90 s old: 30 s into the 60 s decay
+    c.on_chunk(1_000_000, 1316, Some(0));
+    c.on_chunk(31_000_000, 1316, Some(t27(30_000_000)));
+    let held = c.stats().est.stall_peak_us;
+    assert_eq!(
+        held,
+        peak / 2,
+        "stall memory 90 s after its peak should have decayed to half ({} us), reads {held} us",
+        peak / 2
+    );
+}
