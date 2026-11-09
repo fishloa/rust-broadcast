@@ -145,4 +145,40 @@ mod client {
             "part 1 failed and its segment closed: it must be re-requested, got {second:?}"
         );
     }
+
+    const MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000000\nhi.m3u8\n\
+#EXT-X-STREAM-INF:BANDWIDTH=500000\nlo.m3u8\n";
+
+    fn live(first_msn: u64, uri_prefix: &str) -> String {
+        let mut text = format!(
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{first_msn}\n"
+        );
+        for i in 0..3 {
+            text.push_str(&format!("#EXTINF:2.0,\n{uri_prefix}{}.ts\n", first_msn + i));
+        }
+        text
+    }
+
+    /// One variant switch is one discontinuity. `select_variant` already
+    /// restarts the timeline, but leaves the old variant's media-sequence
+    /// high-water mark, so the first playlist of a variant numbered lower is
+    /// judged a second restart and a second `Discontinuity` is emitted.
+    #[test]
+    fn a_variant_switch_emits_exactly_one_discontinuity() {
+        let mut client = HlsClient::new(URL);
+        drain(&mut client);
+        client.on_playlist(MASTER.as_bytes()).unwrap();
+        drain(&mut client);
+        client.on_playlist(live(1000, "hi").as_bytes()).unwrap();
+        drain(&mut client);
+        let _ = std::iter::from_fn(|| client.next_output()).count();
+
+        client.select_variant(1).unwrap();
+        drain(&mut client);
+        client.on_playlist(live(10, "lo").as_bytes()).unwrap();
+        let discontinuities = std::iter::from_fn(|| client.next_output())
+            .filter(|o| matches!(o, Output::Discontinuity))
+            .count();
+        assert_eq!(discontinuities, 1);
+    }
 }
