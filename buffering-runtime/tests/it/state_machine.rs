@@ -1044,3 +1044,25 @@ fn snapshot_new_is_const_and_matches_fields() {
         StallMemorySnapshot::default()
     );
 }
+
+/// A restored stall memory keeps its exact age when the new controller's
+/// clock starts below that age (a host clock that starts at 0 per session),
+/// instead of being treated as younger and held and decayed too late.
+#[test]
+fn restored_stall_memory_keeps_its_age_when_the_clock_starts_small() {
+    let peak = 1_000_000;
+    let age = 60_000_000;
+    let seed = StallMemorySnapshot::new(peak, age);
+    let mut c = BufferController::new(ControllerConfig::default(), Some(seed)).unwrap();
+    // anchored at the first clock reading (1 s) as 60 s old; 30 s later it is
+    // 90 s old: 30 s into the 60 s decay
+    c.on_chunk(1_000_000, 1316, Some(0));
+    c.on_chunk(31_000_000, 1316, Some(30_000_000 * TICKS_PER_US));
+    let held = c.stats().est.stall_peak_us;
+    assert_eq!(
+        held,
+        peak / 2,
+        "stall memory 90 s after its peak should have decayed to half ({} us), reads {held} us",
+        peak / 2
+    );
+}
