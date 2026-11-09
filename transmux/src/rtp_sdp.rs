@@ -159,7 +159,7 @@ pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurat
 ///
 /// For a High profile SPS the record's `chroma_format`/
 /// `bit_depth_luma_minus8`/`bit_depth_chroma_minus8` trailer is filled in
-/// from the SPS itself: ISO/IEC 14496-15 §5.3.3.1.2 makes those fields
+/// from the SPS itself: ISO/IEC 14496-15:2017 §5.3.3.1.2 makes those fields
 /// **conditionally present** on `AVCProfileIndication ∈ {100, 110, 122, 244}`,
 /// so an `avcC` built for a High profile stream without them is a
 /// configuration record that a strict reader parses differently from the wire
@@ -174,7 +174,7 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
         .ok_or(Error::InvalidInput("no SPS NAL unit supplied"))?;
     need_in(&first_sps.0, 4, "SPS profile/level bytes")?;
     let profile_indication = first_sps.0[1];
-    // Gate on the serializer's own emission set (the ISO/IEC 14496-15
+    // Gate on the serializer's own emission set (the ISO/IEC 14496-15:2017
     // §5.3.3.1.2 condition for `profile_idc` 100/110/122/244), reached through
     // the shared `sps::is_high_profile` source of truth so the record and the
     // wire can never disagree about the trailer's presence. The SPS is decoded
@@ -326,7 +326,7 @@ mod tests {
     /// The `avcC` ffmpeg itself wrote for the same stream
     /// (`-c copy out.mp4`; the box's bytes after its 8-byte header):
     /// `01 64 00 0d ff e1 0019 <sps> 01 0004 <pps> fd f8 f8 00`, whose
-    /// trailing `fd f8 f8 00` is ISO/IEC 14496-15 §5.3.3.1.2's High profile
+    /// trailing `fd f8 f8 00` is ISO/IEC 14496-15:2017 §5.3.3.1.2's High profile
     /// extension: chroma_format 1 (4:2:0), bit depths minus 8 of 0, and no
     /// SPS-ext NALs.
     ///
@@ -450,7 +450,7 @@ mod tests {
         for idc in [100u8, 110, 122, 244] {
             assert!(
                 Record::has_high_profile_ext(idc),
-                "profile {idc} carries the trailer (ISO/IEC 14496-15 §5.3.3.1.2)"
+                "profile {idc} carries the trailer (ISO/IEC 14496-15:2017 §5.3.3.1.2)"
             );
         }
         for idc in [66u8, 77, 88, 44, 83, 86, 118, 128, 138, 139, 134, 135] {

@@ -6,7 +6,7 @@
 //! then XOR every TS payload byte except the first 32 after the PES start in
 //! PUSI packets (framing intact, NAL bodies scrambled). A `TrackUpdated`
 //! arrived carrying an `avcC` with an 85 704-byte "SPS" (> the u16 length
-//! field of ISO/IEC 14496-15 §5.3.3.1.2), and `config.to_bytes()` panicked.
+//! field of ISO/IEC 14496-15:2017 §5.3.3.1.2), and `config.to_bytes()` panicked.
 //!
 //! This file applies the same recipe (own implementation) to **committed**
 //! fixtures — H.264, HEVC, AAC, AC-3/E-AC-3 — across seeds, damage start

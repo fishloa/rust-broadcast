@@ -110,7 +110,7 @@ fn real_hevc_config() -> (HEVCConfigurationBox, u16, u16) {
     panic!("hevc/main.ts must carry an HEVC track");
 }
 
-/// One length-prefixed AVC NAL (4-byte length, ISO/IEC 14496-15 §5.3.4.1.1):
+/// One length-prefixed AVC NAL (4-byte length, ISO/IEC 14496-15:2017 §4.3.3.1):
 /// an IDR slice (`nal_unit_type` 5) for a sync sample, else a non-IDR slice
 /// (type 1). The length prefix has to be real — `ts_mux` walks it to convert
 /// the sample to Annex B.

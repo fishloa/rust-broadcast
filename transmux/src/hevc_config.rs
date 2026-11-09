@@ -125,7 +125,7 @@ impl HEVCDecoderConfigurationRecord {
 }
 
 /// Smallest encoded NAL array: `array_completeness`/`NAL_unit_type` byte plus
-/// the 16-bit `numNalus` (ISO/IEC 14496-15 §8.3.3.1.2).
+/// the 16-bit `numNalus` (ISO/IEC 14496-15:2017 §8.3.3.1.2).
 const ARRAY_MIN_LEN: usize = 3;
 /// Smallest encoded NAL unit entry: its 16-bit `nalUnitLength`.
 const NALU_MIN_LEN: usize = 2;
@@ -194,7 +194,7 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "lengthSizeMinusOne",
                 value: length_size_minus_one as u64,
-                reason: "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2017 §8.3.3)",
+                reason: "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2017 §8.3.3.1.3)",
             }));
         }
 

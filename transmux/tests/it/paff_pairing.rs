@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Issue #1161 — H.264 PAFF (field pictures, one PES per FIELD) must demux to
 //! ONE sample per complementary field pair (ITU-T H.264 §3.35-3.37; ISO/IEC
-//! 14496-15 samples are whole access units), PTS/DTS from the first field.
+//! 14496-15:2017 samples are whole access units), PTS/DTS from the first field.
 //!
 //! The streams are spec-built by `transmux/tests/it/support/paff_gen.rs` (I_PCM, losslessly
 //! decodable, every field different), 12 frames of 64x64, TFF and BFF; two are

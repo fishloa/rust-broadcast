@@ -118,7 +118,7 @@ pub enum CodecConfig {
         height: u16,
     },
     /// H.265/HEVC video (`hvc1`/`hev1` sample entry with an `hvcC` config box) —
-    /// ISO/IEC 14496-15:2017 §8.4.
+    /// ISO/IEC 14496-15:2017 §8.4.1.1.
     Hevc {
         /// The `hvcC` decoder configuration record box.
         config: HEVCConfigurationBox,
