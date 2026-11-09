@@ -7,8 +7,9 @@
 //!
 //! * a track becomes **active** on its first delivery;
 //! * a track announced with [`BufferController::register_track`](crate::BufferController::register_track) that has not delivered yet
-//!   **blocks** the reduction (no effective end) until it delivers or has been
-//!   silent for `silence_timeout_us`;
+//!   **blocks** a start or resume (no effective end) until it delivers or has
+//!   been silent for `silence_timeout_us`; while playing it is skipped, so the
+//!   starvation check keeps running over the tracks that have delivered;
 //! * a track removed with
 //!   [`BufferController::unregister_track`](crate::BufferController::unregister_track)
 //!   (a replaced or dead track) leaves the reduction at once; if no track is
@@ -370,8 +371,16 @@ impl TrackSet {
     }
 
     /// Earliest end over the non-excluded tracks (see the module docs for the
-    /// relative-silence rule). `None` while a non-excluded track has no end.
-    pub(crate) fn effective(&self, now: Micros, silence_us: Micros) -> Option<Effective> {
+    /// relative-silence rule). With `pending_blocks`, `None` while a
+    /// non-excluded track has no end; without it such a track is skipped (the
+    /// registered-but-silent rule gates only a start or resume, never the
+    /// starvation check while playing).
+    pub(crate) fn effective(
+        &self,
+        now: Micros,
+        silence_us: Micros,
+        pending_blocks: bool,
+    ) -> Option<Effective> {
         let clock = self.silence_clock(now);
         let mut min: Option<Effective> = None;
         for t in self
@@ -379,7 +388,12 @@ impl TrackSet {
             .iter()
             .filter(|t| !self.is_silent(t, silence_us, clock))
         {
-            let end = t.end?;
+            let Some(end) = t.end else {
+                if pending_blocks {
+                    return None;
+                }
+                continue;
+            };
             if min.is_none_or(|m| before(end, m.end)) {
                 min = Some(Effective {
                     end,
