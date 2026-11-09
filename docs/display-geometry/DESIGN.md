@@ -475,7 +475,7 @@ cares about shape listens to `DisplayChanged` alone.
    whose own SPS declares the sample entry's SAR; an in-band SPS declaring a
    different SAR is a later declaration than the sample entry and is reported
    as it is (`sarswitch-avc3.mp4`). `clap` crop precedence is not applied:
-   `output_rect` stays the codec's crop (follow-up issue).
+   `output_rect` stays the codec's crop (#1918).
 3. AFD never overrides geometry: it is interpreted *against* it (TS 101 154
    §B.3.0 "The AFD itself does not describe the aspect ratio of the coded
    frame"). `DisplayInfo` carries both; the player composes them.
