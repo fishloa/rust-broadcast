@@ -3984,7 +3984,11 @@ mod adapter_tests {
         let (mut driver, mut rx) = test_driver(WINDOW).await;
         for seq in [0u32, 5] {
             driver
-                .ingress(Bytes::from(data_bytes(seq, 0, &[u8::try_from(seq).unwrap()])))
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
                 .expect("ingress");
         }
         driver
@@ -3992,7 +3996,11 @@ mod adapter_tests {
             .expect("ingress dropreq");
         for seq in [1u32, 2] {
             driver
-                .ingress(Bytes::from(data_bytes(seq, 0, &[u8::try_from(seq).unwrap()])))
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
                 .expect("ingress");
         }
         tokio::time::advance(Duration::from_millis(130)).await;
@@ -4015,7 +4023,8 @@ mod adapter_tests {
         let second: Vec<u8> = drain_deliveries(&mut rx).iter().map(|p| p[0]).collect();
         let expected: Vec<u8> = (6..=far).map(|s| u8::try_from(s).unwrap()).collect();
         assert_eq!(
-            second, expected,
+            second,
+            expected,
             "ARQ ack point stuck at {} while TSBPD cursor is at {}",
             driver.receiver.ack_point(),
             driver.tsbpd.next_release()

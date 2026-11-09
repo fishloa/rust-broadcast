@@ -40,7 +40,11 @@ fn sender_ignores_an_ack_beyond_the_highest_sent_sequence() {
         cif: AckCif::Light { last_ack_seq: 1000 },
     };
     s.on_ack(&ack, Duration::ZERO);
-    assert_eq!(s.buffered_count(), 5, "seqs 0..=4 were sent; an ACK for 1000 acknowledges unsent data");
+    assert_eq!(
+        s.buffered_count(),
+        5,
+        "seqs 0..=4 were sent; an ACK for 1000 acknowledges unsent data"
+    );
 }
 
 /// Caller/Listener reject an Initial Packet Sequence Number wider than 31 bits
