@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Fixed
+- `ModuleReassembler`: the completed-module FIFO no longer grows by one entry per completed module version (it is now removed together with its record and never duplicated), so a long-lived carousel that cycles versions stays bounded and a stale entry cannot evict a live record.
+- `ModuleReassembler::note_dii`: a DII repeat that announces the same module version with a different `module_size` or `block_size` replaces the slot instead of leaving DDBs validated against stale geometry.
 - `SiDemux` discards a legally retransmitted (duplicate continuity_counter) continuation packet instead of appending it to the section being reassembled, which failed the CRC and dropped the whole section. Requires the `mpeg-ts` release that adds `SectionReassembler::feed_with_continuity`.
 - `SiDemux` PAT-follow: a PAT spanning several sections no longer unwatches the PMT PIDs named only by other sections; the watch set is the union over every section of the current version and is pruned only once all sections of a new version are seen.
 - `SiDemux` PAT-follow: a `current_next_indicator = 0` PAT is no longer followed, and a `table_id` 0 section on a PID other than 0 no longer rewrites the watch set.

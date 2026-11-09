@@ -175,9 +175,13 @@ impl ModuleReassembler {
             }
             // Any remaining `completed` record here is for a stale version:
             // this module has moved on to a version we haven't completed yet.
-            self.completed.remove(&key);
+            if self.completed.remove(&key).is_some() {
+                self.completed_order.retain(|k| *k != key);
+            }
             if let Some(existing) = self.slots.get(&key) {
-                if existing.module_version == m.module_version {
+                let same_geometry = existing.data.len() == m.module_size as usize
+                    && existing.block_size == dii.block_size as usize;
+                if existing.module_version == m.module_version && same_geometry {
                     continue; // carousel repeat — keep accumulated blocks
                 }
                 // Older version — drop it, releasing its budget.
@@ -247,14 +251,17 @@ impl ModuleReassembler {
     /// when full only risks one redundant re-collection of that module on
     /// its next DII repeat, never incorrect data.
     fn record_completed(&mut self, key: SlotKey, version: u8) {
-        if !self.completed.contains_key(&key)
+        let known = self.completed.contains_key(&key);
+        if !known
             && self.completed.len() >= self.max_slots
             && let Some(oldest) = self.completed_order.pop_front()
         {
             self.completed.remove(&oldest);
         }
         self.completed.insert(key, version);
-        self.completed_order.push_back(key);
+        if !known {
+            self.completed_order.push_back(key);
+        }
     }
 
     /// Drop all in-progress slots and completed-version records.
@@ -601,17 +608,25 @@ mod tests {
     }
 
     #[test]
-    fn auditi_completed_order_does_not_grow_with_version_cycles() {
+    fn completed_records_stay_bounded_across_module_version_cycles() {
         let mut r = ModuleReassembler::new();
         for v in 0..=255u8 {
             r.note_dii(&dii(1, 2, vec![module(1, 2, v)]));
             assert!(r.feed_ddb(&ddb(1, 1, v, 0, &[1, 2])).is_some());
         }
         assert_eq!(r.completed.len(), 1);
-        assert_eq!(
-            r.completed_order.len(),
-            r.completed.len(),
-            "completed_order keeps a stale entry per completed version"
-        );
+        assert_eq!(r.completed_order.len(), r.completed.len());
+    }
+
+    #[test]
+    fn a_dii_repeat_with_changed_geometry_replaces_the_slot() {
+        let mut r = ModuleReassembler::new();
+        r.note_dii(&dii(1, 2, vec![module(1, 4, 0)]));
+        r.note_dii(&dii(1, 3, vec![module(1, 6, 0)]));
+        assert!(r.feed_ddb(&ddb(1, 1, 0, 0, &[1, 2, 3])).is_none());
+        let done = r
+            .feed_ddb(&ddb(1, 1, 0, 1, &[4, 5, 6]))
+            .expect("module completes under the re-announced geometry");
+        assert_eq!(done.data, [1, 2, 3, 4, 5, 6]);
     }
 }
