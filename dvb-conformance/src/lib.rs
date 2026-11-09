@@ -906,6 +906,7 @@ impl ConformanceMonitor {
         }
 
         // ── Step 5: Continuity_count_error (1.4) ─────────────────────────
+        let mut duplicate = false;
         if pid != PID_NULL {
             // W-CONF-5 (#1096): the discontinuity indicator is taken from the
             // adaptation field `TsPacket::parse` already decoded, so the
@@ -915,7 +916,7 @@ impl ConformanceMonitor {
                 .adaptation_field()
                 .and_then(|af| af.ok())
                 .is_some_and(|af| af.discontinuity_indicator);
-            self.check_cc(
+            duplicate = self.check_cc(
                 pid,
                 header.continuity_counter,
                 header.has_payload,
@@ -941,9 +942,9 @@ impl ConformanceMonitor {
         }
 
         let payload = packet.payload;
-        self.feed_pat(pid, header, payload, t);
-        self.feed_pmt(pid, header, payload, t);
-        self.feed_si(pid, header, payload, t);
+        self.feed_pat(pid, header, payload, duplicate, t);
+        self.feed_pmt(pid, header, payload, duplicate, t);
+        self.feed_si(pid, header, payload, duplicate, t);
 
         // Also CRC-check completed PAT/PMT sections via the si_reassemblies
         // map (these share the same PID). PAT and PMT already have their own
@@ -1055,14 +1056,23 @@ impl ConformanceMonitor {
         }
     }
 
-    fn feed_pat(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+    fn feed_pat(
+        &mut self,
+        pid: Pid,
+        header: &TsHeader,
+        payload: Option<&[u8]>,
+        duplicate: bool,
+        t: Duration,
+    ) {
         if pid == PID_PAT && header.has_payload {
             if let Some(payload) = payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
                 // physically arrive — not once with the whole section's
                 // length once it has fully reassembled (issue #1035).
                 self.feed_tbsys_bytes(payload.len() as u64, pid, t);
-                self.pat_reassembler.feed(payload, header.pusi);
+                if !duplicate {
+                    self.pat_reassembler.feed(payload, header.pusi);
+                }
             }
             // W-CONF-1 (#1096): 1.3.a checks *section* presence, so the timer
             // is refreshed only by a completed CRC-valid table_id 0x00 section
@@ -1073,14 +1083,21 @@ impl ConformanceMonitor {
         }
     }
 
-    fn feed_pmt(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+    fn feed_pmt(
+        &mut self,
+        pid: Pid,
+        header: &TsHeader,
+        payload: Option<&[u8]>,
+        duplicate: bool,
+        t: Duration,
+    ) {
         if self.pmt_trackings.contains_key(&pid) && header.has_payload {
             if let Some(payload) = payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
                 // physically arrive — not once with the whole section's
                 // length once it has fully reassembled (issue #1035).
                 self.feed_tbsys_bytes(payload.len() as u64, pid, t);
-                if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
+                if !duplicate && let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
                     tracking.reassembler.feed(payload, header.pusi);
                 }
             }
@@ -1095,7 +1112,14 @@ impl ConformanceMonitor {
         }
     }
 
-    fn feed_si(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+    fn feed_si(
+        &mut self,
+        pid: Pid,
+        header: &TsHeader,
+        payload: Option<&[u8]>,
+        duplicate: bool,
+        t: Duration,
+    ) {
         if pid != PID_PAT
             && !self.pmt_trackings.contains_key(&pid)
             && self.si_reassemblies.contains_key(&pid)
@@ -1114,7 +1138,7 @@ impl ConformanceMonitor {
                 if pid == PID_CAT || pid == PID_NIT {
                     self.feed_tbsys_bytes(payload.len() as u64, pid, t);
                 }
-                if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
+                if !duplicate && let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
                     si_ra.reassembler.feed(payload, header.pusi);
                 }
             }
@@ -1182,7 +1206,7 @@ impl ConformanceMonitor {
         t: Duration,
         raw: &[u8],
         discontinuity: bool,
-    ) {
+    ) -> bool {
         // `discontinuity` is the `discontinuity_indicator` decoded from the
         // parsed adaptation field by the caller (W-CONF-5, #1096). It is not
         // re-derived from `raw` here: the previous raw bit-masking read
@@ -1205,7 +1229,7 @@ impl ConformanceMonitor {
                 state.initialised = true;
                 state.last_packet.clear();
                 state.last_packet.extend_from_slice(raw);
-                return;
+                return false;
             }
 
             if discontinuity {
@@ -1299,6 +1323,7 @@ impl ConformanceMonitor {
             state.last_packet.clear();
             state.last_packet.extend_from_slice(raw);
         }
+        is_duplicate
     }
 
     /// CRC-check a completed section and, if on PID_PAT, process it.
