@@ -811,6 +811,10 @@ pub struct ConformanceMonitor {
     tstd: TstdModel,
 }
 
+fn section_crc_valid(section_bytes: &[u8]) -> bool {
+    Section::parse(section_bytes).is_ok_and(|s| s.validate_crc(section_bytes).is_ok())
+}
+
 impl ConformanceMonitor {
     /// Create a monitor with default configuration.
     pub fn new() -> Self {
@@ -1130,6 +1134,9 @@ impl ConformanceMonitor {
                 let Ok(section) = Section::parse(section_bytes) else {
                     continue;
                 };
+                if section.validate_crc(section_bytes).is_err() {
+                    continue;
+                }
                 self.update_si_repetition(&section, t);
                 self.check_si_min_gap(&section, pid, t);
                 self.check_si_other_section(section_bytes, pid, t);
@@ -1312,7 +1319,9 @@ impl ConformanceMonitor {
             self.pat_timer.refresh(t);
         }
 
-        self.process_pat_section(section_bytes, t);
+        if section_crc_valid(section_bytes) {
+            self.process_pat_section(section_bytes, t);
+        }
     }
 
     /// CRC-check a completed section and, if on a PMT PID, process it.
@@ -1333,7 +1342,9 @@ impl ConformanceMonitor {
             tracking.timer.refresh(t);
         }
 
-        self.process_pmt_section(section_bytes, pid, t);
+        if section_crc_valid(section_bytes) {
+            self.process_pmt_section(section_bytes, pid, t);
+        }
     }
 
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.2 — CRC_error.
