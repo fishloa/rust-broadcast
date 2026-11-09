@@ -144,3 +144,56 @@ async fn assert_derived_numbers_served(route: Arc<RouteHandle>) {
         "DASH segments derived from the post-reconnect MPD are not served: {failures:?}\n{xml}"
     );
 }
+
+fn app_with(route: Arc<RouteHandle>, output: Arc<dyn Output>) -> axum::Router {
+    let mut streams = HashMap::new();
+    streams.insert("cam".to_string(), (route, vec![output]));
+    router(Arc::new(AppState::new(streams)))
+}
+
+async fn manifest_status(
+    reconnect: bool,
+    output: Arc<dyn Output>,
+    path: &str,
+) -> (StatusCode, String) {
+    let track = video_track();
+    let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
+    let program = media_plane::ProgramId(0);
+    let first = route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    if reconnect {
+        route.release_program(program, &first);
+        route.publish_new_program(program);
+        publish_run(&route, program, &track, 3);
+    }
+    let app = app_with(route, output);
+    let resp = app.oneshot(get(path)).await.unwrap();
+    let status = resp.status();
+    (status, body_string(resp).await)
+}
+
+#[tokio::test]
+async fn control_smooth_manifest_is_served_without_a_reconnect() {
+    let (status, body) = manifest_status(
+        false,
+        Arc::new(multimux::output::smooth::SmoothOutput),
+        "/cam/Manifest",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn smooth_manifest_is_served_after_a_reconnect() {
+    let (status, body) = manifest_status(
+        true,
+        Arc::new(multimux::output::smooth::SmoothOutput),
+        "/cam/Manifest",
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Smooth manifest after a reconnect: {body}"
+    );
+}
