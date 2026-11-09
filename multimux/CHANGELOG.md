@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `Config::hold_cold_playlist` (default `true`) and `RouteHandle::with_hold_cold_playlist`.
+### Changed
+- A media-playlist request without `_HLS_msn`/`_HLS_part` made before the playlist holds a closed segment is held, through the blocking-reload wait and its timeout, until the first segment closes, then answered with at least one `EXTINF`; after the timeout it answers `503` with `Retry-After`. Clients that ignore Partial Segments (ffmpeg, VLC, Frigate, go2rtc) failed to open a cold stream; a Low-Latency client's cold start now waits about one segment unless `hold_cold_playlist` is `false` (#1754). A request before the route announces its program is still an immediate `503`.
 
 ## [0.17.0] - 2026-11-08
 ### Changed
