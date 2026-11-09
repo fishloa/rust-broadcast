@@ -1796,7 +1796,7 @@ impl HlsClient {
             if !self.requested.contains(&id) {
                 self.bind_init(msn, seg.map.as_ref())?;
                 let url = url::resolve(self.base(), &seg.uri);
-                let byte_range = self.resolve_byte_range(&url, &seg.byte_range)?;
+                let byte_range = self.request_byte_range(id, &url, &seg.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
             return Ok(());
@@ -1813,7 +1813,7 @@ impl HlsClient {
             if !self.requested.contains(&id) {
                 self.bind_init(msn, seg.map.as_ref())?;
                 let url = url::resolve(self.base(), &part.uri);
-                let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
+                let byte_range = self.request_byte_range(id, &url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
         }
@@ -1833,7 +1833,7 @@ impl HlsClient {
             if !self.requested.contains(&id) {
                 self.bind_init(msn, open.map.as_ref())?;
                 let url = url::resolve(self.base(), &part.uri);
-                let byte_range = self.resolve_byte_range(&url, &part.byte_range)?;
+                let byte_range = self.request_byte_range(id, &url, &part.byte_range)?;
                 self.request_resource(id, url, byte_range);
             }
         }
@@ -1855,6 +1855,21 @@ impl HlsClient {
             url,
             byte_range,
         });
+    }
+
+    /// The range to fetch for `id`: the one already resolved when it was first
+    /// requested, so a re-request after a failure cannot continue from a
+    /// cursor the first request advanced.
+    fn request_byte_range(
+        &mut self,
+        id: ResourceId,
+        url: &str,
+        br: &Option<ByteRange>,
+    ) -> Result<Option<(u64, u64)>> {
+        if let Some((_, stored)) = self.resource_requests.get(&id) {
+            return Ok(*stored);
+        }
+        self.resolve_byte_range(url, br)
     }
 
     /// Resolve a `PartSpec`/`MediaSegment`/`MapTag` `BYTERANGE` into an
@@ -2472,6 +2487,7 @@ impl HlsClient {
         self.discontinuous_msns.clear();
         self.discontinuity_emitted.clear();
         self.byte_range_cursor.clear();
+        self.resource_requests.clear();
         self.outstanding_fetches = 0;
         self.last_full_playlist = None;
         self.inits.clear();
