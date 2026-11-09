@@ -2915,7 +2915,7 @@ fn pcr_only_packet(pid: u16, cc: u8, pcr_ticks: u64) -> [u8; TS_PACKET_SIZE] {
 #[test]
 fn pcr_step_of_100_5_ms_is_outside_the_0_to_100_ms_range() {
     let mut rig = Rig::new();
-    let t0 = 27_000_000u64 * 10;
+    let t0 = broadcast_common::clock33::PCR_HZ * 10;
     rig.feed(&pcr_only_packet(0x100, 0, t0), 20);
     rig.feed(&pcr_only_packet(0x100, 0, t0 + 2_713_500), 40);
     assert_eq!(
