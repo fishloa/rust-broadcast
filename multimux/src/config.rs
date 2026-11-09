@@ -2192,6 +2192,16 @@ pub struct Config {
     /// time anchor supplies one).
     #[serde(default = "default_program_date_time")]
     pub program_date_time: ProgramDateTimeSource,
+    /// Whether a media-playlist request without `_HLS_msn`/`_HLS_part` made
+    /// before the playlist holds a closed segment is held until the first
+    /// segment closes (see `hls_runtime::server::HlsOriginBuilder::hold_cold_playlist`),
+    /// bounded by the blocking-reload timeout and answered `503` after it.
+    /// Defaults to `true`: clients that ignore Partial Segments (ffmpeg, VLC)
+    /// cannot open a playlist with no `EXTINF` and do not retry. Set `false`
+    /// when only Low-Latency clients are served, so their cold start does not
+    /// wait one segment.
+    #[serde(default = "default_hold_cold_playlist")]
+    pub hold_cold_playlist: bool,
     /// Server-side output auth (issue #663 "shared output auth") gating
     /// every media output route (`/{stream}/…`) across every configured
     /// route — see [`OutputAuthSpec`]. `None` (the default) leaves every
@@ -2306,6 +2316,10 @@ fn default_program_date_time() -> ProgramDateTimeSource {
     ProgramDateTimeSource::Arrival
 }
 
+fn default_hold_cold_playlist() -> bool {
+    hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -2322,6 +2336,7 @@ impl Default for Config {
             ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT.as_secs_f64(),
             playlist_name: default_playlist_name(),
             program_date_time: default_program_date_time(),
+            hold_cold_playlist: default_hold_cold_playlist(),
             output_auth: None,
             admin: None,
             allow_open_ingest: false,

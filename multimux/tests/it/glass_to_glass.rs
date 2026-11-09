@@ -169,11 +169,10 @@ async fn run_live_producer(store: Arc<RouteHandle>) {
 /// Start the real `multimux` LL-HLS origin on an ephemeral loopback port,
 /// serving one stream named `live`.
 async fn start_ll_origin() -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
-    let store = Arc::new(RouteHandle::new(
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
-        WINDOW_SEGMENTS,
-    ));
+    let store = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
+            .with_hold_cold_playlist(false),
+    );
     // `multimux` egress resolves what it serves through the route's program
     // registry (issue #805/#806). This test drives the handle's own
     // per-program `Trunk` directly rather than through a supervisor, so it

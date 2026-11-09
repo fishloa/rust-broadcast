@@ -86,7 +86,7 @@ pub fn feed_via_segmenter(
     drain_ready(store, &mut seg);
 }
 
-fn drain_ready(store: &RouteHandle, seg: &mut LlHlsSegmenter) {
+pub fn drain_ready(store: &RouteHandle, seg: &mut LlHlsSegmenter) {
     let program = media_plane::ProgramId(0);
     for part in seg.take_ready_parts() {
         store.add_part(program, part);

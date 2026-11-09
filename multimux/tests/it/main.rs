@@ -3,6 +3,7 @@ mod admin_api;
 mod audio_renditions;
 mod blocking_reload_deadline;
 mod closed_captions;
+mod cold_playlist_hold;
 mod dash_pull_route;
 mod dash_sliding_window;
 mod dashif_ingest_core;

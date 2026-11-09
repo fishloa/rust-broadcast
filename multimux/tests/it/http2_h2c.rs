@@ -22,7 +22,11 @@ async fn wait_for_port(addr: std::net::SocketAddr) {
 }
 
 fn make_state() -> Arc<AppState> {
-    let store = Arc::new(RouteHandle::new(4.0, 500, 4).with_declared_bandwidth_bps(5_000_000));
+    let store = Arc::new(
+        RouteHandle::new(4.0, 500, 4)
+            .with_hold_cold_playlist(false)
+            .with_declared_bandwidth_bps(5_000_000),
+    );
     let program = media_plane::ProgramId(0);
     store.publish_new_program(program);
     store.set_init(program, vec![0xAA; 4]);

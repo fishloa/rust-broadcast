@@ -139,6 +139,7 @@ fn start_rig(media: transmux::Media, subtitles: bool) -> Driver {
     writer.set_tracks(media.tracks.iter().map(|t| t.spec.clone()).collect());
     let route = Arc::new(
         RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
+            .with_hold_cold_playlist(false)
             .with_declared_bandwidth_bps(DECLARED_BPS)
             .with_subtitles(subtitles),
     );

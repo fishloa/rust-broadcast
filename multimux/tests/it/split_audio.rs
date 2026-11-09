@@ -271,6 +271,7 @@ fn build_rig(
     writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
     let route = Arc::new(
         RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
+            .with_hold_cold_playlist(false)
             .with_declared_bandwidth_bps(declared)
             .with_audio_renditions(renditions)
             .with_audio_rendition_sources(selectors),
