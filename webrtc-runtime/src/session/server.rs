@@ -116,8 +116,12 @@ impl<P: Profile> Session<P> {
     ///
     /// A session URL or `etag` that cannot be sent as a header (non-ASCII, a
     /// double quote in the tag) yields a `500 Internal Server Error` response
-    /// with no `Location`, and leaves the session in its current state.
+    /// with no `Location`, and leaves the session in its current state. A
+    /// closed session answers `404 Not Found` and stays closed.
     pub fn accept(&mut self, sdp_answer: Vec<u8>, etag: String) -> HttpResponse {
+        if self.state == State::Closed {
+            return HttpResponse::new(StatusCode::NOT_FOUND);
+        }
         let built = HttpResponse::new(StatusCode::CREATED)
             .with_content_type(content_type::SDP)
             .and_then(|r| r.with_location(&self.session_url))
@@ -194,8 +198,13 @@ impl<P: Profile> Session<P> {
     /// Build the 200 OK response for ICE restart.
     ///
     /// A `new_etag` that cannot be sent as a header yields a `500` response and
-    /// leaves the session's tag unchanged.
+    /// leaves the session's tag unchanged. A session that is not established
+    /// (deleted while the restart was in flight) answers `404 Not Found` and
+    /// keeps its state.
     pub fn ack_restart(&mut self, sdp_fragment: Vec<u8>, new_etag: String) -> HttpResponse {
+        if !matches!(self.state, State::Established { .. }) {
+            return HttpResponse::new(StatusCode::NOT_FOUND);
+        }
         let built = HttpResponse::new(StatusCode::OK)
             .with_content_type(content_type::TRICKLE_ICE)
             .and_then(|r| r.with_etag(&new_etag));
@@ -256,10 +265,23 @@ impl Session<Whep> {
         }
     }
 
-    /// Build 204 response after accepting player's SDP answer to counter-offer.
+    /// Build 204 response after accepting player's SDP answer to counter-offer,
+    /// carrying the resource's `ETag`.
+    ///
+    /// An `etag` that cannot be sent as a header yields a `500` response and
+    /// leaves the state unchanged; a session that is not awaiting the answer
+    /// answers `404 Not Found` and keeps its state.
     pub fn ack_answer(&mut self, etag: String) -> HttpResponse {
-        self.state = State::Established { etag };
-        HttpResponse::new(StatusCode::NO_CONTENT)
+        if !matches!(self.state, State::CounterOffered { .. }) {
+            return HttpResponse::new(StatusCode::NOT_FOUND);
+        }
+        match HttpResponse::new(StatusCode::NO_CONTENT).with_etag(&etag) {
+            Ok(resp) => {
+                self.state = State::Established { etag };
+                resp
+            }
+            Err(_) => HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR),
+        }
     }
 
     /// Build 409 Conflict response (no active publisher), with a typed

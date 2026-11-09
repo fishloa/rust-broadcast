@@ -2,6 +2,7 @@
 mod dtls_fingerprint;
 mod golden_http;
 mod secret_hygiene;
+mod session_state;
 #[cfg(feature = "media")]
 mod srtp_rfc3711_vectors;
 #[cfg(feature = "media")]

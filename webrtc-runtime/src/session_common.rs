@@ -82,6 +82,7 @@ impl SessionCore {
         etag: Option<String>,
         fragment: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
+        self.require_idle("trickle")?;
         let req = self.origin().trickle(session_url, etag, fragment)?;
         self.pending = Some(PendingRequest::Trickle);
         Ok(req)
@@ -92,15 +93,27 @@ impl SessionCore {
         session_url: String,
         fragment: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
+        self.require_idle("ice_restart")?;
         let req = self.origin().ice_restart(session_url, fragment)?;
         self.pending = Some(PendingRequest::IceRestart);
         Ok(req)
     }
 
     pub(crate) fn delete(&mut self, session_url: String) -> Result<HttpRequest, Error> {
+        self.require_idle("terminate")?;
         let req = self.origin().delete(session_url)?;
         self.pending = Some(PendingRequest::Delete);
         Ok(req)
+    }
+
+    fn require_idle(&self, operation: &'static str) -> Result<(), Error> {
+        match self.pending {
+            None => Ok(()),
+            Some(_) => Err(Error::WrongState {
+                operation,
+                state: "established with a request already in flight",
+            }),
+        }
     }
 
     /// Classify an established-session response by the request in flight.

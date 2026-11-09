@@ -162,10 +162,16 @@ impl<P: Profile> Client<P> {
                 self.state = State::CounterOffered { session_url };
                 Ok(Some(Event::CounterOffer(resp.body)))
             }
-            StatusCode::CONFLICT if P::EGRESS => Err(Error::NoPublisher),
-            _ => Err(Error::Http {
-                status: resp.status.as_u16(),
-            }),
+            StatusCode::CONFLICT if P::EGRESS => {
+                self.state = State::Idle;
+                Err(Error::NoPublisher)
+            }
+            _ => {
+                self.state = State::Idle;
+                Err(Error::Http {
+                    status: resp.status.as_u16(),
+                })
+            }
         }
     }
 
