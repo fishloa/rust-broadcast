@@ -10,3 +10,4 @@ mod webvtt_cc_fixture;
 mod webvtt_sei_caption_fixture;
 mod webvtt_teletext_fixture;
 mod webvtt_teletext_tsduck_oracle;
+mod auditj_teletext;
