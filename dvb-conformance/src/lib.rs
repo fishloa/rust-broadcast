@@ -138,6 +138,8 @@ const DEFAULT_SI_OTHER_INTERVAL_SECS: u64 = 10;
 /// and the 27 MHz clock rate: both owned by `broadcast_common::clock33`.
 use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, pcr_forward_distance};
 
+const MICROS_PER_SEC: u64 = 1_000_000;
+
 /// PES start-code prefix byte 0 (ISO/IEC 13818-1 §2.4.3.6, Table 2-21).
 const PES_PREFIX_0: u8 = 0x00;
 /// PES start-code prefix byte 1.
@@ -1850,7 +1852,10 @@ impl ConformanceMonitor {
         let delta = pcr_forward_distance(last_pcr_27mhz, pcr_27mhz);
         let delta_ms = delta * 1000 / CLOCK_27MHZ;
         let limit_ms = self.config.pcr_discontinuity_limit.as_millis() as u64;
-        let should_emit_disc = delta_ms > limit_ms && !discontinuity;
+        let limit_ticks = (self.config.pcr_discontinuity_limit.as_micros() as u64)
+            .saturating_mul(CLOCK_27MHZ)
+            / MICROS_PER_SEC;
+        let should_emit_disc = delta > limit_ticks && !discontinuity;
 
         if should_emit_rep {
             self.emit(
