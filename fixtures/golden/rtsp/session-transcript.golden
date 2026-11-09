@@ -6,6 +6,7 @@ User-Agent: golden-ua
 --- OPTIONS response ---
 RTSP/1.0 200 Ok
 CSeq: 1
+Public: OPTIONS, DESCRIBE, ANNOUNCE, GET_PARAMETER, SET_PARAMETER, SETUP, PLAY, PAUSE, RECORD, TEARDOWN
 Server: rtsp-runtime
 
 --- DESCRIBE request ---

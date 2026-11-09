@@ -73,7 +73,7 @@ Examples: `cargo run -p ts-fix --example repair_continuity` and
 $ ts-fix --help
 Reads an input .ts file, applies repair operations, writes the repaired stream.
 Operations are applied in the engine's canonical order (filter → psi-regen →
-continuity → restamp-pcr/honor-pcr-discontinuity → stuffing) regardless of
+continuity → stuffing → restamp-pcr/honor-pcr-discontinuity) regardless of
 flag order.  All operations are opt-in.
 
 Usage: ts-fix [OPTIONS] --input <PATH> --output <PATH>

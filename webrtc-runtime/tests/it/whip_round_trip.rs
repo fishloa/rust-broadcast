@@ -558,3 +558,60 @@ fn whip_client_409_is_a_plain_http_error_not_no_publisher() {
         .unwrap_err();
     assert!(matches!(err, Error::Http { status: 409 }), "got {err:?}");
 }
+
+fn established_client() -> WhipClient {
+    let mut client = WhipClient::new(ENDPOINT.into(), None);
+    let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
+    let _ = client
+        .on_response(
+            client::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("etag-v1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
+        .unwrap();
+    client
+}
+
+#[test]
+fn whip_client_trickle_412_with_a_current_etag_refreshes_it_for_the_retry() {
+    let mut client = established_client();
+    let _ = client.flush_candidates(ICE_FRAG.to_vec()).unwrap();
+    let err = client
+        .on_response(
+            client::HttpResponse::new(StatusCode::PRECONDITION_FAILED)
+                .with_etag("etag-v3")
+                .unwrap(),
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::Http { status: 412 }), "{err:?}");
+    assert!(matches!(
+        client.state(),
+        client::State::Established { etag: Some(e), .. } if e == "etag-v3"
+    ));
+    let retry = client.flush_candidates(ICE_FRAG.to_vec()).unwrap();
+    assert_eq!(
+        retry.headers.get(header::IF_MATCH).unwrap(),
+        &HeaderValue::from_static("\"etag-v3\"")
+    );
+}
+
+#[test]
+fn whip_client_failed_delete_can_be_retried_and_still_terminates() {
+    let mut client = established_client();
+    let _ = client.terminate().unwrap();
+    let err = client
+        .on_response(client::HttpResponse::new(StatusCode::SERVICE_UNAVAILABLE))
+        .unwrap_err();
+    assert!(matches!(err, Error::Http { status: 503 }), "{err:?}");
+    let _ = client.terminate().unwrap();
+    let event = client
+        .on_response(client::HttpResponse::new(StatusCode::NO_CONTENT))
+        .unwrap();
+    assert!(event.is_some());
+    assert!(matches!(client.state(), client::State::Closed));
+}

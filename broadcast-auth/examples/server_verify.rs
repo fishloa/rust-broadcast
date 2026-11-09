@@ -14,7 +14,7 @@
 //! cargo run --example server_verify -p broadcast-auth
 //! ```
 
-use broadcast_auth::{AuthResult, Credentials, RequestContext, Verifier, respond};
+use broadcast_auth::{AuthResult, Credentials, RequestContext, TrustedProxy, Verifier, respond};
 
 const REALM: &str = "cameras";
 
@@ -95,21 +95,28 @@ fn bearer() {
     println!("[bearer] wrong token       -> Unauthorized");
 }
 
-/// Reverse-proxy forwarded-auth (`Verifier::forwarded`): no credential at
+/// Reverse-proxy forwarded-auth (`Verifier::forwarded_from`): no credential at
 /// all — authenticated iff the proxy-set user header is present and
-/// non-empty. See `Verifier::forwarded`'s doc for the trust assumption this
-/// scheme relies on (only safe behind a proxy that strips client-supplied
-/// copies of the header).
+/// non-empty and the transport peer is a listed proxy. See
+/// `Verifier::forwarded_from`'s doc for the trust assumption this scheme
+/// relies on (the listed proxy strips client-supplied copies of the header).
 fn forwarded() {
-    let verifier = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+    let verifier = Verifier::forwarded_from(
+        "X-Forwarded-User",
+        Some("X-Forwarded-For".to_string()),
+        TrustedProxy::loopback(),
+    );
+    let proxy: std::net::SocketAddr = "127.0.0.1:50000".parse().expect("peer address");
     println!("[forwarded] challenge: {}", verifier.challenge());
 
     let headers: &[(&str, &str)] = &[("X-Forwarded-User", "alice")];
-    let ctx = RequestContext::new("GET", "/stream/media.m3u8").with_headers(headers);
+    let ctx = RequestContext::new("GET", "/stream/media.m3u8")
+        .with_headers(headers)
+        .with_peer_addr(proxy);
     assert_eq!(verifier.verify(&ctx), AuthResult::Ok);
     println!("[forwarded] header present -> Ok");
 
-    let ctx_no_header = RequestContext::new("GET", "/stream/media.m3u8");
+    let ctx_no_header = RequestContext::new("GET", "/stream/media.m3u8").with_peer_addr(proxy);
     assert_eq!(verifier.verify(&ctx_no_header), AuthResult::Unauthorized);
     println!("[forwarded] header absent  -> Unauthorized");
 }

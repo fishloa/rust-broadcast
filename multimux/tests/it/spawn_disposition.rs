@@ -131,32 +131,32 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        1645,
+        1646,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",
     ),
     (
         "origin/mod.rs",
-        1821,
+        1822,
         "spawn_following -> follow_trunk; the returned JoinHandle is owned by the caller and dropped on route teardown (async drop cancels)",
     ),
     (
         "origin/mod.rs",
-        2342,
+        2343,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
         "origin/admin.rs",
-        1115,
+        1116,
         "external shutdown-signal watcher; aborted by hand at admin teardown",
     ),
     (
         "origin/admin.rs",
-        1127,
+        1128,
         "shutdown-watch task translating the signal channel into the token; aborted by hand at teardown",
     ),
     (
         "origin/admin.rs",
-        1133,
+        1134,
         "admin listener server task; joined/aborted at admin teardown",
     ),
     (

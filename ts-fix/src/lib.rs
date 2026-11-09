@@ -87,8 +87,9 @@ impl TsFixBuilder {
     /// pass-through**: every packet is emitted unchanged.
     ///
     /// The engine applies operations in the canonical ordering:
-    /// filter_pids → regen_psi → repair_continuity → restamp_pcr →
-    /// honor_pcr_discontinuity → stuffing. The `build()` method sorts ops by
+    /// filter_pids → regen_psi → repair_continuity → stuffing → restamp_pcr →
+    /// honor_pcr_discontinuity. Stuffing runs first so the PCRs describe the
+    /// byte positions of the packets actually emitted. The `build()` method sorts ops by
     /// this order regardless of the order in which builder methods were
     /// called.
     pub fn build(mut self) -> Result<TsFix, Error> {

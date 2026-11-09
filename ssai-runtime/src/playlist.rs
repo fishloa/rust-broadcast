@@ -139,7 +139,7 @@ impl InterstitialDateRange {
             let list = self
                 .snap
                 .iter()
-                .map(SnapMode::name)
+                .map(SnapMode::token)
                 .collect::<Vec<_>>()
                 .join(",");
             attrs.push((String::from("X-SNAP"), AttrValue::quoted(list)?));
@@ -148,7 +148,7 @@ impl InterstitialDateRange {
             let list = self
                 .restrict
                 .iter()
-                .map(RestrictMode::name)
+                .map(RestrictMode::token)
                 .collect::<Vec<_>>()
                 .join(",");
             attrs.push((String::from("X-RESTRICT"), AttrValue::quoted(list)?));
@@ -176,7 +176,19 @@ impl InterstitialDateRange {
 
         // The shared workspace tokenizer (issue #1140 T12): `attrs` values
         // already have their surrounding `"` stripped for quoted attributes.
-        let (attrs, _quoted) = parse_attribute_list_strict(body)?;
+        let (attrs, quoted) = parse_attribute_list_strict(body)?;
+        for (name, must_be_quoted) in ATTRIBUTE_QUOTING {
+            if attrs.contains_key(*name) && quoted.contains(*name) != *must_be_quoted {
+                return Err(Error::TagParse(alloc::format!(
+                    "{name} must be {} (RFC 8216bis §4.2)",
+                    if *must_be_quoted {
+                        "a quoted-string"
+                    } else {
+                        "a decimal-floating-point, not quoted"
+                    }
+                )));
+            }
+        }
 
         let id = attrs.get("ID").cloned();
         let class_ok = attrs.get("CLASS").map(String::as_str) == Some(INTERSTITIAL_CLASS);
@@ -401,23 +413,38 @@ fn parse_checked_secs(what: &'static str, v: &str, sign: Sign) -> Result<f64> {
 
 fn parse_snap_list(v: &str) -> Vec<SnapMode> {
     v.split(',')
-        .filter_map(|tok| match tok.trim() {
-            "OUT" => Some(SnapMode::Out),
-            "IN" => Some(SnapMode::In),
-            _ => None,
+        .map(|tok| match tok {
+            "OUT" => SnapMode::Out,
+            "IN" => SnapMode::In,
+            other => SnapMode::Other(other.to_string()),
         })
         .collect()
 }
 
 fn parse_restrict_list(v: &str) -> Vec<RestrictMode> {
     v.split(',')
-        .filter_map(|tok| match tok.trim() {
-            "SKIP" => Some(RestrictMode::Skip),
-            "JUMP" => Some(RestrictMode::Jump),
-            _ => None,
+        .map(|tok| match tok {
+            "SKIP" => RestrictMode::Skip,
+            "JUMP" => RestrictMode::Jump,
+            other => RestrictMode::Other(other.to_string()),
         })
         .collect()
 }
+
+/// Whether each interstitial attribute is a quoted-string (`true`) or an
+/// unquoted decimal-floating-point (`false`), RFC 8216bis §4.2 and Appendix D.
+const ATTRIBUTE_QUOTING: &[(&str, bool)] = &[
+    ("ID", true),
+    ("CLASS", true),
+    ("START-DATE", true),
+    ("X-ASSET-URI", true),
+    ("X-ASSET-LIST", true),
+    ("X-SNAP", true),
+    ("X-RESTRICT", true),
+    ("DURATION", false),
+    ("X-RESUME-OFFSET", false),
+    ("X-PLAYOUT-LIMIT", false),
+];
 
 #[cfg(test)]
 mod tests {
@@ -824,5 +851,37 @@ mod tests {
             InterstitialDateRange::parse_tag_line(line).unwrap_err(),
             Error::HlsAttrValue(broadcast_hls::Error::DuplicateAttribute { name }) if name == "ID"
         ));
+    }
+
+    const LINE_PREFIX: &str = "#EXT-X-DATERANGE:CLASS=\"com.apple.hls.interstitial\",START-DATE=\"2020-01-02T21:55:44.000Z\",X-ASSET-URI=\"https://x/a.m3u8\"";
+
+    #[test]
+    fn parse_rejects_an_unquoted_id_and_a_quoted_duration() {
+        for extra in [",ID=ad1", ",ID=\"ad1\",DURATION=\"15\""] {
+            let line = alloc::format!("{LINE_PREFIX}{extra}");
+            assert!(
+                matches!(
+                    InterstitialDateRange::parse_tag_line(&line),
+                    Err(Error::TagParse(_))
+                ),
+                "{line}"
+            );
+        }
+        let ok = alloc::format!("{LINE_PREFIX},ID=\"ad1\",DURATION=15");
+        assert!(InterstitialDateRange::parse_tag_line(&ok).is_ok());
+    }
+
+    #[test]
+    fn unknown_snap_and_restrict_identifiers_round_trip_byte_identical() {
+        let line = alloc::format!(
+            "{LINE_PREFIX},ID=\"ad1\",X-SNAP=\"OUT,SIDEWAYS\",X-RESTRICT=\"SKIP,TELEPORT\""
+        );
+        let parsed = InterstitialDateRange::parse_tag_line(&line).unwrap();
+        assert_eq!(parsed.snap[1], SnapMode::Other("SIDEWAYS".to_string()));
+        let again = parsed.to_tag_line().unwrap();
+        let reparsed = InterstitialDateRange::parse_tag_line(&again).unwrap();
+        assert_eq!(reparsed, parsed);
+        assert!(again.contains("X-SNAP=\"OUT,SIDEWAYS\""), "{again}");
+        assert!(again.contains("X-RESTRICT=\"SKIP,TELEPORT\""), "{again}");
     }
 }

@@ -605,6 +605,8 @@ impl SrtSocket {
         config.initial_seq_number = random_isn()?;
         let mut hs = CallerHandshake::new(own_socket_id, config.clone());
 
+        let epoch = Instant::now();
+        hs.set_elapsed(epoch.elapsed());
         let induction = hs.start().map_err(|e| handshake_err("caller start", e))?;
         send_bounded(&socket, &induction, peer, io.write, "send induction").await?;
 
@@ -646,7 +648,10 @@ impl SrtSocket {
                     });
                 }
                 Event::Oversize => continue,
-                Event::Tick => (hs.tick(), None),
+                Event::Tick => {
+                    hs.set_elapsed(epoch.elapsed());
+                    (hs.tick(), None)
+                }
                 Event::Datagram(bytes, src) => {
                     // A packet from anyone but the peer we're connecting to
                     // (some unrelated traffic that happened to land on this
@@ -660,6 +665,7 @@ impl SrtSocket {
                     // resent/duplicate reply, garbage) must not fail the
                     // connect either — only a genuine handshake rejection or
                     // timeout does that.
+                    hs.set_elapsed(epoch.elapsed());
                     let Ok(outputs) = hs.feed_bytes(&bytes) else {
                         continue;
                     };
@@ -702,6 +708,7 @@ impl SrtSocket {
                             config.initial_seq_number,
                             &params,
                             peer_hs,
+                            epoch,
                             max_datagram,
                             &io,
                             #[cfg(feature = "crypto")]
@@ -734,11 +741,11 @@ impl SrtSocket {
         our_initial_seq: u32,
         params: &handshake_sm::NegotiatedParams,
         peer_hs: PeerHandshake,
+        epoch: Instant,
         max_datagram: usize,
         io: &IoConfig,
         #[cfg(feature = "crypto")] passphrase: Vec<u8>,
     ) -> SrtSocket {
-        let epoch = Instant::now();
         // This socket is exclusively this connection's own (bound fresh by
         // the connect/rendezvous call, never shared) - no demux table needed.
         let stats = Arc::new(Counters::default());
@@ -761,7 +768,7 @@ impl SrtSocket {
             our_initial_seq,
             peer_initial_seq: peer_hs.initial_seq_number,
             peer_socket_id: params.peer_socket_id,
-            tsbpd_time_base: tsbpd_time_base_from(peer_hs.timestamp_us),
+            tsbpd_time_base: tsbpd_time_base_at(epoch, Instant::now(), peer_hs.timestamp_us),
             tsbpd_delay_ms: u64::from(params.latency_ms),
             epoch,
             max_flow_window: params.max_flow_window_size,
@@ -841,6 +848,8 @@ impl SrtSocket {
         }
         let mut hs =
             crate::rendezvous::RendezvousHandshake::new(own_socket_id, own_cookie, config.clone());
+        let epoch = Instant::now();
+        hs.set_elapsed(epoch.elapsed());
         let first = hs
             .start()
             .map_err(|e| handshake_err("rendezvous start", e))?;
@@ -884,11 +893,15 @@ impl SrtSocket {
                     });
                 }
                 Event::Oversize => continue,
-                Event::Tick => hs.tick(),
+                Event::Tick => {
+                    hs.set_elapsed(epoch.elapsed());
+                    hs.tick()
+                }
                 Event::Datagram(bytes, src) => {
                     if src != peer {
                         continue;
                     }
+                    hs.set_elapsed(epoch.elapsed());
                     match SrtPacket::parse(&bytes) {
                         Ok(SrtPacket::Control(ControlPacket::Handshake(hp))) => {
                             last_peer_hs = Some(PeerHandshake {
@@ -934,6 +947,7 @@ impl SrtSocket {
                             config.initial_seq_number,
                             &params,
                             peer_hs,
+                            epoch,
                             max_datagram,
                             &io,
                             #[cfg(feature = "crypto")]
@@ -2319,6 +2333,9 @@ struct PendingListener {
     /// connection epoch (not the later moment `accept` happens to hand the
     /// connection over).
     concluded_at: Option<Instant>,
+    /// When this entry was created: the instant the connection started, the
+    /// epoch every handshake and data timestamp counts from.
+    created_at: Instant,
     /// The last handshake datagram this entry produced — on completion, the
     /// CONCLUSION response a lost-response retransmit must be answered with.
     last_response: Option<Vec<u8>>,
@@ -2659,6 +2676,7 @@ impl ListenerCore {
                     peer_initial_seq: peer_isn,
                     peer_timestamp_us: 0,
                     concluded_at: None,
+                    created_at: Instant::now(),
                     last_response: None,
                     our_initial_seq,
                 },
@@ -2683,6 +2701,7 @@ impl ListenerCore {
             }
         }
 
+        entry.handshake.set_elapsed(entry.created_at.elapsed());
         let outcomes = match entry.handshake.feed(&ctrl) {
             Ok(outcomes) => outcomes,
             Err(e) => {
@@ -2720,6 +2739,7 @@ impl ListenerCore {
         self.cookie_keys.rotate_if_due(Instant::now());
         let mut to_remove = Vec::new();
         for (addr, entry) in self.pending.iter_mut() {
+            entry.handshake.set_elapsed(entry.created_at.elapsed());
             for outcome in entry.handshake.tick() {
                 match outcome {
                     HandshakeOutput::Send(bytes) => {
@@ -2799,8 +2819,9 @@ impl ListenerCore {
         // per-connection value once randomized.
         let our_initial_seq = entry.our_initial_seq;
         let tsbpd_delay_ms = u64::from(negotiated.latency_ms);
-        let tsbpd_time_base = tsbpd_time_base_from(entry.peer_timestamp_us);
-        let epoch = entry.concluded_at.unwrap_or_else(Instant::now);
+        let concluded_at = entry.concluded_at.unwrap_or_else(Instant::now);
+        let epoch = entry.created_at;
+        let tsbpd_time_base = tsbpd_time_base_at(epoch, concluded_at, entry.peer_timestamp_us);
 
         if let Some(response) = entry.last_response.clone() {
             self.remember_accept(
@@ -2808,7 +2829,7 @@ impl ListenerCore {
                 RecentAccept {
                     peer_socket_id,
                     response,
-                    accepted_at: epoch,
+                    accepted_at: concluded_at,
                 },
             );
         }
@@ -3173,6 +3194,15 @@ fn peer_handshake(bytes: &[u8]) -> Result<PeerHandshake> {
 /// the base is generally negative.
 fn tsbpd_time_base_from(peer_timestamp_us: u32) -> i64 {
     -i64::from(peer_timestamp_us)
+}
+
+/// [`tsbpd_time_base_from`] for a connection whose epoch is the instant the
+/// handshake began: `T_NOW` is how long after `epoch` the peer's handshake
+/// packet arrived.
+fn tsbpd_time_base_at(epoch: Instant, arrived: Instant, peer_timestamp_us: u32) -> i64 {
+    let t_now =
+        i64::try_from(arrived.saturating_duration_since(epoch).as_micros()).unwrap_or(i64::MAX);
+    t_now.saturating_add(tsbpd_time_base_from(peer_timestamp_us))
 }
 
 #[cfg(test)]

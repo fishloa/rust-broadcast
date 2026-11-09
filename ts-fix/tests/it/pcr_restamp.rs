@@ -338,3 +338,32 @@ fn without_reanchor_output_would_be_nonmonotonic_across_discontinuity() {
         "raw jump must be ~10 s worth: {raw_jump}"
     );
 }
+
+#[test]
+fn pcr_matches_the_output_byte_position_when_stuffing_is_combined() {
+    const BPS: u64 = 20_000_000;
+    const PCR_HZ: u128 = 27_000_000;
+    const PACKET_BITS: u128 = 188 * 8;
+    let input = load();
+    let (pcr_pid, _) = busiest_pcr_pid(&input);
+    let out = run(&input, |b| {
+        b.restamp_pcr(PcrRestamp::from_bitrate(BPS))
+            .stuffing(ts_fix::Stuffing::pad_to(2.0))
+    });
+    let series: Vec<(usize, u64)> = out
+        .chunks_exact(PKT)
+        .enumerate()
+        .filter(|(_, p)| pid(p) == pcr_pid)
+        .filter_map(|(i, p)| pcr_27mhz(p).map(|v| (i, v)))
+        .collect();
+    assert!(series.len() >= 3, "{}", series.len());
+    for w in series.windows(2) {
+        let packets = (w[1].0 - w[0].0) as u128;
+        let want = packets * PACKET_BITS * PCR_HZ / u128::from(BPS);
+        let got = u128::from(w[1].1 - w[0].1);
+        assert!(
+            got.abs_diff(want) <= 1,
+            "PCR advanced {got} ticks over {packets} output packets, the bitrate implies {want}"
+        );
+    }
+}

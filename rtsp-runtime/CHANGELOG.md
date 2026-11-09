@@ -5,7 +5,10 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `ServerSession::with_describe_sdp` (the `DESCRIBE` body, `Content-Type: application/sdp`) and `with_server_ports` (the `server_port` pair a UDP `SETUP` reply advertises); an `OPTIONS` reply now carries `Public` listing the implemented methods (audit B).
 ### Fixed
+- A reversed `port`/`client_port`/`server_port`/`interleaved` range (`5001-5000`, `3-1`) is a `Transport` parse error instead of being accepted.
 - BREAKING: `Error::MissingCSeq` is removed. `ServerSession::handle_request` answers a request with no parseable `CSeq` with a `400 Bad Request` (RFC 2326 §12.17 makes `CSeq` mandatory, and nothing can be echoed) and carries on, instead of returning an error that ended the connection; the variant had no other user.
 - The server picks the first `Transport` spec in the list it can serve and answers `461` only when none is supported; one unmodelled spec (`RTP/SAVP`) used to fail the whole header.
 - The server answers a method it does not implement (an extension method, `REDIRECT`, `PLAY_NOTIFY`) with `501 Not Implemented` (RFC 2326 §11.3 / Table 2 note) instead of `455`.

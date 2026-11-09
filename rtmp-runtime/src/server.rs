@@ -1777,6 +1777,36 @@ mod tests {
     }
 
     #[test]
+    fn set_data_frame_prefix_is_stripped_from_the_script_tag() {
+        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+        let mut payload = Amf0Value::String("@setDataFrame".to_string())
+            .try_to_bytes()
+            .unwrap();
+        let metadata = Amf0Value::String("onMetaData".to_string())
+            .try_to_bytes()
+            .unwrap();
+        payload.extend(&metadata);
+        payload.extend(
+            Amf0Value::Object(vec![("width".to_string(), Amf0Value::Number(1920.0))])
+                .try_to_bytes()
+                .unwrap(),
+        );
+
+        let (_out, events) = session
+            .handle_data(&av_bytes(1, msg_type::DATA_AMF0, 4, 0, payload))
+            .unwrap();
+        let ServerEvent::Media { flv } = &events[0] else {
+            panic!("expected Media event");
+        };
+        let body_at = FLV_HEADER_SIZE as usize + FLV_PREV_TAG_SIZE_LEN + FLV_TAG_HEADER_LEN;
+        assert_eq!(
+            &flv[body_at..body_at + metadata.len()],
+            metadata.as_slice(),
+            "the script tag must start with the onMetaData name, not @setDataFrame"
+        );
+    }
+
+    #[test]
     fn media_before_publishing_is_silently_dropped() {
         let mut session = ServerSession::with_defaults();
         session.handle_data(&build_c0_c1()).unwrap();

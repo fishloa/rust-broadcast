@@ -4,6 +4,7 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 ### Fixed
+- A trickle PATCH answered `412 Precondition Failed` (RFC 9725 §4.3.1, outdated entity-tag) adopts the `ETag` the response carries, so the retry sends the current `If-Match` instead of the stale one. A failed `DELETE` consuming its pending marker is not a defect: each request pushes its own marker, and a retried `DELETE` terminates (pinned).
 - The client and player track every in-flight request in send order, so a trickle PATCH's `204` can no longer be taken for the answer to a `DELETE` sent after it (the session closed and emitted `Terminated` before the server answered the `DELETE`).
 - A non-2xx answer to the offer `POST` (a `503`, a `307` the engine does not follow, a `409`) returns the client to `Idle`, so it can send the offer again; it used to stay in `OfferSent`, where `offer` is refused.
 - `Session::accept`, `ack_restart` and `ack_answer` no longer reopen a closed session: a `DELETE` that wins the race against an in-flight restart stays final, and the late response is a `404` with the state unchanged (`ack_restart` needs `Established`, `ack_answer` needs `CounterOffered`).

@@ -610,7 +610,7 @@ pub enum OutputAuthSpec {
         token: String,
     },
     /// Reverse-proxy forwarded-auth (issue #663 extensibility wave part 1,
-    /// `broadcast_auth::Verifier::forwarded`): trusts that a fronting
+    /// `broadcast_auth::Verifier::forwarded_from`): trusts that a fronting
     /// reverse proxy has already authenticated the caller and forwards the
     /// authenticated username in `user_header`. Authenticated iff that
     /// header is present and non-empty; unlike Basic/Digest/Bearer there is

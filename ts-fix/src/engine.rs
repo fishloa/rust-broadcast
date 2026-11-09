@@ -14,7 +14,7 @@
 //! position (the builder's `build()` method sorts by the canonical order table):
 //!
 //! ```text
-//! filter_pids → regen_psi → repair_continuity → restamp_pcr → stuffing
+//! filter_pids → regen_psi → repair_continuity → stuffing → restamp_pcr
 //! ```
 //!
 //! This ordering is an implementation detail; callers register ops via builder

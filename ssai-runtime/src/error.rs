@@ -51,6 +51,17 @@ pub enum Error {
     /// session that already has an unresumed break.
     #[error("session {0:?} already has an active ad break")]
     BreakAlreadyActive(String),
+    /// [`crate::session::SessionStore::resume`] was called for a session whose
+    /// break was already resumed.
+    #[error("session {0:?} has already resumed its ad break")]
+    BreakAlreadyResumed(String),
+    /// [`crate::session::SessionStore::begin_break`] was called for a new
+    /// session while the store was already tracking its maximum.
+    #[error("session store is full ({max} sessions)")]
+    SessionStoreFull {
+        /// The store's bound.
+        max: usize,
+    },
     /// An Interstitial `EXT-X-DATERANGE` tag line failed to parse.
     #[error("interstitial DATERANGE parse: {0}")]
     TagParse(String),

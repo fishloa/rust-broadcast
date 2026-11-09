@@ -948,7 +948,7 @@ async fn admin_auth_gate(
     let headers: Vec<(&str, &str)> = req
         .headers()
         .iter()
-        .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str(), v)))
+        .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or_default()))
         .collect();
     let peer_addr = req
         .extensions()
@@ -960,6 +960,7 @@ async fn admin_auth_gate(
     }
     match verifier.verify(&ctx) {
         AuthResult::Ok => next.run(req).await,
+        AuthResult::BadRequest => StatusCode::BAD_REQUEST.into_response(),
         _ => {
             let mut resp = StatusCode::UNAUTHORIZED.into_response();
             // `challenge_for` (not `challenge`): an expired nonce must be

@@ -24,6 +24,13 @@ pub enum Error {
     /// all.
     #[error(transparent)]
     SpliceConditioning(#[from] ssai_runtime::Error),
+    /// A `break_duration` of 2^33 ticks or more does not fit the 33-bit
+    /// `break_duration()` field (ANSI/SCTE 35 §9.8.2).
+    #[error("break duration {ticks} ticks does not fit the 33-bit break_duration field")]
+    BreakDurationTooLong {
+        /// The rejected duration, in 90 kHz ticks.
+        ticks: u64,
+    },
 }
 
 /// Crate result alias.

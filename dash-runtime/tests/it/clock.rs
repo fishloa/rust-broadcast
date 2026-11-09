@@ -128,7 +128,16 @@ fn bodies_by_scheme() {
         "three fraction digits: 1 ms resolution"
     );
     let s = sample_from_body(UtcScheme::HttpIso, b"2026-10-26T08:39:04Z", ex, MAX_RTT).unwrap();
-    assert_eq!(s.uncertainty_us, 100 + 1_000_000, "no fraction: one second");
+    assert_eq!(
+        s.utc_us,
+        1_793_003_944 * 1_000_000 + 500_000,
+        "a whole-second body is centred like a whole-second Date header"
+    );
+    assert_eq!(
+        s.uncertainty_us,
+        100 + 500_000,
+        "no fraction: half a second"
+    );
     let mut ntp = 2_208_988_800u32.to_be_bytes().to_vec();
     ntp.extend_from_slice(&[0; 4]);
     let s = sample_from_body(UtcScheme::HttpNtp, &ntp, ex, MAX_RTT).unwrap();
@@ -152,6 +161,7 @@ fn bodies_by_scheme() {
     ));
     let d = sample_from_direct("2026-10-26T08:39:04Z", Exchange::new(0, 400), MAX_RTT).unwrap();
     assert_eq!(d.mono_us, 200);
+    assert_eq!(d.utc_us, 1_793_003_944 * 1_000_000 + 500_000);
 }
 
 #[test]

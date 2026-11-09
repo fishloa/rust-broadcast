@@ -19,7 +19,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 /// `X-SNAP` identifier (Appendix D §D.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum SnapMode {
@@ -30,21 +30,33 @@ pub enum SnapMode {
     /// `IN` — the client should locate the primary-content segment boundary
     /// nearest the scheduled resumption point and resume there.
     In,
+    /// An identifier this crate does not know, kept verbatim so a parse then
+    /// render is lossless and a newer value is not an error.
+    Other(String),
 }
 
 impl SnapMode {
-    /// Stable label — the literal `X-SNAP` wire token.
+    /// Stable label; `"other"` for [`SnapMode::Other`] (see [`Self::token`]).
     pub fn name(&self) -> &'static str {
         match self {
             SnapMode::Out => "OUT",
             SnapMode::In => "IN",
+            SnapMode::Other(_) => "other",
+        }
+    }
+
+    /// The literal `X-SNAP` wire token, including an unknown one.
+    pub fn token(&self) -> &str {
+        match self {
+            SnapMode::Other(t) => t,
+            known => known.name(),
         }
     }
 }
 broadcast_common::impl_spec_display!(SnapMode);
 
 /// `X-RESTRICT` identifier (Appendix D §D.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum RestrictMode {
@@ -54,14 +66,26 @@ pub enum RestrictMode {
     /// `JUMP` — the client must not allow seeking across the interstitial's
     /// `START-DATE` without first playing it.
     Jump,
+    /// An identifier this crate does not know, kept verbatim so a parse then
+    /// render is lossless and a newer value is not an error.
+    Other(String),
 }
 
 impl RestrictMode {
-    /// Stable label — the literal `X-RESTRICT` wire token.
+    /// Stable label; `"other"` for [`RestrictMode::Other`] (see [`Self::token`]).
     pub fn name(&self) -> &'static str {
         match self {
             RestrictMode::Skip => "SKIP",
             RestrictMode::Jump => "JUMP",
+            RestrictMode::Other(_) => "other",
+        }
+    }
+
+    /// The literal `X-RESTRICT` wire token, including an unknown one.
+    pub fn token(&self) -> &str {
+        match self {
+            RestrictMode::Other(t) => t,
+            known => known.name(),
         }
     }
 }

@@ -4,6 +4,7 @@ mod crypto_vectors;
 mod error_variants;
 mod filecc_congestion;
 mod handshake_round_trip;
+mod handshake_timestamps;
 mod io_concurrent_listener;
 mod io_config;
 mod io_forwarder_abort_on_drop;

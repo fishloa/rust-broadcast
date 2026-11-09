@@ -192,6 +192,9 @@ impl ChannelFilter {
 /// approximation under-reports whenever the loudest window isn't aligned
 /// to that grid. Memory is bounded by `window_samples` (a fixed multiple
 /// of the sample rate), never by measurement duration (issue #1072).
+///
+/// The running sum is re-based on the ring once per window, so floating-point
+/// error in the incremental update cannot accumulate beyond one window.
 #[derive(Debug, Clone)]
 struct SlidingWindowMax {
     /// Circular buffer, length `window_samples`.
@@ -242,6 +245,9 @@ impl SlidingWindowMax {
             }
         } else {
             self.running_sum += weighted_power - outgoing;
+            if self.write_pos == 0 {
+                self.running_sum = self.ring.iter().sum();
+            }
             self.update_max();
         }
     }
@@ -1042,8 +1048,31 @@ impl LoudnessMeter {
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
-    use super::{EXACT_BLOCKS, HISTOGRAM_BINS, LoudnessMeter, SHORT_TERM_SUB_BLOCKS};
+    use super::{
+        EXACT_BLOCKS, HISTOGRAM_BINS, LoudnessMeter, SHORT_TERM_SUB_BLOCKS, SlidingWindowMax,
+    };
     use crate::channel_layout::ChannelLayout;
+
+    #[test]
+    fn sliding_window_running_sum_stays_within_one_window_of_the_exact_sum() {
+        const WINDOW: usize = 7;
+        const BURST: f64 = 1.0e12;
+        const TRICKLE: f64 = 0.1;
+        let mut w = SlidingWindowMax::new(WINDOW);
+        for cycle in 0..350_000usize {
+            w.push(if cycle % WINDOW == 0 { BURST } else { TRICKLE });
+        }
+        for _ in 0..WINDOW {
+            w.push(TRICKLE);
+        }
+        let exact: f64 = w.ring.iter().sum();
+        let bound = WINDOW as f64 * f64::EPSILON * TRICKLE * 4.0;
+        assert!(
+            (w.running_sum - exact).abs() <= bound,
+            "running_sum {} drifted from exact {exact} by more than {bound}",
+            w.running_sum
+        );
+    }
 
     /// Issue #1072 (audit LOUD-C2): the bounded ring/tracker state must
     /// never grow with sample RATE or sample COUNT, only with measurement
