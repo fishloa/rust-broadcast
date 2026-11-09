@@ -451,7 +451,7 @@ fn push_code(out: &mut String, code: Option<u8>, option: NationalOption) {
 /// (clause 12.2, Table 26, attributes 0/A and 0/B: "characters outside this
 /// area are not displayed"; both reset at the start of a row); the two
 /// attribute cells and the padding at the box edges are not text and are
-/// trimmed. On any other page the whole row is rendered, trailing spaces
+/// trimmed; successive boxes on one row are separated by a single space. On any other page the whole row is rendered, trailing spaces
 /// trimmed.
 fn render_row(codes: &RowCodes, option: NationalOption, boxed_page: bool) -> String {
     let mut out = String::with_capacity(ROW_LEN);
@@ -459,7 +459,12 @@ fn render_row(codes: &RowCodes, option: NationalOption, boxed_page: bool) -> Str
         let mut in_box = false;
         for &code in codes {
             match code {
-                Some(START_BOX) => in_box = true,
+                Some(START_BOX) => {
+                    if !in_box && !out.is_empty() && !out.ends_with(' ') {
+                        out.push(' ');
+                    }
+                    in_box = true;
+                }
                 Some(END_BOX) => in_box = false,
                 _ if in_box => push_code(&mut out, code, option),
                 _ => {}
