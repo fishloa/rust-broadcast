@@ -65,3 +65,6 @@ pub use registry::{
 };
 pub use route::{AddSegmentError, HealthState, RouteHandle, TsHlsIdrStatus};
 pub use source::Source;
+
+#[cfg(test)]
+mod auditf_tests;
