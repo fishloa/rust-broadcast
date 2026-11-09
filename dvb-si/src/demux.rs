@@ -53,8 +53,11 @@
 //!
 //! # Version gate
 //!
-//! Each `(pid, table_id, table_id_extension, section_number)` tuple is packed
-//! into a `u64` key. The stored value is a change detector:
+//! Each `(pid, table_id, table_id_extension, section_number,
+//! current_next_indicator)` tuple is packed into a `u64` key, so a current
+//! and a next version of the same section (ETSI EN 300 468 §5.1.4) each keep
+//! their own entry and a steady carousel that alternates them is not
+//! re-emitted every cycle. The stored value is a change detector:
 //!
 //! - **Long-form** sections (`section_syntax_indicator == 1`, plus the TOT
 //!   exception) carry a 5-bit `version_number` and a trailing CRC-32 — the
@@ -89,6 +92,18 @@ const TOT_TABLE_ID: u8 = 0x73;
 const MIN_SECTION_LEN: usize = 3;
 /// Long-form extension header bytes (after the 3-byte common header).
 const LONG_FORM_EXTRA: usize = 5;
+/// `current_next_indicator` bit in the long-form version byte.
+const CURRENT_NEXT_MASK: u8 = 0x01;
+/// Gate-key bit position of `current_next_indicator` (above the 8-bit
+/// `section_number` field at bit 37).
+const KEY_CURRENT_NEXT_SHIFT: u32 = 45;
+/// Gate-key bit position of `table_id_extension` / `section_number`.
+const KEY_EXT_SHIFT: u32 = 21;
+const KEY_SECTION_NUMBER_SHIFT: u32 = 37;
+/// Gate-key bit position of `table_id`.
+const KEY_TABLE_ID_SHIFT: u32 = 13;
+/// Offset of `last_section_number` within a long-form section.
+const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 /// Trailing CRC-32 length.
 const CRC_LEN: usize = 4;
 
@@ -329,6 +344,8 @@ impl SiDemuxBuilder {
             completed_scratch: Vec::new(),
             protected_pids,
             pmt_pids: BTreeSet::new(),
+            pat_generation: None,
+            pat_sections: BTreeMap::new(),
         }
     }
 }
@@ -355,6 +372,12 @@ pub struct SiDemux {
     /// so a later PAT version that drops a programme can stop watching its
     /// PMT PID instead of leaving it watched forever (r02-W8).
     pmt_pids: BTreeSet<Pid>,
+    /// `(transport_stream_id, version_number)` of the PAT whose sections are
+    /// being accumulated in `pat_sections`.
+    pat_generation: Option<(u16, u8)>,
+    /// PMT PIDs named by each section (keyed by `section_number`) of the
+    /// current PAT generation.
+    pat_sections: BTreeMap<u8, BTreeSet<Pid>>,
 }
 
 impl SiDemux {
@@ -437,16 +460,17 @@ impl SiDemux {
             }
         }
 
-        let (ext, section_number, version, change_crc) =
+        let (ext, section_number, version, current, change_crc) =
             if long_form && section.len() >= MIN_SECTION_LEN + LONG_FORM_EXTRA + CRC_LEN {
                 let ext = ((section[3] as u16) << 8) | section[4] as u16;
                 let version = (section[5] >> 1) & 0x1F;
+                let current = section[5] & CURRENT_NEXT_MASK != 0;
                 let section_number = section[6];
                 // For long-form the trailing CRC already uniquely fingerprints the
                 // payload; reuse it as the change hash.
                 let (_, crc_bytes) = section.split_last_chunk::<CRC_LEN>().unwrap();
                 let crc = u32::from_be_bytes(*crc_bytes);
-                (ext, section_number, version, crc)
+                (ext, section_number, version, current, crc)
             } else {
                 // Short-form (incl. TOT and any malformed long-form that slipped
                 // the size check above): no version, ext/section_number = 0,
@@ -455,14 +479,16 @@ impl SiDemux {
                     0u16,
                     0u8,
                     0u8,
+                    true,
                     broadcast_common::crc32_mpeg2::compute(&section),
                 )
             };
 
         let key = (pid.value() as u64)
-            | ((table_id as u64) << 13)
-            | ((ext as u64) << 21)
-            | ((section_number as u64) << 37);
+            | ((table_id as u64) << KEY_TABLE_ID_SHIFT)
+            | ((ext as u64) << KEY_EXT_SHIFT)
+            | ((section_number as u64) << KEY_SECTION_NUMBER_SHIFT)
+            | (u64::from(current) << KEY_CURRENT_NEXT_SHIFT);
 
         let entry = GateEntry {
             version,
@@ -501,7 +527,12 @@ impl SiDemux {
                 bytes: section,
             };
             // PAT-follow happens on an emitted (changed) PAT only.
-            if self.cfg.follow_pat && changed && table_id == PAT_TABLE_ID {
+            if self.cfg.follow_pat
+                && changed
+                && current
+                && table_id == PAT_TABLE_ID
+                && pid == mpeg_ts::pid::well_known::PAT
+            {
                 self.follow_pat(&event);
             }
             self.stats.emitted += 1;
@@ -511,32 +542,53 @@ impl SiDemux {
         }
     }
 
-    /// Parse the PAT and register each programme's PMT PID with a fresh
-    /// reassembler, and stop watching a previously-followed PMT PID that
-    /// this PAT version no longer names (r02-W8) — unless it's also a
-    /// `protected_pid` (a well-known SI PID or a caller-supplied `.pid(...)`,
-    /// which `follow_pat` never touches). Parse failures are silently
-    /// ignored — a malformed PAT that nonetheless passed CRC is implausible,
-    /// and we never panic.
+    /// Parse a *current* PAT section on PID 0 and register each programme's
+    /// PMT PID with a fresh reassembler. A PAT may span several sections
+    /// (ISO/IEC 13818-1 §2.4.4.3), so the followed set is the union over every
+    /// section of the current `(transport_stream_id, version_number)`; a
+    /// previously-followed PMT PID is dropped (r02-W8) only once all sections
+    /// of the new version have been seen, and never if it is a `protected_pid`
+    /// (a well-known SI PID or a caller-supplied `.pid(...)`). Parse failures
+    /// are silently ignored — a malformed PAT that nonetheless passed CRC is
+    /// implausible, and we never panic.
     fn follow_pat(&mut self, event: &SectionEvent) {
         use crate::tables::pat::PatSection;
         use broadcast_common::Parse;
-        if let Ok(pat) = PatSection::parse(&event.bytes) {
-            let new_pmt_pids: BTreeSet<Pid> = pat
-                .entries
-                .iter()
-                .filter(|e| e.program_number != 0)
-                .map(|e| e.pid)
-                .collect();
-            for &pid in &new_pmt_pids {
-                self.pids.entry(pid).or_default();
-            }
-            for old_pid in self.pmt_pids.difference(&new_pmt_pids) {
+        let bytes = &event.bytes;
+        if bytes.len() < MIN_SECTION_LEN + LONG_FORM_EXTRA + CRC_LEN {
+            return;
+        }
+        let Ok(pat) = PatSection::parse(bytes) else {
+            return;
+        };
+        let generation = (pat.transport_stream_id, pat.version_number);
+        if self.pat_generation != Some(generation) {
+            self.pat_generation = Some(generation);
+            self.pat_sections.clear();
+        }
+        let section_pids: BTreeSet<Pid> = pat
+            .entries
+            .iter()
+            .filter(|e| e.program_number != 0)
+            .map(|e| e.pid)
+            .collect();
+        for &pid in &section_pids {
+            self.pids.entry(pid).or_default();
+        }
+        self.pat_sections.insert(bytes[6], section_pids);
+        let last_section = bytes[LAST_SECTION_NUMBER_OFFSET];
+        let complete = (0..=last_section).all(|n| self.pat_sections.contains_key(&n));
+        let mut union: BTreeSet<Pid> = self.pat_sections.values().flatten().copied().collect();
+        if complete {
+            for old_pid in self.pmt_pids.difference(&union) {
                 if !self.protected_pids.contains(old_pid) {
                     self.pids.remove(old_pid);
                 }
             }
-            self.pmt_pids = new_pmt_pids;
+            self.pmt_pids = union;
+        } else {
+            union.extend(self.pmt_pids.iter().copied());
+            self.pmt_pids = union;
         }
     }
 }

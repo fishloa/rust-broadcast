@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `SiDemux` PAT-follow: a PAT spanning several sections no longer unwatches the PMT PIDs named only by other sections; the watch set is the union over every section of the current version and is pruned only once all sections of a new version are seen.
+- `SiDemux` PAT-follow: a `current_next_indicator = 0` PAT is no longer followed, and a `table_id` 0 section on a PID other than 0 no longer rewrites the watch set.
+- `SiDemux` version gate: the gate key now includes `current_next_indicator`, so a current and a next version of the same section (NIT/SDT/EIT) are no longer re-emitted on every carousel cycle.
 
 ## [13.0.0] - 2026-11-07
 ### Removed
