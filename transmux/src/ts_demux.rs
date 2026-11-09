@@ -5738,8 +5738,8 @@ impl StreamingTsDemux {
 
     /// Drop a PID that a PMT no longer declares (issue #774): remove it from
     /// every bookkeeping set (`es_seen`/`codec_order`/`data_order`/`resolved`)
-    /// and drop its [`StreamState`] entirely — any in-flight PES/backlog for
-    /// it goes with it, so no [`DemuxEvent::Sample`] can ever follow the
+    /// and drop its [`StreamState`] entirely after flushing what it still holds
+    /// whole, so no [`DemuxEvent::Sample`] can ever follow the
     /// [`DemuxEvent::TrackRemoved`] this emits below. Only emits
     /// `TrackRemoved` when the PID had actually reached `Live` (a real
     /// `track_id` a consumer has seen via `TrackAdded`) — a PID removed while
@@ -5773,26 +5773,23 @@ impl StreamingTsDemux {
         // gap handling would otherwise drop that first, perfectly good access
         // unit as truncated).
         self.cc_states.remove(&pid);
-        if let Some(stream) = self.streams.remove(&pid)
-            && let Some(TrackState::Live(mut live)) = stream.track
-        {
-            // An E-AC-3 track holding back its final access unit for a
-            // possible dependent substream (#1186) received that unit whole:
-            // emit it before the track goes (as `finish()` does), or the
-            // removal silently drops the last access unit.
-            if let LiveKind::Audio { kind, anchor, .. } = &mut live.kind
-                && anchor.hold_final_au
-            {
-                flush_audio_carry(kind, anchor, live.track_id, &mut self.events);
+        if let Some(mut stream) = self.streams.remove(&pid) {
+            // Everything that arrived whole before the PMT change is still
+            // owed to the consumer: the access unit complete in the PES
+            // assembler, the one-behind pending sample and any held audio
+            // carry go out before `TrackRemoved`, as `finish()` would emit them.
+            flush_stream_pes_tail(pid, &mut stream, &mut self.events);
+            flush_stream_live_tail(pid, &mut stream, &mut self.events);
+            if let Some(TrackState::Live(live)) = stream.track {
+                self.events.push_back(DemuxEvent::TrackRemoved {
+                    track_id: live.track_id,
+                    provenance: EventProvenance {
+                        pid: Some(pid),
+                        packet_index: None,
+                        program_number: None,
+                    },
+                });
             }
-            self.events.push_back(DemuxEvent::TrackRemoved {
-                track_id: live.track_id,
-                provenance: EventProvenance {
-                    pid: Some(pid),
-                    packet_index: None,
-                    program_number: None,
-                },
-            });
         }
     }
 
@@ -6439,28 +6436,7 @@ impl StreamingTsDemux {
             self.push_resync_loss(loss);
         }
         for (&pid, stream) in self.streams.iter_mut() {
-            // Only a PES assembler has a trailing partial payload to flush; a
-            // trailing partial (incomplete) section is genuinely undecodable
-            // and is simply dropped by `SectionReassembler` itself.
-            let completed = match &mut stream.carrier {
-                Carrier::Pes(assembler) => assembler.flush(),
-                Carrier::Section(_) => None,
-            };
-            if let Some(completed) = completed {
-                // The same two-part intactness rule the mid-stream path uses
-                // (r04-W49): the CC mark, *and* — for a bounded PES — the
-                // declared length actually having arrived. A trailing PES that
-                // stopped short of what its own header declared is truncated,
-                // and flushing it at end of input would deliver that
-                // truncation as if it were complete.
-                let short_of_declared = stream.pes_declared_len > 0
-                    && completed.len() < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
-                if stream.current_pes_intact && !short_of_declared {
-                    on_completed_pes(stream, pid, &completed, &mut self.events);
-                } else if matches!(stream.codec, Codec::H264 | Codec::Hevc) {
-                    harvest_damaged_au(stream, pid, &completed, &mut self.events);
-                }
-            }
+            flush_stream_pes_tail(pid, stream, &mut self.events);
         }
     }
 
@@ -6496,48 +6472,66 @@ impl StreamingTsDemux {
     /// live track.
     fn flush_live_tails(&mut self) {
         for (&pid, stream) in self.streams.iter_mut() {
-            if let Some(TrackState::Live(live)) = &mut stream.track {
-                let provenance = EventProvenance {
-                    pid: Some(pid),
-                    packet_index: None,
-                    program_number: None,
-                };
-                match &mut live.kind {
-                    LiveKind::Video {
-                        pending,
-                        last_duration,
-                        ..
-                    } => {
-                        flush_one_behind(
-                            pending,
-                            *last_duration,
-                            live.track_id,
-                            provenance,
-                            &mut self.events,
-                        );
-                    }
-                    LiveKind::Data {
-                        pending,
-                        last_duration,
-                    }
-                    | LiveKind::MpegH {
-                        pending,
-                        last_duration,
-                    } => {
-                        flush_one_behind(
-                            pending,
-                            *last_duration,
-                            live.track_id,
-                            provenance,
-                            &mut self.events,
-                        );
-                    }
-                    LiveKind::Audio { kind, anchor, .. } => {
-                        flush_audio_carry(kind, anchor, live.track_id, &mut self.events);
-                    }
-                    LiveKind::Section => {}
-                }
+            flush_stream_live_tail(pid, stream, &mut self.events);
+        }
+    }
+}
+
+/// Complete one PID's buffered PES payload at end of a timeline.
+fn flush_stream_pes_tail(pid: Pid, stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>) {
+    // Only a PES assembler has a trailing partial payload to flush; a trailing
+    // partial (incomplete) section is genuinely undecodable and is simply
+    // dropped by `SectionReassembler` itself.
+    let completed = match &mut stream.carrier {
+        Carrier::Pes(assembler) => assembler.flush(),
+        Carrier::Section(_) => None,
+    };
+    if let Some(completed) = completed {
+        // The same two-part intactness rule the mid-stream path uses
+        // (r04-W49): the CC mark, *and* — for a bounded PES — the declared
+        // length actually having arrived. A trailing PES that stopped short of
+        // what its own header declared is truncated, and flushing it at end of
+        // input would deliver that truncation as if it were complete.
+        let short_of_declared = stream.pes_declared_len > 0
+            && completed.len() < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
+        if stream.current_pes_intact && !short_of_declared {
+            on_completed_pes(stream, pid, &completed, events);
+        } else if matches!(stream.codec, Codec::H264 | Codec::Hevc) {
+            harvest_damaged_au(stream, pid, &completed, events);
+        }
+    }
+}
+
+/// Emit one PID's one-behind pending sample and held audio carry.
+fn flush_stream_live_tail(pid: Pid, stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>) {
+    if let Some(TrackState::Live(live)) = &mut stream.track {
+        let provenance = EventProvenance {
+            pid: Some(pid),
+            packet_index: None,
+            program_number: None,
+        };
+        match &mut live.kind {
+            LiveKind::Video {
+                pending,
+                last_duration,
+                ..
+            } => {
+                flush_one_behind(pending, *last_duration, live.track_id, provenance, events);
             }
+            LiveKind::Data {
+                pending,
+                last_duration,
+            }
+            | LiveKind::MpegH {
+                pending,
+                last_duration,
+            } => {
+                flush_one_behind(pending, *last_duration, live.track_id, provenance, events);
+            }
+            LiveKind::Audio { kind, anchor, .. } => {
+                flush_audio_carry(kind, anchor, live.track_id, events);
+            }
+            LiveKind::Section => {}
         }
     }
 }
