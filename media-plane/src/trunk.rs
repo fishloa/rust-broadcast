@@ -1386,6 +1386,15 @@ impl PartLog {
             .collect()
     }
 
+    /// The lowest segment number above `after` that has a resident part.
+    fn first_segment_after(&self, after: Option<SegmentSeq>) -> Option<SegmentSeq> {
+        self.by_segment
+            .keys()
+            .copied()
+            .filter(|seq| after.is_none_or(|closed| *seq > closed))
+            .min()
+    }
+
     /// The most recently published resident part for the pair.
     fn part_bytes(&self, segment_number: SegmentSeq, part_index: PartIndex) -> Option<Bytes> {
         self.by_segment
@@ -1983,6 +1992,17 @@ impl Trunk {
     /// survived in the ring.
     pub fn parts_in_segment(&self, segment_number: SegmentSeq) -> Vec<PartEntry> {
         self.lock_state().parts.in_segment(segment_number)
+    }
+
+    /// The segment that is still open: the lowest segment number above
+    /// [`Trunk::last_closed_segment`] (any, when none has closed) that has a
+    /// resident part, or `None` when no part is waiting on its segment to
+    /// close. Unlike probing `last_closed_segment() + 1`, this holds for a
+    /// segmenter whose first segment is not numbered `1`.
+    pub fn open_segment(&self) -> Option<SegmentSeq> {
+        let state = self.lock_state();
+        let closed = state.segments.entries.back().map(|e| e.sequence_number);
+        state.parts.first_segment_after(closed)
     }
 
     /// Diagnostic: entries currently resident in the live-part log. Never

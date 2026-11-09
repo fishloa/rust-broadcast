@@ -1223,3 +1223,47 @@ fn token_less_names_resolve_but_are_never_immutable() {
         }
     }
 }
+
+#[test]
+fn a_segmenter_numbering_from_above_one_renders_the_open_segments_parts() {
+    let (trunk, w) = trunk_with(8, 64);
+    let o = HlsOrigin::builder(Arc::clone(&trunk))
+        .target_duration_secs(4.0)
+        .window_segments(nz(6))
+        .low_latency(500)
+        .hold_cold_playlist(false)
+        .build()
+        .expect("origin builds");
+    publish_part(&w, 5, 0);
+    publish_part(&w, 5, 1);
+    let rendered = playlist(&o);
+    assert_eq!(rendered.matches("#EXT-X-PART:").count(), 2, "{rendered}");
+}
+
+#[test]
+fn a_bare_msn_reload_is_answered_only_with_a_playlist_that_lists_that_segment() {
+    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+    let w = trunk.segment_writer().expect("segment writer");
+    publish_seg(&w, 1, 4, false);
+    let o = origin(&trunk, 4, false);
+    let (now, policy) = patient();
+    let response = o.resolve(
+        HlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery {
+                hls_msn: Some(1),
+                ..BlockingQuery::default()
+            },
+        },
+        now,
+        policy,
+    );
+    match response {
+        EgressResponse::Ready {
+            body: HlsBody::Playlist(m),
+            ..
+        } => assert!(m.contains("seg-1-"), "satisfied but segment 1 missing: {m}"),
+        EgressResponse::Await { .. } => {}
+        other => panic!("{other:?}"),
+    }
+}

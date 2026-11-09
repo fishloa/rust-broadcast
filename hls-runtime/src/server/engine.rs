@@ -3073,27 +3073,22 @@ impl HlsOrigin {
     /// resident live parts)` — the `Trunk`-only replacement for the deleted
     /// `MediaStore::latest_progress`.
     ///
-    /// Derivation: the only segment that can possibly have live, not-yet-
-    /// closed parts is the one immediately after
-    /// [`Trunk::last_closed_segment`] (a segmenter never opens segment N+2's
-    /// parts before N+1 closes) — so probing exactly that one candidate via
-    /// [`Trunk::parts_in_segment`] is exact, not a heuristic. If that probe
-    /// is empty (nothing has started for the next segment yet — e.g. the
-    /// instant after a close, before its successor's first part lands), the
-    /// answer falls back to `last_closed_segment` itself, with an empty part
-    /// list — exactly the degenerate state `MediaStore::latest_progress`
-    /// also returned right after `add_segment` cleared `live_parts`.
+    /// Derivation: the open segment is [`Trunk::open_segment`], the lowest
+    /// segment above [`Trunk::last_closed_segment`] that has resident parts
+    /// (not simply `last_closed + 1`, which a segmenter whose first segment is
+    /// numbered above 1 never reaches). If there is none (nothing has started
+    /// for the next segment yet — e.g. the instant after a close, before its
+    /// successor's first part lands), the answer falls back to
+    /// `last_closed_segment` itself, with an empty part list — exactly the
+    /// degenerate state `MediaStore::latest_progress` also returned right after `add_segment` cleared `live_parts`.
     fn live_edge(&self) -> (SegmentSeq, Vec<PartEntry>) {
         let last_closed = self
             .trunk
             .last_closed_segment()
             .unwrap_or(SegmentSeq::new(0));
-        let candidate = last_closed.saturating_next();
-        let parts = self.trunk.parts_in_segment(candidate);
-        if parts.is_empty() {
-            (last_closed, Vec::new())
-        } else {
-            (candidate, parts)
+        match self.trunk.open_segment() {
+            Some(open) => (open, self.trunk.parts_in_segment(open)),
+            None => (last_closed, Vec::new()),
         }
     }
 
