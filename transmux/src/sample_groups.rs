@@ -18,8 +18,10 @@
 //!
 //! - **prft**: ISO/IEC 14496-12:2015 §8.16.5.2 — version 0: `media_time` is u32;
 //!   version 1: `media_time` is u64.
-//! - **sgpd**: ISO/IEC 14496-12:2015 §8.9.3.2 — version 1: `default_length` field
-//!   present; version 0 is deprecated. Only `'roll'` (RollRecoveryEntry, i16
+//! - **sgpd**: ISO/IEC 14496-12:2026 §8.9.3.2 — version >= 1: `default_length`
+//!   present; version >= 2: `default_group_description_index` also present;
+//!   version 3 is an essential group ([`SampleGroupDescriptionBox::is_essential`]);
+//!   version 0 is deprecated. Only `'roll'` (RollRecoveryEntry, i16
 //!   `roll_distance`) is typed; all other grouping types are stored as raw bytes
 //!   via [`SgpdEntry::Unknown`].
 //! - **sbgp**: ISO/IEC 14496-12:2015 §8.9.2.2 — version 0: no
@@ -50,6 +52,13 @@ const SGPD_TYPE: u32 = u32::from_be_bytes(*b"sgpd");
 const SBGP_TYPE: u32 = u32::from_be_bytes(*b"sbgp");
 const SUBS_TYPE: u32 = u32::from_be_bytes(*b"subs");
 const SSRT_TYPE: u32 = u32::from_be_bytes(*b"ssrt");
+
+/// First `sgpd` version with `default_length` and per-entry `description_length` — ISO/IEC 14496-12:2026 §8.9.3.2.
+pub const SGPD_VERSION_DEFAULT_LENGTH: u8 = 1;
+/// First `sgpd` version with `default_group_description_index` — §8.9.3.2.
+pub const SGPD_VERSION_GROUP_INDEX: u8 = 2;
+/// `sgpd` version marking an essential sample group description — §8.9.3.1.
+pub const SGPD_VERSION_ESSENTIAL: u8 = 3;
 
 /// First `subs` version that uses the reference form — ISO/IEC 14496-12:2026 §8.7.7.2.
 pub const SUBS_VERSION_REFERENCE: u8 = 2;
@@ -268,23 +277,23 @@ impl SgpdEntry {
     }
 }
 
-/// Sample Group Description Box (`sgpd`) — ISO/IEC 14496-12:2015 §8.9.3.2.
+/// Sample Group Description Box (`sgpd`) — ISO/IEC 14496-12:2026 §8.9.3.2.
 ///
-/// Version 1 is the current (non-deprecated) form and is the only version
-/// emitted by this serializer. Version 0 can be parsed.
+/// Versions 0 to 3 parse and serialize at their own version.
 ///
 /// Wire layout (FullBox header omitted):
 ///
 /// ```text
 /// grouping_type          u(32)
-/// default_length         u(32)  — version == 1 only
+/// default_length         u(32)  — version >= 1
+/// default_group_description_index u(32) — version >= 2
 /// entry_count            u(32)
 /// for each entry:
-///   [description_length  u(32)] — only if version == 1 && default_length == 0
+///   [description_length  u(32)] — only if version >= 1 && default_length == 0
 ///   SampleGroupEntry (grouping_type)
 /// ```
 ///
-/// When `version == 1` and `default_length != 0`, every entry has the same
+/// When `version >= 1` and `default_length != 0`, every entry has the same
 /// length (`default_length` bytes). When `default_length == 0`, each entry is
 /// preceded by a 4-byte `description_length`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,20 +305,27 @@ pub struct SampleGroupDescriptionBox {
     pub flags: u32,
     /// Four-CC grouping type (e.g. `GROUPING_TYPE_ROLL`).
     pub grouping_type: u32,
-    /// `default_length` from the v1 syntax; 0 means variable-length entries.
+    /// `default_length` (version >= 1); 0 means variable-length entries.
     ///
     /// On serialization this is recomputed from entries: if all entries have the
     /// same `wire_len`, `default_length` is set to that value; otherwise 0
     /// (each entry gets an explicit `description_length` prefix).
     pub default_length: u32,
-    /// `default_sample_description_index` from the v2 syntax (§8.9.3.2),
-    /// preserved so a v2 box round-trips; `None` for any other version.
-    pub default_sample_description_index: Option<u32>,
+    /// `default_group_description_index` (version >= 2, §8.9.3.2; the 2015
+    /// edition called it `default_sample_description_index`): `None` for
+    /// version < 2, where it is not coded.
+    pub default_group_description_index: Option<u32>,
     /// Parsed entries.
     pub entries: Vec<SgpdEntry>,
 }
 
 impl SampleGroupDescriptionBox {
+    /// Version 3: an essential sample group description (§8.9.3.1). A reader
+    /// that does not recognise `grouping_type` must not process the track.
+    pub fn is_essential(&self) -> bool {
+        self.version >= SGPD_VERSION_ESSENTIAL
+    }
+
     /// Parse the body of an `sgpd` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(body, FULLBOX_EXTRA_SIZE + 4 + 4, "sgpd body")?;
@@ -318,29 +334,22 @@ impl SampleGroupDescriptionBox {
         let mut c = FULLBOX_EXTRA_SIZE;
         let grouping_type = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
         c += 4;
-        let mut default_sample_description_index = None;
+        let mut default_group_description_index = None;
 
-        let default_length = if version == 1 {
+        let default_length = if version >= SGPD_VERSION_DEFAULT_LENGTH {
             need_in(body, c + 4, "sgpd default_length")?;
             let dl = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
             dl
-        } else if version >= 2 {
-            // Version 2 replaces `default_length` with
-            // `default_sample_description_index` (§8.9.3.2). It has to be
-            // stored, not skipped: the serializer used to write that field
-            // only for `version == 1` while keeping `version = 2`, so a parsed
-            // v2 `sgpd` re-serialized 4 bytes short of its own declared syntax
-            // and every reader took `entry_count` from the wrong offset
-            // (audit r05-W15).
-            need_in(body, c + 4, "sgpd default_sample_description_index")?;
+        } else {
+            0
+        };
+        if version >= SGPD_VERSION_GROUP_INDEX {
+            need_in(body, c + 4, "sgpd default_group_description_index")?;
             let idx = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
             c += 4;
-            default_sample_description_index = Some(idx);
-            0
-        } else {
-            0 // version 0: no default_length field
-        };
+            default_group_description_index = Some(idx);
+        }
 
         need_in(body, c + 4, "sgpd entry_count")?;
         let entry_count =
@@ -353,7 +362,7 @@ impl SampleGroupDescriptionBox {
         // `default_length` is 0, else `default_length` itself; 2 bytes for a
         // v0 'roll' entry; 1 byte as a floor for the "consume the rest as one
         // blob" v0 fallback.
-        let sgpd_min_entry_len: usize = if version == 1 {
+        let sgpd_min_entry_len: usize = if version >= SGPD_VERSION_DEFAULT_LENGTH {
             if default_length == 0 {
                 4
             } else {
@@ -384,13 +393,14 @@ impl SampleGroupDescriptionBox {
             entry_count,
         ));
         for _ in 0..entry_count {
-            let entry_len: usize = if version == 1 && default_length == 0 {
+            let entry_len: usize = if version >= SGPD_VERSION_DEFAULT_LENGTH && default_length == 0
+            {
                 need_in(body, c + 4, "sgpd description_length")?;
                 let dl =
                     u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]) as usize;
                 c += 4;
                 dl
-            } else if version == 1 {
+            } else if version >= SGPD_VERSION_DEFAULT_LENGTH {
                 default_length as usize
             } else {
                 // version 0: entry size is implied by the grouping_type; we
@@ -441,7 +451,7 @@ impl SampleGroupDescriptionBox {
             flags,
             grouping_type,
             default_length,
-            default_sample_description_index,
+            default_group_description_index,
             entries,
         })
     }
@@ -473,14 +483,19 @@ impl Serialize for SampleGroupDescriptionBox {
             .iter()
             .map(|e| entry_overhead + e.wire_len())
             .sum();
-        // header + fullbox + grouping_type + [default_length | index] +
-        // entry_count + entries. Version 2 replaces `default_length` with
-        // `default_sample_description_index` (§8.9.3.2) — same 4 bytes, and
-        // omitting it re-framed the whole box (audit r05-W15).
-        let dl_field = if self.version >= 1 { 4 } else { 0 };
+        let dl_field = if self.version >= SGPD_VERSION_DEFAULT_LENGTH {
+            4
+        } else {
+            0
+        };
+        let index_field = if self.version >= SGPD_VERSION_GROUP_INDEX {
+            4
+        } else {
+            0
+        };
         let _ = use_default_len;
         crate::box_types::box_len(
-            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + dl_field + 4 + entries_size,
+            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + dl_field + index_field + 4 + entries_size,
         )
     }
 
@@ -498,12 +513,13 @@ impl Serialize for SampleGroupDescriptionBox {
         c += 4;
         buf[c..c + 4].copy_from_slice(&self.grouping_type.to_be_bytes());
         c += 4;
-        if self.version == 1 {
+        if self.version >= SGPD_VERSION_DEFAULT_LENGTH {
             buf[c..c + 4].copy_from_slice(&effective_dl.to_be_bytes());
             c += 4;
-        } else if self.version >= 2 {
-            let index = self.default_sample_description_index.ok_or(Error::InvalidInput(
-                "sgpd version 2 requires default_sample_description_index (ISO/IEC 14496-12 §8.9.3.2)",
+        }
+        if self.version >= SGPD_VERSION_GROUP_INDEX {
+            let index = self.default_group_description_index.ok_or(Error::InvalidInput(
+                "sgpd version 2 and later require default_group_description_index (ISO/IEC 14496-12:2026 §8.9.3.2)",
             ))?;
             buf[c..c + 4].copy_from_slice(&index.to_be_bytes());
             c += 4;
@@ -539,10 +555,7 @@ impl SampleGroupDescriptionBox {
     ///
     /// Returns `(effective_default_length, per_entry_prefix_needed)`.
     fn effective_default_length(&self) -> (u32, bool) {
-        // Only v1's syntax has the `default_length`/per-entry-description_length
-        // pair; v2 carries a sample-description index instead and every entry
-        // is self-describing (§8.9.3.2).
-        if self.version != 1 || self.entries.is_empty() {
+        if self.version < SGPD_VERSION_DEFAULT_LENGTH || self.entries.is_empty() {
             return (0, false);
         }
         let first = self.entries[0].wire_len();
@@ -1467,43 +1480,88 @@ mod tests {
     // sgpd
     // -----------------------------------------------------------------------
 
-    /// `sgpd` version 2 replaces `default_length` with
-    /// `default_sample_description_index` (ISO/IEC 14496-12:2015 §8.9.3.2) —
-    /// the same 4 bytes, in the same position. The parser skipped the field
-    /// and the serializer wrote it only for `version == 1`, so a parsed v2 box
-    /// was re-emitted 4 bytes short of its own syntax and every reader took
-    /// `entry_count` from the wrong offset (audit r05-W15).
+    /// `sgpd` version 2 keeps `default_length` and adds
+    /// `default_group_description_index` (ISO/IEC 14496-12:2026 §8.9.3.2).
     #[test]
-    fn sgpd_v2_round_trips_with_the_description_index() {
+    fn sgpd_v2_round_trips_with_the_group_index() {
         let b = SampleGroupDescriptionBox {
             version: 2,
             flags: 0,
             grouping_type: GROUPING_TYPE_ROLL,
             default_length: 0,
-            default_sample_description_index: Some(3),
+            default_group_description_index: Some(3),
             entries: alloc::vec![SgpdEntry::Roll { roll_distance: -1 }],
         };
         let bytes = b.try_to_bytes().unwrap();
-        // 8 header + 4 FullBox + 4 grouping_type + 4 index + 4 entry_count
-        // + 2 roll_distance (v2 entries are self-describing, §8.9.3.2).
-        assert_eq!(bytes.len(), 26, "v2 must carry the index field");
+        // 8 header + 4 FullBox + 4 grouping_type + 4 default_length + 4 index
+        // + 4 entry_count + 2 roll_distance (default_length 2).
+        assert_eq!(bytes.len(), 30, "v2 carries default_length and the index");
         let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
         assert_eq!(parsed.version, 2);
-        assert_eq!(parsed.default_sample_description_index, Some(3));
+        assert_eq!(parsed.default_group_description_index, Some(3));
         assert_eq!(parsed.entries, b.entries);
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes, "v2 round-trip");
+    }
+
+    /// ISO/IEC 14496-12:2026 §8.9.3.2: `default_length` is present for every
+    /// version >= 1 and `default_group_description_index` is *additionally*
+    /// present for version >= 2, so a version 2 or 3 body carries both before
+    /// `entry_count`.
+    fn sgpd_v2_plus_body(version: u8) -> [u8; 30] {
+        [
+            0, 0, 0, 30, b's', b'g', b'p', b'd', version, 0, 0, 0, b'r', b'o', b'l', b'l', 0, 0, 0,
+            2, 0, 0, 0, 1, 0, 0, 0, 1, 0xFF, 0xFF,
+        ]
+    }
+
+    #[test]
+    fn sgpd_v2_and_v3_carry_default_length_and_group_index() {
+        for version in [2u8, 3] {
+            let bytes = sgpd_v2_plus_body(version);
+            let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
+            assert_eq!(parsed.default_length, 2, "v{version} default_length");
+            assert_eq!(parsed.default_group_description_index, Some(1));
+            assert_eq!(
+                parsed.entries,
+                alloc::vec![SgpdEntry::Roll { roll_distance: -1 }]
+            );
+            assert_eq!(parsed.is_essential(), version == SGPD_VERSION_ESSENTIAL);
+            assert_eq!(
+                parsed.try_to_bytes().unwrap(),
+                bytes,
+                "v{version} round trip"
+            );
+        }
+    }
+
+    #[test]
+    fn sgpd_v2_per_entry_description_length_when_default_length_is_zero() {
+        let bytes: [u8; 39] = [
+            0, 0, 0, 39, b's', b'g', b'p', b'd', 2, 0, 0, 0, b'x', b'y', b'z', b'w', 0, 0, 0, 0, 0,
+            0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 1, 0xAA, 0, 0, 0, 2, 0xBB, 0xCC,
+        ];
+        let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.default_group_description_index, Some(2));
+        assert_eq!(
+            parsed.entries,
+            alloc::vec![
+                SgpdEntry::Unknown(alloc::vec![0xAA]),
+                SgpdEntry::Unknown(alloc::vec![0xBB, 0xCC])
+            ]
+        );
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     /// A v2 box whose index field is absent from the struct cannot be written:
     /// guessing a value would mislabel the box's own syntax.
     #[test]
-    fn sgpd_v2_without_the_description_index_errors() {
+    fn sgpd_v2_without_the_group_index_errors() {
         let b = SampleGroupDescriptionBox {
             version: 2,
             flags: 0,
             grouping_type: GROUPING_TYPE_ROLL,
             default_length: 0,
-            default_sample_description_index: None,
+            default_group_description_index: None,
             entries: alloc::vec![SgpdEntry::Roll { roll_distance: -1 }],
         };
         let err = b.try_to_bytes().unwrap_err();
@@ -1546,7 +1604,7 @@ mod tests {
             flags: 0,
             grouping_type: GROUPING_TYPE_ROLL,
             default_length: 2,
-            default_sample_description_index: None,
+            default_group_description_index: None,
             entries: vec![SgpdEntry::Roll { roll_distance: -1 }],
         };
         let bytes = b.try_to_bytes().unwrap();
@@ -1563,7 +1621,7 @@ mod tests {
             flags: 0,
             grouping_type: GROUPING_TYPE_ROLL,
             default_length: 2,
-            default_sample_description_index: None,
+            default_group_description_index: None,
             entries: vec![
                 SgpdEntry::Roll { roll_distance: -4 },
                 SgpdEntry::Roll { roll_distance: -1 },

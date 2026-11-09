@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A signalled TS time-base discontinuity lifts every stream of the program by one common offset (the first stream to reach the new base fixes it), so the new base's own A/V skew survives the splice; each PID used to be lifted independently to its own last stamp plus one period, replacing the new skew with the old one (up to one frame). A stream the shared offset would not keep monotonic falls back to its own lift.
 - `StreamingTsDemux::finish` demuxes the aligned packets at the end of input that `TsResync` could not yet confirm (up to four after a corrupt sync byte) instead of dropping them.
 - `SubSampleInformationBox` rejects `subs` version 2 with a typed error instead of silently reading it with the version 0 layout; parse it with `SubSampleInformationBoxV2` (#1905).
+- `SampleGroupDescriptionBox` reads and writes `sgpd` version 2 and 3 per ISO/IEC 14496-12:2026 §8.9.3.2: `default_length` for every version >= 1 plus `default_group_description_index` for version >= 2, so `entry_count` and the entries are read from the right offset; per-entry `description_length` applies to every version >= 1. `SampleGroupDescriptionBox::is_essential` reports a version 3 (essential) group (#1906).
 ### Added
 - `InputDegradation::Scrambled` (on the `#[non_exhaustive]` enum, so not breaking): reported once per payload packet with `transport_scrambling_control != 0` on a PES-carried PID.
 
@@ -25,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A CRC-valid PMT whose body does not parse no longer consumes its `version_number`, so the intact repeat of that version is applied (bug audit E).
 - `Fmp4Demux` reports a trailing `moof` with no following `mdat` as `InputDegradation::MalformedUnit` instead of dropping it silently (bug audit E).
 - `StreamingFlvDemux` unrolls the 32-bit millisecond tag timestamp, so a session past 2^32 ms keeps `dts` monotonic instead of stepping back to zero (bug audit E).
+
+### Changed
+- **BREAKING:** `SampleGroupDescriptionBox::default_sample_description_index` is renamed `default_group_description_index`, the 2026 name; the old name read as a sample-entry index, which is a different thing (#1906).
 
 ## [0.30.0] - 2026-11-07
 ### Added
