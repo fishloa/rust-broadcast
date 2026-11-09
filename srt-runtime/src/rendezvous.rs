@@ -443,6 +443,11 @@ impl RendezvousHandshake {
             // §4.3.2, L2101-2105: Version-4 legacy Rendezvous is out of scope.
             return Ok(self.reject(RejectionReason::Version));
         }
+        if hp.initial_seq_number > crate::packet::SEQ_NUMBER_MASK
+            && self.state != RendezvousHandshakeState::Idle
+        {
+            return Ok(self.reject(RejectionReason::Rogue));
+        }
         match self.state {
             RendezvousHandshakeState::Idle => Err(Error::HandshakeOutOfSequence {
                 state: self.state.name(),
