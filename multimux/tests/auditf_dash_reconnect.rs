@@ -1,0 +1,146 @@
+//! Bug audit F: DASH `$Number$` addressing across a source reconnect.
+//!
+//! A reconnect binds a fresh `Trunk` (segments numbered from 1 again). The HLS
+//! origin continues its Media Sequence Number through an offset, and the shared
+//! resource route names segments by that offset number, while the DASH MPD
+//! keeps `startNumber=1`. A DASH client therefore derives numbers the origin
+//! does not serve.
+
+#[allow(dead_code)]
+#[path = "support/origin.rs"]
+mod origin_support;
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use axum::http::StatusCode;
+use multimux::origin::{AppState, router};
+use multimux::output::Output;
+use multimux::output::dash::DashOutput;
+use multimux::route::RouteHandle;
+use origin_support::{body_string, get};
+use tower::ServiceExt;
+use transmux::TrackId;
+use transmux::ll_hls::LlHlsSegmenter;
+use transmux::{Mpd, TsDemux};
+
+use broadcast_common::Unpackage;
+
+const TARGET_SECS: f64 = 2.0;
+const PART_MS: u32 = 500;
+
+fn video_track() -> transmux::Track {
+    let media = TsDemux::new()
+        .unpackage(&std::fs::read(test_fixtures::path("ts/h264-aac-40s.ts")).expect("fixture"))
+        .expect("demux fixture");
+    let mut track = media
+        .tracks
+        .into_iter()
+        .find(|t| matches!(t.spec.config, transmux::CodecConfig::Avc { .. }))
+        .expect("video track");
+    track.spec.track_id = TrackId::new(1);
+    track
+}
+
+fn publish_run(
+    route: &RouteHandle,
+    program: media_plane::ProgramId,
+    track: &transmux::Track,
+    segments: u32,
+) {
+    let specs = vec![track.spec.clone()];
+    let mut seg = LlHlsSegmenter::with_part_target(
+        specs.clone(),
+        transmux::VIDEO_CLOCK_RATE,
+        TARGET_SECS,
+        PART_MS,
+    )
+    .expect("segmenter");
+    route.set_init(program, seg.init_segment().expect("init"));
+    route.set_track_specs(program, specs);
+    let mut published = 0;
+    for s in track.samples.iter().cloned() {
+        seg.push(TrackId::new(1), s).expect("push");
+        for part in seg.take_ready_parts() {
+            route.add_part(program, part);
+        }
+        for segment in seg.take_ready_segments() {
+            route.add_segment(program, segment).expect("add_segment");
+            published += 1;
+        }
+        if published >= segments {
+            return;
+        }
+    }
+    panic!("fixture too short for {segments} segments");
+}
+
+#[tokio::test]
+async fn control_without_a_reconnect_serves_every_derived_number() {
+    let track = video_track();
+    let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
+    let program = media_plane::ProgramId(0);
+    route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    assert_derived_numbers_served(route).await;
+}
+
+#[tokio::test]
+async fn dash_numbers_derived_from_the_mpd_are_served_after_a_reconnect() {
+    let track = video_track();
+    let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
+    let program = media_plane::ProgramId(0);
+    let first = route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+
+    route.release_program(program, &first);
+    route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    assert_derived_numbers_served(route).await;
+}
+
+async fn assert_derived_numbers_served(route: Arc<RouteHandle>) {
+
+    let mut streams = HashMap::new();
+    streams.insert(
+        "cam".to_string(),
+        (route.clone(), vec![Arc::new(DashOutput) as Arc<dyn Output>]),
+    );
+    let app = router(Arc::new(AppState::new(streams)));
+
+    let resp = app.clone().oneshot(get("/cam/manifest.mpd")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let xml = body_string(resp).await;
+    let mpd = Mpd::parse(&xml).expect("MPD parse");
+    let t = mpd.periods[0].adaptation_sets[0]
+        .segment_template
+        .clone()
+        .or_else(|| {
+            mpd.periods[0].adaptation_sets[0].representations[0]
+                .segment_template
+                .clone()
+        })
+        .expect("SegmentTemplate");
+    let media = t.media.expect("media template");
+
+    // The new run published three segments; a client three segments after
+    // availabilityStartTime derives startNumber..startNumber+2.
+    let mut failures = Vec::new();
+    for n in t.start_number..t.start_number + 3 {
+        let uri = media
+            .replace("$RepresentationID$", "1")
+            .replace("$Number$", &n.to_string());
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/cam/{uri}")))
+            .await
+            .unwrap();
+        if resp.status() != StatusCode::OK {
+            failures.push(format!("{uri} -> {}", resp.status()));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "DASH segments derived from the post-reconnect MPD are not served: {failures:?}\n{xml}"
+    );
+}
