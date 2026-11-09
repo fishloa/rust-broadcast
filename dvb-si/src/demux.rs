@@ -413,7 +413,14 @@ impl SiDemux {
                 // `completed` does not allocate until a section actually pops.
                 let mut completed = core::mem::take(&mut self.completed_scratch);
                 if let Some(reasm) = self.pids.get_mut(&pid) {
-                    reasm.feed(payload, ts.header.pusi);
+                    match ts.payload {
+                        Some(_) => reasm.feed_with_continuity(
+                            payload,
+                            ts.header.pusi,
+                            ts.header.continuity_counter,
+                        ),
+                        None => reasm.feed(payload, ts.header.pusi),
+                    }
                     while let Some(section) = reasm.pop_section() {
                         completed.push(section);
                     }
