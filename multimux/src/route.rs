@@ -1063,6 +1063,7 @@ impl ProgramServing {
         // persist, never pays for a `spawn_blocking` round-trip (issue #1083,
         // F: the UDP ingest path calls `advance_route` once per datagram).
         let latest = self.trunk.last_closed_segment();
+        let latest_init = self.init_generations().pop().map(|g| g.init);
         {
             // A `try_lock` (not a blocking lock): this runs on the async
             // ingest task, and the lock may be held by `poll_dvr_blocking`
@@ -1077,7 +1078,9 @@ impl ProgramServing {
             };
             match guard.as_ref() {
                 None => return,
-                Some(recorder) if !recorder.needs_poll(latest) => return,
+                Some(recorder) if !recorder.needs_poll_for_init(latest, latest_init.as_deref()) => {
+                    return;
+                }
                 Some(_) => {}
             }
         }
@@ -2805,6 +2808,61 @@ mod program_registry_tests {
             dvr_failed_metric(route_name),
             before + 1.0,
             "an already-abandoned recorder must not be counted twice"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn archived_periods(root: &std::path::Path) -> usize {
+        fn count(dir: &std::path::Path) -> usize {
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        count(&path)
+                    } else {
+                        usize::from(path.extension().is_some_and(|e| e == "m4s"))
+                    }
+                })
+                .sum()
+        }
+        count(root)
+    }
+
+    /// An init change with no new closed segment is archived at once: `needs_poll` used to
+    /// look only at the latest closed segment, so the period roll waited for the next close.
+    #[tokio::test]
+    async fn a_dvr_init_change_without_a_new_segment_rolls_the_period_at_once() {
+        let tmp = std::env::temp_dir().join(format!("multimux-dvr-init-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let dvr_cfg = crate::dvr::DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 5,
+            retention_bytes: 0,
+            period_duration_secs: 3600,
+            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
+        };
+        let route = RouteHandle::new(1.0, 250, 8)
+            .with_name("init-roll")
+            .with_dvr(dvr_cfg);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route.add_segment(SPTS_PROGRAM_ID, seg(1, 1.0)).unwrap();
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
+        assert_eq!(archived_periods(&tmp), 1);
+
+        route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        serving.poll_dvr().await;
+        assert_eq!(
+            archived_periods(&tmp),
+            2,
+            "the new init waited for the next segment to roll the period"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

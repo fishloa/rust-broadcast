@@ -937,9 +937,26 @@ impl DvrRecorder {
     /// can skip the whole `spawn_blocking` round-trip (the UDP ingest path
     /// calls `advance_route` once per datagram, so this matters).
     pub fn needs_poll(&self, latest_closed_segment: Option<SegmentSeq>) -> bool {
+        self.needs_poll_for_init(latest_closed_segment, None)
+    }
+
+    /// [`Self::needs_poll`] that also counts an init segment the recorder has not archived
+    /// (`latest_init`, the route's newest) as something to do, so an init change with no new
+    /// closed segment rolls the period at once rather than at the next close.
+    pub fn needs_poll_for_init(
+        &self,
+        latest_closed_segment: Option<SegmentSeq>,
+        latest_init: Option<&[u8]>,
+    ) -> bool {
         // The first poll must always run (it opens period 0 and writes the
         // init prelude).
         if self.current_file.is_none() {
+            return true;
+        }
+        if self.ext == ".m4s"
+            && let (Some(archived), Some(latest)) = (self.last_init.as_deref(), latest_init)
+            && archived != latest
+        {
             return true;
         }
         match latest_closed_segment {
