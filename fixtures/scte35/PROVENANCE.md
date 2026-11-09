@@ -171,7 +171,7 @@ nonzero `pts_adjustment` too, since it's what real generators emit.
 Since transmux's own `Fmp4Demux` currently cannot build a track for this
 real fixture (see **Bug found** below), the video track's sample-level
 `dts`/`pts`/sync-sample flags were extracted independently, straight from
-the `moof`/`traf`/`tfhd`/`tfdt`/`trun` boxes (ISO/IEC 14496-12 §8.8),
+the `moof`/`traf`/`tfhd`/`tfdt`/`trun` boxes (ISO/IEC 14496-12:2026 §8.8),
 deliberately bypassing `moov`/`stsd`/`avcC` (the part that's broken) — a
 from-scratch decode, not reliant on the buggy path or on any external tool's
 interpretation. Every video sample in this capture happens to be a sync

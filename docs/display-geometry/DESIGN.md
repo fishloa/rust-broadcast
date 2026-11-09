@@ -465,16 +465,15 @@ cares about shape listens to `DisplayChanged` alone.
 
 1. ISO BMFF `colr` (`nclx`) over the VUI colour description:
    "this box takes precedence, and over-rides the information in the
-   bitstream" (ISO/IEC 14496-12 §12.1.5.1, SN §6). `source = SampleEntry`.
-2. `pasp` vs VUI SAR: **unknown.** The §12.1.4.1 definition text that would say
-   it is not transcribed (gap G3). Until it is, the VUI SAR is what
-   `aspect_ratio` reports and a `pasp` is not read into the model at all;
-   Phase 4 settles precedence after the transcription (owner question Q7).
+   bitstream" (ISO/IEC 14496-12:2026 §12.1.5.1, SN §6). `source = SampleEntry`.
+2. `pasp` vs VUI SAR: ISO/IEC 14496-12:2026 §12.1.4.1 (transcribed in
+   `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`) gives `pasp`
+   and `clap` precedence over codec-specific structures (gap G3 closed;
+   implementation tracked in issue #1909).
    *Phase 4a-2 status:* `colr nclx` override of the VUI colour is implemented
    (container wins). `pasp` is applied as fill-in only (unspecified VUI SAR);
-   on a specified-vs-specified conflict the VUI SAR is kept, because the
-   available ISO/IEC 14496-12 §12.1.4.1 text does not define precedence
-   (gap G3). See `transmux/CHANGELOG.md` [Unreleased].
+   on a specified-vs-specified conflict the VUI SAR is kept, which contradicts
+   ISO/IEC 14496-12:2026 §12.1.4.1 (issue #1909). See `transmux/CHANGELOG.md` [Unreleased].
 3. AFD never overrides geometry: it is interpreted *against* it (TS 101 154
    §B.3.0 "The AFD itself does not describe the aspect ratio of the coded
    frame"). `DisplayInfo` carries both; the player composes them.
@@ -757,7 +756,7 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
 |---|---|---|---|
 | G1 | **SMPTE ST 2016-1** (AFD and bar data, the normative source TS 101 154 refers to as [23]) | no AFD persistence rule for AVC/HEVC; Table B.8 line semantics | cited by TS 101 154 §B.4.2, ATSC A/53-4, ST 377-1; no transcription |
 | G2 | **ATSC A/72 Part 1** (AVC video in ATSC, AFD/bar data carriage + persistence for AVC) | same | not present at all |
-| G3 | **ISO/IEC 14496-12** as a whole: no `private/specs-md` file. Only an excerpt exists in `private/specs-verified/mpeg/transmux/codec/isobmff-visual-ext.md` (§12.1.4.2 syntax, §12.1.4.3, §12.1.5), starting mid-sentence. **Closed**: ISO/IEC 14496-12:2012 is now in the private repo and transcribed, page-verified, in `private/specs-verified/mpeg/transmux/codec/isobmff-14496-12-2012-visual.md` (§8.3.2 `tkhd`; §8.5.2 `pasp`/`clap`/`colr` precedence: the boxes override the codec structures). Earlier note: §8.3.2 (`tkhd` width/height) is now covered via `private/specs-verified/mpeg/transmux/codec/isobmff-tkhd.md` (F4V layout + the normative DVB TS 103 285 §5.1.2 rule), not the ISO text itself | Phase 4 `pasp` precedence and `tkhd` sizing | `PixelAspectRatioBox` appears only in the UWA HDR guide and AVS3 IMF md (other specs quoting it) |
+| G3 | **ISO/IEC 14496-12:2026** as a whole: previously only an excerpt existed in `private/specs-verified/mpeg/transmux/codec/isobmff-visual-ext.md` (§12.1.4.2 syntax, §12.1.4.3, §12.1.5), starting mid-sentence. **Closed**: ISO/IEC 14496-12:2026 is now in the private repo in full, `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md` (see also the earlier excerpt `private/specs-verified/mpeg/transmux/codec/isobmff-14496-12-2012-visual.md`) (§8.3.2 `tkhd`; §8.5.2 `pasp`/`clap`/`colr` precedence: the boxes override the codec structures). Earlier note: §8.3.2 (`tkhd` width/height) is now covered via `private/specs-verified/mpeg/transmux/codec/isobmff-tkhd.md` (F4V layout + the normative DVB TS 103 285 §5.1.2 rule), not the ISO text itself | Phase 4 `pasp` precedence and `tkhd` sizing | `PixelAspectRatioBox` appears only in the UWA HDR guide and AVS3 IMF md (other specs quoting it) |
 | G4 | **ISO/IEC 23001-8 / ITU-T H.273 (CICP)** | none for VUI (H.264/H.265 Tables E-3..E-5 are sufficient and authoritative for the codec); needed only if `colr` values outside the codec tables must be labelled | cited by A/331, TS 102 366, H.222.0, and rfc8216bis `[CICP]` |
 | G5 | **ISO/IEC 23009-1** (MPD `@sar`/`@par` attribute syntax) | Phase 4 DASH output | only ETSI TS 103 285 (DVB-DASH) rules present |
 | G6 | H.264 Table E-2 and Tables E-3..E-5 / H.265 E.2..E.5 not yet page-checked into a `docs/` transcription | Phase 1 first task | present in md, unverified |
@@ -807,7 +806,7 @@ Checked by grepping `private/specs-md/*.md` for the defining syntax names
 | Q4 | AFD persistence order for AVC/HEVC with B-pictures: decode order (what the player's DTS stamping implies) or output order? | decode order |
 | Q5 | AVC/HEVC AFD persistence policy. **RESOLVED 2026-10-20:** A/72 -> ANSI/SCTE 128-1 §8.2.4 and ST 2016-1/-3 are now transcribed (`afd-bar-data.md`). ATSC/SCTE: sticky until the next SRAP or a new AFD, absence at an SRAP = `1000`; DVB: unspecified. Both are offered through an `AfdPersistence` policy (`UntilReplaced` default, `ResetAtRandomAccess`), see §6.4. | resolved: policy enum |
 | Q6 | Include MPEG-2 video sequence geometry (Phase 1b) given the player is H.264/H.265? | defer; MPEG-2 AFD still in Phase 3 |
-| Q7 | `pasp` vs VUI SAR precedence: blocked on transcribing ISO/IEC 14496-12 §12.1.4.1 into `private/specs-md`. Approve that transcription? | VUI wins until then |
+| Q7 | `pasp` vs VUI SAR precedence: answered by ISO/IEC 14496-12:2026 §12.1.4.1 (`pasp` overrides the codec-level SAR); implementation tracked in issue #1909 | VUI wins until #1909 lands |
 | Q8 | HLS `RESOLUTION` for anamorphic video: coded size, cropped size, or display size after SAR? | **Resolved 2026-10-21: square-pixel presentation size** (cropped output rect, width rescaled by SAR, rounded to nearest) — the same value as `tkhd` (§tkhd). RFC 8216bis §4.4.6.2 defines RESOLUTION as "the optimal pixel resolution at which to display all the video" and §6.3.x tells clients to display within "a rectangle with the same proportions as that resolution", so it is a display size, not a coded size. Experiment: Apple `mediastreamvalidator` 1.25.36 accepts both 720x576 and 1024x576 for a 720x576 SAR 64:45 stream (no resolution-vs-stream check), so it is no oracle here; the decision rests on the spec text. Apple authoring 9.2/9.4 make RESOLUTION a MUST for video variants and I-frame variants. |
 | Q9 | Phase 4 changes init-segment/manifest bytes for anamorphic input: patch or minor? | minor-class note in CHANGELOG, still 0.27.x |
 | Q10 | Out-of-range crop: accept with full-picture `output_rect`, and raise `InputDegraded`? | accept, no event |

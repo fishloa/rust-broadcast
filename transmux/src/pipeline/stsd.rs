@@ -47,8 +47,8 @@ impl MediaKind {
     }
 
     /// The headerless FullBox (version(8)+flags(24)) kept as the first `minf`
-    /// child of a subtitle track: `sthd` for `stpp`/`subt` (ISO/IEC 14496-12
-    /// §12.6.2), `nmhd` for `wvtt`/`text` (§8.4.5.5), see §6.2.3.
+    /// child of a subtitle track: `sthd` for `stpp`/`subt` (ISO/IEC 14496-12:2026
+    /// §12.6.2), `nmhd` for `wvtt`/`text` (§8.4.5.2), see §7.3.4.
     pub(super) fn minf_header(&self) -> Option<OpaqueBox> {
         match self {
             Self::Subtitle { media_header, .. } => {
@@ -481,9 +481,9 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
         }
         // Subtitle track: re-emit the ISOBMFF sample entry carried whole in
         // `sample_entry` (issue #1186, ex-`TODO(#753)`). The media header is
-        // `sthd` for `stpp`/`subt` (ISO/IEC 14496-12 §12.6.2, as in the real
-        // ffmpeg fixture) and `nmhd` for `wvtt`/`text` (§8.4.5.5); both are
-        // headerless FullBoxes, preserved as the first `minf` child (§6.2.3).
+        // `sthd` for `stpp`/`subt` (ISO/IEC 14496-12:2026 §12.6.2, as in the real
+        // ffmpeg fixture) and `nmhd` for `wvtt`/`text` (§8.4.5.2); both are
+        // headerless FullBoxes, preserved as the first `minf` child (§7.3.4).
         CodecConfig::Subtitle {
             sample_entry: Some(se),
             ..

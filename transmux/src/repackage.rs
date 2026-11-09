@@ -1,4 +1,4 @@
-//! fMP4/CMAF repackaging — IR transforms + a driver (ISO/IEC 14496-12; CMAF
+//! fMP4/CMAF repackaging — IR transforms + a driver (ISO/IEC 14496-12:2026; CMAF
 //! ISO/IEC 23000-19).
 //!
 //! `transmux` is an any-to-any container hub: [`Fmp4Demux`]

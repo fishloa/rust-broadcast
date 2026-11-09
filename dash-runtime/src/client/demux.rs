@@ -1,4 +1,4 @@
-//! fMP4 demux of `init ++ segment` (ISO/IEC 14496-12), the `hls-runtime` and
+//! fMP4 demux of `init ++ segment` (ISO/IEC 14496-12:2026), the `hls-runtime` and
 //! multimux `dash_pull` pattern: a fresh [`Fmp4Demux`] per segment, so no
 //! state leaks between segments and any segment can be retried alone.
 

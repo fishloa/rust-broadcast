@@ -19,7 +19,7 @@ Editions: where a spec is vendored in `private/specs/` the edition is verified a
 
 | Standard | Edition | Scope here | Status | Notes |
 |---|---|---|---|---|
-| ISO/IEC 14496-12 ISO base media file format | 2015 as cited in `box_types` (not vendored) | Box framing (incl. 64-bit `largesize`, `uuid`), `moov`/`trak`/`stbl`, fragments (`moof`/`traf`/`trun`/`sidx`/`mfra`), `emsg`, `prft`, sample groups, `srat` | Full for the listed boxes | Every box has `Parse` and `Serialize` with byte-identical round trip |
+| ISO/IEC 14496-12:2026 ISO base media file format | 2026 (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`) | Box framing (incl. 64-bit `largesize`, `uuid`), `moov`/`trak`/`stbl`, fragments (`moof`/`traf`/`trun`/`sidx`/`mfra`), `emsg`, `prft`, sample groups, `srat` | Full for the listed boxes | Every box has `Parse` and `Serialize` with byte-identical round trip |
 | ISO/IEC 14496-1 / -14 / -15 / -30 | As cited (not vendored) | `esds`, AVC/HEVC/VVC config boxes, WebVTT and TTML sample entries | Full for the listed codecs | |
 | ISO/IEC 13818-1 / ITU-T H.222.0 | 08/2023 (vendored) | PAT/PMT, PES, PCR, 33-bit timestamp unroll, stream types, ES_info passthrough (CA descriptors deliberately dropped on re-mux) | Full for demux and mux of the carriable codecs | |
 | ISO/IEC 23009-1 MPEG-DASH | Not vendored; edition unverified | Static and dynamic MPD, `SegmentTemplate` (`$Number$`, `$Time$`), `SegmentTimeline`, `UTCTiming`, `InbandEventStream`, MPD parse | Partial | Built from DASH-IF and TS 103 285 text |

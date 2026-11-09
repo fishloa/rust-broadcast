@@ -1,5 +1,5 @@
 //! Box walkers must survive an untrusted `largesize` that overflows `usize`
-//! arithmetic (ISO/IEC 14496-12:2015 §4.2 `Box.size` / `largesize`).
+//! arithmetic (ISO/IEC 14496-12:2026 §4.2 `Box.size` / `largesize`).
 
 use broadcast_common::Parse;
 

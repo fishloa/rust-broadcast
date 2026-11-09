@@ -3,7 +3,7 @@
 //!
 //! These tests bite end-to-end against the real box layer: the absolute
 //! decode-time anchor ([`Track::start_decode_time`]) is populated by
-//! [`Fmp4Demux`] from the fragment `tfdt` (ISO/IEC 14496-12:2015 §8.8.12),
+//! [`Fmp4Demux`] from the fragment `tfdt` (ISO/IEC 14496-12:2026 §8.8.12),
 //! consumed by [`CmafMux`] as the first segment's `baseMediaDecodeTime`, and
 //! transformed by the [`transmux::rebase`] functions. Every test asserts a value
 //! observed through the muxer/demuxer, so a hardcoded-0 muxer or a no-op

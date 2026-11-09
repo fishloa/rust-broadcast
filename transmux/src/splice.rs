@@ -11,14 +11,14 @@
 //! - [`splice_insert`] — SSAI: play `base` up to a splice time, insert `ad`,
 //!   then resume the remainder of `base` shifted forward by `ad`'s duration.
 //!
-//! # Timeline model (ISO/IEC 14496-12 `tfdt`)
+//! # Timeline model (ISO/IEC 14496-12:2026 `tfdt`)
 //!
 //! [`Sample`] timing is *absolute* (media plane step 2c): each sample carries
 //! its own optional decode time (DTS) and presentation time (PTS =
 //! DTS + composition_offset), in the track's media timescale.
 //! [`Track::start_decode_time`] — which [`CmafMux`](crate::media::CmafMux)
 //! writes as the *first* fragment's `tfdt` `baseMediaDecodeTime` (ISO/IEC
-//! 14496-12:2015 §8.8.12) — is the track's start anchor, not a running cursor:
+//! 14496-12:2026 §8.8.12) — is the track's start anchor, not a running cursor:
 //! a source that re-seeds `tfdt` per fragment (a discontinuous or gapped
 //! capture) can leave a real gap between it and a later sample's true `dts`.
 //! This module therefore reads each join/snap boundary's absolute `dts`

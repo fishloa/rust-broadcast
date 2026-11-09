@@ -8,7 +8,7 @@ This exists because the independent encryptor we use (Bento4 mp4encrypt) always
 re-writes fragments to the default-base-is-moof layout, and ffmpeg's own CENC muxer
 mis-encrypts the audio of fragments >= 2 when video+audio are muxed (documented in
 fixtures/mp4/cenc-layouts/PROVENANCE.md), so the only way to get a *correctly encrypted* file in every ISO/IEC
-14496-12 §8.8.7 addressing form is to re-address a correctly encrypted one.
+14496-12:2026 §8.8.7 addressing form is to re-address a correctly encrypted one.
 
 Layouts (§8.8.7.1 base data offset):
   default    tfhd carries base_data_offset (flag 0x01) = absolute file offset of its moof;

@@ -372,3 +372,23 @@ def test_bare_spec_file_name_naming_a_real_file_passes(tmp_path, monkeypatch, ca
 def test_bare_spec_file_name_skipped_without_private(tmp_path, monkeypatch, capsys) -> None:
     _scratch(tmp_path, {"foo/src/a.rs": "//! Per en_301_192.md Table 44\n"})
     assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_isobmff_citation_without_2026_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/src/a.rs": "//! ISO/IEC 14496-12:2015 section 4.2\n"})
+    assert "must name the 2026 edition" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_isobmff_bare_citation_fails(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/src/a.rs": "//! ISO/IEC 14496-12 section 4.2\n"})
+    assert "must name the 2026 edition" in _errors(monkeypatch, tmp_path, capsys)
+
+
+def test_isobmff_2026_citation_passes(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/src/a.rs": "//! ISO/IEC 14496-12:2026 section 4.2 and 14496-15 and 14496-12-notes\n"})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_isobmff_historical_changelog_is_exempt(tmp_path, monkeypatch, capsys) -> None:
+    _scratch(tmp_path, {"foo/CHANGELOG.md": "ISO/IEC 14496-12:2015 section 4.2\n"})
+    assert _errors(monkeypatch, tmp_path, capsys) == ""

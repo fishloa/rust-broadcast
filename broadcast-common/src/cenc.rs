@@ -1,7 +1,7 @@
 //! Common Encryption (CENC) scheme identity — ISO/IEC 23001-7 §4.
 //!
 //! [`CencScheme`] names the protection scheme a protected track is encrypted
-//! under: the `schm.scheme_type` four-CC of ISO/IEC 14496-12:2015 §8.12.5.
+//! under: the `schm.scheme_type` four-CC of ISO/IEC 14496-12:2026 §13.4.6.
 //!
 //! # Why this lives in `broadcast-common`
 //!

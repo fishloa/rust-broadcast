@@ -10,7 +10,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// Error variants that parsers + builders can return.
 ///
 /// Spec references inside `#[error(...)]` strings quote clauses from
-/// ISO/IEC 14496-12:2015 (§4.2) where applicable.
+/// ISO/IEC 14496-12:2026 (§4.2) where applicable.
 // No longer `Eq` (only `PartialEq`): `Error::HlsAttrValue` wraps
 // `broadcast_hls::Error`, which itself carries a non-`Eq` `f64` (issue
 // #1140 T12 decimal validation).
@@ -153,7 +153,7 @@ pub enum Error {
     #[error("emsg serialize: {0}")]
     EmsgSerialize(#[from] mp4_emsg::Error),
 
-    /// A demuxed ISOBMFF sample entry (`stsd` entry, ISO/IEC 14496-12:2015
+    /// A demuxed ISOBMFF sample entry (`stsd` entry, ISO/IEC 14496-12:2026
     /// §8.5.2) describes a codec this crate has no
     /// [`CodecConfig`](crate::pipeline::CodecConfig) reconstruction for —
     /// e.g. a proprietary or as-yet-unimplemented FourCC

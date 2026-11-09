@@ -98,7 +98,7 @@ deadline compare `>` vs `>=`, lease released on `Req` clone, window cap `<` vs `
 Because behaviour must not change, W-a is a pure refactor PR (committed working state first, per the repo rule), size M.
 
 **NotMedia check (D3).** `hls-runtime/src/client/engine.rs` keeps `has_ts_structure` (>= half of the 188-byte lanes start with `0x47`, ISO/IEC 13818-1 2.4.3.2),
-`has_media_fragment` (a complete `moof` followed by a complete `mdat`, ISO/IEC 14496-12 8.8.4) and `is_progressive_movie` as private functions. They move into `container-probe`
+`has_media_fragment` (a complete `moof` followed by a complete `mdat`, ISO/IEC 14496-12:2026 8.8.4) and `is_progressive_movie` as private functions. They move into `container-probe`
 (`no_std`+`alloc`, additive minor release, version 0.2 -> 0.3 under 0.x rules) as `container_probe::segment::{ts_structure, media_fragment, progressive_movie}`; hls-runtime calls them (internal change, patch
 release, same tests) and dash-runtime uses `media_fragment` for `.m4s` and `progressive_movie` only to report `non_fragmented_mp4` exactly as HLS F9a. Gate: the existing hls-runtime
 NotMedia tests pass unchanged and `container-probe` gets the same cases plus a fuzz target.
@@ -203,7 +203,7 @@ frameRate (string), audioSamplingRate, mimeType, first BaseURL, effective Segmen
 | `S@n`, negative `r` | no `@n`; negative `r` yes | both, lazily expanded (4.3) | 5.3.9.6.1, 5.3.9.6.2 |
 | `SegmentTemplate@endNumber/@index/@bitstreamSwitching`, `@eptDelta/@pdDelta/@presentationDuration`, `Initialization`/`RepresentationIndex` | missing | parsed; `endNumber` bounds the plan; PTO/eptDelta feed continuity; bitstream switching ignored | 5.3.9.2.2 Tables 16-17 |
 | `SegmentList` + `SegmentURL@media/@mediaRange/@index/@indexRange`, `@duration/@startNumber` | missing | parsed and planned | 5.3.9.3 Table 19 |
-| `SegmentBase@indexRange` + `Initialization@range` (on-demand profile, one file + sidx) | missing | parsed; sidx fetched and expanded (4.4) | 5.3.9.2, 5.3.9.5.4; 14496-12 8.16.3 |
+| `SegmentBase@indexRange` + `Initialization@range` (on-demand profile, one file + sidx) | missing | parsed; sidx fetched and expanded (4.4) | 5.3.9.2, 5.3.9.5.4; 14496-12:2026 8.14.3 |
 | `urn:mpeg:dash:urlparam:2014` (`UrlQueryInfo`) | skipped | minimal: `@useMPDUrlQuery`, literal `@queryString` (7.1) | Annex I.2 |
 | `xlink:href/@actuate` on Period/AdaptationSet/SegmentList | missing | `urn:mpeg:dash:resolve-to-zero:2013` removes the element; any other href: element skipped + `Notice::XlinkSkipped` (not resolved in 0.1.0) | 5.5.3 rule 4 |
 | `EventStream`, `InbandEventStream` | skipped | parsed only to count; `Notice::EventStreamIgnored`; emsg boxes ride along in segments untouched | 5.10 |
@@ -245,7 +245,7 @@ vice versa (5.3.9.1), violation drops the Representation. The result per Represe
 
 `Representation` with `BaseURL` + `SegmentBase@indexRange` (+ `Initialization@range`): init = `FetchInit` with the byte range; `FetchIndex` fetches `indexRange`; `SegmentIndexBox::parse_body`
 gives references (type 0 only; a hierarchical type-1 reference => `SegmentSequenceUnsupported`) which become `SegmentRef`s whose byte range is `first_offset + sum(referenced_size)`, anchored at the first byte
-after the sidx box (14496-12 8.16.3 as noted in `transmux/src/timing.rs`); `presentation_us = earliest_presentation_time + cumulative duration - PTO`. Responses honour the shared range rules (206 + exact `Content-Range`, or a 200 sliced
+after the sidx box (14496-12:2026 8.14.3 as noted in `transmux/src/timing.rs`); `presentation_us = earliest_presentation_time + cumulative duration - PTO`. Responses honour the shared range rules (206 + exact `Content-Range`, or a 200 sliced
 after the whole body, W-a `body.rs`). Static MPDs only in practice; the dynamic variant works identically.
 
 ## 5. Client algorithms (live and VOD)

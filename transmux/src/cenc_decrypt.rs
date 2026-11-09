@@ -66,9 +66,9 @@
 //!   implementations are the source of truth) — see `cenc_crypto`'s module
 //!   docs for the full derivation, including the earlier
 //!   cross-subsample-continuous version's divergence from Bento4.
-//! - **`sinf`/`frma` unwrap**: ISO/IEC 14496-12:2015 §8.12 — after decryption the
+//! - **`sinf`/`frma` unwrap**: ISO/IEC 14496-12:2026 §13.4 — after decryption the
 //!   track's coded data is in the original (`frma`) format.
-//! - **Movie fragments** (`moof`/`traf`/`tfhd`/`trun`): ISO/IEC 14496-12:2015 §8.8.
+//! - **Movie fragments** (`moof`/`traf`/`tfhd`/`trun`): ISO/IEC 14496-12:2026 §8.8.
 //!
 //! No AES is rolled by hand: `cenc_crypto` wraps the RustCrypto
 //! [`aes`], [`ctr`], and [`cbc`] crates for the block cipher and mode work.
@@ -469,7 +469,7 @@ const FULL_HDR: usize = 4;
 /// `stsd` fixed header after the FullBox: `entry_count`.
 const STSD_ENTRY_COUNT: usize = 4;
 /// A `VisualSampleEntry` fixed body length before its child boxes
-/// (ISO/IEC 14496-12 §12.1.3): 78 bytes — 6 reserved, 2 data_ref, 16
+/// (ISO/IEC 14496-12:2026 §12.1.3): 78 bytes — 6 reserved, 2 data_ref, 16
 /// predefined/reserved, 2 width, 2 height, 4 hres, 4 vres, 4 reserved, 2
 /// frame_count, 32 compressorname, 2 depth, 2 predefined.
 const VISUAL_SAMPLE_ENTRY_HDR: usize = 78;
@@ -672,7 +672,7 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
     Ok(())
 }
 
-/// Sum every `trun`'s sample count inside one `traf` (ISO/IEC 14496-12:2015
+/// Sum every `trun`'s sample count inside one `traf` (ISO/IEC 14496-12:2026
 /// §8.8.8) — used only to synthesize placeholder `senc` entries for a
 /// legitimately senc-less constant-IV/whole-sample fragment (see
 /// [`harvest_fragment_senc`]).
@@ -935,7 +935,7 @@ fn collect_fragment_samples(
 /// Resolve one `moof`'s samples for `target_track_id` into `out`, slicing
 /// coded bytes from `file`.
 ///
-/// The sample data base follows ISO/IEC 14496-12 §8.8.7/§8.8.8:
+/// The sample data base follows ISO/IEC 14496-12:2026 §8.8.7/§8.8.8:
 ///
 /// - `tfhd.base_data_offset`, when present (`base-data-offset-present`), is an
 ///   **absolute** file offset and anchors the track fragment's runs ("an
@@ -957,12 +957,8 @@ fn collect_fragment_samples(
 /// CMAF) was ignored and a `trun` without `data_offset` sliced the wrong bytes
 /// — which CTR then "decrypted" to garbage with `Ok` (audit r05-W7).
 ///
-/// Note on sourcing: ISO/IEC 14496-12 is not vendored in `private/specs` (it is
-/// a paywalled ISO document), so the clause wording above is quoted from the
-/// spec text as faithfully reproduced by multiple independent implementations
-/// that cite the clause/page (SRS, DumpTS, l-smash, OvenMediaEngine, JAAD,
-/// Shaka Packager); the `base-data-offset-present` and `trun.data_offset`
-/// wording is stable across the 2012 → 2022 editions.
+/// Sourcing: ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8, transcribed in
+/// `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`.
 fn absorb_protected_fragment(
     file: &bytes::Bytes,
     mdats: &[crate::frag_offsets::MdatRange],
@@ -1021,7 +1017,7 @@ fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigur
 // ---------------------------------------------------------------------------
 
 /// Whether `container` (a `stbl` or `traf`, both direct `sgpd` parents per
-/// ISO/IEC 14496-12 §8.9.3.1) has a `sgpd` box whose `grouping_type` is
+/// ISO/IEC 14496-12:2026 §8.9.3.1) has a `sgpd` box whose `grouping_type` is
 /// `seig` — the CENC key-rotation sample group this decryptor does not
 /// implement (see the two call sites' comments, issue #990).
 ///
@@ -1079,7 +1075,7 @@ fn mdhd_timescale(mdhd: &[u8]) -> Option<u32> {
 /// one shared [`sample_layout`] (audit r05-O1 / #1141 — this module used to
 /// carry its own raw-byte expander, which ignored `co64`). `file_len` bounds
 /// the declared `sample_count`: no sample occupies fewer than one byte of the
-/// file (ISO/IEC 14496-12 §8.7.3), so a larger count is rejected before
+/// file (ISO/IEC 14496-12:2026 §8.7.3), so a larger count is rejected before
 /// anything allocates (r05-C4).
 fn progressive_sample_layout(stbl: &[u8], file_len: usize) -> Result<Vec<(usize, usize)>> {
     let stsz = SampleSizeBox::parse(

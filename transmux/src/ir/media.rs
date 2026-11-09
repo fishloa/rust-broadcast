@@ -61,7 +61,7 @@ pub struct SkippedTrack {
     pub fourcc: String,
     /// Human-readable reason (the underlying `Error`'s `Display` text).
     pub reason: String,
-    /// The skipped `trak`'s `tkhd.track_ID` (ISO/IEC 14496-12 §8.3.2) when the
+    /// The skipped `trak`'s `tkhd.track_ID` (ISO/IEC 14496-12:2026 §8.3.2) when the
     /// demuxer reached the track header; `None` for a record that has no
     /// track header to name.
     pub track_id: Option<TrackId>,

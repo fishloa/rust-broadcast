@@ -3,7 +3,7 @@
 //!
 //! **Spec:** ISO/IEC 23009-1:2022 5.3.2 (Periods, continuity 5.3.2.4), 5.3.9
 //! (segment addressing, `sidx` 5.3.9.5.4), 5.6 (BaseURL), Annex A.9 (playback
-//! across Periods); ISO/IEC 14496-12 8.8.4 / 8.16.3 (`moof`/`mdat`, `sidx`).
+//! across Periods); ISO/IEC 14496-12:2026 8.8.4 / 8.14.3 (`moof`/`mdat`, `sidx`).
 //! Verbatim text: `private/specs-verified/dash/23009-1/`.
 //!
 //! [`DashClient`] is the `hls_runtime::client::HlsClient` analogue. The caller

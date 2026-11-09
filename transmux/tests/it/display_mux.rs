@@ -247,7 +247,7 @@ fn colour_bt709_full_range_writes_colr() {
 }
 
 /// The three colour code points are written in the order the box defines
-/// (ISO/IEC 14496-12:2015 §12.1.5.2: colour_primaries, transfer_characteristics,
+/// (ISO/IEC 14496-12:2026 §12.1.5.2: colour_primaries, transfer_characteristics,
 /// matrix_coefficients), not merely "some" of the three. The real captures all
 /// signal symmetric triples (5/5/5, 1/1/1), which would hide a mix-up, so this
 /// uses three DISTINCT code points (BT.709 primaries 1, IEC 61966-2-1 transfer
