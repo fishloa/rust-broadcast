@@ -265,3 +265,22 @@ fn legal_duplicate_continuation_packet_must_not_corrupt_the_section() {
         "the PAT carried by the three packets is intact; the duplicate must not be appended into the section"
     );
 }
+
+#[test]
+fn eit_following_section_vanishing_after_both_were_seen_is_detected() {
+    let mut rig = Rig::new();
+    let mut pz = SectionPacketiser::new(Pid::new(0x12));
+    send(&mut rig, &mut pz, &eit_pf_bytes(0, 1), 10);
+    send(&mut rig, &mut pz, &eit_pf_bytes(1, 1), 20);
+    let mut t = 500u64;
+    while t <= 8_000 {
+        rig.idle_until(t - 10);
+        send(&mut rig, &mut pz, &eit_pf_bytes(0, 1), t);
+        t += 500;
+    }
+    let pf_related = rig.count(Indicator::EitPfError) + rig.count(Indicator::EitError);
+    assert!(
+        pf_related >= 1,
+        "section '1' (following) of the P/F sub-table absent for 8 s (limit 2 s) while section '0' keeps arriving: no 3.6.a/3.6.c indication was raised"
+    );
+}
