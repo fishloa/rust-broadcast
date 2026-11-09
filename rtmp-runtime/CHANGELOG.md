@@ -5,6 +5,8 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `ServerSession` refuses a second `connect` while publishing with `RtmpError::UnexpectedState` and keeps publishing; it used to demote the session to `Connected` and silently drop all following media (bug audit E).
 
 ## [0.9.0] - 2026-11-07
 ### Changed

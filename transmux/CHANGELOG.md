@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `InputDegradation::Scrambled` (on the `#[non_exhaustive]` enum, so not breaking): reported once per payload packet with `transport_scrambling_control != 0` on a PES-carried PID.
+
+### Fixed
+- `StreamingTsDemux` unrolls the 33-bit PTS/DTS of all elementary streams of one program in a single epoch; audio starting before the 2^33 wrap and video after it no longer land about 26.5 hours apart in the IR (bug audit E).
+- A lost last packet of an unbounded (video) PES, seen as a continuity gap at the next `payload_unit_start` after a packet that filled its whole payload, now drops that access unit instead of delivering it truncated; the lost-tail shape is the only evidence an unbounded PES offers (bug audit E).
+- A PMT version change that removes an elementary stream now flushes the access units the demux still holds for it (the complete last PES and the one-behind pending sample) before `TrackRemoved` (bug audit E).
+- A scrambled payload (`transport_scrambling_control != 0`) on a PES-carried PID is dropped and reported as `InputDegradation::Scrambled`, and the access unit it belonged to is no longer delivered as a clean sample of ciphertext (bug audit E).
+- A CRC-valid PMT whose body does not parse no longer consumes its `version_number`, so the intact repeat of that version is applied (bug audit E).
+- `Fmp4Demux` reports a trailing `moof` with no following `mdat` as `InputDegradation::MalformedUnit` instead of dropping it silently (bug audit E).
+- `StreamingFlvDemux` unrolls the 32-bit millisecond tag timestamp, so a session past 2^32 ms keeps `dts` monotonic instead of stepping back to zero (bug audit E).
 
 ## [0.30.0] - 2026-11-07
 ### Added
