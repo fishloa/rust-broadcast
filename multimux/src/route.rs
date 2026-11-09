@@ -1063,6 +1063,7 @@ impl ProgramServing {
         // persist, never pays for a `spawn_blocking` round-trip (issue #1083,
         // F: the UDP ingest path calls `advance_route` once per datagram).
         let latest = self.trunk.last_closed_segment();
+        let latest_init = self.init_generations().pop().map(|g| g.init);
         {
             // A `try_lock` (not a blocking lock): this runs on the async
             // ingest task, and the lock may be held by `poll_dvr_blocking`
@@ -1077,7 +1078,9 @@ impl ProgramServing {
             };
             match guard.as_ref() {
                 None => return,
-                Some(recorder) if !recorder.needs_poll(latest) => return,
+                Some(recorder) if !recorder.needs_poll_for_init(latest, latest_init.as_deref()) => {
+                    return;
+                }
                 Some(_) => {}
             }
         }
@@ -1455,13 +1458,19 @@ impl RouteHandle {
     }
 
     /// Sets whether a media-playlist request without `_HLS_msn`/`_HLS_part`
-    /// is held until the first segment closes; defaults to
+    /// is held until the first segment closes, and a playlist request made before the route
+    /// announces its program until it does (bounded by the blocking-reload timeout, then `503`);
+    /// defaults to
     /// [`hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT`] and production
     /// routes set it from [`crate::config::Config::hold_cold_playlist`].
     #[must_use]
     pub fn with_hold_cold_playlist(mut self, hold: bool) -> Self {
         self.hold_cold_playlist = hold;
         self
+    }
+
+    pub(crate) fn holds_cold_playlist(&self) -> bool {
+        self.hold_cold_playlist
     }
 
     /// Where this route's live HLS playlists get their
@@ -1793,6 +1802,29 @@ impl RouteHandle {
     /// one instead of going silent.
     pub async fn await_trunk_change(&self, current: &Arc<Trunk>) -> Arc<Trunk> {
         self.await_trunk_other_than(Some(current)).await
+    }
+
+    /// [`Self::resolve_program`], parking a `NotYetAnnounced` answer until a program is published
+    /// or `timeout` passes when the route holds cold playlist requests (see
+    /// [`Self::with_hold_cold_playlist`]); a timeout answers `NotYetAnnounced`.
+    pub(crate) async fn resolve_program_held(
+        &self,
+        program: ProgramId,
+        timeout: Duration,
+    ) -> ProgramResolution {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let notified = self.program_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            match self.resolve_program(program) {
+                ProgramResolution::NotYetAnnounced if self.hold_cold_playlist => {}
+                resolved => return resolved,
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return self.resolve_program(program);
+            }
+        }
     }
 
     async fn await_trunk_other_than(&self, current: Option<&Arc<Trunk>>) -> Arc<Trunk> {
@@ -2776,6 +2808,61 @@ mod program_registry_tests {
             dvr_failed_metric(route_name),
             before + 1.0,
             "an already-abandoned recorder must not be counted twice"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn archived_periods(root: &std::path::Path) -> usize {
+        fn count(dir: &std::path::Path) -> usize {
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        count(&path)
+                    } else {
+                        usize::from(path.extension().is_some_and(|e| e == "m4s"))
+                    }
+                })
+                .sum()
+        }
+        count(root)
+    }
+
+    /// An init change with no new closed segment is archived at once: `needs_poll` used to
+    /// look only at the latest closed segment, so the period roll waited for the next close.
+    #[tokio::test]
+    async fn a_dvr_init_change_without_a_new_segment_rolls_the_period_at_once() {
+        let tmp = std::env::temp_dir().join(format!("multimux-dvr-init-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let dvr_cfg = crate::dvr::DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 5,
+            retention_bytes: 0,
+            period_duration_secs: 3600,
+            overrun: crate::dvr::ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
+        };
+        let route = RouteHandle::new(1.0, 250, 8)
+            .with_name("init-roll")
+            .with_dvr(dvr_cfg);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route.add_segment(SPTS_PROGRAM_ID, seg(1, 1.0)).unwrap();
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving.poll_dvr().await;
+        assert_eq!(archived_periods(&tmp), 1);
+
+        route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        serving.poll_dvr().await;
+        assert_eq!(
+            archived_periods(&tmp),
+            2,
+            "the new init waited for the next segment to roll the period"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

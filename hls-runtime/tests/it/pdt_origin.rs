@@ -283,3 +283,37 @@ fn parse_serialize_byte_stability_of_origin_output() {
         "body:\n{body}\nreserialized:\n{reserialized}"
     );
 }
+
+const SEGMENT_PERIOD_90K: u64 = 360_000;
+const ANCHOR_EPOCH_MS: i64 = 1_000_000_000_000;
+const SEGMENT_PERIOD_MS: i64 = 4_000;
+
+/// A playlist window holding more segments than the trunk's `event_capacity` keeps the
+/// program date time of every segment: the start is read when the segment drains into the
+/// window, not from the bounded `segment_starts` table at render time.
+#[test]
+fn pdt_survives_a_window_larger_than_the_event_capacity() {
+    let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(2), nz(64)));
+    let writer = trunk.segment_writer().expect("writer");
+    writer.set_time_anchor(TimeAnchor {
+        pts_90k: 0,
+        utc_epoch_ms: ANCHOR_EPOCH_MS,
+    });
+    let origin = origin(&trunk);
+    origin.set_init(vec![0xAAu8; 8]);
+    for n in 1..=4u32 {
+        let start = u64::from(n - 1) * SEGMENT_PERIOD_90K;
+        writer.note_segment_start(SegmentSeq::new(n), timed_metadata::MediaTime(start));
+        seg(&writer, n, 4.0, false);
+        let _ = playlist_text(&origin);
+    }
+    let body = playlist_text(&origin);
+    for n in 0..4i64 {
+        let pdt = expected_pdt(ANCHOR_EPOCH_MS + n * SEGMENT_PERIOD_MS);
+        assert!(
+            body.contains(&format!("#EXT-X-PROGRAM-DATE-TIME:{pdt}\n")),
+            "segment {} lost its program date time: {body}",
+            n + 1
+        );
+    }
+}

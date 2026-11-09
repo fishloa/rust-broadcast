@@ -427,6 +427,9 @@ struct WindowSegment {
     /// Mean video frame rate of this segment in millihertz, measured when the
     /// stream's SPS carries no VUI timing; `None` when not measurable.
     video_millihertz: Option<u32>,
+    /// The start the writer reported for this segment, read when it drained into the window:
+    /// the trunk's boundary table is bounded by `event_capacity`, the window is not.
+    media_start: Option<timed_metadata::MediaTime>,
 }
 
 /// One closed segment's identity/metadata as tracked by this origin's
@@ -588,6 +591,7 @@ impl Window {
         init_gen: Generation,
         iframe_len: Option<u64>,
         video_millihertz: Option<u32>,
+        media_start: Option<timed_metadata::MediaTime>,
     ) {
         let follows = self
             .segments
@@ -658,6 +662,7 @@ impl Window {
             start_ns: entry.timeline_position.as_nanos(),
             iframe_len,
             video_millihertz,
+            media_start,
         });
     }
 
@@ -2933,7 +2938,13 @@ impl HlsOrigin {
         drop(cursor);
 
         enum Prepared {
-            Segment(SegmentEntry, Generation, Option<u64>, Option<u32>),
+            Segment(
+                SegmentEntry,
+                Generation,
+                Option<u64>,
+                Option<u32>,
+                Option<timed_metadata::MediaTime>,
+            ),
             Gap,
         }
         let video_track_id = *locked(&self.video_track_id);
@@ -2961,7 +2972,14 @@ impl HlsOrigin {
                         }
                     };
                     let init_gen = locked(&self.init).generation_for(entry.sequence_number);
-                    prepared.push(Prepared::Segment(entry, init_gen, iframe_len, video_rate));
+                    let media_start = self.trunk.segment_start_time(entry.sequence_number);
+                    prepared.push(Prepared::Segment(
+                        entry,
+                        init_gen,
+                        iframe_len,
+                        video_rate,
+                        media_start,
+                    ));
                 }
                 // `Lagged`/`Gap`/anything newer: segments were lost, so the
                 // next one does not follow the window's contents.
@@ -2972,7 +2990,7 @@ impl HlsOrigin {
         let mut window = locked(&self.window);
         for item in prepared {
             match item {
-                Prepared::Segment(entry, init_gen, iframe_len, video_rate) => {
+                Prepared::Segment(entry, init_gen, iframe_len, video_rate, media_start) => {
                     // Record the arrival origin exactly once, the first time a
                     // segment drains into the window while an arrival clock is
                     // configured. "this segment ended about now, so it started
@@ -2991,7 +3009,7 @@ impl HlsOrigin {
                         }
                     }
                     let seg_duration = entry.duration;
-                    window.push(entry, init_gen, iframe_len, video_rate);
+                    window.push(entry, init_gen, iframe_len, video_rate, media_start);
                     if let Some(frozen) = *locked(&self.frozen_target_duration_secs)
                         && seg_duration.as_secs_f64().round() > frozen.round()
                     {
@@ -3043,10 +3061,11 @@ impl HlsOrigin {
         &self,
         seq: SegmentSeq,
         start_ns: u64,
+        media_start: Option<timed_metadata::MediaTime>,
     ) -> Option<broadcast_hls::ProgramDateTime> {
         // (1) Explicit trunk time anchor wins.
         if let Some(anchor) = self.trunk.time_anchor()
-            && let Some(media_start) = self.trunk.segment_start_time(seq)
+            && let Some(media_start) = media_start.or_else(|| self.trunk.segment_start_time(seq))
             && let Ok(ts) = jiff::Timestamp::from_millisecond(anchor.media_to_epoch_ms(media_start))
         {
             return Some(broadcast_hls::ProgramDateTime::from_timestamp(ts));
@@ -3326,7 +3345,8 @@ impl HlsOrigin {
             .iter()
             .zip(closed_parts)
             .map(|(s, parts)| {
-                let program_date_time = self.segment_pdt(s.sequence_number, s.start_ns);
+                let program_date_time =
+                    self.segment_pdt(s.sequence_number, s.start_ns, s.media_start);
                 MediaSegment {
                     map: map_for(s.init_gen),
                     uri: self.segment_uri(track_id, s.sequence_number, ext),
@@ -3386,11 +3406,11 @@ impl HlsOrigin {
                 )
             });
             open.program_date_time = match open_start_ns {
-                Some(sn) => self.segment_pdt(open_seq, sn),
+                Some(sn) => self.segment_pdt(open_seq, sn, None),
                 None => {
                     // No closed segment: explicit anchor only.
                     if self.trunk.time_anchor().is_some() {
-                        self.segment_pdt(open_seq, 0)
+                        self.segment_pdt(open_seq, 0, None)
                     } else {
                         None
                     }
@@ -3728,7 +3748,7 @@ impl HlsOrigin {
                     offset: Some(0),
                 }),
                 parts: Vec::new(),
-                program_date_time: self.segment_pdt(s.sequence_number, s.start_ns),
+                program_date_time: self.segment_pdt(s.sequence_number, s.start_ns, s.media_start),
                 ..Default::default()
             })
             .collect();
@@ -5593,12 +5613,30 @@ mod tests {
     #[test]
     fn window_restarts_on_a_repeated_or_decreasing_sequence_number() {
         let mut w = Window::new(nz(6));
-        w.push(window_entry(5, 0xA5, false), Generation::new(1), None, None);
-        w.push(window_entry(6, 0xA6, true), Generation::new(1), None, None);
+        w.push(
+            window_entry(5, 0xA5, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
+        w.push(
+            window_entry(6, 0xA6, true),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(5, false), (6, true)]);
 
         // Decrease: 3 after 6.
-        w.push(window_entry(3, 0xB3, false), Generation::new(1), None, None);
+        w.push(
+            window_entry(3, 0xB3, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
@@ -5610,7 +5648,13 @@ mod tests {
         assert_eq!(w.bytes_of(SegmentSeq::new(6)), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
-        w.push(window_entry(3, 0xC3, false), Generation::new(1), None, None);
+        w.push(
+            window_entry(3, 0xC3, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         assert_eq!(
             w.bytes_of(SegmentSeq::new(3)),
@@ -5628,10 +5672,12 @@ mod tests {
             Generation::new(1),
             None,
             None,
+            None,
         );
         w.push(
             window_entry(u32::MAX, 2, false),
             Generation::new(1),
+            None,
             None,
             None,
         );
@@ -5642,6 +5688,7 @@ mod tests {
         w.push(
             window_entry(u32::MAX, 3, false),
             Generation::new(1),
+            None,
             None,
             None,
         );
@@ -5656,7 +5703,13 @@ mod tests {
     fn window_capacity_is_never_below_three_segments() {
         let mut w = Window::new(nz(1));
         for seq in 1..=5 {
-            w.push(window_entry(seq, 0, false), Generation::new(1), None, None);
+            w.push(
+                window_entry(seq, 0, false),
+                Generation::new(1),
+                None,
+                None,
+                None,
+            );
         }
         assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
     }
@@ -5714,6 +5767,7 @@ mod tests {
             w.push(
                 window_entry(seq, tag, false),
                 Generation::new(1),
+                None,
                 None,
                 None,
             );

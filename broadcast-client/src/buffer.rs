@@ -16,6 +16,47 @@ use crate::join::VideoJoin;
 
 const SILENCE_MARGIN_US: u64 = 500_000;
 
+/// The end of the contiguous decodable run of a video track, in presentation order. Samples arrive
+/// in decode order, so the highest PTS seen can be a whole reorder depth ahead of the pictures
+/// actually delivered. The end only advances over pictures that abut the run, or over a hole no
+/// later sample can fill: every picture still to come has `pts >= dts` and a `dts` above the
+/// highest one delivered.
+struct ReorderEnd {
+    end: i64,
+    decoded: i64,
+    ahead: BTreeMap<i64, i64>,
+}
+
+impl ReorderEnd {
+    fn new(pts: i64, dts: i64, dur: i64) -> Self {
+        Self {
+            end: pts.saturating_add(dur),
+            decoded: dts,
+            ahead: BTreeMap::new(),
+        }
+    }
+
+    fn push(&mut self, pts: i64, dts: i64, dur: i64) -> i64 {
+        self.decoded = self.decoded.max(dts);
+        if dur == 0 {
+            self.end = self.end.max(pts);
+            return self.end;
+        }
+        self.ahead.insert(pts, pts.saturating_add(dur));
+        while let Some((&first, &first_end)) = self.ahead.first_key_value() {
+            let slot = first_end - first;
+            let abuts = first <= self.end.saturating_add(slot / 2);
+            let unfillable = first.saturating_sub(slot) <= self.decoded;
+            if !abuts && !unfillable {
+                break;
+            }
+            self.end = self.end.max(first_end);
+            self.ahead.remove(&first);
+        }
+        self.end
+    }
+}
+
 pub(crate) struct InputLog {
     enabled: bool,
     cap: usize,
@@ -147,7 +188,7 @@ pub(crate) fn effective_controller_config(
 
 pub(crate) struct Feeder {
     config: ControllerConfig,
-    initial_seed: Option<StallMemorySnapshot>,
+    replay_seed_value: Option<StallMemorySnapshot>,
     seed: Option<StallMemorySnapshot>,
     seed_at_us: Option<u64>,
     controller: Option<BufferController>,
@@ -161,7 +202,7 @@ pub(crate) struct Feeder {
     pending_zero: BTreeMap<TrackId, (i64, u32)>,
     video_joined: BTreeSet<TrackId>,
     video_join_at: BTreeMap<TrackId, (i64, u32)>,
-    video_max_pts: BTreeMap<TrackId, i64>,
+    video_reorder: BTreeMap<TrackId, ReorderEnd>,
     video_end: BTreeMap<TrackId, i64>,
     audio_max_end: BTreeMap<TrackId, i64>,
     first_seen: BTreeMap<TrackId, i64>,
@@ -190,7 +231,7 @@ impl Feeder {
     ) -> Self {
         Self {
             config,
-            initial_seed: seed,
+            replay_seed_value: seed,
             seed,
             seed_at_us: None,
             controller: None,
@@ -204,7 +245,7 @@ impl Feeder {
             pending_zero: BTreeMap::new(),
             video_joined: BTreeSet::new(),
             video_join_at: BTreeMap::new(),
-            video_max_pts: BTreeMap::new(),
+            video_reorder: BTreeMap::new(),
             video_end: BTreeMap::new(),
             audio_max_end: BTreeMap::new(),
             first_seen: BTreeMap::new(),
@@ -235,7 +276,7 @@ impl Feeder {
     }
 
     pub(crate) fn replay_seed(&self) -> Option<StallMemorySnapshot> {
-        self.initial_seed
+        self.replay_seed_value
     }
 
     /// A finite connection drops the controller; a later live connection builds a new one that
@@ -396,7 +437,7 @@ impl Feeder {
         self.pending_zero.remove(&t);
         self.video_joined.remove(&t);
         self.video_join_at.remove(&t);
-        self.video_max_pts.remove(&t);
+        self.video_reorder.remove(&t);
         self.video_end.remove(&t);
         self.audio_max_end.remove(&t);
         self.first_seen.remove(&t);
@@ -611,21 +652,21 @@ impl Feeder {
                 Some(JoinDecision::JoinPoint(_)) if !self.video_joined.contains(&track) => {
                     self.video_joined.insert(track);
                     self.video_join_at.insert(track, (pts, timescale));
-                    self.video_max_pts.insert(track, pts);
-                    self.video_end.insert(track, pts.saturating_add(dur));
+                    let run = ReorderEnd::new(pts, sample.dts.unwrap_or(pts), dur);
+                    self.video_end.insert(track, run.end);
+                    self.video_reorder.insert(track, run);
                     if rendered {
                         self.queue_video_join(track);
                         self.queue_video_end(track);
                     }
                 }
                 Some(JoinDecision::Keep) if self.video_joined.contains(&track) => {
-                    let max_pts = self
-                        .video_max_pts
-                        .get(&track)
-                        .copied()
-                        .map_or(pts, |m| m.max(pts));
-                    self.video_max_pts.insert(track, max_pts);
-                    self.video_end.insert(track, max_pts.saturating_add(dur));
+                    let run = self
+                        .video_reorder
+                        .entry(track)
+                        .or_insert_with(|| ReorderEnd::new(pts, pts, 0));
+                    let end = run.push(pts, sample.dts.unwrap_or(pts), dur);
+                    self.video_end.insert(track, end);
                     if rendered {
                         self.queue_video_end(track);
                     }
@@ -652,7 +693,7 @@ impl Feeder {
         self.pending_ends.clear();
         self.pending_zero.clear();
         self.video_join_at.clear();
-        self.video_max_pts.clear();
+        self.video_reorder.clear();
         self.video_end.clear();
         self.audio_max_end.clear();
         self.first_seen.clear();
@@ -680,6 +721,7 @@ impl Feeder {
             .seed
             .map(|s| s.aged(self.seed_at_us.map_or(0, |at| now.saturating_sub(at))));
         if let Ok(mut c) = BufferController::new(self.controller_config(), seed) {
+            self.replay_seed_value = seed;
             self.seed = None;
             self.seed_at_us = None;
             for t in &self.rendered {
@@ -988,6 +1030,78 @@ mod tests {
     }
 
     #[test]
+    fn replay_seed_is_the_one_the_current_controller_was_built_with() {
+        const PEAK_US: u64 = 2_000_000;
+        const CHUNK: usize = 1316;
+        const LATER_US: u64 = 1_000_000;
+        let st = streams();
+        let first = StallMemorySnapshot::new(PEAK_US, 0);
+        let mut f = Feeder::new(
+            ControllerConfig::default(),
+            Some(first),
+            crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
+            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
+        );
+        f.set_recording(true, usize::MAX);
+        f.on_chunk(0, CHUNK, None);
+        assert_eq!(f.replay_seed(), Some(first));
+        f.set_finite();
+        f.new_connection();
+        f.set_expecting(LATER_US, true, false);
+        f.on_track_added(LATER_US, &st.audio.0);
+        f.on_sample(st.audio.0.track_id, &st.audio.1[0], None);
+        f.on_chunk(LATER_US, CHUNK, None);
+        assert_ne!(
+            f.replay_seed(),
+            Some(first),
+            "the log seed stayed the first controller's after a finite connection"
+        );
+        assert_eq!(f.replay_seed().map(|s| s.peak_us), Some(PEAK_US));
+    }
+
+    #[test]
+    fn video_end_does_not_run_ahead_of_reordered_pictures() {
+        const FRAME: i64 = 3_000;
+        const BASE: i64 = 1_000_000;
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(0, &st.video.0);
+        let vid = st.video.0.track_id;
+        let at = |f: &mut Feeder, pts_slot: i64, dts_slot: i64, join: JoinDecision| {
+            let mut s = st.video.1[0].clone();
+            s.pts = Some(BASE + pts_slot * FRAME);
+            s.dts = Some(BASE + dts_slot * FRAME);
+            s.duration = Some(u32::try_from(FRAME).unwrap());
+            f.on_sample(vid, &s, Some(join));
+            f.video_end.get(&vid).copied().map(|e| (e - BASE) / FRAME)
+        };
+        let rap = st
+            .video
+            .1
+            .iter()
+            .find_map(|s| {
+                f.join_sample(vid, s)
+                    .filter(|d| matches!(d, JoinDecision::JoinPoint(_)))
+            })
+            .expect("fixture has a join point");
+        let keep = JoinDecision::Keep;
+        assert_eq!(at(&mut f, 0, -3, rap), Some(1));
+        assert_eq!(
+            at(&mut f, 3, -2, keep),
+            Some(1),
+            "an I P B B end counted the P before its B pictures arrived"
+        );
+        assert_eq!(at(&mut f, 1, -1, keep), Some(2));
+        assert_eq!(at(&mut f, 6, 0, keep), Some(2), "slot 2 may still arrive");
+        assert_eq!(at(&mut f, 4, 1, keep), Some(2));
+        assert_eq!(
+            at(&mut f, 5, 2, keep),
+            Some(7),
+            "slot 2 can no longer arrive (every later picture has pts >= dts > 2), so the run goes on"
+        );
+    }
+
+    #[test]
     fn retain_tracks_forgets_removed_tracks() {
         let st = streams();
         let mut f = feeder();
@@ -1014,7 +1128,7 @@ mod tests {
         assert!(!f.video_joined.contains(&vid));
         assert!(!f.pending_zero.contains_key(&vid));
         assert!(!f.pending_ends.contains_key(&vid));
-        assert!(!f.video_max_pts.contains_key(&vid));
+        assert!(!f.video_reorder.contains_key(&vid));
         assert!(f.track_specs.contains_key(&aid));
         assert!(f.rendered.contains(&aid));
         assert!(f.pending_ends.contains_key(&aid));

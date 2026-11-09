@@ -224,7 +224,7 @@ pub(crate) async fn media_playlist(
     State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    let serving = match http::resolve_route_program(&state.route) {
+    let serving = match http::resolve_route_program_held(&state.route).await {
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
@@ -264,7 +264,7 @@ pub(crate) async fn audio_playlist(
     State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    let serving = match http::resolve_route_program(&state.route) {
+    let serving = match http::resolve_route_program_held(&state.route).await {
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
@@ -281,7 +281,7 @@ pub(crate) async fn subtitle_playlist(
     State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    let serving = match http::resolve_route_program(&state.route) {
+    let serving = match http::resolve_route_program_held(&state.route).await {
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
@@ -333,7 +333,7 @@ pub(crate) async fn iframe_playlist(
     State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    let serving = match http::resolve_route_program(&state.route) {
+    let serving = match http::resolve_route_program_held(&state.route).await {
         Ok(serving) => serving,
         Err(resp) => return *resp,
     };
