@@ -51,3 +51,32 @@ fn pmt_with_bad_crc_must_not_report_a_version_change() {
         "a PMT whose CRC-32 is wrong must be dropped (module docs: 'A corrupted section is dropped'), as the PAT path does"
     );
 }
+
+#[test]
+fn codec_psi_discovery_must_skip_a_pmt_with_a_bad_crc() {
+    use crate::diagnostics::codec_common::collect_pmt_streams;
+    let mut ts = build_pat_pmt_ts_versioned(&[(0x0100u16, StreamType::H264)], 0, true);
+    let control = collect_pmt_streams(&ts);
+    assert_eq!(control.len(), 1, "control: the intact PMT declares one stream");
+    let range = pmt_packet_range(&ts);
+    let p = &mut ts[range];
+    let section_length = (usize::from(p[6] & 0x0F) << 8) | usize::from(p[7]);
+    let crc_at = 5 + 3 + section_length - 4;
+    for b in &mut p[crc_at..crc_at + 4] {
+        *b ^= 0xFF;
+    }
+    assert!(
+        collect_pmt_streams(&ts).is_empty(),
+        "a PMT failing its CRC-32 must not declare streams (collect_pmt_streams docs: malformed sections are skipped)"
+    );
+}
+
+#[test]
+fn codec_psi_discovery_must_ignore_a_next_generation_pmt() {
+    use crate::diagnostics::codec_common::collect_pmt_streams;
+    let ts = build_pat_pmt_ts_versioned(&[(0x0100u16, StreamType::H264)], 0, false);
+    assert!(
+        collect_pmt_streams(&ts).is_empty(),
+        "current_next_indicator=0 is the NEXT table (13818-1 2.4.4.11), not what the stream carries now"
+    );
+}
