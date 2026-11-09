@@ -4111,6 +4111,50 @@ mod adapter_tests {
     }
 
     #[tokio::test]
+    async fn audit_d_pending_entries_made_by_a_stray_conclusion_expire() {
+        let mut listener = test_core(HandshakeConfig::default()).await;
+        let stray = {
+            let hp = HandshakePacket {
+                timestamp: 0,
+                dest_socket_id: 0,
+                version: crate::handshake_sm::HANDSHAKE_VERSION_5,
+                encryption_field: crate::packet::EncryptionField::NoEncryption,
+                extension_field: HandshakeExtensionFlags(0),
+                initial_seq_number: 0,
+                mtu: 1500,
+                max_flow_window_size: 8192,
+                handshake_type: crate::packet::HandshakeType::Conclusion,
+                srt_socket_id: 5,
+                syn_cookie: 0,
+                peer_ip: [0; 4],
+                extensions: HandshakeExtensions(&[]),
+            };
+            let pkt = ControlPacket::Handshake(hp);
+            let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+            pkt.serialize_into(&mut buf).unwrap();
+            buf
+        };
+        for i in 0..2000u32 {
+            let src = std::net::SocketAddr::from(([198, 18, (i >> 8) as u8, i as u8], 40_000));
+            let _ = listener.handle_datagram(src, &stray);
+        }
+        for _ in 0..1000 {
+            listener.tick_pending();
+        }
+        assert_eq!(
+            listener.pending.len(),
+            0,
+            "stray CONCLUSIONs left {} handshake slots allocated for good",
+            listener.pending.len()
+        );
+        let honest = std::net::SocketAddr::from(([203, 0, 113, 9], 4000));
+        listener
+            .handle_datagram(honest, &induction_bytes(7))
+            .expect("an honest caller");
+        assert!(listener.pending.contains_key(&honest));
+    }
+
+    #[tokio::test]
     async fn pending_entries_expire_while_other_sources_keep_sending() {
         let config = HandshakeConfig {
             retransmit_after_ticks: 1,
