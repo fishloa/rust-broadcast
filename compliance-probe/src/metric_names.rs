@@ -82,18 +82,22 @@ pub const EVENT_CURSOR_LAGGED_TOTAL: &str = "compliance_probe_event_cursor_lagge
 
 /// Counter: SCTE-35 cues observed, labelled `kind`
 /// (`timed_metadata::EventKind::name()` on the Trunk-cursor path, or
-/// `"break_start"`/`"break_end"`/`"other"` on the wire path — see
+/// `"break_start"`/`"break_end"`/`"cancel"`/`"other"` on the wire path — see
 /// [`crate::scte35`]).
 pub const SCTE35_CUES_TOTAL: &str = "compliance_probe_scte35_cues_total";
 
 /// Counter: `splice_info_section` bytes that failed to parse
-/// (`scte35_splice::SpliceInfoSection::parse` returned `Err`, or the section
-/// was `encrypted_packet` with no accessible clear view). Wire path only —
-/// see the module docs.
+/// (`scte35_splice::SpliceInfoSection::parse` returned `Err`). Wire path
+/// only — see the module docs.
 pub const SCTE35_MALFORMED_TOTAL: &str = "compliance_probe_scte35_malformed_total";
 
-/// Counter: a `splice_insert` with `time_specified_flag == 0` (an immediate
-/// splice, ANSI/SCTE 35 §9.7.3.1) — genuinely has no `pts_time` to judge
+/// Counter: a well-formed `encrypted_packet` `splice_info_section` (ANSI/SCTE
+/// 35 §9.6.1). Its command cannot be inspected without the key, so it is
+/// neither malformed nor judged. Wire path only.
+pub const SCTE35_ENCRYPTED_TOTAL: &str = "compliance_probe_scte35_encrypted_total";
+
+/// Counter: a `splice_insert` that is immediate (`splice_immediate_flag == 1`
+/// or `time_specified_flag == 0`, ANSI/SCTE 35 §9.7.3.1) — genuinely has no `pts_time` to judge
 /// future-vs-past against, so it is counted separately rather than folded
 /// into either sanity outcome.
 pub const SCTE35_IMMEDIATE_TOTAL: &str = "compliance_probe_scte35_immediate_total";

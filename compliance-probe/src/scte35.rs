@@ -38,16 +38,21 @@ const PTS_HALF: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Scte35Sanity {
-    /// The `splice_info_section` bytes did not parse, or were
-    /// `encrypted_packet` with no accessible clear view. Wire path only.
+    /// The `splice_info_section` bytes did not parse. Wire path only.
     Malformed,
+    /// A well-formed `encrypted_packet` section: the command is not
+    /// inspectable without the key, so there is nothing to judge.
+    Encrypted,
+    /// A `splice_insert` with `splice_event_cancel_indicator == 1`: it names
+    /// an earlier event to cancel and carries no timing or mode fields.
+    Cancelled,
     /// Parsed, but not a `splice_insert` (e.g. `splice_null`, `time_signal`,
     /// `splice_schedule`) — this module only judges `splice_insert`'s
     /// `pts_time`, so there is nothing further to check.
     NotSpliceInsert,
-    /// A `splice_insert` with `time_specified_flag == 0` (ANSI/SCTE 35
-    /// §9.7.3.1) — an immediate splice has no `pts_time` to judge
-    /// future-vs-past against.
+    /// A `splice_insert` with `splice_immediate_flag == 1`, or whose
+    /// `splice_time()` has `time_specified_flag == 0` (ANSI/SCTE 35
+    /// §9.7.3.1) — it has no `pts_time` to judge future-vs-past against.
     Immediate,
     /// The cue's target `pts_time` is at or ahead of the reference "now" —
     /// the ordinary, healthy case.
@@ -64,6 +69,8 @@ impl Scte35Sanity {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Malformed => "malformed",
+            Self::Encrypted => "encrypted",
+            Self::Cancelled => "cancelled",
             Self::NotSpliceInsert => "not_splice_insert",
             Self::Immediate => "immediate",
             Self::InFuture => "in_future",
@@ -100,32 +107,53 @@ pub fn check_section(section: &[u8], now_pts: u64) -> Scte35Sanity {
         return Scte35Sanity::Malformed;
     };
     let Some(clear) = &sis.clear else {
-        // `encrypted_packet` with no accessible clear view: nothing in the
-        // command can be inspected.
-        record_counter!(crate::metric_names::SCTE35_MALFORMED_TOTAL);
-        return Scte35Sanity::Malformed;
+        record_counter!(crate::metric_names::SCTE35_ENCRYPTED_TOTAL);
+        return Scte35Sanity::Encrypted;
     };
     let AnyCommand::SpliceInsert(si) = &clear.command else {
         record_counter!(crate::metric_names::SCTE35_CUES_TOTAL, "kind" => "other");
         return Scte35Sanity::NotSpliceInsert;
     };
 
+    if si.splice_event_cancel_indicator {
+        record_counter!(crate::metric_names::SCTE35_CUES_TOTAL, "kind" => "cancel");
+        return Scte35Sanity::Cancelled;
+    }
+
     record_counter!(
         crate::metric_names::SCTE35_CUES_TOTAL,
         "kind" => kind_label(si.out_of_network_indicator)
     );
 
-    let Some(pts_time) = si.splice_time.as_ref().and_then(|st| st.pts_time) else {
+    let program_time = si.splice_time.as_ref().and_then(|st| st.pts_time);
+    let component_times = si
+        .components
+        .iter()
+        .filter_map(|c| c.splice_time.as_ref().and_then(|st| st.pts_time));
+    let mut times: alloc::vec::Vec<u64> = if si.program_splice_flag {
+        program_time.into_iter().collect()
+    } else {
+        component_times.collect()
+    };
+    if si.splice_immediate_flag || times.is_empty() {
         record_counter!(crate::metric_names::SCTE35_IMMEDIATE_TOTAL);
         return Scte35Sanity::Immediate;
-    };
+    }
 
     // §9.6.1 defines the effective splice time as `pts_time + pts_adjustment`
     // (mod 2^33) — the field exists precisely so a downstream splicer/remux
     // can rebase cues without rewriting them (W-CP-1).
-    let effective_pts = scte35_splice::time::pts_add_wrapping(pts_time, sis.pts_adjustment);
+    for pts_time in &mut times {
+        *pts_time = scte35_splice::time::pts_add_wrapping(*pts_time, sis.pts_adjustment);
+    }
 
-    judge(effective_pts, now_pts)
+    let mut verdict = Scte35Sanity::InFuture;
+    for effective_pts in times {
+        if judge(effective_pts, now_pts) == Scte35Sanity::InPast {
+            verdict = Scte35Sanity::InPast;
+        }
+    }
+    verdict
 }
 
 /// The future-vs-past judgement shared by both entry points: a forward
