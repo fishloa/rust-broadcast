@@ -435,28 +435,22 @@ impl CarryOverExtractor {
         let dfl_bytes = (hdr.dfl / 8) as usize;
         let data = &data_field[..dfl_bytes.min(data_field.len())];
 
+        let mut i = syncd_bytes;
         if all_continuation {
-            // The whole data field continues the previous partial UP.
-            if self.pos > 0 {
-                let space = stride + 1 - self.pos; // bytes still needed to complete
-                let take = data.len().min(space);
-                self.buf[self.pos..self.pos + take].copy_from_slice(&data[..take]);
-                self.pos += take;
-                if self.pos == stride + 1 {
-                    // UP is now complete.
-                    self.buf[0] = TS_SYNC_BYTE;
-                    out.push(self.buf[..NM_UP_SIZE].try_into().expect("188 bytes"));
-                    self.pos = 0;
-                }
+            if self.pos == 0 {
+                return;
             }
-            // Any bytes beyond the completed UP are a new partial; in practice
-            // SYNCD=0xFFFF means the whole field is the continuation, so there
-            // should be nothing left — but buffer any excess defensively.
-            return;
-        }
-
-        // Complete the partial UP from the previous frame.
-        if self.pos > 0 {
+            let take = data.len().min(stride + 1 - self.pos);
+            self.buf[self.pos..self.pos + take].copy_from_slice(&data[..take]);
+            self.pos += take;
+            if self.pos < stride + 1 {
+                return;
+            }
+            self.buf[0] = TS_SYNC_BYTE;
+            out.push(self.buf[..NM_UP_SIZE].try_into().expect("188 bytes"));
+            self.pos = 0;
+            i = take;
+        } else if self.pos > 0 {
             let need = stride + 1 - self.pos; // +1 for the sync byte we'll prepend
             if syncd_bytes == need && data.len() >= need {
                 self.buf[self.pos..self.pos + need].copy_from_slice(&data[..need]);
@@ -470,7 +464,6 @@ impl CarryOverExtractor {
             }
         }
 
-        let mut i = syncd_bytes;
         while i + stride <= data.len() {
             // HEM: 187 bytes of UP, prepend sync byte.
             self.buf[0] = TS_SYNC_BYTE;
@@ -519,12 +512,14 @@ impl CarryOverExtractor {
             Ok(h) => h,
             Err(_) => {
                 self.stats.header_parse_failures += 1;
+                self.discard_carry();
                 return;
             }
         };
         // Mismatched mode (caller fed a non-NM header): no output, no panic.
         if hdr.mode != Mode::Normal {
             self.stats.mode_mismatches += 1;
+            self.discard_carry();
             return;
         }
 
@@ -534,6 +529,7 @@ impl CarryOverExtractor {
                 // UPL/ISSYI/NPD don't describe a valid stride — skip this
                 // frame rather than mis-frame it at a fixed 188 bytes.
                 self.stats.nm_upl_invalid += 1;
+                self.discard_carry();
                 return;
             }
         };
@@ -549,23 +545,21 @@ impl CarryOverExtractor {
         let dfl_bytes = (hdr.dfl / 8) as usize;
         let data = &data_field[..dfl_bytes.min(data_field.len())];
 
+        let mut i = syncd_bytes;
         if all_continuation {
-            // The whole data field continues the previous partial UP.
-            if self.pos > 0 {
-                let space = stride - self.pos; // bytes still needed to complete
-                let take = data.len().min(space);
-                self.buf[self.pos..self.pos + take].copy_from_slice(&data[..take]);
-                self.pos += take;
-                if self.pos == stride {
-                    self.finish_nm_up(stride, out);
-                    self.pos = 0;
-                }
+            if self.pos == 0 {
+                return;
             }
-            return;
-        }
-
-        // Complete partial UP from previous frame.
-        if self.pos > 0 {
+            let take = data.len().min(stride - self.pos);
+            self.buf[self.pos..self.pos + take].copy_from_slice(&data[..take]);
+            self.pos += take;
+            if self.pos < stride {
+                return;
+            }
+            self.finish_nm_up(stride, out);
+            self.pos = 0;
+            i = take;
+        } else if self.pos > 0 {
             let need = stride - self.pos;
             if syncd_bytes == need && data.len() >= need {
                 self.buf[self.pos..self.pos + need].copy_from_slice(&data[..need]);
@@ -575,12 +569,10 @@ impl CarryOverExtractor {
                 // Stride mismatch — discard partial and resync to syncd. The
                 // CRC-8 chain no longer correlates across the gap.
                 self.stats.partial_discards += 1;
-                self.pos = 0;
-                self.nm_crc_state = None;
+                self.discard_carry();
             }
         }
 
-        let mut i = syncd_bytes;
         while i + stride <= data.len() {
             self.buf[..stride].copy_from_slice(&data[i..i + stride]);
             self.finish_nm_up(stride, out);
@@ -595,6 +587,11 @@ impl CarryOverExtractor {
         } else {
             self.pos = 0;
         }
+    }
+
+    pub(crate) fn discard_carry(&mut self) {
+        self.pos = 0;
+        self.nm_crc_state = None;
     }
 
     /// Finish one fully-buffered NM UP of `stride` bytes in `self.buf`:
@@ -1279,5 +1276,94 @@ mod tests {
         assert_eq!(pkts[1][1] & 0x80, 0x80, "TEI must be set when CRC-8 fails");
         // Verify the counter was incremented.
         assert_eq!(extractor.stats().crc8_mismatches, 1);
+    }
+
+    fn nm_frame(prev_crc: u8, body: u8) -> (Vec<u8>, u8) {
+        let up = [body; NM_UP_SIZE - 1];
+        let mut d = vec![prev_crc];
+        d.extend_from_slice(&up);
+        (d, crc8(&up))
+    }
+
+    fn nm_frame_header(syncd: u16, dfl_bytes: usize) -> [u8; BBHEADER_LEN] {
+        let mut h = make_nm_header(syncd);
+        h.dfl = (dfl_bytes * 8) as u16;
+        h.serialize().unwrap()
+    }
+
+    #[test]
+    fn nm_good_packet_after_a_lost_frame_is_not_flagged_transport_error() {
+        let mut ex = CarryOverExtractor::new();
+        let (a, crc_a) = nm_frame(0, 0x11);
+        assert_eq!(ex.feed_nm(&nm_frame_header(0, a.len()), &a).len(), 1);
+
+        let (b, crc_b) = nm_frame(crc_a, 0x22);
+        let mut bad_hdr = nm_frame_header(0, b.len());
+        bad_hdr[9] ^= 0x55;
+        assert!(ex.feed_nm(&bad_hdr, &b).is_empty());
+        assert_eq!(ex.stats().header_parse_failures, 1);
+
+        let (c, _) = nm_frame(crc_b, 0x33);
+        let out = ex.feed_nm(&nm_frame_header(0, c.len()), &c);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0][1] & TS_TEI_BIT, 0);
+        assert_eq!(ex.stats().crc8_mismatches, 0);
+    }
+
+    #[test]
+    fn nm_lost_frame_also_drops_the_pending_partial_up() {
+        let mut ex = CarryOverExtractor::new();
+        let (a, _) = nm_frame(0, 0x11);
+        assert!(ex.feed_nm(&nm_frame_header(0, 100), &a[..100]).is_empty());
+
+        let mut bad_hdr = nm_frame_header(0, 10);
+        bad_hdr[9] ^= 0x55;
+        assert!(ex.feed_nm(&bad_hdr, &[0; 10]).is_empty());
+
+        let (c, _) = nm_frame(0, 0x33);
+        let out = ex.feed_nm(&nm_frame_header(0xFFFF, 88), &c[100..]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn nm_continuation_frame_keeps_whole_ups_after_the_completed_one() {
+        let mut ex = CarryOverExtractor::new();
+        let (a, crc_a) = nm_frame(0, 0x11);
+        let (b, _) = nm_frame(crc_a, 0x22);
+        let stream: Vec<u8> = a.iter().chain(b.iter()).copied().collect();
+        assert!(
+            ex.feed_nm(&nm_frame_header(0, 100), &stream[..100])
+                .is_empty()
+        );
+        let out = ex.feed_nm(&nm_frame_header(0xFFFF, stream.len() - 100), &stream[100..]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1][1], 0x22);
+        assert_eq!(ex.stats().crc8_mismatches, 0);
+    }
+
+    #[test]
+    fn hem_continuation_frame_keeps_whole_ups_after_the_completed_one() {
+        let mut ex = CarryOverExtractor::new();
+        let up = |v: u8| [v; HEM_UP_SIZE];
+        let stream: Vec<u8> = up(0x11).iter().chain(up(0x22).iter()).copied().collect();
+        let hem_header = |syncd: u16, dfl: usize| {
+            let mut h = make_nm_header(syncd);
+            h.mode = Mode::HighEfficiency;
+            h.upl = 0;
+            h.sync = 0;
+            h.dfl = (dfl * 8) as u16;
+            h.serialize().unwrap()
+        };
+        assert!(
+            ex.feed_hem(&hem_header(0, 100), &stream[..100], false)
+                .is_empty()
+        );
+        let out = ex.feed_hem(
+            &hem_header(0xFFFF, stream.len() - 100),
+            &stream[100..],
+            false,
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1][1], 0x22);
     }
 }

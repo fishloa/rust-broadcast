@@ -89,6 +89,11 @@ const ESCR_RESERVED_SHIFT: u32 = 6;
 const ESCR_BASE_MASK: u64 = (1 << 33) - 1;
 /// ESCR 9-bit extension mask (`ESCR_extension`).
 const ESCR_EXT_MASK: u16 = (1 << 9) - 1;
+/// `marker_bit` leading each byte of `program_packet_sequence_counter`.
+const PPSC_MARKER: u8 = 0x80;
+/// The `'01'` prefix of `P-STD_buffer` and the mask selecting it.
+const P_STD_PREFIX: u8 = 0x40;
+const P_STD_PREFIX_MASK: u8 = 0xC0;
 /// ESCR `marker_bit` that sits in bit 2 of bytes 0, 2 and 4.
 const ESCR_MARKER_MID: u8 = 0x04;
 /// ESCR trailing `marker_bit` (bit 0 of byte 5).
@@ -122,6 +127,13 @@ impl Escr {
     /// `B4[7:3]`=`base[4:0]`, `B4[2]`=marker, `B4[1:0]`=`ext[8:7]`,
     /// `B5[7:1]`=`ext[6:0]`, `B5[0]`=marker.
     pub fn from_field_bytes(b: &[u8; 6]) -> Result<Self> {
+        if b[0] & ESCR_MARKER_MID == 0
+            || b[2] & ESCR_MARKER_MID == 0
+            || b[4] & ESCR_MARKER_MID == 0
+            || b[5] & ESCR_MARKER_LAST == 0
+        {
+            return Err(Error::BadMarker("ESCR"));
+        }
         let base = ((((b[0] >> 3) & 0x07) as u64) << 30)   // base[32:30]
             | (((b[0] & 0x03) as u64) << 28)                 // base[29:28]
             | ((b[1] as u64) << 20)                           // base[27:20]
@@ -460,6 +472,9 @@ impl<'a> PesExtension<'a> {
             let b0 = data[cursor];
             let b1 = data[cursor + 1];
             cursor += 2;
+            if b0 & PPSC_MARKER == 0 || b1 & PPSC_MARKER == 0 {
+                return Err(Error::BadMarker("program_packet_sequence_counter"));
+            }
             Some(ProgramPacketSequenceCounter {
                 counter: b0 & 0x7F,
                 mpeg1_mpeg2_identifier: (b1 & 0x40) != 0,
@@ -474,6 +489,9 @@ impl<'a> PesExtension<'a> {
             let b0 = data[cursor];
             let b1 = data[cursor + 1];
             cursor += 2;
+            if b0 & P_STD_PREFIX_MASK != P_STD_PREFIX {
+                return Err(Error::BadMarker("P-STD_buffer"));
+            }
             Some(PStdBuffer {
                 scale: (b0 & 0x20) != 0,
                 size: (((b0 & 0x1F) as u16) << 8) | (b1 as u16),
@@ -594,9 +612,9 @@ impl<'a> PesExtension<'a> {
         }
         if let Some(ppsc) = self.program_packet_sequence_counter {
             // byte 0: marker(1) | counter(7)
-            buf[cursor] = 0x80 | (ppsc.counter & 0x7F);
+            buf[cursor] = PPSC_MARKER | (ppsc.counter & 0x7F);
             // byte 1: marker(1) | mpeg1_mpeg2_id(1) | original_stuff_length(6)
-            buf[cursor + 1] = 0x80
+            buf[cursor + 1] = PPSC_MARKER
                 | ((ppsc.mpeg1_mpeg2_identifier as u8) << 6)
                 | (ppsc.original_stuff_length & 0x3F);
             cursor += 2;
@@ -609,7 +627,7 @@ impl<'a> PesExtension<'a> {
                 13,
                 "PES_extension.P-STD_buffer_size",
             )? as u16;
-            buf[cursor] = 0x40 | ((ps.scale as u8) << 5) | ((size >> 8) as u8 & 0x1F);
+            buf[cursor] = P_STD_PREFIX | ((ps.scale as u8) << 5) | ((size >> 8) as u8 & 0x1F);
             buf[cursor + 1] = (size & 0xFF) as u8;
             cursor += 2;
         }

@@ -21,6 +21,11 @@ pub enum Error {
     /// A required `marker_bit` was not `1` in a PTS/DTS field.
     #[error("bad timestamp marker bit in {0}")]
     BadTimestampMarker(&'static str),
+    /// A required fixed marker or prefix bit was not as the spec requires in
+    /// an ESCR, `P-STD_buffer` or `program_packet_sequence_counter` field
+    /// (ISO/IEC 13818-1 Table 2-21).
+    #[error("bad marker bits in {0}")]
+    BadMarker(&'static str),
     /// The PTS/DTS leading 4-bit prefix did not match the expected `0010`/`0011`/`0001`.
     #[error("bad timestamp prefix in {0}")]
     BadTimestampPrefix(&'static str),

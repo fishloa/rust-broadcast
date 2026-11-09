@@ -103,6 +103,7 @@ impl BbframePump {
         // ── Validate BBHEADER length ──────────────────────────────────────
         if df_bytes.len() < BBHEADER_LEN {
             self.stats.header_parse_failures += 1;
+            self.discard_plp_carry(plp_id);
             return &self.out;
         }
 
@@ -111,6 +112,7 @@ impl BbframePump {
             Ok(h) => h,
             Err(_) => {
                 self.stats.header_parse_failures += 1;
+                self.discard_plp_carry(plp_id);
                 return &self.out;
             }
         };
@@ -118,6 +120,7 @@ impl BbframePump {
         // ── Non-TS payload → skip ─────────────────────────────────────────
         if hdr.matype.ts_gs != TsGs::Ts {
             self.stats.non_ts_payloads += 1;
+            self.discard_plp_carry(plp_id);
             return &self.out;
         }
 
@@ -153,6 +156,12 @@ impl BbframePump {
 
         self.out.append(&mut self.up_buf);
         &self.out
+    }
+
+    fn discard_plp_carry(&mut self, plp_id: u8) {
+        if let Some(ext) = self.extractors[plp_id as usize].as_mut() {
+            ext.discard_carry();
+        }
     }
 
     /// Diagnostic counters accumulated across all `feed` calls.
