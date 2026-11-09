@@ -214,8 +214,15 @@ fn build_pmt_section_versioned(
 
 /// Packetise a section into 188-byte TS packets.
 fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
-    let mut pktizer = SectionPacketiser::new(Pid::new(pid));
-    pktizer.packetise(&[section])
+    thread_local! {
+        static NEXT_CC: std::cell::RefCell<alloc::collections::BTreeMap<u16, u8>> =
+            const { std::cell::RefCell::new(alloc::collections::BTreeMap::new()) };
+    }
+    let cc = NEXT_CC.with(|m| m.borrow().get(&pid).copied().unwrap_or(0));
+    let mut pktizer = SectionPacketiser::with_continuity(Pid::new(pid), cc);
+    let packets = pktizer.packetise(&[section]);
+    NEXT_CC.with(|m| m.borrow_mut().insert(pid, pktizer.continuity_counter()));
+    packets
 }
 
 /// Corrupt the trailing CRC-32 of a long-form section so it still parses but
@@ -224,6 +231,12 @@ fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
 fn corrupt_crc(section: &mut [u8]) {
     let len = section.len();
     section[len - 1] ^= 0xFF;
+}
+
+fn refresh_crc(section: &mut [u8]) {
+    let body = section.len() - 4;
+    let crc = broadcast_common::crc32_mpeg2::compute(&section[..body]);
+    section[body..].copy_from_slice(&crc.to_be_bytes());
 }
 
 /// Feed packets to the monitor and collect all events.
@@ -526,6 +539,7 @@ fn pat_error_wrong_table_id() {
 
     let mut section = build_pat_section(&[(1, 0x100)]);
     section[0] = 0x01; // wrong table_id
+    refresh_crc(&mut section);
 
     let packets = packetise_section(PID_PAT, &section);
     let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
@@ -633,6 +647,7 @@ fn pat_error_timeout_when_sections_carry_wrong_table_id() {
     // wrong-table_id dimension of 1.3.a).
     let mut section = build_pat_section(&[(1, 0x100)]);
     section[0] = 0x01; // wrong table_id
+    refresh_crc(&mut section);
     let packets = packetise_section(PID_PAT, &section);
     let first = feed_all(&mut monitor, &packets, ms(5), ms(1));
     assert_eq!(
