@@ -3571,13 +3571,7 @@ impl HlsOrigin {
                         || (in_progress == msn
                             && u64::try_from(edge_parts).unwrap_or(u64::MAX) > u64::from(part))
                 }
-                None => {
-                    self.public_msn(
-                        self.trunk
-                            .last_closed_segment()
-                            .unwrap_or(SegmentSeq::new(0)),
-                    ) >= msn
-                }
+                None => self.window_reaches(msn),
             };
             if !satisfied {
                 return EgressResponse::pending(await_policy, now, now);
@@ -3597,6 +3591,14 @@ impl HlsOrigin {
             // malformed data-driven field must not take the origin down.
             Err(_) => EgressResponse::NotFound,
         }
+    }
+
+    fn window_reaches(&self, msn: u64) -> bool {
+        self.drain();
+        locked(&self.window)
+            .segments
+            .back()
+            .is_some_and(|newest| self.public_msn(newest.sequence_number) >= msn)
     }
 
     fn has_closed_segment(&self) -> bool {

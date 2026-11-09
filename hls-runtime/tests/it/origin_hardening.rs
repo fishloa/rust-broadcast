@@ -1240,30 +1240,38 @@ fn a_segmenter_numbering_from_above_one_renders_the_open_segments_parts() {
     assert_eq!(rendered.matches("#EXT-X-PART:").count(), 2, "{rendered}");
 }
 
+fn bare_msn_reload(o: &HlsOrigin, msn: u64) -> EgressResponse<HlsBody> {
+    let (now, policy) = patient();
+    o.resolve(
+        HlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery {
+                hls_msn: Some(msn),
+                ..BlockingQuery::default()
+            },
+        },
+        now,
+        policy,
+    )
+}
+
 #[test]
 fn a_bare_msn_reload_is_answered_only_with_a_playlist_that_lists_that_segment() {
     let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
     let w = trunk.segment_writer().expect("segment writer");
     publish_seg(&w, 1, 4, false);
     let o = origin(&trunk, 4, false);
-    let (now, policy) = patient();
-    let response = o.resolve(
-        HlsRequest::Playlist {
-            track_id: DEFAULT_TRACK_ID,
-            query: BlockingQuery {
-                hls_msn: Some(1),
-                ..BlockingQuery::default()
-            },
-        },
-        now,
-        policy,
+    let before = bare_msn_reload(&o, 1);
+    assert!(
+        is_await(&before),
+        "segment 1 predates the origin and is not in its window: {before:?}"
     );
-    match response {
+    publish_seg(&w, 2, 4, false);
+    match bare_msn_reload(&o, 2) {
         EgressResponse::Ready {
             body: HlsBody::Playlist(m),
             ..
-        } => assert!(m.contains("seg-1-"), "satisfied but segment 1 missing: {m}"),
-        EgressResponse::Await { .. } => {}
+        } => assert!(m.contains("-2.m4s"), "{m}"),
         other => panic!("{other:?}"),
     }
 }
