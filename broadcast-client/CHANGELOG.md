@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every sample handed to the host has its end reported to the buffer controller in the same call. Samples released by `on_closed` (the TS demux tail, the RTSP depacketiser flush), `poll` (RTSP/RTMP timers, the TS track hold), `reconnect` and `next_event` used to be reported only at the next `on_data` chunk, so the controller judged the lead short of what the host held.
 - An RTSP or RTMP connection loss is hinted to the buffer controller as `SourceEnded` / `SourceError`, as the TS path already did; a starvation right after the close was charged to the stall memory as `DataArriving`, ratcheting the target. The hint is sent only when the source will announce a `Discontinuity` (and so `Reconnected`) before the next connection's media.
 - A live connection after a finite (VOD) one starts under the same rules as the first: the new controller keeps the previous controller's stall memory (aged by the time in between) and the pending-track placeholder and the explicit-rendered-set start hold apply again (the session's "started" flag stayed set, and the seed was lost).
+- An RTSP connection lost to a protocol error inside `on_data` (no `on_closed` follows) is hinted to the buffer controller as `SourceError`, like a close; it sent no hint, so a starvation right after was charged to the stall memory as `DataArriving`.
 
 ## [0.4.0] - 2026-11-08
 ### Added

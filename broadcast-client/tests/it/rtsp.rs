@@ -1119,3 +1119,25 @@ fn a_closed_connection_is_hinted_to_the_buffer() {
         );
     }
 }
+
+/// A protocol error inside `on_data` loses the connection without a `Closed` callback; the buffer
+/// controller must still learn it was a source outage.
+#[test]
+fn a_protocol_error_inside_on_data_is_hinted_to_the_buffer() {
+    use broadcast_client::{BufferInput, Hint};
+
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    let mut host = connected(config, server());
+    host.deliver_all(&fixture().frames());
+    let conn = host.conn.expect("live connection");
+    let _ = host.session.drain_buffer_inputs();
+    host.session.on_data(conn, b"\xff\xff\xff\xff\r\n\r\n", host.now);
+    let inputs: Vec<BufferInput> = host.session.drain_buffer_inputs().collect();
+    assert!(
+        inputs
+            .iter()
+            .any(|i| matches!(i, BufferInput::Hint { hint, .. } if *hint == Hint::SourceError)),
+        "protocol error sent no SourceError hint: {inputs:?}"
+    );
+}
