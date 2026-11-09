@@ -854,7 +854,7 @@ mod tests {
     }
 
     /// An `avcC` body declaring a 2-byte NAL length prefix
-    /// (`lengthSizeMinusOne = 1`, ISO/IEC 14496-15 §5.3.3.1.2) — legal but
+    /// (`lengthSizeMinusOne = 1`, ISO/IEC 14496-15:2017 §5.3.3.1.3) — legal but
     /// not what this crate's pipeline assumes.
     fn avcc_bytes_length_size_2() -> Vec<u8> {
         let sps_nal: [u8; 6] = [0x67, 0x42, 0x00, 0x1F, 0x00, 0x00];

@@ -1,4 +1,4 @@
-//! AVC/HEVC sample entries and their config boxes — ISO/IEC 14496-15:2017 §5.4, §8.4.
+//! AVC/HEVC sample entries and their config boxes — ISO/IEC 14496-15:2017 §5.4.2.1, §8.4.1.1.
 //!
 //! Sample entries live inside `stsd` and extend `VisualSampleEntry`. Each carries
 //! a configuration box (`avcC` or `hvcC`) containing the decoder configuration record
@@ -310,7 +310,7 @@ pub(crate) fn entry_children_len(children: &[SampleEntryChild], config_len: usiz
 // AVC Sample Entries: avc1 and avc3
 // ---------------------------------------------------------------------------
 
-/// H.264/AVC sample entry — ISO/IEC 14496-15:2017 §5.4.2.
+/// H.264/AVC sample entry — ISO/IEC 14496-15:2017 §5.4.2.1.
 ///
 /// Fields common to `avc1` and `avc3`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -568,7 +568,7 @@ fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::init_segment::OpaqueBox> {
 /// completeness values §8.4.1.1.1 mandates.
 const HVC1_FOURCC: [u8; 4] = *b"hvc1";
 
-/// H.265/HEVC sample entry — ISO/IEC 14496-15:2017 §8.4.1.
+/// H.265/HEVC sample entry — ISO/IEC 14496-15:2017 §8.4.1.1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HEVCSampleEntry {

@@ -4,7 +4,7 @@
 //! field pairs). Transcription: `private/specs-verified/mpeg/transmux/codec/h264-slice-header.md`.
 //!
 //! Field-coded (PAFF) H.264 is broadcast as one coded picture per *field*, one
-//! PES per field. ISO/IEC 14496-15 samples are whole access units, i.e. both
+//! PES per field. ISO/IEC 14496-15:2017 samples are whole access units, i.e. both
 //! fields of a frame ([`AvcFieldInfo::pairs_with`]); the demuxer uses
 //! [`AvcParamSets::classify_au`] to find them. Only the entropy-agnostic prefix
 //! of the slice header (through `redundant_pic_cnt`) is parsed. MBAFF pictures

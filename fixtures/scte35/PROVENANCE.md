@@ -272,7 +272,7 @@ fixture.** Root cause, isolated:
   `AVCProfileIndication = 100` (H.264 High Profile).
 - `transmux::avc_config::AVCDecoderConfigurationRecord::parse`
   (`transmux/src/avc_config.rs`, `has_high_profile_ext`/`is_high_profile`
-  gate around line 162) treats the ISO/IEC 14496-15 §5.3.3.1.1
+  gate around line 162) treats the ISO/IEC 14496-15:2017 §5.3.3.1.2
   backward-compatibility extension (`chroma_format` /
   `bit_depth_luma_minus8` / `bit_depth_chroma_minus8` /
   `numOfSequenceParameterSetExt`) as **mandatory** whenever the profile is

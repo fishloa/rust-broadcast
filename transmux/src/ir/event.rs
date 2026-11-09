@@ -148,7 +148,7 @@ pub enum InputDegradation {
     /// An H.264/H.265 NAL that carries a parameter-set header (SPS/PPS, or
     /// VPS) was **rejected** as unusable for a decoder configuration and
     /// ignored (issue #1171): it was empty or longer than the `u16` length
-    /// field of an `avcC`/`hvcC` record (ISO/IEC 14496-15 §5.3.3.1.2 /
+    /// field of an `avcC`/`hvcC` record (ISO/IEC 14496-15:2017 §5.3.3.1.2 /
     /// §8.3.3.1.2), had a wrong NAL header, or was an SPS that does not parse.
     /// The track's current config is unchanged and no `TrackAdded` /
     /// `TrackUpdated` is raised for it. One event per rejected NAL.

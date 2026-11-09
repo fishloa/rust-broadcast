@@ -30,7 +30,7 @@
 //!
 //! # profile_idc 244, not 144 (#563)
 //!
-//! Early drafts of ISO/IEC 14496-15 (and some still-circulating transcriptions)
+//! Early drafts of the AVC file format standard (and some still-circulating transcriptions)
 //! list this condition as `profile_idc∈{100,110,122,144}`. `144` was the
 //! placeholder profile number assigned to the not-yet-finalized "High 4:4:4"
 //! profile before ITU-T H.264 Amendment 3 (2005) finalized it as **profile_idc
@@ -86,7 +86,7 @@ pub struct AVCDecoderConfigurationRecord {
 
 impl AVCDecoderConfigurationRecord {
     /// True when the profile requires the high-profile extension fields
-    /// (chroma_format, bit depths) — ISO/IEC 14496-15 §5.3.3.1.2. The
+    /// (chroma_format, bit depths) — ISO/IEC 14496-15:2017 §5.3.3.1.2. The
     /// *record's* condition is `AVCProfileIndication ∈ {100, 110, 122, 244}`
     /// (144 was the draft's placeholder for High 4:4:4 Predictive, finalized as
     /// 244; #563), so this is deliberately narrower than
@@ -147,7 +147,7 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
             return Err(Error::InvalidValue(InvalidValue {
                 field: "lengthSizeMinusOne",
                 value: length_size_minus_one as u64,
-                reason: "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2017 §5.3.3)",
+                reason: "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2017 §5.3.3.1.3)",
             }));
         }
 

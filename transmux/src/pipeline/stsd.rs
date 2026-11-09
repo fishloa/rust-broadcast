@@ -134,7 +134,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 ..VisualSampleEntryFields::default()
             };
             // `hvc1` (parameter sets in the sample entry) — ISO/IEC
-            // 14496-15:2017 §8.4.1; `dvh1` for a Dolby Vision base layer that
+            // 14496-15:2017 §8.4.1.1; `dvh1` for a Dolby Vision base layer that
             // is not SDR/HDR compliant
             // (private/specs-verified/dolby/vision/dolby-vision-streams-in-isobmff-v2.0-2017-12.md 8.1.2).
             let dovi = t.dovi.as_ref().filter(|d| d.is_single_layer());

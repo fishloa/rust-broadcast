@@ -633,7 +633,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             let pts_abs = dts_abs + composition_time as i64;
                             // The NALU payload's NAL prefixes use the
                             // `lengthSizeMinusOne` the AVC sequence header
-                            // declared (§E.4.3.1 / ISO/IEC 14496-15 §5.3.3) —
+                            // declared (§E.4.3.1 / ISO/IEC 14496-15:2017 §5.3.3) —
                             // 1, 2 or 4 bytes. The rest of the pipeline is
                             // fixed at 4, so rewrite them (r04-W43).
                             let length_size = avc_source_length_size.unwrap_or(NAL_LENGTH_SIZE);
