@@ -1783,14 +1783,12 @@ impl HlsClient {
             // second time. Caught by `multimux/tests/it/glass_to_glass.rs`
             // (issue #717 slice 5): every sample was double-delivered for
             // the first two segments of a real, live-paced run.
-            let already_have_parts = self
-                .delivered_parts
-                .range((msn, 0)..=(msn, u64::MAX))
-                .next()
-                .is_some();
-            if already_have_parts {
+            if self.has_delivered_part(msn) {
                 self.begin_ts_resource(ResourceId::Segment { msn }, msn)?;
-                self.delivered_segments.insert(msn);
+                self.retry_undelivered_parts(msn);
+                if self.undelivered_parts(msn).is_empty() {
+                    self.delivered_segments.insert(msn);
+                }
                 return Ok(());
             }
             let id = ResourceId::Segment { msn };
@@ -1822,6 +1820,39 @@ impl HlsClient {
             self.delivered_segments.insert(msn);
         }
         Ok(())
+    }
+
+    fn undelivered_parts(&self, msn: u64) -> Vec<ResourceId> {
+        self.resource_requests
+            .range(
+                ResourceId::Part { msn, part: 0 }..=ResourceId::Part {
+                    msn,
+                    part: u64::MAX,
+                },
+            )
+            .map(|(id, _)| *id)
+            .filter(|id| match id {
+                ResourceId::Part { part, .. } => !self.delivered_parts.contains(&(msn, *part)),
+                _ => false,
+            })
+            .collect()
+    }
+
+    fn retry_undelivered_parts(&mut self, msn: u64) {
+        for id in self.undelivered_parts(msn) {
+            self.retry_resource(id);
+        }
+    }
+
+    fn has_delivered_part(&self, msn: u64) -> bool {
+        self.delivered_parts
+            .range((msn, 0)..=(msn, u64::MAX))
+            .next()
+            .is_some()
+    }
+
+    fn covered_by_parts(&self, msn: u64) -> bool {
+        self.has_delivered_part(msn) && self.undelivered_parts(msn).is_empty()
     }
 
     fn process_open_segment(&mut self, msn: u64, open: &OpenSegment) -> Result<()> {
@@ -2510,6 +2541,7 @@ impl HlsClient {
             let msn = playlist.media_sequence.saturating_add(i);
             self.delivered_segments.contains(&msn)
                 || self.fulfilled.contains(&ResourceId::Segment { msn })
+                || self.covered_by_parts(msn)
         })
     }
 
