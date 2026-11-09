@@ -42,6 +42,9 @@ use super::{FULL_ACK_PERIOD, LIGHT_ACK_THRESHOLD, duration_to_wire_us, nak_inter
 /// bound (about ten times libsrt's default 25 600-packet flow window).
 const MAX_TRACKED_WINDOW: u32 = 1 << 18;
 
+/// Most DROPREQ ranges held ahead of the ack point at once.
+const MAX_PENDING_SKIPS: usize = 1024;
+
 /// IPv4 (20 B) + UDP (8 B) header bytes inside one MTU-sized datagram — what
 /// the handshake's `MTU` field (§3.2.1, "Maximum Transmission Unit Size")
 /// counts but a NAK's Control Information Field cannot use.
@@ -101,6 +104,9 @@ pub struct Receiver {
     out_of_order: BTreeSet<u32>,
     /// Sequence numbers currently believed lost (rules 4, 14, 21).
     loss_list: BTreeSet<u32>,
+    /// DROPREQ ranges (§3.2.9) still ahead of the ack point, as inclusive
+    /// `(first, last)` pairs; the ack point jumps each one on arrival.
+    pending_skips: Vec<(u32, u32)>,
     /// The highest sequence number ever received, to detect newly-opened
     /// gaps (bookkeeping, not itself a spec-named field).
     highest_received: Option<u32>,
@@ -146,6 +152,7 @@ impl Receiver {
             next_expected: initial_seq,
             out_of_order: BTreeSet::new(),
             loss_list: BTreeSet::new(),
+            pending_skips: Vec::new(),
             highest_received: None,
             packets_since_ack: 0,
             last_full_ack_at: Duration::ZERO,
@@ -261,6 +268,12 @@ impl Receiver {
                 });
             }
             self.highest_received = Some(seq_number);
+            let pending = &self.pending_skips;
+            self.loss_list.retain(|&s| {
+                !pending
+                    .iter()
+                    .any(|&(f, l)| seq::seq_in_closed_range(s, f, l))
+            });
         }
 
         self.loss_list.remove(&seq_number);
@@ -273,6 +286,7 @@ impl Receiver {
                 delivered.push(self.next_expected);
                 self.next_expected = seq::seq_next(self.next_expected);
             }
+            self.cross_pending_skips(&mut delivered);
         } else if seq::seq_gt(seq_number, self.next_expected) {
             self.out_of_order.insert(seq_number);
         }
@@ -467,18 +481,44 @@ impl Receiver {
         if seq::seq_diff(last, first) < 0 {
             return;
         }
+        let reach = seq::seq_diff(last, self.next_expected);
+        if reach < 0 || !u32::try_from(reach).is_ok_and(|ahead| ahead <= self.window()) {
+            return;
+        }
         self.loss_list
             .retain(|s| !seq::seq_in_closed_range(*s, first, last));
         self.out_of_order
             .retain(|s| !seq::seq_in_closed_range(*s, first, last));
-        if seq::seq_in_closed_range(self.next_expected, first, last) {
+        if seq::seq_lt(self.next_expected, first) {
+            if self.pending_skips.len() < MAX_PENDING_SKIPS {
+                self.pending_skips.push((first, last));
+            }
+        } else {
             self.next_expected = seq::seq_next(last);
         }
-        // Anything at or beyond the new ack point that was already received
-        // is now cumulatively deliverable — drain it exactly like `feed_data`
-        // does when a gap is filled.
-        while self.out_of_order.remove(&self.next_expected) {
-            self.next_expected = seq::seq_next(self.next_expected);
+        self.cross_pending_skips(&mut Vec::new());
+    }
+
+    /// Advance the ack point over every packet already received and every
+    /// DROPREQ range it has reached, pushing the received ones onto
+    /// `delivered`.
+    fn cross_pending_skips(&mut self, delivered: &mut Vec<u32>) {
+        loop {
+            while self.out_of_order.remove(&self.next_expected) {
+                delivered.push(self.next_expected);
+                self.next_expected = seq::seq_next(self.next_expected);
+            }
+            let next = self.next_expected;
+            self.pending_skips.retain(|&(_, l)| !seq::seq_lt(l, next));
+            let Some(pos) = self
+                .pending_skips
+                .iter()
+                .position(|&(f, l)| seq::seq_in_closed_range(next, f, l))
+            else {
+                return;
+            };
+            let (_, last) = self.pending_skips.swap_remove(pos);
+            self.next_expected = seq::seq_next(last);
         }
     }
 }

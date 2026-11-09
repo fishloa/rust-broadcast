@@ -1740,6 +1740,10 @@ impl Driver {
             // `last` precedes `first` — malformed range; nothing sane to skip.
             return;
         }
+        let reach = seq_diff(last, self.receiver.ack_point());
+        if !u32::try_from(reach).is_ok_and(|ahead| ahead <= self.max_flow_window) {
+            return;
+        }
         self.receiver.skip_range(first, last);
         self.tsbpd.skip_range(first, last);
         self.staged
