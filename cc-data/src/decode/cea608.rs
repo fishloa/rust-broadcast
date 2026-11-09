@@ -457,6 +457,13 @@ impl Cea608Decoder {
             return;
         }
 
+        // First bytes 0x01–0x0F are reserved for XDS (field 2 only) and never
+        // carry caption text on field 1 (CTA-608-E §8.6.1; private/specs-verified/captions/cc-data/decode/cea608-decode.md).
+        if (0x01..=0x0F).contains(&b1) {
+            self.last_control[field_idx] = None;
+            return;
+        }
+
         // Displayable characters: first byte 0x20–0x7F.
         self.last_control[field_idx] = None;
         self.xds_active = false;

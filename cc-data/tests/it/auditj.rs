@@ -42,3 +42,12 @@ fn spl_back_over_existing_text_overwrites_instead_of_appending() {
     let w = d.windows(1)[2].as_ref().unwrap();
     assert_eq!(w.text(), "XBC");
 }
+
+#[test]
+fn field1_pair_with_first_byte_in_xds_range_prints_no_text() {
+    let mut d = Cea608Decoder::new();
+    pair(&mut d, 0x14, 0x29);
+    pair(&mut d, 0x14, 0x70);
+    pair(&mut d, 0x01, b'X');
+    assert_eq!(d.channel_text(Cea608Channel::Cc1), "");
+}
