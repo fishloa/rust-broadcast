@@ -12,7 +12,7 @@
 //!    byte-identical to `build_media_segment(..)` on the same tracks.
 //!
 //! Spec citations:
-//! - ISO/IEC 14496-12 §8.8 (movie fragments / `emsg` box).
+//! - ISO/IEC 14496-12:2026 §8.8 (movie fragments).
 //! - DASH-IF IOP Part 10 §6.1 (Events and Timed Metadata in MPEG-DASH / CMAF):
 //!   `emsg` boxes follow `styp` and precede `moof` in each media segment.
 //! - ANSI/SCTE 214-3 §8.3.3: SCTE 35 binary scheme for the inband `emsg`

@@ -162,7 +162,7 @@ fn truncated_final_box_is_tolerated() {
     );
 }
 
-/// `moof`, `moof`, `mdat` is legal (ISO/IEC 14496-12:2015 §8.8.4 allows any
+/// `moof`, `moof`, `mdat` is legal (ISO/IEC 14496-12:2026 §8.8.4 allows any
 /// number of `moof`s, and a multi-track CMF2 segment writes one per track).
 /// A single pending-`moof` slot overwrote the first and silently dropped its
 /// fragment (audit r05-W26).

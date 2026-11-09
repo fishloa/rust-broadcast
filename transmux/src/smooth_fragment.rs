@@ -7,7 +7,7 @@
 //!   [`manifest_declares_protection`] over a real `quick-xml` reader.
 //! - Fragment Response (§2.2.4): `moof( mfhd traf( tfhd trun tfxd [tfrf] ) ) mdat`.
 //!   [`fragment_state`] classifies a fetched fragment as clear, sample-encrypted
-//!   (`senc`/`saiz`/`saio` or the PIFF sample-encryption `uuid` box in a `traf`, ISO/IEC 14496-12
+//!   (`senc`/`saiz`/`saio` or the PIFF sample-encryption `uuid` box in a `traf`, ISO/IEC 14496-12:2026
 //!   §8.8.7/§8.8.8) or undeterminable; [`fragment_track_id`] reads the wire `tfhd@track_ID`
 //!   (a manifest carries none) and [`fragment_tfxd`] the `tfxd` box (§2.2.4.4) with the
 //!   fragment's absolute time and duration.

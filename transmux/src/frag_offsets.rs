@@ -1,4 +1,4 @@
-//! Fragmented-MP4 sample-data addressing — ISO/IEC 14496-12 §8.8.7 / §8.8.8.
+//! Fragmented-MP4 sample-data addressing — ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8.
 //!
 //! The single place in this crate that decides *where a fragment's sample
 //! bytes live*. Both [`crate::media::Fmp4Demux`] and

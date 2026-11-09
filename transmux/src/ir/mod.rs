@@ -36,7 +36,7 @@
 //!   as the track's anchor (equal to its first sample's `dts` when the track
 //!   is timed) — the DTS the track's first sample sits at on the
 //!   presentation timeline (maps onto the fragment `tfdt`
-//!   `baseMediaDecodeTime`, ISO/IEC 14496-12:2015 §8.8.12).
+//!   `baseMediaDecodeTime`, ISO/IEC 14496-12:2026 §8.8.12).
 //! - 33-bit (TS) / 32-bit (RTP) rollover is unwrapped once, at the demux edge
 //!   (`crate::ts_demux`, `crate::rtp`) — never re-derived downstream.
 //! - Samples within a [`Track`] are always in decode order.

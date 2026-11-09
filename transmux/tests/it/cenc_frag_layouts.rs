@@ -1,5 +1,5 @@
 //! Oracle consumer: CENC fragmented-MP4 addressing (audit r05-W7,
-//! ISO/IEC 14496-12 §8.8.7 / §8.8.8).
+//! ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8).
 //!
 //! Consumes `../fixtures/mp4/cenc-layouts/` — see its `PROVENANCE.md` and
 //! `fixtures/mp4/PROVENANCE.md`. Nine encrypted files cover every combination of the three base

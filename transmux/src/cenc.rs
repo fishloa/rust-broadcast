@@ -1,4 +1,4 @@
-//! Common Encryption boxes — ISO/IEC 23001-7 (CENC) + ISO/IEC 14496-12:2015 §8.12.
+//! Common Encryption boxes — ISO/IEC 23001-7 (CENC) + ISO/IEC 14496-12:2026 §13.4.
 //!
 //! # Types
 //!
@@ -7,21 +7,21 @@
 //! | `tenc`  | tenc    | 23001-7                     | Track Encryption Box (KID, IV size)  |
 //! | `senc`  | senc    | 23001-7                     | Sample Encryption Box (per-sample IV)|
 //! | `pssh`  | pssh    | 23001-7                     | Protection System Specific Header    |
-//! | `saiz`  | saiz    | 14496-12 §8.7.8             | Sample Aux Info Sizes                |
-//! | `saio`  | saio    | 14496-12 §8.7.9             | Sample Aux Info Offsets              |
-//! | `sinf`  | sinf    | 14496-12 §8.12.1            | Protection Scheme Information Box    |
-//! | `frma`  | frma    | 14496-12 §8.12.2            | Original Format Box                  |
-//! | `schm`  | schm    | 14496-12 §8.12.5            | Scheme Type Box                      |
-//! | `schi`  | schi    | 14496-12 §8.12.6            | Scheme Information Box               |
+//! | `saiz`  | saiz    | 14496-12:2026 §8.7.8        | Sample Aux Info Sizes                |
+//! | `saio`  | saio    | 14496-12:2026 §8.7.9        | Sample Aux Info Offsets              |
+//! | `sinf`  | sinf    | 14496-12:2026 §13.4.2       | Protection Scheme Information Box    |
+//! | `frma`  | frma    | 14496-12:2026 §13.4.3       | Original Format Box                  |
+//! | `schm`  | schm    | 14496-12:2026 §13.4.6       | Scheme Type Box                      |
+//! | `schi`  | schi    | 14496-12:2026 §13.4.7       | Scheme Information Box               |
 //!
 //! # Spec citations
 //!
 //! - **tenc**: ISO/IEC 23001-7 §12.2 — TrackEncryptionBox.
 //! - **senc**: ISO/IEC 23001-7 §12.3 — SampleEncryptionBox.
 //! - **pssh**: ISO/IEC 23001-7 §12.1 — ProtectionSystemSpecificHeaderBox.
-//! - **sinf/frma/schm/schi**: ISO/IEC 14496-12:2015 §8.12.
-//! - **saiz**: ISO/IEC 14496-12:2015 §8.7.8.
-//! - **saio**: ISO/IEC 14496-12:2015 §8.7.9.
+//! - **sinf/frma/schm/schi**: ISO/IEC 14496-12:2026 §13.4.
+//! - **saiz**: ISO/IEC 14496-12:2026 §8.7.8.
+//! - **saio**: ISO/IEC 14496-12:2026 §8.7.9.
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
@@ -539,7 +539,7 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
 }
 
 // ---------------------------------------------------------------------------
-// saiz — SampleAuxiliaryInformationSizesBox (ISO/IEC 14496-12:2015 §8.7.8)
+// saiz — SampleAuxiliaryInformationSizesBox (ISO/IEC 14496-12:2026 §8.7.8)
 // ---------------------------------------------------------------------------
 
 /// Sample Auxiliary Information Sizes Box (`saiz`) — §8.7.8.
@@ -673,7 +673,7 @@ impl Serialize for SampleAuxInfoSizesBox {
 }
 
 // ---------------------------------------------------------------------------
-// saio — SampleAuxiliaryInformationOffsetsBox (ISO/IEC 14496-12:2015 §8.7.9)
+// saio — SampleAuxiliaryInformationOffsetsBox (ISO/IEC 14496-12:2026 §8.7.9)
 // ---------------------------------------------------------------------------
 
 /// Sample Auxiliary Information Offsets Box (`saio`) — §8.7.9.
@@ -810,10 +810,10 @@ impl Serialize for SampleAuxInfoOffsetsBox {
 }
 
 // ---------------------------------------------------------------------------
-// frma — Original Format Box (ISO/IEC 14496-12:2015 §8.12.2)
+// frma — Original Format Box (ISO/IEC 14496-12:2026 §13.4.3)
 // ---------------------------------------------------------------------------
 
-/// Original Format Box (`frma`) — §8.12.2.
+/// Original Format Box (`frma`) — §13.4.3.
 ///
 /// Identifies the original (unprotected) codec Four-CC that the protection scheme
 /// encrypts (e.g. `avc1`, `mp4a`).
@@ -849,10 +849,10 @@ impl Serialize for OriginalFormatBox {
 }
 
 // ---------------------------------------------------------------------------
-// schm — Scheme Type Box (ISO/IEC 14496-12:2015 §8.12.5)
+// schm — Scheme Type Box (ISO/IEC 14496-12:2026 §13.4.6)
 // ---------------------------------------------------------------------------
 
-/// Scheme Type Box (`schm`) — §8.12.5.
+/// Scheme Type Box (`schm`) — §13.4.6.
 ///
 /// Identifies the protection scheme (e.g. `cenc`), version, and URI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -919,10 +919,10 @@ impl Serialize for SchemeTypeBox {
 }
 
 // ---------------------------------------------------------------------------
-// schi — Scheme Information Box (ISO/IEC 14496-12:2015 §8.12.6)
+// schi — Scheme Information Box (ISO/IEC 14496-12:2026 §13.4.7)
 // ---------------------------------------------------------------------------
 
-/// Scheme Information Box (`schi`) — §8.12.6.
+/// Scheme Information Box (`schi`) — §13.4.7.
 ///
 /// Container box for scheme-specific data (e.g. `tenc` inside `schi`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -992,10 +992,10 @@ impl Serialize for SchemeInformationBox {
 }
 
 // ---------------------------------------------------------------------------
-// sinf — Protection Scheme Information Box (ISO/IEC 14496-12:2015 §8.12.1)
+// sinf — Protection Scheme Information Box (ISO/IEC 14496-12:2026 §13.4.2)
 // ---------------------------------------------------------------------------
 
-/// Protection Scheme Information Box (`sinf`) — §8.12.1.
+/// Protection Scheme Information Box (`sinf`) — §13.4.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ProtectionSchemeInfoBox {

@@ -53,7 +53,7 @@ const MILLIS_PER_SECOND: u64 = 1000;
 /// `EXT-X-VERSION` of the one-segment playlist a single `EXT-X-MAP` line is
 /// parsed in: the lowest version that allows `EXT-X-MAP` without
 /// `EXT-X-I-FRAMES-ONLY` (RFC 8216 §4.3.3.6).
-/// `moov` (ISO/IEC 14496-12 §8.2.1).
+/// `moov` (ISO/IEC 14496-12:2026 §8.2.1).
 const MOVIE_BOX: [u8; 4] = *b"moov";
 
 const MAP_PROBE_VERSION: u32 = 6;

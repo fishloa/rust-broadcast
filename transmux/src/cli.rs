@@ -894,7 +894,7 @@ enum OrderedKey {
     Timed {
         /// Decode ticks relative to the common origin, in `timescale`.
         ticks: i64,
-        /// That track's media timescale (`mdhd.timescale`, ISO/IEC 14496-12
+        /// That track's media timescale (`mdhd.timescale`, ISO/IEC 14496-12:2026
         /// §8.4.2), always `>= 1`.
         timescale: u32,
     },

@@ -10,7 +10,7 @@
 //! chunk (a `moof`+`mdat` fragment) covering a sub-duration of the parent segment,
 //! delivered before the parent segment finalizes.
 //!
-//! # Part structure (ISO/IEC 14496-12:2015)
+//! # Part structure (ISO/IEC 14496-12:2026)
 //!
 //! A part is the same fragment structure the batch builder
 //! [`crate::build_media_segment`] emits, scoped to the samples of one sub-duration:
@@ -443,7 +443,7 @@ impl LlHlsSegmenter {
     /// value a caller should advertise (see [`broadcast_hls::LowLatencyConfig`]).
     pub fn part_target_secs(&self) -> f64 {
         // `timescale` is a wire `u32` (`mdhd.timescale`, ISO/IEC
-        // 14496-12:2015 §8.4.2) — `.max(1)` guards the same zero-timescale
+        // 14496-12:2026 §8.4.2) — `.max(1)` guards the same zero-timescale
         // case `ts_hls.rs` guards at every analogous division (e.g.
         // `ts_hls.rs:225`), so a malformed zero timescale can't turn this
         // into `inf`/`NaN` rendered straight into `#EXT-X-PART-INF` (audit

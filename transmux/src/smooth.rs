@@ -22,7 +22,7 @@
 //! - **`tfrf`** look-ahead (§2.2.4.5) is live-only; omitted for VOD output.
 //!
 //! The standard `mfhd`/`tfhd`/`trun`/`mdat` boxes are the same fMP4 framing
-//! (ISO/IEC 14496-12:2015 §8.8) the crate already builds; this module reuses
+//! (ISO/IEC 14496-12:2026 §8.8) the crate already builds; this module reuses
 //! [`crate::segmenter::Segmenter`] for keyframe-aligned segmentation and injects
 //! the `tfxd` `uuid` box into each fragment's `traf`.
 //!

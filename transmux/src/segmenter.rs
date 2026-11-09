@@ -436,7 +436,7 @@ impl Segmenter {
     }
 
     /// Start `track_id`'s first `tfdt` (`baseMediaDecodeTime`, ISO/IEC
-    /// 14496-12:2015 §8.8.12) at `base` media-timescale ticks instead of 0, so
+    /// 14496-12:2026 §8.8.12) at `base` media-timescale ticks instead of 0, so
     /// a track that starts later than the others keeps that offset (issue
     /// #1021). Only meaningful before the first cut.
     pub(crate) fn set_start_decode_time(&mut self, track_id: TrackId, base: u64) -> Result<()> {

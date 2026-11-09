@@ -31,7 +31,7 @@ marked unverified.
 | Format | Specification (as cited in code) | Edition | Probe scope | Status | Notes |
 |---|---|---|---|---|---|
 | MPEG-2 TS | ISO/IEC 13818-1 §2.4; 192-byte M2TS/BDAV (Blu-ray Disc Association); ETSI EN 300 421/300 744 RS-coded 204-byte; 208-byte TP_extra_header + 204 variant | H.222.0 08/2023 (vendored) | Sync-byte lattice over strides 188/192/204/208 with phase search; 50% coverage rule | Full detection | 204-stride covered only by a marked synthetic fixture; 208-stride has no fixture. |
-| ISOBMFF | ISO/IEC 14496-12 §4.2 | 2015 edition as cited (unverified, not vendored) | Top-level box-chain walk; `ftyp` major brand; fragmented vs progressive layout | Full detection | Reports `IsobmffLayout`. |
+| ISOBMFF | ISO/IEC 14496-12:2026 §4.2 | 2026 (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`) | Top-level box-chain walk; `ftyp` major brand; fragmented vs progressive layout | Full detection | Reports `IsobmffLayout`. |
 | Matroska / WebM | RFC 8794 (EBML), RFC 9559 (Matroska) | RFCs as published (unverified against a vendored copy) | EBML magic + `DocType` | Full detection | Unknown `DocType` reports Matroska with `DocType::Other`. |
 | MXF | SMPTE ST 377-1 §7.1 Partition Pack | module cites ST 377-1.1:2004; the vendored copy is ST 377-1:2019 (Partition Pack unchanged for this purpose, unverified) | Partition-pack key + BER length; decodes `PartitionKind` | Full detection | |
 | MPEG-PS | ISO/IEC 13818-1 §2.5.3, Table 2-39 | H.222.0 08/2023 (vendored) | Pack start code + SCR/mux-rate marker bits | Full detection | `HEURISTIC` when only the start code matches. |

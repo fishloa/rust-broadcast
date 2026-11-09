@@ -53,7 +53,7 @@ fn drain_outputs(client: &mut HlsClient) -> Vec<Output> {
     std::iter::from_fn(|| client.next_output()).collect()
 }
 
-/// An empty `moof` then an empty `mdat` (ISO/IEC 14496-12 §8.8.4, §8.1.1), each just a box
+/// An empty `moof` then an empty `mdat` (ISO/IEC 14496-12:2026 §8.8.4, §8.1.1), each just a box
 /// header: a media fragment with no init segment to demux against, which the client just
 /// buffers, all these state tests need.
 const OPAQUE: &[u8] = &[

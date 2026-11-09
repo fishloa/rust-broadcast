@@ -155,7 +155,7 @@ fn round_tripped_uuid_is_mp4dump_readable() {
 // ---------------------------------------------------------------------------
 
 /// A `uuid` child written in the `size == 1` + 64-bit `largesize` form
-/// (ISO/IEC 14496-12:2015 §4.2). The opaque payload must exclude the 8
+/// (ISO/IEC 14496-12:2026 §4.2). The opaque payload must exclude the 8
 /// `largesize` bytes — the serializer writes its own header — and the form
 /// itself must be re-emitted, or the box comes back with 8 junk bytes in its
 /// body.

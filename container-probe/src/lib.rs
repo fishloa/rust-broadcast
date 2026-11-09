@@ -84,7 +84,7 @@ broadcast_common::impl_spec_display!(PartitionKind, Other);
 pub enum Format {
     /// MPEG-2 Transport Stream — ISO/IEC 13818-1, 188-byte packets.
     MpegTs,
-    /// ISO Base Media File Format (`.mp4`/`.mov`/CMAF) — ISO/IEC 14496-12.
+    /// ISO Base Media File Format (`.mp4`/`.mov`/CMAF) — ISO/IEC 14496-12:2026.
     Isobmff,
     /// MPEG Program Stream — ISO/IEC 13818-1 §2.5.
     MpegPs,
@@ -179,7 +179,7 @@ broadcast_common::impl_spec_display!(Confidence);
 /// How an ISOBMFF file carries its sample metadata — the discriminator a
 /// consumer needs to choose a demuxer.
 ///
-/// ISO/IEC 14496-12 allows both shapes and they are demuxed differently: a
+/// ISO/IEC 14496-12:2026 allows both shapes and they are demuxed differently: a
 /// fragmented file's samples are described by `moof` movie fragments (§8.8,
 /// the CMAF/fMP4 shape), a progressive file's by `moov` sample tables (§8.7).
 /// The prober walks the top-level boxes anyway, so it reports what it saw

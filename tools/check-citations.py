@@ -16,6 +16,9 @@ Scans every tracked text file outside private/ and fails when:
   j. a bare spec file name (`en_301_192.md`, `ts_102_809_apps.md`, ...) that
      is not the name of any file in the public tree or private/ (when it is
      checked out); cite the private/specs-verified/... path instead;
+  k. a mention of ISO/IEC 14496-12 that does not name the 2026 edition
+     (`14496-12:2026`); the vendored text is the eighth edition, so a bare or
+     older-edition label is a stale citation;
   i. a `<member>/(src|tests|examples|benches|docs)/...` or bare
      `(src|tests|examples|benches|docs)/...` path to a source, script, doc or
      manifest file named in a comment or document does not exist (string
@@ -92,6 +95,7 @@ PATH_CITE = re.compile(
 SPEC_FILE_NAME = re.compile(
     r"(?<![\w/.-])((?:en|ts|tr|etsi|ansi|iso|itu|smpte|scte|atsc)_[0-9][\w.-]*\.(?:md|pdf|txt))"
 )
+ISOBMFF_EDITION = re.compile(r"14496-12(?!:2026)(?![\w-])")
 CRATE_RELATIVE_ROOTS = ("src", "tests", "examples", "benches", "docs")
 EXTERNAL_PATH_DOCS = {"docs/migration-notes-downstream.md"}
 GLOB_CHARS = set("*?[")
@@ -481,6 +485,11 @@ def main() -> int:
             if rel not in TEST_STREAMS_ALLOWED:
                 for m in RETIRED_TEST_STREAMS.finditer(text):
                     errors.append(f"{rel}: names the retired .test-streams tier (only tools/fetch-test-streams.sh may)")
+
+        # k. ISO/IEC 14496-12 citations must name the 2026 edition
+        if rel not in RETIRED_EXEMPT:
+            for m in ISOBMFF_EDITION.finditer(text):
+                errors.append(f"{rel}: ISO/IEC 14496-12 citation must name the 2026 edition (14496-12:2026): ...{text[max(0, m.start() - 12):m.end() + 8]!r}")
 
         # h. relative and helper-call fixture citations must resolve
         if rel not in RETIRED_EXEMPT:

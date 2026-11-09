@@ -1,10 +1,10 @@
-//! Segment-level ISOBMFF boxes — ISO/IEC 14496-12:2015.
+//! Segment-level ISOBMFF boxes — ISO/IEC 14496-12:2026.
 //!
 //! These are the boxes that wrap a CMAF/fMP4 stream but sit *outside* the
 //! `moov`/`moof` trees:
 //!
-//! - [`FileTypeBox`] (`ftyp`, §4.3) — brand declaration at the head of an init segment.
-//! - [`SegmentTypeBox`] (`styp`, §8.16.2) — brand declaration at the head of a media segment.
+//! - [`FileTypeBox`] (`ftyp`, §5.2) — brand declaration at the head of an init segment.
+//! - [`SegmentTypeBox`] (`styp`, §8.14.2) — brand declaration at the head of a media segment.
 //! - [`MediaDataBox`] (`mdat`, §8.1.1) — the container carrying coded sample data.
 //!
 //! `ftyp` and `styp` are byte-identical in layout (major brand + minor version +
@@ -25,7 +25,7 @@ pub const MDAT: [u8; 4] = *b"mdat";
 
 /// A brand / compatible-brand list, shared by `ftyp` and `styp`.
 ///
-/// Layout (ISO/IEC 14496-12:2015 §4.3): `major_brand(32) minor_version(32)
+/// Layout (ISO/IEC 14496-12:2026 §5.2): `major_brand(32) minor_version(32)
 /// compatible_brands[](32 each, filling the box)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -78,7 +78,7 @@ impl BrandBox {
     }
 }
 
-/// File Type Box (`ftyp`) — ISO/IEC 14496-12:2015 §4.3.
+/// File Type Box (`ftyp`) — ISO/IEC 14496-12:2026 §5.2.
 ///
 /// The first box of an initialization segment; declares the specification the
 /// file conforms to via a major brand plus a list of compatible brands.
@@ -123,7 +123,7 @@ impl Serialize for FileTypeBox {
     }
 }
 
-/// Segment Type Box (`styp`) — ISO/IEC 14496-12:2015 §8.16.2.
+/// Segment Type Box (`styp`) — ISO/IEC 14496-12:2026 §8.14.2.
 ///
 /// The first box of a media segment; same layout as [`FileTypeBox`] but with
 /// the `styp` four-CC.
@@ -168,7 +168,7 @@ impl Serialize for SegmentTypeBox {
     }
 }
 
-/// Media Data Box (`mdat`) — ISO/IEC 14496-12:2015 §8.1.1.
+/// Media Data Box (`mdat`) — ISO/IEC 14496-12:2026 §8.1.1.
 ///
 /// Opaque container for coded sample data. Uses the 32-bit compact size form
 /// when the box fits in `u32`, otherwise the 64-bit `largesize` form (`size==1`).

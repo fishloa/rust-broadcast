@@ -83,7 +83,7 @@ use crate::source::http_auth::{
 use crate::source::pull_target::{PullKind, PullRoute};
 
 /// The synthesized per-stream init segment's `mvhd` timescale — arbitrary
-/// (ISO/IEC 14496-12 §8.2.2). Reuses [`transmux::VIDEO_CLOCK_RATE`] purely so
+/// (ISO/IEC 14496-12:2026 §8.2.2). Reuses [`transmux::VIDEO_CLOCK_RATE`] purely so
 /// this module doesn't invent a second arbitrary constant.
 const SYNTHETIC_MOVIE_TIMESCALE: u32 = transmux::VIDEO_CLOCK_RATE;
 

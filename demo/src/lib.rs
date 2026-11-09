@@ -910,7 +910,7 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
 // ───────────────────────────── container sniff ────────────────────────────
 
 /// ISO-BMFF top-level box fourccs that identify an MP4/CMAF stream at the
-/// head of a file (ISO/IEC 14496-12 §4.3 `ftyp` / §8.16.2 `styp` / §8.2.1
+/// head of a file (ISO/IEC 14496-12:2026 §5.2 `ftyp` / §8.14.2 `styp` / §8.2.1
 /// `moov` / §8.8.4 `moof`) — the 4-byte fourcc lives at byte offset 4
 /// (`size`(4) + `fourcc`(4), §4.2). Independently declared rather than
 /// imported from `transmux::cli::detect_container` (whose own copy of this

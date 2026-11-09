@@ -1,4 +1,4 @@
-//! Visual sample-entry extension boxes — ISO/IEC 14496-12:2015 §12.1.4–5.
+//! Visual sample-entry extension boxes — ISO/IEC 14496-12:2026 §12.1.4–5.
 //!
 //! These boxes are optional children of `VisualSampleEntry` (avc1, hvc1, etc.)
 //! and carry pixel aspect ratio, clean aperture, and colour information.
@@ -25,7 +25,7 @@ use crate::error::{Error, Result};
 // PixelAspectRatioBox — pasp (§12.1.4.2)
 // ---------------------------------------------------------------------------
 
-/// Pixel Aspect Ratio Box (`pasp`) — ISO/IEC 14496-12:2015 §12.1.4.2.
+/// Pixel Aspect Ratio Box (`pasp`) — ISO/IEC 14496-12:2026 §12.1.4.2.
 ///
 /// Carries the relative width and height of a pixel. Only the ratio matters;
 /// the units are unspecified. Both fields must be positive.
@@ -69,7 +69,7 @@ impl Serialize for PixelAspectRatioBox {
 // CleanApertureBox — clap (§12.1.4.2)
 // ---------------------------------------------------------------------------
 
-/// Clean Aperture Box (`clap`) — ISO/IEC 14496-12:2015 §12.1.4.2.
+/// Clean Aperture Box (`clap`) — ISO/IEC 14496-12:2026 §12.1.4.2.
 ///
 /// Defines the clean aperture width, height, and offset as fractions (N/D).
 /// For horizOff and vertOff, D must be positive and N may be positive or negative.
@@ -196,12 +196,12 @@ impl core::fmt::Display for ColourType {
 }
 
 /// Length of the `nclx` body after the 4-byte `colour_type` — ISO/IEC
-/// 14496-12:2015 §12.1.5.2: `colour_primaries(16)`,
+/// 14496-12:2026 §12.1.5.2: `colour_primaries(16)`,
 /// `transfer_characteristics(16)`, `matrix_coefficients(16)`,
 /// `full_range_flag(1)` + `reserved(7)`.
 const NCLX_PARAMS_LEN: usize = 7;
 
-/// On-screen colour parameters for colour_type 'nclx' — ISO/IEC 14496-12:2015 §12.1.5.2.
+/// On-screen colour parameters for colour_type 'nclx' — ISO/IEC 14496-12:2026 §12.1.5.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NclxColourInfo {
@@ -215,7 +215,7 @@ pub struct NclxColourInfo {
     pub reserved: u8,
 }
 
-/// Colour Information Box (`colr`) — ISO/IEC 14496-12:2015 §12.1.5.2.
+/// Colour Information Box (`colr`) — ISO/IEC 14496-12:2026 §12.1.5.2.
 ///
 /// Carries colour type info: `nclx` (on-screen), `rICC` (restricted ICC),
 /// `prof` (unrestricted ICC), or unknown (opaque payload).

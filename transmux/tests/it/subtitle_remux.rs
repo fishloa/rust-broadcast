@@ -51,7 +51,7 @@ fn stpp_track_carries_entry_and_remuxes_through_cmaf() {
     let out = CmafMux::default()
         .package(&original)
         .expect("CmafMux carries stpp now");
-    // sthd must precede stbl inside the subtitle trak (§6.2.3).
+    // sthd must precede stbl inside the subtitle trak (§7.3.4).
     let sthd = find(&out, b"sthd").expect("sthd emitted");
     let stpp = find(&out, b"stpp").expect("stpp sample entry emitted");
     assert!(sthd < stpp, "media header before the sample table");

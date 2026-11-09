@@ -10,13 +10,13 @@
 //! they are produced. The client can begin decoding the first chunk while the
 //! rest of the segment is still being generated.
 //!
-//! # Chunked-CMAF structure (ISO/IEC 14496-12:2015)
+//! # Chunked-CMAF structure (ISO/IEC 14496-12:2026)
 //!
 //! A CMAF chunk is exactly the fragment structure the batch builder
 //! [`crate::build_media_segment`] already emits, but scoped to K samples:
 //!
 //! - the **first chunk** of a segment carries the segment-type box
-//!   `styp` (§8.16.2) followed by `moof` (§8.8.4) + `mdat` (§8.1.1);
+//!   `styp` (§8.14.2) followed by `moof` (§8.8.4) + `mdat` (§8.1.1);
 //! - **subsequent chunks** are a bare `moof` + `mdat`.
 //!
 //! Each chunk's `moof` has its own `mfhd.sequence_number` (§8.8.5) — contiguous

@@ -56,7 +56,7 @@ fn extract_hvcc_body(file: &[u8]) -> Vec<u8> {
     // Find the hvc1 sample entry.
     let hvc1_body = find_box(entries, b"hvc1").expect("hvc1");
 
-    // VisualSampleEntry has 78 bytes of fixed fields (ISO/IEC 14496-12 §12.1.3):
+    // VisualSampleEntry has 78 bytes of fixed fields (ISO/IEC 14496-12:2026 §12.1.3):
     //   reserved[6] + data_reference_index[2] = 8
     //   pre_defined[2] + reserved[2] + pre_defined[3][12] = 16
     //   width[2] + height[2] = 4

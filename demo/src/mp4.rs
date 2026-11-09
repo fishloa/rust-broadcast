@@ -13,10 +13,10 @@
 //! builders, never a re-derived literal).
 //!
 //! [`transmux::Fmp4Demux`] only reads `moov` + `moof`/`mdat` fragments (ISO/IEC
-//! 14496-12 §8.8); a classic *progressive* (single-file, non-fragmented,
+//! 14496-12:2026 §8.8); a classic *progressive* (single-file, non-fragmented,
 //! `stbl`-sample-table) MP4 — the common shape a phone or a `faststart`
 //! remux produces, with no `moof` at all — needs the sibling
-//! [`transmux::ProgressiveDemux`] (ISO/IEC 14496-12 §8.5-§8.7) instead. This
+//! [`transmux::ProgressiveDemux`] (ISO/IEC 14496-12:2026 §8.5-§8.7) instead. This
 //! module picks between the two per input by checking for a top-level `moof`
 //! box ([`has_top_level_moof`]) rather than guessing from a demux failure,
 //! since an all-`moov`-no-`moof` input is not an *error* for [`Fmp4Demux`] —
@@ -345,7 +345,7 @@ fn build_report(
     }
 }
 
-/// ISO/IEC 14496-12 §8.8.4: whether any top-level box in `bytes` is a
+/// ISO/IEC 14496-12:2026 §8.8.4: whether any top-level box in `bytes` is a
 /// `moof` (movie fragment) — the presence test that decides fragmented
 /// ([`Fmp4Demux`]) vs. progressive ([`ProgressiveDemux`]) demux below.
 /// Malformed/truncated boxes encountered while walking simply end the scan

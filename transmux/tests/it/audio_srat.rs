@@ -3,8 +3,8 @@
 //!
 //! An `AudioSampleEntry`'s `samplerate` field is 16.16 fixed point, so its
 //! integer part tops out at 65535 Hz; `192000 << 16` is truncated to
-//! `0xEE000000` and reads back as 60928 Hz. ISO/IEC 14496-12:2015 §12.2.3.2
-//! (as amended by Amd 1:2017) defines the `AudioSampleEntryV1` form for exactly
+//! `0xEE000000` and reads back as 60928 Hz. ISO/IEC 14496-12:2026 §12.2.3.2
+//! defines the `AudioSampleEntryV1` form for exactly
 //! this case — `entry_version = 1`, the real rate in a `SamplingRateBox`
 //! (`srat`, §12.2.3.1), inside an `stsd` whose version is 1.
 //!

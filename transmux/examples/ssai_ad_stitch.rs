@@ -397,8 +397,8 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // ------------------------------------------------------------------
     // 7. Render the CMAF init + media segments (per track — the real
     //    CMAF/DASH representation model), embedding the emsg box at the
-    //    start of the video track's ad segment only (ISO/IEC 14496-12 §8.8 +
-    //    DASH-IF IOP Part 10 §6.1: it precedes that segment's `moof`).
+    //    start of the video track's ad segment only (DASH-IF IOP Part 10 §6.1: it
+    //    precedes that segment's `moof`).
     // ------------------------------------------------------------------
     let video_init = build_init_segment(
         std::slice::from_ref(&spliced_video.spec),
