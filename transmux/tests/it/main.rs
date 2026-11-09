@@ -27,6 +27,7 @@ mod cenc_frag_layouts;
 mod cenc_fragmented_fixture;
 mod cenc_mux;
 mod cenc_saiz_stsz_v1_boxes;
+mod clap_precedence;
 mod classify_nals;
 mod cli;
 mod cli_binary;

@@ -52,8 +52,8 @@ use crate::init_segment::{
 };
 use crate::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, DisplayInfo,
-    FragmentTrackData, InputDegradation, Sample, SubtitleFormat, SubtitleSampleEntry, TrackSpec,
-    VideoFormat, VideoSignalType,
+    FragmentTrackData, InputDegradation, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry,
+    TrackSpec, VideoFormat, VideoSignalType,
 };
 use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use crate::mp4esds::EsdsBox;
@@ -61,7 +61,7 @@ use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{build_init_segment, build_media_segment};
-use crate::visual_ext::{ColourInformationBox, PixelAspectRatioBox};
+use crate::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 use alloc::sync::Arc;
 
 /// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
@@ -797,7 +797,15 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
 /// unspecified VUI sample aspect ratio. On a disagreement between two
 /// *specified* sample aspect ratios the VUI SAR is kept, although §12.1.4.1 gives
 /// `pasp` precedence over codec-level structures (issue #1909).
-/// Returns the input unchanged when neither box applies.
+///
+/// `clap` replaces the codec's crop in `output_rect` (§12.1.4.1, issue #1918).
+/// Its coordinates are those of a decoded picture of the sample entry's
+/// `width` x `height`: that picture is the whole coded picture when the entry
+/// has the coded size, or the codec's cropped output when it has that size; an
+/// entry that matches neither leaves the geometry alone, as does a `clap` that
+/// is not a rectangle of whole samples inside the picture
+/// ([`CleanApertureBox::aperture_within`]).
+/// Returns the input unchanged when no box applies.
 pub(crate) fn overlay_sample_entry_geometry(
     display: Option<DisplayGeometry>,
     config: &CodecConfig,
@@ -831,6 +839,11 @@ pub(crate) fn overlay_sample_entry_geometry(
             Some((colour, n.full_range_flag))
         });
 
+    let clap = extra_boxes
+        .iter()
+        .filter(|b| b.box_type == *b"clap")
+        .find_map(|b| CleanApertureBox::parse(&b.data).ok());
+
     // The pasp spacings reduced by their gcd to a u16 pair (both must be
     // positive, §12.1.4); a ratio of 1 is the Square idc.
     let pasp_ratio = pasp.and_then(|p| {
@@ -849,7 +862,7 @@ pub(crate) fn overlay_sample_entry_geometry(
         })
     });
 
-    if pasp_ratio.is_none() && colour.is_none() {
+    if pasp_ratio.is_none() && colour.is_none() && clap.is_none() {
         return display;
     }
 
@@ -871,6 +884,22 @@ pub(crate) fn overlay_sample_entry_geometry(
         && display.sample_aspect_ratio().is_none()
     {
         display.aspect_ratio = Some(ratio);
+    }
+
+    if let Some(clap) = clap {
+        let (frame_w, frame_h) = (visual_w, visual_h);
+        let origin = if (frame_w, frame_h) == (display.coded_width, display.coded_height) {
+            Some((0, 0))
+        } else if (frame_w, frame_h) == (display.output_rect.width, display.output_rect.height) {
+            Some((display.output_rect.left, display.output_rect.top))
+        } else {
+            None
+        };
+        if let (Some((x, y)), Some((left, top, width, height))) =
+            (origin, clap.aperture_within(frame_w, frame_h))
+        {
+            display.output_rect = PictureRect::new(x + left, y + top, width, height);
+        }
     }
 
     // colr nclx overrides the bitstream colour; the VUI's video_format is kept

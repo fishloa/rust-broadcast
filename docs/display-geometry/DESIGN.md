@@ -474,6 +474,19 @@ cares about shape listens to `DisplayChanged` alone.
    (container wins). `pasp` is applied as fill-in only (unspecified VUI SAR);
    on a specified-vs-specified conflict the VUI SAR is kept, which contradicts
    ISO/IEC 14496-12:2026 §12.1.4.1 (issue #1909). See `transmux/CHANGELOG.md` [Unreleased].
+   *`clap` (issue #1918):* a sample entry's `clap` replaces the codec crop in
+   `output_rect`. Its fields are `signed int(32)` (`CleanApertureBox` is `i32`);
+   its coordinates are those of a decoded picture of the entry's `width` x
+   `height`, which is the coded picture when the entry has the coded size and
+   the codec's cropped output when it has that size (an entry matching neither
+   leaves the geometry alone). The aperture's first sample is
+   `off + (frame - size)/2`, so an odd size, a fractional width or offset, a
+   non-positive width/height/denominator, or an aperture outside the picture is
+   not a rectangle of whole luma samples: it is not applied and the codec crop
+   stays (`PictureRect` is integral; rounding would invent a crop the file never
+   declared). Pinned by `transmux/tests/it/clap_precedence.rs` on
+   `fixtures/mp4/clap-vs-crop.mp4`, where the SPS crop (1920x1080) and `clap`
+   (1904x1072) disagree.
 3. AFD never overrides geometry: it is interpreted *against* it (TS 101 154
    §B.3.0 "The AFD itself does not describe the aspect ratio of the coded
    frame"). `DisplayInfo` carries both; the player composes them.

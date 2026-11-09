@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AVCDecoderConfigurationRecord` rejects `bit_depth_luma_minus8` / `bit_depth_chroma_minus8` above 4 on parse and on serialize with `Error::InvalidValue` (ISO/IEC 14496-15:2017 §5.3.3.1.3); a 3-bit value of 5 to 7 used to be accepted and written back (#1913).
 - `AVCDecoderConfigurationRecord::parse` accepts `numOfSequenceParameterSets == 0` (ISO/IEC 14496-15:2017 clause 5.3.3.1.1: a parameter-set-stream or in-band-parameter-set record may carry no SPS/PPS), so `avcp` and `avc3`/`avc4` tracks with an empty record demux; the FLV demuxers keep refusing a sequence header without an SPS themselves (#1914).
 - `HEVCDecoderConfigurationRecord::parse` keeps a `hvcC` array whose `NAL_unit_type` is not VPS/SPS/PPS/prefix SEI/suffix SEI, as before: ISO/IEC 14496-15:2017 §8.3.3.1.1 restricts the arrays to those types but tells readers to ignore the others, so rejecting would refuse real files. `HEVCDecoderConfigurationRecord::unpermitted_arrays` and `HevcNalArray::has_permitted_nal_unit_type` / `is_parameter_set` now name them (#1915).
+- The demuxed `DisplayGeometry::output_rect` follows the sample entry's `clap` instead of the codec's own crop (ISO/IEC 14496-12:2026 §12.1.4.1); a `clap` that is not a whole-sample rectangle inside the picture (odd or fractional aperture, non-positive size or denominator, out of frame) is ignored and the codec crop stays (#1918).
+
+### Changed
+- BREAKING: the eight `CleanApertureBox` fields are `i32`, as ISO/IEC 14496-12:2026 §12.1.4.2 types them (`signed int(32)`); `horizOffN`/`vertOffN` may be negative and were misread as large positive values. New `CleanApertureBox::aperture_within`. Reason: a negative centre offset is routine for an off-centre aperture (#1918).
 
 ## [0.30.0] - 2026-11-07
 ### Added
