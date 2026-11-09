@@ -1,4 +1,5 @@
 mod aes128;
+mod audit_c;
 mod audio_renditions;
 mod audit_1485;
 mod audit_1492;
