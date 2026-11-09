@@ -408,13 +408,11 @@ fn cc_anomaly_non_payload_does_not_advance_cc() {
     pkt[3] = 0x10; // AFC=01, CC=0
     ts.extend_from_slice(&pkt);
 
-    // Packet 2: adaptation-only (AFC=10), CC=1 — does NOT advance CC
-    // (CC is technically undefined for non-payload; but the packet still has
-    // a CC value in the header — we just don't use it for the next expected).
+    // Packet 2: adaptation-only (AFC=10) repeats the previous CC (§2.4.3.3).
     let mut pkt2 = vec![0x47u8; 188];
     pkt2[1] = ((pid >> 8) as u8) & 0x1F;
     pkt2[2] = (pid & 0xFF) as u8;
-    pkt2[3] = 0x20 | 5; // AFC=10 (adaptation only), CC=5
+    pkt2[3] = 0x20; // AFC=10 (adaptation only), CC=0
     pkt2[4] = 0; // adaptation_field_length = 0 (just one stuffing byte)
     ts.extend_from_slice(&pkt2);
 
@@ -992,4 +990,30 @@ fn pcr_check_corrupted_pcr_produces_finding() {
         has_error,
         "corrupted PCR should produce at least one Error: {pcr_findings:?}",
     );
+}
+
+/// ISO/IEC 13818-1 §2.4.3.3: an adaptation-only packet carries the PID's
+/// previous CC unincremented; any other value is a continuity fault.
+#[test]
+fn cc_anomaly_adaptation_only_packet_with_incremented_cc_is_flagged() {
+    let pid = 0x0100u16;
+    let packet = |afc_cc: u8| {
+        let mut pkt = vec![0x47u8; 188];
+        pkt[1] = ((pid >> 8) as u8) & 0x1F;
+        pkt[2] = (pid & 0xFF) as u8;
+        pkt[3] = afc_cc;
+        pkt[4] = 0;
+        pkt
+    };
+    let mut ts = packet(0x10);
+    ts.extend_from_slice(&packet(0x20 | 1));
+    let mut report = Report::new();
+    CcAnomalyCheck.run(&ts, &mut report);
+    let hits: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| f.rule_id == "cc-anomaly")
+        .collect();
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].location.packet, 1);
 }
