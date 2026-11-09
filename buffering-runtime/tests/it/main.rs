@@ -16,3 +16,4 @@ mod start_granularity;
 mod state_machine;
 mod support;
 mod synth;
+mod clock_regression;
