@@ -329,9 +329,9 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
     }
 
     let mut has_targetduration = false;
-    let mut targetduration_val: u64 = 0;
+    let mut targetduration_val: Option<u64> = None;
     let mut extinf_line_nums: Vec<usize> = Vec::new();
-    let mut extinf_durations: Vec<f64> = Vec::new();
+    let mut extinf_durations: Vec<Option<f64>> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
         let trimmed = line.trim();
@@ -339,18 +339,17 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
         if trimmed.starts_with("#EXT-X-TARGETDURATION:") {
             has_targetduration = true;
             if let Some(val_str) = trimmed.strip_prefix("#EXT-X-TARGETDURATION:") {
-                targetduration_val = val_str.trim().parse::<u64>().unwrap_or(0);
+                targetduration_val = val_str.trim().parse::<u64>().ok();
             }
         }
 
         if trimmed.starts_with("#EXTINF:") {
             extinf_line_nums.push(line_num);
             if let Some(dur_str) = trimmed.strip_prefix("#EXTINF:") {
-                let dur = dur_str.split(',').next().unwrap_or("0");
-                let parsed: f64 = dur.trim().parse().unwrap_or(0.0);
-                extinf_durations.push(parsed);
+                let dur = dur_str.split(',').next().unwrap_or_default();
+                extinf_durations.push(dur.trim().parse().ok());
             } else {
-                extinf_durations.push(0.0);
+                extinf_durations.push(None);
             }
         }
     }
@@ -366,8 +365,11 @@ fn legacy_line_checks(text: &str, report: &mut Report) {
     }
 
     // hls-extinf-exceeds-target — §4.4.3.1
-    if has_targetduration {
-        for (idx, &dur) in extinf_durations.iter().enumerate() {
+    if let Some(targetduration_val) = targetduration_val {
+        for (idx, dur) in extinf_durations.iter().enumerate() {
+            let Some(dur) = *dur else {
+                continue;
+            };
             let rounded = (dur + 0.5) as u64;
             if rounded > targetduration_val {
                 report.push(Finding::new(
