@@ -60,7 +60,8 @@ broadcast_common::impl_spec_display!(BreakEdge);
 /// [`ConditionedSplicePoint`] reports `requested_pts` and `snapped_pts` in the
 /// caller's own units (an unwrapped channel clock stays unwrapped).
 ///
-/// `break_duration_ticks`, if given, sets `break_duration().duration` with
+/// `break_duration_ticks`, if given (and below 2^33, the width of the
+/// `break_duration()` field, else [`crate::Error::BreakDurationTooLong`]), sets `break_duration().duration` with
 /// `auto_return = true` (the splicer returns to the network feed on its own
 /// once the duration elapses — §9.7.3).
 ///
@@ -84,6 +85,11 @@ pub fn build_splice_insert(
     max_delta_ticks: u64,
     break_duration_ticks: Option<u64>,
 ) -> Result<(ConditionedSplicePoint, SpliceInsert)> {
+    if let Some(ticks) = break_duration_ticks
+        && ticks >= PTS_MODULUS_33
+    {
+        return Err(crate::Error::BreakDurationTooLong { ticks });
+    }
     // `splice_time().pts_time` is a 33-bit field (ANSI/SCTE 35 §9.8.1;
     // `SpliceTime::with_pts` masks to it), so the instant a cue names — and the
     // boundary it snaps to — live on the circle of 2^33 ticks, wrapping about
@@ -165,6 +171,25 @@ mod tests {
         // The cue must reflect the *conditioned* point, not the raw request
         // — proves this isn't a passthrough of `requested_pts`.
         assert_ne!(insert.splice_time.unwrap().pts_time, Some(1_000));
+    }
+
+    #[test]
+    fn a_break_duration_past_33_bits_is_rejected_at_construction() {
+        let max = PTS_MODULUS_33 - 1;
+        assert!(build_splice_insert(BreakEdge::Enter, 1, 1_000, &[1_000], 0, Some(max)).is_ok());
+        let err = build_splice_insert(
+            BreakEdge::Enter,
+            1,
+            1_000,
+            &[1_000],
+            0,
+            Some(PTS_MODULUS_33),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::Error::BreakDurationTooLong { ticks } if ticks == PTS_MODULUS_33
+        ));
     }
 
     #[test]
