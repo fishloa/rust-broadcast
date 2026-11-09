@@ -59,6 +59,11 @@ pub enum CaError {
     /// Sending the built `ca_pmt` to the device failed.
     #[error("ca_pmt send failed: {0}")]
     Io(#[from] std::io::Error),
+    /// The stack could not hand the `ca_pmt` to the CAM (no open
+    /// conditional-access session, connection not active, or a full outbound
+    /// queue); the managed service set is left unchanged.
+    #[error("ca_pmt was not sent: {0}")]
+    NotSent(String),
     /// The `ca_pmt` projected from the caller's PMT has no valid wire
     /// encoding (a `program_info_length`/`ES_info_length` or `version_number`
     /// out of its spec range — e.g. a source PMT whose descriptor loop is

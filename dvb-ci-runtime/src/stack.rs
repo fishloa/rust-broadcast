@@ -11,7 +11,7 @@ use crate::resource::{
     ResourceManager, ResourceOut,
 };
 use crate::session::{SessionLayer, SessionOut};
-use crate::transport::{Out as TransportOut, Transport};
+use crate::transport::{Out as TransportOut, TcState, Transport};
 
 use broadcast_common::Parse;
 use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
@@ -311,6 +311,11 @@ impl CiStack {
     fn send_to_resource(&mut self, resource: ResourceId, apdu: &[u8]) -> Vec<Action> {
         let nb = self.session.session_for(resource);
         match nb {
+            Some(_) if self.transport.state() != TcState::Active => {
+                vec![Action::Notify(Notification::Error {
+                    detail: "transport connection is not active".to_owned(),
+                })]
+            }
             Some(nb) => match self.session.send_apdu(nb, apdu) {
                 Ok(spdu) => {
                     let out = self.transport.send_spdu(&spdu);

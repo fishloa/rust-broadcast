@@ -191,6 +191,16 @@ impl<D: CaDevice> Driver<D> {
         self.run(actions)
     }
 
+    fn send_ca_pmt_checked(&mut self, ca_pmt: &[u8]) -> Result<(), CaError> {
+        let before = self.notifications.len();
+        self.send_ca_pmt(ca_pmt)?;
+        let refusal = self.notifications[before..].iter().find_map(|n| match n {
+            Notification::Error { detail } => Some(detail.clone()),
+            _ => None,
+        });
+        refusal.map_or(Ok(()), |detail| Err(CaError::NotSent(detail)))
+    }
+
     /// Descramble the services in a PMT section: the stack filters the PMT's
     /// `CA_descriptor`s to the CAM's advertised CAIDs and sends a `ca_pmt`
     /// (`list_management = only`, `cmd_id = ok_descrambling`). The outcome
@@ -304,6 +314,8 @@ impl<D: CaDevice> Driver<D> {
     /// (ISO/IEC 13818-1 §2.6.16, tag `0x09`) at programme or
     /// elementary-stream level — there would be nothing for the CAM to
     /// descramble. [`CaError::Io`] if sending the built `ca_pmt` fails.
+    /// [`CaError::NotSent`] if the stack could not hand it to the CAM (no open
+    /// CA session, inactive connection, full queue); nothing is recorded.
     pub fn add_service(&mut self, pmt: &PmtSection<'_>) -> Result<(), CaError> {
         let list_management = if self.managed.is_empty() {
             CaPmtListManagement::Only
@@ -312,7 +324,7 @@ impl<D: CaDevice> Driver<D> {
         };
         let cmd_id = CaPmtCmdId::OkDescrambling;
         let (built_bytes, pmt_raw) = self.build_service_bytes(pmt, list_management, cmd_id)?;
-        self.send_ca_pmt(&built_bytes)?;
+        self.send_ca_pmt_checked(&built_bytes)?;
         self.managed.record(
             pmt.program_number,
             managed::service_of(pmt, cmd_id, built_bytes, pmt_raw),
@@ -353,7 +365,7 @@ impl<D: CaDevice> Driver<D> {
         let list_management = CaPmtListManagement::Update;
         let cmd_id = CaPmtCmdId::OkDescrambling;
         let (built_bytes, pmt_raw) = self.build_service_bytes(pmt, list_management, cmd_id)?;
-        self.send_ca_pmt(&built_bytes)?;
+        self.send_ca_pmt_checked(&built_bytes)?;
         self.managed.record(
             pmt.program_number,
             managed::service_of(pmt, cmd_id, built_bytes, pmt_raw),
