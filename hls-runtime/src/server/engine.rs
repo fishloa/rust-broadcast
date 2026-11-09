@@ -3638,8 +3638,7 @@ impl HlsOrigin {
                     reason: "_HLS_msn unreasonably far beyond the live edge",
                 };
             }
-            let satisfied = self.public_msn(last_closed) >= msn;
-            if !satisfied {
+            if !self.window_reaches(msn) {
                 return EgressResponse::pending(await_policy, now, now);
             }
         }

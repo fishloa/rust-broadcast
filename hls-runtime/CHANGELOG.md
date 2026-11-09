@@ -18,7 +18,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Client: a skipped segment is skipped once; reloading the playlist no longer rewinds the byte-range cursor of later omitted-offset segments.
 - Origin: a blocking reload for an existing part of the just-closed segment is answered instead of parked.
 - Origin: the open segment is found when the segmenter's first segment is numbered above 1.
-- Origin: a bare `_HLS_msn` reload is satisfied from the rendered window, so a playlist answered as satisfied lists that segment.
+- Origin: a bare `_HLS_msn` reload (media and I-frame playlists) is satisfied from the rendered window, so a playlist answered as satisfied lists that segment.
 
 ## [0.12.0] - 2026-11-07
 ### Changed
