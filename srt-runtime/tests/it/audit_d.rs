@@ -42,3 +42,63 @@ fn sender_ignores_an_ack_beyond_the_highest_sent_sequence() {
     s.on_ack(&ack, Duration::ZERO);
     assert_eq!(s.buffered_count(), 5, "seqs 0..=4 were sent; an ACK for 1000 acknowledges unsent data");
 }
+
+/// Caller/Listener reject an Initial Packet Sequence Number wider than 31 bits
+/// as Rogue; a Rendezvous peer's ISN must get the same check.
+#[test]
+fn rendezvous_rejects_a_peer_isn_wider_than_31_bits() {
+    use srt_runtime::handshake_sm::{HandshakeConfig, HandshakeOutput};
+    use srt_runtime::packet::ControlPacket;
+    use srt_runtime::rendezvous::RendezvousHandshake;
+
+    let mut a = RendezvousHandshake::new(0x1111, 0xAAAA_0002, HandshakeConfig::default());
+    let mut b = RendezvousHandshake::new(
+        0x2222,
+        0x1111_0001,
+        HandshakeConfig {
+            initial_seq_number: 0xFFFF_FFFF,
+            ..HandshakeConfig::default()
+        },
+    );
+    let _ = a.start().unwrap();
+    let wave = b.start().unwrap();
+    let outputs = a.feed(&ControlPacket::parse(&wave).unwrap()).unwrap();
+    let mut connected = false;
+    let mut rejected = false;
+    let mut pending = outputs;
+    for _ in 0..6 {
+        let mut next = Vec::new();
+        for o in pending.drain(..) {
+            match o {
+                HandshakeOutput::Send(bytes) => {
+                    for r in b.feed(&ControlPacket::parse(&bytes).unwrap()).unwrap() {
+                        if let HandshakeOutput::Send(back) = r {
+                            next.extend(a.feed(&ControlPacket::parse(&back).unwrap()).unwrap());
+                        }
+                    }
+                }
+                HandshakeOutput::Connected(_) => connected = true,
+                HandshakeOutput::Rejected(_) => rejected = true,
+                _ => {}
+            }
+        }
+        pending = next;
+    }
+    assert!(
+        rejected && !connected,
+        "peer ISN 0xFFFF_FFFF accepted: connected={connected} rejected={rejected}"
+    );
+}
+
+/// MAX_BW arithmetic must saturate, not overflow, on a large configured rate.
+#[test]
+fn livecc_input_based_max_bw_does_not_overflow() {
+    use srt_runtime::livecc::MaxBwConfig;
+    let bw = MaxBwConfig::InputBased {
+        input_bw: u64::MAX / 4,
+        overhead: 25,
+    }
+    .max_bw_bytes_per_sec()
+    .unwrap();
+    assert!(bw >= u64::MAX / 4);
+}
