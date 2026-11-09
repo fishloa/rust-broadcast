@@ -1,3 +1,4 @@
+mod audite_pmt_removal;
 mod audite_tail_loss;
 mod audite_cross_pid_wrap;
 mod absolute_timing;
