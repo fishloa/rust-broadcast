@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- A `sidx` reference of size 0 still advances the subsegment timeline by its `subsegment_duration`; every later subsegment used to start early by the skipped duration.
 
 ## [0.3.0] - 2026-11-07
 ### Added

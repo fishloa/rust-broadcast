@@ -5,6 +5,16 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- A DROPREQ for a range ahead of the ARQ ack point is remembered and crossed when the ack point arrives (it used to be forgotten, leaving the ack point stuck and the flow window to fill); a DROPREQ whose range reaches further than the negotiated flow window is ignored instead of moving the ack point up to 2^30 ahead.
+- A first handshake packet from a new source that the listener engine rejects (a stray CONCLUSION, WAVEAHAND or AGREEMENT) no longer holds one of the listener's pending slots for good.
+- A Key Material refresh with `KK = Both` installs both the even and the odd SEK (the single ICV covers `even || odd`); it was dropped, so packets under the new parity could not be decrypted.
+- The Rendezvous handshake rejects a peer Initial Packet Sequence Number wider than 31 bits as `Rogue`, as the Caller and Listener already did.
+- The Caller, Listener and Rendezvous handshakes reject a peer advertising a Maximum Transmission Unit Size or Maximum Flow Window Size of 0 as `Rogue`; negotiating it made the receive window 0.
+- The sender ignores an ACK for a sequence number it never sent instead of freeing unacknowledged data.
+- LiveCC `MAX_BW` (`InputBased`/`Estimated`) saturates at `u64::MAX` instead of overflowing (a panic in debug, a tiny wrapped rate in release).
+- FileCC treats a `MAX_BW` of 0 as unbounded instead of an infinite send period.
+- TSBPD unwraps a reordered packet from just before a timestamp wrap to its true (pre-seed) value instead of clamping it to 0.
 
 ## [0.8.0] - 2026-11-07
 ### Added
