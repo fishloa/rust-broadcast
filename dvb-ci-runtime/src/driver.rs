@@ -505,6 +505,7 @@ impl<D: CaDevice> Driver<D> {
         // `None` (first call) has no previous point to measure from, so
         // `timeout` is used as a reasonable initial estimate, same as before.
         let now = (self.clock)();
+        let measured = self.last_pump.is_some();
         let mut elapsed = self
             .last_pump
             .map_or(timeout, |prev| now.saturating_duration_since(prev));
@@ -554,6 +555,11 @@ impl<D: CaDevice> Driver<D> {
                 // r10-O-11).
                 let actions = self.stack.handle(Event::Readable(&self.buf[..n]));
                 self.run(actions)?;
+                if measured && !elapsed.is_zero() {
+                    let actions = self.stack.handle(Event::Tick { elapsed });
+                    self.run(actions)?;
+                    self.requery_tick(elapsed)?;
+                }
                 return Ok(true);
             }
         }
