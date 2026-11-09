@@ -52,15 +52,15 @@ fn a_corrupt_sync_byte_mid_stream_counts_one_desync_and_recovers() {
     assert_eq!(
         got.len(),
         2,
-        "only the packets before the corruption survive (old behaviour: rest of the buffer is dropped)"
+        "packet 4 waits for its confirming successor before the stream re-locks"
     );
     assert_eq!(d.resync_stats().desyncs, 1);
-    assert_eq!(d.resync_stats().bytes_discarded, 188 * 2);
+    assert_eq!(d.resync_stats().bytes_discarded, 188);
     // the stream recovers on the next aligned data
     buf.extend_from_slice(&pkt(5));
     buf.extend_from_slice(&pkt(6));
     let got = drain(&mut d, &mut buf);
-    assert_eq!(got.iter().map(|p| p[1]).collect::<Vec<_>>(), vec![5, 6]);
+    assert_eq!(got.iter().map(|p| p[1]).collect::<Vec<_>>(), vec![4, 5, 6]);
     assert_eq!(d.resync_stats().resyncs, 2);
 }
 
@@ -268,4 +268,49 @@ fn bare_ts_and_non_ts_rtp_payloads_are_not_unwrapped() {
     let mut junk = rtp_header().to_vec();
     junk.extend_from_slice(&[0x55u8; 200]); // not a whole number of TS packets
     assert!(decode_datagram(&mut d, &junk).is_empty());
+}
+
+fn tags(packets: &[Bytes]) -> Vec<u8> {
+    packets.iter().map(|p| p[1]).collect()
+}
+
+#[test]
+fn one_corrupt_sync_byte_loses_only_that_packet() {
+    let mut d = TsDecoder::new();
+    let mut buf = BytesMut::new();
+    for tag in 1..=10u8 {
+        let mut p = pkt(tag);
+        if tag == 3 {
+            p[0] = 0x00;
+        }
+        buf.extend_from_slice(&p);
+    }
+    let mut got = drain(&mut d, &mut buf);
+    got.extend(d.decode_eof(&mut buf).unwrap());
+    assert_eq!(tags(&got), vec![1, 2, 4, 5, 6, 7, 8, 9, 10]);
+}
+
+#[test]
+fn a_false_sync_byte_in_a_short_first_read_does_not_misalign_the_stream() {
+    let mut d = TsDecoder::new();
+    let mut buf = BytesMut::new();
+    buf.extend_from_slice(&[0x11, 0x22, 0x47, 0x33]);
+    let mut stream = Vec::new();
+    for tag in 1..=4u8 {
+        stream.extend_from_slice(&pkt(tag));
+    }
+    buf.extend_from_slice(&stream[..60]);
+    let mut got = drain(&mut d, &mut buf);
+    buf.extend_from_slice(&stream[60..]);
+    got.extend(drain(&mut d, &mut buf));
+    assert_eq!(tags(&got), vec![1, 2, 3, 4]);
+}
+
+#[test]
+fn a_lone_packet_at_end_of_input_is_still_delivered() {
+    let mut d = TsDecoder::new();
+    let mut buf = BytesMut::from(&pkt(9)[..]);
+    assert!(drain(&mut d, &mut buf).is_empty());
+    let last = d.decode_eof(&mut buf).unwrap().expect("lone packet at EOF");
+    assert_eq!(last[1], 9);
 }
