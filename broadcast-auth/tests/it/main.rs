@@ -1,3 +1,4 @@
+mod audith_findings;
 mod basic_bearer;
 mod challenge;
 mod challenge_render;
