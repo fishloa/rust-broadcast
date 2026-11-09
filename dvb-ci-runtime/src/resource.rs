@@ -419,7 +419,66 @@ impl Resource for DateTime {
 /// [`mmi_cancel`](crate::Driver::mmi_cancel) (sent by [`CiStack`](crate::CiStack)
 /// on the open MMI session).
 #[derive(Debug, Default)]
-pub struct Mmi;
+pub struct Mmi {
+    chain: Option<MmiChain>,
+}
+
+/// Cap on a chained `menu`/`list` body (EN 50221 §8.3.2); a module that never
+/// sends the `_last` block cannot grow host memory past this.
+pub const MAX_MMI_CHAIN_LEN: usize = 0xFFFF;
+
+const APDU_TAG_LEN: usize = 3;
+
+#[derive(Debug)]
+struct MmiChain {
+    last: ApduTag,
+    body: Vec<u8>,
+}
+
+impl Mmi {
+    fn chain_more(&mut self, apdu: &[u8], last: ApduTag) -> dvb_ci::Result<()> {
+        let (len, hdr) = dvb_ci::length::decode(&apdu[APDU_TAG_LEN..])?;
+        let start = APDU_TAG_LEN + hdr;
+        let data = apdu
+            .get(start..start + len)
+            .ok_or(dvb_ci::Error::LengthTooLarge(len))?;
+        let mut chain = match self.chain.take() {
+            Some(c) if c.last == last => c,
+            _ => MmiChain {
+                last,
+                body: Vec::new(),
+            },
+        };
+        if chain.body.len() + data.len() > MAX_MMI_CHAIN_LEN {
+            return Err(dvb_ci::Error::LengthTooLarge(chain.body.len() + data.len()));
+        }
+        chain.body.extend_from_slice(data);
+        self.chain = Some(chain);
+        Ok(())
+    }
+
+    /// The complete `_last` APDU, with any chained `_more` bodies prepended to
+    /// its data field (EN 50221 §8.3.2: the receiver concatenates the data
+    /// fields once the last block arrives).
+    fn complete(&mut self, apdu: &[u8], last: ApduTag) -> dvb_ci::Result<Vec<u8>> {
+        let Some(chain) = self.chain.take().filter(|c| c.last == last) else {
+            return Ok(apdu.to_vec());
+        };
+        let (len, hdr) = dvb_ci::length::decode(&apdu[APDU_TAG_LEN..])?;
+        let start = APDU_TAG_LEN + hdr;
+        let data = apdu
+            .get(start..start + len)
+            .ok_or(dvb_ci::Error::LengthTooLarge(len))?;
+        let total = chain.body.len() + data.len();
+        let mut buf = vec![0u8; APDU_TAG_LEN + dvb_ci::length::encoded_len(total) + total];
+        buf[..APDU_TAG_LEN].copy_from_slice(&last.to_bytes());
+        let n = dvb_ci::length::encode_into(total, &mut buf[APDU_TAG_LEN..])?;
+        let body_at = APDU_TAG_LEN + n;
+        buf[body_at..body_at + chain.body.len()].copy_from_slice(&chain.body);
+        buf[body_at + chain.body.len()..].copy_from_slice(data);
+        Ok(buf)
+    }
+}
 
 impl Resource for Mmi {
     fn id(&self) -> ResourceId {
@@ -439,17 +498,21 @@ impl Resource for Mmi {
                     answer_len: e.answer_text_length,
                 }));
             }
+            Some(t) if t == tag::MENU_MORE => self.chain_more(apdu, tag::MENU_LAST)?,
+            Some(t) if t == tag::LIST_MORE => self.chain_more(apdu, tag::LIST_LAST)?,
             Some(t) if t == tag::MENU_LAST => {
                 // A CAM-originated APDU that fails to parse is a protocol error to
                 // surface, not to drop silently (audit #1092 interop).
-                let m = Menu::parse(apdu)?;
+                let full = self.complete(apdu, tag::MENU_LAST)?;
+                let m = Menu::parse(&full)?;
                 out.notify
                     .push(Notification::Mmi(MmiEvent::Menu(to_menu(&m))));
             }
             Some(t) if t == tag::LIST_LAST => {
                 // A CAM-originated APDU that fails to parse is a protocol error to
                 // surface, not to drop silently (audit #1092 interop).
-                let l = List::parse(apdu)?;
+                let full = self.complete(apdu, tag::LIST_LAST)?;
+                let l = List::parse(&full)?;
                 out.notify
                     .push(Notification::Mmi(MmiEvent::List(to_menu(&l.0))));
             }
@@ -489,7 +552,9 @@ impl Resource for Mmi {
         }
         Ok(out)
     }
-    // No state carried between calls — the default `reset()` no-op applies.
+    fn reset(&mut self) {
+        self.chain = None;
+    }
 }
 
 /// Host Control (§8.5.1) — host-provided. The module opens a host_control
@@ -648,7 +713,7 @@ mod tests {
 
     #[test]
     fn mmi_surfaces_enquiry_and_close() {
-        let mut h = Mmi;
+        let mut h = Mmi::default();
         // enquiry
         let enq = s(&Enq {
             reserved: Default::default(),
@@ -681,7 +746,7 @@ mod tests {
             more: false,
             text_chars: s,
         };
-        let mut h = Mmi;
+        let mut h = Mmi::default();
         // A `menu()` → MmiEvent::Menu with header lines and choices kept distinct.
         let menu = s(&Menu {
             length_form: dvb_ci::length::LengthForm::Minimal,
@@ -722,10 +787,98 @@ mod tests {
         );
     }
 
+    fn chained(more: ApduTag, last: ApduTag, whole_last_apdu: &[u8], split: usize) -> [Vec<u8>; 2] {
+        let (len, hdr) = dvb_ci::length::decode(&whole_last_apdu[3..]).unwrap();
+        let body = &whole_last_apdu[3 + hdr..3 + hdr + len];
+        let part = |t: ApduTag, b: &[u8]| {
+            let mut v = t.to_bytes().to_vec();
+            let mut l = [0u8; 3];
+            let n = dvb_ci::length::encode_into(b.len(), &mut l).unwrap();
+            v.extend_from_slice(&l[..n]);
+            v.extend_from_slice(b);
+            v
+        };
+        [
+            part(more, &body[..split]),
+            part(last, &body[split..]),
+        ]
+    }
+
+    #[test]
+    fn mmi_reassembles_a_menu_chained_over_menu_more_and_menu_last() {
+        use dvb_ci::objects::mmi_high::{Menu, Text};
+        let txt = |s: &'static [u8]| Text {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            more: false,
+            text_chars: s,
+        };
+        let whole = s(&Menu {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            more: false,
+            choice_nb: 2,
+            title: txt(b"AlphaCrypt"),
+            subtitle: txt(b"Module Mainmenu"),
+            bottom: txt(b"Select item and press OK"),
+            choices: vec![txt(b"Smartcard"), txt(b"Quit")],
+        });
+        let [first, second] = chained(tag::MENU_MORE, tag::MENU_LAST, &whole, 20);
+        let mut h = Mmi::default();
+        assert!(h.on_apdu(&first).unwrap().notify.is_empty());
+        assert_eq!(
+            h.on_apdu(&second).unwrap().notify,
+            vec![Notification::Mmi(MmiEvent::Menu(MmiMenu {
+                title: "AlphaCrypt".to_string(),
+                subtitle: "Module Mainmenu".to_string(),
+                bottom: "Select item and press OK".to_string(),
+                choices: vec!["Smartcard".to_string(), "Quit".to_string()],
+            }))]
+        );
+    }
+
+    #[test]
+    fn mmi_reassembles_a_list_chained_over_list_more_and_list_last() {
+        use dvb_ci::objects::mmi_high::{List, Menu, Text};
+        let txt = |s: &'static [u8]| Text {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            more: false,
+            text_chars: s,
+        };
+        let whole = s(&List(Menu {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            more: false,
+            choice_nb: 2,
+            title: txt(b"Entitlements"),
+            subtitle: txt(b""),
+            bottom: txt(b""),
+            choices: vec![txt(b"ORF AUT"), txt(b"ZDF")],
+        }));
+        let [first, second] = chained(tag::LIST_MORE, tag::LIST_LAST, &whole, 9);
+        let mut h = Mmi::default();
+        assert!(h.on_apdu(&first).unwrap().notify.is_empty());
+        assert_eq!(
+            h.on_apdu(&second).unwrap().notify,
+            vec![Notification::Mmi(MmiEvent::List(MmiMenu {
+                title: "Entitlements".to_string(),
+                subtitle: String::new(),
+                bottom: String::new(),
+                choices: vec!["ORF AUT".to_string(), "ZDF".to_string()],
+            }))]
+        );
+    }
+
+    #[test]
+    fn mmi_discards_a_partial_chain_on_reset() {
+        let mut h = Mmi::default();
+        let first = [0x9F, 0x88, 0x0A, 0x01, 0x02];
+        assert!(h.on_apdu(&first).unwrap().notify.is_empty());
+        h.reset();
+        assert!(h.chain.is_none());
+    }
+
     #[test]
     fn mmi_answers_display_control_set_mmi_mode() {
         use dvb_ci::objects::mmi_display::{DisplayControl, DisplayControlCmd, MmiMode};
-        let mut h = Mmi;
+        let mut h = Mmi::default();
         let dc = s(&DisplayControl {
             length_form: dvb_ci::length::LengthForm::Minimal,
             cmd: DisplayControlCmd::SetMmiMode,

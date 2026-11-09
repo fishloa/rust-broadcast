@@ -86,7 +86,7 @@ impl CiStack {
                 Box::new(ApplicationInformation),
                 Box::new(ConditionalAccess),
                 Box::new(DateTime::new()),
-                Box::new(Mmi),
+                Box::new(Mmi::default()),
                 Box::new(HostControl),
             ],
             host_provided,
