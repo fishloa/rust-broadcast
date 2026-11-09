@@ -1399,8 +1399,8 @@ fn pmt_removal_of_video_flushes_the_held_access_unit() {
     let (head, tail) = ts.split_at(split);
     let last_pmt = head
         .chunks_exact(RAW_TS_LEN)
-        .filter(|p| raw_pid(p) == pmt)
-        .last()
+        .rev()
+        .find(|p| raw_pid(p) == pmt)
         .expect("PMT in first half");
 
     let mut reference = StreamingTsDemux::new();
