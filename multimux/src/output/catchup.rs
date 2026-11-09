@@ -708,7 +708,7 @@ mod tests {
         );
 
         release.send(()).expect("scan still waiting");
-        tokio::time::timeout(std::time::Duration::from_secs(5), pool.acquire())
+        let _permit = tokio::time::timeout(std::time::Duration::from_secs(5), pool.acquire())
             .await
             .expect("the permit returns when the scan ends")
             .expect("pool open");
