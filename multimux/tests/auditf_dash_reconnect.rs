@@ -100,15 +100,13 @@ async fn dash_numbers_derived_from_the_mpd_are_served_after_a_reconnect() {
 }
 
 async fn assert_derived_numbers_served(route: Arc<RouteHandle>) {
+    derived_numbers_served(route, Arc::new(DashOutput), "/cam/manifest.mpd").await;
+}
 
-    let mut streams = HashMap::new();
-    streams.insert(
-        "cam".to_string(),
-        (route.clone(), vec![Arc::new(DashOutput) as Arc<dyn Output>]),
-    );
-    let app = router(Arc::new(AppState::new(streams)));
+async fn derived_numbers_served(route: Arc<RouteHandle>, output: Arc<dyn Output>, path: &str) {
+    let app = app_with(route, output);
 
-    let resp = app.clone().oneshot(get("/cam/manifest.mpd")).await.unwrap();
+    let resp = app.clone().oneshot(get(path)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let xml = body_string(resp).await;
     let mpd = Mpd::parse(&xml).expect("MPD parse");
@@ -196,4 +194,22 @@ async fn smooth_manifest_is_served_after_a_reconnect() {
         StatusCode::OK,
         "Smooth manifest after a reconnect: {body}"
     );
+}
+
+#[tokio::test]
+async fn ll_dash_numbers_derived_from_the_mpd_are_served_after_a_reconnect() {
+    let track = video_track();
+    let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
+    let program = media_plane::ProgramId(0);
+    let first = route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    route.release_program(program, &first);
+    route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    derived_numbers_served(
+        route,
+        Arc::new(multimux::output::ll_dash::LlDashOutput),
+        "/cam/manifest-ll.mpd",
+    )
+    .await;
 }
