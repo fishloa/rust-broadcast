@@ -190,23 +190,26 @@ impl Validator {
     /// expressions.
     fn validate_nested_content_timing(
         &mut self,
-        el: &crate::foreign::UnknownElement,
+        root: &crate::foreign::UnknownElement,
         ctx: &crate::time::TimeContext,
     ) {
-        if el.namespace.as_deref() == Some(document::NS_TT)
-            && matches!(el.local_name.as_str(), "div" | "p" | "image")
-        {
-            for attr in &el.attributes {
-                if attr.namespace.is_none()
-                    && matches!(attr.local_name.as_str(), "begin" | "dur" | "end")
-                {
-                    self.validate_time_expr(Some(&attr.value), ctx);
+        let mut stack = alloc::vec![root];
+        while let Some(el) = stack.pop() {
+            if el.namespace.as_deref() == Some(document::NS_TT)
+                && matches!(el.local_name.as_str(), "div" | "p" | "image")
+            {
+                for attr in &el.attributes {
+                    if attr.namespace.is_none()
+                        && matches!(attr.local_name.as_str(), "begin" | "dur" | "end")
+                    {
+                        self.validate_time_expr(Some(&attr.value), ctx);
+                    }
                 }
             }
-        }
-        for child in &el.children {
-            if let crate::foreign::UnknownNode::Element(c) = child {
-                self.validate_nested_content_timing(c, ctx);
+            for child in el.children.iter().rev() {
+                if let crate::foreign::UnknownNode::Element(c) = child {
+                    stack.push(c);
+                }
             }
         }
     }
