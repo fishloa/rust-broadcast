@@ -4050,6 +4050,27 @@ mod adapter_tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_dropreq_wider_than_the_flow_window_is_ignored_by_the_driver() {
+        const WINDOW: u32 = 64;
+        let (mut driver, mut rx) = test_driver(WINDOW).await;
+        driver
+            .ingress(Bytes::from(data_bytes(0, 0, &[0])))
+            .expect("ingress");
+        driver
+            .ingress(Bytes::from(dropreq_bytes(1, 0x3FFF_FFFF)))
+            .expect("ingress dropreq");
+        driver
+            .ingress(Bytes::from(data_bytes(1, 0, &[1])))
+            .expect("ingress");
+        tokio::time::advance(Duration::from_millis(130)).await;
+        driver.tick_engines();
+        let delivered: Vec<u8> = drain_deliveries(&mut rx).iter().map(|p| p[0]).collect();
+        assert_eq!(delivered, vec![0, 1]);
+        assert_eq!(driver.receiver.ack_point(), 2);
+        assert_eq!(driver.tsbpd.next_release(), 2);
+    }
+
     #[cfg(feature = "crypto")]
     #[tokio::test]
     async fn km_refresh_with_both_keys_installs_both_parities() {
