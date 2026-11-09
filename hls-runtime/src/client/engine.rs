@@ -2520,6 +2520,7 @@ impl HlsClient {
         self.discontinuity_emitted.clear();
         self.byte_range_cursor.clear();
         self.resource_requests.clear();
+        self.last_media_sequence = None;
         self.outstanding_fetches = 0;
         self.last_full_playlist = None;
         self.inits.clear();
