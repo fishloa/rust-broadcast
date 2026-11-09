@@ -3464,3 +3464,7 @@ mod tests {
         cleanup_temp(&tmp);
     }
 }
+
+#[cfg(test)]
+#[path = "auditf_dvr_tests.rs"]
+mod auditf_dvr_tests;
