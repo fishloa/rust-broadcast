@@ -147,7 +147,7 @@ pub(crate) fn effective_controller_config(
 
 pub(crate) struct Feeder {
     config: ControllerConfig,
-    initial_seed: Option<StallMemorySnapshot>,
+    replay_seed_value: Option<StallMemorySnapshot>,
     seed: Option<StallMemorySnapshot>,
     seed_at_us: Option<u64>,
     controller: Option<BufferController>,
@@ -190,7 +190,7 @@ impl Feeder {
     ) -> Self {
         Self {
             config,
-            initial_seed: seed,
+            replay_seed_value: seed,
             seed,
             seed_at_us: None,
             controller: None,
@@ -235,7 +235,7 @@ impl Feeder {
     }
 
     pub(crate) fn replay_seed(&self) -> Option<StallMemorySnapshot> {
-        self.initial_seed
+        self.replay_seed_value
     }
 
     /// A finite connection drops the controller; a later live connection builds a new one that
@@ -680,6 +680,7 @@ impl Feeder {
             .seed
             .map(|s| s.aged(self.seed_at_us.map_or(0, |at| now.saturating_sub(at))));
         if let Ok(mut c) = BufferController::new(self.controller_config(), seed) {
+            self.replay_seed_value = seed;
             self.seed = None;
             self.seed_at_us = None;
             for t in &self.rendered {
@@ -985,6 +986,36 @@ mod tests {
             placeholder,
             "the live controller after a finite connection skipped the pending-track placeholder"
         );
+    }
+
+    #[test]
+    fn replay_seed_is_the_one_the_current_controller_was_built_with() {
+        const PEAK_US: u64 = 2_000_000;
+        const CHUNK: usize = 1316;
+        const LATER_US: u64 = 1_000_000;
+        let st = streams();
+        let first = StallMemorySnapshot::new(PEAK_US, 0);
+        let mut f = Feeder::new(
+            ControllerConfig::default(),
+            Some(first),
+            crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
+            crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
+        );
+        f.set_recording(true, usize::MAX);
+        f.on_chunk(0, CHUNK, None);
+        assert_eq!(f.replay_seed(), Some(first));
+        f.set_finite();
+        f.new_connection();
+        f.set_expecting(LATER_US, true, false);
+        f.on_track_added(LATER_US, &st.audio.0);
+        f.on_sample(st.audio.0.track_id, &st.audio.1[0], None);
+        f.on_chunk(LATER_US, CHUNK, None);
+        assert_ne!(
+            f.replay_seed(),
+            Some(first),
+            "the log seed stayed the first controller's after a finite connection"
+        );
+        assert_eq!(f.replay_seed().map(|s| s.peak_us), Some(PEAK_US));
     }
 
     #[test]

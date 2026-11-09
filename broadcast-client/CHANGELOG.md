@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An RTSP or RTMP connection loss is hinted to the buffer controller as `SourceEnded` / `SourceError`, as the TS path already did; a starvation right after the close was charged to the stall memory as `DataArriving`, ratcheting the target. The hint is sent only when the source will announce a `Discontinuity` (and so `Reconnected`) before the next connection's media.
 - A live connection after a finite (VOD) one starts under the same rules as the first: the new controller keeps the previous controller's stall memory (aged by the time in between) and the pending-track placeholder and the explicit-rendered-set start hold apply again (the session's "started" flag stayed set, and the seed was lost).
 - An RTSP connection lost to a protocol error inside `on_data` (no `on_closed` follows) is hinted to the buffer controller as `SourceError`, like a close; it sent no hint, so a starvation right after was charged to the stall memory as `DataArriving`.
+- `Session::buffer_input_log_seed` reports the seed the session's current controller was built with (a live connection after a finite one starts from the dropped controller's aged stall memory), not the seed the session was opened with; a log of the later connection replays from the right memory.
 
 ## [0.4.0] - 2026-11-08
 ### Added
