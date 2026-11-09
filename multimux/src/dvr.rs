@@ -3519,8 +3519,87 @@ mod tests {
 
         cleanup_temp(&tmp);
     }
-}
 
-#[cfg(test)]
-#[path = "auditf_dvr_tests.rs"]
-mod auditf_dvr_tests;
+    #[test]
+    fn a_failed_period_roll_leaves_the_next_period_starting_with_the_init() {
+        let root = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("writer");
+        let mut rec =
+            DvrRecorder::new("r".into(), dvr_config(&root, 10), ".m4s", &trunk).expect("rec");
+        rec.poll_and_persist(Some(b"INIT")).expect("open p0");
+        writer
+            .publish_segment(dummy_segment(1, 1))
+            .expect("publish");
+        rec.poll_and_persist(Some(b"INIT")).expect("persist 1");
+
+        let dir = root.join("r");
+        fs::create_dir(dir.join("p1.m4s")).expect("blocker");
+        rec.period_opened_at = Some(SystemTime::now() - Duration::from_secs(7200));
+        assert!(
+            rec.poll_and_persist(Some(b"INIT")).is_err(),
+            "roll must fail"
+        );
+        fs::remove_dir(dir.join("p1.m4s")).expect("unblock");
+
+        writer
+            .publish_segment(dummy_segment(2, 2))
+            .expect("publish");
+        rec.poll_and_persist(Some(b"INIT")).expect("persist 2");
+
+        let holder = dir.join("p1.m4s");
+        let bytes = fs::read(&holder).expect("the retried roll opened p1");
+        assert!(
+            bytes.starts_with(b"INIT") && bytes.contains(&2u8),
+            "{} must hold segment 2 behind the init, found {:?}",
+            holder.display(),
+            &bytes[..bytes.len().min(8)]
+        );
+        assert!(
+            !dir.join("p2.m4s").exists(),
+            "the failed roll must not consume a period number"
+        );
+        cleanup_temp(&root);
+    }
+
+    #[test]
+    fn retention_removes_the_programme_sidecar_with_its_period() {
+        let root = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("writer");
+        let mut rec =
+            DvrRecorder::new("r".into(), dvr_config(&root, 1), ".m4s", &trunk).expect("rec");
+        rec.current_programme = Some(EitProgramme {
+            event_id: 7,
+            service_id: 1,
+            title: Some("t".into()),
+            start: None,
+            duration_secs: None,
+        });
+        rec.poll_and_persist(Some(b"INIT_0")).expect("p0");
+        for (n, init) in [(1u32, b"INIT_1"), (2, b"INIT_2"), (3, b"INIT_3")] {
+            writer
+                .publish_segment(dummy_segment(n, 1))
+                .expect("publish");
+            rec.poll_and_persist(Some(init)).expect("roll");
+        }
+        let dir = root.join("r");
+        let names_ending = |suffix: &str| -> Vec<String> {
+            let mut names: Vec<String> = fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(suffix))
+                .collect();
+            names.sort();
+            names
+        };
+        let kept = names_ending(".idx");
+        let sidecars = names_ending(".event.json");
+        assert!(
+            sidecars.len() <= kept.len(),
+            "retention keeps {kept:?} but .event.json sidecars remain for {sidecars:?}"
+        );
+        cleanup_temp(&root);
+    }
+}

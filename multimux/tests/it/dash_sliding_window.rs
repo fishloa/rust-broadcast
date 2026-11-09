@@ -199,3 +199,121 @@ async fn dash_mpd_stays_servable_as_the_window_slides() {
 async fn ll_dash_mpd_stays_servable_as_the_window_slides() {
     slide(Arc::new(LlDashOutput), "/cam/manifest-ll.mpd").await;
 }
+
+fn fixture_video_track() -> transmux::Track {
+    let media = TsDemux::new()
+        .unpackage(&std::fs::read(test_fixtures::path("ts/h264-aac-40s.ts")).expect("fixture"))
+        .expect("demux fixture");
+    let mut track = media
+        .tracks
+        .into_iter()
+        .find(|t| matches!(t.spec.config, transmux::CodecConfig::Avc { .. }))
+        .expect("video track");
+    track.spec.track_id = TrackId::new(1);
+    track
+}
+
+/// Publish `segments` closed segments of the fixture video as one source run
+/// on `program`'s current `Trunk`.
+fn publish_run(
+    route: &RouteHandle,
+    program: media_plane::ProgramId,
+    track: &transmux::Track,
+    segments: u32,
+) {
+    let specs = vec![track.spec.clone()];
+    let mut seg = LlHlsSegmenter::with_part_target(
+        specs.clone(),
+        transmux::VIDEO_CLOCK_RATE,
+        TARGET_SECS,
+        PART_MS,
+    )
+    .expect("segmenter");
+    route.set_init(program, seg.init_segment().expect("init"));
+    route.set_track_specs(program, specs);
+    let mut published = 0;
+    for s in track.samples.iter().cloned() {
+        seg.push(TrackId::new(1), s).expect("push");
+        for part in seg.take_ready_parts() {
+            route.add_part(program, part);
+        }
+        for segment in seg.take_ready_segments() {
+            route.add_segment(program, segment).expect("add_segment");
+            published += 1;
+        }
+        if published >= segments {
+            return;
+        }
+    }
+    panic!("fixture too short for {segments} segments");
+}
+
+/// Request the first three numbers a client derives from the current MPD.
+async fn derived_numbers_not_served(
+    route: Arc<RouteHandle>,
+    output: Arc<dyn Output>,
+    manifest_path: &str,
+) -> (Vec<String>, String) {
+    let mut streams = HashMap::new();
+    streams.insert("cam".to_string(), (route, vec![output]));
+    let app = router(Arc::new(AppState::new(streams)));
+
+    let resp = app.clone().oneshot(get(manifest_path)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let xml = body_string(resp).await;
+    let edge = read_mpd(&xml);
+    let mut failures = Vec::new();
+    for n in edge.start_number..edge.start_number + 3 {
+        let uri = edge
+            .media
+            .replace("$RepresentationID$", "1")
+            .replace("$Number$", &n.to_string());
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/cam/{uri}")))
+            .await
+            .unwrap();
+        if resp.status() != StatusCode::OK {
+            failures.push(format!("{uri} -> {}", resp.status()));
+        }
+    }
+    (failures, xml)
+}
+
+async fn run_then_reconnect_then_run(output: Arc<dyn Output>, manifest_path: &str) {
+    let track = fixture_video_track();
+    let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
+    let program = media_plane::ProgramId(0);
+    let first = route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    route.release_program(program, &first);
+    route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    let (failures, xml) = derived_numbers_not_served(route, output, manifest_path).await;
+    assert!(
+        failures.is_empty(),
+        "segments derived from the post-reconnect MPD are not served: {failures:?}\n{xml}"
+    );
+}
+
+#[tokio::test]
+async fn dash_segments_derived_from_the_mpd_are_served_without_a_reconnect() {
+    let track = fixture_video_track();
+    let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
+    let program = media_plane::ProgramId(0);
+    route.publish_new_program(program);
+    publish_run(&route, program, &track, 3);
+    let (failures, xml) =
+        derived_numbers_not_served(route, Arc::new(DashOutput), "/cam/manifest.mpd").await;
+    assert!(failures.is_empty(), "{failures:?}\n{xml}");
+}
+
+#[tokio::test]
+async fn dash_segments_derived_from_the_mpd_are_served_after_a_source_reconnect() {
+    run_then_reconnect_then_run(Arc::new(DashOutput), "/cam/manifest.mpd").await;
+}
+
+#[tokio::test]
+async fn ll_dash_segments_derived_from_the_mpd_are_served_after_a_source_reconnect() {
+    run_then_reconnect_then_run(Arc::new(LlDashOutput), "/cam/manifest-ll.mpd").await;
+}

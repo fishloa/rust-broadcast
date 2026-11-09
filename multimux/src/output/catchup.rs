@@ -1384,4 +1384,118 @@ mod tests {
         );
         cleanup(&tmp);
     }
+
+    fn archived_seq_periods(dir: &std::path::Path) -> Vec<(u32, u32)> {
+        catchup::scan_archive(dir)
+            .iter()
+            .map(|s| (s.seq.value(), s.period_num))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_segment_closed_under_the_old_init_is_archived_with_the_old_init() {
+        let root = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(2.0, 500, 8)
+                .with_name("r")
+                .with_dvr(dvr_config(&root)),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xA1))
+            .expect("add");
+        route.drain_dvr().await;
+
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
+            .expect("add");
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_B".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(3, 0xB3))
+            .expect("add");
+        route.drain_dvr().await;
+
+        assert_eq!(
+            archived_seq_periods(&root.join("r")),
+            vec![(1, 0), (2, 0), (3, 1)],
+            "segment 2 was closed under INIT_A and belongs in the INIT_A period"
+        );
+        cleanup(&root);
+    }
+
+    #[tokio::test]
+    async fn segments_closed_before_a_source_reconnect_are_archived() {
+        let root = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(2.0, 500, 8)
+                .with_name("r")
+                .with_dvr(dvr_config(&root)),
+        );
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xA1))
+            .expect("add");
+        route.drain_dvr().await;
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
+            .expect("add");
+
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xB1))
+            .expect("add");
+        route.drain_dvr().await;
+
+        let seqs: Vec<u32> = archived_seq_periods(&root.join("r"))
+            .iter()
+            .map(|s| s.0)
+            .collect();
+        assert_eq!(
+            seqs,
+            vec![1, 2, 4],
+            "segment 2 was closed on the old Trunk before the reconnect"
+        );
+        cleanup(&root);
+    }
+
+    #[tokio::test]
+    async fn the_archive_timeline_does_not_go_backwards_across_a_source_reconnect() {
+        let root = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(2.0, 500, 8)
+                .with_name("r")
+                .with_dvr(dvr_config(&root)),
+        );
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xA1))
+            .expect("add");
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
+            .expect("add");
+        route.drain_dvr().await;
+
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xB1))
+            .expect("add");
+        route.drain_dvr().await;
+
+        let starts: Vec<u64> = catchup::scan_archive(&root.join("r"))
+            .iter()
+            .map(|s| s.start_pts_ns)
+            .collect();
+        assert!(
+            starts.windows(2).all(|w| w[0] < w[1]),
+            "archived start_pts_ns must increase across the reconnect: {starts:?}"
+        );
+        cleanup(&root);
+    }
 }
