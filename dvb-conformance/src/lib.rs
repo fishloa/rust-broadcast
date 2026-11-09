@@ -714,8 +714,6 @@ struct OtherRepetitionState {
     occurrences: u64,
     /// Time of the most recent section.
     last_seen: Duration,
-    /// Whether the absence has already been reported for this key.
-    reported: bool,
 }
 
 /// Per-sub-table EIT P/F pairing state (indicator 3.6.c).
@@ -2051,22 +2049,18 @@ impl ConformanceMonitor {
                 .or_insert_with(|| OtherRepetitionState {
                     occurrences: 0,
                     last_seen: Duration::ZERO,
-                    reported: false,
                 });
 
         entry.occurrences += 1;
 
         // Snapshot what we need before any emit.
         let should_report = entry.occurrences >= 2
-            && !entry.reported
             && t.saturating_sub(entry.last_seen) > self.config.si_other_interval;
         let last_seen = entry.last_seen;
 
         entry.last_seen = t;
 
         if should_report {
-            entry.reported = true;
-
             let indicator = match table_id {
                 NIT_OTHER_TABLE_ID => Indicator::NitOtherError,
                 SDT_OTHER_TABLE_ID => Indicator::SdtOtherError,
