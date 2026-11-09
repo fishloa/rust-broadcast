@@ -1973,7 +1973,12 @@ impl WrapState {
     /// * **Only the new base consumes the flag.** An old-base access unit
     ///   completing after the indicator reads as a forward step, so
     ///   `pending_rebase` stays set for the next access unit.
-    fn rebase_at_discontinuity(&mut self, raw_dts: u64, step: i128) -> DiscontinuityVerdict {
+    fn rebase_at_discontinuity(
+        &mut self,
+        raw_dts: u64,
+        step: i128,
+        epoch: &mut ProgramEpoch,
+    ) -> DiscontinuityVerdict {
         if !self.initialized {
             return DiscontinuityVerdict::Forward;
         }
@@ -2005,7 +2010,30 @@ impl WrapState {
         let lift = last_emitted
             .saturating_sub(next_emitted)
             .saturating_add(slack);
-        self.discontinuity_offset = self.discontinuity_offset.saturating_add(lift);
+        let own_offset = self.discontinuity_offset.saturating_add(lift);
+        // The first stream of the program to reach the new base fixes the
+        // offset for all of them: the new base is one clock, so lifting every
+        // stream by the same amount keeps the A/V skew the new base carries
+        // instead of replacing it with the old base's. A stream the shared
+        // offset would put at or before its own last stamp (or implausibly far
+        // past it) falls back to its own lift.
+        let offset = match epoch.splice_offset {
+            Some(shared) => {
+                let landed = next_uw.saturating_add(shared);
+                if landed > last_emitted
+                    && landed.saturating_sub(last_emitted) < broadcast_common::clock33::WRAP_33BIT_HALF as i128
+                {
+                    shared
+                } else {
+                    own_offset
+                }
+            }
+            None => {
+                epoch.splice_offset = Some(own_offset);
+                own_offset
+            }
+        };
+        self.discontinuity_offset = offset;
         self.prev_dts_raw = raw_dts;
         self.prev_dts_uw = next_uw;
         self.prev_pts_raw = raw_dts;
@@ -2023,6 +2051,10 @@ impl WrapState {
 #[derive(Default)]
 struct ProgramEpoch {
     last: Option<(u64, i128)>,
+    /// The `discontinuity_offset` the first stream to reach the new time base
+    /// after a signalled discontinuity settled on, for the rest of the program
+    /// to share; cleared when the next discontinuity is signalled.
+    splice_offset: Option<i128>,
 }
 
 /// The PMT PID of the program that declares `pid` — the key of its
@@ -4639,7 +4671,7 @@ fn on_completed_pes(
         // case this call is a no-op and the wait continues.
         stream.pending_rebase = stream
             .wrap
-            .rebase_at_discontinuity(dts, stream.last_frame_period)
+            .rebase_at_discontinuity(dts, stream.last_frame_period, epoch)
             == DiscontinuityVerdict::Forward;
     }
     let (pts_uw, dts_uw) = stream.wrap.push(pts, dts, epoch);
@@ -5177,6 +5209,10 @@ impl StreamingTsDemux {
                     for es_pid in members {
                         if let Some(stream) = self.streams.get_mut(&es_pid) {
                             stream.pending_rebase = true;
+                            self.program_epochs
+                                .entry(stream.epoch_key)
+                                .or_default()
+                                .splice_offset = None;
                         }
                     }
                 }
@@ -9079,6 +9115,113 @@ pub(crate) mod tests {
         assert!(
             !a2_steps.is_empty() && a2_steps.iter().all(|&d| d > 0),
             "program A's *second* PID must be rebased by the discontinuity on              its PCR_PID too: {a2:?}"
+        );
+    }
+
+    /// A signalled splice lifts every stream of the program by one common
+    /// offset, so the new time base's own A/V skew survives it: lifting each PID
+    /// independently to "last emitted + one period" erased whatever skew the new
+    /// base carried and replaced it with the old base's.
+    #[test]
+    fn splice_lift_is_common_to_the_program_so_new_base_av_skew_survives() {
+        const PMT: Pid = Pid::new(0x1000);
+        const ES1: Pid = Pid::new(0x1100);
+        const ES2: Pid = Pid::new(0x1101);
+        const PROGRAM: u16 = 1;
+        const FRAME_PERIOD: i64 = 3600;
+        const FRAMES: i64 = 8;
+        const BASE_A: i64 = 900_000;
+        const BASE_B: i64 = 40_000;
+        /// The second stream's offset from the first within the new base, and
+        /// zero within the old one.
+        const NEW_BASE_SKEW: i64 = 1800;
+
+        let annexb = real_annexb_frames();
+        let mut cc = 0u8;
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        let mut pat = Vec::new();
+        pat.extend_from_slice(&PROGRAM.to_be_bytes());
+        pat.extend_from_slice(&(0xE000 | PMT.value()).to_be_bytes());
+        input.extend_from_slice(&psi_section_packets_for(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            0,
+            &pat,
+        ));
+        input.extend_from_slice(&psi_section_packets_for(
+            PMT,
+            0,
+            TABLE_ID_PMT,
+            PROGRAM,
+            &pmt_body_two_es_with_pcr_pid(ES1, STREAM_TYPE_AVC, ES2, STREAM_TYPE_AVC, ES1),
+        ));
+        let push_au = |input: &mut Vec<u8>, cc: &mut u8, pid: Pid, au: &[u8], dts: i64| {
+            let pes = pes_packet(ES_STREAM_ID_VIDEO, dts, Some(dts), au);
+            let packets = pes_packets(pid, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+
+        for i in 0..FRAMES {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push_au(&mut input, &mut cc, ES1, &au, BASE_A + i * FRAME_PERIOD);
+        }
+        let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+        pkt[0] = 0x47;
+        pkt[1] = (ES1.value() >> 8) as u8 & PID_HI_MASK;
+        pkt[2] = (ES1.value() & 0xFF) as u8;
+        pkt[3] = 0x20 | (cc & 0x0F);
+        pkt[4] = 8;
+        pkt[5] = 0x80;
+        input.extend_from_slice(&pkt);
+        cc = cc.wrapping_add(1);
+        for i in 0..FRAMES {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            push_au(&mut input, &mut cc, ES1, &au, BASE_B + i * FRAME_PERIOD);
+        }
+        for i in 0..FRAMES * 2 {
+            let au = annexb[(i as usize) % annexb.len()].clone();
+            let dts = if i < FRAMES {
+                BASE_A + i * FRAME_PERIOD
+            } else {
+                BASE_B + NEW_BASE_SKEW + (i - FRAMES) * FRAME_PERIOD
+            };
+            push_au(&mut input, &mut cc, ES2, &au, dts);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input);
+        demux.finish();
+        let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
+        let ids: BTreeMap<TrackId, Pid> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::TrackAdded(spec) => spec.source_pid.map(|pid| (spec.track_id, pid)),
+                _ => None,
+            })
+            .collect();
+        let mut by_pid: BTreeMap<Pid, Vec<i64>> = BTreeMap::new();
+        for event in &events {
+            if let DemuxEvent::Sample { track_id, sample } = event
+                && let Some(pid) = ids.get(track_id)
+                && let Some(dts) = sample.dts
+            {
+                by_pid.entry(*pid).or_default().push(dts);
+            }
+        }
+        let first = by_pid.get(&ES1).expect("ES1 samples");
+        let second = by_pid.get(&ES2).expect("ES2 samples");
+        let n = FRAMES as usize;
+        assert!(first.len() > n && second.len() > n, "{first:?} {second:?}");
+        assert!(second.windows(2).all(|w| w[1] > w[0]), "{second:?}");
+        assert_eq!(
+            second[n] - first[n],
+            NEW_BASE_SKEW,
+            "the new base's A/V skew must survive the splice: ES1 {first:?} ES2 {second:?}"
         );
     }
 
