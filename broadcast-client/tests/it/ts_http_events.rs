@@ -300,3 +300,73 @@ fn unknown_conn_callbacks_ignored() {
         "an unknown connection's close must not drive the retry policy: {evs:?}"
     );
 }
+
+/// The demuxer's tail (the last PES of every PID) is flushed when the
+/// connection closes and handed to the host; the controller learns those ends
+/// in the same `on_closed`, so it never judges the lead short of what the host
+/// holds.
+#[test]
+fn media_flushed_at_connection_close_reaches_the_controller_in_the_same_call() {
+    use broadcast_client::BufferInput;
+    use std::collections::BTreeMap;
+    use support::replay::{bitrate_bps, open_live};
+
+    let bytes = test_fixtures::read("ts/h264-aac-40s.ts");
+    let bps = bitrate_bps(&bytes);
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    let (mut s, conn) = open_live(config);
+    let mut timescale: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut host_end: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut reported: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut now = 0u64;
+    let mut drain = |s: &mut broadcast_client::Session,
+                     host_end: &mut BTreeMap<u32, u64>,
+                     reported: &mut BTreeMap<u32, u64>| {
+        while let Some(e) = s.next_event() {
+            match e {
+                Event::Tracks(specs) => {
+                    for t in specs {
+                        timescale.insert(t.track_id.value(), t.timescale);
+                    }
+                }
+                Event::Sample { track, sample, .. } => {
+                    let ts = u64::from(timescale[&track.value()]);
+                    let end = u64::try_from(
+                        sample.pts.unwrap() + i64::from(sample.duration.unwrap_or(0)),
+                    )
+                    .unwrap();
+                    let e27 = end * 27_000_000 / ts;
+                    let slot = host_end.entry(track.value()).or_insert(0);
+                    *slot = (*slot).max(e27);
+                }
+                _ => {}
+            }
+        }
+        for i in s.drain_buffer_inputs() {
+            if let BufferInput::TrackMedia { track, end, .. } = i {
+                let slot = reported.entry(track).or_insert(0);
+                *slot = (*slot).max(end);
+            }
+        }
+    };
+    for part in bytes.chunks(188 * 7) {
+        s.on_data(conn, part, now);
+        drain(&mut s, &mut host_end, &mut reported);
+        now += part.len() as u64 * 8 * 1_000_000 / bps;
+    }
+    let before_close = reported.clone();
+    s.on_closed(conn, None, now);
+    drain(&mut s, &mut host_end, &mut reported);
+    let mut short = Vec::new();
+    for (track, rep) in &reported {
+        let host = host_end[track];
+        if host > *rep {
+            short.push((*track, (host - rep) / 27_000));
+        }
+    }
+    assert!(
+        short.is_empty(),
+        "controller told less than the host holds after close, (track, ms short): {short:?}; reported before close {before_close:?}"
+    );
+}
