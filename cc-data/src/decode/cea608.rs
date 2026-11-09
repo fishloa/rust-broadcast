@@ -317,6 +317,7 @@ impl Default for Pen {
 struct ChannelState {
     displayed: Cea608Screen,
     nondisplayed: Cea608Screen,
+    text: Cea608Screen,
     mode: Cea608Mode,
     rollup_rows: u8,
     cursor_row: usize,
@@ -330,6 +331,7 @@ impl ChannelState {
     fn active_mut(&mut self) -> &mut Cea608Screen {
         match self.mode {
             Cea608Mode::PopOn => &mut self.nondisplayed,
+            Cea608Mode::Text => &mut self.text,
             _ => &mut self.displayed,
         }
     }
@@ -591,7 +593,7 @@ impl Cea608Decoder {
             }
             MC_TR => {
                 st.mode = Cea608Mode::Text;
-                st.displayed = Cea608Screen::default();
+                st.text = Cea608Screen::default();
                 st.cursor_row = 0;
                 st.cursor_col = 0;
             }
