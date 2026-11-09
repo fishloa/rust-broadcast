@@ -66,6 +66,9 @@ pub fn segments(sidx: &SegmentIndexBox, anchor: u64) -> Result<Vec<IndexedSegmen
             return Err(AddressError::Unsupported(Unsupported::HierarchicalSidx));
         }
         if r.referenced_size == 0 {
+            time = time
+                .checked_add(u64::from(r.subsegment_duration))
+                .ok_or(AddressError::Overflow)?;
             continue;
         }
         let size = u64::from(r.referenced_size);

@@ -172,7 +172,7 @@ pub struct TsbpdScheduler {
     /// into an always-increasing microsecond value (issue #1063): the most
     /// recently *advanced-to* raw timestamp and the absolute value it was
     /// unwrapped to. `None` until the first packet.
-    ts_unwrap_reference: Option<(u32, u64)>,
+    ts_unwrap_reference: Option<(u32, i64)>,
 }
 
 impl TsbpdScheduler {
@@ -242,10 +242,10 @@ impl TsbpdScheduler {
     ///
     /// Computed in signed saturating arithmetic (the time base and drift are
     /// signed); a play time before the epoch is clamped to `0` ("already due").
-    fn pkt_tsbpd_time(&self, unwrapped_pkt_timestamp_us: u64) -> u64 {
+    fn pkt_tsbpd_time(&self, unwrapped_pkt_timestamp_us: i64) -> u64 {
         let sum = self
             .tsbpd_time_base
-            .saturating_add(i64::try_from(unwrapped_pkt_timestamp_us).unwrap_or(i64::MAX))
+            .saturating_add(unwrapped_pkt_timestamp_us)
             .saturating_add(
                 i64::try_from(self.tsbpd_delay_ms.saturating_mul(1000)).unwrap_or(i64::MAX),
             )
@@ -272,11 +272,9 @@ impl TsbpdScheduler {
     /// `Drift`; the part beyond [`DRIFT_MAX_US`] is folded into the time base
     /// so `Drift` stays small (the same split libsrt's tracer makes). The
     /// window is packet-count based, not time based (rule 27).
-    fn add_drift_sample(&mut self, now_us: u64, unwrapped_ts: u64) {
+    fn add_drift_sample(&mut self, now_us: u64, unwrapped_ts: i64) {
         let arrival = i64::try_from(now_us).unwrap_or(i64::MAX);
-        let expected = self
-            .tsbpd_time_base
-            .saturating_add(i64::try_from(unwrapped_ts).unwrap_or(i64::MAX));
+        let expected = self.tsbpd_time_base.saturating_add(unwrapped_ts);
         self.drift_sample_sum = self
             .drift_sample_sum
             .saturating_add(arrival.saturating_sub(expected));
@@ -315,10 +313,10 @@ impl TsbpdScheduler {
     /// highest absolute value produced so far); an out-of-order/retransmitted
     /// packet earlier than the current reference is still unwrapped
     /// correctly against it, it just doesn't move the reference.
-    fn unwrap_timestamp(&mut self, raw: u32) -> u64 {
+    fn unwrap_timestamp(&mut self, raw: u32) -> i64 {
         let Some((ref_raw, ref_abs)) = self.ts_unwrap_reference else {
-            self.ts_unwrap_reference = Some((raw, u64::from(raw)));
-            return u64::from(raw);
+            self.ts_unwrap_reference = Some((raw, i64::from(raw)));
+            return i64::from(raw);
         };
         let mut delta = i64::from(raw) - i64::from(ref_raw);
         if delta < -(1i64 << 31) {
@@ -326,12 +324,7 @@ impl TsbpdScheduler {
         } else if delta >= (1i64 << 31) {
             delta -= 1i64 << 32;
         }
-        let abs = u64::try_from(
-            i64::try_from(ref_abs)
-                .unwrap_or(i64::MAX)
-                .saturating_add(delta),
-        )
-        .unwrap_or(0);
+        let abs = ref_abs.saturating_add(delta);
         if abs > ref_abs {
             self.ts_unwrap_reference = Some((raw, abs));
         }
@@ -684,7 +677,7 @@ mod tests {
         // PktTsbpdTime = TsbpdTimeBase + PKT_TIMESTAMP + TsbpdDelay_us + Drift
         let ts = 5000u32;
         let expected = TIME_BASE + u64::from(ts) + DELAY_MS * 1000;
-        assert_eq!(s.pkt_tsbpd_time(u64::from(ts)), expected);
+        assert_eq!(s.pkt_tsbpd_time(i64::from(ts)), expected);
     }
 
     #[test]
@@ -866,13 +859,13 @@ mod tests {
         let iterations = (u64::from(u32::MAX) / u64::from(STEP)) * 2 + 10; // > 2 wraps
 
         let mut raw: u32 = 0;
-        let mut expected_abs = u64::from(raw);
+        let mut expected_abs = i64::from(raw);
         let mut prev_abs = s.unwrap_timestamp(raw);
         assert_eq!(prev_abs, expected_abs);
 
         for _ in 0..iterations {
             raw = raw.wrapping_add(STEP);
-            expected_abs += u64::from(STEP);
+            expected_abs += i64::from(STEP);
             let abs = s.unwrap_timestamp(raw);
             assert_eq!(abs, expected_abs, "raw={raw:#x}");
             assert!(abs > prev_abs, "prev={prev_abs} abs={abs}");
@@ -899,13 +892,25 @@ mod tests {
     }
 
     #[test]
+    fn a_reordered_pre_wrap_packet_keeps_its_play_time_before_the_first_post_wrap_one() {
+        let mut s = TsbpdScheduler::new(0, 0, DELAY_MS, 0, false, None);
+        let _ = s.feed_data(1, 5, Duration::ZERO);
+        let _ = s.feed_data(0, u32::MAX - 15, Duration::ZERO);
+        assert_eq!(
+            s.next_release_after(Duration::ZERO),
+            Some(Duration::from_micros(DELAY_MS * 1000 - 16)),
+            "16 us before the wrap point, so before the epoch the post-wrap packet seeded"
+        );
+    }
+
+    #[test]
     fn minimum_delay_floor_applied() {
         // A delay below 120 ms should be silently raised.
         let s = TsbpdScheduler::new(0, TIME_BASE_I64, 10, 0, false, None);
         let ts = 0u32;
         // The computed PktTsbpdTime should use 120 ms, not 10 ms.
         let expected = TIME_BASE + u64::from(ts) + TSBPD_DELAY_MIN_MS * 1000;
-        assert_eq!(s.pkt_tsbpd_time(u64::from(ts)), expected);
+        assert_eq!(s.pkt_tsbpd_time(i64::from(ts)), expected);
     }
 
     #[test]

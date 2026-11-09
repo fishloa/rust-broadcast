@@ -1683,24 +1683,34 @@ impl Driver {
             #[cfg(feature = "crypto")]
             ControlPacket::UserDefined(u) => {
                 if let Ok(km) = u.as_key_material() {
-                    let parity = match km.kk {
-                        crate::packet::KmKeyFlag::Even => KeyParity::Even,
-                        crate::packet::KmKeyFlag::Odd => KeyParity::Odd,
-                        _ => KeyParity::Even,
-                    };
-                    if let Ok((sek, salt)) =
-                        crate::handshake_sm::recover_sek(&self.crypto_passphrase, &km)
-                    {
-                        match parity {
-                            KeyParity::Even => {
-                                self.crypto_even_sek = Some(zeroize::Zeroizing::new(sek.to_vec()));
-                                self.crypto_salt_even = Some(salt);
-                            }
-                            KeyParity::Odd => {
-                                self.crypto_odd_sek = Some(zeroize::Zeroizing::new(sek.to_vec()));
-                                self.crypto_salt_odd = Some(salt);
-                            }
+                    let installed = match km.kk {
+                        crate::packet::KmKeyFlag::Both => {
+                            crate::handshake_sm::recover_both_seks(&self.crypto_passphrase, &km)
+                                .map(|(even, odd, salt)| {
+                                    self.crypto_even_sek =
+                                        Some(zeroize::Zeroizing::new(even.to_vec()));
+                                    self.crypto_salt_even = Some(salt);
+                                    self.crypto_odd_sek =
+                                        Some(zeroize::Zeroizing::new(odd.to_vec()));
+                                    self.crypto_salt_odd = Some(salt);
+                                })
+                                .is_ok()
                         }
+                        kk => crate::handshake_sm::recover_sek(&self.crypto_passphrase, &km)
+                            .map(|(sek, salt)| {
+                                if kk == crate::packet::KmKeyFlag::Odd {
+                                    self.crypto_odd_sek =
+                                        Some(zeroize::Zeroizing::new(sek.to_vec()));
+                                    self.crypto_salt_odd = Some(salt);
+                                } else {
+                                    self.crypto_even_sek =
+                                        Some(zeroize::Zeroizing::new(sek.to_vec()));
+                                    self.crypto_salt_even = Some(salt);
+                                }
+                            })
+                            .is_ok(),
+                    };
+                    if installed {
                         // echo back as KMRSP (subtype 4)
                         let mut km_buf = vec![0u8; km.serialized_len()];
                         if km.serialize_into(&mut km_buf).is_ok() {
@@ -1738,6 +1748,10 @@ impl Driver {
         let last = d.last_seq & SEQ_NUMBER_MASK;
         if seq_diff(last, first) < 0 {
             // `last` precedes `first` — malformed range; nothing sane to skip.
+            return;
+        }
+        let reach = seq_diff(last, self.receiver.ack_point());
+        if !u32::try_from(reach).is_ok_and(|ahead| ahead <= self.max_flow_window) {
             return;
         }
         self.receiver.skip_range(first, last);
@@ -2565,10 +2579,15 @@ impl ListenerCore {
             }
         }
 
-        let outcomes = entry
-            .handshake
-            .feed(&ctrl)
-            .map_err(|e| handshake_err("listener feed", e))?;
+        let outcomes = match entry.handshake.feed(&ctrl) {
+            Ok(outcomes) => outcomes,
+            Err(e) => {
+                if is_new {
+                    self.pending.remove(&src);
+                }
+                return Err(handshake_err("listener feed", e));
+            }
+        };
 
         for outcome in outcomes {
             match outcome {
@@ -3978,6 +3997,123 @@ mod adapter_tests {
         assert_eq!(seqs, vec![0, 2, 3], "DROPREQ must unblock the gap");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn dropreq_ahead_of_the_ack_point_does_not_stall_the_flow_window() {
+        const WINDOW: u32 = 64;
+        let (mut driver, mut rx) = test_driver(WINDOW).await;
+        for seq in [0u32, 5] {
+            driver
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
+                .expect("ingress");
+        }
+        driver
+            .ingress(Bytes::from(dropreq_bytes(3, 4)))
+            .expect("ingress dropreq");
+        for seq in [1u32, 2] {
+            driver
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
+                .expect("ingress");
+        }
+        tokio::time::advance(Duration::from_millis(130)).await;
+        driver.tick_engines();
+        let first: Vec<u8> = drain_deliveries(&mut rx).iter().map(|p| p[0]).collect();
+        assert_eq!(first, vec![0, 1, 2, 5]);
+
+        let far = 3 + WINDOW + 1;
+        for seq in 6..=far {
+            driver
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    130_000,
+                    &[u8::try_from(seq).unwrap()],
+                )))
+                .expect("ingress");
+        }
+        tokio::time::advance(Duration::from_millis(130)).await;
+        driver.tick_engines();
+        let second: Vec<u8> = drain_deliveries(&mut rx).iter().map(|p| p[0]).collect();
+        let expected: Vec<u8> = (6..=far).map(|s| u8::try_from(s).unwrap()).collect();
+        assert_eq!(
+            second,
+            expected,
+            "ARQ ack point stuck at {} while TSBPD cursor is at {}",
+            driver.receiver.ack_point(),
+            driver.tsbpd.next_release()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dropreq_wider_than_the_flow_window_is_ignored_by_the_driver() {
+        const WINDOW: u32 = 64;
+        let (mut driver, mut rx) = test_driver(WINDOW).await;
+        driver
+            .ingress(Bytes::from(data_bytes(0, 0, &[0])))
+            .expect("ingress");
+        driver
+            .ingress(Bytes::from(dropreq_bytes(1, 0x3FFF_FFFF)))
+            .expect("ingress dropreq");
+        driver
+            .ingress(Bytes::from(data_bytes(1, 0, &[1])))
+            .expect("ingress");
+        tokio::time::advance(Duration::from_millis(130)).await;
+        driver.tick_engines();
+        let delivered: Vec<u8> = drain_deliveries(&mut rx).iter().map(|p| p[0]).collect();
+        assert_eq!(delivered, vec![0, 1]);
+        assert_eq!(driver.receiver.ack_point(), 2);
+        assert_eq!(driver.tsbpd.next_release(), 2);
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn km_refresh_with_both_keys_installs_both_parities() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.crypto_passphrase = b"audit-d-passphrase".to_vec().into();
+        let salt = [0x5Au8; crate::crypto::SALT_LEN];
+        let (even, odd) = ([0x11u8; 16], [0x22u8; 16]);
+        let kek = crate::crypto::derive_kek(&driver.crypto_passphrase, &salt, 16).unwrap();
+        let mut both = even.to_vec();
+        both.extend_from_slice(&odd);
+        let (icv, wrapped) = crate::crypto::wrap_sek(&kek, &both).unwrap();
+        let km = crate::packet::KeyMaterial {
+            kk: crate::packet::KmKeyFlag::Both,
+            keki: 0,
+            cipher: crate::packet::Cipher::AesCtr,
+            auth: crate::packet::KmAuth::None,
+            se: crate::packet::StreamEncapsulation::MpegTsSrt,
+            salt: &salt,
+            icv,
+            x_sek: &wrapped[..16],
+            o_sek: Some(&wrapped[16..]),
+        };
+        let mut km_buf = vec![0u8; km.serialized_len()];
+        km.serialize_into(&mut km_buf).unwrap();
+        let ud = ControlPacket::UserDefined(crate::packet::UserDefinedPacket {
+            control_type: crate::packet::control::CONTROL_TYPE_USER_DEFINED,
+            subtype: 3,
+            type_specific_info: 0,
+            timestamp: 0,
+            dest_socket_id: 1,
+            cif: &km_buf,
+        });
+        let mut out = vec![0u8; ud.serialized_len()];
+        ud.serialize_into(&mut out).unwrap();
+        driver.ingress(Bytes::from(out)).expect("ingress KM");
+        assert!(
+            driver.crypto_even_sek.is_some() && driver.crypto_odd_sek.is_some(),
+            "KK=Both carries both SEKs: even installed = {}, odd installed = {}",
+            driver.crypto_even_sek.is_some(),
+            driver.crypto_odd_sek.is_some()
+        );
+    }
+
     #[tokio::test]
     async fn staged_never_exceeds_the_flow_window() {
         const WINDOW: u32 = 64;
@@ -4021,6 +4157,50 @@ mod adapter_tests {
             "pending grew to {} — must be capped at MAX_PENDING",
             listener.pending.len()
         );
+    }
+
+    #[tokio::test]
+    async fn stray_conclusions_do_not_hold_listener_handshake_slots() {
+        let mut listener = test_core(HandshakeConfig::default()).await;
+        let stray = {
+            let hp = HandshakePacket {
+                timestamp: 0,
+                dest_socket_id: 0,
+                version: crate::handshake_sm::HANDSHAKE_VERSION_5,
+                encryption_field: crate::packet::EncryptionField::NoEncryption,
+                extension_field: HandshakeExtensionFlags(0),
+                initial_seq_number: 0,
+                mtu: 1500,
+                max_flow_window_size: 8192,
+                handshake_type: crate::packet::HandshakeType::Conclusion,
+                srt_socket_id: 5,
+                syn_cookie: 0,
+                peer_ip: [0; 4],
+                extensions: HandshakeExtensions(&[]),
+            };
+            let pkt = ControlPacket::Handshake(hp);
+            let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+            pkt.serialize_into(&mut buf).unwrap();
+            buf
+        };
+        for i in 0..2000u32 {
+            let src = std::net::SocketAddr::from(([198, 18, (i >> 8) as u8, i as u8], 40_000));
+            let _ = listener.handle_datagram(src, &stray);
+        }
+        for _ in 0..1000 {
+            listener.tick_pending();
+        }
+        assert_eq!(
+            listener.pending.len(),
+            0,
+            "stray CONCLUSIONs left {} handshake slots allocated for good",
+            listener.pending.len()
+        );
+        let honest = std::net::SocketAddr::from(([203, 0, 113, 9], 4000));
+        listener
+            .handle_datagram(honest, &induction_bytes(7))
+            .expect("an honest caller");
+        assert!(listener.pending.contains_key(&honest));
     }
 
     #[tokio::test]

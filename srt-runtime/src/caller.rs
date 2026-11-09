@@ -300,6 +300,11 @@ impl CallerHandshake {
             return Ok(vec![HandshakeOutput::Rejected(RejectionReason::Rogue)]);
         }
 
+        if hp.mtu == 0 || hp.max_flow_window_size == 0 {
+            self.state = CallerHandshakeState::Rejected;
+            return Ok(vec![HandshakeOutput::Rejected(RejectionReason::Rogue)]);
+        }
+
         // Re-capture the Listener's Socket ID from the CONCLUSION itself, not the stale INDUCTION one — draft §4.3.1; libsrt interop.
         self.peer_socket_id = hp.srt_socket_id;
 

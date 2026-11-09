@@ -7,7 +7,7 @@ use crate::common;
 use common::loopback::{
     Drive, Order, Origin, Run, Sig, assert_matches_oracle, drive, oracle, play,
 };
-use dash_runtime::client::{Output, PullLimits};
+use dash_runtime::client::{FatalKind, Output, PullLimits};
 
 fn seq(prefix: &str, init: &str, pattern: &str, n: std::ops::RangeInclusive<usize>) -> Vec<String> {
     let mut out = vec![format!("{prefix}{init}")];
@@ -242,4 +242,38 @@ fn samples_of_a_track_never_go_back_in_decode_time() {
             last = s.dts.or(last);
         }
     }
+}
+
+#[test]
+fn a_static_period_with_no_known_end_is_a_typed_fatal_not_an_endless_plan() {
+    const URL: &str = "http://dash.test/open.mpd";
+    let mpd = r#"<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S">
+ <Period id="p" start="PT0S">
+  <AdaptationSet id="1" contentType="video" mimeType="video/mp4">
+   <Representation id="v" bandwidth="63434" codecs="avc1.4d400d" width="320" height="240">
+    <BaseURL>http://dash.test/timeline-ffmpeg-quirk/</BaseURL>
+    <SegmentTemplate media="chunk-stream0-$Number%05d$.m4s" initialization="init-stream0.m4s" timescale="90000" duration="90000" startNumber="1"/>
+   </Representation>
+  </AdaptationSet>
+ </Period>
+</MPD>"#;
+    let mut origin = Origin::new()
+        .doc(URL, mpd.as_bytes().to_vec())
+        .mount("dash.test", "");
+    let run = drive(
+        URL,
+        PullLimits::default(),
+        &mut origin,
+        &mut Drive {
+            max_steps: 2_000,
+            ..Drive::default()
+        },
+    );
+    assert!(
+        matches!(run.fatal, Some(FatalKind::MpdInvalid { .. })),
+        "{:?}",
+        run.fatal
+    );
+    assert_eq!(run.requests.len(), 1, "only the MPD was ever requested");
 }

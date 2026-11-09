@@ -410,10 +410,11 @@ impl FileCc {
     }
 
     /// Reconfigure `MAX_BW` (rule 15: `MAXBW_SET` mode only applies to file
-    /// transfer; there is no default, `None` is unbounded).
+    /// transfer; there is no default, `None` is unbounded). `Some(0)` would
+    /// make the minimum send period infinite, so it is treated as unbounded.
     #[cfg(test)]
     pub(crate) fn set_max_bw_bytes_per_sec(&mut self, max_bw: Option<u64>) {
-        self.max_bw_bytes_per_sec = max_bw;
+        self.max_bw_bytes_per_sec = max_bw.filter(|&bw| bw > 0);
     }
 
     /// The last `RECEIVING_RATE` fed via [`FileCc::on_ack`], packets/sec.
@@ -824,6 +825,22 @@ mod tests {
         );
         // MIN_PERIOD = 1_000_000 / (1 / 1500) = 1_500_000_000 us.
         assert!(cc.pkt_snd_period_us() >= 1_500_000_000.0);
+    }
+
+    #[test]
+    fn zero_max_bw_is_unbounded_not_an_infinite_send_period() {
+        let mut cc = FileCc::new(0);
+        cc.on_loss(1, 1, 0.9);
+        cc.set_max_bw_bytes_per_sec(Some(0));
+        assert_eq!(cc.max_bw_bytes_per_sec(), None);
+        cc.on_ack(
+            Duration::from_millis(10),
+            1,
+            1_000,
+            1_000,
+            Duration::from_millis(50),
+        );
+        assert!(cc.pkt_snd_period_us().is_finite());
     }
 
     #[test]
