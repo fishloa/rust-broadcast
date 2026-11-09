@@ -161,6 +161,12 @@ fn whep_player_trickle_ice_and_terminate() {
     assert_eq!(req.method, http::Method::DELETE);
     assert_eq!(req.url, SESSION);
 
+    // responses arrive in request order: the trickle ack first
+    let event = player
+        .on_response(player::HttpResponse::new(StatusCode::NO_CONTENT))
+        .unwrap();
+    assert!(event.is_none());
+
     // 200 with no ETag -> Terminated
     let event = player
         .on_response(player::HttpResponse::new(StatusCode::OK))

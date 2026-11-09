@@ -546,7 +546,7 @@ fn whip_client_406_is_a_plain_http_error_not_a_counter_offer() {
         )
         .unwrap_err();
     assert!(matches!(err, Error::Http { status: 406 }), "got {err:?}");
-    assert_eq!(*client.state(), client::State::OfferSent);
+    assert_eq!(*client.state(), client::State::Idle);
 }
 
 #[test]

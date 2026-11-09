@@ -25,6 +25,7 @@ whep counter_offer(valid-until) -> 406
   location: https://origin.example/whip/live/s1
   body=1B
 whep ack_answer -> 204
+  etag: "e2"
   body=0B
 whep ack_trickle -> 204
   body=0B

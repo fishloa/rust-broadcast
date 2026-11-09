@@ -3,6 +3,7 @@
 //! both PATCH trickle-ICE fragments and ICE restarts with `If-Match`, DELETE
 //! to terminate, and answer a response by the request actually in flight.
 
+use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -26,11 +27,12 @@ pub(crate) enum PendingRequest {
 }
 
 /// The request-building state a WHIP client and a WHEP player share: the
-/// endpoint, the bound bearer token and the request awaiting a response.
+/// endpoint, the bound bearer token and the requests awaiting a response, oldest
+/// first (responses arrive in request order).
 pub(crate) struct SessionCore {
     endpoint_url: String,
     bearer_token: Option<String>,
-    pending: Option<PendingRequest>,
+    pending: VecDeque<PendingRequest>,
 }
 
 impl SessionCore {
@@ -38,7 +40,7 @@ impl SessionCore {
         Self {
             endpoint_url,
             bearer_token,
-            pending: None,
+            pending: VecDeque::new(),
         }
     }
 
@@ -82,9 +84,8 @@ impl SessionCore {
         etag: Option<String>,
         fragment: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
-        self.require_idle("trickle")?;
         let req = self.origin().trickle(session_url, etag, fragment)?;
-        self.pending = Some(PendingRequest::Trickle);
+        self.pending.push_back(PendingRequest::Trickle);
         Ok(req)
     }
 
@@ -93,27 +94,15 @@ impl SessionCore {
         session_url: String,
         fragment: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
-        self.require_idle("ice_restart")?;
         let req = self.origin().ice_restart(session_url, fragment)?;
-        self.pending = Some(PendingRequest::IceRestart);
+        self.pending.push_back(PendingRequest::IceRestart);
         Ok(req)
     }
 
     pub(crate) fn delete(&mut self, session_url: String) -> Result<HttpRequest, Error> {
-        self.require_idle("terminate")?;
         let req = self.origin().delete(session_url)?;
-        self.pending = Some(PendingRequest::Delete);
+        self.pending.push_back(PendingRequest::Delete);
         Ok(req)
-    }
-
-    fn require_idle(&self, operation: &'static str) -> Result<(), Error> {
-        match self.pending {
-            None => Ok(()),
-            Some(_) => Err(Error::WrongState {
-                operation,
-                state: "established with a request already in flight",
-            }),
-        }
     }
 
     /// Classify an established-session response by the request in flight.
@@ -122,7 +111,7 @@ impl SessionCore {
         resp: HttpResponse,
         etag: &mut Option<String>,
     ) -> Result<Established, Error> {
-        classify_established(self.pending.take(), resp, etag)
+        classify_established(self.pending.pop_front(), resp, etag)
     }
 }
 

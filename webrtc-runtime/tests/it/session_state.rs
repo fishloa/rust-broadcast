@@ -33,27 +33,20 @@ fn trickle_ct() -> HeaderMap {
 }
 
 #[test]
-fn a_second_request_is_refused_while_one_is_in_flight() {
+fn responses_are_matched_to_requests_in_the_order_they_were_sent() {
     let mut c = established_client();
     c.flush_candidates(FRAG.to_vec()).unwrap();
-    assert!(matches!(
-        c.terminate(),
-        Err(webrtc_runtime::Error::WrongState { .. })
-    ));
-    assert!(matches!(
-        c.ice_restart(FRAG.to_vec()),
-        Err(webrtc_runtime::Error::WrongState { .. })
-    ));
-    let ev = c
-        .on_response(client::HttpResponse::new(StatusCode::NO_CONTENT))
-        .unwrap();
-    assert!(ev.is_none());
-    assert!(matches!(c.state(), client::State::Established { .. }));
     c.terminate().unwrap();
     let ev = c
         .on_response(client::HttpResponse::new(StatusCode::NO_CONTENT))
         .unwrap();
+    assert!(ev.is_none(), "the trickle 204 must not close the session");
+    assert!(matches!(c.state(), client::State::Established { .. }));
+    let ev = c
+        .on_response(client::HttpResponse::new(StatusCode::NO_CONTENT))
+        .unwrap();
     assert!(matches!(ev, Some(client::Event::Terminated)));
+    assert_eq!(*c.state(), client::State::Closed);
 }
 
 #[test]
