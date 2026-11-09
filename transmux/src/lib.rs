@@ -156,6 +156,7 @@ pub mod annexb;
 pub mod au;
 pub mod av1;
 pub mod avc_config;
+pub mod avc_parameter_set;
 pub mod avs2;
 pub mod avs3;
 pub mod avs3_audio;
@@ -239,6 +240,7 @@ pub mod splice;
 pub mod sps;
 pub mod subtitle_entries;
 pub mod timing;
+pub mod track_reference;
 pub mod trickplay;
 pub mod ts_demux;
 pub mod ts_hls;
@@ -373,7 +375,7 @@ pub use nal::{
     avc_access_unit_dimensions, avc_access_unit_parameter_sets, avc_sps_dimensions,
     caption_cc_data, is_idr_nal, is_keyframe_nal, nal_unit_type, recovery_point_sei,
 };
-pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
+pub use nalu_types::{AvcNalUnit, AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use pipeline::{
     CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, FrameRateBasis, PresentationTime,

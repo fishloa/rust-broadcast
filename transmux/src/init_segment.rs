@@ -255,7 +255,7 @@ fn is_four_cc(four_cc: &[u8; 4], expected: &[u8; 4]) -> bool {
 /// for the 8-byte header form. A container written with 64-bit `largesize`
 /// (`size == 1`, §4.2) has a 16-byte header, so the hardcoded slice swallowed
 /// its first 8 body bytes and the child walk started mid-box (audit r05-W13).
-fn box_body(bytes: &[u8]) -> Result<&[u8]> {
+pub(crate) fn box_body(bytes: &[u8]) -> Result<&[u8]> {
     Ok(crate::box_types::parse_box(bytes)?.0.body)
 }
 
@@ -2863,6 +2863,10 @@ impl Serialize for Mp4aSampleEntry {
 pub enum SampleEntryVariant {
     Avc1(crate::sample_entries::AVCSampleEntry),
     Hevc1(crate::sample_entries::HEVCSampleEntry),
+    /// AVC parameter set stream entry (`avcp`) — ISO/IEC 14496-15:2017 §5.4.3.1.
+    /// It parses and serializes; the IR has no track kind for it, so a demux
+    /// still reports it as an unsupported sample entry.
+    AvcParameterSet(Box<crate::avc_parameter_set::AVCParameterSampleEntry>),
     /// H.266/VVC sample entry (`vvc1`/`vvi1`) — ISO/IEC 14496-15:2022 §11.3.3.
     /// The `codec_type` field on [`crate::sample_entries::VVCSampleEntry`]
     /// records which FourCC was parsed.
@@ -2925,6 +2929,7 @@ impl Serialize for SampleEntryVariant {
         match self {
             SampleEntryVariant::Avc1(a) => a.serialized_len(),
             SampleEntryVariant::Hevc1(h) => h.serialized_len(),
+            SampleEntryVariant::AvcParameterSet(p) => p.serialized_len(),
             SampleEntryVariant::Vvc(v) => v.serialized_len(),
             SampleEntryVariant::Mp4v(m) => m.serialized_len(),
             SampleEntryVariant::Av01(a) => a.serialized_len(),
@@ -2946,6 +2951,7 @@ impl Serialize for SampleEntryVariant {
         match self {
             SampleEntryVariant::Avc1(a) => a.serialize_into(buf),
             SampleEntryVariant::Hevc1(h) => h.serialize_into(buf),
+            SampleEntryVariant::AvcParameterSet(p) => p.serialize_into(buf),
             SampleEntryVariant::Vvc(v) => v.serialize_into(buf),
             SampleEntryVariant::Mp4v(m) => m.serialize_into(buf),
             SampleEntryVariant::Av01(a) => a.serialize_into(buf),
@@ -3009,6 +3015,9 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(
                     crate::sample_entries::AVCSampleEntry::bare_parse(box_bytes)?,
                 ),
+                b"avcp" => SampleEntryVariant::AvcParameterSet(Box::new(
+                    crate::avc_parameter_set::AVCParameterSampleEntry::bare_parse(box_bytes)?,
+                )),
                 b"hvc1" | b"hev1" | b"dvh1" | b"dvhe" => SampleEntryVariant::Hevc1(
                     crate::sample_entries::HEVCSampleEntry::bare_parse(box_bytes)?,
                 ),
@@ -3801,6 +3810,16 @@ pub struct TrackBox {
 }
 
 impl TrackBox {
+    /// The track's `tref` (ISO/IEC 14496-12:2026 §8.3.3), parsed from the
+    /// opaque child that round-trips in place; `None` when the track has none.
+    pub fn track_references(&self) -> Result<Option<crate::track_reference::TrackReferenceBox>> {
+        self.opaque
+            .iter()
+            .find(|b| b.box_type == *b"tref")
+            .map(|b| crate::track_reference::TrackReferenceBox::parse_body(&b.data))
+            .transpose()
+    }
+
     /// Build a `trak` from its typed parts, children in the conventional
     /// `tkhd`, `edts`, `mdia` sequence.
     pub fn new(
@@ -4267,7 +4286,8 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Mha(_)
         | SampleEntryVariant::Dts(_)
         | SampleEntryVariant::Ac4(_) => SampleEntryMediaKind::Audio,
-        SampleEntryVariant::Stpp(_)
+        SampleEntryVariant::AvcParameterSet(_)
+        | SampleEntryVariant::Stpp(_)
         | SampleEntryVariant::Wvtt(_)
         | SampleEntryVariant::Unknown(_) => SampleEntryMediaKind::Unsupported,
     }

@@ -6,6 +6,7 @@ mod audio_metadata;
 mod audio_pes_straddle;
 mod audio_srat;
 mod avc_hvc_config;
+mod avc_parameter_set_stream;
 mod base64_lenient;
 mod base_url;
 #[path = "support/bit_writer.rs"]
@@ -26,6 +27,7 @@ mod cenc_frag_layouts;
 mod cenc_fragmented_fixture;
 mod cenc_mux;
 mod cenc_saiz_stsz_v1_boxes;
+mod clap_precedence;
 mod classify_nals;
 mod cli;
 mod cli_binary;
@@ -86,6 +88,7 @@ mod hdr10;
 mod hdr10plus;
 #[cfg(feature = "std")]
 mod heaac_signalling;
+mod hevc_array_rules;
 mod hevc_sps;
 mod hevc_vps_timing;
 mod hls_discontinuity;
