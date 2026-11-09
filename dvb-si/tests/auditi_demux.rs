@@ -83,3 +83,36 @@ fn next_pat_with_current_next_zero_does_not_change_followed_pmt_pids() {
         "a not-yet-applicable PAT must not unwatch the current PMT PID"
     );
 }
+
+fn raw_packet(pid: u16, pusi: bool, cc: u8, payload: &[u8]) -> [u8; 188] {
+    let mut p = [0xFFu8; 188];
+    p[0] = 0x47;
+    p[1] = (if pusi { 0x40 } else { 0 }) | (pid >> 8) as u8;
+    p[2] = pid as u8;
+    p[3] = 0x10 | (cc & 0x0F);
+    let mut at = 4;
+    if pusi {
+        p[4] = 0;
+        at = 5;
+    }
+    p[at..at + payload.len()].copy_from_slice(payload);
+    p
+}
+
+#[test]
+fn retransmitted_duplicate_continuation_packet_does_not_drop_the_section() {
+    let sec = section(0x4E, 1, 1, true, 0, 0, &[0x5A; 400]);
+    let first = &sec[..183];
+    let second = &sec[183..183 + 184];
+    let third = &sec[183 + 184..];
+    let mut demux = SiDemux::builder().build();
+    let mut n = 0;
+    n += demux.feed(&raw_packet(0x12, true, 0, first)).count();
+    n += demux.feed(&raw_packet(0x12, false, 1, second)).count();
+    n += demux.feed(&raw_packet(0x12, false, 1, second)).count();
+    n += demux.feed(&raw_packet(0x12, false, 2, third)).count();
+    assert_eq!(
+        n, 1,
+        "H.222.0 2.4.3.3 permits one duplicate packet (same continuity_counter); it must be discarded, not appended"
+    );
+}
