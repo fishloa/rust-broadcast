@@ -1116,3 +1116,34 @@ fn resources_font_and_source_round_trip() {
     let out = doc.to_xml();
     assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }
+
+#[test]
+fn validator_rejects_malformed_time_expression_on_nested_div() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter">
+  <body>
+    <div>
+      <div begin="garbage">
+        <p begin="1s" end="2s">hi</p>
+      </div>
+    </div>
+  </body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let result = validator.validate(&doc);
+    assert!(
+        !result.valid,
+        "malformed nested-div begin= must be rejected"
+    );
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
+}
