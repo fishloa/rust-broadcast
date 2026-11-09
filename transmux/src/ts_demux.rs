@@ -5310,6 +5310,11 @@ impl StreamingTsDemux {
 
         if let Some(stream) = self.streams.get_mut(&pid) {
             stream.payload_packets = stream.payload_packets.saturating_add(1);
+            if pkt.header.scrambling != 0 && matches!(stream.carrier, Carrier::Pes(_)) {
+                drop_scrambled_payload(stream, pid, pusi, idx, &mut self.events);
+                self.try_promote_ready();
+                return;
+            }
             let mut sections: Vec<Vec<u8>> = Vec::new();
             // ── r04-W49 intactness rule ────────────────────────────────────
             //
@@ -6488,6 +6493,42 @@ impl StreamingTsDemux {
             flush_stream_live_tail(pid, stream, &mut self.events);
         }
     }
+}
+
+/// A scrambled payload on a PES-carried PID is ciphertext: report it, drop it,
+/// and mark the unit in progress damaged. A scrambled `payload_unit_start`
+/// still ends the previous unit, which is judged by the usual intactness rule.
+fn drop_scrambled_payload(
+    stream: &mut StreamState,
+    pid: Pid,
+    pusi: bool,
+    packet_index: u64,
+    events: &mut VecDeque<DemuxEvent>,
+) {
+    let track = match &stream.track {
+        Some(TrackState::Live(live)) => Some(live.track_id),
+        _ => None,
+    };
+    events.push_back(DemuxEvent::InputDegraded {
+        track,
+        kind: InputDegradation::Scrambled,
+        provenance: EventProvenance {
+            pid: Some(pid),
+            packet_index: Some(packet_index),
+            program_number: None,
+        },
+    });
+    if pusi {
+        flush_stream_pes_tail(pid, stream, events);
+    } else if let Carrier::Pes(assembler) = &mut stream.carrier
+        && let Some(bytes) = assembler.flush()
+        && matches!(stream.codec, Codec::H264 | Codec::Hevc)
+    {
+        harvest_damaged_au(stream, pid, &bytes, events);
+    }
+    stream.current_pes_intact = false;
+    stream.last_payload_full = false;
+    clear_audio_carry(stream, events);
 }
 
 /// Complete one PID's buffered PES payload at end of a timeline.
