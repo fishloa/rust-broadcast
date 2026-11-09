@@ -16,16 +16,13 @@
 //! A Media Playlist request without `_HLS_msn`/`_HLS_part` made before the
 //! window holds a closed segment is answered [`EgressResponse::Await`], like a
 //! blocking reload, until the first segment closes (see
-//! [`HlsOriginBuilder::hold_cold_playlist`]). RFC 8216bis section 4 (Playlists,
-//! `private/specs-verified/hls/ietf/rfc8216bis-playlists.md`) calls a Media
-//! Playlist with no `EXTINF` "valid but empty", so serving it is conforming
-//! but unusable to a client that ignores Partial Segments; nothing in section
-//! 6.2.5.2 (`rfc8216bis-server-requirements.md`) limits how long a Server may
-//! take to answer a Playlist request. The hold shares the blocking-reload
-//! bound: once the caller's [`AwaitPolicy`] expires the answer is
-//! [`EgressResponse::NotFound`], which the adapter turns into `503 Service
-//! Unavailable` ([6.2.5.2-S2], a Server that cannot provide the Playlist after
-//! blocking more than three Target Durations SHOULD return 503).
+//! [`HlsOriginBuilder::hold_cold_playlist`]): clients that ignore Partial
+//! Segments cannot open a playlist with no `EXTINF`. The hold shares the
+//! blocking-reload bound; once the caller's [`AwaitPolicy`] expires the answer
+//! is [`EgressResponse::NotFound`], which the adapter turns into `503 Service
+//! Unavailable`. Spec: RFC 8216bis §4
+//! (`private/specs-verified/hls/ietf/rfc8216bis-playlists.md`) and §6.2.5.2
+//! (`private/specs-verified/hls/ietf/rfc8216bis-server-requirements.md`).
 //!
 //! # What comes straight from the `Trunk`, with no cache at all
 //!
