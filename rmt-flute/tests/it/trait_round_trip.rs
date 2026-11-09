@@ -4,6 +4,7 @@
 use broadcast_common::{Parse, Serialize};
 use rmt_flute::{
     AlcPacket, CencAlgorithm, Error, ExtCenc, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128,
+    NormCmd,
 };
 
 fn fixture() -> Vec<u8> {
@@ -85,4 +86,44 @@ fn lct_header_with_reserved_bits_set_serializes_byte_identically() {
         Serialize::try_to_bytes(&pkt.lct).unwrap(),
         &data[..hdr_bytes]
     );
+}
+
+fn norm_cmd_wire(sub_type: u8, b1: u8, b2: u8, b3: u8, extra: &[u8]) -> Vec<u8> {
+    let mut v = vec![
+        0x13, 0, 0x12, 0x34, 0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0xFF, 0x40, 0xA5, sub_type, b1, b2, b3,
+    ];
+    v.extend_from_slice(extra);
+    v[1] = (v.len() / 4) as u8;
+    v
+}
+
+fn assert_norm_cmd_round_trips(name: &str, wire: Vec<u8>) {
+    let cmd = NormCmd::parse(&wire, 0).unwrap();
+    let out = Serialize::try_to_bytes(&cmd).unwrap();
+    assert_eq!(out, wire, "{name}: reserved bytes lost");
+}
+
+#[test]
+fn norm_cmd_eot_reserved_word_round_trips_byte_exact() {
+    assert_norm_cmd_round_trips("EOT", norm_cmd_wire(2, 0xAA, 0xBB, 0xCC, &[]));
+}
+
+#[test]
+fn norm_cmd_cc_reserved_byte_round_trips_byte_exact() {
+    assert_norm_cmd_round_trips("CC", norm_cmd_wire(4, 0xAA, 0x00, 0x07, &[0; 8]));
+}
+
+#[test]
+fn norm_cmd_repair_adv_reserved_bytes_round_trip_byte_exact() {
+    assert_norm_cmd_round_trips("REPAIR_ADV", norm_cmd_wire(5, 0x01, 0xBB, 0xCC, &[]));
+}
+
+#[test]
+fn norm_cmd_ack_req_reserved_byte_round_trips_byte_exact() {
+    assert_norm_cmd_round_trips("ACK_REQ", norm_cmd_wire(6, 0xAA, 0x01, 0x09, &[]));
+}
+
+#[test]
+fn norm_cmd_application_reserved_word_round_trips_byte_exact() {
+    assert_norm_cmd_round_trips("APPLICATION", norm_cmd_wire(7, 0xAA, 0xBB, 0xCC, &[]));
 }
