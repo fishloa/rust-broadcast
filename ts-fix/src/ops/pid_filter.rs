@@ -27,6 +27,7 @@
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.4 (PAT) / §2.4.4.7 (CAT) /
 //! §2.4.4.9 (PMT) / §2.6.16 (CA_descriptor).
 
+use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use mpeg_ts::pid::Pid;
 
