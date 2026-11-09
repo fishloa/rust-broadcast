@@ -18,6 +18,11 @@ pub enum Error {
     #[error("failed to compute Authorization response: {0}")]
     ResponseCompute(String),
 
+    /// A trusted-proxy entry was not an IP address or CIDR block (see
+    /// [`crate::TrustedProxy`]) — a setup-time error.
+    #[error("invalid trusted proxy {0}")]
+    InvalidTrustedProxy(String),
+
     /// [`crate::SignedUrlKeySet::new`] rejected a key whose secret is shorter
     /// than the required minimum (issue #747) — a setup-time error, never
     /// returned from request verification. The `kid` is included since this

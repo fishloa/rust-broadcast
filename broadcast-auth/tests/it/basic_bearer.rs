@@ -129,3 +129,12 @@ fn a_bearer_challenge_error_code_maps_to_its_variant() {
         ]
     );
 }
+
+#[test]
+fn blank_bearer_token_never_verifies_a_blank_credential() {
+    for token in ["", "   "] {
+        let v = Verifier::new(Credentials::bearer(token), "r");
+        assert_eq!(verify(&v, "Bearer "), AuthResult::Unauthorized, "{token:?}");
+        assert_eq!(verify(&v, "Bearer"), AuthResult::Unauthorized, "{token:?}");
+    }
+}

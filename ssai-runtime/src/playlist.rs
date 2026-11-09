@@ -89,8 +89,9 @@ impl InterstitialDateRange {
     /// third-party ad-decision service — so a `"`, CR or LF in any of them
     /// is rejected here rather than terminating the attribute list and
     /// injecting arbitrary tag lines into the session playlist. `duration`/
-    /// `resume_offset`/`playout_limit` must also be finite and non-negative
-    /// (audit r14-SSAI-W4) — `Error::InvalidDuration` otherwise.
+    /// `playout_limit` must also be finite and non-negative and
+    /// `resume_offset` finite (it is a signed-decimal-floating-point, RFC 8216bis
+    /// Appendix D; audit r14-SSAI-W4) — `Error::InvalidDuration` otherwise.
     ///
     /// [`bare`]: AttrValue::bare
     pub fn to_tag_line(&self) -> Result<String> {
@@ -108,7 +109,7 @@ impl InterstitialDateRange {
         if let Some(d) = self.duration {
             attrs.push((
                 String::from("DURATION"),
-                AttrValue::bare(fmt_checked_secs("DURATION", d)?)?,
+                AttrValue::bare(fmt_checked_secs("DURATION", d, Sign::NonNegative)?)?,
             ));
         }
         match &self.asset {
@@ -125,13 +126,13 @@ impl InterstitialDateRange {
         if let Some(v) = self.resume_offset {
             attrs.push((
                 String::from("X-RESUME-OFFSET"),
-                AttrValue::bare(fmt_checked_secs("X-RESUME-OFFSET", v)?)?,
+                AttrValue::bare(fmt_checked_secs("X-RESUME-OFFSET", v, Sign::Signed)?)?,
             ));
         }
         if let Some(v) = self.playout_limit {
             attrs.push((
                 String::from("X-PLAYOUT-LIMIT"),
-                AttrValue::bare(fmt_checked_secs("X-PLAYOUT-LIMIT", v)?)?,
+                AttrValue::bare(fmt_checked_secs("X-PLAYOUT-LIMIT", v, Sign::NonNegative)?)?,
             ));
         }
         if !self.snap.is_empty() {
@@ -182,17 +183,17 @@ impl InterstitialDateRange {
         let start_date = attrs.get("START-DATE").cloned();
         let duration = attrs
             .get("DURATION")
-            .map(|v| parse_checked_secs("DURATION", v))
+            .map(|v| parse_checked_secs("DURATION", v, Sign::NonNegative))
             .transpose()?;
         let uri = attrs.get("X-ASSET-URI").cloned();
         let list = attrs.get("X-ASSET-LIST").cloned();
         let resume_offset = attrs
             .get("X-RESUME-OFFSET")
-            .map(|v| parse_checked_secs("X-RESUME-OFFSET", v))
+            .map(|v| parse_checked_secs("X-RESUME-OFFSET", v, Sign::Signed))
             .transpose()?;
         let playout_limit = attrs
             .get("X-PLAYOUT-LIMIT")
-            .map(|v| parse_checked_secs("X-PLAYOUT-LIMIT", v))
+            .map(|v| parse_checked_secs("X-PLAYOUT-LIMIT", v, Sign::NonNegative))
             .transpose()?;
         let snap = attrs
             .get("X-SNAP")
@@ -352,27 +353,44 @@ impl SessionPlaylistBase {
 /// `NaN as i64 == 0` and `NaN != 0.0`, so an unchecked version of this
 /// function rendered `DURATION=NaN` — syntax the §4.2 grammar has no
 /// notation for.
-fn fmt_checked_secs(what: &'static str, v: f64) -> Result<String> {
-    if !v.is_finite() || v < 0.0 {
+fn fmt_checked_secs(what: &'static str, v: f64, sign: Sign) -> Result<String> {
+    if !sign.admits(v) {
         return Err(Error::InvalidDuration { what, value: v });
     }
-    let trunc = v as i64;
-    Ok(if v == trunc as f64 {
-        format!("{trunc}")
-    } else {
-        format!("{v}")
-    })
+    if v.abs() < EXACT_INT_LIMIT {
+        let trunc = v as i64;
+        if v == trunc as f64 {
+            return Ok(format!("{trunc}"));
+        }
+    }
+    Ok(format!("{v}"))
+}
+
+/// Integers up to 2^53 are exactly representable in an `f64`; beyond it the
+/// saturating `as i64` cast no longer round-trips.
+const EXACT_INT_LIMIT: f64 = 9_007_199_254_740_992.0;
+
+#[derive(Clone, Copy)]
+enum Sign {
+    NonNegative,
+    Signed,
+}
+
+impl Sign {
+    fn admits(self, v: f64) -> bool {
+        v.is_finite() && (matches!(self, Sign::Signed) || v >= 0.0)
+    }
 }
 
 /// Parse a decimal-floating-point seconds attribute, rejecting a
 /// NaN/infinite/negative value at parse time (issue #1140 / audit
 /// r14-SSAI-W4) rather than letting it reach [`fmt_checked_secs`] on the
 /// next render.
-fn parse_checked_secs(what: &'static str, v: &str) -> Result<f64> {
+fn parse_checked_secs(what: &'static str, v: &str, sign: Sign) -> Result<f64> {
     let parsed: f64 = v
         .parse()
         .map_err(|_| Error::TagParse(format!("bad number: {v}")))?;
-    if !parsed.is_finite() || parsed < 0.0 {
+    if !sign.admits(parsed) {
         return Err(Error::InvalidDuration {
             what,
             value: parsed,
@@ -519,12 +537,14 @@ mod tests {
                 "duration {bad} should be rejected, got {err:?}"
             );
 
-            let mut dr = sample();
-            dr.resume_offset = Some(bad);
-            assert!(matches!(
-                dr.to_tag_line().unwrap_err(),
-                Error::InvalidDuration { .. }
-            ));
+            if bad != -1.0 {
+                let mut dr = sample();
+                dr.resume_offset = Some(bad);
+                assert!(matches!(
+                    dr.to_tag_line().unwrap_err(),
+                    Error::InvalidDuration { .. }
+                ));
+            }
 
             let mut dr = sample();
             dr.playout_limit = Some(bad);
@@ -533,6 +553,45 @@ mod tests {
                 Error::InvalidDuration { .. }
             ));
         }
+    }
+
+    #[test]
+    fn negative_resume_offset_round_trips() {
+        let mut dr = sample();
+        dr.resume_offset = Some(-5.0);
+        let line = dr.to_tag_line().unwrap();
+        assert!(line.contains("X-RESUME-OFFSET=-5"), "{line}");
+        let back = InterstitialDateRange::parse_tag_line(&line).unwrap();
+        assert_eq!(back.resume_offset, Some(-5.0));
+    }
+
+    #[test]
+    fn parse_accepts_negative_resume_offset() {
+        let s = "#EXT-X-DATERANGE:ID=\"a\",CLASS=\"com.apple.hls.interstitial\",\
+                 START-DATE=\"2020-01-02T21:55:44.000Z\",X-ASSET-URI=\"http://x/a\",\
+                 X-RESUME-OFFSET=-3";
+        let parsed = InterstitialDateRange::parse_tag_line(s).unwrap();
+        assert_eq!(parsed.resume_offset, Some(-3.0));
+    }
+
+    #[test]
+    fn negative_playout_limit_is_still_rejected() {
+        let mut dr = sample();
+        dr.playout_limit = Some(-1.0);
+        assert!(matches!(
+            dr.to_tag_line().unwrap_err(),
+            Error::InvalidDuration { .. }
+        ));
+    }
+
+    #[test]
+    fn duration_beyond_exact_integer_range_renders_exactly() {
+        let mut dr = sample();
+        dr.duration = Some(9_223_372_036_854_775_808.0);
+        let line = dr.to_tag_line().unwrap();
+        assert!(!line.contains("DURATION=9223372036854775807"), "{line}");
+        let back = InterstitialDateRange::parse_tag_line(&line).unwrap();
+        assert_eq!(back.duration, Some(9_223_372_036_854_775_808.0));
     }
 
     #[test]

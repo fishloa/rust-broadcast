@@ -380,17 +380,21 @@ no `WWW-Authenticate` round-trip a direct client could answer:
   "output_auth": {
     "scheme": "forwarded",
     "user_header": "X-Forwarded-User",
-    "forwarded_for_header": "X-Forwarded-For"
+    "forwarded_for_header": "X-Forwarded-For",
+    "trusted_proxies": ["127.0.0.0/8", "::1", "10.20.0.0/16"]
   }
 }
 ```
 
-**Safe ONLY when the origin is reachable exclusively through a reverse
-proxy that strips any client-supplied copies of `user_header` (and
-`forwarded_for_header`, if set) before forwarding.** multimux performs no
-such stripping and trusts every inbound header completely — if the origin
-is *also* reachable directly, any client can set these headers itself and
-bypass authentication entirely.
+`trusted_proxies` lists the IPs and CIDR blocks of the proxies allowed to set
+`user_header`; a request from any other transport peer is `401` even with the
+header present (IPv4-mapped IPv6 peers match their IPv4 block). Omit it to
+trust loopback only (`127.0.0.0/8` and `::1`), which suits a proxy on the same
+host. An explicit list must not be empty.
+
+The proxy must still strip any client-supplied copies of `user_header` (and
+`forwarded_for_header`, if set) before forwarding: multimux does not, and
+trusts the header completely from a listed peer.
 
 
 ## Runtime admin API

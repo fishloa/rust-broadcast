@@ -3,6 +3,9 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Fixed
+- `X-RESUME-OFFSET` is a signed-decimal-floating-point (RFC 8216bis, `private/specs-verified/hls/ietf/rfc8216bis-interstitials.md`): a negative value now renders and parses instead of failing with `Error::InvalidDuration`. `DURATION` and `X-PLAYOUT-LIMIT` stay non-negative.
+- A `DURATION` of exactly 2^63 seconds no longer renders as `i64::MAX`; the integer shortcut is used only below 2^53.
 
 ## [0.5.0] - 2026-11-07
 ### Changed

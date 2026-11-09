@@ -3974,6 +3974,71 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
     }
 
+    fn forwarded_spec(trusted_proxies: Option<Vec<&str>>) -> crate::config::OutputAuthSpec {
+        crate::config::OutputAuthSpec::Forwarded {
+            user_header: "X-Forwarded-User".into(),
+            forwarded_for_header: None,
+            trusted_proxies: trusted_proxies
+                .map(|list| list.into_iter().map(String::from).collect()),
+        }
+    }
+
+    async fn forwarded_status(
+        spec: &crate::config::OutputAuthSpec,
+        peer: &str,
+    ) -> axum::http::StatusCode {
+        let app = app_with_output_auth(spec.build_verifier(OUTPUT_AUTH_REALM));
+        let mut req = get_with_header("/cam1/master.m3u8", "X-Forwarded-User", "alice");
+        req.extensions_mut().insert(axum::extract::ConnectInfo(
+            peer.parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        app.oneshot(req).await.unwrap().status()
+    }
+
+    /// Security: a spoofed `X-Forwarded-User` from a peer that is not a
+    /// listed proxy is refused; loopback (default) and listed peers pass.
+    #[tokio::test]
+    async fn output_auth_forwarded_honours_the_header_only_from_trusted_proxies() {
+        const OK: axum::http::StatusCode = axum::http::StatusCode::OK;
+        const UNAUTHORIZED: axum::http::StatusCode = axum::http::StatusCode::UNAUTHORIZED;
+        let default = forwarded_spec(None);
+        assert_eq!(
+            forwarded_status(&default, "203.0.113.9:1").await,
+            UNAUTHORIZED
+        );
+        assert_eq!(forwarded_status(&default, "127.0.0.1:1").await, OK);
+        assert_eq!(forwarded_status(&default, "[::1]:1").await, OK);
+        assert_eq!(forwarded_status(&default, "[::ffff:127.0.0.1]:1").await, OK);
+
+        let listed = forwarded_spec(Some(vec!["198.51.100.0/24"]));
+        assert_eq!(forwarded_status(&listed, "198.51.100.4:1").await, OK);
+        assert_eq!(
+            forwarded_status(&listed, "[::ffff:198.51.100.4]:1").await,
+            OK
+        );
+        assert_eq!(
+            forwarded_status(&listed, "203.0.113.9:1").await,
+            UNAUTHORIZED
+        );
+        assert_eq!(forwarded_status(&listed, "127.0.0.1:1").await, UNAUTHORIZED);
+    }
+
+    /// A request with no `ConnectInfo` (no transport peer) cannot be matched
+    /// against the allow-list and is refused.
+    #[tokio::test]
+    async fn output_auth_forwarded_from_config_refuses_a_request_without_a_peer() {
+        let app = app_with_output_auth(forwarded_spec(None).build_verifier(OUTPUT_AUTH_REALM));
+        let resp = app
+            .oneshot(get_with_header(
+                "/cam1/master.m3u8",
+                "X-Forwarded-User",
+                "alice",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
     /// Biting test: with `Forwarded` `output_auth` configured, a request with
     /// no `X-Forwarded-User` header must `401` — a client hitting the origin
     /// directly (bypassing the trusted proxy) must not get in.
