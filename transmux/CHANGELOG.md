@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A CRC-valid PMT whose body does not parse no longer consumes its `version_number`, so the intact repeat of that version is applied (bug audit E).
 - `Fmp4Demux` reports a trailing `moof` with no following `mdat` as `InputDegradation::MalformedUnit` instead of dropping it silently (bug audit E).
 - `StreamingFlvDemux` unrolls the 32-bit millisecond tag timestamp, so a session past 2^32 ms keeps `dts` monotonic instead of stepping back to zero (bug audit E).
+- `AVCDecoderConfigurationRecord` rejects `bit_depth_luma_minus8` / `bit_depth_chroma_minus8` above 4 on parse and on serialize with `Error::InvalidValue` (ISO/IEC 14496-15:2017 §5.3.3.1.3); a 3-bit value of 5 to 7 used to be accepted and written back (#1913).
 
 ## [0.30.0] - 2026-11-07
 ### Added

@@ -48,6 +48,10 @@ use broadcast_common::len::need_out;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
 
+/// Largest permitted `bit_depth_luma_minus8` / `bit_depth_chroma_minus8`
+/// (ISO/IEC 14496-15:2017 §5.3.3.1.3: range 0 to 4, inclusive).
+pub(crate) const MAX_BIT_DEPTH_MINUS8: u8 = 4;
+
 // ---------------------------------------------------------------------------
 // AVCDecoderConfigurationRecord
 // ---------------------------------------------------------------------------
@@ -191,13 +195,13 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
             // byte: reserved(5) + bit_depth_luma_minus8(3)
             let b_bdl = read_u8(bytes, &mut cursor, "bit_depth_luma_minus8 byte")?;
             let _reserved_bdl = (b_bdl >> 3) & 0x1F;
-            let bdl = b_bdl & 0x07;
+            let bdl = check_bit_depth("bit_depth_luma_minus8", b_bdl & 0x07)?;
             bit_depth_luma_minus8 = Some(bdl);
 
             // byte: reserved(5) + bit_depth_chroma_minus8(3)
             let b_bdc = read_u8(bytes, &mut cursor, "bit_depth_chroma_minus8 byte")?;
             let _reserved_bdc = (b_bdc >> 3) & 0x1F;
-            let bdc = b_bdc & 0x07;
+            let bdc = check_bit_depth("bit_depth_chroma_minus8", b_bdc & 0x07)?;
             bit_depth_chroma_minus8 = Some(bdc);
 
             // numOfSequenceParameterSetExt (8)
@@ -318,12 +322,18 @@ impl Serialize for AVCDecoderConfigurationRecord {
             buf[cursor] = 0xFC | (cf & 0x03);
             cursor += 1;
 
-            let bdl = self.bit_depth_luma_minus8.unwrap_or(0);
-            buf[cursor] = 0xF8 | (bdl & 0x07);
+            let bdl = check_bit_depth(
+                "bit_depth_luma_minus8",
+                self.bit_depth_luma_minus8.unwrap_or(0),
+            )?;
+            buf[cursor] = 0xF8 | bdl;
             cursor += 1;
 
-            let bdc = self.bit_depth_chroma_minus8.unwrap_or(0);
-            buf[cursor] = 0xF8 | (bdc & 0x07);
+            let bdc = check_bit_depth(
+                "bit_depth_chroma_minus8",
+                self.bit_depth_chroma_minus8.unwrap_or(0),
+            )?;
+            buf[cursor] = 0xF8 | bdc;
             cursor += 1;
 
             // numOfSequenceParameterSetExt
@@ -406,6 +416,17 @@ impl Serialize for AVCConfigurationBox {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn check_bit_depth(field: &'static str, value: u8) -> Result<u8> {
+    if value > MAX_BIT_DEPTH_MINUS8 {
+        return Err(Error::InvalidValue(InvalidValue {
+            field,
+            value: u64::from(value),
+            reason: "must be in 0..=4 (ISO/IEC 14496-15:2017 §5.3.3.1.3)",
+        }));
+    }
+    Ok(value)
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -661,6 +682,70 @@ mod tests {
             ),
             "0 SPS must be a structured InvalidValue error, not silently accepted: {err:?}"
         );
+    }
+
+    fn high_profile_body(bit_depth_luma: u8, bit_depth_chroma: u8) -> Vec<u8> {
+        let mut body = vec![0x01, 0x64, 0x00, 0x1E, 0xFF, 0xE1];
+        let sps = [0x67u8, 0x64, 0x00, 0x1E];
+        body.extend_from_slice(&(sps.len() as u16).to_be_bytes());
+        body.extend_from_slice(&sps);
+        body.push(0x00);
+        body.push(0xFD);
+        body.push(0xF8 | bit_depth_luma);
+        body.push(0xF8 | bit_depth_chroma);
+        body.push(0x00);
+        body
+    }
+
+    #[test]
+    fn bit_depth_range_is_enforced_on_parse() {
+        for depth in 0..=MAX_BIT_DEPTH_MINUS8 {
+            let record = AVCDecoderConfigurationRecord::parse(&high_profile_body(depth, depth))
+                .expect("0..=4 is the permitted range");
+            assert_eq!(record.bit_depth_luma_minus8, Some(depth));
+        }
+        for depth in 5..=7u8 {
+            for (luma, chroma, field) in [
+                (depth, 0, "bit_depth_luma_minus8"),
+                (0, depth, "bit_depth_chroma_minus8"),
+            ] {
+                let err = AVCDecoderConfigurationRecord::parse(&high_profile_body(luma, chroma))
+                    .unwrap_err();
+                assert!(
+                    matches!(
+                        err,
+                        Error::InvalidValue(InvalidValue { field: f, value, .. })
+                            if f == field && value == u64::from(depth)
+                    ),
+                    "depth {depth} must be rejected for {field}: {err:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bit_depth_range_is_enforced_on_serialize() {
+        let mut record = AVCDecoderConfigurationRecord::parse(&high_profile_body(2, 4)).unwrap();
+        assert_eq!(record.try_to_bytes().unwrap(), high_profile_body(2, 4));
+        record.bit_depth_luma_minus8 = Some(5);
+        assert!(matches!(
+            record.try_to_bytes().unwrap_err(),
+            Error::InvalidValue(InvalidValue {
+                field: "bit_depth_luma_minus8",
+                value: 5,
+                ..
+            })
+        ));
+        record.bit_depth_luma_minus8 = Some(0);
+        record.bit_depth_chroma_minus8 = Some(9);
+        assert!(matches!(
+            record.try_to_bytes().unwrap_err(),
+            Error::InvalidValue(InvalidValue {
+                field: "bit_depth_chroma_minus8",
+                value: 9,
+                ..
+            })
+        ));
     }
 
     fn base_record(sps: Vec<AvcSps>) -> AVCDecoderConfigurationRecord {
