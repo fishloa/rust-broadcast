@@ -3538,6 +3538,11 @@ impl HlsOrigin {
         if let Some(msn) = query.hls_msn {
             let (in_progress_seg, live_parts) = self.live_edge();
             let in_progress = self.public_msn(in_progress_seg);
+            let edge_parts = if live_parts.is_empty() {
+                self.trunk.parts_in_segment(in_progress_seg).len()
+            } else {
+                live_parts.len()
+            };
             if msn > in_progress.saturating_add(ABUSE_MSN_FUTURE_BOUND) {
                 return EgressResponse::BadRequest {
                     reason: "_HLS_msn unreasonably far beyond the live edge",
@@ -3552,7 +3557,7 @@ impl HlsOrigin {
                 && msn >= in_progress
             {
                 let existing = if msn == in_progress {
-                    u64::try_from(live_parts.len()).unwrap_or(u64::MAX)
+                    u64::try_from(edge_parts).unwrap_or(u64::MAX)
                 } else {
                     0
                 };
@@ -3569,8 +3574,7 @@ impl HlsOrigin {
                 Some(part) => {
                     in_progress > msn
                         || (in_progress == msn
-                            && u64::try_from(live_parts.len()).unwrap_or(u64::MAX)
-                                > u64::from(part))
+                            && u64::try_from(edge_parts).unwrap_or(u64::MAX) > u64::from(part))
                 }
                 None => {
                     self.public_msn(
