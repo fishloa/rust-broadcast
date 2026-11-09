@@ -233,3 +233,17 @@ fn real_scte35_on_non_default_pid_is_found() {
         "unbalanced finding should reference event_id 777: {unbal:?}",
     );
 }
+
+/// Each packet of `scte35-other-pid.ts` carries six byte-identical
+/// retransmissions of one `splice_insert`; retransmissions are not duplicates.
+#[test]
+fn scte35_retransmissions_do_not_flood_dup_out() {
+    let ts = read("ts/scte35-other-pid.ts");
+    let mut report = Report::new();
+    Scte35Check.run(&ts, &mut report);
+    let dup = scte35_dup_out(&report);
+    assert!(
+        dup.is_empty(),
+        "was 48 before retransmission handling; got {dup:?}"
+    );
+}

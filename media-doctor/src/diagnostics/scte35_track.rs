@@ -16,9 +16,13 @@
 //! [`MAX_OPEN_EVENTS`], so it cannot grow over a long run even on an out-only
 //! feed (audit MD-W3).
 //!
+//! A section byte-identical to the previous one on the PID (same CRC) is a
+//! retransmission, not a second "out": it never raises a duplicate.
+//!
 //! [`Scte35Check`]: crate::Scte35Check
 
 use alloc::collections::BTreeSet;
+use alloc::vec::Vec;
 
 use broadcast_common::Parse;
 use mpeg_ts::ts::SectionReassembler;
@@ -47,6 +51,7 @@ pub(crate) struct SpliceObservation {
 pub(crate) struct SpliceTracker {
     reassembler: SectionReassembler,
     open: BTreeSet<u32>,
+    last_section: Vec<u8>,
 }
 
 impl SpliceTracker {
@@ -76,11 +81,14 @@ impl SpliceTracker {
             if si.splice_event_cancel_indicator {
                 continue;
             }
+            let retransmission = section[..] == self.last_section[..];
+            self.last_section.clear();
+            self.last_section.extend_from_slice(&section[..]);
             let auto_return = si
                 .break_duration
                 .is_some_and(|break_duration| break_duration.auto_return);
-            let duplicate_open =
-                self.observe(si.splice_event_id, si.out_of_network_indicator, auto_return);
+            let duplicate_open = !retransmission
+                && self.observe(si.splice_event_id, si.out_of_network_indicator, auto_return);
             on_event(SpliceObservation {
                 event_id: si.splice_event_id,
                 duplicate_open,
