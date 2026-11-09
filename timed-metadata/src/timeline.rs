@@ -28,13 +28,16 @@ impl Timeline {
     pub fn with_anchor(anchor: TimeAnchor) -> Self {
         Timeline {
             anchor: Some(anchor),
-            unroller: PtsUnroller::default(),
+            unroller: PtsUnroller::seeded(anchor.pts_90k),
         }
     }
 
     /// Set or replace the wall-clock anchor, keeping the PTS unroll state of the
     /// events already pushed.
     pub fn set_anchor(&mut self, anchor: TimeAnchor) {
+        if self.unroller.state.is_none() {
+            self.unroller = PtsUnroller::seeded(anchor.pts_90k);
+        }
         self.anchor = Some(anchor);
     }
 
@@ -90,6 +93,12 @@ pub(crate) struct PtsUnroller {
 }
 
 impl PtsUnroller {
+    pub(crate) fn seeded(origin: u64) -> Self {
+        PtsUnroller {
+            state: Some((origin % PTS_WRAP, i128::from(origin))),
+        }
+    }
+
     pub(crate) fn unroll(&mut self, raw33: u64) -> u64 {
         let unwrapped = match self.state {
             Some((prev_raw, prev_unwrapped)) => {
