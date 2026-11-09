@@ -310,6 +310,7 @@ async fn vod_playlist(
 /// `find_archived_segment`), each of which reads every `pN.idx` until it
 /// finds what it wants. Sized well below the blocking pool's own ceiling so
 /// ordinary DVR persists always find a thread.
+/// Conservative ceiling: the DVR persist must always be able to run.
 const MAX_CONCURRENT_SCANS: usize = 4;
 
 fn scan_permit() -> &'static tokio::sync::Semaphore {
