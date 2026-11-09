@@ -102,3 +102,20 @@ fn livecc_input_based_max_bw_does_not_overflow() {
     .unwrap();
     assert!(bw >= u64::MAX / 4);
 }
+
+/// A DROPREQ naming a range far wider than any flow window must not move the
+/// ack point 2^30 packets ahead (every later packet would then be ignored as
+/// "already delivered").
+#[test]
+fn receiver_ignores_a_dropreq_range_wider_than_the_flow_window() {
+    let mut r = Receiver::new(PEER, 0, WINDOW);
+    r.feed_data(0, Duration::ZERO);
+    r.skip_range(1, 0x3FFF_FFFF);
+    let out = r.feed_data(1, Duration::ZERO);
+    assert_eq!(
+        out.delivered,
+        vec![1],
+        "ack point jumped to {:#x}; seq 1 was discarded as a duplicate",
+        r.ack_point()
+    );
+}
