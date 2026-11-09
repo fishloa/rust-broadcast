@@ -20,6 +20,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Origin: a blocking reload for an existing part of the just-closed segment is answered instead of parked.
 - Origin: the open segment is found when the segmenter's first segment is numbered above 1.
 - Origin: a bare `_HLS_msn` reload (media and I-frame playlists) is satisfied from the rendered window, so a playlist answered as satisfied lists that segment.
+### Tests
+- Client: after a genuine restart the media-sequence high-water mark is the new numbering's, so a later forward jump with no overlap and no `PROGRAM-DATE-TIME` is not read as a second restart (pinned; the stale mark was cleared by the variant-switch fix).
 
 ## [0.12.0] - 2026-11-07
 ### Changed
