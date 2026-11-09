@@ -150,3 +150,20 @@ fn runtime_switch_between_modes_alters_period() {
     cc.set_max_bw_config(MaxBwConfig::Infinite);
     assert_eq!(cc.on_ack_received(), Duration::ZERO);
 }
+
+#[test]
+fn input_based_max_bw_saturates_instead_of_overflowing() {
+    let bw = MaxBwConfig::InputBased {
+        input_bw: u64::MAX / 4,
+        overhead: 25,
+    }
+    .max_bw_bytes_per_sec()
+    .unwrap();
+    assert!(bw >= u64::MAX / 4);
+    let saturated = MaxBwConfig::InputBased {
+        input_bw: u64::MAX,
+        overhead: 25,
+    }
+    .max_bw_bytes_per_sec();
+    assert_eq!(saturated, Some(u64::MAX));
+}

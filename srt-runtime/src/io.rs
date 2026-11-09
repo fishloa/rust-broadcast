@@ -3998,7 +3998,7 @@ mod adapter_tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn audit_d_dropreq_ahead_of_the_ack_point_must_not_stall_the_flow_window() {
+    async fn dropreq_ahead_of_the_ack_point_does_not_stall_the_flow_window() {
         const WINDOW: u32 = 64;
         let (mut driver, mut rx) = test_driver(WINDOW).await;
         for seq in [0u32, 5] {
@@ -4052,7 +4052,7 @@ mod adapter_tests {
 
     #[cfg(feature = "crypto")]
     #[tokio::test]
-    async fn audit_d_km_refresh_with_both_keys_installs_the_odd_key() {
+    async fn km_refresh_with_both_keys_installs_both_parities() {
         let (mut driver, _rx) = test_driver(8192).await;
         driver.crypto_passphrase = b"audit-d-passphrase".to_vec().into();
         let salt = [0x5Au8; crate::crypto::SALT_LEN];
@@ -4139,7 +4139,7 @@ mod adapter_tests {
     }
 
     #[tokio::test]
-    async fn audit_d_pending_entries_made_by_a_stray_conclusion_expire() {
+    async fn stray_conclusions_do_not_hold_listener_handshake_slots() {
         let mut listener = test_core(HandshakeConfig::default()).await;
         let stray = {
             let hp = HandshakePacket {

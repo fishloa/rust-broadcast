@@ -250,3 +250,44 @@ fn caller_handshake_emits_the_configured_isn_exactly() {
         panic!("expected a handshake packet");
     }
 }
+
+#[test]
+fn listener_rejects_a_caller_advertising_zero_mtu_or_flow_window() {
+    for bad in [
+        HandshakeConfig {
+            mtu: 0,
+            ..HandshakeConfig::default()
+        },
+        HandshakeConfig {
+            max_flow_window_size: 0,
+            ..HandshakeConfig::default()
+        },
+    ] {
+        let mut caller = CallerHandshake::new(CALLER_SOCKET_ID, bad);
+        let mut listener =
+            ListenerHandshake::new(LISTENER_SOCKET_ID, SYN_COOKIE, HandshakeConfig::default());
+        run_handshake(&mut caller, &mut listener);
+        assert_eq!(listener.state(), ListenerHandshakeState::Rejected);
+        assert!(listener.negotiated().is_none());
+    }
+}
+
+#[test]
+fn caller_rejects_a_listener_advertising_zero_mtu_or_flow_window() {
+    for bad in [
+        HandshakeConfig {
+            mtu: 0,
+            ..HandshakeConfig::default()
+        },
+        HandshakeConfig {
+            max_flow_window_size: 0,
+            ..HandshakeConfig::default()
+        },
+    ] {
+        let mut caller = CallerHandshake::new(CALLER_SOCKET_ID, HandshakeConfig::default());
+        let mut listener = ListenerHandshake::new(LISTENER_SOCKET_ID, SYN_COOKIE, bad);
+        run_handshake(&mut caller, &mut listener);
+        assert_eq!(caller.state(), CallerHandshakeState::Rejected);
+        assert!(caller.negotiated().is_none());
+    }
+}

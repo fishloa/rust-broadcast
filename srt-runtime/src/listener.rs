@@ -235,6 +235,9 @@ impl ListenerHandshake {
         if hp.initial_seq_number > crate::packet::SEQ_NUMBER_MASK {
             return self.reject(RejectionReason::Rogue, hp);
         }
+        if hp.mtu == 0 || hp.max_flow_window_size == 0 {
+            return self.reject(RejectionReason::Rogue, hp);
+        }
         if hp.syn_cookie != self.syn_cookie {
             // §4.3.1.1: the cookie exists precisely so the Listener can
             // refuse to allocate resources for an unverified Caller.

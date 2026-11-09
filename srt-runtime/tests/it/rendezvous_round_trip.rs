@@ -201,3 +201,63 @@ fn malformed_packet_fed_mid_flow_yields_structured_error_not_panic() {
         Err(srt_runtime::error::Error::HandshakeOutOfSequence { .. })
     ));
 }
+
+/// Runs the Rendezvous exchange between a default peer and one built from
+/// `peer_config`, returning `(connected, rejected)` as seen by the default one.
+fn rendezvous_with_peer(peer_config: HandshakeConfig) -> (bool, bool) {
+    let mut a = RendezvousHandshake::new(0x1111, PEER_A_COOKIE, HandshakeConfig::default());
+    let mut b = RendezvousHandshake::new(0x2222, PEER_B_COOKIE, peer_config);
+    let _ = a.start().unwrap();
+    let wave = b.start().unwrap();
+    let mut pending = a.feed(&ControlPacket::parse(&wave).unwrap()).unwrap();
+    let mut connected = false;
+    let mut rejected = false;
+    for _ in 0..6 {
+        let mut next = Vec::new();
+        for o in pending.drain(..) {
+            match o {
+                HandshakeOutput::Send(bytes) => {
+                    for r in b.feed(&ControlPacket::parse(&bytes).unwrap()).unwrap() {
+                        if let HandshakeOutput::Send(back) = r {
+                            next.extend(a.feed(&ControlPacket::parse(&back).unwrap()).unwrap());
+                        }
+                    }
+                }
+                HandshakeOutput::Connected(_) => connected = true,
+                HandshakeOutput::Rejected(_) => rejected = true,
+                _ => {}
+            }
+        }
+        pending = next;
+    }
+    (connected, rejected)
+}
+
+#[test]
+fn rendezvous_rejects_a_peer_isn_wider_than_31_bits() {
+    let (connected, rejected) = rendezvous_with_peer(HandshakeConfig {
+        initial_seq_number: 0xFFFF_FFFF,
+        ..HandshakeConfig::default()
+    });
+    assert!(
+        rejected && !connected,
+        "peer ISN 0xFFFF_FFFF accepted: connected={connected} rejected={rejected}"
+    );
+}
+
+#[test]
+fn rendezvous_rejects_a_peer_advertising_zero_mtu_or_flow_window() {
+    for bad in [
+        HandshakeConfig {
+            mtu: 0,
+            ..HandshakeConfig::default()
+        },
+        HandshakeConfig {
+            max_flow_window_size: 0,
+            ..HandshakeConfig::default()
+        },
+    ] {
+        let (connected, rejected) = rendezvous_with_peer(bad);
+        assert!(rejected && !connected, "connected={connected}");
+    }
+}

@@ -221,3 +221,53 @@ fn zero_loss_run_emits_no_spurious_naks() {
 fn alloc_payload(seq: u32) -> Vec<u8> {
     format!("payload-{seq}").into_bytes()
 }
+
+#[test]
+fn receiver_ack_point_crosses_a_dropreq_range_announced_ahead_of_it() {
+    let mut r = Receiver::new(RECEIVER_ID, 0, MAX_FLOW_WINDOW);
+    let t = Duration::ZERO;
+    r.feed_data(0, t);
+    r.feed_data(5, t);
+    r.skip_range(3, 4);
+    r.feed_data(1, t);
+    r.feed_data(2, t);
+    assert_eq!(
+        r.ack_point(),
+        6,
+        "0,1,2 delivered, 3..=4 dropped by the sender, 5 held: ack point must reach 6"
+    );
+}
+
+#[test]
+fn receiver_ignores_a_dropreq_range_wider_than_the_flow_window() {
+    let mut r = Receiver::new(RECEIVER_ID, 0, MAX_FLOW_WINDOW);
+    r.feed_data(0, Duration::ZERO);
+    r.skip_range(1, 0x3FFF_FFFF);
+    let out = r.feed_data(1, Duration::ZERO);
+    assert_eq!(
+        out.delivered,
+        vec![1],
+        "ack point jumped to {:#x}; seq 1 was discarded as a duplicate",
+        r.ack_point()
+    );
+}
+
+#[test]
+fn sender_ignores_an_ack_beyond_the_highest_sent_sequence() {
+    let mut s = Sender::new(RECEIVER_ID);
+    for seq in 0..5u32 {
+        s.on_data(seq, seq, b"x", Duration::ZERO).unwrap();
+    }
+    let ack = AckPacket {
+        ack_number: 0,
+        timestamp: 0,
+        dest_socket_id: RECEIVER_ID,
+        cif: AckCif::Light { last_ack_seq: 1000 },
+    };
+    s.on_ack(&ack, Duration::ZERO);
+    assert_eq!(
+        s.buffered_count(),
+        5,
+        "seqs 0..=4 were sent; an ACK for 1000 acknowledges unsent data"
+    );
+}

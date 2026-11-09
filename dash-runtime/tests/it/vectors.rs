@@ -751,7 +751,7 @@ fn two_periods_may_not_share_an_id() {
 }
 
 #[test]
-fn sidx_zero_size_reference_is_skipped() {
+fn sidx_zero_size_reference_is_skipped_but_still_advances_the_timeline() {
     use dash_runtime::address::base_index;
     use transmux::SegmentIndexBox;
     use transmux::timing::SidxReference;
@@ -784,4 +784,5 @@ fn sidx_zero_size_reference_is_skipped() {
     let out = base_index::segments(&sidx, 100).unwrap();
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].range.first, 100);
+    assert_eq!(out[0].time, 5, "the skipped reference still spans 5 ticks");
 }

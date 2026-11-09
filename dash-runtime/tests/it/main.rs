@@ -1,4 +1,3 @@
-mod audit_d;
 mod availability;
 mod client_config;
 mod client_faults;
