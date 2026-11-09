@@ -454,6 +454,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn collect_pmt_streams_ignores_a_crc_valid_next_generation_pmt_under_a_current_pat() {
+        let streams = [(0x0100u16, StreamType::H264)];
+        let mut ts = build_pat_pmt_ts_versioned(&streams, 0, true);
+        let next = build_pat_pmt_ts_versioned(&streams, 0, false);
+        assert_eq!(
+            collect_pmt_streams(&ts).len(),
+            1,
+            "control: current PMT declares one stream"
+        );
+        let range = pmt_packet_range(&ts);
+        let next_range = pmt_packet_range(&next);
+        ts[range].copy_from_slice(&next[next_range]);
+        assert!(
+            collect_pmt_streams(&ts).is_empty(),
+            "a PMT with current_next_indicator=0 (CRC valid) must not declare streams"
+        );
+    }
+
+    #[test]
     fn collect_pmt_streams_ignores_a_next_generation_pmt() {
         let ts = build_pat_pmt_ts_versioned(&[(0x0100u16, StreamType::H264)], 0, false);
         assert!(
