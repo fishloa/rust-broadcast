@@ -599,4 +599,19 @@ mod tests {
         assert_eq!(m.data.len(), 130);
         assert_eq!(m.data[129], 0x81);
     }
+
+    #[test]
+    fn auditi_completed_order_does_not_grow_with_version_cycles() {
+        let mut r = ModuleReassembler::new();
+        for v in 0..=255u8 {
+            r.note_dii(&dii(1, 2, vec![module(1, 2, v)]));
+            assert!(r.feed_ddb(&ddb(1, 1, v, 0, &[1, 2])).is_some());
+        }
+        assert_eq!(r.completed.len(), 1);
+        assert_eq!(
+            r.completed_order.len(),
+            r.completed.len(),
+            "completed_order keeps a stale entry per completed version"
+        );
+    }
 }
