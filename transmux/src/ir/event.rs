@@ -185,6 +185,12 @@ pub enum InputDegradation {
         /// Number of trailing bytes discarded.
         dropped_bytes: u64,
     },
+    /// A payload-bearing TS packet on a PES-carried PID had
+    /// `transport_scrambling_control != 0` (ISO/IEC 13818-1 §2.4.3.3 Table
+    /// 2-4): its payload is ciphertext the demuxer cannot read, so it was
+    /// **dropped**, and the access unit it belonged to is damaged and not
+    /// delivered. One event per scrambled packet.
+    Scrambled,
 }
 
 impl InputDegradation {
@@ -197,6 +203,7 @@ impl InputDegradation {
             InputDegradation::MalformedUnit { .. } => "malformed unit",
             InputDegradation::SyncLoss { .. } => "sync loss",
             InputDegradation::TruncatedPacket { .. } => "truncated packet",
+            InputDegradation::Scrambled => "scrambled",
         }
     }
 }
