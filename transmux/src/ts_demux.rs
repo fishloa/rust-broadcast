@@ -1897,15 +1897,27 @@ impl WrapState {
     /// Feed the next access unit's raw 33-bit `(pts, dts)`, returning the
     /// unwrapped `(pts, dts)` with any accumulated discontinuity offset
     /// applied.
-    fn push(&mut self, raw_pts: u64, raw_dts: u64) -> (i128, i128) {
+    fn push(&mut self, raw_pts: u64, raw_dts: u64, epoch: &mut ProgramEpoch) -> (i128, i128) {
+        let (pts, dts) = self.push_unshared(raw_pts, raw_dts, epoch);
+        if raw_dts != 0 {
+            epoch.last = Some((raw_dts, self.prev_dts_uw));
+        }
+        (pts, dts)
+    }
+
+    fn push_unshared(&mut self, raw_pts: u64, raw_dts: u64, epoch: &ProgramEpoch) -> (i128, i128) {
         if !self.initialized {
             self.initialized = true;
             self.dts_seen_real = raw_dts != 0;
             self.pts_seen_real = raw_pts != 0;
             self.prev_dts_raw = raw_dts;
-            self.prev_dts_uw = raw_dts as i128;
             self.prev_pts_raw = raw_pts;
-            self.prev_pts_uw = raw_pts as i128;
+            let seed = |raw: u64| match epoch.last {
+                Some((anchor_raw, anchor_uw)) if raw != 0 => unwrap_ts(anchor_uw, anchor_raw, raw),
+                _ => raw as i128,
+            };
+            self.prev_dts_uw = seed(raw_dts);
+            self.prev_pts_uw = seed(raw_pts);
             return (self.prev_pts_uw, self.prev_dts_uw);
         }
         let dts_uw = if self.dts_seen_real {
@@ -2004,6 +2016,24 @@ impl WrapState {
     }
 }
 
+/// The most recent raw and unwrapped 33-bit decode stamp any elementary stream
+/// of one program produced. A PID's first stamp is unrolled against it, so
+/// every stream of a program lands in one epoch even when their first stamps
+/// straddle the 2^33 wrap (ISO/IEC 13818-1 §2.4.3.7).
+#[derive(Default)]
+struct ProgramEpoch {
+    last: Option<(u64, i128)>,
+}
+
+/// The PMT PID of the program that declares `pid` — the key of its
+/// [`ProgramEpoch`] (the PID itself when no PMT declares it yet).
+fn program_key(declarers: &BTreeMap<Pid, BTreeSet<Pid>>, pid: Pid) -> Pid {
+    declarers
+        .get(&pid)
+        .and_then(|pmts| pmts.iter().next().copied())
+        .unwrap_or(pid)
+}
+
 /// A PID's reassembly engine: PES access units, or PSI/private sections
 /// (issue #576) — chosen once at PID discovery from [`data_carriage`] (a
 /// decoded [`Codec`] or a PES-carried [`Codec::Data`] always gets
@@ -2068,6 +2098,9 @@ struct StreamState {
     units_since_stamped: u64,
     has_any: bool,
     wrap: WrapState,
+    /// Key of the [`ProgramEpoch`] this PID's stamps are unrolled in, fixed at
+    /// registration.
+    epoch_key: Pid,
     /// Always `Some` except transiently inside [`advance_track`].
     track: Option<TrackState>,
     /// This PID's most recent observed inter-access-unit spacing (90 kHz
@@ -4499,6 +4532,7 @@ fn on_completed_pes(
     stream: &mut StreamState,
     pid: Pid,
     pes_bytes: &[u8],
+    epoch: &mut ProgramEpoch,
     events: &mut VecDeque<DemuxEvent>,
 ) {
     let Ok(pes) = PesPacket::parse(pes_bytes) else {
@@ -4608,7 +4642,7 @@ fn on_completed_pes(
             .rebase_at_discontinuity(dts, stream.last_frame_period)
             == DiscontinuityVerdict::Forward;
     }
-    let (pts_uw, dts_uw) = stream.wrap.push(pts, dts);
+    let (pts_uw, dts_uw) = stream.wrap.push(pts, dts, epoch);
     advance_track(stream, pid, pes.payload, pts_uw, dts_uw, events);
 }
 
@@ -4800,6 +4834,9 @@ pub struct StreamingTsDemux {
     pmt_reasm: BTreeMap<Pid, PmtState>,
     es_seen: BTreeSet<Pid>,
     streams: BTreeMap<Pid, StreamState>,
+    /// One 33-bit unroll epoch per program (keyed by PMT PID), shared by all
+    /// of that program's elementary streams.
+    program_epochs: BTreeMap<Pid, ProgramEpoch>,
     /// Payloads for a PID not yet classified as PAT/PMT/a known ES — a real
     /// capture excerpt need not start at a clean PAT/PMT boundary, so an ES's
     /// own packets can arrive before its PMT registration completes (see the
@@ -4911,6 +4948,7 @@ impl StreamingTsDemux {
             pmt_reasm: BTreeMap::new(),
             es_seen: BTreeSet::new(),
             streams: BTreeMap::new(),
+            program_epochs: BTreeMap::new(),
             unattributed: BTreeMap::new(),
             removed_pids: BTreeSet::new(),
             es_declarers: BTreeMap::new(),
@@ -5310,8 +5348,9 @@ impl StreamingTsDemux {
 
         if let Some(stream) = self.streams.get_mut(&pid) {
             stream.payload_packets = stream.payload_packets.saturating_add(1);
+            let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
             if pkt.header.scrambling != 0 && matches!(stream.carrier, Carrier::Pes(_)) {
-                drop_scrambled_payload(stream, pid, pusi, idx, &mut self.events);
+                drop_scrambled_payload(stream, pid, pusi, idx, epoch, &mut self.events);
                 self.try_promote_ready();
                 return;
             }
@@ -5396,7 +5435,7 @@ impl StreamingTsDemux {
                 clear_audio_carry(stream, &mut self.events);
             }
             if completed_intact && let Some(completed) = completed_pes {
-                on_completed_pes(stream, pid, &completed, &mut self.events);
+                on_completed_pes(stream, pid, &completed, epoch, &mut self.events);
             } else if let Some(completed) = completed_pes
                 && matches!(stream.codec, Codec::H264 | Codec::Hevc)
             {
@@ -5705,6 +5744,7 @@ impl StreamingTsDemux {
             units_since_stamped: 0,
             has_any: false,
             wrap: WrapState::default(),
+            epoch_key: program_key(&self.es_declarers, es_pid),
             track: Some(TrackState::Probing {
                 probe: initial_probe(codec),
                 backlog: Vec::new(),
@@ -5744,7 +5784,8 @@ impl StreamingTsDemux {
                     None
                 };
                 if let Some(completed) = completed_pes {
-                    on_completed_pes(&mut stream, es_pid, &completed, &mut self.events);
+                    let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
+                    on_completed_pes(&mut stream, es_pid, &completed, epoch, &mut self.events);
                 }
                 for s in sections {
                     on_completed_section(&mut stream, es_pid, &s, &mut self.events);
@@ -5796,7 +5837,8 @@ impl StreamingTsDemux {
             // owed to the consumer: the access unit complete in the PES
             // assembler, the one-behind pending sample and any held audio
             // carry go out before `TrackRemoved`, as `finish()` would emit them.
-            flush_stream_pes_tail(pid, &mut stream, &mut self.events);
+            let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
+            flush_stream_pes_tail(pid, &mut stream, epoch, &mut self.events);
             flush_stream_live_tail(pid, &mut stream, &mut self.events);
             if let Some(TrackState::Live(live)) = stream.track {
                 self.events.push_back(DemuxEvent::TrackRemoved {
@@ -6441,6 +6483,7 @@ impl StreamingTsDemux {
             pmt.last_applied_version = None;
         }
         self.cc_states.clear();
+        self.program_epochs.clear();
         for stream in self.streams.values_mut() {
             stream.restart_timeline();
         }
@@ -6454,7 +6497,8 @@ impl StreamingTsDemux {
             self.push_resync_loss(loss);
         }
         for (&pid, stream) in self.streams.iter_mut() {
-            flush_stream_pes_tail(pid, stream, &mut self.events);
+            let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
+            flush_stream_pes_tail(pid, stream, epoch, &mut self.events);
         }
     }
 
@@ -6503,6 +6547,7 @@ fn drop_scrambled_payload(
     pid: Pid,
     pusi: bool,
     packet_index: u64,
+    epoch: &mut ProgramEpoch,
     events: &mut VecDeque<DemuxEvent>,
 ) {
     let track = match &stream.track {
@@ -6519,7 +6564,7 @@ fn drop_scrambled_payload(
         },
     });
     if pusi {
-        flush_stream_pes_tail(pid, stream, events);
+        flush_stream_pes_tail(pid, stream, epoch, events);
     } else if let Carrier::Pes(assembler) = &mut stream.carrier
         && let Some(bytes) = assembler.flush()
         && matches!(stream.codec, Codec::H264 | Codec::Hevc)
@@ -6532,7 +6577,12 @@ fn drop_scrambled_payload(
 }
 
 /// Complete one PID's buffered PES payload at end of a timeline.
-fn flush_stream_pes_tail(pid: Pid, stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>) {
+fn flush_stream_pes_tail(
+    pid: Pid,
+    stream: &mut StreamState,
+    epoch: &mut ProgramEpoch,
+    events: &mut VecDeque<DemuxEvent>,
+) {
     // Only a PES assembler has a trailing partial payload to flush; a trailing
     // partial (incomplete) section is genuinely undecodable and is simply
     // dropped by `SectionReassembler` itself.
@@ -6549,7 +6599,7 @@ fn flush_stream_pes_tail(pid: Pid, stream: &mut StreamState, events: &mut VecDeq
         let short_of_declared = stream.pes_declared_len > 0
             && completed.len() < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
         if stream.current_pes_intact && !short_of_declared {
-            on_completed_pes(stream, pid, &completed, events);
+            on_completed_pes(stream, pid, &completed, epoch, events);
         } else if matches!(stream.codec, Codec::H264 | Codec::Hevc) {
             harvest_damaged_au(stream, pid, &completed, events);
         }
