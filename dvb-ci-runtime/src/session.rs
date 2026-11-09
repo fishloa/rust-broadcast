@@ -226,13 +226,19 @@ impl SessionLayer {
             // Peer closes a session.
             Some(tags::CLOSE_SESSION_REQUEST) => {
                 let req = CloseSessionRequest::parse(spdu)?;
-                self.sessions.remove(&req.session_nb);
+                let known = self.sessions.remove(&req.session_nb).is_some();
                 out.spdus.push(ser(&CloseSessionResponse {
                     length_form: dvb_ci::length::LengthForm::Minimal,
-                    status: SessionStatus::Ok,
+                    status: if known {
+                        SessionStatus::Ok
+                    } else {
+                        SessionStatus::ResourceNonExistent
+                    },
                     session_nb: req.session_nb,
                 })?);
-                out.closed.push(req.session_nb);
+                if known {
+                    out.closed.push(req.session_nb);
+                }
             }
             // Ack of a close we initiated.
             Some(tags::CLOSE_SESSION_RESPONSE) => {
