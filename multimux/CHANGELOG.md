@@ -12,6 +12,7 @@
 - A DVR period roll that failed to open the new file (a transient I/O error) had already advanced the period number and recorded the old period, so the next period started with no init and one period number was skipped; the roll now opens the new file first and only then commits, leaving the recorder unchanged on failure.
 - The DVR archived the last segment closed under an fMP4 init in the period of the next init: the init change was applied before the pending segments were drained. Each pending segment is now archived under the init it was closed under (`DvrRecorder::poll_and_persist_inits`, `InitGeneration`).
 - Segments a program had closed but the DVR had not yet archived were lost when a source reconnect replaced the program; the replacement's recorder now archives them first.
+- The push `ReconnectEngine` reset its backoff and attempt counter as soon as a connection was established, so a destination that accepted the connection and then dropped it was never backed off or given up on. The series now restarts only after the connection stayed up for `push::HEALTHY_CONNECTION` (30 s); `ReconnectEngine::on_connect` no longer resets the counter.
 
 ## [0.17.0] - 2026-11-08
 ### Changed

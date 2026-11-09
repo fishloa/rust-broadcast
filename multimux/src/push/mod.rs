@@ -251,12 +251,19 @@ pub enum ReconnectState {
     Failed,
 }
 
+/// How long a push connection must stay up before its end counts as a
+/// healthy session. A destination that accepts the connection and drops it
+/// within seconds, repeatedly, is a failing destination, so the backoff and
+/// the attempt budget only restart after a connection at least this long.
+pub const HEALTHY_CONNECTION: Duration = Duration::from_secs(30);
+
 /// The reconnect engine: [`ReconnectState`] + the attempt counter + the
 /// backoff/attempt budget that drives it.
 #[derive(Debug, Clone)]
 pub struct ReconnectEngine {
     state: ReconnectState,
     attempt: u32,
+    connected_at: Option<Instant>,
     policy: crate::config::ReconnectPolicy,
 }
 
@@ -266,6 +273,7 @@ impl ReconnectEngine {
         Self {
             state: ReconnectState::Ready,
             attempt: 0,
+            connected_at: None,
             policy,
         }
     }
@@ -279,9 +287,15 @@ impl ReconnectEngine {
         }
     }
 
-    /// A connection attempt started successfully — reset the attempt counter.
+    /// A connection was established. The attempt counter is not reset here:
+    /// it restarts only once the connection has stayed up for
+    /// [`HEALTHY_CONNECTION`] (see [`Self::on_disconnect`]).
     pub fn on_connect(&mut self) {
-        self.attempt = 0;
+        self.on_connect_at(Instant::now());
+    }
+
+    fn on_connect_at(&mut self, now: Instant) {
+        self.connected_at = Some(now);
         self.state = ReconnectState::Ready;
     }
 
@@ -293,7 +307,21 @@ impl ReconnectEngine {
     /// doubles), capped at [`ReconnectPolicy::max_backoff_ms`](crate::config::ReconnectPolicy::max_backoff_ms) — the `attempt`
     /// counter is 1-based, so the `n`-th disconnect waits
     /// [`ReconnectPolicy::backoff_for(n - 1)`](crate::config::ReconnectPolicy::backoff_for).
+    ///
+    /// A connection that had stayed up for [`HEALTHY_CONNECTION`] first
+    /// restarts the series from its floor.
     pub fn on_disconnect(&mut self) {
+        self.on_disconnect_at(Instant::now());
+    }
+
+    fn on_disconnect_at(&mut self, now: Instant) {
+        let healthy = self
+            .connected_at
+            .take()
+            .is_some_and(|since| now.saturating_duration_since(since) >= HEALTHY_CONNECTION);
+        if healthy {
+            self.attempt = 0;
+        }
         self.attempt = self.attempt.saturating_add(1);
         if let Some(max) = self.policy.max_attempts
             && self.attempt >= max
@@ -304,7 +332,7 @@ impl ReconnectEngine {
         let backoff = crate::reconnect::ReconnectSchedule::from_policy(&self.policy)
             .delay_for_attempt(self.attempt.saturating_sub(1));
         self.state = ReconnectState::Backoff {
-            resume_at: Instant::now() + backoff,
+            resume_at: now + backoff,
         };
     }
 
@@ -823,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn on_connect_resets_attempt_counter() {
+    fn on_connect_returns_a_failed_engine_to_ready() {
         let mut eng = ReconnectEngine::new(policy(Some(2)));
         eng.on_disconnect();
         eng.on_disconnect();
@@ -831,6 +859,20 @@ mod tests {
         eng.on_connect();
         assert!(!eng.is_failed());
         assert!(eng.should_connect());
+    }
+
+    #[test]
+    fn a_connection_that_stayed_up_restarts_the_backoff_series() {
+        let mut eng = ReconnectEngine::new(policy(Some(2)));
+        let start = Instant::now();
+        eng.on_connect_at(start);
+        eng.on_disconnect_at(start);
+        eng.on_connect_at(start);
+        eng.on_disconnect_at(start + HEALTHY_CONNECTION);
+        assert!(
+            !eng.is_failed(),
+            "a healthy connection must restart the attempt budget"
+        );
     }
 
     #[test]
