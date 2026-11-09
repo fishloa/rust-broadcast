@@ -5404,10 +5404,8 @@ impl StreamingTsDemux {
             // or a bounded PES that arrived short of its declared length. A
             // `discontinuity_indicator` is *not* such evidence on its own —
             // see the rule above.
-            let tail_lost = gap_here
-                && pusi
-                && stream.pes_declared_len == 0
-                && stream.last_payload_full;
+            let tail_lost =
+                gap_here && pusi && stream.pes_declared_len == 0 && stream.last_payload_full;
             let completed_intact = stream.current_pes_intact && !short_of_declared && !tail_lost;
             let mut completed_pes = None;
             if gap_here

@@ -38,6 +38,7 @@ use std::collections::BTreeMap;
 
 use broadcast_common::Unpackage;
 use mpeg_ts::pid::Pid;
+use transmux::pipeline::CodecConfig;
 use transmux::{DemuxEvent, InputDegradation, StreamingTsDemux, TsDemux};
 
 const TS: usize = 188;
@@ -371,5 +372,169 @@ fn france_tnt_m6_eac3_zenith_matches_the_independent_count() {
             (0x00AB, 6),
             (0x00AC, 1),
         ],
+    );
+}
+
+const RAW_TS_LEN: usize = 188;
+
+fn raw_pid(p: &[u8]) -> u16 {
+    (((p[1] & 0x1F) as u16) << 8) | p[2] as u16
+}
+
+fn raw_payload_start(p: &[u8]) -> usize {
+    match (p[3] >> 4) & 3 {
+        3 => 5 + p[4] as usize,
+        2 | 0 => RAW_TS_LEN,
+        _ => 4,
+    }
+}
+
+struct DegradationRun {
+    samples: Vec<Vec<u8>>,
+    degraded: usize,
+}
+
+fn run_degradation(ts: &[u8]) -> DegradationRun {
+    let mut d = StreamingTsDemux::new();
+    d.feed(ts);
+    d.finish();
+    let mut video = None;
+    let mut samples = Vec::new();
+    let mut degraded = 0;
+    while let Some(ev) = d.poll_event() {
+        match ev {
+            DemuxEvent::TrackAdded(s) if matches!(s.config, CodecConfig::Avc { .. }) => {
+                video = Some(s.track_id)
+            }
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } if Some(track_id) == video => samples.push(sample.data.to_vec()),
+            DemuxEvent::InputDegraded { .. } => degraded += 1,
+            _ => {}
+        }
+    }
+    DegradationRun { samples, degraded }
+}
+
+#[test]
+fn scrambled_continuation_packet_is_not_delivered_as_clean_video() {
+    let ts = test_fixtures::read("ts/h264-aac.ts");
+    let mut vpid = None;
+    let mut target = None;
+    let mut seen = 0;
+    for (i, p) in ts.chunks_exact(RAW_TS_LEN).enumerate() {
+        let at = raw_payload_start(p);
+        let pusi = p[1] & 0x40 != 0;
+        if pusi
+            && at + 4 <= RAW_TS_LEN
+            && p[at..at + 3] == [0, 0, 1]
+            && (0xE0..0xF0).contains(&p[at + 3])
+        {
+            vpid.get_or_insert(raw_pid(p));
+            if Some(raw_pid(p)) == vpid {
+                seen += 1;
+            }
+        }
+        if seen >= 4 && !pusi && Some(raw_pid(p)) == vpid && at < RAW_TS_LEN - 16 {
+            target = Some(i);
+            break;
+        }
+    }
+    let target = target.expect("a video continuation packet");
+    let base = run_degradation(&ts);
+
+    let mut bad = ts.clone();
+    let p = &mut bad[target * RAW_TS_LEN..(target + 1) * RAW_TS_LEN];
+    let at = raw_payload_start(p);
+    p[3] |= 0x80;
+    for b in &mut p[at..] {
+        *b ^= 0x55;
+    }
+    let got = run_degradation(&bad);
+
+    let corrupt_clean = got
+        .samples
+        .iter()
+        .filter(|s| !base.samples.contains(s))
+        .count();
+    assert!(
+        corrupt_clean == 0 || got.degraded > base.degraded,
+        "{corrupt_clean} video sample(s) built from a scrambled packet were delivered as clean (degraded events {} vs baseline {})",
+        got.degraded,
+        base.degraded
+    );
+}
+
+fn video_pes_packet_ranges(ts: &[u8]) -> (u16, Vec<Vec<usize>>) {
+    let mut vpid = None;
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (i, p) in ts.chunks_exact(RAW_TS_LEN).enumerate() {
+        let pusi = p[1] & 0x40 != 0;
+        let at = raw_payload_start(p);
+        if pusi
+            && at + 4 <= RAW_TS_LEN
+            && p[at..at + 3] == [0, 0, 1]
+            && (0xE0..0xF0).contains(&p[at + 3])
+        {
+            vpid.get_or_insert(raw_pid(p));
+        }
+        if Some(raw_pid(p)) == vpid {
+            if pusi {
+                groups.push(vec![i]);
+            } else if let Some(g) = groups.last_mut() {
+                g.push(i);
+            }
+        }
+    }
+    (vpid.expect("video raw_pid"), groups)
+}
+
+fn without(ts: &[u8], drop: usize) -> Vec<u8> {
+    ts.chunks_exact(RAW_TS_LEN)
+        .enumerate()
+        .filter(|(i, _)| *i != drop)
+        .flat_map(|(_, p)| p.iter().copied())
+        .collect()
+}
+
+fn video_sample_lens(ts: &[u8]) -> Vec<usize> {
+    let media = TsDemux::new().unpackage(ts).expect("demux");
+    let v = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("avc track");
+    v.samples.iter().map(|s| s.data.len()).collect()
+}
+
+#[test]
+fn lost_last_packet_of_a_video_pes_does_not_yield_a_truncated_clean_sample() {
+    let ts = test_fixtures::read("ts/h264-aac.ts");
+    let (_, groups) = video_pes_packet_ranges(&ts);
+    let k = groups
+        .iter()
+        .enumerate()
+        .skip(3)
+        .find(|(_, g)| g.len() >= 3)
+        .map(|(k, _)| k)
+        .expect("a multi-packet video PES");
+    let g = &groups[k];
+
+    let base = video_sample_lens(&ts);
+    let mid = video_sample_lens(&without(&ts, g[1]));
+    let tail = video_sample_lens(&without(&ts, *g.last().unwrap()));
+
+    assert_eq!(
+        mid.len() + 1,
+        base.len(),
+        "control: a mid-PES loss drops the damaged access unit"
+    );
+    assert!(
+        tail.len() < base.len() || tail.iter().all(|l| base.contains(l)),
+        "tail loss: {} samples vs {} baseline; lengths {:?} include a truncated sample not in {:?}",
+        tail.len(),
+        base.len(),
+        tail,
+        base
     );
 }

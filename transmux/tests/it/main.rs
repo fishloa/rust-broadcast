@@ -1,7 +1,3 @@
-mod audite_scrambled_continuation;
-mod audite_pmt_removal;
-mod audite_tail_loss;
-mod audite_cross_pid_wrap;
 mod absolute_timing;
 mod ac3_syncframe_ranges;
 mod any_stream;

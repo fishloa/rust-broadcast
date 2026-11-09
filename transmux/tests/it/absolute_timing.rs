@@ -956,3 +956,94 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
          absolute dts+pts alone"
     );
 }
+
+const VID_PID: u16 = 0x0100;
+const AUD_PID: u16 = 0x0101;
+const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
+const AAC_FRAME_TICKS: i64 = 1920;
+const AAC_RATE: i64 = 48_000;
+
+fn adts_frame() -> Vec<u8> {
+    let len = 27usize;
+    let mut f = vec![
+        0xFF,
+        0xF1,
+        0x4C,
+        0x80 | ((len >> 11) as u8 & 0x03),
+        ((len >> 3) & 0xFF) as u8,
+        (((len & 7) << 5) as u8) | 0x1F,
+        0xFC,
+    ];
+    f.extend(core::iter::repeat_n(0x21, len - 7));
+    f
+}
+
+fn audio_pes(frame: &[u8], pts: i64) -> Vec<u8> {
+    let mut out = vec![0x00, 0x00, 0x01, 0xC0];
+    let payload_len = frame.len() + 3 + 5;
+    out.extend_from_slice(&(payload_len as u16).to_be_bytes());
+    out.push(0x80);
+    out.push(0x80);
+    out.push(5);
+    out.extend_from_slice(&encode_pes_ts(pts, 0b0010));
+    out.extend_from_slice(frame);
+    out
+}
+
+fn synth_two_pid_ts(video_first: i64, audio_first: i64) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut pat_body = Vec::new();
+    pat_body.extend_from_slice(&1u16.to_be_bytes());
+    pat_body.extend_from_slice(&(0xE000 | PMT_PID).to_be_bytes());
+    let mut cc = 0u8;
+    packetise(PAT_PID, &psi_section(0x00, 1, &pat_body), &mut cc, &mut out);
+
+    let mut pmt_body = Vec::new();
+    pmt_body.extend_from_slice(&(0xE000 | VID_PID).to_be_bytes());
+    pmt_body.extend_from_slice(&0xF000u16.to_be_bytes());
+    for (st, pid) in [(STREAM_TYPE_AVC, VID_PID), (STREAM_TYPE_AAC_ADTS, AUD_PID)] {
+        pmt_body.push(st);
+        pmt_body.extend_from_slice(&(0xE000 | pid).to_be_bytes());
+        pmt_body.extend_from_slice(&0xF000u16.to_be_bytes());
+    }
+    let mut cc = 0u8;
+    packetise(PMT_PID, &psi_section(0x02, 1, &pmt_body), &mut cc, &mut out);
+
+    let (mut cc_v, mut cc_a) = (0u8, 0u8);
+    let wrap = TS_WRAP;
+    for i in 0..6i64 {
+        let dts = (video_first + i * FRAME_DUR).rem_euclid(wrap);
+        let au = annexb_au(i == 0, i as u8);
+        packetise(VID_PID, &pes_packet(&au, dts, dts), &mut cc_v, &mut out);
+        for j in 0..2i64 {
+            let n = i * 2 + j;
+            let pts = (audio_first + n * AAC_FRAME_TICKS).rem_euclid(wrap);
+            packetise(AUD_PID, &audio_pes(&adts_frame(), pts), &mut cc_a, &mut out);
+        }
+    }
+    out
+}
+
+#[test]
+fn audio_and_video_of_one_program_share_one_unroll_epoch_across_2_33() {
+    let ts = synth_two_pid_ts(3000, TS_WRAP - 1500);
+    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("avc track");
+    let audio = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+        .expect("aac track");
+    let v0 = video.samples[0].dts.expect("video dts");
+    let a0 = audio.samples[0].dts.expect("audio dts");
+    let a0_90k = a0 * 90_000 / AAC_RATE;
+    let skew = (a0_90k - v0).abs();
+    assert!(
+        skew < 90_000,
+        "audio starts 4500 ticks before video on the wire (across the 2^33 wrap) but the IR puts them {skew} ticks apart (audio dts {a0_90k}, video dts {v0})"
+    );
+}
