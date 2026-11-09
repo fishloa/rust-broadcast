@@ -254,6 +254,12 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             offset += consumed;
         }
 
+        for (moof_off, _) in pending_moofs {
+            degraded.push(InputDegradation::MalformedUnit {
+                position: moof_off as u64,
+            });
+        }
+
         let tracks = builders
             .into_iter()
             .map(|mut b| {
