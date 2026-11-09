@@ -35,12 +35,15 @@ const AF_DISCONTINUITY: u8 = 0x80;
 struct PidState {
     /// The CC we expect on the next payload-bearing packet (mod 16).
     expected: u8,
-    /// The CC of the most recent payload-bearing packet (for duplicate
-    /// detection).  This tracks the ORIGINAL wire CC, not the corrected
-    /// value, so that a same-CC pair straddling a gap repair is still
-    /// recognised.
+    /// The input CC of the most recent payload-bearing packet (for
+    /// duplicate detection).  This tracks the ORIGINAL wire CC, not the
+    /// corrected value, so that a same-CC pair straddling a gap repair is
+    /// still recognised.
     last_wire_cc: u8,
-    /// Raw bytes of the most recent payload-bearing packet, used with
+    /// The CC written to the output for that packet, which a legal
+    /// duplicate of it must carry too.
+    last_out_cc: u8,
+    /// Input bytes of the most recent payload-bearing packet, used with
     /// [`broadcast_common::ts_dup::is_legal_duplicate_pair`] to identify
     /// legal §2.4.3.3 duplicates (identical bytes except a re-encoded
     /// PCR). Replaces a hand-rolled hash that duplicated the same rule
@@ -138,7 +141,15 @@ impl Op for ContinuityOp {
         // not falsely flagged as errors.
         let is_discontinuity = header.has_adaptation && Self::has_discontinuity(packet);
         if is_discontinuity {
-            self.per_pid.remove(&pid);
+            self.per_pid.insert(
+                pid,
+                PidState {
+                    expected: (current_cc + 1) & 0x0F,
+                    last_wire_cc: current_cc,
+                    last_out_cc: current_cc,
+                    last_packet: packet.to_vec(),
+                },
+            );
             out(packet);
             return;
         }
@@ -153,6 +164,7 @@ impl Op for ContinuityOp {
             PidState {
                 expected: current_cc,
                 last_wire_cc: current_cc,
+                last_out_cc: current_cc,
                 last_packet: packet.to_vec(),
             }
         });
@@ -170,18 +182,20 @@ impl Op for ContinuityOp {
         // the same CC as the previous payload-bearing packet on this PID
         // and byte-identical content (except a re-encoded PCR).
         //
-        // When preserving a duplicate we do NOT advance `state.expected` —
-        // the next packet must still match the pre-duplicate expectation.
-        // We DO update `state.last_wire_cc` so that a third identical repeat
-        // is also preserved.
+        // A duplicate is preserved as a duplicate: it carries the CC the
+        // original was given, and `state.expected` does not advance.
         if current_cc == state.last_wire_cc
             && broadcast_common::ts_dup::is_legal_duplicate_pair(&state.last_packet, packet)
         {
-            // Legal duplicate repeat — pass through unchanged.
-            // Don't advance expected, but update last_wire_cc for next comparison.
-            state.last_wire_cc = current_cc;
             state.last_packet = packet.to_vec();
-            out(packet);
+            if state.last_out_cc == current_cc {
+                out(packet);
+            } else {
+                let mut buf = [0u8; TS_PACKET_SIZE];
+                buf.copy_from_slice(packet);
+                OwnedTsPacket::set_continuity_counter(&mut buf, state.last_out_cc);
+                out(&buf[..]);
+            }
             return;
         }
 
@@ -191,6 +205,7 @@ impl Op for ContinuityOp {
             let next = (current_cc + 1) & 0x0F;
             state.expected = next;
             state.last_wire_cc = current_cc;
+            state.last_out_cc = current_cc;
             state.last_packet = packet.to_vec();
             out(packet);
             return;
@@ -202,12 +217,10 @@ impl Op for ContinuityOp {
         OwnedTsPacket::set_continuity_counter(&mut buf, correct_cc);
         out(&buf[..]);
 
-        // Advance state using the **corrected** value.  Set
-        // `state.last_wire_cc` to the OUTPUT CC (`correct_cc`) so that
-        // subsequent duplicate detection sees the repaired value, not the
-        // original error.
         state.expected = (correct_cc + 1) & 0x0F;
-        state.last_wire_cc = correct_cc;
+        state.last_wire_cc = current_cc;
+        state.last_out_cc = correct_cc;
+        state.last_packet = packet.to_vec();
     }
 
     fn flush(&mut self, _model: &mut StreamModel, _out: &mut dyn FnMut(&[u8])) {
@@ -344,9 +357,9 @@ mod tests {
     }
 
     #[test]
-    fn cc_after_discontinuity_resets() {
-        // After a discontinuity, the next packet's CC should not be forced
-        // to match the sequence from before the discontinuity.
+    fn cc_after_discontinuity_continues_from_the_flagged_packet() {
+        // §2.4.3.5: only the flagged packet may break the sequence; the next
+        // packet must follow the flagged packet's CC, not the one before it.
         let pkt1 = make_payload_packet(Pid::new(0x0300), 0, false, &[0xAA]);
         let pkt2 = make_discontinuity_packet(Pid::new(0x0300), 0x0F, &[0xBB]);
         let pkt3 = make_payload_packet(Pid::new(0x0300), 3, false, &[0xCC]); // after discontinuity
@@ -355,9 +368,37 @@ mod tests {
         assert_eq!(output.len(), 3);
         assert_eq!(output[0][3] & 0x0F, 0);
         assert_eq!(output[1][3] & 0x0F, 0x0F);
-        // pkt3 (CC=3) is the *first* post-discontinuity packet — it initialises
-        // fresh state and passes through unchanged.
-        assert_eq!(output[2][3] & 0x0F, 3);
+        // pkt3 (CC=3) follows the flagged packet (CC=15), so it is repaired to 0.
+        assert_eq!(output[2][3] & 0x0F, 0);
+    }
+
+    #[test]
+    fn packet_after_discontinuity_with_the_right_cc_is_untouched() {
+        let pid = Pid::new(0x0300);
+        let pkt1 = make_payload_packet(pid, 0, false, &[0xAA]);
+        let pkt2 = make_discontinuity_packet(pid, 9, &[0xBB]);
+        let pkt3 = make_payload_packet(pid, 10, false, &[0xCC]);
+        let pkt4 = make_payload_packet(pid, 12, false, &[0xDD]);
+
+        let output = run_op(&[pkt1, pkt2, pkt3, pkt4]);
+        let ccs: Vec<u8> = output.iter().map(|p| p[3] & 0x0F).collect();
+        assert_eq!(ccs, [0, 9, 10, 11]);
+    }
+
+    #[test]
+    fn legal_duplicate_after_a_repaired_packet_stays_a_duplicate() {
+        let pid = Pid::new(0x0300);
+        let pkts = [
+            make_payload_packet(pid, 0, false, &[0xA0]),
+            make_payload_packet(pid, 1, false, &[0xA1]),
+            make_payload_packet(pid, 5, false, &[0xD5]),
+            make_payload_packet(pid, 5, false, &[0xD5]),
+            make_payload_packet(pid, 6, false, &[0xE6]),
+        ];
+        let output = run_op(&pkts);
+        let ccs: Vec<u8> = output.iter().map(|p| p[3] & 0x0F).collect();
+        assert_eq!(ccs, [0, 1, 2, 2, 3]);
+        assert_eq!(output[2][4..], output[3][4..]);
     }
 
     #[test]
