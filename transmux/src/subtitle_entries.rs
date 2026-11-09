@@ -8,7 +8,7 @@
 //! | `wvtt`   | WVTTSampleEntry             | `text`  | ISO/IEC 14496-30 §9.2 |
 //!
 //! Both follow the `SampleEntry` base (6 reserved bytes + `data_reference_index` u16,
-//! ISO/IEC 14496-12 §8.5.2) and carry no `VisualSampleEntry` or `AudioSampleEntry`
+//! ISO/IEC 14496-12:2026 §8.5.2) and carry no `VisualSampleEntry` or `AudioSampleEntry`
 //! sub-base — they are plain subtitle sample entries.
 //!
 //! `stpp` appends three null-terminated strings directly after the SampleEntry header;

@@ -219,7 +219,7 @@ fn protect_init_segment_emits_encv_sinf() {
     assert_eq!(&entry.box_type, b"encv", "sample entry renamed to encv");
 
     // `entry.data` is the encv box's body: the 78-byte fixed VisualSampleEntry
-    // fields (ISO/IEC 14496-12:2015 §12.1.3) come first, unwrapped (not
+    // fields (ISO/IEC 14496-12:2026 §12.1.3) come first, unwrapped (not
     // themselves a box) — child boxes (avcC, then our appended sinf) start
     // right after, matching `crate::cenc_decrypt::find_sinf_in_stsd`'s own
     // `VISUAL_SAMPLE_ENTRY_HDR` skip.

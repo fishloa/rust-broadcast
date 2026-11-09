@@ -1,4 +1,4 @@
-//! ISOBMFF Box/FullBox layer — ISO/IEC 14496-12:2015 §4.2.
+//! ISOBMFF Box/FullBox layer — ISO/IEC 14496-12:2026 §4.2.
 //!
 //! Types for parsing and serialising ISO Base Media File Format (ISOBMFF) box headers.
 //!
@@ -9,7 +9,7 @@
 //! - [`BoxRef`] — a borrowed view of a box: header + body bytes (a slice), for
 //!   generic size-driven walking.
 //! - [`box_iter`] — yield every top-level box in an ISOBMFF file by advancing
-//!   via `size`; unknown `type` values are skipped (ISO/IEC 14496-12:2015 §4.2 L1294).
+//!   via `size`; unknown `type` values are skipped (ISO/IEC 14496-12:2026 §4.2).
 //!
 //! # Wire layout (§4.2)
 //!
@@ -29,7 +29,7 @@
 //! ```
 //!
 //! All fields are big-endian. Sub-byte fields are packed MSB-first.
-//! See ISO/IEC 14496-12:2015 §4.2 (fulltext L1254–L1304).
+//! See ISO/IEC 14496-12:2026 §4.2.
 
 use crate::error::{Error, Result};
 use broadcast_common::error::{BufferTooShort, InvalidValue};
@@ -41,7 +41,7 @@ use core::fmt;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// The special size value `1` indicating a 64-bit `largesize` follows (ISO/IEC 14496-12:2015 §4.2).
+/// The special size value `1` indicating a 64-bit `largesize` follows (ISO/IEC 14496-12:2026 §4.2).
 pub const SIZE_INDICATES_LARGESIZE: u32 = 1;
 
 /// The special size value `0` indicating the box runs to the end of the file (§4.2).
@@ -50,10 +50,10 @@ pub const SIZE_TO_EOF: u32 = 0;
 /// Size of the fixed-size Box header fields: `size`(32) + `type`(32) = 8 bytes.
 pub const BOX_HEADER_MIN_SIZE: usize = 8;
 
-/// Byte range of the four-CC within a box's header (ISO/IEC 14496-12 §4.2).
+/// Byte range of the four-CC within a box's header (ISO/IEC 14496-12:2026 §4.2).
 const BOX_TYPE_RANGE: core::ops::Range<usize> = 4..8;
 
-/// Size of the 64-bit `largesize` field (ISO/IEC 14496-12:2015 §4.2).
+/// Size of the 64-bit `largesize` field (ISO/IEC 14496-12:2026 §4.2).
 pub const LARGESIZE_SIZE: usize = 8;
 
 /// Size of the 128-bit `usertype` field for `uuid` boxes (§4.2).
@@ -181,7 +181,7 @@ impl fmt::Display for BoxType {
 // BoxHeader
 // ---------------------------------------------------------------------------
 
-/// Parsed header of an ISOBMFF Box (ISO/IEC 14496-12:2015 §4.2).
+/// Parsed header of an ISOBMFF Box (ISO/IEC 14496-12:2026 §4.2).
 ///
 /// Carries the decoded size, type, and conditional largesize/usertype fields.
 /// All sizes are checked for consistency at parse time.
@@ -200,7 +200,7 @@ pub struct BoxHeader {
 
 impl BoxHeader {
     /// Whether the wire encoding used the 64-bit `largesize` form
-    /// (`size == 1` + an 8-byte length, ISO/IEC 14496-12:2015 §4.2).
+    /// (`size == 1` + an 8-byte length, ISO/IEC 14496-12:2026 §4.2).
     pub fn has_largesize(&self) -> bool {
         self.has_largesize
     }
@@ -237,7 +237,7 @@ impl BoxHeader {
     }
 
     /// The header for a box carrying `payload_len` bytes after its header
-    /// (ISO/IEC 14496-12:2015 §4.2): the compact 32-bit `size` when the whole
+    /// (ISO/IEC 14496-12:2026 §4.2): the compact 32-bit `size` when the whole
     /// box fits, else `size = 1` + 64-bit `largesize`, whose extra 8 header
     /// bytes count toward the size. The single place a box writer should
     /// derive its header length and `size` from.
@@ -304,7 +304,7 @@ fn force_largesize() -> bool {
 }
 
 /// Total on-wire length of a box whose compact-form (8-byte header) length is
-/// `compact_len` (ISO/IEC 14496-12:2015 §4.2): `compact_len` itself while it
+/// `compact_len` (ISO/IEC 14496-12:2026 §4.2): `compact_len` itself while it
 /// fits the 32-bit `size` field, else `compact_len` plus the 8-byte
 /// `largesize` the `size = 1` form adds. Every variable-size box writer's
 /// `serialized_len` ends with this, so it agrees with
@@ -320,7 +320,7 @@ pub(crate) fn box_len(compact_len: usize) -> usize {
 /// Encode a box header for a box of `total` bytes (header included) and
 /// return its length: the compact 8-byte `size`+`type` when `total` fits
 /// `u32`, else the 16-byte `size = 1` + `type` + 64-bit `largesize` form
-/// (ISO/IEC 14496-12:2015 §4.2). `total` must come from [`box_len`] (it
+/// (ISO/IEC 14496-12:2026 §4.2). `total` must come from [`box_len`] (it
 /// counts the 8 `largesize` bytes). Pure: touches no payload, so tests can
 /// exercise a multi-GiB `total` without allocating it.
 pub(crate) fn encode_box_header(fourcc: &[u8; 4], total: u64) -> ([u8; 16], usize) {
@@ -415,7 +415,7 @@ pub(crate) fn box_body<'a>(
 
 /// The total length of the child box at the front of `region`, header
 /// included: its `size`, the 64-bit `largesize` when `size == 1`, or the rest
-/// of `region` when `size == 0` (ISO/IEC 14496-12:2015 §4.2). `None` when the
+/// of `region` when `size == 0` (ISO/IEC 14496-12:2026 §4.2). `None` when the
 /// header is truncated or declares a length shorter than itself — the
 /// tolerant "stop walking here" signal the lenient child scanners use. Not
 /// clamped to `region`.
@@ -441,7 +441,7 @@ pub(crate) fn child_extent_in(region: &[u8]) -> Option<usize> {
 
 /// Length of the `size`+`type` (+ `largesize`) header at the front of the
 /// whole box `bytes`: 8, or 16 when `size == 1` announces the 64-bit
-/// `largesize` (ISO/IEC 14496-12:2015 §4.2). Typed box readers slice their
+/// `largesize` (ISO/IEC 14496-12:2026 §4.2). Typed box readers slice their
 /// body at this offset instead of a hardcoded 8, so a box written in the
 /// `largesize` form (see [`write_box_header`]) parses back (#1147). The usual
 /// `uuid` `usertype` is left to the callers that handle `uuid` boxes.
@@ -608,7 +608,7 @@ impl Serialize for BoxHeader {
 // FullBoxHeader
 // ---------------------------------------------------------------------------
 
-/// Extended header for a FullBox (ISO/IEC 14496-12:2015 §4.2 L1298): adds
+/// Extended header for a FullBox (ISO/IEC 14496-12:2026 §4.2): adds
 /// `version`(8) + `flags`(24) after the base [`BoxHeader`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -741,7 +741,7 @@ pub fn parse_box<'a>(bytes: &'a [u8]) -> Result<(BoxRef<'a>, usize)> {
 /// The walk is **size-driven**: each step advances by the box's reported `size`
 /// (or the remaining buffer for to-EOF boxes). Unknown box types are skipped —
 /// the iterator yields only parseable boxes. This matches the spec requirement
-/// (ISO/IEC 14496-12:2015 §4.2 L1294): "Unknown `type` → ignore + skip".
+/// (ISO/IEC 14496-12:2026 §4.2): "Unknown `type` → ignore + skip".
 ///
 /// # Examples
 ///

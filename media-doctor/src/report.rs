@@ -43,7 +43,7 @@ pub struct Location {
     /// issue was detected (0 if unknown / N/A).
     ///
     /// `u32`, not `u16`: a TS PID is 13 bits, but the same field also carries
-    /// a media **track id** for container checks, and ISO/IEC 14496-12
+    /// a media **track id** for container checks, and ISO/IEC 14496-12:2026
     /// `track_ID` is a 32-bit field. Narrowing it silently aliased every
     /// track id above 65535 onto a lower one.
     pub pid: u32,
@@ -68,7 +68,7 @@ impl Location {
         }
     }
 
-    /// A location on a container-level media track (ISO/IEC 14496-12 `track_ID`).
+    /// A location on a container-level media track (ISO/IEC 14496-12:2026 `track_ID`).
     pub fn at_track(packet: usize, track_id: TrackId) -> Self {
         Self {
             packet,

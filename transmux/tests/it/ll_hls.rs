@@ -499,7 +499,7 @@ fn part_media_matches_whole_segment_build() {
 // playlist (audit finding #5).
 // ===========================================================================
 
-/// `timescale` is a wire `u32` (`mdhd.timescale`, ISO/IEC 14496-12:2015
+/// `timescale` is a wire `u32` (`mdhd.timescale`, ISO/IEC 14496-12:2026
 /// §8.4.2) that `LlHlsSegmenter::with_part_target` does not itself validate —
 /// only `target_duration_secs`/`part_target_ms` are checked at construction.
 /// `part_target_secs`/the part- and segment-duration computations divide by

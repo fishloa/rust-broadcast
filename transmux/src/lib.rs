@@ -1,4 +1,4 @@
-//! `transmux` — an any-to-any media container muxing hub (ISO/IEC 14496-12,
+//! `transmux` — an any-to-any media container muxing hub (ISO/IEC 14496-12:2026,
 //! 13818-1, 23009-1, RFC 8216/3550, [MS-SSTR]).
 //!
 //! transmux demuxes any supported container into one neutral in-memory
@@ -80,7 +80,7 @@
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
 //!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
 //!   URI-reference resolution for DASH `BaseURL`/`SegmentTemplate`
-//!   (`base_url`, `std` only; WHATWG `url::Url::join`); the single ISO/IEC 14496-12 §8.8.7/§8.8.8 fragment
+//!   (`base_url`, `std` only; WHATWG `url::Url::join`); the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`frag_offsets`]).
 //!
@@ -118,10 +118,10 @@
 //!
 //! # Spec citations
 //!
-//! - **Box / FullBox**: ISO/IEC 14496-12:2015 §4.2 (fulltext L1254–L1304).
-//! - **Box order**: §6.2.3 (recommendations; only `ftyp` before variable-length and
+//! - **Box / FullBox**: ISO/IEC 14496-12:2026 §4.2.
+//! - **Box order**: §7.3.4 (recommendations; only `ftyp` before variable-length and
 //!   `moof` sequence_number are mandatory).
-//! - **Skip-unknown rule**: §4.2 L1294 — unknown type → ignore + skip via size.
+//! - **Skip-unknown rule**: §4.2 — unknown type → ignore + skip via size.
 //!
 //! # Feature flags
 //!

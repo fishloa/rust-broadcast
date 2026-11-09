@@ -1,9 +1,9 @@
 //! SegmentBase + `sidx`: the on-demand profile's segment ranges
-//! (ISO/IEC 23009-1 5.3.9.5.4; ISO/IEC 14496-12 8.16.3).
+//! (ISO/IEC 23009-1 5.3.9.5.4; ISO/IEC 14496-12:2026 8.14.3).
 //!
 //! The Representation is one file; `@indexRange` locates its `sidx` box. The
-//! sidx offsets are anchored at the first byte after the box (14496-12
-//! 8.16.3), so each reference's byte range follows from the box alone.
+//! sidx offsets are anchored at the first byte after the box (14496-12:2026
+//! 8.14.3), so each reference's byte range follows from the box alone.
 
 use broadcast_common::Parse;
 use transmux::SegmentIndexBox;

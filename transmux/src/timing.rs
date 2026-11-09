@@ -1,4 +1,4 @@
-//! Sample-timing and segment-index boxes — ISO/IEC 14496-12:2015 §8.6/§8.16.
+//! Sample-timing and segment-index boxes — ISO/IEC 14496-12:2026 §8.6/§8.14.
 //!
 //! Typed containers for:
 //!
@@ -8,7 +8,7 @@
 //! | `ctts`| CompositionOffsetBox     | §8.6.1.3   | Composition offset (v0 unsigned / v1 signed) |
 //! | `cslg`| CompositionToDecodeBox   | §8.6.1.4   | Composition–decode timeline shift summary (optional) |
 //! | `elst`| EditListBox              | §8.6.6     | Presentation→media timeline mapping  |
-//! | `sidx`| SegmentIndexBox          | §8.16.3    | Segment time/byte index for DASH/CMAF |
+//! | `sidx`| SegmentIndexBox          | §8.14.3    | Segment time/byte index for DASH/CMAF |
 //!
 //! All boxes are FullBoxes. Lengths/counts are computed from fields
 //! (no `self.raw`).
@@ -35,7 +35,7 @@ const ELST_TYPE: u32 = u32::from_be_bytes(*b"elst");
 const SIDX_TYPE: u32 = u32::from_be_bytes(*b"sidx");
 
 // ---------------------------------------------------------------------------
-// TimeToSampleBox — stts (ISO/IEC 14496-12:2015 §8.6.1.2)
+// TimeToSampleBox — stts (ISO/IEC 14496-12:2026 §8.6.1.2)
 // ---------------------------------------------------------------------------
 
 /// Entry in the stts decode-time delta table (§8.6.1.2).
@@ -48,7 +48,7 @@ pub struct SttsEntry {
     pub sample_delta: u32,
 }
 
-/// Time To Sample Box (`stts`) — ISO/IEC 14496-12:2015 §8.6.1.2.
+/// Time To Sample Box (`stts`) — ISO/IEC 14496-12:2026 §8.6.1.2.
 ///
 /// Maps decode-time deltas to samples. The sum of `sample_count * sample_delta`
 /// across all entries equals the track media duration.
@@ -130,7 +130,7 @@ impl Serialize for TimeToSampleBox {
 }
 
 // ---------------------------------------------------------------------------
-// CompositionOffsetBox — ctts (ISO/IEC 14496-12:2015 §8.6.1.3)
+// CompositionOffsetBox — ctts (ISO/IEC 14496-12:2026 §8.6.1.3)
 // ---------------------------------------------------------------------------
 
 /// Entry in the ctts composition-offset table.
@@ -150,12 +150,12 @@ pub struct CttsEntry {
     pub sample_offset: i32,
 }
 
-/// Composition Offset Box (`ctts`) — ISO/IEC 14496-12:2015 §8.6.1.3.
+/// Composition Offset Box (`ctts`) — ISO/IEC 14496-12:2026 §8.6.1.3.
 ///
-/// Present only when at least one sample has CT ≠ DT (§8.6.1.3 L3043).
+/// Present only when at least one sample has CT ≠ DT (§8.6.1.3).
 /// v0: all offsets are non-negative (DT ≤ CT).
 /// v1: offsets may be negative (earlier composition) or encode the
-/// non-output-sample sentinel (-2^31) (§8.6.1.3 L3009).
+/// non-output-sample sentinel (-2^31) (§8.6.1.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CompositionOffsetBox {
@@ -236,10 +236,10 @@ impl Serialize for CompositionOffsetBox {
 }
 
 // ---------------------------------------------------------------------------
-// CompositionToDecodeBox — cslg (ISO/IEC 14496-12:2015 §8.6.1.4)
+// CompositionToDecodeBox — cslg (ISO/IEC 14496-12:2026 §8.6.1.4)
 // ---------------------------------------------------------------------------
 
-/// Composition To Decode Box (`cslg`) — ISO/IEC 14496-12:2015 §8.6.1.4.
+/// Composition To Decode Box (`cslg`) — ISO/IEC 14496-12:2026 §8.6.1.4.
 ///
 /// Optional.  Present only when `ctts` version == 1 (signed offsets) or when
 /// the author wishes to optimise composition→decode timeline conversion.
@@ -368,16 +368,16 @@ impl Serialize for CompositionToDecodeBox {
 }
 
 // ---------------------------------------------------------------------------
-// EditListBox — elst (ISO/IEC 14496-12:2015 §8.6.6)
+// EditListBox — elst (ISO/IEC 14496-12:2026 §8.6.6)
 // ---------------------------------------------------------------------------
 
 /// Entry in the elst edit list.
 ///
 /// `segment_duration` is in the `mvhd` timescale (presentation timeline).
 /// `media_time` is in the media timescale (`mdhd.timescale`), or -1 for an
-/// empty edit (§8.6.6 L3392).
+/// empty edit (§8.6.6).
 /// `media_rate_integer` / `media_rate_fraction` = 0 for dwell, 1 for normal
-/// playback (§8.6.6 L3392).
+/// playback (§8.6.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EditListEntry {
@@ -387,7 +387,7 @@ pub struct EditListEntry {
     pub media_rate_fraction: i16,
 }
 
-/// Edit List Box (`elst`) — ISO/IEC 14496-12:2015 §8.6.6.
+/// Edit List Box (`elst`) — ISO/IEC 14496-12:2026 §8.6.6.
 ///
 /// Maps presentation timeline to media timeline. Absent → implicit 1:1 mapping.
 /// v0: fields are 32-bit; v1: fields are 64-bit.
@@ -535,10 +535,10 @@ impl Serialize for EditListBox {
 }
 
 // ---------------------------------------------------------------------------
-// SegmentIndexBox — sidx (ISO/IEC 14496-12:2015 §8.16.3)
+// SegmentIndexBox — sidx (ISO/IEC 14496-12:2026 §8.14.3)
 // ---------------------------------------------------------------------------
 
-/// A single reference entry in the Segment Index Box (§8.16.3).
+/// A single reference entry in the Segment Index Box (§8.14.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SidxReference {
@@ -553,20 +553,20 @@ pub struct SidxReference {
     pub subsegment_duration: u32,
     /// 1 = the referenced (sub)segment starts with a SAP.
     pub starts_with_sap: u8,
-    /// SAP type (1–6) per §8.16.3.
+    /// SAP type (1–6) per §8.14.3.
     pub sap_type: u8,
     /// SAP delta time (0 if starts_with_sap==1 and SAP_type==1)
     pub sap_delta_time: u32,
 }
 
-/// Segment Index Box (`sidx`) — ISO/IEC 14496-12:2015 §8.16.3.
+/// Segment Index Box (`sidx`) — ISO/IEC 14496-12:2026 §8.14.3.
 ///
 /// Provides a compact time/byte index for one reference stream within a segment.
 /// v0: earliest_presentation_time / first_offset are 32-bit.
 /// v1: earliest_presentation_time / first_offset are 64-bit.
 ///
-/// Anchor for offsets = first byte after this sidx box (§8.16.3 L6413).
-/// The sidx shall precede the material it documents (§8.16.3 L6467).
+/// Anchor for offsets = first byte after this sidx box (§8.14.3).
+/// The sidx shall precede the material it documents (§8.14.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SegmentIndexBox {
@@ -622,7 +622,7 @@ impl SegmentIndexBox {
             (ept, fo)
         };
         need_in(body, c + 4, "sidx reserved+count")?;
-        // ISO/IEC 14496-12 §8.16.3.2 (Table): `reserved(16) = 0` comes BEFORE
+        // ISO/IEC 14496-12:2026 §8.14.3.2 (Table): `reserved(16) = 0` comes BEFORE
         // `reference_count(16)`, not folded into it — before this fix, parse
         // read `reference_count` from the `reserved` field's own 2 bytes,
         // so every conformant sidx (`reserved == 0`) parsed as

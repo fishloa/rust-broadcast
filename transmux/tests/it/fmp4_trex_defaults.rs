@@ -1,5 +1,5 @@
 //! A fragment whose `trun` carries sample sizes only takes its sample
-//! durations (and flags) from the init movie's `trex`, as ISO/IEC 14496-12
+//! durations (and flags) from the init movie's `trex`, as ISO/IEC 14496-12:2026
 //! §8.8.7 says. Real GPAC output: `fixtures/dash/multiperiod-restart/`
 //! (`PROVENANCE`: `fixtures/dash/PROVENANCE.md`), whose first video fragment
 //! has `trun` flags 0x205 (data offset, first-sample flags, sample size) and

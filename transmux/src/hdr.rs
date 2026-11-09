@@ -8,10 +8,8 @@
 //!   `h265-d2-35-content-light-level-syntax.md` and
 //!   `h265-sei-payload-dispatch.md`.
 //! - Box layout: `private/specs-verified/mpeg/hdr/isobmff-mdcv-clli-boxes.md`.
-//!   ISO/IEC 14496-12 clause 12.1.5 is paywalled and not vendored; that file is
-//!   reconstructed from free sources (AOM AV1-ISOBMFF binding, FFmpeg, GPAC) and
-//!   checked against a GPAC-written fixture, so the box layout is high
-//!   confidence but not verbatim ISO.
+//!   The layouts also match ISO/IEC 14496-12:2026 clauses 12.1.6 (`clli`) and
+//!   12.1.7 (`mdcv`), `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`.
 //!
 //! The SEI payload and the box body are byte-identical (all big-endian), so one
 //! type serves both; the box header is added by the sample-entry writer.

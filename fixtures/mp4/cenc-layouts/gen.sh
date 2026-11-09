@@ -30,7 +30,7 @@ PY
 # (B) independent ENCRYPTOR: Bento4 mp4encrypt, CENC (aes-ctr, cenc scheme), both tracks, AVC NAL-aware subsamples.
 #     (Bento4 always writes default-base-is-moof; mfra in its output is stale)
 mp4encrypt --method MPEG-CENC --key 1:$KEY:$IV --key 2:$KEY:$IV --property 1:KID:$KID --property 2:KID:$KID clear.mp4 $T/enc-bento4.mp4
-# (C) re-address the correctly-encrypted file into every 14496-12 §8.8.7/§8.8.8 form (no sample byte changes)
+# (C) re-address the correctly-encrypted file into every 14496-12:2026 §8.8.7/§8.8.8 form (no sample byte changes)
 for lay in default base_moof omit; do for sp in none explicit implicit; do
   python3 relayout.py $T/enc-bento4.mp4 enc-${lay//_/-}-${sp}.mp4 --layout $lay --split $sp
 done; done

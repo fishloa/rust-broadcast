@@ -1,12 +1,12 @@
-//! Movie Fragment boxes - ISO/IEC 14496-12:2015 Â§8.8.
+//! Movie Fragment boxes - ISO/IEC 14496-12:2026 §8.8.
 //!
-//! Typed containers for fMP4 segment boxes: `moof` (Movie Fragment | Â§8.8.2)
-//! containing `mfhd` (Movie Fragment Header | Â§8.8.2) and one or more `traf`
-//! (Track Fragment | Â§8.8.3). Each `traf` contains `tfhd` (Track Fragment Header |
-//! Â§8.8.7), optional `tfdt` (Base Media Decode Time | Â§8.8.12),
-//! and one or more `trun` (Track Fragment Run | Â§8.8.8).
+//! Typed containers for fMP4 segment boxes: `moof` (Movie Fragment | §8.8.2)
+//! containing `mfhd` (Movie Fragment Header | §8.8.2) and one or more `traf`
+//! (Track Fragment | §8.8.3). Each `traf` contains `tfhd` (Track Fragment Header |
+//! §8.8.7), optional `tfdt` (Base Media Decode Time | §8.8.12),
+//! and one or more `trun` (Track Fragment Run | §8.8.8).
 //!
-//! Field presence in `tfhd` and `trun` is **flag-driven** (Â§8.8.7, Â§8.8.8):
+//! Field presence in `tfhd` and `trun` is **flag-driven** (§8.8.7, §8.8.8):
 //! the `flags` field of the FullBox header determines which optional fields appear
 //! on the wire. The serializer recomputes every size from the logical fields
 //! (no `self.raw`).
@@ -21,11 +21,11 @@ use broadcast_common::len::{need_in, need_out};
 const BOX_HEADER_SIZE: usize = 8;
 
 /// Size of the optional 64-bit `largesize` field that follows a `size` of 1
-/// (ISO/IEC 14496-12:2015 §4.2).
+/// (ISO/IEC 14496-12:2026 §4.2).
 const LARGESIZE_SIZE: usize = 8;
 const FULLBOX_EXTRA_SIZE: usize = 4;
 
-// tfhd flags — ISO/IEC 14496-12:2015 §8.8.7.1 (public: builders set these).
+// tfhd flags — ISO/IEC 14496-12:2026 §8.8.7.1 (public: builders set these).
 /// `tfhd` flag: `base_data_offset` field present.
 pub const TFHD_BASE_DATA_OFFSET_PRESENT: u32 = 0x000001;
 /// `tfhd` flag: `sample_description_index` field present.
@@ -42,7 +42,7 @@ pub const TFHD_DURATION_IS_EMPTY: u32 = 0x010000;
 /// `tfhd` flag: base offset is the containing `moof` (CMAF default).
 pub const TFHD_DEFAULT_BASE_IS_MOOF: u32 = 0x020000;
 
-// trun flags — ISO/IEC 14496-12:2015 §8.8.8.1 (public: builders set these).
+// trun flags — ISO/IEC 14496-12:2026 §8.8.8.1 (public: builders set these).
 /// `trun` flag: `data_offset` field present.
 pub const TRUN_DATA_OFFSET_PRESENT: u32 = 0x000001;
 /// `trun` flag: `first_sample_flags` field present.
@@ -56,9 +56,9 @@ pub const TRUN_SAMPLE_FLAGS_PRESENT: u32 = 0x000400;
 /// `trun` flag: per-sample `sample_composition_time_offset` present.
 pub const TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT: u32 = 0x000800;
 
-// `sample_flags` words (ISO/IEC 14496-12:2015 §8.8.3.1) shared by the fragment writers.
+// `sample_flags` words (ISO/IEC 14496-12:2026 §8.8.3.1) shared by the fragment writers.
 /// `sample_flags` for a sync sample (I-frame): `sample_depends_on = 2` (does not
-/// depend on others), `sample_is_non_sync_sample = 0` — ISO/IEC 14496-12:2015
+/// depend on others), `sample_is_non_sync_sample = 0` — ISO/IEC 14496-12:2026
 /// §8.8.3.1. The one copy every fragment builder writes (audit r05-O6).
 pub(crate) const SAMPLE_FLAGS_SYNC: u32 = 0x0200_0000;
 /// `sample_flags` for a non-sync sample: `sample_depends_on = 1`,
@@ -465,7 +465,7 @@ pub struct TrunSample {
     pub sample_duration: Option<u32>,
     pub sample_size: Option<u32>,
     pub sample_flags: Option<u32>,
-    /// `trun.sample_composition_time_offset` (ISO/IEC 14496-12:2015 §8.8.8.2):
+    /// `trun.sample_composition_time_offset` (ISO/IEC 14496-12:2026 §8.8.8.2):
     /// an *unsigned* 32-bit value under version 0, a *signed* one under
     /// version 1. Held as `i64` so a legal v0 offset of 2^31 or more survives
     /// instead of wrapping negative — which also wrongly forced such a box to
@@ -542,7 +542,7 @@ impl TrackFragmentRunBox {
         let has_flg = tr_flags & TRUN_SAMPLE_FLAGS_PRESENT != 0;
         let has_cto = tr_flags & TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT != 0;
 
-        // Each present per-sample field is a 32-bit word (ISO/IEC 14496-12
+        // Each present per-sample field is a 32-bit word (ISO/IEC 14496-12:2026
         // §8.8.8.2); bound the wire-declared `sample_count` against the
         // remaining buffer before trusting it for `Vec::with_capacity` (#983).
         // The loop below still walks the raw (unbounded) `sc` — each iteration
@@ -843,7 +843,7 @@ impl Serialize for TrackFragmentRunBox {
 ///
 /// `box_type` is the wire four-CC and `data` the payload after the 8-byte
 /// `size`+`type` header — which includes the 16-byte `usertype` of a `uuid`
-/// child (ISO/IEC 14496-12:2015 §4.2): an ISMV `moov`/`trak` uuid, a Smooth
+/// child (ISO/IEC 14496-12:2026 §4.2): an ISMV `moov`/`trak` uuid, a Smooth
 /// `tfxd`/`tfrf`, or a `uuid`-form `pssh`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -855,7 +855,7 @@ pub struct OpaqueChild {
     /// [`OpaqueChild::largesize`]).
     pub data: Vec<u8>,
     /// Whether the wire used the `size == 1` + 64-bit `largesize` form
-    /// (ISO/IEC 14496-12:2015 §4.2), so the round trip re-emits it.
+    /// (ISO/IEC 14496-12:2026 §4.2), so the round trip re-emits it.
     pub largesize: bool,
     /// Whether the wire used the `size == 0` form ("extends to the end of the
     /// enclosing container", §4.2). Only written back when this child is the
@@ -952,8 +952,8 @@ impl OpaqueChild {
 
 /// One child of a [`TrackFragmentBox`], in wire order.
 ///
-/// A `traf` carries `tfhd`/`tfdt`/`trun` *and* (per ISO/IEC 14496-12:2015
-/// §6.2.3) optional `sbgp`/`sgpd`/`subs`/`saiz`/`saio`/`meta`. This crate
+/// A `traf` carries `tfhd`/`tfdt`/`trun` *and* (per ISO/IEC 14496-12:2026
+/// §6.2, Table 2) optional `sbgp`/`sgpd`/`subs`/`saiz`/`saio`/`meta`. This crate
 /// models only the first three; [`TrackFragmentBox::order`] keeps every child
 /// in the sequence it appeared on the wire, so a parse → serialize — and any
 /// rewrite such as [`protect_media_segment`] — reproduces the file's own
@@ -1276,7 +1276,7 @@ impl Serialize for MovieFragmentBox {
 
 // ---------------------------------------------------------------------------
 // CENC movie-fragment protection (`senc`/`saiz`/`saio`) — ISO/IEC 23001-7
-// §12.3, ISO/IEC 14496-12:2015 §8.7.8-9 — issue #564 Task 3 (muxer emission).
+// §12.3, ISO/IEC 14496-12:2026 §8.7.8-9 — issue #564 Task 3 (muxer emission).
 //
 // `senc`/`saiz`/`saio` are deliberately **not** modelled as fields on
 // [`TrackFragmentBox`]: every call site that builds one (e.g.
@@ -2226,7 +2226,7 @@ mod tests {
 
     // ── r05-W11: a traf with no trun, and unknown children preserved ──────
 
-    /// ISO/IEC 14496-12:2015 `traf` declarations — `trun` is optional (the
+    /// ISO/IEC 14496-12:2026 `traf` declarations — `trun` is optional (the
     /// syntax is `tfhd` then a `trun` *loop*), and §8.8.7.1's
     /// `duration-is-empty` flag (`0x010000`) exists to declare a fragment
     /// with no samples for one track of a multi-track `moof`. The parser used

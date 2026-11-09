@@ -3,7 +3,7 @@
 use libfuzzer_sys::fuzz_target;
 
 // Fuzz the CENC per-sample aux-info box parsers — `senc` (ISO/IEC 23001-7
-// §12.3), `saiz` (ISO/IEC 14496-12 §8.7.8) and `saio` (§8.7.9).
+// §12.3), `saiz` (ISO/IEC 14496-12:2026 §8.7.8) and `saio` (§8.7.9).
 //
 // These read third-party media (a protected fMP4 arriving over the network), and
 // every one of them takes a sample/entry count straight off the wire before

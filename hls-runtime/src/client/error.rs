@@ -62,7 +62,7 @@ pub enum Error {
     },
 
     /// A fetched Part/Segment answered with bytes that are not media for its
-    /// container: for MPEG-TS (ISO/IEC 13818-1 §2.4.3.2) no sync-byte lattice, for ISO BMFF (ISO/IEC 14496-12 §8.8.4) no complete
+    /// container: for MPEG-TS (ISO/IEC 13818-1 §2.4.3.2) no sync-byte lattice, for ISO BMFF (ISO/IEC 14496-12:2026 §8.8.4) no complete
     /// `moof` followed by its `mdat`. The resource is marked unrequested, so a
     /// retry ([`crate::client::HlsClient::retry_resource`] or the next
     /// playlist) fetches it again. Structurally valid media that yields no

@@ -455,7 +455,7 @@ Parses and serializes HLS playlists, including Low-Latency HLS (parts, preload h
 
 Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF and ADTS/MP3/Annex B elementary streams. Every prober runs and scores structural evidence; a near-tie reports `Ambiguous`, and `Insufficient` (read more) is distinct from `Unknown` (stop).
 
-- **Standards:** Uses layouts from ISO/IEC 13818-1, ISO/IEC 14496-12, RFC 8794/9559 (EBML/Matroska), SMPTE ST 377-1 and others; implements no standard of its own
+- **Standards:** Uses layouts from ISO/IEC 13818-1, ISO/IEC 14496-12:2026, RFC 8794/9559 (EBML/Matroska), SMPTE ST 377-1 and others; implements no standard of its own
 - **Cargo description:** Robust media container-format detection — MPEG-2 TS (188/192/204/208 stride + phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF, and elementary streams.
 - **Version (in-tree):** 0.3.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
@@ -466,7 +466,7 @@ Identifies MPEG-2 TS (any of 188/192/204/208-byte strides at any phase), ISOBMFF
 
 Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxes it to any supported output, so every input-output pair composes (WebM VP8/Vorbis tracks are the documented exception). Also: CENC/CBCS encrypt and decrypt, HLS SAMPLE-AES, RTP/RTCP, IR transforms (rebase, splice/SSAI, trick-play), an fMP4/CMAF conformance validator and a `transmux` CLI (feature `cli`). It parses codec configuration headers only and never decodes or encodes samples. XML manifest paths (DASH, Smooth, PlayReady) need `std`.
 
-- **Standards:** ISO/IEC 14496-12 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
+- **Standards:** ISO/IEC 14496-12:2026 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.30.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`mp4-emsg`](#mp4-emsg), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtp-packet`](#rtp-packet)

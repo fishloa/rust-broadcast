@@ -183,7 +183,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         // per `traf`).
         let mdats = crate::frag_offsets::mdat_ranges(input);
         // Fragments waiting for their `mdat`. A queue, not a single slot:
-        // `moof`, `moof`, `mdat` is legal (ISO/IEC 14496-12:2015 §8.8.4 allows
+        // `moof`, `moof`, `mdat` is legal (ISO/IEC 14496-12:2026 §8.8.4 allows
         // any number of `moof`s, and CMAF writes one per track for
         // CMF2/multi-track segments), and a single slot silently dropped every
         // fragment before the last (audit r05-W26). Each `mdat` resolves the
@@ -277,7 +277,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                     spec: b.spec,
                     samples: b.samples,
                     // First-fragment tfdt baseMediaDecodeTime; 0 when the stream
-                    // carried no tfdt at all (ISO/IEC 14496-12:2015 §8.8.12).
+                    // carried no tfdt at all (ISO/IEC 14496-12:2026 §8.8.12).
                     start_decode_time: b.start_decode_time.unwrap_or(0),
                     encryption: None,
                 })
@@ -294,7 +294,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
     }
 }
 
-/// Fill what a `tfhd` leaves out from the track's `trex` (ISO/IEC 14496-12
+/// Fill what a `tfhd` leaves out from the track's `trex` (ISO/IEC 14496-12:2026
 /// §8.8.3, §8.8.7): a sample's duration, size and flags default to the `tfhd`
 /// value, and when that is absent too, to the `trex` of the init movie.
 ///
@@ -321,7 +321,7 @@ fn apply_trex_defaults(moof: &mut MovieFragmentBox, trex: &[crate::init_segment:
 }
 
 /// Resolve a fragment's samples into `builders`, slicing coded bytes from the
-/// file per ISO/IEC 14496-12 §8.8.7 / §8.8.8.
+/// file per ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8.
 ///
 /// The addressing (and its bounds) live in [`crate::frag_offsets`], shared with
 /// [`crate::cenc_decrypt::CencDecryptor`] so the two cannot drift.
@@ -363,7 +363,7 @@ fn absorb_traf(
             return Ok(());
         };
         // `tfdt` is authoritative for **every** fragment that carries one, not
-        // just the first (ISO/IEC 14496-12:2015 §8.8.12: it *is* the absolute
+        // just the first (ISO/IEC 14496-12:2026 §8.8.12: it *is* the absolute
         // decode time of the fragment's first sample). Seeding once and then
         // pure-summing `trun` durations silently assumes the source is gapless;
         // for a discontinuous or gapped fMP4 (a DVR recording spliced across a
@@ -475,7 +475,7 @@ impl Package for CmafMux {
 
         // Each track's single-segment fragment is anchored at the track's
         // absolute decode time (its `tfdt` baseMediaDecodeTime, ISO/IEC
-        // 14496-12:2015 §8.8.12) — the anchor a demuxer populated and the
+        // 14496-12:2026 §8.8.12) — the anchor a demuxer populated and the
         // `crate::rebase` transforms condition.
         let fragments: Vec<FragmentTrackData<'_>> = media
             .tracks
@@ -778,7 +778,7 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
     let config = codec_config_from_entry(entry)?;
     let spec = TrackSpec::new(track_id, timescale, config);
     // Overlay container-level display geometry (pasp / colr nclx) from the
-    // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2015
+    // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2026
     // §12.1.4 (pasp) / §12.1.5 (colr). AVC/HEVC entries only; see
     // `overlay_sample_entry_display`.
     let spec = match entry {
@@ -792,11 +792,11 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
 /// Overlay container-level display geometry (a `pasp` / `colr nclx` box found
 /// in an AVC/HEVC sample entry) onto an SPS-derived [`DisplayGeometry`].
 ///
-/// ISO/IEC 14496-12:2015 §12.1.4 (`pasp`) / §12.1.5 (`colr`): `colr nclx`
+/// ISO/IEC 14496-12:2026 §12.1.4 (`pasp`) / §12.1.5 (`colr`): `colr nclx`
 /// overrides the bitstream colour description (§12.1.5.1); `pasp` fills in an
-/// unspecified VUI sample aspect ratio. Which of two *specified* sample aspect
-/// ratios wins is not defined by the text available here (the §12.1.4.1
-/// definition is not transcribed), so on a disagreement the VUI SAR is kept.
+/// unspecified VUI sample aspect ratio. On a disagreement between two
+/// *specified* sample aspect ratios the VUI SAR is kept, although §12.1.4.1 gives
+/// `pasp` precedence over codec-level structures (issue #1909).
 /// Returns the input unchanged when neither box applies.
 pub(crate) fn overlay_sample_entry_geometry(
     display: Option<DisplayGeometry>,
@@ -1050,7 +1050,7 @@ pub(crate) fn skipped_track(err: Error, track_id: crate::TrackId) -> SkippedTrac
 
 /// The real sampling rate of an audio sample entry.
 ///
-/// Prefers a `SamplingRateBox` (`srat`, ISO/IEC 14496-12 §12.2.3.1) in the
+/// Prefers a `SamplingRateBox` (`srat`, ISO/IEC 14496-12:2026 §12.2.3.1) in the
 /// entry's config children over the entry's 16.16 fixed-point `samplerate`
 /// field: the box is present precisely when the rate does not fit that field
 /// (rates above 65535 Hz — 96 kHz, 192 kHz, …), and it "overrides the
@@ -1076,7 +1076,7 @@ fn entry_sampling_rate(samplerate_16_16: u32, config_boxes: &[OpaqueBox]) -> u32
 /// [`Error::UnsupportedSampleEntry`], propagated by [`Fmp4Demux`] rather than
 /// silently skipping the track (media plane step 2d: codec coverage lands
 /// *before* this strictness, so `stpp`/`wvtt`/`ac-4` — which used to hit this
-/// path — no longer do) (ISO/IEC 14496-12:2015 §8.5.2 sample entries; -15
+/// path — no longer do) (ISO/IEC 14496-12:2026 §8.5.2 sample entries; -15
 /// §5.4/§8.4 for AVC/HEVC; ISO/IEC 23008-3 §20 for MPEG-H `mha*`; ISO/IEC
 /// 14496-30 §7.2/§9.2 for `stpp`/`wvtt`; ETSI TS 103 190-2 Annex E for `ac-4`).
 fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
@@ -1425,7 +1425,7 @@ mod tests {
     /// this workspace carries a *gapped* fMP4 (every CMAF capture here is
     /// contiguous), so the two fragments are built with this crate's own
     /// [`build_init_segment`] / [`build_media_segment`] — i.e. the exact
-    /// `moof`/`tfdt`/`trun` layout the muxer emits (ISO/IEC 14496-12 §8.8),
+    /// `moof`/`tfdt`/`trun` layout the muxer emits (ISO/IEC 14496-12:2026 §8.8),
     /// not hand-rolled bytes — with the second fragment's
     /// `base_media_decode_time` deliberately advanced past the running sum of
     /// the first fragment's `trun` durations.

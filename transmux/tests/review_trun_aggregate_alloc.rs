@@ -2,7 +2,7 @@
 //! (`MAX_ZERO_WIDTH_TRUN_SAMPLES`) is PER `trun`, so it does not bound a
 //! `moof`. A zero-width `trun` (flags 0) is 16 bytes on the wire and may
 //! legally declare 2^20 samples = 2^20 x 40-byte `TrunSample`s = 40 MiB. A
-//! `traf` may carry any number of `trun`s (ISO/IEC 14496-12 §8.8.8: "zero or
+//! `traf` may carry any number of `trun`s (ISO/IEC 14496-12:2026 §8.8.8: "zero or
 //! more"), so N x 16 input bytes still cost N x 40 MiB: 16 `trun`s (256 bytes)
 //! allocate ~640 MiB+. FAILS on the code under review.
 

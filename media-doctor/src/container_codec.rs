@@ -114,7 +114,7 @@ fn nal_length_size(config: &CodecConfig) -> Option<usize> {
 
 fn check_media(media: &Media, report: &mut Report) {
     for track in &media.tracks {
-        // `track_ID` is a full 32-bit field (ISO/IEC 14496-12 §8.3.2) — never
+        // `track_ID` is a full 32-bit field (ISO/IEC 14496-12:2026 §8.3.2) — never
         // narrowed, or every id above 65535 aliases onto a lower one.
         let track_id = track.track_id();
         // Length-prefixed NAL framing (ISO/IEC 14496-15:2017 §4.3.2, §4.3.3) only

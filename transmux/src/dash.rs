@@ -217,7 +217,7 @@ broadcast_common::impl_spec_display!(Addressing);
 /// A segment's `SegmentTimeline` start time (`S@t`, and the `$Time$`
 /// substitution) is the cumulative sum of the *preceding* entries in this
 /// list — exactly a segment's `tfdt.baseMediaDecodeTime`
-/// (ISO/IEC 14496-12:2015 §8.8.12) whenever the representation's decode
+/// (ISO/IEC 14496-12:2026 §8.8.12) whenever the representation's decode
 /// timeline starts at zero, which every segmenter in this crate
 /// ([`crate::segmenter::Segmenter`], [`crate::ll_dash::LlSegmenter`])
 /// guarantees.

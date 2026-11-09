@@ -1,9 +1,9 @@
-//! Progressive (single-file, non-fragmented) MP4 packager — ISO/IEC 14496-12:2015 §8.
+//! Progressive (single-file, non-fragmented) MP4 packager — ISO/IEC 14496-12:2026 §8.
 //!
 //! [`ProgressiveMux`] muxes the crate's [`Media`] IR into one **non-fragmented**
 //! `.mp4` file: an `ftyp`, a single `moov` carrying per-track `trak` boxes with
 //! the *full* sample tables (`stbl`: `stsd`/`stts`/`ctts`/`stsc`/`stsz`/
-//! `stco`|`co64`/`stss`, ISO/IEC 14496-12:2015 §8.5–§8.7), and a single `mdat`
+//! `stco`|`co64`/`stss`, ISO/IEC 14496-12:2026 §8.5–§8.7), and a single `mdat`
 //! holding every track's sample data concatenated. This is the VOD/download
 //! counterpart to the fragmented [`crate::media::CmafMux`].
 //!
@@ -56,11 +56,11 @@ const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;
 const FTYP_MAJOR_BRAND: [u8; 4] = *b"isom";
 /// `ftyp` minor version.
 const FTYP_MINOR_VERSION: u32 = 512;
-/// The `mdat` box type (ISO/IEC 14496-12:2015 §8.1.1).
+/// The `mdat` box type (ISO/IEC 14496-12:2026 §8.1.1).
 const MDAT_TYPE: [u8; 4] = *b"mdat";
 /// The `default_sample_description_index` referenced by the single `stsd` entry.
 const SAMPLE_DESCRIPTION_INDEX: u32 = 1;
-/// `elst` `media_time` of an empty edit (ISO/IEC 14496-12:2015 §8.6.6).
+/// `elst` `media_time` of an empty edit (ISO/IEC 14496-12:2026 §8.6.6).
 const ELST_EMPTY_EDIT: i64 = -1;
 /// `elst` `media_rate_integer` for normal-speed playback (§8.6.6).
 const ELST_NORMAL_RATE: i16 = 1;
@@ -104,7 +104,7 @@ fn decode_deltas(samples: &[Sample], times: &[i64]) -> Vec<u32> {
 }
 
 /// Run-length code a per-sample decode-delta list into `stts` entries
-/// (ISO/IEC 14496-12:2015 §8.6.1.2): consecutive equal deltas collapse into a
+/// (ISO/IEC 14496-12:2026 §8.6.1.2): consecutive equal deltas collapse into a
 /// single `(sample_count, sample_delta)` run.
 fn build_stts(deltas: &[u32]) -> TimeToSampleBox {
     let mut entries: Vec<SttsEntry> = Vec::new();
@@ -702,7 +702,7 @@ struct TrackTiming {
 
 /// Build every track's [`TrackTiming`] over one origin common to all tracks
 /// (issue #1020): each track's decode times are its samples' own `dts`, and
-/// an `elst` (ISO/IEC 14496-12:2015 §8.6.6) delays a track that starts after
+/// an `elst` (ISO/IEC 14496-12:2026 §8.6.6) delays a track that starts after
 /// the earliest one by an empty edit and skips its composition lead-in, so the
 /// inter-track offsets of the IR survive into the file.
 fn track_timings(media: &Media, movie_timescale: u32) -> Vec<TrackTiming> {
@@ -811,7 +811,7 @@ fn track_timings(media: &Media, movie_timescale: u32) -> Vec<TrackTiming> {
 /// header boxes, not in `trun`s).
 ///
 /// A header box's version selects the width of its `duration` field — 32 bits
-/// at version 0, 64 at version 1 (ISO/IEC 14496-12:2015 §8.2.2.2, §8.3.2.2,
+/// at version 0, 64 at version 1 (ISO/IEC 14496-12:2026 §8.2.2.2, §8.3.2.2,
 /// §8.4.2.2). `build_init_segment` writes version-0 headers, so a duration
 /// past `u32::MAX` used to be truncated by the v0 serializer's `as u32`: a
 /// 10 MHz track (a Smooth-sourced timeline, `smooth_parse`) wrapped after
@@ -849,7 +849,7 @@ fn apply_track_timings(moov: &mut MovieBox, timings: &[TrackTiming]) {
 }
 
 /// Whether a header box's `duration` fits the 32-bit version-0 field
-/// (ISO/IEC 14496-12:2015 §8.2.2.2).
+/// (ISO/IEC 14496-12:2026 §8.2.2.2).
 fn duration_fits_v0(duration: u64) -> bool {
     duration <= u64::from(u32::MAX)
 }
@@ -858,7 +858,7 @@ fn duration_fits_v0(duration: u64) -> bool {
 mod tests {
     use super::*;
 
-    /// ISO/IEC 14496-12:2015 §4.2: a box whose size does not fit 32 bits is
+    /// ISO/IEC 14496-12:2026 §4.2: a box whose size does not fit 32 bits is
     /// written `size = 1` + 64-bit `largesize`, a 16-byte header. Driven with a
     /// synthetic payload length, no 4 GiB allocation.
     /// The interleave must keep each track's own chunks in sample order even

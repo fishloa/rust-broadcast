@@ -5,7 +5,7 @@ use libfuzzer_sys::fuzz_target;
 
 // Fuzz the `stsd` sample-entry readers (every codec the dispatcher knows) in
 // BOTH box-header forms. A box may carry `size = 1` + a 64-bit `largesize`
-// (ISO/IEC 14496-12 §4.2), which moves its body from offset 8 to 16; a reader
+// (ISO/IEC 14496-12:2026 §4.2), which moves its body from offset 8 to 16; a reader
 // whose minimum-length guard still assumed 8 bytes indexed past a short
 // `largesize` body and PANICKED on a hostile init segment (#1147 follow-up).
 //

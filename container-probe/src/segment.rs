@@ -6,7 +6,7 @@
 //!
 //! - [`ts_structure`]: MPEG-2 TS (ISO/IEC 13818-1 §2.4.3.2, 188-byte packets, `sync_byte` 0x47
 //!   first) at some packet phase.
-//! - [`media_fragment`]: a complete `moof` followed by its complete `mdat` (ISO/IEC 14496-12
+//! - [`media_fragment`]: a complete `moof` followed by its complete `mdat` (ISO/IEC 14496-12:2026
 //!   §8.8.4, §8.1.1), what every fMP4/CMAF media segment or part carries.
 //! - [`progressive_movie`]: a `moov` with no `moof`, a progressive MP4 rather than a fragmented one.
 
@@ -16,7 +16,7 @@ use crate::isobmff::{
 };
 use crate::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
-/// The `uuid` box type, whose header carries a 16-byte extended type (ISO/IEC 14496-12 §4.2).
+/// The `uuid` box type, whose header carries a 16-byte extended type (ISO/IEC 14496-12:2026 §4.2).
 const TYPE_UUID: [u8; 4] = *b"uuid";
 /// Length of the extended type following a `uuid` box header (§4.2).
 const UUID_USERTYPE_LEN: usize = 16;
@@ -50,7 +50,7 @@ pub fn ts_structure(bytes: &[u8]) -> bool {
 }
 
 /// `true` when `bytes` holds a complete `moof` box followed, anywhere later at the top level, by a
-/// complete `mdat` box (ISO/IEC 14496-12 §8.8.4, §8.1.1). Any leading box (`styp`, `prft`, `emsg`,
+/// complete `mdat` box (ISO/IEC 14496-12:2026 §8.8.4, §8.1.1). Any leading box (`styp`, `prft`, `emsg`,
 /// `free`, `sidx`) is skipped; a malformed or truncated box ends the walk with `false`.
 pub fn media_fragment(bytes: &[u8]) -> bool {
     let mut fragment = false;
@@ -114,7 +114,7 @@ impl Iterator for TopLevelBoxes<'_> {
 
 /// The type and total length of the box at the start of `bytes` (a to-EOF box runs to the end of
 /// `bytes`), or `None` when its header is truncated or inconsistent or its payload is not all
-/// present (ISO/IEC 14496-12 §4.2).
+/// present (ISO/IEC 14496-12:2026 §4.2).
 fn next_box(bytes: &[u8]) -> Option<([u8; 4], usize)> {
     if bytes.len() < BOX_HEADER_MIN_SIZE {
         return None;
