@@ -1,4 +1,3 @@
-mod audit_g;
 mod cc_repair;
 #[cfg(feature = "cli")]
 mod cli_keep_pids;

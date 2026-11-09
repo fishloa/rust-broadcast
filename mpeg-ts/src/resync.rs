@@ -664,4 +664,69 @@ mod tests {
             assert_eq!(e, o, "packet {i} mismatch vs oracle");
         }
     }
+
+    #[test]
+    fn finish_emits_the_aligned_packets_after_a_corrupt_sync_byte() {
+        let mut input = Vec::new();
+        for tag in 1u8..=10 {
+            input.extend_from_slice(&ts_packet(tag));
+        }
+        let mut bad = ts_packet(11);
+        bad[0] = 0x00;
+        input.extend_from_slice(&bad);
+        for tag in 12u8..=14 {
+            input.extend_from_slice(&ts_packet(tag));
+        }
+
+        let mut r = TsResync::new();
+        let mut packets = r.feed(&input);
+        assert_eq!(
+            packets.len(),
+            10,
+            "three packets cannot lock before the end"
+        );
+        packets.extend(r.finish());
+        let tags: Vec<u8> = packets.iter().map(|p| p[1]).collect();
+        assert_eq!(tags, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14]);
+        let stats = r.stats();
+        assert_eq!(stats.packets, 13);
+        assert_eq!(stats.dropped_bytes, TS_PACKET_SIZE as u64);
+        let losses = r.take_losses();
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].dropped_bytes, TS_PACKET_SIZE as u64);
+        assert!(!losses[0].truncated_tail);
+    }
+
+    #[test]
+    fn finish_emits_a_stream_shorter_than_the_lock_window() {
+        let packets: Vec<_> = (1u8..=4).map(ts_packet).collect();
+        let mut r = TsResync::new();
+        assert!(r.feed(&concat_ts(&packets)).is_empty());
+        assert_eq!(r.finish(), packets);
+        assert_eq!(r.stride(), Some(PacketStride::Ts188));
+        assert_eq!(r.stats().dropped_bytes, 0);
+    }
+
+    #[test]
+    fn finish_emits_a_short_rs204_stream_stripped() {
+        let mut stream = Vec::new();
+        for tag in 1u8..=3 {
+            stream.extend_from_slice(&rs_packet(tag, 0xFF));
+        }
+        let mut r = TsResync::new();
+        assert!(r.feed(&stream).is_empty());
+        let packets = r.finish();
+        assert_eq!(packets, [ts_packet(1), ts_packet(2), ts_packet(3)]);
+        assert_eq!(r.stride(), Some(PacketStride::Rs204));
+    }
+
+    #[test]
+    fn finish_does_not_lock_onto_a_stray_sync_byte_without_a_whole_packet() {
+        let mut junk = vec![0x00u8; 100];
+        junk[40] = TS_SYNC_BYTE;
+        let mut r = TsResync::new();
+        assert!(r.feed(&junk).is_empty());
+        assert!(r.finish().is_empty());
+        assert_eq!(r.stats().dropped_bytes, 100);
+    }
 }
