@@ -175,7 +175,7 @@ mod tests {
     use super::*;
     use broadcast_common::Serialize;
     use scte35_splice::SpliceInfoSection;
-    use scte35_splice::commands::SpliceInsert;
+    use scte35_splice::commands::{SpliceInsert, SpliceInsertComponent};
     use scte35_splice::time::{PTS_MODULUS, SpliceTime};
 
     fn splice_insert_section(pts_time: Option<u64>, out_of_network: bool) -> alloc::vec::Vec<u8> {
@@ -279,5 +279,96 @@ mod tests {
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).unwrap();
         assert_eq!(check_section(&buf, 0), Scte35Sanity::NotSpliceInsert);
+    }
+
+    fn bytes(section: &SpliceInfoSection<'_>) -> alloc::vec::Vec<u8> {
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).unwrap();
+        buf
+    }
+
+    #[test]
+    fn cancelled_splice_insert_is_cancelled_not_immediate() {
+        let si = SpliceInsert {
+            splice_event_id: 7,
+            splice_event_cancel_indicator: true,
+            ..SpliceInsert::default()
+        };
+        let b = bytes(&SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            &[],
+        ));
+        assert_eq!(check_section(&b, 90_000), Scte35Sanity::Cancelled);
+    }
+
+    #[test]
+    fn component_mode_cue_is_judged_by_its_component_times() {
+        let component_mode = |tags_and_pts: &[(u8, u64)]| {
+            let si = SpliceInsert {
+                splice_event_id: 8,
+                out_of_network_indicator: true,
+                program_splice_flag: false,
+                splice_immediate_flag: false,
+                components: tags_and_pts
+                    .iter()
+                    .map(|&(component_tag, pts)| SpliceInsertComponent {
+                        component_tag,
+                        splice_time: Some(SpliceTime::with_pts(pts)),
+                    })
+                    .collect(),
+                ..SpliceInsert::default()
+            };
+            bytes(&SpliceInfoSection::new_clear(
+                AnyCommand::SpliceInsert(si),
+                &[],
+            ))
+        };
+        let now = 90_000 * 10;
+        assert_eq!(
+            check_section(&component_mode(&[(1, 90_000 * 3)]), now),
+            Scte35Sanity::InPast
+        );
+        assert_eq!(
+            check_section(&component_mode(&[(1, now + 90_000), (2, 90_000 * 3)]), now),
+            Scte35Sanity::InPast,
+            "one elapsed component makes the cue late"
+        );
+        assert_eq!(
+            check_section(
+                &component_mode(&[(1, now + 90_000), (2, now + 180_000)]),
+                now
+            ),
+            Scte35Sanity::InFuture
+        );
+    }
+
+    #[test]
+    fn immediate_flag_wins_over_any_time_field() {
+        let si = SpliceInsert {
+            splice_event_id: 9,
+            program_splice_flag: true,
+            splice_immediate_flag: true,
+            ..SpliceInsert::default()
+        };
+        let b = bytes(&SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            &[],
+        ));
+        assert_eq!(check_section(&b, 0), Scte35Sanity::Immediate);
+    }
+
+    #[test]
+    fn well_formed_encrypted_section_is_encrypted_not_malformed() {
+        use broadcast_common::Parse;
+        let mut s =
+            SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(SpliceInsert::default()), &[]);
+        s.encrypted_packet = true;
+        s.clear = None;
+        let payload = [0x5Au8; 24];
+        s.encrypted_payload = Some(&payload);
+        s.encrypted_splice_command_length = Some(20);
+        let b = bytes(&s);
+        assert!(SpliceInfoSection::parse(&b).is_ok(), "fixture must parse");
+        assert_eq!(check_section(&b, 0), Scte35Sanity::Encrypted);
     }
 }
