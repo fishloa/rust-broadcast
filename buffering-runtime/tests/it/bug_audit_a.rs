@@ -154,10 +154,11 @@ fn pcr_less_second_track_joining_behind_is_not_a_discontinuity() {
 fn restored_stall_memory_keeps_its_age_when_the_clock_starts_small() {
     use buffering_runtime::StallMemorySnapshot;
     let peak = 1_000_000;
-    let age = 59_000_000;
+    let age = 60_000_000;
     let seed = StallMemorySnapshot::new(peak, age);
     let mut c = BufferController::new(ControllerConfig::default(), Some(seed)).unwrap();
-    // first clock reading 1 s; 30 s later the peak is 90 s old: 30 s into the 60 s decay
+    // anchored at the first clock reading (1 s) as 60 s old; 30 s later it is
+    // 90 s old: 30 s into the 60 s decay
     c.on_chunk(1_000_000, 1316, Some(0));
     c.on_chunk(31_000_000, 1316, Some(t27(30_000_000)));
     let held = c.stats().est.stall_peak_us;

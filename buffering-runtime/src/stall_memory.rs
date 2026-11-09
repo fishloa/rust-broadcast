@@ -54,10 +54,14 @@ pub(crate) fn decayed(peak: u64, age: u64, hold: u64, decay: u64) -> u64 {
     u64::try_from(v).unwrap_or(u64::MAX)
 }
 
+fn age_at(now: u64, at: i128) -> u64 {
+    u64::try_from((i128::from(now) - at).max(0)).unwrap_or(u64::MAX)
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct MaxHold {
     peak: u64,
-    at: Option<u64>,
+    at: Option<i128>,
     pending_age: Option<u64>,
     hold: u64,
     decay: u64,
@@ -77,13 +81,13 @@ impl MaxHold {
     /// Anchor a restored-but-unplaced snapshot at the clock reading `now`.
     pub(crate) fn anchor(&mut self, now: u64) {
         if let Some(age) = self.pending_age.take() {
-            self.at = Some(now.saturating_sub(age));
+            self.at = Some(i128::from(now) - i128::from(age));
         }
     }
 
     pub(crate) fn value(&self, now: u64) -> u64 {
         match (self.at, self.pending_age) {
-            (Some(at), _) => decayed(self.peak, now.saturating_sub(at), self.hold, self.decay),
+            (Some(at), _) => decayed(self.peak, age_at(now, at), self.hold, self.decay),
             (None, Some(age)) => decayed(self.peak, age, self.hold, self.decay),
             (None, None) => 0,
         }
@@ -95,13 +99,13 @@ impl MaxHold {
         self.anchor(now);
         if self.at.is_none() || v >= self.value(now) {
             self.peak = v;
-            self.at = Some(now);
+            self.at = Some(i128::from(now));
         }
     }
 
     pub(crate) fn snapshot(&self, now: u64) -> StallMemorySnapshot {
         match (self.at, self.pending_age) {
-            (Some(at), _) => StallMemorySnapshot::new(self.peak, now.saturating_sub(at)),
+            (Some(at), _) => StallMemorySnapshot::new(self.peak, age_at(now, at)),
             (None, Some(age)) => StallMemorySnapshot::new(self.peak, age),
             (None, None) => StallMemorySnapshot::default(),
         }
