@@ -4,9 +4,9 @@ use std::fmt;
 use broadcast_client::{Action, BufferEvent, Config, Event, PauseReason, Session, TrackId};
 
 use crate::support;
-use crate::support::video_run::VideoRun;
 use crate::support::replay::open_live;
 use crate::support::ts_shift::{PACKET, Shift, packet_has_pcr, packet_pid, shift_pes};
+use crate::support::video_run::VideoRun;
 
 const PAT_PID: u16 = 0x00;
 const TF1_PMT_PID: u16 = 0x64;

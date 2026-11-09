@@ -986,7 +986,7 @@ impl Session {
         self.buffer.replay_config()
     }
 
-    /// The stall-memory seed the session's controller started from (the `seed` row of an
+    /// The stall-memory seed the session's current controller was built with (the `seed` row of an
     /// [`InputLog`](buffering_runtime::input_log::InputLog)); `None` for a session opened without
     /// [`Session::open_with_memory`].
     #[must_use]

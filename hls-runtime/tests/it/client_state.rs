@@ -999,7 +999,10 @@ fn a_forward_jump_after_a_restart_is_not_a_second_restart() {
     let again = std::iter::from_fn(|| client.next_output())
         .filter(|o| matches!(o, Output::Discontinuity))
         .count();
-    assert_eq!(again, 0, "a forward jump after the restart read as another restart");
+    assert_eq!(
+        again, 0,
+        "a forward jump after the restart read as another restart"
+    );
 }
 
 const OPEN_WITH_ONE_PART: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:4\n\

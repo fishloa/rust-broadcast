@@ -3345,7 +3345,8 @@ impl HlsOrigin {
             .iter()
             .zip(closed_parts)
             .map(|(s, parts)| {
-                let program_date_time = self.segment_pdt(s.sequence_number, s.start_ns, s.media_start);
+                let program_date_time =
+                    self.segment_pdt(s.sequence_number, s.start_ns, s.media_start);
                 MediaSegment {
                     map: map_for(s.init_gen),
                     uri: self.segment_uri(track_id, s.sequence_number, ext),
@@ -5612,12 +5613,30 @@ mod tests {
     #[test]
     fn window_restarts_on_a_repeated_or_decreasing_sequence_number() {
         let mut w = Window::new(nz(6));
-        w.push(window_entry(5, 0xA5, false), Generation::new(1), None, None, None);
-        w.push(window_entry(6, 0xA6, true), Generation::new(1), None, None, None);
+        w.push(
+            window_entry(5, 0xA5, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
+        w.push(
+            window_entry(6, 0xA6, true),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(5, false), (6, true)]);
 
         // Decrease: 3 after 6.
-        w.push(window_entry(3, 0xB3, false), Generation::new(1), None, None, None);
+        w.push(
+            window_entry(3, 0xB3, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
@@ -5629,7 +5648,13 @@ mod tests {
         assert_eq!(w.bytes_of(SegmentSeq::new(6)), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
-        w.push(window_entry(3, 0xC3, false), Generation::new(1), None, None, None);
+        w.push(
+            window_entry(3, 0xC3, false),
+            Generation::new(1),
+            None,
+            None,
+            None,
+        );
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         assert_eq!(
             w.bytes_of(SegmentSeq::new(3)),
@@ -5678,7 +5703,13 @@ mod tests {
     fn window_capacity_is_never_below_three_segments() {
         let mut w = Window::new(nz(1));
         for seq in 1..=5 {
-            w.push(window_entry(seq, 0, false), Generation::new(1), None, None, None);
+            w.push(
+                window_entry(seq, 0, false),
+                Generation::new(1),
+                None,
+                None,
+                None,
+            );
         }
         assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
     }

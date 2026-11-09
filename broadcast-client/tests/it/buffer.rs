@@ -1250,9 +1250,12 @@ fn video_expectations(h: &Host) -> Vec<ChunkVideo> {
         let c = h.chunk_of_event(i);
         let end = match j {
             Some(JoinDecision::JoinPoint(_)) if run.is_none() => {
-                run.insert(VideoRun::new()).push(pts, s.dts.unwrap_or(pts), dur)
+                run.insert(VideoRun::new())
+                    .push(pts, s.dts.unwrap_or(pts), dur)
             }
-            Some(JoinDecision::Keep) if run.is_some() => run.as_mut().unwrap().push(pts, s.dts.unwrap_or(pts), dur),
+            Some(JoinDecision::Keep) if run.is_some() => {
+                run.as_mut().unwrap().push(pts, s.dts.unwrap_or(pts), dur)
+            }
             _ => continue,
         };
         per_chunk[c].expected_end = Some(pts27(end, ts));

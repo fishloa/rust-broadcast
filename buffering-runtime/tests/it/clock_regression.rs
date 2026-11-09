@@ -35,7 +35,10 @@ fn run(with_b: bool, regress_b_us: Micros) -> bool {
 #[test]
 fn control_without_b_starts_and_with_b_in_order_waits() {
     assert!(run(false, 0), "track A alone must start in this scenario");
-    assert!(!run(true, 0), "B has only its zero-length first report: the start waits for it");
+    assert!(
+        !run(true, 0),
+        "B has only its zero-length first report: the start waits for it"
+    );
 }
 
 #[test]

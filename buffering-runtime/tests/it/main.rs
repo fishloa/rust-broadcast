@@ -1,5 +1,6 @@
 mod apple_tv_input_logs;
 mod burst;
+mod clock_regression;
 mod granularity;
 mod granularity_coalesce;
 mod input_log;
@@ -16,4 +17,3 @@ mod start_granularity;
 mod state_machine;
 mod support;
 mod synth;
-mod clock_regression;

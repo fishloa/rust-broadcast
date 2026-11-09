@@ -1132,7 +1132,8 @@ fn a_protocol_error_inside_on_data_is_hinted_to_the_buffer() {
     host.deliver_all(&fixture().frames());
     let conn = host.conn.expect("live connection");
     let _ = host.session.drain_buffer_inputs();
-    host.session.on_data(conn, b"\xff\xff\xff\xff\r\n\r\n", host.now);
+    host.session
+        .on_data(conn, b"\xff\xff\xff\xff\r\n\r\n", host.now);
     let inputs: Vec<BufferInput> = host.session.drain_buffer_inputs().collect();
     assert!(
         inputs
