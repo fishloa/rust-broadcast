@@ -2102,3 +2102,87 @@ async fn concurrent_first_requests_to_a_fresh_route_see_complete_playlists() {
         }
     }
 }
+
+async fn run_on(route: &Arc<RouteHandle>, trunk: &Arc<Trunk>, sources: &[Source]) {
+    let writer = trunk.writer().expect("trunk writer");
+    writer.set_tracks(sources.iter().map(|s| s.spec.clone()).collect());
+    route.publish_program(ProgramId(0), Arc::clone(trunk));
+    route.set_track_specs(ProgramId(0), trunk.tracks().to_vec());
+    let mut segmenter =
+        ProgramSegmenter::try_new(trunk, route, TARGET_DURATION_SECS, PART_TARGET_MS)
+            .expect("segmenter");
+    segmenter.continue_after_reconnect(route, ProgramId(0));
+    if let Some(init) = segmenter.init_segment() {
+        route.set_init(ProgramId(0), init);
+    }
+    let refs: Vec<&Source> = sources.iter().collect();
+    publish_interleaved(trunk, &writer, route, &mut segmenter, &refs, &|_, _| true);
+}
+
+/// After a source reconnect the video's first segment starts at the time its
+/// number derives (`(N - 1)` target durations), and the audio rendition's
+/// first segment starts within one audio frame of it.
+#[tokio::test]
+async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time() {
+    let sources = h264_aac();
+    let aac = &sources[1];
+    let route = Arc::new(
+        RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, WINDOW_SEGMENTS)
+            .with_hold_cold_playlist(false)
+            .with_declared_bandwidth_bps(Some(DECLARED_BPS))
+            .with_audio_renditions(decls(&["eng"]))
+            .with_audio_rendition_sources(vec![AudioTrackSelector::TrackId(
+                aac.spec.track_id.value(),
+            )]),
+    );
+    let first = new_trunk();
+    run_on(&route, &first, sources).await;
+    route.release_program(ProgramId(0), &first);
+    run_on(&route, &new_trunk(), sources).await;
+    let rig = Rig {
+        app: app_for(route),
+        live: None,
+    };
+
+    let video = rig.playlist("media.m3u8").await;
+    let audio = rig.playlist("audio/a0.m3u8").await;
+    let video_uri = &video.segments[0].uri;
+    let number = u64::from(seq_of(video_uri));
+    assert!(number > 1, "the run continues the earlier numbering");
+    let (_, video_tfdt) = first_tfdt(&rig.ok(video_uri).await);
+    let video_ts = f64::from(sources[0].spec.timescale);
+    let derived = (number - 1) as f64 * TARGET_DURATION_SECS;
+    assert!(
+        (video_tfdt as f64 / video_ts - derived).abs() < 1.0 / video_ts,
+        "video tfdt {video_tfdt} is not the derived {derived} s"
+    );
+    let (_, audio_tfdt) = first_tfdt(&rig.ok(&audio.segments[0].uri).await);
+    let audio_secs = audio_tfdt as f64 / f64::from(aac.spec.timescale);
+    let origin = sources[0]
+        .samples
+        .iter()
+        .find(|s| s.flags.is_sync)
+        .and_then(|s| s.dts)
+        .map(|d| sources[0].secs(d))
+        .expect("video sync sample");
+    let first_audio_rel = aac
+        .samples
+        .iter()
+        .filter_map(|s| s.dts)
+        .map(|d| aac.secs(d))
+        .find(|t| *t >= origin)
+        .map_or(0.0, |t| t - origin);
+    let video_secs = video_tfdt as f64 / video_ts;
+    let tolerance = aac.max_frame_secs() + 0.001;
+    assert!(
+        (audio_secs - video_secs.max(first_audio_rel)).abs() <= tolerance,
+        "audio {audio_secs:.6} s is not aligned with video {video_secs:.6} s"
+    );
+    let (_, video_next) = first_tfdt(&rig.ok(&video.segments[1].uri).await);
+    let (_, audio_next) = first_tfdt(&rig.ok(&audio.segments[1].uri).await);
+    assert!(
+        (audio_next as f64 / f64::from(aac.spec.timescale) - video_next as f64 / video_ts).abs()
+            <= tolerance,
+        "the second segment drifted"
+    );
+}

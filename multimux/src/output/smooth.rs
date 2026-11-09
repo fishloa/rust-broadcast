@@ -952,16 +952,13 @@ mod tests {
         crate::source::release_route(&first, &route);
         let _second = crate::testutil::ingest_run(&route, 8).await;
         let (stream, after) = manifest_chunks(&app).await;
-        assert!(
-            after[0].0 >= last_t + last_d,
-            "first chunk after the reconnect starts at {}, before the previous run ended at {}",
+        assert_eq!(
             after[0].0,
+            (before.len() as u64 + 1) * SMOOTH_TIMESCALE,
+            "the first chunk starts at the time its number derives, past the previous end {}",
             last_t + last_d
         );
-        assert!(
-            after[0].0 < last_t + last_d + 2 * SMOOTH_TIMESCALE,
-            "the gap across the reconnect is the lost open segment, not more"
-        );
+        assert!(after[0].0 >= last_t + last_d);
 
         let bitrate = stream.qualities.first().map_or(0, |q| q.bitrate);
         for (start, _) in &after {

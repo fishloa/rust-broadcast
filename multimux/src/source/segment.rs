@@ -391,13 +391,15 @@ pub struct ProgramSegmenter {
     timescale_moves: HashMap<TrackId, (u32, u32)>,
     segment_writer: SegmentWriter,
     seg: AnySegmenter,
+    /// The next segment published opens a replacement run, so it carries
+    /// `EXT-X-DISCONTINUITY` (RFC 8216bis 6.2.1: a change of timing or
+    /// encoding is signalled with it).
+    mark_next_discontinuous: bool,
     /// Cumulative nanoseconds of segment duration published so far by this
     /// segmenter — mirrors `crate::route::RouteHandle`'s own
     /// `next_timeline_ns`, kept per-program here since each program's
     /// timeline is independent.
     next_timeline_ns: u64,
-    /// Where this run stands on the route's media timeline.
-    media_end: MediaEnd,
     /// Last-seen [`Trunk::track_generation`] — compared each pump to detect
     /// a mid-stream track-set change (issue #781). When the trunk's
     /// generation advances past this, [`Self::apply_track_change`] admits
@@ -694,15 +696,30 @@ pub(super) fn drain_publish_queue(
 }
 
 impl ProgramSegmenter {
-    /// Continue the route's media timeline from `end_ns`, the end of the
-    /// program this run replaces: the segmenter's decode clock and the
-    /// segment timeline start there instead of at zero.
-    pub(crate) fn continue_media_timeline(&mut self, end_ns: u64) {
-        if end_ns > 0 {
-            self.seg.set_start_time_ns(end_ns);
-            self.next_timeline_ns = end_ns;
-            self.media_end.start_ns = end_ns;
-            self.media_end.end_ns = end_ns;
+    /// Start this run's media timeline where `route_handle` says `program`'s
+    /// serving begins it (a no-op for the first run on a route): call once,
+    /// right after [`Self::try_new`] and the program's publication, before
+    /// the first [`Self::pump`].
+    pub fn continue_after_reconnect(&mut self, route_handle: &RouteHandle, program: ProgramId) {
+        if let Some(epoch) = route_handle.epoch(program) {
+            self.continue_media_timeline(epoch.media_start_ns);
+        }
+    }
+
+    /// Start this run's media timeline at `start_ns` instead of zero: the
+    /// leader's and every follower's decode clock and the segment timeline.
+    pub(crate) fn continue_media_timeline(&mut self, start_ns: u64) {
+        if start_ns == 0 {
+            return;
+        }
+        self.seg.set_start_time_ns(start_ns);
+        self.next_timeline_ns = start_ns;
+        self.mark_next_discontinuous = true;
+        for follower in &mut self.followers {
+            follower.set_start_time_ns(start_ns);
+        }
+        for follower in &mut self.subtitle_followers {
+            follower.set_start_time_ns(start_ns);
         }
     }
 
@@ -843,8 +860,8 @@ impl ProgramSegmenter {
             cursor: trunk.subscribe_from_backlog(),
             segment_writer,
             seg,
+            mark_next_discontinuous: false,
             next_timeline_ns: 0,
-            media_end: MediaEnd::default(),
             track_generation: trunk.track_generation(),
             pending: VecDeque::new(),
             pending_since: None,
@@ -1148,8 +1165,6 @@ impl ProgramSegmenter {
             .find(|f| f.source_track_id == track_id)
         {
             let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
-            let ticks = declared_timescale(&self.timescale_moves, track_id, trunk);
-            self.media_end.note(&sample, ticks);
             follower.push(sample, &self.leader_durations);
             return;
         }
@@ -1210,8 +1225,6 @@ impl ProgramSegmenter {
             }
         }
         let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
-        let ticks = declared_timescale(&self.timescale_moves, track_id, trunk);
-        self.media_end.note(&sample, ticks);
         if let Err(e) = self.seg.push(track_id, sample) {
             tracing::warn!(error = %e, "driver-backed segmenter push failed");
         }
@@ -1630,14 +1643,14 @@ impl ProgramSegmenter {
         self.next_timeline_ns = self
             .next_timeline_ns
             .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+        let discontinuous =
+            segment.discontinuous || std::mem::take(&mut self.mark_next_discontinuous);
         self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
             segment.bytes,
             segment.segment_seq,
             duration,
             Timestamp::from_nanos(start_ns),
-            SegmentMeta {
-                discontinuous: segment.discontinuous,
-            },
+            SegmentMeta { discontinuous },
         )));
     }
 
@@ -1694,57 +1707,6 @@ impl ProgramSegmenter {
         }
         (parts_published, segments_published)
     }
-}
-
-/// Where a run stands on the route's media timeline: it starts at `start_ns`
-/// (the end of the program a reconnect replaced, `0` for the first run) and
-/// advances with the samples pushed, measured from the first timed sample.
-#[derive(Debug, Clone, Copy, Default)]
-struct MediaEnd {
-    start_ns: u64,
-    origin_ns: Option<i128>,
-    end_ns: u64,
-}
-
-impl MediaEnd {
-    fn note(&mut self, sample: &Sample, timescale: u32) {
-        let Some(start) = sample.dts.or(sample.pts) else {
-            return;
-        };
-        if timescale == 0 {
-            return;
-        }
-        let end_ns = ticks_to_ns(
-            start.saturating_add(i64::from(sample.duration.unwrap_or(0))),
-            timescale,
-        );
-        let origin = *self
-            .origin_ns
-            .get_or_insert_with(|| ticks_to_ns(start, timescale));
-        let run_ns = u64::try_from((end_ns - origin).max(0)).unwrap_or(u64::MAX);
-        self.end_ns = self.end_ns.max(self.start_ns.saturating_add(run_ns));
-    }
-}
-
-fn ticks_to_ns(ticks: i64, timescale: u32) -> i128 {
-    i128::from(ticks) * i128::from(NANOS_PER_SEC) / i128::from(timescale)
-}
-
-fn declared_timescale(
-    moves: &HashMap<TrackId, (u32, u32)>,
-    track_id: TrackId,
-    trunk: &Trunk,
-) -> u32 {
-    moves.get(&track_id).map_or_else(
-        || {
-            trunk
-                .tracks()
-                .iter()
-                .find(|t| t.track_id == track_id)
-                .map_or(0, |t| t.timescale)
-        },
-        |&(_, to)| to,
-    )
 }
 
 fn in_declared_timescale(
@@ -1841,9 +1803,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         ) else {
             continue;
         };
-        if let Some(epoch) = route_handle.epoch(program) {
-            segmenter.continue_media_timeline(epoch.media_end_ns);
-        }
+        segmenter.continue_after_reconnect(route_handle, program);
         // Push the fMP4 init segment for every program — DVR recording
         // needs it regardless of whether HTTP egress addresses this
         // program yet (issue #805 task 6's MPTS-addressing doc).
@@ -1862,7 +1822,6 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
             continue;
         };
         let (parts, segments) = segmenter.pump(program, trunk, route_handle);
-        route_handle.note_media_end(program, segmenter.media_end.end_ns);
         parts_total += parts;
         segments_total += segments;
     }
@@ -3328,8 +3287,8 @@ mod tests {
             cursor: trunk.subscribe_from_backlog(),
             segment_writer,
             seg,
+            mark_next_discontinuous: false,
             next_timeline_ns: 0,
-            media_end: MediaEnd::default(),
             track_generation: trunk.track_generation(),
             pending: VecDeque::new(),
             pending_since: None,

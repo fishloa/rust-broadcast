@@ -298,6 +298,9 @@ pub struct LlHlsSegmenter {
     /// Follower mode: cut only at externally supplied boundaries.
     external_cuts: bool,
     timeline_origin: Option<(i64, u32)>,
+    /// Decode-clock start set by [`LlHlsSegmenter::set_start_time_ns`]; a
+    /// follower adds it to the origin-relative `tfdt` it anchors.
+    start_time_ns: u64,
     /// Leader mode: record the boundaries of every cut into `ready_cuts`.
     record_cuts: bool,
     /// Part boundaries of the segment being built (leader mode).
@@ -422,6 +425,7 @@ impl LlHlsSegmenter {
             ready: VecDeque::new(),
             external_cuts: false,
             timeline_origin: None,
+            start_time_ns: 0,
             record_cuts: false,
             current_cuts: Vec::new(),
             ready_cuts: VecDeque::new(),
@@ -1059,7 +1063,8 @@ impl LlHlsSegmenter {
             let first = follower_dts(&t.pending[0]);
             let offset = i128::from(first) * i128::from(origin_ts)
                 - i128::from(origin) * i128::from(t.spec.timescale);
-            let ticks = offset / i128::from(origin_ts);
+            let ticks = offset / i128::from(origin_ts)
+                + i128::from(self.start_time_ns) * i128::from(t.spec.timescale) / 1_000_000_000;
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(0);
             t.part_base_decode = t.seg_base_decode;
         }
@@ -1140,6 +1145,7 @@ impl LlHlsSegmenter {
                 return;
             }
         }
+        self.start_time_ns = start_ns;
         for t in &mut self.tracks {
             let ticks = u128::from(start_ns) * u128::from(t.spec.timescale) / 1_000_000_000;
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);

@@ -227,8 +227,8 @@ pub(crate) fn mpd_attribute(xml: &str, key: &str) -> String {
 /// A source reconnect on a route serving `output` at `manifest_path`: the
 /// numbers keep counting, `availabilityStartTime`, `startNumber` and the
 /// Period are unchanged, every advertised segment is served and its `tfdt` is
-/// the time its number implies (`tfdt(1)` plus whole segments; the stream has
-/// a one-second GOP and the lost open segment's slot stays empty).
+/// the time its number derives (`tfdt(1)` plus whole segments; the stream has a
+/// one-second GOP and the lost open segment's slot stays empty).
 pub(crate) async fn assert_dash_continues_across_a_reconnect(
     output: std::sync::Arc<dyn crate::output::Output>,
     manifest_path: &str,
@@ -270,19 +270,14 @@ pub(crate) async fn assert_dash_continues_across_a_reconnect(
         .parse()
         .expect("publishTime");
     let newest = start + (published.as_second() - ast.as_second()) - 1;
-    let mut previous = old_end;
+    assert!(old_end <= t0 + 8 * SEGMENT_TICKS);
     for n in 9..=newest {
         let dts = served_first_dts(&app, u64::try_from(n).expect("positive")).await;
-        let advertised = t0 + (n - start) * SEGMENT_TICKS;
-        assert!(
-            (dts - advertised).abs() < SEGMENT_TICKS,
-            "segment {n}: tfdt {dts} is not the advertised time {advertised}"
+        assert_eq!(
+            dts,
+            t0 + (n - start) * SEGMENT_TICKS,
+            "segment {n}: tfdt is not the time its number derives"
         );
-        assert!(
-            dts >= previous,
-            "segment {n}: tfdt {dts} moved back from {previous}"
-        );
-        previous = dts + SEGMENT_TICKS;
     }
     assert!(
         (14..=15).contains(&newest),

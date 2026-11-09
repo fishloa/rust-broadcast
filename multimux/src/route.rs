@@ -343,10 +343,14 @@ pub struct DashWindowSegment {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ProgramEpoch {
     pub(crate) seq_offset: u64,
-    /// Where the route's media timeline stood when the program this one
-    /// replaces ended (`0` for the first program): the new run's samples
-    /// continue from it.
-    pub(crate) media_end_ns: u64,
+    /// Where this program's media timeline starts: the time the DASH
+    /// manifest derives for its first number, `(first public number -
+    /// startNumber)` nominal segments, so the segment bytes, the manifests
+    /// and the DVR agree. `0` for the first program.
+    pub(crate) media_start_ns: u64,
+    /// The previous origin's Discontinuity Sequence Number, so
+    /// `EXT-X-DISCONTINUITY-SEQUENCE` never decreases across a reconnect.
+    pub(crate) discontinuity_sequence: u64,
     /// The first public number the route ever served: DASH `startNumber`.
     pub(crate) first_number: u64,
     /// The route's first presentation start: DASH `availabilityStartTime`,
@@ -476,9 +480,6 @@ pub(crate) struct ProgramServing {
     /// segment it starts at, so the recorder archives each pending segment
     /// under the init it was closed under.
     init_log: Mutex<Vec<crate::dvr::InitGeneration>>,
-    /// End of the newest sample the program's segmenter has pushed, on the
-    /// route's media timeline (see [`ProgramEpoch::media_end_ns`]).
-    media_end_ns: AtomicU64,
     /// The program this one replaced on a reconnect, until the first persist
     /// of this program's recorder has flushed the segments it had closed but
     /// not yet archived (see [`Self::flush_predecessor`]).
@@ -521,6 +522,7 @@ struct SiblingParams {
     part_target_ms: u32,
     window_segments: NonZeroUsize,
     media_sequence_offset: u64,
+    discontinuity_sequence: u64,
     program_date_time: crate::config::ProgramDateTimeSource,
     hold_cold_playlist: bool,
 }
@@ -613,6 +615,7 @@ impl ProgramServing {
             .window_segments(window_segments)
             .container(container)
             .media_sequence_offset(media_sequence_offset)
+            .discontinuity_sequence(epoch.discontinuity_sequence)
             .hold_cold_playlist(hold_cold_playlist);
         if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
             builder = builder
@@ -654,6 +657,7 @@ impl ProgramServing {
                 .window_segments(window_segments)
                 .container(Container::Fmp4)
                 .media_sequence_offset(media_sequence_offset)
+                .discontinuity_sequence(epoch.discontinuity_sequence)
                 .hold_cold_playlist(hold_cold_playlist);
             if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
                 ab = ab.program_date_time_arrival(Arc::new(|| {
@@ -725,10 +729,9 @@ impl ProgramServing {
             dvr_recording: std::sync::atomic::AtomicBool::new(dvr.is_some()),
             dvr: Mutex::new(dvr),
             init_log: Mutex::new(Vec::new()),
-            media_end_ns: AtomicU64::new(epoch.media_end_ns),
             predecessor: Mutex::new(None),
             segment_writer: Mutex::new(None),
-            next_timeline_ns: AtomicU64::new(epoch.media_end_ns),
+            next_timeline_ns: AtomicU64::new(epoch.media_start_ns),
             audio_rendition_servings: audio_servings,
             subtitle_servings: Mutex::new(Vec::new()),
             sibling_params: SiblingParams {
@@ -736,6 +739,7 @@ impl ProgramServing {
                 part_target_ms,
                 window_segments,
                 media_sequence_offset,
+                discontinuity_sequence: epoch.discontinuity_sequence,
                 program_date_time,
                 hold_cold_playlist,
             },
@@ -858,6 +862,7 @@ impl ProgramServing {
                 .window_segments(params.window_segments)
                 .container(Container::WebVtt)
                 .media_sequence_offset(params.media_sequence_offset)
+                .discontinuity_sequence(params.discontinuity_sequence)
                 .hold_cold_playlist(params.hold_cold_playlist)
                 .low_latency(params.part_target_ms)
                 .playlist_uri(decl.uri.clone());
@@ -949,10 +954,6 @@ impl ProgramServing {
         self.dash.presentation_origin
     }
 
-    fn media_end_ns(&self) -> u64 {
-        self.media_end_ns.load(Ordering::SeqCst)
-    }
-
     fn epoch(&self) -> ProgramEpoch {
         self.dash.epoch
     }
@@ -1007,10 +1008,6 @@ impl ProgramServing {
         let duration = Duration::from_secs_f64(info.duration);
         let start_ns = self.next_timeline_ns.fetch_add(
             u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
-            Ordering::SeqCst,
-        );
-        self.media_end_ns.fetch_max(
-            start_ns.saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)),
             Ordering::SeqCst,
         );
         let published = self.with_segment_writer(|writer| {
@@ -1670,9 +1667,13 @@ impl RouteHandle {
         let previous_epoch = programs.get(&program).map(|previous| previous.epoch());
         let epoch = ProgramEpoch {
             seq_offset,
-            media_end_ns: programs
+            media_start_ns: previous_epoch.map_or(0, |e| {
+                let slots = seq_offset.saturating_add(1).saturating_sub(e.first_number);
+                (slots as f64 * self.target_duration_secs * 1e9) as u64
+            }),
+            discontinuity_sequence: programs
                 .get(&program)
-                .map_or(0, |previous| previous.media_end_ns()),
+                .map_or(0, |previous| previous.ll_hls.discontinuity_sequence_after()),
             first_number: previous_epoch.map_or(seq_offset.saturating_add(1), |e| e.first_number),
             presentation_origin: previous_epoch
                 .map_or_else(SystemTime::now, |e| e.presentation_origin),
@@ -2073,12 +2074,6 @@ impl RouteHandle {
     /// [`Self::created_at`] it starts with ingest, not with the route.
     pub fn presentation_origin(&self, program: ProgramId) -> Option<SystemTime> {
         self.serving(program).map(|s| s.presentation_origin())
-    }
-
-    pub(crate) fn note_media_end(&self, program: ProgramId, end_ns: u64) {
-        if let Some(serving) = self.serving(program) {
-            serving.media_end_ns.fetch_max(end_ns, Ordering::SeqCst);
-        }
     }
 
     pub(crate) fn epoch(&self, program: ProgramId) -> Option<ProgramEpoch> {

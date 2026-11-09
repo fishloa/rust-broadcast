@@ -159,6 +159,7 @@ pub(super) struct AudioFollower {
     newest_dts: Option<i64>,
     next_seq: u32,
     next_timeline_ns: u64,
+    first_discontinuous: bool,
     target_duration_secs: f64,
     part_target_ms: u32,
     part_target_sized: bool,
@@ -220,6 +221,7 @@ impl AudioFollower {
             newest_dts: None,
             next_seq,
             next_timeline_ns: 0,
+            first_discontinuous: false,
             target_duration_secs,
             part_target_ms,
             part_target_sized: false,
@@ -239,6 +241,12 @@ impl AudioFollower {
         {
             self.origin_handle.set_part_target_ms(ms);
         }
+    }
+
+    pub(super) fn set_start_time_ns(&mut self, start_ns: u64) {
+        self.seg.set_start_time_ns(start_ns);
+        self.next_timeline_ns = start_ns;
+        self.first_discontinuous = true;
     }
 
     pub(super) fn push(&mut self, sample: Sample, leaders: &LeaderDurations) {
@@ -399,7 +407,7 @@ impl AudioFollower {
                 duration,
                 Timestamp::from_nanos(start_ns),
                 SegmentMeta {
-                    discontinuous: false,
+                    discontinuous: std::mem::take(&mut self.first_discontinuous),
                 },
             )));
     }
