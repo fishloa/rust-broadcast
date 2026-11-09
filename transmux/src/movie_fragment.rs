@@ -1432,7 +1432,7 @@ fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<Option<CencFr
                 "protect_media_segment: per-sample aux info size exceeds 255 bytes (saiz sample_info_size is u8)",
             ));
         }
-        sizes.push(sz as u8);
+        sizes.push(sz as u32);
     }
     let uniform = sizes
         .first()

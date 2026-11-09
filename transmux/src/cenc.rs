@@ -20,7 +20,7 @@
 //! - **senc**: ISO/IEC 23001-7 §12.3 — SampleEncryptionBox.
 //! - **pssh**: ISO/IEC 23001-7 §12.1 — ProtectionSystemSpecificHeaderBox.
 //! - **sinf/frma/schm/schi**: ISO/IEC 14496-12:2015 §8.12.
-//! - **saiz**: ISO/IEC 14496-12:2015 §8.7.8.
+//! - **saiz**: ISO/IEC 14496-12:2026 §8.7.8 — version 0: 8-bit sizes; version 1: 16-bit; version 2: 32-bit.
 //! - **saio**: ISO/IEC 14496-12:2015 §8.7.9.
 
 use crate::error::{Error, Result};
@@ -538,8 +538,42 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
     }
 }
 
+/// `saiz` version 0, 1, 2: 8-, 16-, 32-bit sizes — ISO/IEC 14496-12:2026 §8.7.8.2.
+const SAIZ_VERSION_MAX: u8 = 2;
+
+fn saiz_size_width(version: u8) -> Result<usize> {
+    if version > SAIZ_VERSION_MAX {
+        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "saiz version",
+            value: u64::from(version),
+            reason: "ISO/IEC 14496-12:2026 §8.7.8.2 defines versions 0 to 2",
+        }));
+    }
+    Ok(1usize << version)
+}
+
+fn read_be(bytes: &[u8]) -> u32 {
+    bytes
+        .iter()
+        .fold(0u32, |acc, b| (acc << u8::BITS) | u32::from(*b))
+}
+
+fn write_be(
+    buf: &mut [u8],
+    c: &mut usize,
+    value: u32,
+    width: usize,
+    field: &'static str,
+) -> Result<()> {
+    broadcast_common::len::fit_bits(u64::from(value), (width as u32) * u8::BITS, field)?;
+    buf[*c..*c + width]
+        .copy_from_slice(&value.to_be_bytes()[core::mem::size_of::<u32>() - width..]);
+    *c += width;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
-// saiz — SampleAuxiliaryInformationSizesBox (ISO/IEC 14496-12:2015 §8.7.8)
+// saiz — SampleAuxiliaryInformationSizesBox (ISO/IEC 14496-12:2026 §8.7.8)
 // ---------------------------------------------------------------------------
 
 /// Sample Auxiliary Information Sizes Box (`saiz`) — §8.7.8.
@@ -557,9 +591,11 @@ pub struct SampleAuxInfoSizesBox {
     pub flags: u32,
     pub aux_info_type: Option<u32>,
     pub aux_info_type_parameter: Option<u32>,
-    pub default_sample_info_size: u8,
+    /// Width on the wire follows `version`: 8, 16 or 32 bits (§8.7.8.2).
+    pub default_sample_info_size: u32,
     pub sample_count: u32,
-    pub sample_info_sizes: Vec<u8>,
+    /// Same width as `default_sample_info_size`.
+    pub sample_info_sizes: Vec<u32>,
 }
 
 impl SampleAuxInfoSizesBox {
@@ -585,15 +621,14 @@ impl SampleAuxInfoSizesBox {
         } else {
             (None, None)
         };
-        if bytes.len() < offset + 1 + 4 {
-            return Err(Error::BufferTooShort(BufferTooShort {
-                need: offset + 5,
-                have: bytes.len(),
-                what: "saiz default_sample_info_size+sample_count",
-            }));
-        }
-        let default_size = bytes[offset];
-        offset += 1;
+        let width = saiz_size_width(version)?;
+        need_in(
+            bytes,
+            offset + width + 4,
+            "saiz default_sample_info_size+sample_count",
+        )?;
+        let default_size = read_be(&bytes[offset..offset + width]);
+        offset += width;
         let sample_count_wire = u32::from_be_bytes([
             bytes[offset],
             bytes[offset + 1],
@@ -603,8 +638,14 @@ impl SampleAuxInfoSizesBox {
         offset += 4;
         let sample_info_sizes = if default_size == 0 {
             let sample_count = sample_count_wire as usize;
-            need_in(bytes, offset + sample_count, "saiz sample_info_size")?;
-            bytes[offset..offset + sample_count].to_vec()
+            let table = sample_count
+                .checked_mul(width)
+                .ok_or(Error::InvalidInput("saiz sample_count overflows the body"))?;
+            need_in(bytes, offset + table, "saiz sample_info_size")?;
+            bytes[offset..offset + table]
+                .chunks_exact(width)
+                .map(read_be)
+                .collect()
         } else {
             Vec::new()
         };
@@ -628,9 +669,10 @@ impl Serialize for SampleAuxInfoSizesBox {
         if (self.flags & 0x01) != 0 {
             n += 8;
         }
-        n += 1 + 4;
+        let width = saiz_size_width(self.version).unwrap_or(1);
+        n += width + 4;
         if self.default_sample_info_size == 0 {
-            n += self.sample_info_sizes.len();
+            n += self.sample_info_sizes.len() * width;
         }
         crate::box_types::box_len(n)
     }
@@ -653,8 +695,14 @@ impl Serialize for SampleAuxInfoSizesBox {
             buf[c..c + 4].copy_from_slice(&param.to_be_bytes());
             c += 4;
         }
-        buf[c] = self.default_sample_info_size;
-        c += 1;
+        let width = saiz_size_width(self.version)?;
+        write_be(
+            buf,
+            &mut c,
+            self.default_sample_info_size,
+            width,
+            "default_sample_info_size",
+        )?;
         if self.default_sample_info_size == 0
             && self.sample_info_sizes.len() != self.sample_count as usize
         {
@@ -665,8 +713,9 @@ impl Serialize for SampleAuxInfoSizesBox {
         buf[c..c + 4].copy_from_slice(&self.sample_count.to_be_bytes());
         c += 4;
         if self.default_sample_info_size == 0 {
-            buf[c..c + self.sample_info_sizes.len()].copy_from_slice(&self.sample_info_sizes);
-            c += self.sample_info_sizes.len();
+            for &v in &self.sample_info_sizes {
+                write_be(buf, &mut c, v, width, "sample_info_size")?;
+            }
         }
         Ok(c)
     }
@@ -1175,6 +1224,75 @@ mod tests {
     use broadcast_common::error::BufferTooShort;
 
     use super::*;
+
+    /// `saiz` versions 0, 1 and 2 (ISO/IEC 14496-12:2026 §8.7.8.2): 8-, 16-
+    /// and 32-bit `default_sample_info_size` / `sample_info_size[]`.
+    fn saiz_variable_box(version: u8, flags_bytes: &[u8], sizes: &[u32]) -> Vec<u8> {
+        let width = match version {
+            0 => 1,
+            1 => 2,
+            _ => 4,
+        };
+        let mut body = alloc::vec![version, 0, 0, flags_bytes.len().min(1) as u8];
+        body.extend_from_slice(flags_bytes);
+        body.extend(core::iter::repeat_n(0u8, width));
+        body.extend_from_slice(&(sizes.len() as u32).to_be_bytes());
+        for v in sizes {
+            body.extend_from_slice(&v.to_be_bytes()[4 - width..]);
+        }
+        let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(b"saiz");
+        out.extend_from_slice(&body);
+        out
+    }
+
+    #[test]
+    fn saiz_versions_read_their_own_width_and_round_trip() {
+        for (version, sizes) in [
+            (0u8, alloc::vec![0x28u32, 0x10]),
+            (1, alloc::vec![0x0128, 0x0200]),
+            (2, alloc::vec![0x0001_0000, 0x0200_0001]),
+        ] {
+            let bytes = saiz_variable_box(version, &[], &sizes);
+            let saiz = SampleAuxInfoSizesBox::parse_box(&bytes).unwrap();
+            assert_eq!(saiz.version, version);
+            assert_eq!(saiz.sample_count, 2, "v{version} sample_count");
+            assert_eq!(saiz.default_sample_info_size, 0);
+            assert_eq!(saiz.sample_info_sizes, sizes, "v{version} sizes");
+            assert_eq!(saiz.try_to_bytes().unwrap(), bytes, "v{version} round trip");
+        }
+    }
+
+    #[test]
+    fn saiz_wide_default_size_and_aux_info_type_round_trip() {
+        for (version, default) in [(1u8, 0x0123u32), (2, 0x0001_0203)] {
+            let width = if version == 1 { 2 } else { 4 };
+            let mut body = alloc::vec![version, 0, 0, 1];
+            body.extend_from_slice(b"cenc");
+            body.extend_from_slice(&7u32.to_be_bytes());
+            body.extend_from_slice(&default.to_be_bytes()[4 - width..]);
+            body.extend_from_slice(&9u32.to_be_bytes());
+            let mut bytes = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+            bytes.extend_from_slice(b"saiz");
+            bytes.extend_from_slice(&body);
+            let saiz = SampleAuxInfoSizesBox::parse_box(&bytes).unwrap();
+            assert_eq!(saiz.default_sample_info_size, default);
+            assert_eq!(saiz.sample_count, 9);
+            assert_eq!(saiz.aux_info_type_parameter, Some(7));
+            assert!(saiz.sample_info_sizes.is_empty());
+            assert_eq!(saiz.try_to_bytes().unwrap(), bytes, "v{version} round trip");
+        }
+    }
+
+    #[test]
+    fn saiz_size_wider_than_its_version_errors_and_unknown_version_is_rejected() {
+        let mut saiz =
+            SampleAuxInfoSizesBox::parse_box(&saiz_variable_box(1, &[], &[1, 2])).unwrap();
+        saiz.sample_info_sizes[1] = 0x1_0000;
+        assert!(saiz.try_to_bytes().is_err(), "0x10000 does not fit 16 bits");
+        let bad = saiz_variable_box(3, &[], &[1]);
+        assert!(SampleAuxInfoSizesBox::parse_box(&bad).is_err());
+    }
 
     #[test]
     fn tenc_body_round_trip() {
