@@ -49,6 +49,11 @@ pub enum Error {
         value: f64,
     },
 
+    /// A [`crate::ChannelLayout::Custom`] weight is non-finite or negative,
+    /// or no weight is positive, so the layout measures nothing.
+    #[error("invalid custom channel weights")]
+    InvalidChannelWeights,
+
     /// A sample whose magnitude exceeds
     /// [`crate::LoudnessMeter::max_sample_magnitude`], which could carry a
     /// block above the +30 LKFS top of the meter's loudness histograms.
