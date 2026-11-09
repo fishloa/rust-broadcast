@@ -3,6 +3,9 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Fixed
+- `cc_data()` with `process_cc_data_flag` clear is discarded instead of producing cues.
+- A WebVTT cue identifier that merely starts with `NOTE` (for example `NOTES1`) is no longer dropped as a NOTE block; only `NOTE` alone or followed by a space or tab is.
 
 ## [0.5.0] - 2026-11-07
 ### Changed
