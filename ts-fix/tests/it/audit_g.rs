@@ -74,8 +74,8 @@ fn resync_does_not_drop_aligned_tail_packets_at_end_of_input() {
         input.extend_from_slice(&payload_packet(0x100, i, 0x20 + i));
     }
     let mut r = TsResync::new();
-    let pkts = r.feed(&input);
-    r.finish();
+    let mut pkts = r.feed(&input);
+    pkts.extend(r.finish());
     assert_eq!(
         pkts.len(),
         13,
@@ -92,7 +92,7 @@ fn resync_emits_a_short_clean_stream() {
         input.extend_from_slice(&payload_packet(0x100, i, 0x20 + i));
     }
     let mut r = TsResync::new();
-    let pkts = r.feed(&input);
-    r.finish();
+    let mut pkts = r.feed(&input);
+    pkts.extend(r.finish());
     assert_eq!(pkts.len(), 4, "a 4-packet aligned stream is emitted whole");
 }

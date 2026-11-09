@@ -165,17 +165,7 @@ impl TsResync {
             match self.stride {
                 None => {
                     if let Some((offset, s)) = find_sync(&self.buf[self.head..]) {
-                        self.stats.dropped_bytes += offset as u64;
-                        self.head += offset;
-                        self.stride = Some(s);
-                        if let Some(start) = self.open_loss.take() {
-                            self.losses.push(ResyncLoss {
-                                offset: start,
-                                dropped_bytes: self.consumed + self.head as u64 - start,
-                                packet_index: self.stats.packets,
-                                truncated_tail: false,
-                            });
-                        }
+                        self.lock(offset, s);
                     } else {
                         // Keep at most enough bytes to detect a future lock.
                         let keep = LOCK_CONFIRMATIONS * RS_PACKET_SIZE;
@@ -235,10 +225,36 @@ impl TsResync {
         core::mem::take(&mut self.losses)
     }
 
-    /// Declare end of input: close a sync loss that never re-locked and record a
-    /// truncated trailing packet, both retrievable with
+    fn lock(&mut self, offset: usize, stride: PacketStride) {
+        self.stats.dropped_bytes += offset as u64;
+        self.head += offset;
+        self.stride = Some(stride);
+        if let Some(start) = self.open_loss.take() {
+            self.losses.push(ResyncLoss {
+                offset: start,
+                dropped_bytes: self.consumed + self.head as u64 - start,
+                packet_index: self.stats.packets,
+                truncated_tail: false,
+            });
+        }
+    }
+
+    /// Declare end of input and return the packets that were still waiting
+    /// for a full [`LOCK_CONFIRMATIONS`] window: no more bytes can arrive to
+    /// confirm them, so the aligned packets that fill the rest of the input
+    /// are emitted (a stream shorter than the window included).
+    ///
+    /// Also closes a sync loss that never re-locked and records a truncated
+    /// trailing packet, both retrievable with
     /// [`take_losses`](Self::take_losses). The buffer is discarded.
-    pub fn finish(&mut self) {
+    pub fn finish(&mut self) -> Vec<[u8; TS_PACKET_SIZE]> {
+        let mut emitted = Vec::new();
+        if self.stride.is_none()
+            && let Some((offset, s)) = find_tail_sync(&self.buf[self.head..])
+        {
+            self.lock(offset, s);
+            self.feed_into(&[], &mut emitted);
+        }
         let end = self.consumed + self.buf.len() as u64;
         if let Some(start) = self.open_loss.take() {
             self.losses.push(ResyncLoss {
@@ -258,6 +274,7 @@ impl TsResync {
         self.stats.dropped_bytes += (self.buf.len() - self.head) as u64;
         self.head = self.buf.len();
         self.compact();
+        emitted
     }
 
     /// Accumulated statistics.
@@ -293,6 +310,30 @@ fn find_sync(buf: &[u8]) -> Option<(usize, PacketStride)> {
         }
     }
     None
+}
+
+/// End-of-input counterpart of [`find_sync`]: the smallest offset whose
+/// stride (188 first, then 204) holds a sync byte at every packet boundary
+/// the buffer still covers, with at least one whole packet.
+fn find_tail_sync(buf: &[u8]) -> Option<(usize, PacketStride)> {
+    let chain = |o: usize, s: usize| {
+        o + s <= buf.len()
+            && (o..buf.len())
+                .step_by(s)
+                .take_while(|pos| pos + s <= buf.len())
+                .all(|pos| buf[pos] == TS_SYNC_BYTE)
+    };
+    (0..buf.len())
+        .filter(|&o| buf[o] == TS_SYNC_BYTE)
+        .find_map(|o| {
+            if chain(o, TS_PACKET_SIZE) {
+                Some((o, PacketStride::Ts188))
+            } else if chain(o, RS_PACKET_SIZE) {
+                Some((o, PacketStride::Rs204))
+            } else {
+                None
+            }
+        })
 }
 
 /// Return `true` if `LOCK_CONFIRMATIONS` consecutive sync bytes exist at
