@@ -502,12 +502,8 @@ impl StreamingFlvDemux {
         let data = &body[5..];
         match avc_packet_type_byte {
             avc_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
-                // `AVCDecoderConfigurationRecord::parse` rejects 0 SPS
-                // (#738 T11a review, Critical — see `avc_config.rs`), so
-                // this never panics on a malicious sequence header; the
-                // `.first()` below is additional defense-in-depth against
-                // a directly-constructed (non-`parse`) empty-SPS record.
                 let mut record = AVCDecoderConfigurationRecord::parse(data)?;
+                record.require_sps()?;
                 let length_size = usize::from(record.length_size_minus_one) + 1;
                 // The NALU samples are normalised to 4-byte NAL prefixes below,
                 // so the emitted `avcC` must declare that size (r04-W43).
@@ -1125,10 +1121,10 @@ mod tests {
     fn zero_sps_avcc_is_an_error_not_a_panic() {
         // #738 T11a review (Critical): a malicious RTMP publisher's sequence
         // header declaring 0 SPS must error `feed`, not panic at
-        // `config.sps[0]` — `AVCDecoderConfigurationRecord::parse` now
-        // rejects 0 SPS (see `avc_config.rs::test_avc_config_zero_sps_rejected`);
-        // this proves the streaming path surfaces that as a clean `Err`,
-        // with no index-panic reachable through `feed`.
+        // `config.sps[0]`; `AVCDecoderConfigurationRecord::parse` accepts 0 SPS
+        // (ISO/IEC 14496-15:2017 §5.3.3.1.1), so the FLV path enforces it with
+        // `require_sps`; this proves it surfaces as a clean `Err`, with no
+        // index-panic reachable through `feed`.
         let mut out = flv_header();
         let mut seq_body = vec![(1u8 << 4) | CODEC_ID_AVC, avc_packet_type::SEQUENCE_HEADER];
         seq_body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0

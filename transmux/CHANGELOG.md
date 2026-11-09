@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Fmp4Demux` reports a trailing `moof` with no following `mdat` as `InputDegradation::MalformedUnit` instead of dropping it silently (bug audit E).
 - `StreamingFlvDemux` unrolls the 32-bit millisecond tag timestamp, so a session past 2^32 ms keeps `dts` monotonic instead of stepping back to zero (bug audit E).
 - `AVCDecoderConfigurationRecord` rejects `bit_depth_luma_minus8` / `bit_depth_chroma_minus8` above 4 on parse and on serialize with `Error::InvalidValue` (ISO/IEC 14496-15:2017 §5.3.3.1.3); a 3-bit value of 5 to 7 used to be accepted and written back (#1913).
+- `AVCDecoderConfigurationRecord::parse` accepts `numOfSequenceParameterSets == 0` (ISO/IEC 14496-15:2017 clause 5.3.3.1.1: a parameter-set-stream or in-band-parameter-set record may carry no SPS/PPS), so `avcp` and `avc3`/`avc4` tracks with an empty record demux; the FLV demuxers keep refusing a sequence header without an SPS themselves (#1914).
 
 ## [0.30.0] - 2026-11-07
 ### Added

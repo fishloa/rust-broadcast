@@ -604,7 +604,10 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         {
                             // A corrupt sequence header is skipped and reported; a
                             // later intact one can still configure the track.
-                            let Ok(mut record) = AVCDecoderConfigurationRecord::parse(data) else {
+                            let Some(mut record) = AVCDecoderConfigurationRecord::parse(data)
+                                .ok()
+                                .filter(|r| r.require_sps().is_ok())
+                            else {
                                 degraded.push(InputDegradation::MalformedUnit {
                                     position: tag.offset as u64,
                                 });
@@ -722,11 +725,6 @@ impl<'a> Unpackage for FlvDemux<'a> {
         if let Some(config) = avc_config
             && !video_samples.is_empty()
         {
-            // #738 T11a review (Critical): `AVCDecoderConfigurationRecord::parse`
-            // now rejects 0 SPS, so this is unreachable via `parse` — but
-            // `config.sps` is a public field and a directly-constructed
-            // record could still be empty, so index defensively via
-            // `.first()` rather than `[0]` (no panic either way).
             let (width, height) = avc_dimensions(&config)?;
             let anchor = anchor_of(&video_samples);
             tracks.push(Track::new_at(
