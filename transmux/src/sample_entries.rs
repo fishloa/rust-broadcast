@@ -564,6 +564,10 @@ fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::init_segment::OpaqueBox> {
 // HEVC Sample Entries: hvc1 and hev1
 // ---------------------------------------------------------------------------
 
+/// Sample entry name `hvc1`: parameter sets live in the entry, with the array
+/// completeness values §8.4.1.1.1 mandates.
+const HVC1_FOURCC: [u8; 4] = *b"hvc1";
+
 /// H.265/HEVC sample entry — ISO/IEC 14496-15:2017 §8.4.1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -613,6 +617,24 @@ impl HEVCSampleEntry {
                 what: "hvc1 missing hvcC",
             }))
         }
+    }
+
+    /// Arrays whose `array_completeness` breaks the rule for this entry name.
+    ///
+    /// ISO/IEC 14496-15:2017 §8.4.1.1.1: for `hvc1` the "default and mandatory
+    /// value" is 1 for the parameter-set arrays (VPS, SPS, PPS) and 0 for every
+    /// other array; for `hev1` 0 is only the default, so nothing is reported.
+    /// Parsing accepts either (real `hvc1` files carry 0 on the parameter sets),
+    /// so a caller that wants the rule enforced asks here.
+    pub fn array_completeness_violations(
+        &self,
+    ) -> impl Iterator<Item = &crate::nalu_types::HevcNalArray> {
+        let is_hvc1 = self.codec_type == HVC1_FOURCC;
+        self.config
+            .config
+            .arrays
+            .iter()
+            .filter(move |a| is_hvc1 && a.array_completeness != a.is_parameter_set())
     }
 
     /// Create a new hvc1 sample entry.

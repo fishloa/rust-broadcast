@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - `LlHlsSegmenter::set_start_time_ns` and `StreamingTsHlsSegmenter::set_start_time_ns` start the decode clock (`tfdt`, TS PES times) at a given time instead of zero, so a segmenter for a reconnected source continues the previous run's timeline.
+- `HEVCSampleEntry::array_completeness_violations`: the arrays whose `array_completeness` breaks the `hvc1` rule of §8.4.1.1.1 (1 on VPS/SPS/PPS, 0 elsewhere; `hev1` only defaults to 0 and is never reported). Parsing stays tolerant because real `hvc1` files (GPAC) write 0 on the parameter sets. Public constants `HEVC_VPS_NUT`, `HEVC_SPS_NUT`, `HEVC_PPS_NUT`, `HEVC_SUFFIX_SEI_NUT` in `nalu_types` (#1915).
 
 ### Fixed
 - A signalled TS time-base discontinuity lifts every stream of the program by one common offset (the first stream to reach the new base fixes it), so the new base's own A/V skew survives the splice; each PID used to be lifted independently to its own last stamp plus one period, replacing the new skew with the old one (up to one frame). A stream the shared offset would not keep monotonic falls back to its own lift.
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StreamingFlvDemux` unrolls the 32-bit millisecond tag timestamp, so a session past 2^32 ms keeps `dts` monotonic instead of stepping back to zero (bug audit E).
 - `AVCDecoderConfigurationRecord` rejects `bit_depth_luma_minus8` / `bit_depth_chroma_minus8` above 4 on parse and on serialize with `Error::InvalidValue` (ISO/IEC 14496-15:2017 §5.3.3.1.3); a 3-bit value of 5 to 7 used to be accepted and written back (#1913).
 - `AVCDecoderConfigurationRecord::parse` accepts `numOfSequenceParameterSets == 0` (ISO/IEC 14496-15:2017 clause 5.3.3.1.1: a parameter-set-stream or in-band-parameter-set record may carry no SPS/PPS), so `avcp` and `avc3`/`avc4` tracks with an empty record demux; the FLV demuxers keep refusing a sequence header without an SPS themselves (#1914).
+- `HEVCDecoderConfigurationRecord::parse` keeps a `hvcC` array whose `NAL_unit_type` is not VPS/SPS/PPS/prefix SEI/suffix SEI, as before: ISO/IEC 14496-15:2017 §8.3.3.1.1 restricts the arrays to those types but tells readers to ignore the others, so rejecting would refuse real files. `HEVCDecoderConfigurationRecord::unpermitted_arrays` and `HevcNalArray::has_permitted_nal_unit_type` / `is_parameter_set` now name them (#1915).
 
 ## [0.30.0] - 2026-11-07
 ### Added

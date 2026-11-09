@@ -18,7 +18,13 @@ pub(crate) const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
 
 /// H.265 `nal_unit_type` for a sequence parameter set (`SPS_NUT`) — ITU-T H.265
 /// Table 7-1 (type 33).
-pub(crate) const HEVC_SPS_NUT: u8 = 33;
+pub const HEVC_SPS_NUT: u8 = 33;
+/// H.265 `VPS_NUT` — ITU-T H.265 Table 7-1 (type 32).
+pub const HEVC_VPS_NUT: u8 = 32;
+/// H.265 `PPS_NUT` — ITU-T H.265 Table 7-1 (type 34).
+pub const HEVC_PPS_NUT: u8 = 34;
+/// H.265 `SUFFIX_SEI_NUT` — ITU-T H.265 Table 7-1 (type 40).
+pub const HEVC_SUFFIX_SEI_NUT: u8 = 40;
 
 // ---------------------------------------------------------------------------
 // AVC: SPS, PPS, and SPSExt NAL units (sequenceParameterSetNALUnit)
@@ -142,6 +148,25 @@ impl HevcNalArray {
             nal_unit_type,
             nalus,
         }
+    }
+
+    /// Whether this array holds VPS, SPS or PPS NAL units.
+    pub fn is_parameter_set(&self) -> bool {
+        matches!(
+            self.nal_unit_type,
+            HEVC_VPS_NUT | HEVC_SPS_NUT | HEVC_PPS_NUT
+        )
+    }
+
+    /// Whether `NAL_unit_type` is one of the five values the `hvcC` arrays are
+    /// restricted to: VPS, SPS, PPS, prefix SEI and suffix SEI (ISO/IEC
+    /// 14496-15:2017 §8.3.3.1.1, §8.3.3.1.3).
+    pub fn has_permitted_nal_unit_type(&self) -> bool {
+        self.is_parameter_set()
+            || matches!(
+                self.nal_unit_type,
+                crate::hdr::HEVC_PREFIX_SEI_NUT | HEVC_SUFFIX_SEI_NUT
+            )
     }
 }
 

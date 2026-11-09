@@ -86,6 +86,7 @@ mod hdr10;
 mod hdr10plus;
 #[cfg(feature = "std")]
 mod heaac_signalling;
+mod hevc_array_rules;
 mod hevc_sps;
 mod hevc_vps_timing;
 mod hls_discontinuity;

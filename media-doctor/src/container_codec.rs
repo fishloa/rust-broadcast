@@ -34,6 +34,16 @@
 //!   an Annex B start code smuggled into an MP4 sample in place of a length
 //!   prefix (ISO/IEC 14496-15:2017 §5.4.3.2.3 "no Annex B start codes").
 //!
+//! - **`hvcc-array-nal-type`** (Warning): an `hvcC` array whose `NAL_unit_type` is
+//!   not VPS/SPS/PPS/prefix SEI/suffix SEI. The 2017 text restricts the arrays to
+//!   those types but tells readers to ignore the others, so this is a warning
+//!   (ISO/IEC 14496-15:2017 §8.3.3.1.1).
+//! - **`hvc1-array-completeness`** (Warning): an `hvc1` entry whose
+//!   `array_completeness` is not 1 on a parameter-set array and 0 on every other
+//!   array (§8.4.1.1.1 "default and mandatory"). A warning, not an error: GPAC
+//!   writes `hvc1` with 0 on the parameter sets and the file plays everywhere.
+//!   `hev1` only defaults to 0, so it is never reported.
+//!
 //! Non-ISOBMFF input, or input that fails to demux (e.g. a bare `sidx`-only
 //! stub with no `moov`), yields no findings — this function has nothing to
 //! say about a container it cannot parse, which must never surface as a
@@ -44,8 +54,10 @@
 //! for track-level findings) and [`Location::pid`] holds the MP4 track_id
 //! (not a TS PID — there is none for this input).
 
-use broadcast_common::Unpackage;
+use broadcast_common::{Parse, Unpackage};
 use transmux::TrackId;
+use transmux::box_types::clamped_boxes;
+use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
 
 use crate::report::{Finding, Location, Report, Severity};
@@ -79,6 +91,66 @@ pub fn check_container_codec(bytes: &[u8], report: &mut Report) {
     };
     if let Some(media) = media {
         check_media(&media, report);
+    }
+    check_hevc_sample_entries(bytes, report);
+}
+
+fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
+    let Some(moov) = clamped_boxes(bytes).find(|b| b.header.box_type.is(b"moov")) else {
+        return;
+    };
+    let Ok(movie) = MovieBox::parse(&bytes[moov.start..moov.end]) else {
+        return;
+    };
+    for track in &movie.tracks {
+        let track_id = track.tkhd.track_id;
+        let Some(stbl) = track
+            .mdia
+            .as_ref()
+            .and_then(|m| m.minf.as_ref())
+            .and_then(|m| m.stbl.as_ref())
+        else {
+            continue;
+        };
+        for child in &stbl.children {
+            let StblChild::Stsd(stsd) = child else {
+                continue;
+            };
+            for entry in &stsd.entries {
+                let SampleEntryVariant::Hevc1(entry) = entry else {
+                    continue;
+                };
+                let name = alloc::string::String::from_utf8_lossy(&entry.codec_type).into_owned();
+                for array in entry.config.config.unpermitted_arrays() {
+                    report.push(Finding::new(
+                        Severity::Warning,
+                        Location::at_track(0, track_id),
+                        "hvcc-array-nal-type",
+                        alloc::format!(
+                            "{name} hvcC on track {track_id} carries an array of NAL_unit_type {}, \
+                             which is not VPS, SPS, PPS, prefix SEI or suffix SEI; readers ignore \
+                             it — ISO/IEC 14496-15:2017 §8.3.3.1.1",
+                            array.nal_unit_type,
+                        ),
+                    ));
+                }
+                for array in entry.array_completeness_violations() {
+                    report.push(Finding::new(
+                        Severity::Warning,
+                        Location::at_track(0, track_id),
+                        "hvc1-array-completeness",
+                        alloc::format!(
+                            "hvc1 hvcC on track {track_id} has array_completeness {} on the \
+                             NAL_unit_type {} array; hvc1 requires {} — ISO/IEC 14496-15:2017 \
+                             §8.4.1.1.1",
+                            u8::from(array.array_completeness),
+                            array.nal_unit_type,
+                            u8::from(array.is_parameter_set()),
+                        ),
+                    ));
+                }
+            }
+        }
     }
 }
 
