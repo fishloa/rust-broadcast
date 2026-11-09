@@ -292,6 +292,9 @@ impl PidFilterOp {
                     let Ok(pat) = PatSection::parse(&section) else {
                         continue;
                     };
+                    if !pat.current_next_indicator {
+                        continue;
+                    }
                     if let Some(entry) = pat.entries.iter().find(|e| e.program_number == pn) {
                         let pmt_pid = entry.pid;
                         *state = ServiceState::WaitingPmt {
@@ -322,6 +325,9 @@ impl PidFilterOp {
                     let Ok(pmt) = PmtSection::parse(&section) else {
                         continue;
                     };
+                    if !pmt.current_next_indicator {
+                        continue;
+                    }
                     let keep = resolve_keep_set(&pmt, pmt_pid, &BTreeSet::new());
                     *state = ServiceState::Resolved {
                         program_number: pn,
@@ -358,6 +364,9 @@ impl PidFilterOp {
                         let Ok(pmt) = PmtSection::parse(&section) else {
                             continue;
                         };
+                        if !pmt.current_next_indicator {
+                            continue;
+                        }
                         // The PMT that initially resolved the state is the
                         // reference version; only a *different* version is a
                         // change (§2.4.4.9).
@@ -385,6 +394,9 @@ impl PidFilterOp {
                         let Ok(pat) = PatSection::parse(&section) else {
                             continue;
                         };
+                        if !pat.current_next_indicator {
+                            continue;
+                        }
                         // The PAT version observed when the state resolved is
                         // the reference; only a different version is a change
                         // (§2.4.4.4).
@@ -415,6 +427,9 @@ impl PidFilterOp {
                         let Ok(cat) = CatSection::parse(&section) else {
                             continue;
                         };
+                        if !cat.current_next_indicator {
+                            continue;
+                        }
                         if cat_version.is_some_and(|v| v == cat.version_number) {
                             continue;
                         }
