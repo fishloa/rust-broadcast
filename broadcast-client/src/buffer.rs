@@ -682,7 +682,7 @@ impl Feeder {
         }
     }
 
-    fn flush_pending(&mut self, now_us: u64) {
+    pub(crate) fn flush_pending(&mut self, now_us: u64) {
         if self.finite || self.controller.is_none() {
             return;
         }

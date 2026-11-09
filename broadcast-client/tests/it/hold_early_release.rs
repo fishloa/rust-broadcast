@@ -156,25 +156,25 @@ fn drive(s: &mut Session, now: u64, wake: &mut Option<u64>, events: &mut Vec<Eve
     }
 }
 
+fn last_resolution_chunk(bytes: &[u8], chunk: usize) -> usize {
+    let free = replay_paced(bytes, config(0, 0), chunk, bitrate_bps(bytes));
+    let t = *free.tracks_times().last().unwrap();
+    let bps = bitrate_bps(bytes);
+    let mut at = 0u64;
+    for (i, part) in bytes.chunks(chunk).enumerate() {
+        at += part.len() as u64 * 8 * 1_000_000 / bps;
+        if at >= t {
+            return i;
+        }
+    }
+    0
+}
+
 #[test]
 fn the_settle_is_armed_on_the_session_clock_when_the_source_goes_quiet() {
     let bytes = without_pid(&test_fixtures::read(FRANCE2), FRANCE2_SILENT);
     let chunk = 64 * 1024;
-    let free = replay_paced(&bytes, config(0, 0), chunk, bitrate_bps(&bytes));
-    let last_chunk = {
-        let t = *free.tracks_times().last().unwrap();
-        let bps = bitrate_bps(&bytes);
-        let mut at = 0u64;
-        let mut idx = 0usize;
-        for (i, part) in bytes.chunks(chunk).enumerate() {
-            at += part.len() as u64 * 8 * 1_000_000 / bps;
-            if at >= t {
-                idx = i;
-                break;
-            }
-        }
-        idx
-    };
+    let last_chunk = last_resolution_chunk(&bytes, chunk);
     let (mut s, c) = open_live(config(FAR_US, FAR_US));
     let mut now = 0;
     let mut wake = None;
@@ -212,4 +212,86 @@ fn the_settle_is_armed_on_the_session_clock_when_the_source_goes_quiet() {
         }
     }
     panic!("never released by {release_at}");
+}
+
+/// The track hold released by a wake-up (`poll`, not `on_data`) hands samples to the host; the
+/// controller must learn their ends in that same `poll`, not at the next chunk.
+#[test]
+fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
+    use broadcast_client::BufferInput;
+    use std::collections::BTreeMap;
+
+    let bytes = without_pid(&test_fixtures::read(FRANCE2), FRANCE2_SILENT);
+    let chunk = 64 * 1024;
+    let mut cfg = config(FAR_US, FAR_US);
+    cfg.record_buffer_inputs = true;
+    let (mut s, c) = open_live(cfg);
+    let mut now = 0;
+    let mut wake = None;
+    let mut timescale: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut host_end: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut reported: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut released = false;
+    let mut collect = |s: &mut Session, now: u64, wake: &mut Option<u64>| {
+        let mut got_tracks = false;
+        while let Some(a) = s.poll(now) {
+            if let Action::WakeAt(t) = a {
+                *wake = Some(t);
+            }
+        }
+        while let Some(e) = s.next_event() {
+            match e {
+                Event::Tracks(specs) => {
+                    got_tracks = true;
+                    for t in specs {
+                        timescale.insert(t.track_id.value(), t.timescale);
+                    }
+                }
+                Event::Sample { track, sample, .. } => {
+                    let ts = u64::from(timescale[&track.value()]);
+                    let end = u64::try_from(
+                        sample.pts.unwrap() + i64::from(sample.duration.unwrap_or(0)),
+                    )
+                    .unwrap();
+                    let slot = host_end.entry(track.value()).or_insert(0);
+                    *slot = (*slot).max(end * 27_000_000 / ts);
+                }
+                _ => {}
+            }
+        }
+        for i in s.drain_buffer_inputs() {
+            if let BufferInput::TrackMedia { track, end, .. } = i {
+                let slot = reported.entry(track).or_insert(0);
+                *slot = (*slot).max(end);
+            }
+        }
+        got_tracks
+    };
+    for part in bytes.chunks(chunk).take(last_resolution_chunk(&bytes, chunk) + 1) {
+        now += STEP_US;
+        s.on_data(c, part, now);
+        assert!(
+            !collect(&mut s, now, &mut wake),
+            "precondition: the hold is released by a wake-up, not by data"
+        );
+    }
+    for _ in 0..MAX_WAKES {
+        let due = wake.take().expect("a wake-up stays armed while holding");
+        if collect(&mut s, due, &mut wake) {
+            released = true;
+            break;
+        }
+    }
+    assert!(released, "precondition: the hold released on a wake-up");
+    assert!(
+        !reported.is_empty(),
+        "the wake-up handed samples to the host but reported no end to the controller"
+    );
+    for (track, rep) in &reported {
+        assert!(
+            host_end[track] <= *rep,
+            "track {track}: host holds media to {} but the controller was told {rep}",
+            host_end[track]
+        );
+    }
 }
