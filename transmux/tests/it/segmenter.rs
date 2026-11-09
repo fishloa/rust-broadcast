@@ -20,7 +20,7 @@ use transmux::{
     SLConfigDescriptor, Sample, Segmenter, TrackSpec, build_media_segment,
 };
 
-/// Wire value of a sync (random-access) `sample_flags`, per ISO/IEC 14496-12
+/// Wire value of a sync (random-access) `sample_flags`, per ISO/IEC 14496-12:2026
 /// §8.8.3.1 (`sample_is_non_sync_sample == 0`, `sample_depends_on == 2`).
 const WIRE_SYNC_FLAGS: u32 = 0x0200_0000;
 

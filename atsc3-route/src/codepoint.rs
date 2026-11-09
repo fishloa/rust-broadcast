@@ -83,7 +83,7 @@ pub enum FragMode {
     /// `0` — arbitrary byte-boundary fragmentation.
     Arbitrary,
     /// `1` — application-specific, sample-based: one or more complete
-    /// ISOBMFF samples (ISO/IEC 14496-12), used for MDE mode carrying an
+    /// ISOBMFF samples (ISO/IEC 14496-12:2026), used for MDE mode carrying an
     /// `mdat` box.
     SampleBased,
     /// `2` — application-specific, box-collection: one or more complete

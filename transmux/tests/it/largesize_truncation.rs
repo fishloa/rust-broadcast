@@ -1,6 +1,6 @@
 //! Property test for the #1147 follow-up: every sample-entry type the `stsd`
 //! dispatcher knows, in BOTH box-header forms (compact 8-byte and the
-//! `size = 1` + 64-bit `largesize` 16-byte form, ISO/IEC 14496-12 §4.2), at
+//! `size = 1` + 64-bit `largesize` 16-byte form, ISO/IEC 14496-12:2026 §4.2), at
 //! EVERY body length from 0 up past the longest fixed layout, with several
 //! fill patterns, must return `Ok`/`Err` and never panic. A reader whose
 //! minimum-length guard assumed an 8-byte header indexed out of bounds on a

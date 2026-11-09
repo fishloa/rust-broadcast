@@ -1,12 +1,12 @@
 //! ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox, and
-//! SubSampleInformationBox — ISO/IEC 14496-12:2015 §8.16.5, §8.9.2, §8.9.3,
+//! SubSampleInformationBox — ISO/IEC 14496-12:2026 §8.14.5, §8.9.2, §8.9.3,
 //! §8.7.7.
 //!
 //! Typed containers for:
 //!
 //! | Box   | Name                           | Section   | Description                                       |
 //! |-------|--------------------------------|-----------|---------------------------------------------------|
-//! | `prft`| ProducerReferenceTimeBox       | §8.16.5   | NTP wall-clock anchor for the reference track     |
+//! | `prft`| ProducerReferenceTimeBox       | §8.14.5   | NTP wall-clock anchor for the reference track     |
 //! | `sgpd`| SampleGroupDescriptionBox      | §8.9.3    | Per-grouping-type sample group description table  |
 //! | `sbgp`| SampleToGroupBox               | §8.9.2    | Maps samples to sample group description indices  |
 //! | `subs`| SubSampleInformationBox        | §8.7.7    | Per-sample sub-sample size/priority table         |
@@ -16,7 +16,7 @@
 //!
 //! # Spec citations
 //!
-//! - **prft**: ISO/IEC 14496-12:2015 §8.16.5.2 — version 0: `media_time` is u32;
+//! - **prft**: ISO/IEC 14496-12:2026 §8.14.5.2 — version 0: `media_time` is u32;
 //!   version 1: `media_time` is u64.
 //! - **sgpd**: ISO/IEC 14496-12:2026 §8.9.3.2 — version >= 1: `default_length`
 //!   present; version >= 2: `default_group_description_index` also present;
@@ -24,7 +24,7 @@
 //!   version 0 is deprecated. Only `'roll'` (RollRecoveryEntry, i16
 //!   `roll_distance`) is typed; all other grouping types are stored as raw bytes
 //!   via [`SgpdEntry::Unknown`].
-//! - **sbgp**: ISO/IEC 14496-12:2015 §8.9.2.2 — version 0: no
+//! - **sbgp**: ISO/IEC 14496-12:2026 §8.9.2.2 — version 0: no
 //!   `grouping_type_parameter`; version 1: `grouping_type_parameter` present.
 //! - **subs**: ISO/IEC 14496-12:2026 §8.7.7.2 — version 0: `subsample_size` is
 //!   u16; version 1: `subsample_size` is u32; version 2 (the reference form,
@@ -79,7 +79,7 @@ const SHORT_REF_BITS: u32 = 7;
 const LONG_REF_BITS: u32 = 15;
 const MAX_CSP_LEN: usize = 4;
 
-/// Grouping type `'roll'` (RollRecoveryEntry) — ISO/IEC 14496-12:2015 §10.6.
+/// Grouping type `'roll'` (RollRecoveryEntry) — ISO/IEC 14496-12:2026 §10.1.
 pub const GROUPING_TYPE_ROLL: u32 = u32::from_be_bytes(*b"roll");
 
 /// Grouping type `'seig'` (CencSampleEncryptionInformationGroupEntry) —
@@ -95,10 +95,10 @@ pub const GROUPING_TYPE_ROLL: u32 = u32::from_be_bytes(*b"roll");
 pub const GROUPING_TYPE_SEIG: u32 = u32::from_be_bytes(*b"seig");
 
 // ---------------------------------------------------------------------------
-// ProducerReferenceTimeBox — prft (ISO/IEC 14496-12:2015 §8.16.5)
+// ProducerReferenceTimeBox — prft (ISO/IEC 14496-12:2026 §8.14.5)
 // ---------------------------------------------------------------------------
 
-/// Producer Reference Time Box (`prft`) — ISO/IEC 14496-12:2015 §8.16.5.2.
+/// Producer Reference Time Box (`prft`) — ISO/IEC 14496-12:2026 §8.14.5.2.
 ///
 /// Provides a UTC wall-clock anchor for the reference track.
 ///
@@ -121,9 +121,9 @@ pub struct ProducerReferenceTimeBox {
     pub version: u8,
     /// FullBox flags `[23:0]`.
     pub flags: u32,
-    /// Track ID of the reference track (§8.16.5.3).
+    /// Track ID of the reference track (§8.14.5.3).
     pub reference_track_id: TrackId,
-    /// UTC time in NTP format (§8.16.5.3).
+    /// UTC time in NTP format (§8.14.5.3).
     pub ntp_timestamp: u64,
     /// Media time in the reference track's timescale.
     ///
@@ -240,18 +240,18 @@ impl Serialize for ProducerReferenceTimeBox {
 }
 
 // ---------------------------------------------------------------------------
-// SampleGroupDescriptionBox — sgpd (ISO/IEC 14496-12:2015 §8.9.3)
+// SampleGroupDescriptionBox — sgpd (ISO/IEC 14496-12:2026 §8.9.3)
 // ---------------------------------------------------------------------------
 
 /// A parsed entry in the sgpd sample group description table.
 ///
-/// Only `'roll'` (§10.6 RollRecoveryEntry) is fully typed; all other grouping
+/// Only `'roll'` (§10.1 RollRecoveryEntry) is fully typed; all other grouping
 /// types carry their body as raw bytes in [`SgpdEntry::Unknown`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum SgpdEntry {
-    /// RollRecoveryEntry for grouping type `'roll'` (§10.6).
+    /// RollRecoveryEntry for grouping type `'roll'` (§10.1).
     ///
     /// `roll_distance` is the number of samples that must be decoded before the
     /// stream is usable (negative = pre-roll, positive = post-roll).
@@ -264,7 +264,7 @@ pub enum SgpdEntry {
 }
 
 /// A `roll` sample-group description: `roll_distance` (`signed int(16)`),
-/// ISO/IEC 14496-12:2015 §10.6.1.
+/// ISO/IEC 14496-12:2026 §10.1.2.
 const ROLL_ENTRY_LEN: usize = 2;
 
 impl SgpdEntry {
@@ -430,7 +430,7 @@ impl SampleGroupDescriptionBox {
             need_in(body, c + entry_len, "sgpd entry body")?;
             let entry_bytes = &body[c..c + entry_len];
             // A `roll` description is exactly the 2-byte `roll_distance`
-            // (§10.6.1). A box whose v1 `default_length` or per-entry
+            // (§10.1.2). A box whose v1 `default_length` or per-entry
             // `description_length` is larger therefore carries something this
             // crate does not model after the distance; keeping only the first
             // 2 bytes would re-serialize it 2 bytes wide and shrink the whole
@@ -569,7 +569,7 @@ impl SampleGroupDescriptionBox {
 }
 
 // ---------------------------------------------------------------------------
-// SampleToGroupBox — sbgp (ISO/IEC 14496-12:2015 §8.9.2)
+// SampleToGroupBox — sbgp (ISO/IEC 14496-12:2026 §8.9.2)
 // ---------------------------------------------------------------------------
 
 /// Entry in the sbgp sample-to-group mapping table (§8.9.2.2).
@@ -582,7 +582,7 @@ pub struct SbgpEntry {
     pub group_description_index: u32,
 }
 
-/// Sample To Group Box (`sbgp`) — ISO/IEC 14496-12:2015 §8.9.2.2.
+/// Sample To Group Box (`sbgp`) — ISO/IEC 14496-12:2026 §8.9.2.2.
 ///
 /// Wire layout (FullBox header omitted):
 ///
@@ -712,7 +712,7 @@ impl Serialize for SampleToGroupBox {
 }
 
 // ---------------------------------------------------------------------------
-// SubSampleInformationBox — subs (ISO/IEC 14496-12:2015 §8.7.7)
+// SubSampleInformationBox — subs (ISO/IEC 14496-12:2026 §8.7.7)
 // ---------------------------------------------------------------------------
 
 /// A single sub-sample descriptor within a [`SubsEntry`].
@@ -756,7 +756,7 @@ impl SubsEntry {
     }
 }
 
-/// Sub-Sample Information Box (`subs`) — ISO/IEC 14496-12:2015 §8.7.7.2.
+/// Sub-Sample Information Box (`subs`) — ISO/IEC 14496-12:2026 §8.7.7.2.
 ///
 /// Wire layout (FullBox header omitted):
 ///
@@ -1571,7 +1571,7 @@ mod tests {
         );
     }
 
-    /// A `roll` description is exactly 2 bytes (§10.6.1). A box whose v1
+    /// A `roll` description is exactly 2 bytes (§10.1.2). A box whose v1
     /// `default_length` is larger carries something this crate does not model
     /// after the distance; keeping only the first 2 bytes re-serialized the
     /// entry 2 bytes wide and shrank the whole entry list (audit r05-W15).

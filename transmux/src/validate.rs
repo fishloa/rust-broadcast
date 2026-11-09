@@ -3,7 +3,7 @@
 //!
 //! Walks the ISOBMFF box tree of an initialization and/or media segment and
 //! reports structural conformance issues ([`ConformanceIssue`], graded by
-//! [`Severity`]) against ISO/IEC 14496-12:2015 (ISOBMFF), ISO/IEC 23000-19
+//! [`Severity`]) against ISO/IEC 14496-12:2026 (ISOBMFF), ISO/IEC 23000-19
 //! (CMAF), and DASH-IF structural conventions. It never decodes media — it
 //! only inspects box structure, presence, ordering, and the sample-size /
 //! `data_offset` arithmetic.
@@ -15,9 +15,9 @@
 //!
 //! # Checks
 //!
-//! ## Initialization segment ([`validate_init_segment`], ISO/IEC 14496-12)
-//! - **`init.ftyp.missing`** (ERROR) — `ftyp` must be the first box (§4.3).
-//! - **`init.ftyp.not-first`** (ERROR) — a box precedes `ftyp` (§4.3, §6.2.3).
+//! ## Initialization segment ([`validate_init_segment`], ISO/IEC 14496-12:2026)
+//! - **`init.ftyp.missing`** (ERROR) — `ftyp` must be the first box (§5.2).
+//! - **`init.ftyp.not-first`** (ERROR) — a box precedes `ftyp` (§5.2, §7.3.4).
 //! - **`init.moov.missing`** (ERROR) — a `moov` box is required (§8.2.1).
 //! - **`init.mvhd.missing`** (ERROR) — `moov` must contain `mvhd` (§8.2.2).
 //! - **`init.trak.missing`** (ERROR) — `moov` must contain ≥1 `trak` (§8.3.1).
@@ -27,9 +27,9 @@
 //!   carry `mvex`/`trex` (§8.8.1/§8.8.3); its absence means the init segment
 //!   is not marked fragmented.
 //!
-//! ## Media segment ([`validate_media_segment`], ISO/IEC 14496-12 + CMAF)
+//! ## Media segment ([`validate_media_segment`], ISO/IEC 14496-12:2026 + CMAF)
 //! - **`media.styp.missing`** (WARNING) — CMAF media segments begin with
-//!   `styp` (§8.16.2; CMAF ISO/IEC 23000-19 §7.3.2.3).
+//!   `styp` (§8.14.2; CMAF ISO/IEC 23000-19 §7.3.2.3).
 //! - **`media.styp.brand`** (WARNING) — the `styp` brand set should include a
 //!   segment brand (`msdh`/`msix`/`cmf*`) (CMAF §7.3.2.3).
 //! - **`media.moof.missing`** (ERROR) — a media segment carries a `moof`
@@ -55,7 +55,7 @@
 //! ## Cross-segment ([`validate_cmaf_track`])
 //! - **`track.tfdt.discontinuity`** (ERROR) — across consecutive segments the
 //!   `tfdt` baseMediaDecodeTime must be contiguous: `next.tfdt ==
-//!   prev.tfdt + Σ(prev sample durations)` (ISO/IEC 14496-12 §8.8.12; CMAF
+//!   prev.tfdt + Σ(prev sample durations)` (ISO/IEC 14496-12:2026 §8.8.12; CMAF
 //!   §7.5.19 contiguous decode timeline). Any gap or overlap is flagged.
 //! - **`track.mfhd.sequence`** (WARNING) — `mfhd.sequence_number` should be
 //!   strictly increasing across segments (§8.8.5).
@@ -192,7 +192,7 @@ fn child_body<'a>(body: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 // Init-segment validation
 // ---------------------------------------------------------------------------
 
-/// Validate a fMP4/CMAF **initialization segment** against ISO/IEC 14496-12.
+/// Validate a fMP4/CMAF **initialization segment** against ISO/IEC 14496-12:2026.
 ///
 /// Returns every structural [`ConformanceIssue`] found (empty ⇒ conformant).
 /// Malformed input is reported as issues, never a panic.
@@ -200,18 +200,18 @@ pub fn validate_init_segment(bytes: &[u8]) -> Vec<ConformanceIssue> {
     let mut issues = Vec::new();
     let top = children(bytes);
 
-    // ftyp present and first (§4.3, §6.2.3).
+    // ftyp present and first (§5.2, §7.3.4).
     match top.iter().position(|(t, _)| t == &FTYP) {
         None => issues.push(ConformanceIssue::error(
             "init.ftyp.missing",
-            "no ftyp box: an initialization segment must begin with ftyp (ISO/IEC 14496-12 §4.3)"
+            "no ftyp box: an initialization segment must begin with ftyp (ISO/IEC 14496-12:2026 §5.2)"
                 .to_string(),
         )),
         Some(0) => {}
         Some(pos) => issues.push(ConformanceIssue::error(
             "init.ftyp.not-first",
             format!(
-                "ftyp is box #{} but must be the first box (ISO/IEC 14496-12 §4.3, §6.2.3)",
+                "ftyp is box #{} but must be the first box (ISO/IEC 14496-12:2026 §5.2, §7.3.4)",
                 pos + 1
             ),
         )),
@@ -221,7 +221,7 @@ pub fn validate_init_segment(bytes: &[u8]) -> Vec<ConformanceIssue> {
     let Some(moov) = child_body(bytes, &MOOV) else {
         issues.push(ConformanceIssue::error(
             "init.moov.missing",
-            "no moov box: an initialization segment requires a movie box (ISO/IEC 14496-12 §8.2.1)"
+            "no moov box: an initialization segment requires a movie box (ISO/IEC 14496-12:2026 §8.2.1)"
                 .to_string(),
         ));
         return issues;
@@ -236,7 +236,7 @@ fn validate_moov(moov: &[u8], issues: &mut Vec<ConformanceIssue>) {
     if !has_child(moov, &MVHD) {
         issues.push(ConformanceIssue::error(
             "init.mvhd.missing",
-            "moov has no mvhd (ISO/IEC 14496-12 §8.2.2)".to_string(),
+            "moov has no mvhd (ISO/IEC 14496-12:2026 §8.2.2)".to_string(),
         ));
     }
 
@@ -248,7 +248,7 @@ fn validate_moov(moov: &[u8], issues: &mut Vec<ConformanceIssue>) {
     if traks.is_empty() {
         issues.push(ConformanceIssue::error(
             "init.trak.missing",
-            "moov has no trak: at least one track is required (ISO/IEC 14496-12 §8.3.1)"
+            "moov has no trak: at least one track is required (ISO/IEC 14496-12:2026 §8.3.1)"
                 .to_string(),
         ));
     }
@@ -261,7 +261,7 @@ fn validate_moov(moov: &[u8], issues: &mut Vec<ConformanceIssue>) {
         None => issues.push(ConformanceIssue::warning(
             "init.mvex.missing",
             "moov has no mvex: the init segment is not marked as a fragmented movie \
-             (ISO/IEC 14496-12 §8.8.1) — required for a fragmented (CMAF/DASH) workflow"
+             (ISO/IEC 14496-12:2026 §8.8.1) — required for a fragmented (CMAF/DASH) workflow"
                 .to_string(),
         )),
         Some(mvex) => {
@@ -269,7 +269,7 @@ fn validate_moov(moov: &[u8], issues: &mut Vec<ConformanceIssue>) {
                 issues.push(ConformanceIssue::warning(
                     "init.mvex.missing",
                     "mvex has no trex: fragmented tracks need per-track defaults \
-                     (ISO/IEC 14496-12 §8.8.3)"
+                     (ISO/IEC 14496-12:2026 §8.8.3)"
                         .to_string(),
                 ));
             }
@@ -311,7 +311,7 @@ fn validate_trak(trak: &[u8], track_no: usize, issues: &mut Vec<ConformanceIssue
             "init.trak.incomplete",
             format!(
                 "trak #{track_no} is missing required box(es): {} \
-                 (ISO/IEC 14496-12 §8.3.2/§8.4)",
+                 (ISO/IEC 14496-12:2026 §8.3.2/§8.4)",
                 missing.join(", ")
             ),
         ));
@@ -363,7 +363,7 @@ struct TrackFragmentInfo {
     total_duration: u64,
 }
 
-/// Validate a fMP4/CMAF **media segment** against ISO/IEC 14496-12 + CMAF.
+/// Validate a fMP4/CMAF **media segment** against ISO/IEC 14496-12:2026 + CMAF.
 ///
 /// Returns every structural [`ConformanceIssue`] found (empty ⇒ conformant).
 /// Malformed input is reported as issues, never a panic.
@@ -378,12 +378,12 @@ pub fn validate_media_segment(bytes: &[u8]) -> Vec<ConformanceIssue> {
 fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Option<MediaInfo> {
     let top = children(bytes);
 
-    // styp (CMAF §7.3.2.3 / §8.16.2).
+    // styp (CMAF §7.3.2.3 / §8.14.2).
     match top.iter().find(|(t, _)| t == &STYP) {
         None => issues.push(ConformanceIssue::warning(
             "media.styp.missing",
             "no styp box: a CMAF media segment begins with styp \
-             (ISO/IEC 14496-12 §8.16.2, ISO/IEC 23000-19 §7.3.2.3)"
+             (ISO/IEC 14496-12:2026 §8.14.2, ISO/IEC 23000-19 §7.3.2.3)"
                 .to_string(),
         )),
         Some((_, bx)) => {
@@ -427,7 +427,7 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
     if moof_positions.is_empty() {
         issues.push(ConformanceIssue::error(
             "media.moof.missing",
-            "no moof box: a media segment requires a movie fragment (ISO/IEC 14496-12 §8.8.4)"
+            "no moof box: a media segment requires a movie fragment (ISO/IEC 14496-12:2026 §8.8.4)"
                 .to_string(),
         ));
     }
@@ -439,7 +439,7 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
                 "media.mdat.orphan",
                 format!(
                     "mdat (box #{}) is not immediately preceded by a moof \
-                     (ISO/IEC 14496-12 §8.1.1/§8.8.4)",
+                     (ISO/IEC 14496-12:2026 §8.1.1/§8.8.4)",
                     mp + 1
                 ),
             ));
@@ -479,7 +479,7 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
                     "media.mdat.missing",
                     format!(
                         "moof (box #{}) is not followed by an mdat box \
-                         (ISO/IEC 14496-12 §8.8.4)",
+                         (ISO/IEC 14496-12:2026 §8.8.4)",
                         mp + 1
                     ),
                 ));
@@ -515,7 +515,7 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
                     issues.push(ConformanceIssue::error(
                             "media.mdat.overrun",
                             format!(
-                                "moof #{}, traf #{}: sample data offsets do not resolve to a                                  range inside an mdat (ISO/IEC 14496-12 §8.8.7)",
+                                "moof #{}, traf #{}: sample data offsets do not resolve to a                                  range inside an mdat (ISO/IEC 14496-12:2026 §8.8.7)",
                                 mp + 1,
                                 ti + 1
                             ),
@@ -542,7 +542,7 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
                 issues.push(ConformanceIssue::error(
                     "media.mdat.overlap",
                     format!(
-                        "moof #{}: trun data ranges {}..{} and {}..{} overlap                          (ISO/IEC 14496-12 §8.8.8)",
+                        "moof #{}: trun data ranges {}..{} and {}..{} overlap                          (ISO/IEC 14496-12:2026 §8.8.8)",
                         mp + 1,
                         a_lo,
                         a_hi,
@@ -614,13 +614,13 @@ fn validate_moof(
     match child_body(moof, &MFHD) {
         None => issues.push(ConformanceIssue::error(
             "media.mfhd.missing",
-            format!("moof #{moof_no} has no mfhd (ISO/IEC 14496-12 §8.8.5)"),
+            format!("moof #{moof_no} has no mfhd (ISO/IEC 14496-12:2026 §8.8.5)"),
         )),
         Some(mfhd) => match MovieFragmentHeaderBox::parse_body(mfhd) {
             Ok(h) => sequence_number = Some(h.sequence_number),
             Err(_) => issues.push(ConformanceIssue::error(
                 "media.mfhd.missing",
-                format!("moof #{moof_no} mfhd could not be parsed (ISO/IEC 14496-12 §8.8.5)"),
+                format!("moof #{moof_no} mfhd could not be parsed (ISO/IEC 14496-12:2026 §8.8.5)"),
             )),
         },
     }
@@ -633,7 +633,7 @@ fn validate_moof(
     if trafs.is_empty() {
         issues.push(ConformanceIssue::error(
             "media.traf.missing",
-            format!("moof #{moof_no} has no traf (ISO/IEC 14496-12 §8.8.6)"),
+            format!("moof #{moof_no} has no traf (ISO/IEC 14496-12:2026 §8.8.6)"),
         ));
     }
     // CMAF: a fragment SHOULD carry a single track (CMAF §7.3.2.3).
@@ -667,14 +667,14 @@ fn validate_traf(
     if tfhd.is_none() {
         issues.push(ConformanceIssue::error(
             "media.tfhd.missing",
-            format!("moof #{moof_no}, traf #{traf_no} has no tfhd (ISO/IEC 14496-12 §8.8.7)"),
+            format!("moof #{moof_no}, traf #{traf_no} has no tfhd (ISO/IEC 14496-12:2026 §8.8.7)"),
         ));
     }
     let tfhd = tfhd.and_then(|b| TrackFragmentHeaderBox::parse_body(b).ok());
     let track_id = tfhd.as_ref().map(|h| h.track_id);
     let default_duration = tfhd.as_ref().and_then(|h| h.default_sample_duration);
 
-    // CMAF §7.3.2.3 / ISO/IEC 14496-12 §8.8.7: a CMAF fragment's `tfhd` must
+    // CMAF §7.3.2.3 / ISO/IEC 14496-12:2026 §8.8.7: a CMAF fragment's `tfhd` must
     // set `default-base-is-moof`, so its `trun.data_offset` values resolve
     // against the `moof` start. Without it the base falls back to the
     // enclosing `traf`'s `base_data_offset` or the previous fragment's end —
@@ -697,7 +697,7 @@ fn validate_traf(
                 "media.tfdt.missing",
                 format!(
                     "moof #{moof_no}, traf #{traf_no} has no tfdt: CMAF requires the \
-                     baseMediaDecodeTime (ISO/IEC 14496-12 §8.8.12, ISO/IEC 23000-19 §7.5.19)"
+                     baseMediaDecodeTime (ISO/IEC 14496-12:2026 §8.8.12, ISO/IEC 23000-19 §7.5.19)"
                 ),
             ));
             None
@@ -722,7 +722,7 @@ fn validate_traf(
     if truns.is_empty() {
         issues.push(ConformanceIssue::error(
             "media.trun.missing",
-            format!("moof #{moof_no}, traf #{traf_no} has no trun (ISO/IEC 14496-12 §8.8.8)"),
+            format!("moof #{moof_no}, traf #{traf_no} has no trun (ISO/IEC 14496-12:2026 §8.8.8)"),
         ));
     }
 
@@ -748,7 +748,7 @@ fn validate_traf(
             "media.sample.zero-duration",
             format!(
                 "moof #{moof_no}, traf #{traf_no}: {zero_duration_samples} sample(s) have \
-                 zero duration (ISO/IEC 14496-12 §8.8.8)"
+                 zero duration (ISO/IEC 14496-12:2026 §8.8.8)"
             ),
         ));
     }
@@ -806,7 +806,7 @@ fn validate_traf(
 }
 
 /// `sample_is_non_sync_sample` in the 32-bit sample-flags word
-/// (ISO/IEC 14496-12 §8.8.3.1): bit 16, set when the sample is NOT a sync point.
+/// (ISO/IEC 14496-12:2026 §8.8.3.1): bit 16, set when the sample is NOT a sync point.
 const SAMPLE_FLAGS_IS_NON_SYNC: u32 = 1 << 16;
 
 // ---------------------------------------------------------------------------
@@ -834,7 +834,7 @@ fn child_whole<'a>(owner: &'a [u8], parent_body: &'a [u8], fourcc: &[u8; 4]) -> 
 }
 
 /// The `track_id`s an init segment declares, from every `moov > trak > tkhd`
-/// (ISO/IEC 14496-12 §8.3.2). Empty when no `moov`/`tkhd` can be parsed.
+/// (ISO/IEC 14496-12:2026 §8.3.2). Empty when no `moov`/`tkhd` can be parsed.
 fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
     use crate::init_segment::TrackHeaderBox;
     use broadcast_common::Parse;
@@ -884,7 +884,7 @@ pub fn validate_cmaf_track(init: &[u8], segments: &[&[u8]]) -> Vec<ConformanceIs
                         "track.tfhd.unknown-track",
                         format!(
                             "media segment names track_id {} which the init segment's moov \
-                             does not declare (ISO/IEC 14496-12 §8.8.7)",
+                             does not declare (ISO/IEC 14496-12:2026 §8.8.7)",
                             track.track_id
                         ),
                     ));
@@ -905,7 +905,7 @@ pub fn validate_cmaf_track(init: &[u8], segments: &[&[u8]]) -> Vec<ConformanceIs
                 "track.mfhd.sequence",
                 format!(
                     "mfhd sequence_number not strictly increasing: {a} then {b} \
-                     (ISO/IEC 14496-12 §8.8.5)"
+                     (ISO/IEC 14496-12:2026 §8.8.5)"
                 ),
             ));
         }
@@ -932,7 +932,7 @@ pub fn validate_cmaf_track(init: &[u8], segments: &[&[u8]]) -> Vec<ConformanceIs
                     format!(
                         "track {}: tfdt baseMediaDecodeTime discontinuity - expected {} \
                          (prev first tfdt {} + sum durations), got {} \
-                         (ISO/IEC 14496-12 §8.8.12, ISO/IEC 23000-19 §7.5.19)",
+                         (ISO/IEC 14496-12:2026 §8.8.12, ISO/IEC 23000-19 §7.5.19)",
                         cur.track_id, prev_end, prev_first, cur_first
                     ),
                 ));

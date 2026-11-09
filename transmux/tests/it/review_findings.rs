@@ -251,7 +251,7 @@ fn segment_timeline_negative_r_non_increasing_next_t_silently_drops_the_s() {
     }
 }
 
-/// A whole box in the `size = 1` + 64-bit `largesize` form (ISO/IEC 14496-12
+/// A whole box in the `size = 1` + 64-bit `largesize` form (ISO/IEC 14496-12:2026
 /// §4.2): 16-byte header, then `body`.
 fn largesize_box(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
     let mut b = 1u32.to_be_bytes().to_vec();

@@ -8,7 +8,7 @@
 //!
 //! # Spec basis
 //!
-//! The "sync sample" concept maps directly to the ISO/IEC 14496-12 `stss`
+//! The "sync sample" concept maps directly to the ISO/IEC 14496-12:2026 `stss`
 //! (Sync Sample Box, §8.6.2): a sample not listed in `stss` is a non-sync
 //! sample (it depends on others for decoding). The trick-play track carries
 //! only the samples that *would* appear in `stss` — every sample in the derived
@@ -104,7 +104,7 @@ use crate::pipeline::Sample;
 ///
 /// # Spec basis
 ///
-/// Sync samples correspond to ISO/IEC 14496-12 §8.6.2 (`stss`). Each sample
+/// Sync samples correspond to ISO/IEC 14496-12:2026 §8.6.2 (`stss`). Each sample
 /// in the returned track is a random-access point (i.e. would appear in `stss`).
 pub fn derive_iframe_track(src: &Track) -> Result<Track> {
     let sync_indices: Vec<usize> = src

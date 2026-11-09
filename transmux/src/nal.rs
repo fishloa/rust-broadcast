@@ -449,7 +449,7 @@ pub(crate) fn sei_messages(nal_body: &[u8]) -> Vec<(u32, Vec<u8>)> {
 ///
 ///   Segments cut on case 2 or 3 open on a non-IDR access unit — correct for
 ///   open-GOP decode and DASH-IF/CMAF-acceptable, but not a "closed GOP"
-///   clean random-access point in the strict ISO/IEC 14496-12 sync-sample
+///   clean random-access point in the strict ISO/IEC 14496-12:2026 sync-sample
 ///   sense.
 ///
 /// Case 3 additionally requires the access unit to carry an **I-slice**: some

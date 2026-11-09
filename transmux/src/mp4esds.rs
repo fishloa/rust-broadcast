@@ -1125,7 +1125,7 @@ impl EsdsBox {
                 reason: "expected 'esds'",
             }));
         }
-        // ISO/IEC 14496-12 §4.2: size == 0 means the box extends to the end of
+        // ISO/IEC 14496-12:2026 §4.2: size == 0 means the box extends to the end of
         // the enclosing data; a declared size past `data` is rejected (r04-C4).
         let end = match header.size {
             0 => data.len(),
@@ -2006,7 +2006,7 @@ mod tests {
         );
     }
 
-    // r04-C4: ISO/IEC 14496-12 §4.2 — size == 0 means the box extends to the
+    // r04-C4: ISO/IEC 14496-12:2026 §4.2 — size == 0 means the box extends to the
     // end of the enclosing data; a well-formed size-0 esds must parse the same
     // as its explicit-size twin (used to slice [8..0] and panic).
     #[test]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""frag_samples.py FILE.mp4 [--dump]   (spec-derived sample extractor, ISO/IEC 14496-12 §8.8.7/§8.8.8)
+"""frag_samples.py FILE.mp4 [--dump]   (spec-derived sample extractor, ISO/IEC 14496-12:2026 §8.8.7/§8.8.8)
 
 Prints one line per track: `track <id>: <n> samples sha256=<hash over all sample bytes>` and
 (--dump) each sample's (moof#, traf#, trun#, file offset, size).  Base data offset rules (§8.8.7.1):

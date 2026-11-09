@@ -45,7 +45,7 @@ Use it to build a DASH player or repackager without taking a dependency on an HT
 | DASH-IF IOP | v4.3 | 4.3.3.2 live timing, 4.7 UTC timing | Full | Table 10 worked example is a test; the last (short) segment follows 5.3.9.5.3, not the IOP's nominal duration |
 | ETSI TS 103 285 | 1.4.1 | 10.8.2 BaseURL `@dvb:priority` | Priority, rotation after 2 failures | `@weight` parsed, never used |
 | ISO/IEC 23009-1 | 2022 (5th ed.) | 5.3.2.4 continuity, A.9 playback across Periods | Continuity honoured, connectivity treated as a discontinuity | the client; spec notes in `private/specs-verified/dash/docs-specs/23009-1/` |
-| ISO/IEC 14496-12 | 2022 | 8.8.4 `moof`/`mdat`, 8.16.3 `sidx` | Used | structural segment check via `container-probe`; `sidx` ranges via `transmux` |
+| ISO/IEC 14496-12:2026 | 2026 | 8.8.4 `moof`/`mdat`, 8.14.3 `sidx` | Used | structural segment check via `container-probe`; `sidx` ranges via `transmux` |
 | W3C XML Schema Part 2 | 2004 | 3.2.7 `xs:dateTime` | Accepted subset | `private/specs-verified/dash/docs-specs/xs-datetime-subset.md` |
 
 ## Quick start

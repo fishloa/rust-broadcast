@@ -1,5 +1,5 @@
 //! Progressive (single-file, non-fragmented) MP4 demux — ISO/IEC
-//! 14496-12:2015 §8.5–§8.7.
+//! 14496-12:2026 §8.5–§8.7.
 //!
 //! [`ProgressiveDemux`] parses a non-fragmented `.mp4` (a `moov` carrying full
 //! per-track sample tables, no `moof`) into the crate's [`Media`] IR — the
@@ -27,7 +27,7 @@
 //!   bytes directly out of the input — no separate `mdat` lookup is needed,
 //!   because chunk offsets are already file-absolute.
 //!
-//! This demuxer never reads the `elst` edit list (ISO/IEC 14496-12:2015
+//! This demuxer never reads the `elst` edit list (ISO/IEC 14496-12:2026
 //! §8.6.6): the [`Track`]/[`Sample`] IR the tracks are built into carries only
 //! decode-order sample timing, matching every other demuxer in this crate — a
 //! presentation-timeline edit remains a mux/consumer-side concern.
@@ -82,7 +82,7 @@ pub struct ProgressiveDemux<'a> {
     /// the file**, so `buf` now has a hole in it.
     ///
     /// This demuxer resolves sample payloads through `stbl`'s *file-absolute*
-    /// chunk offsets (ISO/IEC 14496-12:2015 §8.7.5), so parsing a buffer with
+    /// chunk offsets (ISO/IEC 14496-12:2026 §8.7.5), so parsing a buffer with
     /// a hole does not fail cleanly — every offset past the hole is shifted,
     /// and the parse either reports a misleading [`Error::UnexpectedBox`] or,
     /// far worse, succeeds and returns a [`Media`] whose samples carry the
@@ -452,7 +452,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
     let mut samples = Vec::with_capacity(total_samples);
     // Absolute decode time (media plane step 2c): a progressive movie's media
     // timeline starts at 0 and `stts` carries per-sample decode *deltas*
-    // (ISO/IEC 14496-12:2015 §8.6.1.2), so sample `i`'s absolute DTS is the
+    // (ISO/IEC 14496-12:2026 §8.6.1.2), so sample `i`'s absolute DTS is the
     // running sum of the preceding deltas; PTS folds in the `ctts`
     // composition offset (§8.6.1.3).
     let mut next_dts: i64 = 0;
@@ -497,7 +497,7 @@ thread_local! {
 /// bounded by `file_len` first (no sample occupies fewer than one byte,
 /// #987), so a hostile table cannot drive a large allocation.
 ///
-/// `stsc.first_chunk` must be >= 1 and strictly ascending (ISO/IEC 14496-12
+/// `stsc.first_chunk` must be >= 1 and strictly ascending (ISO/IEC 14496-12:2026
 /// §8.7.4); anything else is a structured `InvalidValue`. That ordering is
 /// what lets the expansion be one forward pass, linear in chunks + entries.
 pub(crate) fn sample_layout(
@@ -523,7 +523,7 @@ pub(crate) fn sample_layout(
             return Err(Error::InvalidValue(InvalidValue {
                 field: "stsc.first_chunk",
                 value: u64::from(e.first_chunk),
-                reason: "first_chunk must be >= 1 and strictly ascending (ISO/IEC 14496-12 §8.7.4)",
+                reason: "first_chunk must be >= 1 and strictly ascending (ISO/IEC 14496-12:2026 §8.7.4)",
             }));
         }
         prev_first = e.first_chunk;

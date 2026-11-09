@@ -3,7 +3,7 @@
 
 ## Notes
 
-# CENC fragmented-MP4 addressing layouts (audit r05-W7, ISO/IEC 14496-12 §8.8.7 / §8.8.8)
+# CENC fragmented-MP4 addressing layouts (audit r05-W7, ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8)
 
 Source: 320x180 10 fps H.264 (GOP 5) + 48 kHz stereo AAC, 2 s => 4 fragments, **two trafs per moof**
 (track 1 video = 20 samples, track 2 audio = 95 samples). Key `00112233445566778899aabbccddeeff`,

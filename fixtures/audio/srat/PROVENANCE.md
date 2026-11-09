@@ -6,7 +6,7 @@
 # `srat` / `AudioSampleEntryV1` fixtures (audit r05-W31)
 
 Fixtures for the 16.16 sampling-rate field and its `srat` escape hatch
-(ISO/IEC 14496-12:2015 §12.2.3, §12.2.3.1 and §12.2.3.2 as amended by
+(ISO/IEC 14496-12:2026 §12.2.3, §12.2.3.1 and §12.2.3.2 as amended by
 Amd 1:2017), plus QuickTime sound-description round-trip fixtures.
 
 ## What the numbers actually are

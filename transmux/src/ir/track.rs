@@ -161,7 +161,7 @@ pub struct Track {
     /// redundant with (and must be kept equal to) `samples.first().dts` for a
     /// timed track — it survives as the anchor consumers reach for without
     /// touching the sample slice (e.g. building the fragment `tfdt`
-    /// `baseMediaDecodeTime`, ISO/IEC 14496-12:2015 §8.8.12), and as the
+    /// `baseMediaDecodeTime`, ISO/IEC 14496-12:2026 §8.8.12), and as the
     /// track-level anchor for tracks with no samples at all.
     ///
     /// Demuxers that recover an absolute timeline populate it

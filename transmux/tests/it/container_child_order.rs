@@ -2,7 +2,7 @@
 //!
 //! W12: a container's typed fields carry no order, so the serializer used to
 //! write every typed child first and every opaque one after, reordering any
-//! file that did not already match. A subtitle track's `sthd` (§6.2.3 puts a
+//! file that did not already match. A subtitle track's `sthd` (§7.3.4 puts a
 //! media header first in `minf`) moved after `stbl`, and a `moov`'s `pssh`
 //! moved after the `trak`s.
 //!
@@ -85,7 +85,7 @@ fn moov_of(body: &[u8]) -> Vec<u8> {
 // r05-W12 — child order survives the round trip
 // ---------------------------------------------------------------------------
 
-/// `sthd` is a subtitle track's media header, which §6.2.3 places *first* in
+/// `sthd` is a subtitle track's media header, which §7.3.4 places *first* in
 /// `minf` (before `dinf`/`stbl`). This crate models `vmhd`/`smhd` but not
 /// `sthd`/`nmhd`, so it is kept as an opaque `minf` child — and the old
 /// "typed first, opaque last" serializer moved it after `stbl`, where strict
@@ -150,8 +150,8 @@ fn nth_child<'a>(container: &'a [u8], fourcc: &[u8; 4], n: usize) -> Option<&'a 
     None
 }
 
-/// `pssh` is a movie-level child that §8.16.1 orders ahead of the `trak`s in
-/// the conventional layout. The old serializer always emitted opaque children
+/// `pssh` is a movie-level child (ISO/IEC 23001-7) that the conventional layout
+/// writes ahead of the `trak`s. The old serializer always emitted opaque children
 /// last, so a `pssh` that preceded the tracks came back after them.
 #[test]
 fn moov_keeps_pssh_before_trak() {
@@ -410,7 +410,7 @@ fn complete_sample_tables_still_parse() {
 }
 
 /// A child with `size == 0` extends to the end of its **enclosing container**
-/// (ISO/IEC 14496-12:2015 §4.2), not of the file — `parse_box` is handed the
+/// (ISO/IEC 14496-12:2026 §4.2), not of the file — `parse_box` is handed the
 /// container body, so it stops there. Nothing follows such a child by
 /// definition, so this is not a "dropped sibling" case; what matters is that
 /// the box is preserved (as opaque) and its bytes stop at the container end.

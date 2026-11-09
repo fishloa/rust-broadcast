@@ -25,7 +25,7 @@ use super::DisplayInfo;
 
 use crate::annexb::annexb_to_length_prefixed;
 
-/// Per-sample flags (ISO/IEC 14496-12:2015 §8.8.3.1 `sample_flags`, reduced to
+/// Per-sample flags (ISO/IEC 14496-12:2026 §8.8.3.1 `sample_flags`, reduced to
 /// the one bit this crate's IR tracks today).
 ///
 /// `#[non_exhaustive]`: a struct, not a bare `bool`, so a future flag (e.g.

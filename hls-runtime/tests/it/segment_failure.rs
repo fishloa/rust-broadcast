@@ -3,7 +3,7 @@
 //! range and no playlist reload, and [`HlsClient::skip_resource`] gives one up with a
 //! discontinuity.
 //!
-//! Spec: ISO/IEC 13818-1 §2.4.3.2 (TS `sync_byte`, 188-byte packets), ISO/IEC 14496-12 §8.8.4
+//! Spec: ISO/IEC 13818-1 §2.4.3.2 (TS `sync_byte`, 188-byte packets), ISO/IEC 14496-12:2026 §8.8.4
 //! (`moof` then `mdat`), RFC 8216 §4.3.4.3.
 
 use hls_runtime::client::{Action, Error, HlsClient, Output, ResourceId};

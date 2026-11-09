@@ -1,4 +1,4 @@
-//! ISO Base Media File Format prober — ISO/IEC 14496-12:2015 §4.2.
+//! ISO Base Media File Format prober — ISO/IEC 14496-12:2026 §4.2.
 //!
 //! Walks the top-level box chain by size. Header layout follows
 //! `transmux/src/box_types.rs` (which round-trips real fixtures): a `u32`
@@ -19,21 +19,21 @@
 use crate::{Confidence, Detail::Isobmff, Evidence, IsobmffLayout, Outcome};
 
 /// Header size of the fixed `size`(32) + `type`(32) Box fields (ISO/IEC
-/// 14496-12:2015 §4.2).
+/// 14496-12:2026 §4.2).
 pub(crate) const BOX_HEADER_MIN_SIZE: usize = 8;
 /// Header size of the 64-bit `largesize` form: 8 fixed + 8 largesize
 /// (`size==1`) (§4.2).
 pub(crate) const BOX_HEADER_LARGESIZE_SIZE: usize = 16;
 /// Byte offset of the major brand within a `ftyp`/`styp` box — 4 bytes into
-/// the box body, i.e. 8 bytes into the box (after the header) (§8.16.2).
+/// the box body, i.e. 8 bytes into the box (after the header) (§8.14.2).
 const BRAND_OFFSET: usize = 8;
 /// The special `size` value `0`: the box runs to the end of file (§4.2).
 pub(crate) const SIZE_TO_EOF: u32 = 0;
 /// The special `size` value `1`: a 64-bit `largesize` follows (§4.2).
 pub(crate) const SIZE_INDICATES_LARGESIZE: u32 = 1;
-/// The `ftyp` box type (ISO/IEC 14496-12 §4.3).
+/// The `ftyp` box type (ISO/IEC 14496-12:2026 §5.2).
 const TYPE_FTYP: [u8; 4] = *b"ftyp";
-/// The `styp` box type (segment type, §8.16.2).
+/// The `styp` box type (segment type, §8.14.2).
 const TYPE_STYP: [u8; 4] = *b"styp";
 /// The `moov` box type (§8.2.1).
 pub(crate) const TYPE_MOOV: [u8; 4] = *b"moov";
@@ -90,7 +90,7 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     let mut boxes = 0u64;
     let mut brand: Option<[u8; 4]> = None;
     // Which structural box the file uses to carry sample metadata. `moof`
-    // means fragmented (ISO/IEC 14496-12 §8.8 movie fragments, the CMAF/fMP4
+    // means fragmented (ISO/IEC 14496-12:2026 §8.8 movie fragments, the CMAF/fMP4
     // shape); `moov` alone means a progressive file with sample tables. The
     // walk already visits every top-level box, so this costs nothing and
     // spares a consumer re-walking the chain to pick a demuxer.

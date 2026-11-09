@@ -346,7 +346,7 @@ fn sidx_byte_exact_round_trip_and_mutation_bites() {
 /// A `Stage::feed` rejected for exceeding `max_bytes` **discards that chunk**,
 /// so the accumulated buffer has a hole in it. Because a progressive MP4
 /// resolves sample payloads through `stbl`'s *file-absolute* chunk offsets
-/// (ISO/IEC 14496-12:2015 §8.7.5), parsing a holed buffer does not fail
+/// (ISO/IEC 14496-12:2026 §8.7.5), parsing a holed buffer does not fail
 /// cleanly — it either reports a misleading `UnexpectedBox` or, far worse,
 /// succeeds and hands back a `Media` whose samples carry the wrong bytes.
 ///

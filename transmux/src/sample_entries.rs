@@ -23,7 +23,7 @@ use broadcast_common::Serialize;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::{need_in, need_out};
 
-/// Length of the VisualSampleEntry fixed fields (ISO/IEC 14496-12:2015 §12.1.3).
+/// Length of the VisualSampleEntry fixed fields (ISO/IEC 14496-12:2026 §12.1.3).
 /// 6+2(data_ref_index)+8+2(width)+2(height)+4(horiz)+4(vert)+4(reserved)+2(frame_count)+
 /// 32(compressorname)+2(depth)+2(predefined) = 78
 const VISUAL_SAMPLE_ENTRY_SIZE: usize = 78;
@@ -36,7 +36,7 @@ const BARE_ENTRY_MIN_LEN: usize = 8 + VISUAL_SAMPLE_ENTRY_SIZE + 8;
 // VisualSampleEntry fields (common to all visual sample entries)
 // ---------------------------------------------------------------------------
 
-/// Fixed fields shared by all visual sample entries, per ISO/IEC 14496-12:2015 §12.1.3.
+/// Fixed fields shared by all visual sample entries, per ISO/IEC 14496-12:2026 §12.1.3.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VisualSampleEntryFields {
@@ -199,7 +199,7 @@ impl OpaqueBox {
 /// Find a config box (e.g. `avcC`) inside the sample entry's config region.
 /// Returns the full box bytes (including 8-byte header).
 ///
-/// `size` is an untrusted wire `u32` (ISO/IEC 14496-12:2015 §4.2 `Box.size`),
+/// `size` is an untrusted wire `u32` (ISO/IEC 14496-12:2026 §4.2 `Box.size`),
 /// so it is clamped against what actually remains in `region` before it is
 /// used to slice — the same bound `init_segment::parse_stbl_children` applies
 /// — rather than trusted outright: a child box declaring `size = 0xFFFFFFFF`
@@ -227,7 +227,7 @@ pub(crate) fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; 4]) -> Option<
 /// verbatim.
 ///
 /// A `vp09`/`av01` entry carries `pasp`, `btrt`, `colr` and friends alongside
-/// its config box (ISO/IEC 14496-12:2015 §8.5.2.2, §12.1.5); modelling only
+/// its config box (ISO/IEC 14496-12:2026 §8.5.2.2, §12.1.5); modelling only
 /// the config box dropped the rest (audit item 9).
 /// One child of a `vp09`/`av01` sample entry, in wire order.
 ///
@@ -421,7 +421,7 @@ impl Serialize for AVCSampleEntry {
 // MPEG-4/MPEG-2 Visual Sample Entry: mp4v (esds-bearing)
 // ---------------------------------------------------------------------------
 
-/// MPEG visual sample entry (`mp4v`) — ISO/IEC 14496-12:2015 §12.1 /
+/// MPEG visual sample entry (`mp4v`) — ISO/IEC 14496-12:2026 §12.1 /
 /// ISO/IEC 14496-14 §5.6: a `VisualSampleEntry` followed by an `esds`
 /// (`ES_Descriptor`) box and any extra child boxes (`pasp`, `fiel`, `btrt`).
 ///
@@ -836,7 +836,7 @@ mod tests {
     }
 
     /// Audit finding #2: a config-region child box declaring a wire `size`
-    /// (ISO/IEC 14496-12:2015 §4.2 `Box.size`) far larger than the region
+    /// (ISO/IEC 14496-12:2026 §4.2 `Box.size`) far larger than the region
     /// actually holding it used to panic slicing `&region[off..off + size]`.
     /// Must clamp to what the region can hold, not panic — same discipline
     /// `init_segment::parse_stbl_children` already applies to its own child

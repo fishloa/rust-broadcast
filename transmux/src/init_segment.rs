@@ -1,4 +1,4 @@
-//! Typed init-segment (moov) box tree — ISO/IEC 14496-12:2015 §8.2–8.7.
+//! Typed init-segment (moov) box tree — ISO/IEC 14496-12:2026 §8.2–8.7.
 //!
 //! Complete typed representation of the `moov` hierarchy found in ISOBMFF
 //! initialisation segments. Container sizes are **computed** from children
@@ -23,9 +23,9 @@ use broadcast_common::{Parse, Serialize};
 const BOX_HDR: usize = 8;
 const FULL_HDR: usize = 4;
 
-/// Bound an untrusted wire entry `count` (ISO/IEC 14496-12:2015 §8.1.1's
-/// FullBox array-count fields, e.g. `stsc`/`stsz`/`stco`/`co64`/`stss`/`stsd`/
-/// `dref`'s `entry_count`) against how many fixed-size `entry_len`-byte
+/// Bound an untrusted wire entry `count` (the FullBox array-count fields of
+/// ISO/IEC 14496-12:2026 §8.5.2.3, §8.6.1.2.3, §8.7.4.3, e.g.
+/// `stsc`/`stsz`/`stco`/`co64`/`stss`/`stsd`/`dref`'s `entry_count`) against how many fixed-size `entry_len`-byte
 /// records the bytes remaining after the count field could actually hold,
 /// **before** it drives an allocation — the same discipline
 /// [`crate::cenc::SampleEncryptionBox::parse_body`] applies against `senc`'s
@@ -61,7 +61,7 @@ const ZERO_WIDTH_PREALLOC: usize = 1024;
 /// disagreed with each other and demux produced misaligned samples with no
 /// signal at all (audit r05-W13, second bullet; the W17/W25 class on the
 /// output side). A declared count is a promise about the box's own size
-/// (ISO/IEC 14496-12:2015 §8.1.1: `entry_count` "gives the number of entries
+/// (ISO/IEC 14496-12:2026 §8.7.4.3: `entry_count` "gives the number of entries
 /// in the following table"), so a body that cannot hold it is a malformed box,
 /// not a short one.
 pub(crate) fn check_entry_count(
@@ -137,7 +137,7 @@ pub(crate) fn serialize_flat_table<E>(
 }
 
 // ---------------------------------------------------------------------------
-// Container child walker — ISO/IEC 14496-12:2015 §4.2
+// Container child walker — ISO/IEC 14496-12:2026 §4.2
 // ---------------------------------------------------------------------------
 
 /// Size of the smallest legal box header (`size` + `type`), §4.2.
@@ -154,7 +154,7 @@ pub(crate) struct ChildBox<'a> {
     /// The child's whole bytes, header included.
     pub bytes: &'a [u8],
     /// The child's *opaque payload*: the 16-byte `usertype` of a `uuid` box
-    /// (ISO/IEC 14496-12:2015 §4.2) followed by its body — i.e. everything
+    /// (ISO/IEC 14496-12:2026 §4.2) followed by its body — i.e. everything
     /// after `size`/`type`, **except** the 8 `largesize` bytes when the
     /// `size == 1` form was used.
     ///
@@ -201,7 +201,7 @@ impl ChildBox<'_> {
 /// past the buffer, so the walk is size-driven and exact.
 ///
 /// A `size == 0` child means "the box extends to the end of the enclosing
-/// container" (ISO/IEC 14496-12:2015 §4.2 — for a child box, the end of its
+/// container" (ISO/IEC 14496-12:2026 §4.2 — for a child box, the end of its
 /// parent, not of the file). `parse_box` implements exactly that against the
 /// slice it is handed, which here *is* the container body, so such a child
 /// consumes the remaining bytes and ends the walk by construction — there is
@@ -265,7 +265,7 @@ fn box_body(bytes: &[u8]) -> Result<&[u8]> {
 /// A container's typed fields have no order of their own, so serializing them
 /// in declaration order silently *reorders* a file whose children were not
 /// written that way — `moov` lost its `pssh` to after the `trak`s, and a
-/// subtitle track's `sthd`/`nmhd` (which §6.2.3 places first in `minf`, and
+/// subtitle track's `sthd`/`nmhd` (which §7.3.4 places first in `minf`, and
 /// which strict readers require there) ended up after `stbl` (audit r05-W12).
 /// Every container built by this crate's own muxers writes the conventional
 /// order, so the round-trip break showed up only on files other muxers wrote.
@@ -566,7 +566,7 @@ impl OpaqueBox {
 }
 
 // ---------------------------------------------------------------------------
-// MovieHeaderBox — mvhd (ISO/IEC 14496-12:2015 §8.2.2)
+// MovieHeaderBox — mvhd (ISO/IEC 14496-12:2026 §8.2.2)
 // ---------------------------------------------------------------------------
 
 /// Movie Header Box (`mvhd`) — §8.2.2.
@@ -623,7 +623,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                 ])),
             })
         } else {
-            // v1 body (ISO/IEC 14496-12 §8.2.2.2): the 8-byte creation/
+            // v1 body (ISO/IEC 14496-12:2026 §8.2.2.2): the 8-byte creation/
             // modification_time + duration widening (+12 bytes over v0) is
             // the ONLY size change — `pre_defined[6]` still ends at byte 116,
             // so `next_track_id` sits at `116..120` and the whole box is
@@ -732,7 +732,7 @@ impl Serialize for MovieHeaderBox {
 }
 
 // ---------------------------------------------------------------------------
-// TrackHeaderBox — tkhd (ISO/IEC 14496-12:2015 §8.3.2)
+// TrackHeaderBox — tkhd (ISO/IEC 14496-12:2026 §8.3.2)
 // ---------------------------------------------------------------------------
 
 /// Track Header Box (`tkhd`) — §8.3.2.
@@ -785,7 +785,7 @@ impl<'a> Parse<'a> for TrackHeaderBox {
         } else {
             let need = 104;
             need_in(bytes, need, "tkhd v1")?;
-            // v1 body (ISO/IEC 14496-12 §8.3.2): track_ID(32) + a single
+            // v1 body (ISO/IEC 14496-12:2026 §8.3.2): track_ID(32) + a single
             // 32-bit `reserved` (not 8) sit between modification_time and
             // duration, so duration starts at byte 36, not 40 — every field
             // from `duration` on was previously read 4 bytes early
@@ -905,7 +905,7 @@ impl Serialize for TrackHeaderBox {
 }
 
 // ---------------------------------------------------------------------------
-// MediaHeaderBox — mdhd (ISO/IEC 14496-12:2015 §8.4.2)
+// MediaHeaderBox — mdhd (ISO/IEC 14496-12:2026 §8.4.2)
 // ---------------------------------------------------------------------------
 
 /// Media Header Box (`mdhd`) — §8.4.2.
@@ -1016,7 +1016,7 @@ impl Serialize for MediaHeaderBox {
 }
 
 // ---------------------------------------------------------------------------
-// HandlerBox — hdlr (ISO/IEC 14496-12:2015 §8.4.3)
+// HandlerBox — hdlr (ISO/IEC 14496-12:2026 §8.4.3)
 // ---------------------------------------------------------------------------
 
 /// Handler Box (`hdlr`) — §8.4.3.
@@ -1084,10 +1084,10 @@ impl Serialize for HandlerBox {
 }
 
 // ---------------------------------------------------------------------------
-// VideoMediaHeaderBox — vmhd (ISO/IEC 14496-12:2015 §8.4.5.2)
+// VideoMediaHeaderBox — vmhd (ISO/IEC 14496-12:2026 §12.1.2)
 // ---------------------------------------------------------------------------
 
-/// Video Media Header Box (`vmhd`) — §8.4.5.2.
+/// Video Media Header Box (`vmhd`) — §12.1.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VideoMediaHeaderBox {
@@ -1143,10 +1143,10 @@ impl Serialize for VideoMediaHeaderBox {
 }
 
 // ---------------------------------------------------------------------------
-// SoundMediaHeaderBox — smhd (ISO/IEC 14496-12:2015 §8.4.5.3)
+// SoundMediaHeaderBox — smhd (ISO/IEC 14496-12:2026 §12.2.2)
 // ---------------------------------------------------------------------------
 
-/// Sound Media Header Box (`smhd`) — §8.4.5.3.
+/// Sound Media Header Box (`smhd`) — §12.2.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SoundMediaHeaderBox {
@@ -1571,7 +1571,7 @@ impl Serialize for DataEntrySeqNumImdaBox {
 }
 
 // ---------------------------------------------------------------------------
-// SampleToChunkBox — stsc (ISO/IEC 14496-12:2015 §8.7.4)
+// SampleToChunkBox — stsc (ISO/IEC 14496-12:2026 §8.7.4)
 // ---------------------------------------------------------------------------
 
 /// Entry in the stsc chunk-to-sample table (§8.7.4).
@@ -1676,7 +1676,7 @@ impl Serialize for SampleToChunkBox {
 }
 
 // ---------------------------------------------------------------------------
-// SampleSizeBox — stsz (ISO/IEC 14496-12:2015 §8.7.3)
+// SampleSizeBox — stsz (ISO/IEC 14496-12:2026 §8.7.3)
 // ---------------------------------------------------------------------------
 
 /// Sample Size Box (`stsz`) — §8.7.3.
@@ -1789,7 +1789,7 @@ impl Serialize for SampleSizeBox {
 }
 
 // ---------------------------------------------------------------------------
-// ChunkOffsetBox — stco (ISO/IEC 14496-12:2015 §8.7.5)
+// ChunkOffsetBox — stco (ISO/IEC 14496-12:2026 §8.7.5)
 // ---------------------------------------------------------------------------
 
 /// Chunk Offset Box (`stco`) — §8.7.5 (32-bit offsets).
@@ -1838,7 +1838,7 @@ impl Serialize for ChunkOffsetBox {
 }
 
 // ---------------------------------------------------------------------------
-// ChunkLargeOffsetBox — co64 (ISO/IEC 14496-12:2015 §8.7.5)
+// ChunkLargeOffsetBox — co64 (ISO/IEC 14496-12:2026 §8.7.5)
 // ---------------------------------------------------------------------------
 
 /// Chunk Large Offset Box (`co64`) — §8.7.5 (64-bit chunk offsets).
@@ -1890,7 +1890,7 @@ impl Serialize for ChunkLargeOffsetBox {
 }
 
 // ---------------------------------------------------------------------------
-// SyncSampleBox — stss (ISO/IEC 14496-12:2015 §8.6.2)
+// SyncSampleBox — stss (ISO/IEC 14496-12:2026 §8.6.2)
 // ---------------------------------------------------------------------------
 
 /// Sync Sample Box (`stss`) — §8.6.2.
@@ -1943,11 +1943,11 @@ impl Serialize for SyncSampleBox {
 }
 
 // ---------------------------------------------------------------------------
-// SampleDescriptionBox — stsd (ISO/IEC 14496-12:2015 §8.5.2)
+// SampleDescriptionBox — stsd (ISO/IEC 14496-12:2026 §8.5.2)
 // ---------------------------------------------------------------------------
 
 /// The `entry_version`-1 ("AudioSampleEntryV1") form of an audio sample entry —
-/// ISO/IEC 14496-12:2015 §12.2.3.2, as amended by Amd 1:2017.
+/// ISO/IEC 14496-12:2026 §12.2.3.2.
 ///
 /// A plain `AudioSampleEntry` carries the sampling rate as a 16.16 fixed-point
 /// `u32`, so its integer part is limited to 65535 Hz. A rate above that (88.2,
@@ -1966,10 +1966,10 @@ pub struct AudioSampleEntryV1;
 
 impl AudioSampleEntryV1 {
     /// The `entry_version` value that marks an `AudioSampleEntryV1`
-    /// (ISO/IEC 14496-12 §12.2.3.2: "must be 1").
+    /// (ISO/IEC 14496-12:2026 §12.2.3.2: "must be 1").
     pub const ENTRY_VERSION: u16 = 1;
     /// The `stsd` `version` an `AudioSampleEntryV1` requires — "must be in an
-    /// stsd with version == 1" (ISO/IEC 14496-12 §12.2.3.2).
+    /// stsd with version == 1" (ISO/IEC 14496-12:2026 §12.2.3.2).
     pub const STSD_VERSION: u8 = 1;
     /// The placeholder written into the v1 `samplerate` field:
     /// `template unsigned int(32) samplerate = 1<<16;` (§12.2.3.2).
@@ -1979,14 +1979,13 @@ impl AudioSampleEntryV1 {
     /// carry `rate` without losing its integer part.
     ///
     /// The integer part is the top 16 bits, so any rate above `u16::MAX` needs
-    /// the v1 form (ISO/IEC 14496-12 §12.2.3 vs §12.2.3.2).
+    /// the v1 form (ISO/IEC 14496-12:2026 §12.2.3 vs §12.2.3.2).
     pub fn rate_fits_v0(rate: u32) -> bool {
         rate <= u32::from(u16::MAX)
     }
 }
 
-/// Sampling Rate Box (`srat`) — ISO/IEC 14496-12:2015 §12.2.3.1 (as amended by
-/// Amd 1:2017).
+/// Sampling Rate Box (`srat`) — ISO/IEC 14496-12:2026 §12.2.3.1.
 ///
 /// Carries the *actual* sampling rate of an audio track whose rate does not fit
 /// the 16.16 fixed-point `samplerate` field of an AudioSampleEntry. It is valid
@@ -2072,7 +2071,7 @@ impl<'a> Parse<'a> for SamplingRateBox {
 /// Read the `srat` body out of an audio sample entry's config boxes, if any.
 ///
 /// A `SamplingRateBox` may appear at most once and takes precedence over the
-/// entry's 16.16 `samplerate` field (ISO/IEC 14496-12 §12.2.3.1).
+/// entry's 16.16 `samplerate` field (ISO/IEC 14496-12:2026 §12.2.3.1).
 ///
 /// Returns `None` — leaving the entry's own 16.16 field to stand — when the box
 /// is absent, fails to parse, or declares `sampling_rate == 0`. A zero rate is
@@ -2094,7 +2093,7 @@ pub fn sampling_rate_override(config_boxes: &[OpaqueBox]) -> Option<u32> {
     Some(srat.sampling_rate)
 }
 
-/// AAC audio sample entry (`mp4a`) — ISO/IEC 14496-12:2015 §12.2.3.
+/// AAC audio sample entry (`mp4a`) — ISO/IEC 14496-12:2026 §12.2.3.
 ///
 /// Wire layout (32 bytes before optional config children):
 /// - SampleEntry: reserved(6) + data_reference_index(16) = 8 bytes
@@ -2120,13 +2119,13 @@ pub struct Mp4aSampleEntry {
     /// entry as v0 on any parse -> serialize round trip.
     pub entry_version: u16,
     /// The six bytes following `entry_version` in the fixed 8-byte block
-    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12's
+    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
     pub reserved_1: [u8; 6],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
-    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12 §12.2.3) — or, in
+    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12:2026 §12.2.3) — or, in
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
@@ -2156,13 +2155,13 @@ pub struct Ac3SampleEntry {
     /// entry as v0 on any parse -> serialize round trip.
     pub entry_version: u16,
     /// The six bytes following `entry_version` in the fixed 8-byte block
-    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12's
+    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
     pub reserved_1: [u8; 6],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
-    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12 §12.2.3) — or, in
+    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12:2026 §12.2.3) — or, in
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
@@ -2215,13 +2214,13 @@ pub struct Ec3SampleEntry {
     /// entry as v0 on any parse -> serialize round trip.
     pub entry_version: u16,
     /// The six bytes following `entry_version` in the fixed 8-byte block
-    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12's
+    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
     pub reserved_1: [u8; 6],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
-    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12 §12.2.3) — or, in
+    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12:2026 §12.2.3) — or, in
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
@@ -2273,13 +2272,13 @@ pub struct OpusSampleEntry {
     /// entry as v0 on any parse -> serialize round trip.
     pub entry_version: u16,
     /// The six bytes following `entry_version` in the fixed 8-byte block
-    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12's
+    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
     pub reserved_1: [u8; 6],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
-    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12 §12.2.3) — or, in
+    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12:2026 §12.2.3) — or, in
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
@@ -2344,13 +2343,13 @@ pub struct FlacSampleEntry {
     /// entry as v0 on any parse -> serialize round trip.
     pub entry_version: u16,
     /// The six bytes following `entry_version` in the fixed 8-byte block
-    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12's
+    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
     pub reserved_1: [u8; 6],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
-    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12 §12.2.3) — or, in
+    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12:2026 §12.2.3) — or, in
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
@@ -2415,13 +2414,13 @@ pub struct Ac4SampleEntry {
     /// entry as v0 on any parse -> serialize round trip.
     pub entry_version: u16,
     /// The six bytes following `entry_version` in the fixed 8-byte block
-    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12's
+    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
     pub reserved_1: [u8; 6],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
-    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12 §12.2.3) — or, in
+    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12:2026 §12.2.3) — or, in
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
@@ -2494,13 +2493,13 @@ pub struct DtsSampleEntry {
     /// entry as v0 on any parse -> serialize round trip.
     pub entry_version: u16,
     /// The six bytes following `entry_version` in the fixed 8-byte block
-    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12's
+    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
     pub reserved_1: [u8; 6],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
-    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12 §12.2.3) — or, in
+    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12:2026 §12.2.3) — or, in
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
@@ -2579,13 +2578,13 @@ pub struct MhaSampleEntry {
     /// entry as v0 on any parse -> serialize round trip.
     pub entry_version: u16,
     /// The six bytes following `entry_version` in the fixed 8-byte block
-    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12's
+    /// (QuickTime's `revision_level` + `vendor`, ISO/IEC 14496-12:2026's
     /// `reserved[3]`). Written back verbatim so a real file round-trips.
     pub reserved_1: [u8; 6],
     pub data_reference_index: u16,
     pub channelcount: u16,
     pub samplesize: u16,
-    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12 §12.2.3) — or, in
+    /// The `pre_defined` + `reserved` pair (ISO/IEC 14496-12:2026 §12.2.3) — or, in
     /// a QuickTime sound description, `compression_ID` + `packet_size`.
     /// QuickTime's VBR marker is `compression_ID = -2` (`ff fe`), so this is
     /// not always zero and must survive a round trip.
@@ -2651,7 +2650,7 @@ impl<'a> Parse<'a> for MhaSampleEntry {
 /// children.
 ///
 /// `entry_version` is 0 for a plain `AudioSampleEntry`, 1 for an
-/// `AudioSampleEntryV1` (ISO/IEC 14496-12 §12.2.3.2 as amended by Amd 1:2017)
+/// `AudioSampleEntryV1` (ISO/IEC 14496-12:2026 §12.2.3.2)
 /// or any other value a QuickTime sound description carried; every form shares
 /// the 28-byte fixed layout. Every field is preserved verbatim, including the
 /// ones this crate does not interpret (QuickTime's `revision_level`/`vendor`
@@ -2898,8 +2897,8 @@ impl SampleEntryVariant {
     /// The `stsd` version this entry requires.
     ///
     /// An `AudioSampleEntryV1` (`entry_version == 1`) is valid only inside an
-    /// `stsd` with `version == 1` (ISO/IEC 14496-12 §12.2.3.2 as amended by
-    /// Amd 1:2017). Every other entry uses the version-0 form (§8.5.2).
+    /// `stsd` with `version == 1` (ISO/IEC 14496-12:2026 §12.2.3.2).
+    /// Every other entry uses the version-0 form (§8.5.2).
     pub fn required_stsd_version(&self) -> u8 {
         let entry_version = match self {
             SampleEntryVariant::Mp4a(e) => e.entry_version,
@@ -3402,7 +3401,7 @@ impl MediaInformationBox {
 impl MediaInformationBox {
     /// Install an opaque media header (`sthd` / `nmhd`, which this crate does
     /// not model) as the **first** `minf` child, ahead of `dinf`/`stbl` —
-    /// ISO/IEC 14496-12 §6.2.3 requires the media header first, and the
+    /// ISO/IEC 14496-12:2026 §7.3.4 requires the media header first, and the
     /// default "typed first, opaque last" order would put it after `stbl`.
     pub(crate) fn set_leading_opaque_header(&mut self, header: OpaqueBox) {
         let mut order = ChildOrder::default();
@@ -3495,7 +3494,7 @@ impl<'a> Parse<'a> for MediaInformationBox {
                 // A subtitle track's `sthd` and a data track's `nmhd` are not
                 // modelled (no fields to carry — §12.6.2/§8.4.5.2 are both
                 // headerless FullBoxes), but they are preserved *in place*:
-                // §6.2.3 puts a media header first in `minf`, and the old
+                // §7.3.4 puts a media header first in `minf`, and the old
                 // "typed first, opaque last" serializer moved them after
                 // `stbl`, where strict readers reject them (audit r05-W12).
                 _ => {
@@ -3928,7 +3927,7 @@ impl Serialize for TrackBox {
 // MovieBox — moov (container: mvhd, trak*, …) — THE TOP-LEVEL TYPE
 // ---------------------------------------------------------------------------
 
-/// Track Extends Box (`trex`) — ISO/IEC 14496-12:2015 §8.8.3.
+/// Track Extends Box (`trex`) — ISO/IEC 14496-12:2026 §8.8.3.
 ///
 /// Declares per-track defaults for the samples carried in movie fragments. A
 /// fragmented-init `moov` carries one `trex` per track inside [`MovieExtendsBox`].
@@ -3992,10 +3991,10 @@ impl Serialize for TrackExtendsBox {
     }
 }
 
-/// Movie Extends Box (`mvex`) — ISO/IEC 14496-12:2015 §8.8.1.
+/// Movie Extends Box (`mvex`) — ISO/IEC 14496-12:2026 §8.8.1.
 ///
 /// Signals that the movie is fragmented and carries the per-track [`TrackExtendsBox`]
-/// defaults. Any other children (e.g. `mehd`, which §6.2.3 orders *before* the
+/// defaults. Any other children (e.g. `mehd`, which Table 2 (§6.2) orders *before* the
 /// `trex` list) are preserved verbatim in `opaque`, at the position they
 /// occupied on the wire — see [`MovieExtendsBox::order`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4178,9 +4177,9 @@ impl<'a> Parse<'a> for MovieBox {
                     order.push(child.four_cc);
                     mvex = Some(MovieExtendsBox::parse(child.bytes)?);
                 }
-                // `pssh`/`udta`/`meta`/`iods` stay opaque, in place: §8.16.1
-                // places `pssh` ahead of the `trak`s in the conventional
-                // order, and the old serializer always emitted it last.
+                // `pssh`/`udta`/`meta`/`iods` stay opaque, in place: the
+                // conventional layout writes `pssh` ahead of the `trak`s, and the
+                // old serializer always emitted it last.
                 _ => {
                     order.push_opaque(child.four_cc);
                     opaque.push(OpaqueBox {
@@ -4233,18 +4232,18 @@ impl Serialize for MovieBox {
 
 // ---------------------------------------------------------------------------
 // CENC init-segment protection (`encv`/`enca` + `sinf`) — ISO/IEC
-// 14496-12:2015 §8.12 (sinf/frma/schm/schi), ISO/IEC 23001-7 §12.2 (tenc) —
+// 14496-12:2026 §13.4 (sinf/frma/schm/schi), ISO/IEC 23001-7 §12.2 (tenc) —
 // issue #564 Task 3 (muxer emission).
 // ---------------------------------------------------------------------------
 
 /// `schm.scheme_version` written for every CENC-protected sample entry:
 /// version 1.0, packed as a 16.16 major.minor pair per ISO/IEC
-/// 14496-12:2015 §8.12.5.
+/// 14496-12:2026 §13.4.6.
 const CENC_SCHEME_VERSION: u32 = 0x0001_0000;
 
 /// Which media kind a [`SampleEntryVariant`] carries, to choose the
 /// CENC-protected wrapper four-CC (`encv` for video, `enca` for audio —
-/// ISO/IEC 14496-12:2015 §8.12.1). Subtitle (`stpp`/`wvtt`) and unrecognised
+/// ISO/IEC 14496-12:2026 §13.4.1). Subtitle (`stpp`/`wvtt`) and unrecognised
 /// entries have no protected-wrapper form defined in this crate.
 enum SampleEntryMediaKind {
     Video,
@@ -4286,7 +4285,7 @@ fn sample_entry_bytes(entry: &SampleEntryVariant) -> Result<Vec<u8>> {
 }
 
 /// Wrap a clear sample entry as a CENC-protected `encv`/`enca` entry —
-/// ISO/IEC 14496-12:2015 §8.12.1: rename the codec four-CC to `encv`/`enca`,
+/// ISO/IEC 14496-12:2026 §13.4.1: rename the codec four-CC to `encv`/`enca`,
 /// keep the original four-CC in a child `sinf`>`frma`, and add `sinf`>`schm`
 /// (`scheme_type`/`scheme_version`) + `sinf`>`schi`>`tenc` (ISO/IEC
 /// 23001-7 §12.2).

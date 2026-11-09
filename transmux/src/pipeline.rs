@@ -4,7 +4,7 @@
 //! already-demuxed *encoded* access units plus their per-track [`CodecConfig`],
 //! and get back a CMAF **initialization segment** (`ftyp` + fragmented-init
 //! `moov`) and **media segments** (`styp` + `moof` + `mdat`), per
-//! ISO/IEC 14496-12:2015 §8.8 (movie fragments) and the CMAF structure.
+//! ISO/IEC 14496-12:2026 §8.8 (movie fragments) and the CMAF structure.
 //!
 //! Video access units are carried length-prefixed in `mdat`
 //! ([`crate::annexb`]); the `moof` `trun` carries per-sample size / duration /
@@ -53,7 +53,7 @@ pub use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 /// ISO-639-2 packed language code `und` (undetermined).
 const LANG_UND: u16 = 0x55C4;
-/// The ISOBMFF identity transformation matrix (§6.2.2), unity + `[2,30]` fixed.
+/// The ISOBMFF identity transformation matrix (ISO/IEC 14496-12:2026 §7.3.2), unity + `[2,30]` fixed.
 const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
 /// `tkhd` flags: track_enabled | in_movie | in_preview.
 const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
@@ -172,7 +172,7 @@ fn config_box<C: Serialize<Error = crate::error::Error>>(
 /// An `AudioSampleEntry`'s `samplerate` is 16.16 fixed point, so its integer
 /// part is limited to 65535 Hz. A rate above that (96, 176.4, 192 kHz, …)
 /// cannot be represented — `192000 << 16` is truncated to `0xEE000000` and
-/// reads back as 60928 Hz. ISO/IEC 14496-12 §12.2.3.2 (as amended by Amd 1:2017)
+/// reads back as 60928 Hz. ISO/IEC 14496-12:2026 §12.2.3.2
 /// requires the `AudioSampleEntryV1` form for those rates: `entry_version = 1`,
 /// `samplerate = 1 << 16`, and a [`SamplingRateBox`] (`srat`, §12.2.3.1)
 /// carrying the real rate. Such an entry must sit in an `stsd` whose version
@@ -190,7 +190,7 @@ struct AudioRateCarriage {
 }
 
 /// Decide the `stsd` sampling-rate carriage for `sample_rate`
-/// (ISO/IEC 14496-12 §12.2.3 / §12.2.3.1 / §12.2.3.2).
+/// (ISO/IEC 14496-12:2026 §12.2.3 / §12.2.3.1 / §12.2.3.2).
 ///
 /// A rate that fits the 16.16 field's integer part is written the plain way;
 /// a rate above `u16::MAX` needs the v1 entry, its `srat` box and an `stsd`
@@ -226,7 +226,7 @@ fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> 
     ))
 }
 
-/// Build the `pasp`/`colr` child boxes (ISO/IEC 14496-12:2015 §12.1.4–5)
+/// Build the `pasp`/`colr` child boxes (ISO/IEC 14496-12:2026 §12.1.4–5)
 /// that `build_trak` appends to an AVC/HEVC sample entry from the track's
 /// [`DisplayGeometry`] (Phase 4a-1). `pasp` is emitted only for a non-1:1
 /// sample aspect ratio; `colr` (`nclx`) only when a colour description was
@@ -585,7 +585,7 @@ fn presentation_size_fixed(
     (width, height)
 }
 
-/// tkhd presentation size for an AVC/HEVC video track per ISO/IEC 14496-12:2012
+/// tkhd presentation size for an AVC/HEVC video track per ISO/IEC 14496-12:2026
 /// §8.3.2 and ETSI TS 103 285 §5.1.2: cropped output size, then rescaled for
 /// the sample aspect ratio (horizontal only), as 16.16 fixed point.
 fn tkhd_presentation_size(
@@ -696,7 +696,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         matrix: IDENTITY_MATRIX,
         width: tkhd_w,
         height: tkhd_h,
-        // Anamorphic tkhd presentation size (ISO/IEC 14496-12 §8.3.2) is a follow-up; coded size retained.
+        // Anamorphic tkhd presentation size (ISO/IEC 14496-12:2026 §8.3.2) is a follow-up; coded size retained.
     };
 
     Ok(TrackBox::new(tkhd, None, Some(mdia), vec![]))
@@ -721,7 +721,7 @@ pub fn build_media_segment(
 ///
 /// # Box order
 ///
-/// Per **ISO/IEC 14496-12 §8.8** (movie fragments) and the DASH-IF Interoperability
+/// Per **ISO/IEC 14496-12:2026 §8.8** (movie fragments) and the DASH-IF Interoperability
 /// Point Part 10 §6.1 (Events and Timed Metadata in MPEG-DASH / CMAF), each
 /// [`EmsgBox`] must appear **at the start of the segment**, after the `styp`
 /// segment-type box but *before* the `moof`.  The boxes in `emsgs` are emitted
@@ -749,8 +749,8 @@ pub fn build_media_segment_with_events(
     build_chunk(sequence_number, tracks, true, emsgs)
 }
 
-/// `styp` major brand of a CMAF segment or low-latency chunk (ISO/IEC 14496-12
-/// §8.16.4); one brand set so chunk concatenation equals the whole segment.
+/// `styp` major brand of a CMAF segment or low-latency chunk (ISO/IEC 14496-12:2026
+/// §8.14.2); one brand set so chunk concatenation equals the whole segment.
 const STYP_MAJOR_BRAND: [u8; 4] = *b"msdh";
 const STYP_COMPATIBLE_BRANDS: [[u8; 4]; 2] = [*b"msdh", *b"msix"];
 
@@ -761,7 +761,7 @@ const STYP_COMPATIBLE_BRANDS: [[u8; 4]; 2] = [*b"msdh", *b"msix"];
 /// offset resolution everywhere, so a segment's chunks concatenate to the
 /// whole-segment coded-sample stream. `with_styp` gates the leading `styp`
 /// (first chunk of a segment only); `emsgs` follow it and precede the `moof`
-/// (ISO/IEC 14496-12 §8.8, DASH-IF IOP Part 10 §6.1).
+/// (ISO/IEC 14496-12:2026 §8.8, DASH-IF IOP Part 10 §6.1).
 pub(crate) fn build_chunk(
     sequence_number: u32,
     tracks: &[FragmentTrackData<'_>],

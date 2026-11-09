@@ -96,7 +96,7 @@ pub enum Output {
     /// `transmux::Fmp4Demux`.
     Samples {
         /// Track ID, matching the `moov`'s `trak.tkhd.track_ID` (ISO/IEC
-        /// 14496-12 §8.3.2) carried by the preceding [`Output::Init`].
+        /// 14496-12:2026 §8.3.2) carried by the preceding [`Output::Init`].
         track_id: TrackId,
         /// The samples, in decode order.
         samples: Vec<Sample>,

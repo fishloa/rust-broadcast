@@ -2749,7 +2749,7 @@ mod tests {
     }
 
     /// Collect every `track_ID` from `tfhd` boxes in a CMAF segment
-    /// (walks `moof` → `traf` → `tfhd`, ISO/IEC 14496-12 §8.8.7).
+    /// (walks `moof` → `traf` → `tfhd`, ISO/IEC 14496-12:2026 §8.8.7).
     fn tfhd_track_ids(segment_bytes: &[u8]) -> Vec<u32> {
         let mut ids = Vec::new();
         for (fourcc, moof) in box_iter(segment_bytes) {
