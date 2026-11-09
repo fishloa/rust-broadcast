@@ -14,6 +14,7 @@
 - Segments a program had closed but the DVR had not yet archived were lost when a source reconnect replaced the program; the replacement's recorder now archives them first.
 - The push `ReconnectEngine` reset its backoff and attempt counter as soon as a connection was established, so a destination that accepted the connection and then dropped it was never backed off or given up on. The series now restarts only after the connection stayed up for `push::HEALTHY_CONNECTION` (30 s); `ReconnectEngine::on_connect` no longer resets the counter.
 - A catch-up request dropped mid-scan (a client disconnect) released its scan permit while the archive scan kept running on the blocking pool, so aborted requests could exceed `MAX_CONCURRENT_SCANS`; the permit now moves into the blocking task.
+- The HLS, DASH and Smooth pull sources' fetch scheduler spawned a delayed fetch (a retry backoff or a paced playlist reload) at once, so it held an in-flight slot while it slept and could keep ready segment fetches from starting; a fetch now takes a slot only when it is due.
 
 ## [0.17.0] - 2026-11-08
 ### Changed

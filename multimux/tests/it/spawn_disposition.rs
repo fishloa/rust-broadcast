@@ -35,7 +35,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ("dvr.rs", 607, "spawn_blocking DVR write; awaited inline"),
     (
         "source/pull.rs",
-        174,
+        200,
         "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",
     ),
     (
