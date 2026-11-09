@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 ### Added
+- `OutputAuthSpec::Forwarded::trusted_proxies`: the IPs and CIDR blocks allowed to set the forwarded-user header. Omitted means loopback only (`127.0.0.0/8` and `::1`).
 - `Config::hold_cold_playlist` (default `true`) and `RouteHandle::with_hold_cold_playlist`.
 ### Changed
+- BREAKING (behaviour): the `forwarded` output-auth scheme honours `X-Forwarded-User` only from a peer in `trusted_proxies` (default loopback); any other peer is `401`, so a client reaching the origin directly can no longer forge it. A deployment whose proxy is not on loopback must list it. `OutputAuthSpec::Forwarded` gained a field, so code constructing or exhaustively matching it must add `trusted_proxies` / `..`.
 - A media-playlist request without `_HLS_msn`/`_HLS_part` made before the playlist holds a closed segment is held, through the blocking-reload wait and its timeout, until the first segment closes, then answered with at least one `EXTINF`; after the timeout it answers `503` with `Retry-After`. Clients that ignore Partial Segments (ffmpeg, VLC, Frigate, go2rtc) failed to open a cold stream; a Low-Latency client's cold start now waits about one segment unless `hold_cold_playlist` is `false` (#1754). A request before the route announces its program is still an immediate `503`.
+
+### Fixed
+- A blank or whitespace-only Bearer token is rejected at config validation (`output_auth.token`, `routes.input.auth.bearer_token`) with `ConfigInvalid`; it previously passed and `Authorization: Bearer ` then authenticated.
 
 ## [0.17.0] - 2026-11-08
 ### Changed
