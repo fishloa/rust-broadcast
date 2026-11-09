@@ -784,6 +784,45 @@ pub(crate) fn recover_sek(passphrase: &[u8], km: &KeyMaterial<'_>) -> Result<Rec
     Ok((sek, salt))
 }
 
+/// Recover the `(even, odd, salt)` triple a `KK = Both` Key Material message
+/// carries: §6.1.6 wraps `even SEK || odd SEK` as one RFC 3394 block under a
+/// single ICV.
+///
+/// # Errors
+/// [`Error::InvalidField`] if the message is not `KK = Both`, the Salt is not
+/// 16 bytes, or the RFC 3394 integrity check fails.
+#[cfg(feature = "crypto")]
+pub(crate) fn recover_both_seks(
+    passphrase: &[u8],
+    km: &KeyMaterial<'_>,
+) -> Result<(SecretBytes, SecretBytes, [u8; crate::crypto::SALT_LEN])> {
+    let Some(o_sek) = km.o_sek.filter(|_| km.kk == KmKeyFlag::Both) else {
+        return Err(Error::InvalidField(InvalidField {
+            field: "Key Material KK",
+            reason: "expected both an even and an odd SEK",
+        }));
+    };
+    if km.salt.len() != crate::crypto::SALT_LEN {
+        return Err(Error::InvalidField(InvalidField {
+            field: "Key Material Salt",
+            reason: "must be 16 bytes (the only Salt length this crate's codec accepts)",
+        }));
+    }
+    let mut salt = [0u8; crate::crypto::SALT_LEN];
+    salt.copy_from_slice(km.salt);
+    let kek = crate::crypto::derive_kek(passphrase, &salt, km.x_sek.len())?;
+    let mut wrapped = Vec::with_capacity(km.x_sek.len() + o_sek.len());
+    wrapped.extend_from_slice(km.x_sek);
+    wrapped.extend_from_slice(o_sek);
+    let keys = crate::crypto::unwrap_sek(&kek, &km.icv, &wrapped)?;
+    let (even, odd) = keys.split_at(km.x_sek.len());
+    Ok((
+        SecretBytes::new(even.to_vec()),
+        SecretBytes::new(odd.to_vec()),
+        salt,
+    ))
+}
+
 /// Re-serialize a parsed Key Material message and wrap it as a `KmRsp`
 /// extension block — the responder's confirmation echo (§6.1.5: "the
 /// responder ... echoes the same KM message back to prove it derived the

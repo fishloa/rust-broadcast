@@ -1683,24 +1683,34 @@ impl Driver {
             #[cfg(feature = "crypto")]
             ControlPacket::UserDefined(u) => {
                 if let Ok(km) = u.as_key_material() {
-                    let parity = match km.kk {
-                        crate::packet::KmKeyFlag::Even => KeyParity::Even,
-                        crate::packet::KmKeyFlag::Odd => KeyParity::Odd,
-                        _ => KeyParity::Even,
-                    };
-                    if let Ok((sek, salt)) =
-                        crate::handshake_sm::recover_sek(&self.crypto_passphrase, &km)
-                    {
-                        match parity {
-                            KeyParity::Even => {
-                                self.crypto_even_sek = Some(zeroize::Zeroizing::new(sek.to_vec()));
-                                self.crypto_salt_even = Some(salt);
-                            }
-                            KeyParity::Odd => {
-                                self.crypto_odd_sek = Some(zeroize::Zeroizing::new(sek.to_vec()));
-                                self.crypto_salt_odd = Some(salt);
-                            }
+                    let installed = match km.kk {
+                        crate::packet::KmKeyFlag::Both => {
+                            crate::handshake_sm::recover_both_seks(&self.crypto_passphrase, &km)
+                                .map(|(even, odd, salt)| {
+                                    self.crypto_even_sek =
+                                        Some(zeroize::Zeroizing::new(even.to_vec()));
+                                    self.crypto_salt_even = Some(salt);
+                                    self.crypto_odd_sek =
+                                        Some(zeroize::Zeroizing::new(odd.to_vec()));
+                                    self.crypto_salt_odd = Some(salt);
+                                })
+                                .is_ok()
                         }
+                        kk => crate::handshake_sm::recover_sek(&self.crypto_passphrase, &km)
+                            .map(|(sek, salt)| {
+                                if kk == crate::packet::KmKeyFlag::Odd {
+                                    self.crypto_odd_sek =
+                                        Some(zeroize::Zeroizing::new(sek.to_vec()));
+                                    self.crypto_salt_odd = Some(salt);
+                                } else {
+                                    self.crypto_even_sek =
+                                        Some(zeroize::Zeroizing::new(sek.to_vec()));
+                                    self.crypto_salt_even = Some(salt);
+                                }
+                            })
+                            .is_ok(),
+                    };
+                    if installed {
                         // echo back as KMRSP (subtype 4)
                         let mut km_buf = vec![0u8; km.serialized_len()];
                         if km.serialize_into(&mut km_buf).is_ok() {
