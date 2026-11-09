@@ -161,7 +161,9 @@ fn parse_block(lines: &[&str]) -> Result<Option<(Cue, bool)>, Error> {
     let mut lossy = false;
     let first = lines[0];
 
-    if first.starts_with("NOTE")
+    if first == "NOTE"
+        || first.starts_with("NOTE ")
+        || first.starts_with("NOTE\t")
         || first == "STYLE"
         || first.starts_with("STYLE ")
         || first == "REGION"
