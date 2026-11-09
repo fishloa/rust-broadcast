@@ -24,6 +24,8 @@
 
 ### Fixed
 - A blank or whitespace-only Bearer token is rejected at config validation (`output_auth.token`, `routes.input.auth.bearer_token`) with `ConfigInvalid`; it previously passed and `Authorization: Bearer ` then authenticated.
+### Tests
+- WebVTT subtitle renditions after a source reconnect: the run's `X-TIMESTAMP-MAP` starts at the number-derived time and every cue lands where the TSDuck reference puts it on the video timeline, end to end through the production segmenter and the router.
 
 ## [0.17.0] - 2026-11-08
 ### Changed
