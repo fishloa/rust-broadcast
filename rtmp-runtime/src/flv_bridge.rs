@@ -6,6 +6,8 @@
 //!
 //! Spec: `private/specs-verified/rtmp/rtmp-runtime/rtmp.md` sections 6.6 and 9.
 
+use broadcast_common::Serialize;
+
 use crate::RtmpError;
 use crate::chunk::Message;
 
@@ -63,6 +65,11 @@ impl FlvTagWriter {
     /// # Errors
     /// [`RtmpError::Unsupported`] if `payload` does not fit the tag's 24-bit `DataSize`.
     pub(crate) fn tag(&mut self, tag_type: u8, timestamp: u32, payload: &[u8]) -> Result<Vec<u8>> {
+        let payload = if tag_type == crate::message::msg_type::DATA_AMF0 {
+            strip_set_data_frame(payload)
+        } else {
+            payload
+        };
         let mut flv = if self.header_sent {
             Vec::new()
         } else {
@@ -72,6 +79,20 @@ impl FlvTagWriter {
         flv.extend(flv_tag(tag_type, timestamp, payload)?);
         Ok(flv)
     }
+}
+
+/// The AMF0 handler name a publisher puts in front of `onMetaData` (the FMLE
+/// `@setDataFrame` convention); it addresses the server, not the FLV script tag.
+const SET_DATA_FRAME: &str = "@setDataFrame";
+
+/// `payload` without a leading AMF0 `@setDataFrame` string, so the FLV script tag
+/// begins with `onMetaData` as Adobe FLV v10.1 Annex E.4.1 defines it.
+fn strip_set_data_frame(payload: &[u8]) -> &[u8] {
+    let Ok(name) = crate::amf0::Amf0Value::String(SET_DATA_FRAME.to_string()).try_to_bytes()
+    else {
+        return payload;
+    };
+    payload.strip_prefix(name.as_slice()).unwrap_or(payload)
 }
 
 /// Unpack an Aggregate Message (22, §7.1.6), calling `deliver(tag_type, timestamp, payload)` for

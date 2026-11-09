@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LlHlsSegmenter::set_start_time_ns` and `StreamingTsHlsSegmenter::set_start_time_ns` start the decode clock (`tfdt`, TS PES times) at a given time instead of zero, so a segmenter for a reconnected source continues the previous run's timeline.
 
 ### Fixed
+- A signalled TS time-base discontinuity lifts every stream of the program by one common offset (the first stream to reach the new base fixes it), so the new base's own A/V skew survives the splice; each PID used to be lifted independently to its own last stamp plus one period, replacing the new skew with the old one (up to one frame). A stream the shared offset would not keep monotonic falls back to its own lift.
 - `StreamingTsDemux::finish` demuxes the aligned packets at the end of input that `TsResync` could not yet confirm (up to four after a corrupt sync byte) instead of dropping them.
 ### Added
 - `InputDegradation::Scrambled` (on the `#[non_exhaustive]` enum, so not breaking): reported once per payload packet with `transport_scrambling_control != 0` on a PES-carried PID.
