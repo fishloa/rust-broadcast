@@ -116,7 +116,30 @@ struct PendingSample {
     sample: Sample,
     /// This sample's own FLV tag timestamp (ms) — the DTS the *next*
     /// same-kind tag's timestamp is subtracted from to get its duration.
-    dts: u32,
+    dts: i64,
+}
+
+/// Unrolls the 32-bit millisecond FLV tag timestamp (`Timestamp` +
+/// `TimestampExtended`, FLV spec §E.4.1) into a monotonic 64-bit clock: a
+/// step of less than half the 32-bit range in either direction is the real
+/// delta, so a session running past 2^32 ms continues instead of stepping
+/// back to zero.
+#[derive(Debug, Default)]
+struct TimestampUnroll {
+    last: Option<(u32, i64)>,
+}
+
+impl TimestampUnroll {
+    fn unroll(&mut self, raw: u32) -> i64 {
+        let unrolled = match self.last {
+            Some((prev_raw, prev_unrolled)) => {
+                prev_unrolled + i64::from(raw.wrapping_sub(prev_raw).cast_signed())
+            }
+            None => i64::from(raw),
+        };
+        self.last = Some((raw, unrolled));
+        unrolled
+    }
 }
 
 /// Per-track (video or audio) streaming state.
@@ -150,12 +173,12 @@ impl TrackState {
     /// Advance the pending slot with a newly-decoded tag at `dts`, emitting
     /// the *previous* pending sample now that its duration (`dts - prev.dts`)
     /// is known.
-    fn advance(&mut self, sample: Sample, dts: u32, events: &mut VecDeque<DemuxEvent>) {
+    fn advance(&mut self, sample: Sample, dts: i64, events: &mut VecDeque<DemuxEvent>) {
         let track_id = self
             .track_id
             .expect("TrackState::advance called before the track's config resolved");
         if let Some(prev) = self.pending.take() {
-            let duration = dts.saturating_sub(prev.dts);
+            let duration = u32::try_from((dts - prev.dts).max(0)).unwrap_or(u32::MAX);
             self.last_duration = duration;
             let mut emitted = prev.sample;
             emitted.duration = Some(duration);
@@ -198,6 +221,7 @@ pub struct StreamingFlvDemux {
     header_seen: bool,
     video: TrackState,
     audio: TrackState,
+    clock: TimestampUnroll,
     next_track_id: TrackId,
     /// Pending events, drained one at a time via
     /// [`poll_event`](Self::poll_event) — mirrors
@@ -229,6 +253,7 @@ impl StreamingFlvDemux {
             header_seen: false,
             video: TrackState::default(),
             audio: TrackState::default(),
+            clock: TimestampUnroll::default(),
             next_track_id: TrackId::new(1),
             events: VecDeque::new(),
             #[cfg(test)]
@@ -358,6 +383,10 @@ impl StreamingFlvDemux {
             // later `feed`. The bytes are unusable as anything else, so
             // discarding them is what lets the ingest continue.
             *cursor += total;
+            let timestamp = match tag_type_byte {
+                tag_type::VIDEO | tag_type::AUDIO => self.clock.unroll(timestamp),
+                _ => i64::from(timestamp),
+            };
             Self::process_tag(
                 &mut self.video,
                 &mut self.audio,
@@ -433,7 +462,7 @@ impl StreamingFlvDemux {
         audio: &mut TrackState,
         next_track_id: &mut TrackId,
         tag_type_byte: u8,
-        timestamp: u32,
+        timestamp: i64,
         body: &[u8],
         events: &mut VecDeque<DemuxEvent>,
     ) -> Result<(), FlvError> {
@@ -452,7 +481,7 @@ impl StreamingFlvDemux {
     fn process_video_tag(
         video: &mut TrackState,
         next_track_id: &mut TrackId,
-        timestamp: u32,
+        timestamp: i64,
         body: &[u8],
         events: &mut VecDeque<DemuxEvent>,
     ) -> Result<(), FlvError> {
@@ -541,7 +570,7 @@ impl StreamingFlvDemux {
                 // timestamp is already an absolute wire clock
                 // (milliseconds, `FLV_TIMESCALE`); `CompositionTime`
                 // (§E.4.3.2) folds directly into `pts`.
-                let dts_abs = timestamp as i64;
+                let dts_abs = timestamp;
                 let pts_abs = dts_abs + composition_time as i64;
                 // The NALU payload's NAL prefixes use the sequence header's
                 // `lengthSizeMinusOne` (§E.4.3.1); rewrite them to the crate's
@@ -571,7 +600,7 @@ impl StreamingFlvDemux {
     fn process_audio_tag(
         audio: &mut TrackState,
         next_track_id: &mut TrackId,
-        timestamp: u32,
+        timestamp: i64,
         body: &[u8],
         events: &mut VecDeque<DemuxEvent>,
     ) -> Result<(), FlvError> {
@@ -638,7 +667,7 @@ impl StreamingFlvDemux {
             // Dropped (not buffered) if the sequence header hasn't resolved
             // the track yet — see the module `# Ordering assumption` note.
             aac_packet_type::RAW if audio.track_id.is_some() => {
-                let dts_abs = timestamp as i64;
+                let dts_abs = timestamp;
                 let sample = Sample {
                     data: data.to_vec().into(),
                     dts: Some(dts_abs),
@@ -1153,6 +1182,42 @@ mod tests {
         assert!(
             demux.poll_event().is_none(),
             "unknown tag types must be skipped, not error"
+        );
+    }
+
+    #[test]
+    fn timestamps_past_2_pow_32_ms_keep_stepping_forward() {
+        let mut out = flv_header();
+        let mut seq_body = vec![(1u8 << 4) | CODEC_ID_AVC, avc_packet_type::SEQUENCE_HEADER];
+        seq_body.extend_from_slice(&[0, 0, 0]);
+        seq_body.extend_from_slice(&minimal_avcc_bytes());
+        let start = u32::MAX - 31;
+        write_tag(&mut out, tag_type::VIDEO, start, &seq_body);
+        for i in 0..3u32 {
+            let mut body = vec![(1u8 << 4) | CODEC_ID_AVC, avc_packet_type::NALU];
+            body.extend_from_slice(&[0, 0, 0]);
+            body.extend_from_slice(&1u32.to_be_bytes());
+            body.push(i as u8);
+            write_tag(&mut out, tag_type::VIDEO, start.wrapping_add(i * 40), &body);
+        }
+        let mut demux = StreamingFlvDemux::new();
+        let mut events = feed_and_drain(&mut demux, &out).unwrap();
+        events.extend(finish_and_drain(&mut demux));
+        let stamps: Vec<(Option<i64>, Option<u32>)> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some((sample.dts, sample.duration)),
+                _ => None,
+            })
+            .collect();
+        let start = i64::from(start);
+        assert_eq!(
+            stamps,
+            vec![
+                (Some(start), Some(40)),
+                (Some(start + 40), Some(40)),
+                (Some(start + 80), Some(40)),
+            ]
         );
     }
 
