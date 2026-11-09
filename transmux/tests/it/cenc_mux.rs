@@ -311,7 +311,8 @@ fn protect_media_segment_emits_senc_saiz_saio() {
 
     let saiz = SampleAuxInfoSizesBox::parse_box(saiz_bytes).expect("parse saiz");
     assert_eq!(
-        saiz.default_sample_info_size, enc.tenc.default_per_sample_iv_size,
+        saiz.default_sample_info_size,
+        u32::from(enc.tenc.default_per_sample_iv_size),
         "uniform aux size (no subsamples) == IV size"
     );
 

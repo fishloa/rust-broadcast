@@ -155,14 +155,15 @@ fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
 }
 
 /// A minimal ISOBMFF sniff: the first box is a `size(4)+type(4)` header
-/// naming a top-level box type every ISOBMFF/CMAF/DASH file starts with.
+/// naming a top-level box type every ISOBMFF/CMAF/DASH file starts with,
+/// including the compressed `!mov` / `!mof` (ISO/IEC 14496-12:2026 §8.16).
 fn looks_like_isobmff(bytes: &[u8]) -> bool {
     if bytes.len() < 8 {
         return false;
     }
     matches!(
         &bytes[4..8],
-        b"ftyp" | b"styp" | b"moov" | b"moof" | b"free" | b"skip"
+        b"ftyp" | b"styp" | b"moov" | b"moof" | b"!mov" | b"!mof" | b"free" | b"skip"
     )
 }
 
@@ -413,6 +414,16 @@ mod tests {
 
     /// Non-ISOBMFF bytes (e.g. a raw TS packet) must yield no findings, never
     /// a panic.
+    #[test]
+    fn compressed_top_level_boxes_are_isobmff() {
+        for kind in [b"!mov", b"!mof"] {
+            let mut bytes = 16u32.to_be_bytes().to_vec();
+            bytes.extend_from_slice(kind);
+            bytes.extend_from_slice(&[0u8; 8]);
+            assert!(looks_like_isobmff(&bytes), "{kind:?}");
+        }
+    }
+
     #[test]
     fn non_isobmff_input_yields_no_findings() {
         let mut report = Report::new();

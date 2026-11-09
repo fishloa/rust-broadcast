@@ -5,8 +5,10 @@
 //! big-endian size, a 4-byte type, an optional 64-bit `largesize` when
 //! `size == 1`, and `size == 0` meaning "runs to end of file".
 //!
-//! - The first box's type must be one of `ftyp`, `styp`, `moov`, `moof`,
-//!   `skip`, `free`, `mdat`, else no match.
+//! - The first box's type must be one of `ftyp`, `styp`, `moov`, `moof`, the
+//!   compressed `!mov` / `!mof` (ISO/IEC 14496-12:2026 §8.16), `skip`, `free`,
+//!   `mdat`, else no match. A compressed box counts as the box it replaces and
+//!   is never inflated; an `otyp` after `ftyp`/`styp` is walked as any box.
 //! - `>= 2` boxes chaining cleanly (each size landing exactly on the next
 //!   header, or on a clean truncation at the region end) -> `STRUCTURAL`.
 //! - One valid box that runs to the region end -> `HEURISTIC`; fewer -> none.
@@ -37,6 +39,10 @@ const TYPE_STYP: [u8; 4] = *b"styp";
 pub(crate) const TYPE_MOOV: [u8; 4] = *b"moov";
 /// The `moof` box type (§8.8.4).
 pub(crate) const TYPE_MOOF: [u8; 4] = *b"moof";
+/// The `!mov` compressed movie box type, replacing `moov` (ISO/IEC 14496-12:2026 §8.16.6).
+pub(crate) const TYPE_COMPRESSED_MOOV: [u8; 4] = *b"!mov";
+/// The `!mof` compressed movie fragment box type, replacing `moof` (§8.16.7).
+pub(crate) const TYPE_COMPRESSED_MOOF: [u8; 4] = *b"!mof";
 /// The `skip` box type (§8.1.2).
 const TYPE_SKIP: [u8; 4] = *b"skip";
 /// The `free` box type (§8.1.2).
@@ -50,8 +56,16 @@ const BRAND_LEN: usize = 4;
 /// The 4-byte box types accepted as the FILE's first box (§4.4 / §8.2 / §8.8):
 /// a standalone init segment begins `ftyp`, a CMAF/fMP4 segment `styp`/`moof`,
 /// a progressive file `ftyp`/`moov`, etc.
-const LEADING_BOX_TYPES: [[u8; 4]; 7] = [
-    TYPE_FTYP, TYPE_STYP, TYPE_MOOV, TYPE_MOOF, TYPE_SKIP, TYPE_FREE, TYPE_MDAT,
+const LEADING_BOX_TYPES: [[u8; 4]; 9] = [
+    TYPE_FTYP,
+    TYPE_STYP,
+    TYPE_MOOV,
+    TYPE_MOOF,
+    TYPE_COMPRESSED_MOOV,
+    TYPE_COMPRESSED_MOOF,
+    TYPE_SKIP,
+    TYPE_FREE,
+    TYPE_MDAT,
 ];
 
 /// The registered ISOBMFF prober: size-driven walk of `limit` bytes.
@@ -136,9 +150,9 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
                 brand = Some([rem[8], rem[9], rem[10], rem[11]]);
             }
             let this_type = [rem[4], rem[5], rem[6], rem[7]];
-            if this_type == TYPE_MOOF {
+            if this_type == TYPE_MOOF || this_type == TYPE_COMPRESSED_MOOF {
                 saw_moof = true;
-            } else if this_type == TYPE_MOOV {
+            } else if this_type == TYPE_MOOV || this_type == TYPE_COMPRESSED_MOOV {
                 saw_moov = true;
             }
             boxes += 1;
