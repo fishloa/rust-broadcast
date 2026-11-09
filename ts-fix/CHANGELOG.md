@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+- `repair_continuity` keeps a legal duplicate of a repaired packet a duplicate (it carries the CC the original was given) instead of renumbering it into a second distinct packet.
+- `repair_continuity` records the flagged packet's CC at a signalled discontinuity, so the following packet is checked against it (it was accepted with any CC).
+- `Stuffing::pad_to` with a non-finite, below-1.0 or above-`Stuffing::MAX_PACKETS_PER_INPUT` rate fails `build()` with `Error::InvalidPadRate` instead of looping forever (`--pad-to inf`).
+- `PidFilter::service` ignores PAT, PMT and CAT sections with `current_next_indicator = 0`.
+- The CLI writes the trailing aligned packets of the input, and a capture shorter than five packets, instead of an empty file.
+### Added
+- `Error::InvalidPadRate` (the enum is `#[non_exhaustive]`) and `Stuffing::MAX_PACKETS_PER_INPUT`.
+
 ## [0.8.0] - 2026-11-07
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).

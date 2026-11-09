@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- `TsResync::finish` emits the aligned packets that never reached a full `LOCK_CONFIRMATIONS` window (the tail after a corrupt sync byte, or a whole stream shorter than the window) instead of dropping them.
+### Changed
+- BREAKING: `TsResync::finish` returns `Vec<[u8; 188]>` (the tail packets) instead of `()`; a caller that discarded the unit result must now take or drop the packets.
+
 ## [0.7.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `into_raw`.

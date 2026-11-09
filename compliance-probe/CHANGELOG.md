@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- SCTE-35 `check_section`: a `splice_event_cancel_indicator = 1` message is `Scte35Sanity::Cancelled` and a component-mode `splice_insert` is judged by its component times (it was `Immediate` in both cases); `Immediate` now follows `splice_immediate_flag` or an absent `pts_time`.
+- A well-formed encrypted `splice_info_section` is `Scte35Sanity::Encrypted` (new `compliance_probe_scte35_encrypted_total` counter), no longer counted malformed.
+### Added
+- `Scte35Sanity::Cancelled` and `Scte35Sanity::Encrypted` (the enum is `#[non_exhaustive]`), `metric_names::SCTE35_ENCRYPTED_TOTAL`, and a `"cancel"` value of the `kind` label on `compliance_probe_scte35_cues_total`.
+### Documentation
+- `Probe::drain_byte_tap` documents that every packet of one tap chunk shares the chunk's arrival time.
+
 ## [0.7.0] - 2026-11-07
 ### Removed
 - BREAKING: `Probe::feed_scte35_section` (an unused-`self` passthrough). Call `compliance_probe::scte35::check_section` directly (dedupe R2).
