@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `Driver::add_service` and `update_service` no longer report success and record the service when no `ca_pmt` reached the CAM (no open conditional-access session, inactive connection, full outbound queue); they return the new `CaError::NotSent` (#1920).
+- The transport re-sends `Create_T_C` after a setup timeout, up to `MAX_SETUP_ATTEMPTS` (5) times, before reporting `TransportError::SetupTimeout` (#1921).
+- A reply timeout discards a partial `T_Data_More` chain instead of prepending it to the next message (#1922).
+- Closing a session the host never allocated is answered with `SessionStatus::ResourceNonExistent` and no longer reports `SessionClosed` (#1923).
+- `Driver::pump` advances the stack timers and the entitlement re-query timer on pumps that read a frame, so a chatty CAM no longer starves them (#1924).
+- MMI reassembles a menu or list chained over `menu_more`/`list_more` blocks (EN 50221 §8.3.2) instead of dropping them; the partial chain is capped at `MAX_MMI_CHAIN_LEN` and cleared on reset (#1931).
+
+### Changed
+- BREAKING (minor, constructor only): `resource::Mmi` now holds chain state, so the unit-struct literal `Mmi` no longer compiles; use `Mmi::default()` (#1931).
+- Added `CaError::NotSent` (the enum is `#[non_exhaustive]`).
+
 ## [0.19.0] - 2026-11-07
 ### Changed
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).

@@ -12,18 +12,29 @@
 //! (`out_of_network_indicator`) without `break_duration.auto_return` opens its
 //! `splice_event_id`; a matching "in" closes it; an "out" carrying
 //! `auto_return` closes itself at its own duration and so is never left open.
-//! The tracker stores only the *currently open* ids, so it cannot grow over a
-//! long run (audit MD-W3).
+//! The tracker stores only the *currently open* ids, capped at
+//! [`MAX_OPEN_EVENTS`], so it cannot grow over a long run even on an out-only
+//! feed (audit MD-W3).
+//!
+//! A section byte-identical to the previous one on the PID (same CRC) is a
+//! retransmission, not a second "out": it never raises a duplicate.
 //!
 //! [`Scte35Check`]: crate::Scte35Check
 
 use alloc::collections::BTreeSet;
+use alloc::vec::Vec;
 
 use broadcast_common::Parse;
 use mpeg_ts::ts::SectionReassembler;
 
 /// `table_id` of a SCTE-35 `splice_info_section` (ANSI/SCTE 35 §9.6.1).
 const SCTE35_TABLE_ID: u8 = 0xFC;
+
+/// Upper bound on simultaneously tracked open events. An out-only feed with
+/// ever-changing `splice_event_id`s would otherwise grow the set without
+/// limit; past the bound the oldest (lowest) id is forgotten, so its eventual
+/// "in" is treated as standalone. Implementation-chosen, not a spec limit.
+pub(crate) const MAX_OPEN_EVENTS: usize = 1024;
 
 /// What one non-cancelled `splice_insert` did to the open set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +51,7 @@ pub(crate) struct SpliceObservation {
 pub(crate) struct SpliceTracker {
     reassembler: SectionReassembler,
     open: BTreeSet<u32>,
+    last_section: Vec<u8>,
 }
 
 impl SpliceTracker {
@@ -69,11 +81,14 @@ impl SpliceTracker {
             if si.splice_event_cancel_indicator {
                 continue;
             }
+            let retransmission = section[..] == self.last_section[..];
+            self.last_section.clear();
+            self.last_section.extend_from_slice(&section[..]);
             let auto_return = si
                 .break_duration
                 .is_some_and(|break_duration| break_duration.auto_return);
-            let duplicate_open =
-                self.observe(si.splice_event_id, si.out_of_network_indicator, auto_return);
+            let duplicate_open = !retransmission
+                && self.observe(si.splice_event_id, si.out_of_network_indicator, auto_return);
             on_event(SpliceObservation {
                 event_id: si.splice_event_id,
                 duplicate_open,
@@ -99,6 +114,9 @@ impl SpliceTracker {
         } else {
             if out && !auto_return {
                 self.open.insert(event_id);
+                if self.open.len() > MAX_OPEN_EVENTS {
+                    self.open.pop_first();
+                }
             }
             false
         }
@@ -151,6 +169,17 @@ mod tests {
         t.observe(3, true, false);
         assert!(t.observe(3, true, true));
         assert_eq!(t.open_count(), 0);
+    }
+
+    #[test]
+    fn open_set_is_bounded_on_an_out_only_feed() {
+        let mut t = tracker();
+        let total = MAX_OPEN_EVENTS as u32 * 4;
+        for id in 0..total {
+            t.observe(id, true, false);
+        }
+        assert_eq!(t.open_count(), MAX_OPEN_EVENTS);
+        assert_eq!(t.open_events().next(), Some(total - MAX_OPEN_EVENTS as u32));
     }
 
     #[test]

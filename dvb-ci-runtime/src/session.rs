@@ -226,13 +226,19 @@ impl SessionLayer {
             // Peer closes a session.
             Some(tags::CLOSE_SESSION_REQUEST) => {
                 let req = CloseSessionRequest::parse(spdu)?;
-                self.sessions.remove(&req.session_nb);
+                let known = self.sessions.remove(&req.session_nb).is_some();
                 out.spdus.push(ser(&CloseSessionResponse {
                     length_form: dvb_ci::length::LengthForm::Minimal,
-                    status: SessionStatus::Ok,
+                    status: if known {
+                        SessionStatus::Ok
+                    } else {
+                        SessionStatus::ResourceNonExistent
+                    },
                     session_nb: req.session_nb,
                 })?);
-                out.closed.push(req.session_nb);
+                if known {
+                    out.closed.push(req.session_nb);
+                }
             }
             // Ack of a close we initiated.
             Some(tags::CLOSE_SESSION_RESPONSE) => {
@@ -477,5 +483,19 @@ mod tests {
         let wire = [0x90, 0x82, 0x00, 0x02, 0x00, 0x03, 0xAA, 0xBB];
         let out = s.on_spdu(&wire, |_| false).unwrap();
         assert_eq!(out.apdus, vec![(3, vec![0xAA, 0xBB])]);
+    }
+
+    #[test]
+    fn closing_an_unallocated_session_is_answered_not_allocated() {
+        let mut s = SessionLayer::new();
+        let req = ser(&CloseSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb: 77,
+        })
+        .unwrap();
+        let out = s.on_spdu(&req, |_| true).unwrap();
+        let resp = CloseSessionResponse::parse(&out.spdus[0]).unwrap();
+        assert_eq!(resp.status, SessionStatus::ResourceNonExistent);
+        assert!(out.closed.is_empty(), "no session was closed");
     }
 }

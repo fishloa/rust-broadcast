@@ -11,7 +11,7 @@
 //! | `dash-parse-error` | Error | MPD XML fails to parse | §5.3 |
 //! | `dash-representation-id-duplicate` | Error | Duplicate `@id` across Representations | ISO/IEC 23009-1:2012 §5.3.5.2 Table 7 (@id shall be unique within a Period) |
 //! | `dash-segment-timeline-monotonic` | Error | SegmentTimeline `t` values not monotonic | ISO/IEC 23009-1:2012 §5.3.9.6.2 (@t must be ≥ previous S end time, defaulting to 0 for first S) |
-//! | `dash-static-mpd-missing-duration` | Error | Static MPD missing `mediaPresentationDuration` | ISO/IEC 23009-1:2012 §5.3.1.2 Table 3 (CM — must be present for @type='static') |
+//! | `dash-static-mpd-missing-duration` | Error | Static MPD missing `mediaPresentationDuration` while neither `minimumUpdatePeriod` nor the last `Period@duration` is present | ISO/IEC 23009-1:2012 §5.3.1.2 Table 3 (`private/specs-verified/dash/23009-1/05-3-1-hierarchy.md`) |
 //! | `dash-dynamic-mpd-no-availability-start` | Error | Dynamic MPD missing `availabilityStartTime` | ISO/IEC 23009-1:2012 §5.3.1.2 Table 3 (CM — must be present for @type='dynamic') |
 //! | `dash-period-no-adaptation-sets` | Error | Period has no AdaptationSets | §5.3.2 |
 
@@ -35,7 +35,12 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
 
     // dash-static-mpd-missing-duration — ISO/IEC 23009-1:2012 §5.3.1.2 Table 3
     // CM (Conditionally Mandatory) — must be present for @type='static'.
-    if mpd.mpd_type == transmux::MpdType::Static && mpd.media_presentation_duration.is_none() {
+    let last_period_duration = mpd.periods.last().and_then(|p| p.duration);
+    if mpd.mpd_type == transmux::MpdType::Static
+        && mpd.media_presentation_duration.is_none()
+        && mpd.minimum_update_period.is_none()
+        && last_period_duration.is_none()
+    {
         report.push(Finding::new(
             Severity::Error,
             Location::new(1, 0),

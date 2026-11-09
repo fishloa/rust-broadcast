@@ -19,10 +19,53 @@ use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use broadcast_common::Parse;
-use dvb_si::tables::pat::PatSection;
+use dvb_si::tables::pat::{self, PatSection};
 use dvb_si::tables::pmt::{PmtSection, StreamType};
 use mpeg_pes::PesAssembler;
+use mpeg_ts::section::Section;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
+
+/// A PAT section that passed every gate: typed-parseable, CRC-valid, current
+/// (not a next-generation section), and not from a reserved PID.
+///
+/// Used **both** for version tracking and for PMT-PID discovery, so a
+/// corrupt or stale PAT can never register a PMT PID (audit MD-W1(a)/(c)).
+pub(crate) fn current_pat(raw: &[u8]) -> Option<PatSection> {
+    let pat = PatSection::parse(raw).ok()?;
+    // The typed parse does not cover the CRC — validate it explicitly
+    // (ISO/IEC 13818-1 Annex B).
+    Section::parse(raw).ok()?.validate_crc(raw).ok()?;
+    // A next-generation section is not the current one (ISO/IEC 13818-1
+    // §2.4.4.11).
+    pat.current_next_indicator.then_some(pat)
+}
+
+/// The PMT PIDs a current PAT declares, ignoring the NIT entry
+/// (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.4) and any reserved PID.
+///
+/// A PAT entry naming PID 0 would otherwise collide with the PAT PID itself;
+/// PID 0x1FFF (`NULL`) is reserved and can never carry a PMT
+/// (§2.4.3.3).
+pub(crate) fn declared_pmt_pids(pat: &PatSection) -> impl Iterator<Item = Pid> + '_ {
+    pat.entries.iter().filter_map(|entry| {
+        let pid = entry.pid;
+        (entry.program_number != pat::PROGRAM_NUMBER_NIT && pid != pat::PID && pid != NULL_PID)
+            .then_some(pid)
+    })
+}
+
+/// The reserved null-packet PID (`0x1FFF`), which never carries a section
+/// (ISO/IEC 13818-1 §2.4.3.3).
+const NULL_PID: Pid = Pid::new(0x1FFF);
+
+/// A PMT section that passed the same gates as [`current_pat`]: typed-parseable,
+/// CRC-valid (ISO/IEC 13818-1 Annex B) and current (`current_next_indicator`
+/// set, §2.4.4.11).
+pub(crate) fn current_pmt(raw: &[u8]) -> Option<PmtSection<'_>> {
+    let pmt = PmtSection::parse(raw).ok()?;
+    Section::parse(raw).ok()?.validate_crc(raw).ok()?;
+    pmt.current_next_indicator.then_some(pmt)
+}
 
 /// One elementary stream declared by a program's PMT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +89,8 @@ pub(crate) struct DeclaredStream {
 /// version bump legitimately changes a PID's declared `stream_type`, and the
 /// most recent one is authoritative); returned in PID order.
 ///
-/// Malformed/unparseable PAT or PMT sections are skipped rather than
+/// Malformed/unparseable, CRC-failing or next-generation
+/// (`current_next_indicator == 0`) PAT or PMT sections are skipped rather than
 /// propagated — a codec check degrades to "nothing declared" on a broken PSI
 /// layer instead of panicking; other diagnostics (e.g. `PatPmtVersionCheck`)
 /// already cover PSI-layer faults.
@@ -77,17 +121,14 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
         let mut new_pmt_pids: Vec<Pid> = Vec::new();
         while let Some(section) = reassemblers.get_mut(&pid).unwrap().pop_section() {
             if pid == dvb_si::tables::pat::PID {
-                if let Ok(pat) = PatSection::parse(&section) {
-                    for entry in &pat.entries {
-                        if entry.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT
-                            && !pmt_pids.contains(&entry.pid)
-                            && !new_pmt_pids.contains(&entry.pid)
-                        {
-                            new_pmt_pids.push(entry.pid);
+                if let Some(pat) = current_pat(&section) {
+                    for pmt_pid in declared_pmt_pids(&pat) {
+                        if !pmt_pids.contains(&pmt_pid) && !new_pmt_pids.contains(&pmt_pid) {
+                            new_pmt_pids.push(pmt_pid);
                         }
                     }
                 }
-            } else if let Ok(pmt) = PmtSection::parse(&section) {
+            } else if let Some(pmt) = current_pmt(&section) {
                 for stream in &pmt.streams {
                     declared.insert(stream.elementary_pid, stream.stream_type);
                 }
@@ -193,6 +234,7 @@ pub(crate) fn for_each_access_unit(
 /// `SectionPacketiser` — never hand-rolled bytes.
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::collect_pmt_streams;
     use alloc::vec::Vec;
 
     use broadcast_common::Serialize;
@@ -377,6 +419,67 @@ pub(crate) mod tests {
 
     /// Elementary-stream PID used by every test fixture built here.
     pub(crate) const ELEMENTARY_PID: Pid = Pid::new(0x0101);
+
+    pub(crate) fn pmt_packet_range(ts: &[u8]) -> core::ops::Range<usize> {
+        for i in 0..ts.len() / TS_PACKET_SIZE {
+            let p = &ts[i * TS_PACKET_SIZE..(i + 1) * TS_PACKET_SIZE];
+            let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
+            if pid == TEST_PMT_PID.value() {
+                return i * TS_PACKET_SIZE..(i + 1) * TS_PACKET_SIZE;
+            }
+        }
+        panic!("no PMT packet");
+    }
+
+    #[test]
+    fn collect_pmt_streams_skips_a_pmt_with_a_bad_crc() {
+        let mut ts = build_pat_pmt_ts_versioned(&[(0x0100u16, StreamType::H264)], 0, true);
+        let control = collect_pmt_streams(&ts);
+        assert_eq!(
+            control.len(),
+            1,
+            "control: the intact PMT declares one stream"
+        );
+        let range = pmt_packet_range(&ts);
+        let p = &mut ts[range];
+        let section_length = (usize::from(p[6] & 0x0F) << 8) | usize::from(p[7]);
+        let crc_at = 5 + 3 + section_length - 4;
+        for b in &mut p[crc_at..crc_at + 4] {
+            *b ^= 0xFF;
+        }
+        assert!(
+            collect_pmt_streams(&ts).is_empty(),
+            "a PMT failing its CRC-32 must not declare streams (collect_pmt_streams docs: malformed sections are skipped)"
+        );
+    }
+
+    #[test]
+    fn collect_pmt_streams_ignores_a_crc_valid_next_generation_pmt_under_a_current_pat() {
+        let streams = [(0x0100u16, StreamType::H264)];
+        let mut ts = build_pat_pmt_ts_versioned(&streams, 0, true);
+        let next = build_pat_pmt_ts_versioned(&streams, 0, false);
+        assert_eq!(
+            collect_pmt_streams(&ts).len(),
+            1,
+            "control: current PMT declares one stream"
+        );
+        let range = pmt_packet_range(&ts);
+        let next_range = pmt_packet_range(&next);
+        ts[range].copy_from_slice(&next[next_range]);
+        assert!(
+            collect_pmt_streams(&ts).is_empty(),
+            "a PMT with current_next_indicator=0 (CRC valid) must not declare streams"
+        );
+    }
+
+    #[test]
+    fn collect_pmt_streams_ignores_a_next_generation_pmt() {
+        let ts = build_pat_pmt_ts_versioned(&[(0x0100u16, StreamType::H264)], 0, false);
+        assert!(
+            collect_pmt_streams(&ts).is_empty(),
+            "current_next_indicator=0 is the NEXT table (13818-1 2.4.4.11), not what the stream carries now"
+        );
+    }
 }
 
 #[cfg(test)]

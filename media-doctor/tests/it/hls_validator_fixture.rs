@@ -572,3 +572,25 @@ seg0.m4s
         report.findings(),
     );
 }
+
+/// An unparseable `#EXT-X-TARGETDURATION` is reported by the structured parse;
+/// it must not also be read as `0`, which would flag every conformant
+/// `#EXTINF` as exceeding it.
+#[test]
+fn unparseable_targetduration_does_not_inflate_extinf_findings() {
+    let text =
+        read_fixture("valid.m3u8").replace("#EXT-X-TARGETDURATION:10", "#EXT-X-TARGETDURATION:ten");
+    assert!(text.contains("TARGETDURATION:ten"), "fixture edit applied");
+    let mut report = Report::new();
+    check_hls_playlist(&text, &mut report);
+    assert!(
+        !findings(&report, "hls-parse-error").is_empty(),
+        "the garbage value is itself reported: {:?}",
+        report.findings()
+    );
+    assert!(
+        findings(&report, "hls-extinf-exceeds-target").is_empty(),
+        "an unknown TARGETDURATION is not a limit of 0: {:?}",
+        report.findings()
+    );
+}

@@ -258,7 +258,7 @@ mod tests {
     fn duplicate_out_produces_finding() {
         let pid = 0x01F0u16;
         let out1 = make_splice_insert_section(7, true, false);
-        let out2 = make_splice_insert_section(7, true, false);
+        let out2 = make_splice_insert_section_with_break(7, true, false, Some((false, 90_000)));
 
         let mut payload = Vec::new();
         payload.push(0x00);
@@ -283,6 +283,28 @@ mod tests {
             dup[0].message.contains("7"),
             "message should reference event_id 7: {}",
             dup[0].message
+        );
+    }
+
+    /// A byte-identical repeat of the previous section is a retransmission,
+    /// not a duplicate open.
+    #[test]
+    fn byte_identical_retransmission_is_not_a_duplicate_out() {
+        let out = make_splice_insert_section(7, true, false);
+        let mut payload = vec![0x00];
+        for _ in 0..3 {
+            payload.extend_from_slice(&out);
+        }
+        let ts = make_packet(&payload, Pid::new(0x01F0), 0);
+        let mut report = Report::new();
+        Scte35Check.run(&ts, &mut report);
+        assert!(
+            report
+                .findings()
+                .iter()
+                .all(|f| f.rule_id != "scte35-dup-out"),
+            "{:?}",
+            report.findings()
         );
     }
 

@@ -191,6 +191,16 @@ impl<D: CaDevice> Driver<D> {
         self.run(actions)
     }
 
+    fn send_ca_pmt_checked(&mut self, ca_pmt: &[u8]) -> Result<(), CaError> {
+        let before = self.notifications.len();
+        self.send_ca_pmt(ca_pmt)?;
+        let refusal = self.notifications[before..].iter().find_map(|n| match n {
+            Notification::Error { detail } => Some(detail.clone()),
+            _ => None,
+        });
+        refusal.map_or(Ok(()), |detail| Err(CaError::NotSent(detail)))
+    }
+
     /// Descramble the services in a PMT section: the stack filters the PMT's
     /// `CA_descriptor`s to the CAM's advertised CAIDs and sends a `ca_pmt`
     /// (`list_management = only`, `cmd_id = ok_descrambling`). The outcome
@@ -304,6 +314,8 @@ impl<D: CaDevice> Driver<D> {
     /// (ISO/IEC 13818-1 §2.6.16, tag `0x09`) at programme or
     /// elementary-stream level — there would be nothing for the CAM to
     /// descramble. [`CaError::Io`] if sending the built `ca_pmt` fails.
+    /// [`CaError::NotSent`] if the stack could not hand it to the CAM (no open
+    /// CA session, inactive connection, full queue); nothing is recorded.
     pub fn add_service(&mut self, pmt: &PmtSection<'_>) -> Result<(), CaError> {
         let list_management = if self.managed.is_empty() {
             CaPmtListManagement::Only
@@ -312,7 +324,7 @@ impl<D: CaDevice> Driver<D> {
         };
         let cmd_id = CaPmtCmdId::OkDescrambling;
         let (built_bytes, pmt_raw) = self.build_service_bytes(pmt, list_management, cmd_id)?;
-        self.send_ca_pmt(&built_bytes)?;
+        self.send_ca_pmt_checked(&built_bytes)?;
         self.managed.record(
             pmt.program_number,
             managed::service_of(pmt, cmd_id, built_bytes, pmt_raw),
@@ -353,7 +365,7 @@ impl<D: CaDevice> Driver<D> {
         let list_management = CaPmtListManagement::Update;
         let cmd_id = CaPmtCmdId::OkDescrambling;
         let (built_bytes, pmt_raw) = self.build_service_bytes(pmt, list_management, cmd_id)?;
-        self.send_ca_pmt(&built_bytes)?;
+        self.send_ca_pmt_checked(&built_bytes)?;
         self.managed.record(
             pmt.program_number,
             managed::service_of(pmt, cmd_id, built_bytes, pmt_raw),
@@ -505,6 +517,7 @@ impl<D: CaDevice> Driver<D> {
         // `None` (first call) has no previous point to measure from, so
         // `timeout` is used as a reasonable initial estimate, same as before.
         let now = (self.clock)();
+        let measured = self.last_pump.is_some();
         let mut elapsed = self
             .last_pump
             .map_or(timeout, |prev| now.saturating_duration_since(prev));
@@ -554,6 +567,11 @@ impl<D: CaDevice> Driver<D> {
                 // r10-O-11).
                 let actions = self.stack.handle(Event::Readable(&self.buf[..n]));
                 self.run(actions)?;
+                if measured && !elapsed.is_zero() {
+                    let actions = self.stack.handle(Event::Tick { elapsed });
+                    self.run(actions)?;
+                    self.requery_tick(elapsed)?;
+                }
                 return Ok(true);
             }
         }
@@ -3656,5 +3674,70 @@ pub(crate) mod tests {
 
         let svc_after = d.managed_ca().services().get(&1).unwrap();
         assert_eq!(svc_before, *svc_after, "record must be unchanged");
+    }
+
+    #[test]
+    fn add_service_without_an_open_ca_session_errors_and_records_nothing() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        let result = d.add_service(&pmt);
+        let wrote_ca_pmt = d.device().ops.iter().any(|op| match op {
+            DeviceOp::Write(w) => w.windows(3).any(|x| x == [0x9F, 0x80, 0x32]),
+            _ => false,
+        });
+        assert!(!wrote_ca_pmt, "precondition: nothing can have been sent");
+        assert!(matches!(result, Err(CaError::NotSent(_))), "{result:?}");
+        assert!(d.managed_ca().services().is_empty());
+    }
+
+    #[test]
+    fn setup_timeout_is_followed_by_a_new_create_t_c() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        let clock = TestClock::new();
+        d = d.with_clock(clock.as_fn());
+        d.init().unwrap();
+        for _ in 0..60 {
+            clock.advance(Duration::from_millis(100));
+            d.pump(Duration::from_millis(100)).unwrap();
+        }
+        let create_t_c = d
+            .device()
+            .ops
+            .iter()
+            .filter(|op| matches!(op, DeviceOp::Write(w) if w.first() == Some(&tags::CREATE_T_C)))
+            .count();
+        assert!(
+            create_t_c > 1,
+            "6 s of a silent CAM produced {create_t_c} Create_T_C"
+        );
+    }
+
+    #[test]
+    fn readable_pumps_still_advance_the_requery_timer() {
+        let clock = TestClock::new();
+        let mut d = driver_with_sessions().with_clock(clock.as_fn());
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        d.set_requery_interval(Duration::from_secs(1));
+        d.pump(Duration::from_millis(10)).unwrap();
+        let ca_pmt_writes = |d: &Driver<MockCaDevice>| {
+            d.device()
+                .ops
+                .iter()
+                .filter(|op| matches!(op, DeviceOp::Write(w) if w.windows(3).any(|x| x == [0x9F, 0x80, 0x32])))
+                .count()
+        };
+        let before = ca_pmt_writes(&d);
+        for _ in 0..8 {
+            clock.advance(Duration::from_millis(500));
+            d.device_mut().inbound.push_back(sb());
+            d.pump(Duration::from_millis(10)).unwrap();
+        }
+        assert!(
+            ca_pmt_writes(&d) > before,
+            "4 s passed with a 1 s requery interval but no re-query was sent"
+        );
     }
 }

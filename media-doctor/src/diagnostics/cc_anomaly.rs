@@ -15,7 +15,8 @@
 //! [`broadcast_common::ts_dup`] — shared with `dvb-conformance` and
 //! `ts-fix`, which independently implement the same §2.4.3.3 clause.
 //!
-//! Non-payload-bearing packets (AFC `00` or `10`) do not advance the CC.
+//! Non-payload-bearing packets (AFC `00` or `10`) do not advance the CC; an
+//! adaptation-only packet (AFC `10`) must repeat the PID's last CC value.
 
 use alloc::collections::btree_map::BTreeMap;
 use mpeg_ts::pid::Pid;
@@ -26,6 +27,10 @@ use crate::Diagnostic;
 use crate::Report;
 use crate::report::{Finding, Location, Severity};
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+
+/// `discontinuity_indicator`, the top bit of the adaptation-field flags byte
+/// (ISO/IEC 13818-1 §2.4.3.4).
+const AF_DISCONTINUITY_INDICATOR: u8 = 0x80;
 
 /// Copy one TS packet into a fixed array: no heap allocation per packet
 /// (audit MD-O2, #1112). `raw` is always exactly `TS_PACKET_SIZE` here (it
@@ -83,12 +88,35 @@ impl Diagnostic for CcAnomalyCheck {
                 continue;
             }
 
-            // Only payload-bearing packets (AFC 01 or 11) interact with CC.
+            let cc = hdr.continuity_counter;
+
+            // An adaptation-only packet (AFC 10) does not increment the CC
+            // (§2.4.3.3): it must repeat the PID's last value.
             if !hdr.has_payload {
+                if hdr.has_adaptation
+                    && let Some(state) = pid_states.get_mut(&pid)
+                    && state.initialized
+                {
+                    let discontinuity = raw[4] > 0 && (raw[5] & AF_DISCONTINUITY_INDICATOR) != 0;
+                    if discontinuity {
+                        state.last_cc = cc;
+                        state.dup_used = false;
+                    } else if cc != state.last_cc {
+                        report.push(Finding::new(
+                            Severity::Error,
+                            Location::at_pid(i, pid),
+                            "cc-anomaly",
+                            alloc::format!(
+                                "PID 0x{pid:04X}: adaptation-only packet carries CC={cc}, \
+                                 expected the unincremented CC={} (§2.4.3.3)",
+                                state.last_cc
+                            ),
+                        ));
+                    }
+                }
                 continue;
             }
 
-            let cc = hdr.continuity_counter;
             let state = pid_states.entry(pid).or_insert(CcState {
                 initialized: false,
                 last_cc: 0,
@@ -105,7 +133,7 @@ impl Diagnostic for CcAnomalyCheck {
 
             let has_discontinuity = if hdr.has_adaptation {
                 let af_len = raw[4] as usize;
-                af_len > 0 && (raw[5] & 0x80) != 0
+                af_len > 0 && (raw[5] & AF_DISCONTINUITY_INDICATOR) != 0
             } else {
                 false
             };
