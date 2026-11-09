@@ -285,6 +285,10 @@ pub struct OpenSegment {
     /// `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.6) applying to this
     /// open (in-progress) segment, if any.
     pub program_date_time: Option<ProgramDateTime>,
+    /// If `true`, emit `#EXT-X-DISCONTINUITY` immediately before this open
+    /// segment's map/parts (RFC 8216 §4.3.4.3), so a period change at the
+    /// live edge survives a parse/render round trip.
+    pub discontinuous: bool,
 }
 
 impl OpenSegment {
@@ -296,6 +300,7 @@ impl OpenSegment {
             map: None,
             pre_tags: Vec::new(),
             program_date_time: None,
+            discontinuous: false,
         }
     }
 
@@ -1691,6 +1696,9 @@ impl MediaPlaylist {
         // into an open segment when lines remain after the last URI, and
         // dropping them there would be the round-trip loss BH-W5 fixes.
         if let Some(open) = &self.open_segment {
+            if open.discontinuous {
+                s.push_str("#EXT-X-DISCONTINUITY\n");
+            }
             if self.low_latency.is_some() {
                 // Same dedup-vs-previous rule as the closed segments' loop
                 // above: `#EXT-X-MAP` applies until a new one is seen, so
@@ -2178,6 +2186,7 @@ impl MediaPlaylist {
         let open_segment = if pending_parts.is_empty()
             && pending_pre_tags.is_empty()
             && pending_program_date_time.is_none()
+            && !pending_discontinuous
         {
             None
         } else {
@@ -2189,6 +2198,7 @@ impl MediaPlaylist {
             Some(OpenSegment {
                 pre_tags: core::mem::take(&mut pending_pre_tags),
                 program_date_time: pending_program_date_time.take(),
+                discontinuous: core::mem::take(&mut pending_discontinuous),
                 ..open
             })
         };
@@ -3943,6 +3953,70 @@ impl MasterPlaylist {
     /// assembled from external data. Covers every field [`Self::to_m3u8`]
     /// emits; the per-tag renderers re-check the same values, so a caller
     /// that bypasses this method still cannot emit a malformed line.
+    fn validate_group_references(&self) -> Result<()> {
+        let none_used = self
+            .variants
+            .iter()
+            .any(|v| matches!(v.closed_captions, Some(ClosedCaptionsRef::None)));
+        if none_used {
+            for v in &self.variants {
+                if !matches!(v.closed_captions, Some(ClosedCaptionsRef::None)) {
+                    return Err(Error::HlsParse {
+                        line_no: 0,
+                        line: String::new(),
+                        reason:
+                            "EXT-X-STREAM-INF CLOSED-CAPTIONS=NONE must be used on all variants"
+                                .to_string(),
+                    });
+                }
+            }
+        }
+        let group_exists = |gid: &str, mt: MediaType| -> bool {
+            self.media
+                .iter()
+                .any(|m| m.group_id == gid && m.media_type == mt)
+        };
+        for v in &self.variants {
+            if let Some(g) = &v.audio
+                && !group_exists(g, MediaType::Audio)
+            {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("EXT-X-STREAM-INF AUDIO group {g:?} not found"),
+                });
+            }
+            if let Some(g) = &v.video
+                && !group_exists(g, MediaType::Video)
+            {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("EXT-X-STREAM-INF VIDEO group {g:?} not found"),
+                });
+            }
+            if let Some(g) = &v.subtitles
+                && !group_exists(g, MediaType::Subtitles)
+            {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("EXT-X-STREAM-INF SUBTITLES group {g:?} not found"),
+                });
+            }
+            if let Some(ClosedCaptionsRef::Group(g)) = &v.closed_captions
+                && !group_exists(g, MediaType::ClosedCaptions)
+            {
+                return Err(Error::HlsParse {
+                    line_no: 0,
+                    line: String::new(),
+                    reason: format!("EXT-X-STREAM-INF CLOSED-CAPTIONS group {g:?} not found"),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn validate_for_render(&self) -> Result<()> {
         validate_tag_body("playlist-level extra tag", &self.extra_tags)?;
         for def in &self.defines {
@@ -4062,67 +4136,7 @@ impl MasterPlaylist {
                 validate_quoted_string(ch, "EXT-X-MEDIA CHANNELS")?;
             }
         }
-        // Group cross-check + NONE consistency.
-        let none_used = self
-            .variants
-            .iter()
-            .any(|v| matches!(v.closed_captions, Some(ClosedCaptionsRef::None)));
-        if none_used {
-            for v in &self.variants {
-                if !matches!(v.closed_captions, Some(ClosedCaptionsRef::None)) {
-                    return Err(Error::HlsParse {
-                        line_no: 0,
-                        line: String::new(),
-                        reason:
-                            "EXT-X-STREAM-INF CLOSED-CAPTIONS=NONE must be used on all variants"
-                                .to_string(),
-                    });
-                }
-            }
-        }
-        let group_exists = |gid: &str, mt: MediaType| -> bool {
-            self.media
-                .iter()
-                .any(|m| m.group_id == gid && m.media_type == mt)
-        };
-        for v in &self.variants {
-            if let Some(g) = &v.audio
-                && !group_exists(g, MediaType::Audio)
-            {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("EXT-X-STREAM-INF AUDIO group {g:?} not found"),
-                });
-            }
-            if let Some(g) = &v.video
-                && !group_exists(g, MediaType::Video)
-            {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("EXT-X-STREAM-INF VIDEO group {g:?} not found"),
-                });
-            }
-            if let Some(g) = &v.subtitles
-                && !group_exists(g, MediaType::Subtitles)
-            {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("EXT-X-STREAM-INF SUBTITLES group {g:?} not found"),
-                });
-            }
-            if let Some(ClosedCaptionsRef::Group(g)) = &v.closed_captions
-                && !group_exists(g, MediaType::ClosedCaptions)
-            {
-                return Err(Error::HlsParse {
-                    line_no: 0,
-                    line: String::new(),
-                    reason: format!("EXT-X-STREAM-INF CLOSED-CAPTIONS group {g:?} not found"),
-                });
-            }
-        }
+        self.validate_group_references()?;
         for sk in &self.session_keys {
             push_session_key_line(&mut String::new(), sk)?;
         }
@@ -4384,7 +4398,7 @@ impl MasterPlaylist {
 
         check_rendition_groups(&media)?;
 
-        Ok(MasterPlaylist {
+        let playlist = MasterPlaylist {
             version,
             media,
             variants,
@@ -4396,7 +4410,9 @@ impl MasterPlaylist {
             session_data,
             session_keys,
             content_steering,
-        })
+        };
+        playlist.validate_group_references()?;
+        Ok(playlist)
     }
 
     /// Compute the minimum `#EXT-X-VERSION` this Multivariant Playlist's

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `OpenSegment::discontinuous`: an `#EXT-X-DISCONTINUITY` ahead of the live-edge parts is kept on parse and rendered back (#1943).
+
+### Fixed
+- `MediaPlaylist::parse` no longer drops an `#EXT-X-DISCONTINUITY` that precedes the open segment's parts (#1943).
+- `MasterPlaylist::parse` now rejects an `#EXT-X-STREAM-INF` whose AUDIO/VIDEO/SUBTITLES/CLOSED-CAPTIONS group has no `#EXT-X-MEDIA`, matching what `to_m3u8` already refused (#1948).
 
 ## [0.6.0] - 2026-11-07
 ### Documentation

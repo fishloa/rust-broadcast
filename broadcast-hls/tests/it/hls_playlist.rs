@@ -636,3 +636,41 @@ s1.m4s\n\
         Err(broadcast_hls::Error::InvalidQuotedString { .. })
     ));
 }
+
+const LL_OPEN_DISCONTINUITY: &str = "#EXTM3U\n\
+#EXT-X-VERSION:9\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-MEDIA-SEQUENCE:100\n\
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n\
+#EXT-X-MAP:URI=\"init.mp4\"\n\
+#EXT-X-PART:DURATION=0.5,URI=\"s100.0.mp4\",INDEPENDENT=YES\n\
+#EXTINF:4,\n\
+s100.mp4\n\
+#EXT-X-DISCONTINUITY\n\
+#EXT-X-PART:DURATION=0.5,URI=\"s101.0.mp4\",INDEPENDENT=YES\n";
+
+#[test]
+fn discontinuity_before_the_open_segment_survives_a_round_trip() {
+    let pl = MediaPlaylist::parse(LL_OPEN_DISCONTINUITY).unwrap();
+    assert!(pl.open_segment.is_some());
+    let out = pl.to_m3u8().unwrap();
+    assert_eq!(out, LL_OPEN_DISCONTINUITY);
+    let disc = out.matches("#EXT-X-DISCONTINUITY\n").count();
+    assert_eq!(
+        disc, 1,
+        "EXT-X-DISCONTINUITY preceding the live-edge parts was dropped; rendered:\n{out}"
+    );
+}
+
+#[test]
+fn master_parse_rejects_a_stream_inf_group_that_has_no_ext_x_media() {
+    let src = "#EXTM3U\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1000,AUDIO=\"aud\"\n\
+v.m3u8\n";
+    let parsed = MasterPlaylist::parse(src);
+    assert!(
+        matches!(parsed, Err(Error::HlsParse { .. })),
+        "parse must refuse what render refuses, got {parsed:?}"
+    );
+}
