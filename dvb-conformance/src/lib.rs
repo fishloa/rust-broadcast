@@ -140,6 +140,10 @@ use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, pcr_forward_distance};
 
 const MICROS_PER_SEC: u64 = 1_000_000;
 
+/// EIT P/F sections that carry a presence requirement: '0' (present) and '1'
+/// (following).
+const EIT_PF_SECTIONS: usize = 2;
+
 /// PES start-code prefix byte 0 (ISO/IEC 13818-1 §2.4.3.6, Table 2-21).
 const PES_PREFIX_0: u8 = 0x00;
 /// PES start-code prefix byte 1.
@@ -681,6 +685,16 @@ struct SiRepetitionTimer {
     armed: bool,
 }
 
+impl SiRepetitionTimer {
+    const fn unarmed() -> Self {
+        Self {
+            last_seen: Duration::ZERO,
+            reported: false,
+            armed: false,
+        }
+    }
+}
+
 /// Tracking state for a candidate Unreferenced_PID (indicator 3.4): the time
 /// this PID was first observed while NOT part of the referenced set.
 struct UnreferencedPidTracking {
@@ -793,6 +807,7 @@ pub struct ConformanceMonitor {
 
     // SI repetition-interval timers keyed by table_id (3.2)
     si_timers: BTreeMap<u8, SiRepetitionTimer>,
+    eit_pf_section_timers: [SiRepetitionTimer; EIT_PF_SECTIONS],
 
     // Unreferenced_PID candidate tracking (3.4)
     unreferenced_pid_timers: BTreeMap<Pid, UnreferencedPidTracking>,
@@ -854,6 +869,7 @@ impl ConformanceMonitor {
             cat_seen: false,
             scrambled_without_cat_reported: false,
             si_timers: BTreeMap::new(),
+            eit_pf_section_timers: [SiRepetitionTimer::unarmed(), SiRepetitionTimer::unarmed()],
             unreferenced_pid_timers: BTreeMap::new(),
             min_gap_timers: BTreeMap::new(),
             other_repetition_timers: BTreeMap::new(),
@@ -1999,6 +2015,16 @@ impl ConformanceMonitor {
         timer.last_seen = t;
         timer.reported = false;
         timer.armed = true;
+
+        if table_id == EIT_PF_ACTUAL_TABLE_ID
+            && let Some(timer) = self
+                .eit_pf_section_timers
+                .get_mut(usize::from(section.section_number))
+        {
+            timer.last_seen = t;
+            timer.reported = false;
+            timer.armed = true;
+        }
     }
 
     /// TR 101 290 v1.4.1 Table 5.0c — 25 ms minimum-gap check shared by
@@ -2572,6 +2598,33 @@ impl ConformanceMonitor {
                     Some(pid),
                     t,
                     format!("no {table_name} section on PID 0x{pid:04X} within {limit_ms} ms"),
+                );
+            }
+        }
+
+        // 3.6.a: one EIT_PF_actual section ('0' or '1') absent while its
+        // partner keeps arriving. Both absent is the table-level 3.2 timer's.
+        let eit_limit = self.config.si_eit_pf_interval;
+        for section in 0..EIT_PF_SECTIONS {
+            let own = &self.eit_pf_section_timers[section];
+            let partner = &self.eit_pf_section_timers[EIT_PF_SECTIONS - 1 - section];
+            let gap = t.saturating_sub(own.last_seen);
+            if own.armed
+                && !own.reported
+                && gap > eit_limit
+                && partner.armed
+                && t.saturating_sub(partner.last_seen) <= eit_limit
+            {
+                self.eit_pf_section_timers[section].reported = true;
+                self.emit(
+                    Indicator::EitError,
+                    Some(PID_EIT),
+                    t,
+                    format!(
+                        "EIT_P/F_actual section '{section}' absent for {} ms (limit {} ms) while the other section keeps arriving",
+                        gap.as_millis(),
+                        eit_limit.as_millis(),
+                    ),
                 );
             }
         }
