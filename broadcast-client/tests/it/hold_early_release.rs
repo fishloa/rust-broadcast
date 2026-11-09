@@ -267,7 +267,10 @@ fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
         }
         got_tracks
     };
-    for part in bytes.chunks(chunk).take(last_resolution_chunk(&bytes, chunk) + 1) {
+    for part in bytes
+        .chunks(chunk)
+        .take(last_resolution_chunk(&bytes, chunk) + 1)
+    {
         now += STEP_US;
         s.on_data(c, part, now);
         assert!(

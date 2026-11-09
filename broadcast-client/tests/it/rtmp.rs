@@ -583,7 +583,10 @@ fn caller_reconnect_restarts_the_connection() {
 fn a_closed_connection_is_hinted_to_the_buffer_and_cleared_on_reconnect() {
     use broadcast_client::{BufferInput, Hint};
 
-    for (error, want) in [(None, Hint::SourceEnded), (Some("reset"), Hint::SourceError)] {
+    for (error, want) in [
+        (None, Hint::SourceEnded),
+        (Some("reset"), Hint::SourceError),
+    ] {
         let mut config = rtmp_config();
         config.record_buffer_inputs = true;
         let mut h = RtmpHost::new(URL, config, peer_config());
