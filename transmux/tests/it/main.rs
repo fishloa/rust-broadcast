@@ -1,3 +1,4 @@
+mod audite_tail_loss;
 mod audite_cross_pid_wrap;
 mod absolute_timing;
 mod ac3_syncframe_ranges;
