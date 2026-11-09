@@ -1789,6 +1789,7 @@ impl HlsClient {
                 .next()
                 .is_some();
             if already_have_parts {
+                self.begin_ts_resource(ResourceId::Segment { msn }, msn)?;
                 self.delivered_segments.insert(msn);
                 return Ok(());
             }
