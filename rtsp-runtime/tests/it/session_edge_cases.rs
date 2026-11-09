@@ -1,6 +1,9 @@
 //! Session edge cases: Transport selection, redirects, 454, stale auth, large reads, unknown methods.
 
-use rtsp_runtime::{ClientEvent, ClientSession, ServerSession, SessionHeader, SessionState, Transport, TransportSpec};
+use rtsp_runtime::{
+    ClientEvent, ClientSession, ServerSession, SessionHeader, SessionState, Transport,
+    TransportSpec,
+};
 
 fn wire(s: &str) -> Vec<u8> {
     s.replace('\n', "\r\n").into_bytes()
@@ -34,7 +37,10 @@ fn server_picks_the_first_supported_transport_spec_instead_of_answering_461() {
 #[test]
 fn session_timeout_above_u32_is_kept_not_replaced_by_the_default() {
     let h = SessionHeader::parse("abc;timeout=4294967296").unwrap();
-    assert_eq!(h.timeout, Some(std::time::Duration::from_secs(4_294_967_296)));
+    assert_eq!(
+        h.timeout,
+        Some(std::time::Duration::from_secs(4_294_967_296))
+    );
 }
 
 #[test]
@@ -72,14 +78,18 @@ fn redirect_resets_state_to_init_and_forgets_the_old_session_id() {
     assert_eq!(c.state(), SessionState::Init);
     let t = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(0, 1));
     let setup = String::from_utf8(c.setup("rtsp://other/s", &t).unwrap()).unwrap();
-    assert!(!setup.contains("Session:"), "stale Session id sent to the redirect target:\n{setup}");
+    assert!(
+        !setup.contains("Session:"),
+        "stale Session id sent to the redirect target:\n{setup}"
+    );
 }
 
 #[test]
 fn teardown_answered_454_leaves_the_client_in_init() {
     let mut c = client_in_ready();
     c.teardown(BASE).unwrap();
-    c.handle_data_strict(&wire("RTSP/1.0 454 Session Not Found\nCSeq: 2\n\n")).unwrap();
+    c.handle_data_strict(&wire("RTSP/1.0 454 Session Not Found\nCSeq: 2\n\n"))
+        .unwrap();
     assert_eq!(c.state(), SessionState::Init);
     assert_eq!(c.session_id(), None);
 }
@@ -120,7 +130,10 @@ fn endless_stale_401_challenges_end_in_the_401_response() {
             other => panic!("{other:?}"),
         }
     }
-    assert!(gave_up, "client kept re-sending after 50 consecutive stale=true 401s");
+    assert!(
+        gave_up,
+        "client kept re-sending after 50 consecutive stale=true 401s"
+    );
 }
 
 #[test]

@@ -1,8 +1,8 @@
 //! Session state-machine invariants: request correlation, retry after an error, closed sessions.
 
 use http::{HeaderMap, HeaderValue, StatusCode, header};
-use webrtc_runtime::whip::client::{self, WhipClient};
 use webrtc_runtime::whep::server::WhepSession;
+use webrtc_runtime::whip::client::{self, WhipClient};
 use webrtc_runtime::whip::server::{self, WhipSession};
 
 const ENDPOINT: &str = "https://whip.example.com/pub";
@@ -51,7 +51,10 @@ fn responses_are_matched_to_requests_in_the_order_they_were_sent() {
 
 #[test]
 fn offer_can_be_retried_after_a_503_or_a_redirect() {
-    for status in [StatusCode::SERVICE_UNAVAILABLE, StatusCode::TEMPORARY_REDIRECT] {
+    for status in [
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::TEMPORARY_REDIRECT,
+    ] {
         let mut c = WhipClient::new(ENDPOINT.into(), None);
         c.offer(b"v=0\r\n".to_vec()).unwrap();
         assert!(c.on_response(client::HttpResponse::new(status)).is_err());

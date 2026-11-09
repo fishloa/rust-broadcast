@@ -172,8 +172,8 @@ impl ServerSession {
 
     fn handle_parsed(&mut self, request: Request<Body>) -> Result<(Vec<u8>, Vec<ServerEvent>)> {
         let method = request.method().clone();
-        let Some(cseq) = header_value(request.header(&headers::CSEQ))
-            .and_then(|s| s.trim().parse::<u32>().ok())
+        let Some(cseq) =
+            header_value(request.header(&headers::CSEQ)).and_then(|s| s.trim().parse::<u32>().ok())
         else {
             let resp = Response::builder(Version::V1_0, StatusCode::BadRequest)
                 .header(headers::SERVER, self.server_header.clone())

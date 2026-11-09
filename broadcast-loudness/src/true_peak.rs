@@ -168,11 +168,7 @@ impl TruePeakMeter {
     ///
     /// A rejected slice leaves the meter exactly as it was.
     pub fn push_f32_slice(&mut self, samples: &[f32]) -> Result<(), Error> {
-        if let Some((i, &s)) = samples
-            .iter()
-            .enumerate()
-            .find(|(_, s)| !s.is_finite())
-        {
+        if let Some((i, &s)) = samples.iter().enumerate().find(|(_, s)| !s.is_finite()) {
             return Err(Error::NonFiniteSample {
                 index: self.sample_count + i,
                 channel: 0,
@@ -191,11 +187,7 @@ impl TruePeakMeter {
     ///
     /// A rejected slice leaves the meter exactly as it was.
     pub fn push_f64_slice(&mut self, samples: &[f64]) -> Result<(), Error> {
-        if let Some((i, &s)) = samples
-            .iter()
-            .enumerate()
-            .find(|(_, s)| !s.is_finite())
-        {
+        if let Some((i, &s)) = samples.iter().enumerate().find(|(_, s)| !s.is_finite()) {
             return Err(Error::NonFiniteSample {
                 index: self.sample_count + i,
                 channel: 0,

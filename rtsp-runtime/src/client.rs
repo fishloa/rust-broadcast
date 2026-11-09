@@ -60,10 +60,11 @@ pub const MIN_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 /// for RTSP headers plus an SDP body (audit run-09 W6).
 const MAX_INBOUND_BYTES: usize = 1024 * 1024;
 
-/// Most 401 replays of one logical request: the first answers a challenge, the
-/// second a `stale=true` nonce refresh (RFC 2617 §3.2.1); a server that keeps
-/// answering stale is refused further signing and its 401 reaches the caller.
-const MAX_AUTH_RETRIES: u8 = 2;
+/// Most 401 replays of one logical request: a challenge, a `stale=true` nonce
+/// refresh (RFC 2617 §3.2.1) and one more for a rotation racing the refresh.
+/// A server that keeps answering stale gets no further signing and its 401
+/// reaches the caller.
+const MAX_AUTH_RETRIES: u8 = 3;
 
 /// Record of a request the client has sent and is awaiting a response for.
 #[derive(Debug, Clone)]
