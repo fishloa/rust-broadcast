@@ -139,7 +139,7 @@ impl InterstitialDateRange {
             let list = self
                 .snap
                 .iter()
-                .map(SnapMode::name)
+                .map(SnapMode::token)
                 .collect::<Vec<_>>()
                 .join(",");
             attrs.push((String::from("X-SNAP"), AttrValue::quoted(list)?));
@@ -148,7 +148,7 @@ impl InterstitialDateRange {
             let list = self
                 .restrict
                 .iter()
-                .map(RestrictMode::name)
+                .map(RestrictMode::token)
                 .collect::<Vec<_>>()
                 .join(",");
             attrs.push((String::from("X-RESTRICT"), AttrValue::quoted(list)?));
@@ -210,12 +210,10 @@ impl InterstitialDateRange {
         let snap = attrs
             .get("X-SNAP")
             .map(|v| parse_snap_list(v))
-            .transpose()?
             .unwrap_or_default();
         let restrict = attrs
             .get("X-RESTRICT")
             .map(|v| parse_restrict_list(v))
-            .transpose()?
             .unwrap_or_default();
 
         if !class_ok {
@@ -413,26 +411,22 @@ fn parse_checked_secs(what: &'static str, v: &str, sign: Sign) -> Result<f64> {
     Ok(parsed)
 }
 
-fn parse_snap_list(v: &str) -> Result<Vec<SnapMode>> {
+fn parse_snap_list(v: &str) -> Vec<SnapMode> {
     v.split(',')
-        .map(|tok| match tok.trim() {
-            "OUT" => Ok(SnapMode::Out),
-            "IN" => Ok(SnapMode::In),
-            other => Err(Error::TagParse(alloc::format!(
-                "unknown X-SNAP identifier {other:?}"
-            ))),
+        .map(|tok| match tok {
+            "OUT" => SnapMode::Out,
+            "IN" => SnapMode::In,
+            other => SnapMode::Other(other.to_string()),
         })
         .collect()
 }
 
-fn parse_restrict_list(v: &str) -> Result<Vec<RestrictMode>> {
+fn parse_restrict_list(v: &str) -> Vec<RestrictMode> {
     v.split(',')
-        .map(|tok| match tok.trim() {
-            "SKIP" => Ok(RestrictMode::Skip),
-            "JUMP" => Ok(RestrictMode::Jump),
-            other => Err(Error::TagParse(alloc::format!(
-                "unknown X-RESTRICT identifier {other:?}"
-            ))),
+        .map(|tok| match tok {
+            "SKIP" => RestrictMode::Skip,
+            "JUMP" => RestrictMode::Jump,
+            other => RestrictMode::Other(other.to_string()),
         })
         .collect()
 }
@@ -878,16 +872,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_unknown_snap_and_restrict_identifiers() {
-        for extra in [",X-SNAP=\"OUT,SIDEWAYS\"", ",X-RESTRICT=\"SKIP,TELEPORT\""] {
-            let line = alloc::format!("{LINE_PREFIX},ID=\"ad1\"{extra}");
-            assert!(
-                matches!(
-                    InterstitialDateRange::parse_tag_line(&line),
-                    Err(Error::TagParse(_))
-                ),
-                "{line}"
-            );
-        }
+    fn unknown_snap_and_restrict_identifiers_round_trip_byte_identical() {
+        let line = alloc::format!(
+            "{LINE_PREFIX},ID=\"ad1\",X-SNAP=\"OUT,SIDEWAYS\",X-RESTRICT=\"SKIP,TELEPORT\""
+        );
+        let parsed = InterstitialDateRange::parse_tag_line(&line).unwrap();
+        assert_eq!(parsed.snap[1], SnapMode::Other("SIDEWAYS".to_string()));
+        let again = parsed.to_tag_line().unwrap();
+        let reparsed = InterstitialDateRange::parse_tag_line(&again).unwrap();
+        assert_eq!(reparsed, parsed);
+        assert!(again.contains("X-SNAP=\"OUT,SIDEWAYS\""), "{again}");
+        assert!(again.contains("X-RESTRICT=\"SKIP,TELEPORT\""), "{again}");
     }
 }
