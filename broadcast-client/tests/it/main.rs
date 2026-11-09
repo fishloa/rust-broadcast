@@ -25,6 +25,7 @@ mod audit_r8_segments;
 mod auth;
 #[cfg(feature = "__test-seams")]
 mod buffer;
+mod bug_audit_a;
 mod cookies;
 mod dash_clock_surface;
 mod dash_errors;
