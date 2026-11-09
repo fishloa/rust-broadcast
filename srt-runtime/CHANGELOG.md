@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Fixed
+- A refreshed SEK survives a lost Key Material datagram: the refresh KMREQ is re-sent every 500 ms until its KMRSP arrives, and the sender keeps encrypting under the old key, past the nominal switchover, until the KMRSP confirms the peer holds the new one (draft-sharabayko-srt-01 section 6.1.6); it used to send the KMREQ once and switch regardless, so one lost control datagram left the peer unable to decrypt every later packet.
+- A bidirectional encrypted connection keeps its transmit and receive keys apart: each side's own refreshed SEK and the SEK installed from the peer's Key Material no longer share a slot, so both sides refreshing at once no longer overwrite each other's keys. A KMRSP is no longer installed as if it were a KMREQ.
+- A plaintext connection no longer runs KM Refresh (it used to announce a key to a peer that never negotiated encryption).
 - A DROPREQ for a range ahead of the ARQ ack point is remembered and crossed when the ack point arrives (it used to be forgotten, leaving the ack point stuck and the flow window to fill); a DROPREQ whose range reaches further than the negotiated flow window is ignored instead of moving the ack point up to 2^30 ahead.
 - A first handshake packet from a new source that the listener engine rejects (a stray CONCLUSION, WAVEAHAND or AGREEMENT) no longer holds one of the listener's pending slots for good.
 - A Key Material refresh with `KK = Both` installs both the even and the odd SEK (the single ICV covers `even || odd`); it was dropped, so packets under the new parity could not be decrypted.
