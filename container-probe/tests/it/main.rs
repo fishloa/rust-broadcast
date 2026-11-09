@@ -1,4 +1,5 @@
 mod api_labels;
+mod compressed_boxes;
 mod corpus_sweep;
 mod drift_guard;
 mod fixture_magic_es;

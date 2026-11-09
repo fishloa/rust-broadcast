@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- The ISOBMFF sniff behind the container-codec checks accepts a file that starts with a compressed `!mov` or `!mof` box (ISO/IEC 14496-12:2026 §8.16); the checks themselves need the box inflated and report nothing for it (#1910).
+
 ## [0.14.0] - 2026-11-07
 ### Documentation
 - README brought to the common section skeleton (what it does, standards, quick start, what is implemented, design notes, related crates, feature flags, MSRV and licence); the licence heading is spelled consistently (c6 C6-10).

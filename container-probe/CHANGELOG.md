@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The ISOBMFF prober and `segment::{media_fragment, progressive_movie}` recognise the compressed top-level boxes of ISO/IEC 14496-12:2026 §8.16: `!mov` counts as `moov` (progressive layout), `!mof` as `moof` (fragmented layout / media fragment), and either may be the first box. Nothing is inflated; an `otyp` after `ftyp`/`styp` is walked as an ordinary box (#1910).
+
 ## [0.3.0] - 2026-11-07
 ### Changed
 - Six probers (ASF, EBML, FLV, MPEG-PS, MXF, Ogg) share one `signature_gate` prologue (internal).
