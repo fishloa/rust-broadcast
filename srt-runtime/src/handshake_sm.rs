@@ -550,6 +550,24 @@ impl RetransmitStep {
     }
 }
 
+/// The connection-relative wire timestamp (§3.2.1, microseconds since the
+/// connection started) the handshake machines stamp on every packet they build.
+/// The machines read no clock: the driver feeds the elapsed time in.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct WireClock {
+    us: u32,
+}
+
+impl WireClock {
+    pub(crate) fn set(&mut self, elapsed: core::time::Duration) {
+        self.us = crate::arq::duration_to_wire_us(elapsed);
+    }
+
+    pub(crate) fn now(&self) -> u32 {
+        self.us
+    }
+}
+
 /// The retransmit bookkeeping every handshake machine (caller, listener,
 /// rendezvous) shares: the last packet sent, ticks since it was sent, and the
 /// retransmissions spent on it.

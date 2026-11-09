@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use crate::error::{Error, Result};
 use crate::handshake_sm::{
     self, HANDSHAKE_VERSION_5, HandshakeConfig, HandshakeOutput, NegotiatedParams, RejectionReason,
-    Retransmit, RetransmitStep, SRT_MAGIC_CODE,
+    Retransmit, RetransmitStep, SRT_MAGIC_CODE, WireClock,
 };
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags, HandshakeExtensions,
@@ -79,6 +79,7 @@ pub struct ListenerHandshake {
     state: ListenerHandshakeState,
     peer_socket_id: u32,
     retransmit: Retransmit,
+    clock: WireClock,
     negotiated: Option<NegotiatedParams>,
 }
 
@@ -94,8 +95,16 @@ impl ListenerHandshake {
             state: ListenerHandshakeState::Idle,
             peer_socket_id: 0,
             retransmit: Retransmit::default(),
+            clock: WireClock::default(),
             negotiated: None,
         }
+    }
+
+    /// Sets the time elapsed since the connection started; every packet built
+    /// from here on carries it as its wire timestamp (§3.2.1). The machine reads
+    /// no clock, so the driver calls this before each `start`, `feed` and `tick`.
+    pub fn set_elapsed(&mut self, elapsed: core::time::Duration) {
+        self.clock.set(elapsed);
     }
 
     /// The current state.
@@ -205,7 +214,7 @@ impl ListenerHandshake {
         self.peer_socket_id = hp.srt_socket_id;
 
         let hp_out = HandshakePacket {
-            timestamp: 0,
+            timestamp: self.clock.now(),
             dest_socket_id: self.peer_socket_id,
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
@@ -339,7 +348,7 @@ impl ListenerHandshake {
         };
 
         let hp_out = HandshakePacket {
-            timestamp: 0,
+            timestamp: self.clock.now(),
             dest_socket_id: self.peer_socket_id,
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
@@ -372,7 +381,7 @@ impl ListenerHandshake {
     ) -> Result<Vec<HandshakeOutput>> {
         self.state = ListenerHandshakeState::Rejected;
         let hp_out = HandshakePacket {
-            timestamp: 0,
+            timestamp: self.clock.now(),
             dest_socket_id: hp.srt_socket_id,
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,

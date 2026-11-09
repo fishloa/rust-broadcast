@@ -5,7 +5,10 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `CallerHandshake`, `ListenerHandshake` and `RendezvousHandshake` gain `set_elapsed(Duration)`: the time since the connection started, stamped on every handshake packet they build.
 ### Fixed
+- Handshake packets carry the microseconds since the connection started (INDUCTION, CONCLUSION and AGREEMENT used to carry a constant 0, while data timestamps counted from a later epoch, so a libsrt peer's TSBPD base was off by the handshake duration). The adapter's connection epoch is now the instant the handshake began, and the TSBPD time base accounts for the peer's handshake arriving after it. A retransmitted handshake datagram is resent byte-identical, with its original timestamp.
 - A refreshed SEK survives a lost Key Material datagram: the refresh KMREQ is re-sent every 500 ms until its KMRSP arrives, and the sender keeps encrypting under the old key, past the nominal switchover, until the KMRSP confirms the peer holds the new one (draft-sharabayko-srt-01 section 6.1.6); it used to send the KMREQ once and switch regardless, so one lost control datagram left the peer unable to decrypt every later packet.
 - A bidirectional encrypted connection keeps its transmit and receive keys apart: each side's own refreshed SEK and the SEK installed from the peer's Key Material no longer share a slot, so both sides refreshing at once no longer overwrite each other's keys. A KMRSP is no longer installed as if it were a KMREQ.
 - A plaintext connection no longer runs KM Refresh (it used to announce a key to a peer that never negotiated encryption).
@@ -60,7 +63,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - `io::SrtSocket::rendezvous` / `rendezvous_with`: the tokio adapter now drives the sans-IO `RendezvousHandshake` (§4.3.2) over a bound UDP socket, so two peers can connect in Rendezvous mode (previously only the sans-IO engine existed). Verified against a REAL peer: `tests/libsrt_rendezvous.rs` runs `srt-live-transmit` in `mode=rendezvous` over loopback in both data directions, repeated with fresh random cookies so both Initiator/Responder outcomes occur (skips loudly when libsrt is absent, like the other `libsrt_*` tests; `SRT_REQUIRE_LIBSRT=1` makes the skip a failure). `tests/io_rendezvous.rs` is the self-vs-self counterpart that runs everywhere. The Caller path's post-handshake wiring is now the shared `SrtSocket::established`.
-
 ## [0.5.0] - 2026-10-05
 
 ### Security
@@ -349,7 +351,6 @@ Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
 
 ### Added
 - `tests/non_exhaustive_coverage.rs` drift guard (issue #806).
-
 ### Fixed
 - Doc accuracy (#941 row 6): README install snippet corrected from `"0.2"`
   to `"0.3"` (the crate is 0.3.0).

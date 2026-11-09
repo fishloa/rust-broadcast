@@ -101,7 +101,7 @@ use broadcast_common::error::InvalidField;
 use crate::error::{Error, Result};
 use crate::handshake_sm::{
     self, HANDSHAKE_VERSION_5, HandshakeConfig, HandshakeOutput, NegotiatedParams, RejectionReason,
-    Retransmit, RetransmitStep,
+    Retransmit, RetransmitStep, WireClock,
 };
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags,
@@ -321,6 +321,7 @@ pub struct RendezvousHandshake {
     /// packet that carried its Handshake Extension Message.
     peer_limits: Option<(u32, u32)>,
     retransmit: Retransmit,
+    clock: WireClock,
     negotiated: Option<NegotiatedParams>,
     #[cfg(feature = "crypto")]
     crypto_recovered: Option<handshake_sm::RecoveredSek>,
@@ -349,6 +350,7 @@ impl RendezvousHandshake {
             peer_hs_msg: None,
             peer_limits: None,
             retransmit: Retransmit::default(),
+            clock: WireClock::default(),
             negotiated: None,
             #[cfg(feature = "crypto")]
             crypto_recovered: None,
@@ -357,6 +359,13 @@ impl RendezvousHandshake {
             #[cfg(feature = "crypto")]
             crypto_verified: false,
         }
+    }
+
+    /// Sets the time elapsed since the connection started; every packet built
+    /// from here on carries it as its wire timestamp (§3.2.1). The machine reads
+    /// no clock, so the driver calls this before each `start`, `feed` and `tick`.
+    pub fn set_elapsed(&mut self, elapsed: core::time::Duration) {
+        self.clock.set(elapsed);
     }
 
     /// The current state.
@@ -389,7 +398,7 @@ impl RendezvousHandshake {
             });
         }
         let hp = HandshakePacket {
-            timestamp: 0,
+            timestamp: self.clock.now(),
             dest_socket_id: 0, // Unknown yet — mirrors CallerHandshake::start's INDUCTION.
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
@@ -828,7 +837,7 @@ impl RendezvousHandshake {
             ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
         }
         let hp = HandshakePacket {
-            timestamp: 0,
+            timestamp: self.clock.now(),
             dest_socket_id: self.peer_socket_id,
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
@@ -850,7 +859,7 @@ impl RendezvousHandshake {
     /// Builds and sends an AGREEMENT: no extensions (§4.3.2.1, L2224-2230).
     fn send_agreement(&mut self) -> Result<Vec<HandshakeOutput>> {
         let hp = HandshakePacket {
-            timestamp: 0,
+            timestamp: self.clock.now(),
             dest_socket_id: self.peer_socket_id,
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,

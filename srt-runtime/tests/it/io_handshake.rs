@@ -742,3 +742,43 @@ async fn the_peers_smaller_flow_window_bounds_what_is_tracked() {
         "the packet 100 ahead (outside the 64-packet window) must not have been tracked"
     );
 }
+
+#[tokio::test]
+async fn the_caller_stamps_the_time_since_it_started_on_its_conclusion() {
+    const DELAY: Duration = Duration::from_millis(300);
+    let raw = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let addr = raw.local_addr().unwrap();
+    let connect = tokio::spawn(SrtSocket::connect(addr, HandshakeConfig::default()));
+
+    let (induction, src) = recv_from(&raw).await;
+    let timestamp_of = |d: &[u8]| match SrtPacket::parse(d).expect("parse") {
+        SrtPacket::Control(ControlPacket::Handshake(hp)) => hp.timestamp,
+        other => panic!("expected a handshake, got {other:?}"),
+    };
+    assert!(timestamp_of(&induction) < 100_000);
+
+    let mut engine = listener_engine();
+    let induction_response = answer(&mut engine, &induction).expect("INDUCTION response");
+    tokio::time::sleep(DELAY).await;
+    raw.send_to(&induction_response, src).await.unwrap();
+
+    let conclusion = loop {
+        let (d, _) = recv_handshake(&raw).await;
+        if handshake_of(&d).0 == HandshakeType::Conclusion {
+            break d;
+        }
+    };
+    let stamped = u64::from(timestamp_of(&conclusion));
+    assert!(
+        stamped >= DELAY.as_micros() as u64,
+        "the CONCLUSION carries {stamped} us, the handshake had been running for at least {DELAY:?}"
+    );
+
+    let conclusion_response = answer(&mut engine, &conclusion).expect("CONCLUSION response");
+    raw.send_to(&conclusion_response, src).await.unwrap();
+    tokio::time::timeout(WAIT, connect)
+        .await
+        .expect("connect never finished")
+        .unwrap()
+        .expect("connect");
+}

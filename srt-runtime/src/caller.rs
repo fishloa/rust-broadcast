@@ -29,7 +29,7 @@ use crate::error::{Error, Result};
 use crate::handshake_sm::{
     self, HANDSHAKE_VERSION_4, HANDSHAKE_VERSION_5, HandshakeConfig, HandshakeOutput,
     INDUCTION_LEGACY_SOCKET_TYPE, NegotiatedParams, RejectionReason, Retransmit, RetransmitStep,
-    SRT_MAGIC_CODE,
+    SRT_MAGIC_CODE, WireClock,
 };
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags, HandshakeExtensions,
@@ -80,6 +80,7 @@ pub struct CallerHandshake {
     peer_socket_id: u32,
     syn_cookie: u32,
     retransmit: Retransmit,
+    clock: WireClock,
     negotiated: Option<NegotiatedParams>,
 }
 
@@ -93,8 +94,16 @@ impl CallerHandshake {
             peer_socket_id: 0,
             syn_cookie: 0,
             retransmit: Retransmit::default(),
+            clock: WireClock::default(),
             negotiated: None,
         }
+    }
+
+    /// Sets the time elapsed since the connection started; every packet built
+    /// from here on carries it as its wire timestamp (§3.2.1). The machine reads
+    /// no clock, so the driver calls this before each `start`, `feed` and `tick`.
+    pub fn set_elapsed(&mut self, elapsed: core::time::Duration) {
+        self.clock.set(elapsed);
     }
 
     /// The current state.
@@ -120,7 +129,7 @@ impl CallerHandshake {
             });
         }
         let hp = HandshakePacket {
-            timestamp: 0,
+            timestamp: self.clock.now(),
             dest_socket_id: 0, // §4.3.1.1: 0 is interpreted as a connection request.
             version: HANDSHAKE_VERSION_4,
             encryption_field: EncryptionField::NoEncryption,
@@ -258,7 +267,7 @@ impl CallerHandshake {
         };
 
         let hp_out = HandshakePacket {
-            timestamp: 0,
+            timestamp: self.clock.now(),
             // 0, not the captured Listener Socket ID — libsrt `CUDT::processAsyncConnectRequest` (srtcore/core.cpp), draft §4.3.1; libsrt interop.
             dest_socket_id: 0,
             version: HANDSHAKE_VERSION_5,
