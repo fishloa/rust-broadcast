@@ -2569,10 +2569,15 @@ impl ListenerCore {
             }
         }
 
-        let outcomes = entry
-            .handshake
-            .feed(&ctrl)
-            .map_err(|e| handshake_err("listener feed", e))?;
+        let outcomes = match entry.handshake.feed(&ctrl) {
+            Ok(outcomes) => outcomes,
+            Err(e) => {
+                if is_new {
+                    self.pending.remove(&src);
+                }
+                return Err(handshake_err("listener feed", e));
+            }
+        };
 
         for outcome in outcomes {
             match outcome {
