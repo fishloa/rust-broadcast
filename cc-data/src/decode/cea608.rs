@@ -418,8 +418,10 @@ impl Cea608Decoder {
         let b2 = raw2 & 0x7F;
         let field_idx = usize::from(field2);
 
-        // Null filler (0x00 0x00): nothing to do.
+        // Null filler (0x00 0x00): separates control pairs, so a control after it
+        // is not a doubled copy (CTA-608-E Annex B.14; private/specs-verified/captions/cc-data/decode/cea608-decode.md).
         if b1 == 0x00 && b2 == 0x00 {
+            self.last_control[field_idx] = None;
             return;
         }
 
