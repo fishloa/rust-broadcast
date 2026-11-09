@@ -791,7 +791,7 @@ pub(crate) fn recover_sek(passphrase: &[u8], km: &KeyMaterial<'_>) -> Result<Rec
 /// # Errors
 /// [`Error::InvalidField`] if the message is not `KK = Both`, the Salt is not
 /// 16 bytes, or the RFC 3394 integrity check fails.
-#[cfg(feature = "crypto")]
+#[cfg(all(feature = "crypto", feature = "tokio"))]
 pub(crate) fn recover_both_seks(
     passphrase: &[u8],
     km: &KeyMaterial<'_>,
