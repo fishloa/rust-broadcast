@@ -419,8 +419,10 @@ pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VisualSampleEntryFields,
 };
 pub use sample_groups::{
-    GROUPING_TYPE_ROLL, ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox,
-    SbgpEntry, SgpdEntry, SubSampleDescriptor, SubSampleInformationBox, SubsEntry,
+    CodecSpecificParameters, GROUPING_TYPE_ROLL, ProducerReferenceTimeBox,
+    SampleGroupDescriptionBox, SampleToGroupBox, SbgpEntry, SgpdEntry, SubSampleDescriptor,
+    SubSampleInformationBox, SubSampleInformationBoxV2, SubSampleReferenceTableBox, SubsEntry,
+    SubsV2Entry, SubsV2Source, SubsV2Subsample, SubsampleProperties,
 };
 pub use segment_cut::{IdrWait, SegmentCutPolicy};
 pub use segmenter::{SegmentMeta, Segmenter};

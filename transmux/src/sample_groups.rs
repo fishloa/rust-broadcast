@@ -24,8 +24,10 @@
 //!   via [`SgpdEntry::Unknown`].
 //! - **sbgp**: ISO/IEC 14496-12:2015 §8.9.2.2 — version 0: no
 //!   `grouping_type_parameter`; version 1: `grouping_type_parameter` present.
-//! - **subs**: ISO/IEC 14496-12:2015 §8.7.7.2 — version 0: `subsample_size` is
-//!   u16; version 1: `subsample_size` is u32.
+//! - **subs**: ISO/IEC 14496-12:2026 §8.7.7.2 — version 0: `subsample_size` is
+//!   u16; version 1: `subsample_size` is u32; version 2 (the reference form,
+//!   [`SubSampleInformationBoxV2`]) pairs with the `ssrt` box (§8.7.10,
+//!   [`SubSampleReferenceTableBox`]).
 
 use crate::TrackId;
 use crate::error::{Error, Result};
@@ -47,6 +49,26 @@ const PRFT_TYPE: u32 = u32::from_be_bytes(*b"prft");
 const SGPD_TYPE: u32 = u32::from_be_bytes(*b"sgpd");
 const SBGP_TYPE: u32 = u32::from_be_bytes(*b"sbgp");
 const SUBS_TYPE: u32 = u32::from_be_bytes(*b"subs");
+const SSRT_TYPE: u32 = u32::from_be_bytes(*b"ssrt");
+
+/// First `subs` version that uses the reference form — ISO/IEC 14496-12:2026 §8.7.7.2.
+pub const SUBS_VERSION_REFERENCE: u8 = 2;
+
+const HAS_REFERENCE_BIT: u8 = 0x80;
+const SUBS_SIZE16_BIT: u8 = 0x80;
+const SUBS_SHORT_REF_BIT: u8 = 0x40;
+const PROP_DISCARDABLE_BIT: u8 = 0x40;
+const PROP_HAS_PRIORITY_BIT: u8 = 0x20;
+const PROP_HAS_CSP_BIT: u8 = 0x10;
+const PROP_CSP_LEN_SHIFT: u32 = 2;
+const PROP_CSP_LEN_MASK: u8 = 0x03;
+const SSRT_PROP_DISCARDABLE_BIT: u8 = 0x80;
+const SSRT_PROP_HAS_PRIORITY_BIT: u8 = 0x40;
+const SSRT_PROP_HAS_CSP_BIT: u8 = 0x20;
+const SSRT_PROP_CSP_LEN_SHIFT: u32 = 3;
+const SHORT_REF_BITS: u32 = 7;
+const LONG_REF_BITS: u32 = 15;
+const MAX_CSP_LEN: usize = 4;
 
 /// Grouping type `'roll'` (RollRecoveryEntry) — ISO/IEC 14496-12:2015 §10.6.
 pub const GROUPING_TYPE_ROLL: u32 = u32::from_be_bytes(*b"roll");
@@ -752,6 +774,13 @@ impl SubSampleInformationBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(body, FULLBOX_EXTRA_SIZE + 4, "subs body")?;
         let version = body[0];
+        if version >= SUBS_VERSION_REFERENCE {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "subs version",
+                value: u64::from(version),
+                reason: "version 2 and later use SubSampleInformationBoxV2 (ISO/IEC 14496-12:2026 §8.7.7.2)",
+            }));
+        }
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let mut c = FULLBOX_EXTRA_SIZE;
         let entry_count =
@@ -882,6 +911,510 @@ impl Serialize for SubSampleInformationBox {
                 buf[c..c + 4].copy_from_slice(&ss.codec_specific_parameters.to_be_bytes());
                 c += 4;
             }
+        }
+        Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// subs version 2 and ssrt (ISO/IEC 14496-12:2026 §8.7.7.2, §8.7.10)
+// ---------------------------------------------------------------------------
+
+/// `codec_specific_parameters` of a version-2 sub-sample property set: 1 to 4
+/// bytes (`csp_length_minus_1` + 1), big-endian in `value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct CodecSpecificParameters {
+    /// Wire length in bytes, 1..=4.
+    pub len: u8,
+    /// Value; must fit in `len` bytes.
+    pub value: u32,
+}
+
+/// Explicit sub-sample properties of a `subs` version-2 sub-sample or an
+/// `ssrt` entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SubsampleProperties {
+    /// `discardable`.
+    pub discardable: bool,
+    /// `subsample_priority` when `has_subsample_priority` is set, else `None`
+    /// (inferred 0).
+    pub subsample_priority: Option<u8>,
+    /// `codec_specific_parameters` when `is_csp_present` is set, else `None`
+    /// (inferred 0).
+    pub codec_specific_parameters: Option<CodecSpecificParameters>,
+}
+
+impl SubsampleProperties {
+    fn wire_len_after_flags(&self) -> usize {
+        usize::from(self.subsample_priority.is_some())
+            + self
+                .codec_specific_parameters
+                .map_or(0, |c| usize::from(c.len))
+    }
+
+    fn flags_byte(&self, layout: PropertyLayout) -> Result<u8> {
+        let (disc, prio, csp, shift) = match layout {
+            PropertyLayout::Subs => (
+                PROP_DISCARDABLE_BIT,
+                PROP_HAS_PRIORITY_BIT,
+                PROP_HAS_CSP_BIT,
+                PROP_CSP_LEN_SHIFT,
+            ),
+            PropertyLayout::Ssrt => (
+                SSRT_PROP_DISCARDABLE_BIT,
+                SSRT_PROP_HAS_PRIORITY_BIT,
+                SSRT_PROP_HAS_CSP_BIT,
+                SSRT_PROP_CSP_LEN_SHIFT,
+            ),
+        };
+        let mut b = 0u8;
+        if self.discardable {
+            b |= disc;
+        }
+        if self.subsample_priority.is_some() {
+            b |= prio;
+        }
+        if let Some(c) = self.codec_specific_parameters {
+            if c.len == 0 || usize::from(c.len) > MAX_CSP_LEN {
+                return Err(Error::InvalidInput(
+                    "codec_specific_parameters length must be 1..=4 bytes (ISO/IEC 14496-12:2026 §8.7.7.2)",
+                ));
+            }
+            b |= csp | ((c.len - 1) << shift);
+        }
+        Ok(b)
+    }
+
+    fn write_after_flags(&self, buf: &mut [u8]) -> Result<usize> {
+        let mut c = 0;
+        if let Some(p) = self.subsample_priority {
+            buf[c] = p;
+            c += 1;
+        }
+        if let Some(csp) = self.codec_specific_parameters {
+            let n = usize::from(csp.len);
+            broadcast_common::len::fit_bits(
+                u64::from(csp.value),
+                8 * n as u32,
+                "codec_specific_parameters",
+            )?;
+            buf[c..c + n].copy_from_slice(&csp.value.to_be_bytes()[MAX_CSP_LEN - n..]);
+            c += n;
+        }
+        Ok(c)
+    }
+
+    fn parse(body: &[u8], c: &mut usize, flags: u8, layout: PropertyLayout) -> Result<Self> {
+        let (disc, prio, csp, shift) = match layout {
+            PropertyLayout::Subs => (
+                PROP_DISCARDABLE_BIT,
+                PROP_HAS_PRIORITY_BIT,
+                PROP_HAS_CSP_BIT,
+                PROP_CSP_LEN_SHIFT,
+            ),
+            PropertyLayout::Ssrt => (
+                SSRT_PROP_DISCARDABLE_BIT,
+                SSRT_PROP_HAS_PRIORITY_BIT,
+                SSRT_PROP_HAS_CSP_BIT,
+                SSRT_PROP_CSP_LEN_SHIFT,
+            ),
+        };
+        let subsample_priority = if flags & prio != 0 {
+            need_in(body, *c + 1, "subsample_priority")?;
+            let p = body[*c];
+            *c += 1;
+            Some(p)
+        } else {
+            None
+        };
+        let codec_specific_parameters = if flags & csp != 0 {
+            let n = usize::from((flags >> shift) & PROP_CSP_LEN_MASK) + 1;
+            need_in(body, *c + n, "codec_specific_parameters")?;
+            let mut v = [0u8; MAX_CSP_LEN];
+            v[MAX_CSP_LEN - n..].copy_from_slice(&body[*c..*c + n]);
+            *c += n;
+            Some(CodecSpecificParameters {
+                len: n as u8,
+                value: u32::from_be_bytes(v),
+            })
+        } else {
+            None
+        };
+        Ok(Self {
+            discardable: flags & disc != 0,
+            subsample_priority,
+            codec_specific_parameters,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PropertyLayout {
+    Subs,
+    Ssrt,
+}
+
+/// How one version-2 sub-sample gets its properties.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum SubsV2Source {
+    /// `has_reference` = 1: the properties are entry `reference_idx` (0-based)
+    /// of the matching [`SubSampleReferenceTableBox`].
+    Reference {
+        /// 0-based index into the `ssrt` entries.
+        reference_idx: u16,
+    },
+    /// `has_reference` = 0: the properties are carried here.
+    Explicit(SubsampleProperties),
+}
+
+/// One sub-sample of a version-2 `subs` entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SubsV2Subsample {
+    /// `subsample_size` in bytes.
+    pub subsample_size: u32,
+    /// Where the properties come from.
+    pub source: SubsV2Source,
+}
+
+/// Per-sample entry of a version-2 `subs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SubsV2Entry {
+    /// Sample-number delta, as in version 0/1.
+    pub sample_delta: u32,
+    /// Sub-samples of this sample.
+    pub subsamples: Vec<SubsV2Subsample>,
+}
+
+/// Sub-Sample Information Box (`subs`) version 2 — ISO/IEC 14496-12:2026
+/// §8.7.7.2 (private/specs-verified/mpeg/isobmff/edit-and-sampletable.md).
+///
+/// Versions 0 and 1 stay in [`SubSampleInformationBox`], which rejects
+/// version 2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SubSampleInformationBoxV2 {
+    /// FullBox flags `[23:0]`; pairs with the `ssrt` of equal flags.
+    pub flags: u32,
+    /// `is_size_16_bits`: `subsample_size` is 16 bits when set, else 32.
+    pub is_size_16_bits: bool,
+    /// `is_short_ref`: `reference_idx` is 7 bits when set, else 15.
+    pub is_short_ref: bool,
+    /// Entries.
+    pub entries: Vec<SubsV2Entry>,
+}
+
+impl SubSampleInformationBoxV2 {
+    fn size_len(&self) -> usize {
+        if self.is_size_16_bits { 2 } else { 4 }
+    }
+
+    fn ref_len(&self) -> usize {
+        if self.is_short_ref { 1 } else { 2 }
+    }
+
+    fn subsample_len(&self, s: &SubsV2Subsample) -> usize {
+        self.size_len()
+            + match s.source {
+                SubsV2Source::Reference { .. } => self.ref_len(),
+                SubsV2Source::Explicit(p) => 1 + p.wire_len_after_flags(),
+            }
+    }
+
+    /// Parse the body of a `subs` box (after the 8-byte BoxHeader).
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE + 4 + 1, "subs v2 body")?;
+        if body[0] != SUBS_VERSION_REFERENCE {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "subs version",
+                value: u64::from(body[0]),
+                reason: "expected version 2",
+            }));
+        }
+        let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
+        let mut c = FULLBOX_EXTRA_SIZE;
+        let entry_count =
+            u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]) as usize;
+        c += 4;
+        let is_size_16_bits = body[c] & SUBS_SIZE16_BIT != 0;
+        let is_short_ref = body[c] & SUBS_SHORT_REF_BIT != 0;
+        c += 1;
+        let mut out = Self {
+            flags,
+            is_size_16_bits,
+            is_short_ref,
+            entries: Vec::new(),
+        };
+        let size_len = out.size_len();
+        let min_subsample = size_len + 1;
+        out.entries = Vec::with_capacity(bounded_entry_count(
+            body.len().saturating_sub(c),
+            4 + 2,
+            entry_count,
+        ));
+        for _ in 0..entry_count {
+            need_in(body, c + 6, "subs v2 entry header")?;
+            let sample_delta = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
+            let count = usize::from(u16::from_be_bytes([body[c + 4], body[c + 5]]));
+            c += 6;
+            let mut subsamples = Vec::with_capacity(bounded_entry_count(
+                body.len().saturating_sub(c),
+                min_subsample,
+                count,
+            ));
+            for _ in 0..count {
+                need_in(body, c + min_subsample, "subs v2 subsample")?;
+                let subsample_size = if is_size_16_bits {
+                    u32::from(u16::from_be_bytes([body[c], body[c + 1]]))
+                } else {
+                    u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]])
+                };
+                c += size_len;
+                let first = body[c];
+                let source = if first & HAS_REFERENCE_BIT != 0 {
+                    let reference_idx = if is_short_ref {
+                        c += 1;
+                        u16::from(first & !HAS_REFERENCE_BIT)
+                    } else {
+                        need_in(body, c + 2, "subs v2 reference_idx")?;
+                        let v = u16::from_be_bytes([first & !HAS_REFERENCE_BIT, body[c + 1]]);
+                        c += 2;
+                        v
+                    };
+                    SubsV2Source::Reference { reference_idx }
+                } else {
+                    c += 1;
+                    SubsV2Source::Explicit(SubsampleProperties::parse(
+                        body,
+                        &mut c,
+                        first,
+                        PropertyLayout::Subs,
+                    )?)
+                };
+                subsamples.push(SubsV2Subsample {
+                    subsample_size,
+                    source,
+                });
+            }
+            out.entries.push(SubsV2Entry {
+                sample_delta,
+                subsamples,
+            });
+        }
+        Ok(out)
+    }
+}
+
+impl<'a> Parse<'a> for SubSampleInformationBoxV2 {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4, "subs box")?;
+        let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        if ty != SUBS_TYPE {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "box_type",
+                value: ty as u64,
+                reason: "expected subs",
+            }));
+        }
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
+    }
+}
+
+impl Serialize for SubSampleInformationBoxV2 {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let entries: usize = self
+            .entries
+            .iter()
+            .map(|e| {
+                6 + e
+                    .subsamples
+                    .iter()
+                    .map(|s| self.subsample_len(s))
+                    .sum::<usize>()
+            })
+            .sum();
+        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + 1 + entries)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, b"subs", need)?;
+        buf[c] = SUBS_VERSION_REFERENCE;
+        buf[c + 1..c + 4].copy_from_slice(&self.flags.to_be_bytes()[1..]);
+        c += 4;
+        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
+        c += 4;
+        let mut cfg = 0u8;
+        if self.is_size_16_bits {
+            cfg |= SUBS_SIZE16_BIT;
+        }
+        if self.is_short_ref {
+            cfg |= SUBS_SHORT_REF_BIT;
+        }
+        buf[c] = cfg;
+        c += 1;
+        let ref_bits = if self.is_short_ref {
+            SHORT_REF_BITS
+        } else {
+            LONG_REF_BITS
+        };
+        for e in &self.entries {
+            buf[c..c + 4].copy_from_slice(&e.sample_delta.to_be_bytes());
+            let count = broadcast_common::len::fit_u16(e.subsamples.len(), "subsample_count")?;
+            buf[c + 4..c + 6].copy_from_slice(&count.to_be_bytes());
+            c += 6;
+            for s in &e.subsamples {
+                if self.is_size_16_bits {
+                    let v = broadcast_common::len::fit_u16(
+                        s.subsample_size as usize,
+                        "subsample_size",
+                    )?;
+                    buf[c..c + 2].copy_from_slice(&v.to_be_bytes());
+                } else {
+                    buf[c..c + 4].copy_from_slice(&s.subsample_size.to_be_bytes());
+                }
+                c += self.size_len();
+                match s.source {
+                    SubsV2Source::Reference { reference_idx } => {
+                        let idx = broadcast_common::len::fit_bits(
+                            u64::from(reference_idx),
+                            ref_bits,
+                            "reference_idx",
+                        )? as u16;
+                        if self.is_short_ref {
+                            buf[c] = HAS_REFERENCE_BIT | idx as u8;
+                        } else {
+                            let w = u16::from(HAS_REFERENCE_BIT) << u8::BITS | idx;
+                            buf[c..c + 2].copy_from_slice(&w.to_be_bytes());
+                        }
+                        c += self.ref_len();
+                    }
+                    SubsV2Source::Explicit(p) => {
+                        buf[c] = p.flags_byte(PropertyLayout::Subs)?;
+                        c += 1;
+                        c += p.write_after_flags(&mut buf[c..])?;
+                    }
+                }
+            }
+        }
+        Ok(c)
+    }
+}
+
+/// Sub-sample Reference Table Box (`ssrt`) — ISO/IEC 14496-12:2026 §8.7.10
+/// (private/specs-verified/mpeg/isobmff/edit-and-sampletable.md). Referenced
+/// by a version-2 [`SubSampleInformationBoxV2`] with equal `flags`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SubSampleReferenceTableBox {
+    /// FullBox flags `[23:0]`.
+    pub flags: u32,
+    /// `is_short_ref`: `entry_count` is 7 bits when set, else 15.
+    pub is_short_ref: bool,
+    /// Referenced property sets.
+    pub entries: Vec<SubsampleProperties>,
+}
+
+impl<'a> Parse<'a> for SubSampleReferenceTableBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(bytes, BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 1, "ssrt box")?;
+        let ty = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        if ty != SSRT_TYPE {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "box_type",
+                value: ty as u64,
+                reason: "expected ssrt",
+            }));
+        }
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+        need_in(body, FULLBOX_EXTRA_SIZE + 1, "ssrt body")?;
+        let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
+        let mut c = FULLBOX_EXTRA_SIZE;
+        let is_short_ref = body[c] & HAS_REFERENCE_BIT != 0;
+        let entry_count = if is_short_ref {
+            let v = usize::from(body[c] & !HAS_REFERENCE_BIT);
+            c += 1;
+            v
+        } else {
+            need_in(body, c + 2, "ssrt entry_count")?;
+            let v = usize::from(u16::from_be_bytes([
+                body[c] & !HAS_REFERENCE_BIT,
+                body[c + 1],
+            ]));
+            c += 2;
+            v
+        };
+        let mut entries = Vec::with_capacity(bounded_entry_count(
+            body.len().saturating_sub(c),
+            1,
+            entry_count,
+        ));
+        for _ in 0..entry_count {
+            need_in(body, c + 1, "ssrt entry")?;
+            let first = body[c];
+            c += 1;
+            entries.push(SubsampleProperties::parse(
+                body,
+                &mut c,
+                first,
+                PropertyLayout::Ssrt,
+            )?);
+        }
+        Ok(Self {
+            flags,
+            is_short_ref,
+            entries,
+        })
+    }
+}
+
+impl Serialize for SubSampleReferenceTableBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let count = if self.is_short_ref { 1 } else { 2 };
+        let entries: usize = self
+            .entries
+            .iter()
+            .map(|p| 1 + p.wire_len_after_flags())
+            .sum();
+        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + count + entries)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, b"ssrt", need)?;
+        buf[c] = 0;
+        buf[c + 1..c + 4].copy_from_slice(&self.flags.to_be_bytes()[1..]);
+        c += 4;
+        let bits = if self.is_short_ref {
+            SHORT_REF_BITS
+        } else {
+            LONG_REF_BITS
+        };
+        let count =
+            broadcast_common::len::fit_bits(self.entries.len() as u64, bits, "entry_count")? as u16;
+        if self.is_short_ref {
+            buf[c] = HAS_REFERENCE_BIT | count as u8;
+            c += 1;
+        } else {
+            buf[c..c + 2].copy_from_slice(&count.to_be_bytes());
+            c += 2;
+        }
+        for p in &self.entries {
+            buf[c] = p.flags_byte(PropertyLayout::Ssrt)?;
+            c += 1;
+            c += p.write_after_flags(&mut buf[c..])?;
         }
         Ok(c)
     }
@@ -1150,6 +1683,139 @@ mod tests {
         let bytes = b.try_to_bytes().unwrap();
         let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
+    }
+
+    /// A `subs` version 2 box (ISO/IEC 14496-12:2026 §8.7.7.2): one entry
+    /// (`sample_delta` 256) with one explicit 100-byte sub-sample whose
+    /// priority and 4-byte `codec_specific_parameters` are present.
+    const SUBS_V2_EXPLICIT: [u8; 31] = [
+        0, 0, 0, 31, b's', b'u', b'b', b's', 2, 0, 0, 0, 0, 0, 0, 1, 0xC0, 0, 0, 1, 0, 0, 1, 0,
+        100, 0x7C, 0x80, 0xAA, 0xBB, 0xCC, 0xDD,
+    ];
+
+    #[test]
+    fn subs_v2_is_not_misparsed_as_v0() {
+        assert!(
+            SubSampleInformationBox::parse(&SUBS_V2_EXPLICIT).is_err(),
+            "a version 2 subs must not be read with the version 0 layout"
+        );
+    }
+
+    #[test]
+    fn subs_v2_explicit_round_trips() {
+        let parsed = SubSampleInformationBoxV2::parse(&SUBS_V2_EXPLICIT).unwrap();
+        assert!(parsed.is_size_16_bits && parsed.is_short_ref);
+        assert_eq!(parsed.entries[0].sample_delta, 256);
+        assert_eq!(
+            parsed.entries[0].subsamples,
+            alloc::vec![SubsV2Subsample {
+                subsample_size: 100,
+                source: SubsV2Source::Explicit(SubsampleProperties {
+                    discardable: true,
+                    subsample_priority: Some(0x80),
+                    codec_specific_parameters: Some(CodecSpecificParameters {
+                        len: 4,
+                        value: 0xAABB_CCDD
+                    }),
+                }),
+            }]
+        );
+        assert_eq!(parsed.try_to_bytes().unwrap(), SUBS_V2_EXPLICIT);
+    }
+
+    #[test]
+    fn subs_v2_reference_forms_round_trip() {
+        // 32-bit sizes, 15-bit references, a sample with two sub-samples
+        // (one reference, one explicit with a 1-byte csp and no priority),
+        // then a 16-bit-size / 7-bit-reference box.
+        let wide = SubSampleInformationBoxV2 {
+            flags: 5,
+            is_size_16_bits: false,
+            is_short_ref: false,
+            entries: alloc::vec![SubsV2Entry {
+                sample_delta: 3,
+                subsamples: alloc::vec![
+                    SubsV2Subsample {
+                        subsample_size: 0x0001_0000,
+                        source: SubsV2Source::Reference {
+                            reference_idx: 0x7ABC
+                        },
+                    },
+                    SubsV2Subsample {
+                        subsample_size: 7,
+                        source: SubsV2Source::Explicit(SubsampleProperties {
+                            discardable: false,
+                            subsample_priority: None,
+                            codec_specific_parameters: Some(CodecSpecificParameters {
+                                len: 1,
+                                value: 0x42
+                            }),
+                        }),
+                    },
+                ],
+            }],
+        };
+        let bytes = wide.try_to_bytes().unwrap();
+        assert_eq!(SubSampleInformationBoxV2::parse(&bytes).unwrap(), wide);
+        let mut narrow = wide.clone();
+        narrow.is_size_16_bits = true;
+        narrow.is_short_ref = true;
+        narrow.entries[0].subsamples[0].subsample_size = 9;
+        narrow.entries[0].subsamples[0].source = SubsV2Source::Reference { reference_idx: 127 };
+        let bytes = narrow.try_to_bytes().unwrap();
+        assert_eq!(SubSampleInformationBoxV2::parse(&bytes).unwrap(), narrow);
+    }
+
+    #[test]
+    fn subs_v2_out_of_range_fields_error() {
+        let mut b = SubSampleInformationBoxV2::parse(&SUBS_V2_EXPLICIT).unwrap();
+        b.entries[0].subsamples[0].subsample_size = 0x1_0000;
+        assert!(b.try_to_bytes().is_err(), "size exceeds 16 bits");
+        b.entries[0].subsamples[0].source = SubsV2Source::Reference { reference_idx: 128 };
+        b.entries[0].subsamples[0].subsample_size = 1;
+        assert!(b.try_to_bytes().is_err(), "reference_idx exceeds 7 bits");
+    }
+
+    #[test]
+    fn ssrt_round_trips_short_and_long_counts() {
+        let entries = alloc::vec![
+            SubsampleProperties {
+                discardable: true,
+                subsample_priority: Some(9),
+                codec_specific_parameters: None,
+            },
+            SubsampleProperties {
+                discardable: false,
+                subsample_priority: None,
+                codec_specific_parameters: Some(CodecSpecificParameters {
+                    len: 3,
+                    value: 0x0012_3456
+                }),
+            },
+        ];
+        for is_short_ref in [true, false] {
+            let b = SubSampleReferenceTableBox {
+                flags: 1,
+                is_short_ref,
+                entries: entries.clone(),
+            };
+            let bytes = b.try_to_bytes().unwrap();
+            assert_eq!(SubSampleReferenceTableBox::parse(&bytes).unwrap(), b);
+        }
+        let short = SubSampleReferenceTableBox {
+            flags: 0,
+            is_short_ref: true,
+            entries: entries.clone(),
+        }
+        .try_to_bytes()
+        .unwrap();
+        assert_eq!(
+            short,
+            [
+                0, 0, 0, 19, b's', b's', b'r', b't', 0, 0, 0, 0, 0x82, 0xC0, 9, 0x30, 0x12, 0x34,
+                0x56
+            ]
+        );
     }
 
     fn subsample(size: u32) -> SubSampleDescriptor {
