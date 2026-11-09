@@ -2021,7 +2021,8 @@ impl WrapState {
             Some(shared) => {
                 let landed = next_uw.saturating_add(shared);
                 if landed > last_emitted
-                    && landed.saturating_sub(last_emitted) < broadcast_common::clock33::WRAP_33BIT_HALF as i128
+                    && landed.saturating_sub(last_emitted)
+                        < broadcast_common::clock33::WRAP_33BIT_HALF as i128
                 {
                     shared
                 } else {
@@ -4669,10 +4670,11 @@ fn on_completed_pes(
         // monotonic across the discontinuity (r04-W50). The indicator may
         // arrive while the *old* base's last unit is still completing, in which
         // case this call is a no-op and the wait continues.
-        stream.pending_rebase = stream
-            .wrap
-            .rebase_at_discontinuity(dts, stream.last_frame_period, epoch)
-            == DiscontinuityVerdict::Forward;
+        stream.pending_rebase =
+            stream
+                .wrap
+                .rebase_at_discontinuity(dts, stream.last_frame_period, epoch)
+                == DiscontinuityVerdict::Forward;
     }
     let (pts_uw, dts_uw) = stream.wrap.push(pts, dts, epoch);
     advance_track(stream, pid, pes.payload, pts_uw, dts_uw, events);

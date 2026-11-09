@@ -24,8 +24,7 @@ use crate::transport::{LowerTransport, Transport};
 
 const SDP_CONTENT_TYPE: &str = "application/sdp";
 
-const IMPLEMENTED_PUBLIC: &str =
-    "OPTIONS, DESCRIBE, ANNOUNCE, GET_PARAMETER, SET_PARAMETER, SETUP, PLAY, PAUSE, RECORD, TEARDOWN";
+const IMPLEMENTED_PUBLIC: &str = "OPTIONS, DESCRIBE, ANNOUNCE, GET_PARAMETER, SET_PARAMETER, SETUP, PLAY, PAUSE, RECORD, TEARDOWN";
 
 /// A message body type: owned bytes.
 type Body = Vec<u8>;
@@ -242,9 +241,7 @@ impl ServerSession {
             };
             // §12.39: the reply carries the one spec the server selected.
             let mut chosen = chosen;
-            if chosen.lower_transport != Some(LowerTransport::Tcp)
-                && chosen.server_port.is_none()
-            {
+            if chosen.lower_transport != Some(LowerTransport::Tcp) && chosen.server_port.is_none() {
                 chosen.server_port = self.server_ports;
             }
             let transport = Transport::single(chosen);

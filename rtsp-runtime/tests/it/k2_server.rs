@@ -28,9 +28,16 @@ fn options_advertises_the_implemented_methods_in_public() {
 fn describe_returns_the_configured_sdp_with_its_content_type() {
     let sdp = "v=0\r\ns=x\r\n";
     let mut s = ServerSession::new(|| 1).with_describe_sdp(sdp);
-    let text = answer(&mut s, "DESCRIBE rtsp://h/s RTSP/1.0\nCSeq: 1\nAccept: application/sdp\n\n");
+    let text = answer(
+        &mut s,
+        "DESCRIBE rtsp://h/s RTSP/1.0\nCSeq: 1\nAccept: application/sdp\n\n",
+    );
     assert!(text.starts_with("RTSP/1.0 200"), "{text}");
-    assert!(text.to_ascii_lowercase().contains("content-type: application/sdp"), "{text}");
+    assert!(
+        text.to_ascii_lowercase()
+            .contains("content-type: application/sdp"),
+        "{text}"
+    );
     assert!(text.ends_with(sdp), "{text}");
 }
 

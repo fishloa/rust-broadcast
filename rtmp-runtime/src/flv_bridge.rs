@@ -88,8 +88,7 @@ const SET_DATA_FRAME: &str = "@setDataFrame";
 /// `payload` without a leading AMF0 `@setDataFrame` string, so the FLV script tag
 /// begins with `onMetaData` as Adobe FLV v10.1 Annex E.4.1 defines it.
 fn strip_set_data_frame(payload: &[u8]) -> &[u8] {
-    let Ok(name) = crate::amf0::Amf0Value::String(SET_DATA_FRAME.to_string()).try_to_bytes()
-    else {
+    let Ok(name) = crate::amf0::Amf0Value::String(SET_DATA_FRAME.to_string()).try_to_bytes() else {
         return payload;
     };
     payload.strip_prefix(name.as_slice()).unwrap_or(payload)
