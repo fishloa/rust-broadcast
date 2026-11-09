@@ -126,13 +126,30 @@ pub struct CcData {
 }
 
 impl CcData {
-    /// Iterator over the CEA-608 (line-21) triplets.
-    pub fn cea608(&self) -> impl Iterator<Item = &CcTriplet> {
-        self.triplets.iter().filter(|t| t.cc_type.is_cea608())
+    /// The triplets to process: all of them when `process_cc_data_flag` is
+    /// set, none when it is clear (ETSI TS 101 154 Table B.9, see
+    /// `private/specs-verified/captions/cc-data/ts_101_154/b9-cc-data.md`).
+    #[must_use]
+    pub fn processed_triplets(&self) -> &[CcTriplet] {
+        if self.process_cc_data_flag {
+            &self.triplets
+        } else {
+            &[]
+        }
     }
-    /// Iterator over the CEA-708 (DTVCC) triplets.
+    /// Iterator over the CEA-608 (line-21) triplets; empty when
+    /// `process_cc_data_flag` is clear.
+    pub fn cea608(&self) -> impl Iterator<Item = &CcTriplet> {
+        self.processed_triplets()
+            .iter()
+            .filter(|t| t.cc_type.is_cea608())
+    }
+    /// Iterator over the CEA-708 (DTVCC) triplets; empty when
+    /// `process_cc_data_flag` is clear.
     pub fn cea708(&self) -> impl Iterator<Item = &CcTriplet> {
-        self.triplets.iter().filter(|t| t.cc_type.is_cea708())
+        self.processed_triplets()
+            .iter()
+            .filter(|t| t.cc_type.is_cea708())
     }
 }
 

@@ -1,3 +1,4 @@
+mod auditj;
 mod cc_to_webvtt_fixture;
 mod error_variants;
 mod hostility;
@@ -10,4 +11,3 @@ mod teletext_test012;
 mod teletext_to_webvtt_fixture;
 mod webvtt_header_metadata_fixture;
 mod webvtt_srt_fixture;
-mod auditj;

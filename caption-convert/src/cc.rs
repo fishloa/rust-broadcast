@@ -46,7 +46,7 @@ impl Cea608ToWebVtt {
     pub fn push_cc_data(&mut self, pts_90k: u64, cc_data_bytes: &[u8]) -> Result<(), Error> {
         use broadcast_common::Parse;
         let cc = cc_data::CcData::parse(cc_data_bytes)?;
-        self.extractor.push_frame(pts_90k, &cc.triplets);
+        self.extractor.push_frame(pts_90k, cc.processed_triplets());
         Ok(())
     }
 
@@ -79,7 +79,7 @@ impl Cea708ToWebVtt {
     pub fn push_cc_data(&mut self, pts_90k: u64, cc_data_bytes: &[u8]) -> Result<(), Error> {
         use broadcast_common::Parse;
         let cc = cc_data::CcData::parse(cc_data_bytes)?;
-        self.extractor.push_frame(pts_90k, &cc.triplets);
+        self.extractor.push_frame(pts_90k, cc.processed_triplets());
         Ok(())
     }
 
