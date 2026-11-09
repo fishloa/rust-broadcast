@@ -476,4 +476,46 @@ mod dedup_tests {
              PID, got {declared:?}",
         );
     }
+
+    pub(crate) fn pmt_packet_range(ts: &[u8]) -> core::ops::Range<usize> {
+        for i in 0..ts.len() / TS_PACKET_SIZE {
+            let p = &ts[i * TS_PACKET_SIZE..(i + 1) * TS_PACKET_SIZE];
+            let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
+            if pid == TEST_PMT_PID.value() {
+                return i * TS_PACKET_SIZE..(i + 1) * TS_PACKET_SIZE;
+            }
+        }
+        panic!("no PMT packet");
+    }
+
+    #[test]
+    fn collect_pmt_streams_skips_a_pmt_with_a_bad_crc() {
+        let mut ts = build_pat_pmt_ts_versioned(&[(0x0100u16, StreamType::H264)], 0, true);
+        let control = collect_pmt_streams(&ts);
+        assert_eq!(
+            control.len(),
+            1,
+            "control: the intact PMT declares one stream"
+        );
+        let range = pmt_packet_range(&ts);
+        let p = &mut ts[range];
+        let section_length = (usize::from(p[6] & 0x0F) << 8) | usize::from(p[7]);
+        let crc_at = 5 + 3 + section_length - 4;
+        for b in &mut p[crc_at..crc_at + 4] {
+            *b ^= 0xFF;
+        }
+        assert!(
+            collect_pmt_streams(&ts).is_empty(),
+            "a PMT failing its CRC-32 must not declare streams (collect_pmt_streams docs: malformed sections are skipped)"
+        );
+    }
+
+    #[test]
+    fn collect_pmt_streams_ignores_a_next_generation_pmt() {
+        let ts = build_pat_pmt_ts_versioned(&[(0x0100u16, StreamType::H264)], 0, false);
+        assert!(
+            collect_pmt_streams(&ts).is_empty(),
+            "current_next_indicator=0 is the NEXT table (13818-1 2.4.4.11), not what the stream carries now"
+        );
+    }
 }

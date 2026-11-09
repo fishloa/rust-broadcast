@@ -892,4 +892,18 @@ mod tests {
         }
         t.tick(reply_timeout)
     }
+
+    #[test]
+    fn reply_timeout_discards_a_partial_chain() {
+        let mut t = Transport::new(1);
+        t.init();
+        t.on_frame(&[tags::C_T_C_REPLY, 0x01, 0x01, tags::SB, 0x02, 0x01, 0x00]);
+        assert_eq!(t.state(), TcState::Active);
+        let out = t.on_frame(&r_tpdu(tags::DATA_MORE, 1, &[1, 2, 3], false));
+        assert_eq!(out.writes.len(), 1, "T_RCV for the next fragment");
+        let out = t.tick(Duration::from_millis(1500));
+        assert_eq!(out.error, Some(TransportError::ReplyTimeout));
+        let out = t.on_frame(&r_tpdu(tags::DATA_LAST, 1, &[9, 9], false));
+        assert_eq!(out.spdus, vec![vec![9u8, 9]]);
+    }
 }

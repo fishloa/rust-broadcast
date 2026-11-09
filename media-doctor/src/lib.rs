@@ -5,8 +5,6 @@
 
 extern crate alloc;
 
-#[cfg(test)]
-mod audit_k_tests;
 mod container_codec;
 // `check_dash_mpd` parses the MPD with `transmux::Mpd`, whose quick-xml parser is
 // `std`-only.

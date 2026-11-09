@@ -3675,4 +3675,69 @@ pub(crate) mod tests {
         let svc_after = d.managed_ca().services().get(&1).unwrap();
         assert_eq!(svc_before, *svc_after, "record must be unchanged");
     }
+
+    #[test]
+    fn add_service_without_an_open_ca_session_errors_and_records_nothing() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        let result = d.add_service(&pmt);
+        let wrote_ca_pmt = d.device().ops.iter().any(|op| match op {
+            DeviceOp::Write(w) => w.windows(3).any(|x| x == [0x9F, 0x80, 0x32]),
+            _ => false,
+        });
+        assert!(!wrote_ca_pmt, "precondition: nothing can have been sent");
+        assert!(matches!(result, Err(CaError::NotSent(_))), "{result:?}");
+        assert!(d.managed_ca().services().is_empty());
+    }
+
+    #[test]
+    fn setup_timeout_is_followed_by_a_new_create_t_c() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        let clock = TestClock::new();
+        d = d.with_clock(clock.as_fn());
+        d.init().unwrap();
+        for _ in 0..60 {
+            clock.advance(Duration::from_millis(100));
+            d.pump(Duration::from_millis(100)).unwrap();
+        }
+        let create_t_c = d
+            .device()
+            .ops
+            .iter()
+            .filter(|op| matches!(op, DeviceOp::Write(w) if w.first() == Some(&tags::CREATE_T_C)))
+            .count();
+        assert!(
+            create_t_c > 1,
+            "6 s of a silent CAM produced {create_t_c} Create_T_C"
+        );
+    }
+
+    #[test]
+    fn readable_pumps_still_advance_the_requery_timer() {
+        let clock = TestClock::new();
+        let mut d = driver_with_sessions().with_clock(clock.as_fn());
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        d.set_requery_interval(Duration::from_secs(1));
+        d.pump(Duration::from_millis(10)).unwrap();
+        let ca_pmt_writes = |d: &Driver<MockCaDevice>| {
+            d.device()
+                .ops
+                .iter()
+                .filter(|op| matches!(op, DeviceOp::Write(w) if w.windows(3).any(|x| x == [0x9F, 0x80, 0x32])))
+                .count()
+        };
+        let before = ca_pmt_writes(&d);
+        for _ in 0..8 {
+            clock.advance(Duration::from_millis(500));
+            d.device_mut().inbound.push_back(sb());
+            d.pump(Duration::from_millis(10)).unwrap();
+        }
+        assert!(
+            ca_pmt_writes(&d) > before,
+            "4 s passed with a 1 s requery interval but no re-query was sent"
+        );
+    }
 }

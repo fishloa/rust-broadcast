@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Fixed
+- No false `dash-static-mpd-missing-duration` when the last `Period` carries `@duration` or the MPD carries `@minimumUpdatePeriod` (ISO/IEC 23009-1 Table 3) (#1925).
+- `avcc-sps-mismatch` / `hvcc-sps-mismatch` flag a record level only when it is below the SPS level; a level at or above it is conformant (ISO/IEC 14496-15:2017 §5.3.3.1.1 / §8.3.3.1.1) (#1926).
+- `PatPmtVersionCheck` drops a PMT that fails its CRC-32 instead of reporting a spurious `pmt-version` change (#1927).
+- Shared codec PSI discovery (`CodecSignallingCheck`, `Scte35Check`, `FpsCadenceCheck`, `ParamSetsCheck`, `InterlaceCheck`) skips PMTs that fail CRC or have `current_next_indicator = 0` and ignores reserved PAT PIDs, through the same gate `PatPmtVersionCheck` uses (#1928).
+- The open SCTE-35 event set is capped at 1024 ids, so an out-only feed cannot grow it without limit (#1932).
+- `CcAnomalyCheck` flags an adaptation-only packet whose CC is not the PID's unincremented previous value (ISO/IEC 13818-1 §2.4.3.3) (#1934).
+- An unparseable `#EXT-X-TARGETDURATION` or `#EXTINF` is no longer read as `0`, which flagged every conformant `#EXTINF` as exceeding the target (#1935).
 - The ISOBMFF sniff behind the container-codec checks accepts a file that starts with a compressed `!mov` or `!mof` box (ISO/IEC 14496-12:2026 §8.16); the checks themselves need the box inflated and report nothing for it (#1910).
 
 ## [0.14.0] - 2026-11-07

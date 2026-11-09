@@ -798,10 +798,7 @@ mod tests {
             v.extend_from_slice(b);
             v
         };
-        [
-            part(more, &body[..split]),
-            part(last, &body[split..]),
-        ]
+        [part(more, &body[..split]), part(last, &body[split..])]
     }
 
     #[test]

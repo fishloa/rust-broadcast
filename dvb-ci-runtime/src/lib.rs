@@ -18,9 +18,6 @@ pub mod stack;
 pub mod trace;
 pub mod transport;
 
-#[cfg(test)]
-mod audit_k_tests;
-
 #[cfg(all(feature = "linux", target_os = "linux"))]
 pub mod linux;
 

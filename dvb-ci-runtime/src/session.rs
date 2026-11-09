@@ -484,4 +484,18 @@ mod tests {
         let out = s.on_spdu(&wire, |_| false).unwrap();
         assert_eq!(out.apdus, vec![(3, vec![0xAA, 0xBB])]);
     }
+
+    #[test]
+    fn closing_an_unallocated_session_is_answered_not_allocated() {
+        let mut s = SessionLayer::new();
+        let req = ser(&CloseSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb: 77,
+        })
+        .unwrap();
+        let out = s.on_spdu(&req, |_| true).unwrap();
+        let resp = CloseSessionResponse::parse(&out.spdus[0]).unwrap();
+        assert_eq!(resp.status, SessionStatus::ResourceNonExistent);
+        assert!(out.closed.is_empty(), "no session was closed");
+    }
 }
