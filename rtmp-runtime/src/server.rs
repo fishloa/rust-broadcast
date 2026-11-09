@@ -603,7 +603,9 @@ impl ServerSession {
     /// `app` property of type String — a present-but-empty `app` string
     /// (`""`) is tolerated (it is a valid, if unhelpful, application name).
     /// [`RtmpError::UnexpectedState`] if the session has already reached
-    /// [`State::Closed`].
+    /// [`State::Closed`] or is [`State::Publishing`]: `connect` opens the
+    /// `NetConnection` once (§7.2.1.1), so a repeat during publishing is
+    /// refused and the session keeps publishing.
     fn handle_connect(
         &mut self,
         command: &Command,
@@ -614,6 +616,11 @@ impl ServerSession {
         if self.state == State::Closed {
             return Err(RtmpError::UnexpectedState {
                 what: "connect received after the session was closed",
+            });
+        }
+        if self.state == State::Publishing {
+            return Err(RtmpError::UnexpectedState {
+                what: "connect received while publishing",
             });
         }
 
@@ -1632,6 +1639,30 @@ mod tests {
         assert!(
             !flv.starts_with(b"FLV"),
             "only the first Media event carries the file header"
+        );
+    }
+
+    #[test]
+    fn second_connect_while_publishing_is_rejected_and_media_keeps_flowing() {
+        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+
+        let err = session.handle_data(&connect_bytes("live")).unwrap_err();
+        assert!(matches!(err, RtmpError::UnexpectedState { .. }));
+
+        let (_out, events) = session
+            .handle_data(&av_bytes(
+                1,
+                msg_type::AUDIO,
+                4,
+                0,
+                vec![0xAF, 0x01, 0xDE, 0xAD],
+            ))
+            .unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ServerEvent::Media { .. })),
+            "the rejected connect must not demote the session out of Publishing"
         );
     }
 
