@@ -310,10 +310,10 @@ async fn vod_playlist(
 /// `find_archived_segment`), each of which reads every `pN.idx` until it
 /// finds what it wants. Sized well below the blocking pool's own ceiling so
 /// ordinary DVR persists always find a thread.
+const MAX_CONCURRENT_SCANS: usize = 4;
+
 fn scan_permit() -> &'static tokio::sync::Semaphore {
     static SEM: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
-    /// Conservative ceiling: the DVR persist must always be able to run.
-    const MAX_CONCURRENT_SCANS: usize = 4;
     SEM.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_SCANS))
 }
 
@@ -505,14 +505,17 @@ mod tests {
         dir
     }
 
-    /// Take every permit from the shared scan semaphore, returning them so
-    /// the caller can release.
-    async fn scan_permit_wait_all() -> Vec<tokio::sync::SemaphorePermit<'static>> {
-        let mut held = Vec::new();
-        while let Ok(p) = scan_permit().try_acquire() {
-            held.push(p);
-        }
-        held
+    /// Take every permit from the shared scan semaphore, waiting for permits
+    /// held by concurrently running tests.
+    async fn scan_permit_wait_all() -> tokio::sync::SemaphorePermit<'static> {
+        let n = u32::try_from(MAX_CONCURRENT_SCANS).expect("pool size fits u32");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            scan_permit().acquire_many(n),
+        )
+        .await
+        .expect("timed out waiting for every scan permit")
+        .expect("scan semaphore is never closed")
     }
 
     fn cleanup(dir: &std::path::Path) {
@@ -678,7 +681,7 @@ mod tests {
 
         // Exhaust the pool.
         let held = scan_permit_wait_all().await;
-        assert_eq!(held.len(), 4, "the scan pool has 4 permits");
+        assert_eq!(scan_permit().available_permits(), 0);
 
         // Each path must not complete while no permit is free. Each is
         // driven in its own owned task so the borrow of `route` is explicit.
