@@ -327,9 +327,9 @@ pub struct DashWindowSegment {
     /// this does not.
     pub timeline_position_ns: u64,
     /// The number the shared resource route and the HLS playlist show this
-    /// segment under: the `Trunk`'s own number plus the route's
-    /// [`ProgramEpoch::seq_offset`], so it keeps counting up across a source
-    /// reconnect.
+    /// segment under: the `Trunk`'s own number plus the offset the
+    /// route carries over from the program a reconnect replaced, so it keeps
+    /// counting up across a source reconnect.
     pub public_seq: u64,
 }
 
