@@ -138,8 +138,10 @@ broadcast_common::impl_spec_display!(MaxBwConfig);
 fn apply_overhead(bw: u64, overhead: u64) -> u64 {
     // `overhead / 100` is truncated integer division, but the spec formula
     // `(1 + OVERHEAD / 100)` is a real multiplier — we lose precision with
-    // integer arithmetic. Compute as `bw + bw * overhead / 100` instead.
-    bw + bw * overhead / 100
+    // integer arithmetic. Compute as `bw + bw * overhead / 100` instead, in
+    // 128 bits and saturating at `u64::MAX`.
+    let scaled = u128::from(bw) + u128::from(bw) * u128::from(overhead) / 100;
+    u64::try_from(scaled).unwrap_or(u64::MAX)
 }
 
 /// SRT Live Congestion Control — sender-side pacing state
