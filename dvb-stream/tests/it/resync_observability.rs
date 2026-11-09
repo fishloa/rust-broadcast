@@ -122,8 +122,8 @@ async fn section_stream_junk_only_discards_all_bytes() {
 // ── test 4: mid-stream corruption → desync detected ──────────────────────────
 //
 // Build 5 clean aligned packets, corrupt the 3rd packet's sync byte, and
-// feed as a single chunk.  The desync fires on the corrupted packet, the
-// rest of the chunk is dropped, and counters reflect it.
+// feed as a single chunk.  The desync fires on the corrupted packet, only that
+// packet is dropped, and the decoder re-locks on the aligned packets after it.
 
 #[tokio::test]
 async fn section_stream_mid_stream_corruption_detected() {
@@ -146,12 +146,13 @@ async fn section_stream_mid_stream_corruption_detected() {
     drain_section_stream(&mut stream).await;
 
     let stats = stream.resync_stats();
-    assert_eq!(stats.resyncs, 1, "expected 1 resync (initial only)");
-    // Desync discards rest of chunk from corrupted pkt offset (2*188=376).
-    // 940 - 376 = 564 bytes discarded.
     assert_eq!(
-        stats.bytes_discarded, 564,
-        "expected 564 bytes discarded, got {}",
+        stats.resyncs, 2,
+        "expected the initial lock and one re-lock"
+    );
+    assert_eq!(
+        stats.bytes_discarded, 188,
+        "expected only the corrupt packet discarded, got {}",
         stats.bytes_discarded
     );
     assert_eq!(stats.desyncs, 1, "expected 1 desync, got {}", stats.desyncs);

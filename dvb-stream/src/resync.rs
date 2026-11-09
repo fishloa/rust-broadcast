@@ -42,3 +42,27 @@ pub fn resync(buf: &[u8]) -> Option<usize> {
     }
     None
 }
+
+/// Find the byte offset of the first sync byte in `buf` that is confirmed by a
+/// second sync byte exactly one packet later.
+///
+/// Unlike [`resync`] this never accepts a lone sync byte: a `0x47` with no
+/// following packet in `buf` is "not yet known" and yields `None`, so a
+/// byte-stream caller can wait for more input instead of locking onto a
+/// payload byte that happens to equal the sync byte.
+#[must_use]
+pub fn resync_confirmed(buf: &[u8]) -> Option<usize> {
+    (0..buf.len().saturating_sub(TS_PACKET_SIZE))
+        .find(|&i| buf[i] == TS_SYNC_BYTE && buf[i + TS_PACKET_SIZE] == TS_SYNC_BYTE)
+}
+
+/// Offset of the first `0x47` in `buf` that has no room for a confirming sync
+/// byte one packet later (so it may yet be confirmed by more input).
+#[must_use]
+pub fn unconfirmed_candidate(buf: &[u8]) -> Option<usize> {
+    let from = buf.len().saturating_sub(TS_PACKET_SIZE);
+    buf[from..]
+        .iter()
+        .position(|&b| b == TS_SYNC_BYTE)
+        .map(|i| from + i)
+}
