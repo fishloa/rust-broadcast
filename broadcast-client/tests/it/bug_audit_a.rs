@@ -99,3 +99,74 @@ fn pts_wrap_between_first_audio_and_first_video_keeps_the_join_contract() {
         early_ms
     );
 }
+
+/// The demuxer's tail (the last PES of every PID, held until the next PES
+/// start) is flushed when the connection closes. `Session::on_closed` drains
+/// those samples to the host and queues their ends in the feeder, but the
+/// feeder reports queued ends only from `on_chunk`, and the reconnect's
+/// `rejoin` clears the queue: the controller never learns media the host
+/// already holds, so it judges the lead short by the tail.
+#[test]
+fn media_flushed_at_connection_close_reaches_the_controller() {
+    use broadcast_client::BufferInput;
+    use std::collections::BTreeMap;
+
+    let bytes = test_fixtures::read(FIXTURE);
+    let bps = bitrate_bps(&bytes);
+    let mut config = Config::default();
+    config.record_buffer_inputs = true;
+    let (mut s, conn) = crate::support::replay::open_live(config);
+    let mut timescale: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut host_end: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut reported: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut now = 0u64;
+    let mut drain = |s: &mut broadcast_client::Session,
+                     host_end: &mut BTreeMap<u32, u64>,
+                     reported: &mut BTreeMap<u32, u64>| {
+        while let Some(e) = s.next_event() {
+            match e {
+                Event::Tracks(specs) => {
+                    for t in specs {
+                        timescale.insert(t.track_id.value(), t.timescale);
+                    }
+                }
+                Event::Sample { track, sample, .. } => {
+                    let ts = u64::from(timescale[&track.value()]);
+                    let end = u64::try_from(
+                        sample.pts.unwrap() + i64::from(sample.duration.unwrap_or(0)),
+                    )
+                    .unwrap();
+                    let e27 = end * 27_000_000 / ts;
+                    let slot = host_end.entry(track.value()).or_insert(0);
+                    *slot = (*slot).max(e27);
+                }
+                _ => {}
+            }
+        }
+        for i in s.drain_buffer_inputs() {
+            if let BufferInput::TrackMedia { track, end, .. } = i {
+                let slot = reported.entry(track).or_insert(0);
+                *slot = (*slot).max(end);
+            }
+        }
+    };
+    for part in bytes.chunks(CHUNK) {
+        s.on_data(conn, part, now);
+        drain(&mut s, &mut host_end, &mut reported);
+        now += part.len() as u64 * 8 * 1_000_000 / bps;
+    }
+    let before_close = reported.clone();
+    s.on_closed(conn, None, now);
+    drain(&mut s, &mut host_end, &mut reported);
+    let mut short = Vec::new();
+    for (track, rep) in &reported {
+        let host = host_end[track];
+        if host > *rep {
+            short.push((*track, (host - rep) / 27_000));
+        }
+    }
+    assert!(
+        short.is_empty(),
+        "controller told less than the host holds after close, (track, ms short): {short:?}; reported before close {before_close:?}"
+    );
+}
