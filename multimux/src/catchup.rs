@@ -478,6 +478,16 @@ pub(crate) fn merge_segments(
             init: Some(InitRef::Live(s.init_generation)),
         })
     }));
+    // A tail that does not continue the archive's numbering (the recorder
+    // stopped after a panic while the live window kept advancing, or a
+    // reconnect skipped numbers) joins two runs of media that are not
+    // contiguous: signal it.
+    if let Some(max) = archive_max_seq
+        && let Some(first_tail) = combined.get_mut(archived.len())
+        && first_tail.seq != max.saturating_next()
+    {
+        first_tail.discontinuous = true;
+    }
     combined
 }
 
@@ -708,6 +718,34 @@ mod tests {
             vec![1, 2, 3, 4],
             "archive + live must merge into one continuous sequence, no duplicates"
         );
+    }
+
+    /// A live tail that starts past the next number after the archive (the
+    /// recorder stopped while the live window advanced) is marked
+    /// discontinuous; one that continues the numbering is not.
+    #[test]
+    fn merge_segments_marks_a_gap_between_archive_and_live_tail() {
+        let archived = vec![ArchivedSegment {
+            seq: SegmentSeq::new(2),
+            start_pts_ns: 2_000_000_000,
+            duration_secs: 2.0,
+            discontinuous: false,
+            period_num: 0,
+            byte_offset: 10,
+            byte_len: 10,
+        }];
+        let gapped = merge_segments(
+            &archived,
+            &[
+                closed(7, 12_000_000_000, 2.0, false),
+                closed(8, 14_000_000_000, 2.0, false),
+            ],
+        );
+        assert!(gapped[1].discontinuous, "the tail skips segments 3..=6");
+        assert!(!gapped[2].discontinuous);
+
+        let contiguous = merge_segments(&archived, &[closed(3, 4_000_000_000, 2.0, false)]);
+        assert!(!contiguous[1].discontinuous);
     }
 
     #[test]
