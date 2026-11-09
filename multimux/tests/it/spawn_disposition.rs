@@ -121,17 +121,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/catchup.rs",
-        352,
+        353,
         "spawn_blocking archived-segment lookup; awaited inline",
     ),
     (
         "output/catchup.rs",
-        365,
+        366,
         "spawn_blocking archived-segment read; awaited inline",
     ),
     (
         "output/catchup.rs",
-        447,
+        448,
         "spawn_blocking archived-segment read; awaited inline",
     ),
     (
