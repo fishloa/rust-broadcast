@@ -217,4 +217,39 @@ mod client {
             .count();
         assert_eq!(discontinuities, 1);
     }
+
+    const BYTERANGE_VOD: &str = "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:2\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000@0\nmain.ts\n\
+#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000\nmain.ts\n#EXTINF:2.0,\n#EXT-X-BYTERANGE:1000\nmain.ts\n\
+#EXT-X-ENDLIST\n";
+
+    fn range_of(actions: &[Action], wanted: ResourceId) -> Option<Option<(u64, u64)>> {
+        actions.iter().find_map(|a| match a {
+            Action::FetchResource { id, byte_range, .. } if *id == wanted => Some(*byte_range),
+            _ => None,
+        })
+    }
+
+    /// A sub-range segment whose offset is omitted continues the previous
+    /// sub-range of the same resource. Re-requesting a failed segment on the
+    /// next playlist load recomputes that offset from a cursor the first
+    /// request already advanced, so the retry asks for another segment's bytes.
+    #[test]
+    fn a_re_requested_byterange_segment_asks_for_its_own_bytes() {
+        let mut client = HlsClient::new(URL);
+        drain(&mut client);
+        client.on_playlist(BYTERANGE_VOD.as_bytes()).unwrap();
+        let first = drain(&mut client);
+        let id = ResourceId::Segment { msn: 1 };
+        assert_eq!(range_of(&first, id), Some(Some((1000, 1000))));
+
+        client.on_error(Some(id));
+        client.on_playlist(BYTERANGE_VOD.as_bytes()).unwrap();
+        let second = drain(&mut client);
+        assert_eq!(
+            range_of(&second, id),
+            Some(Some((1000, 1000))),
+            "the retry must fetch the same bytes"
+        );
+    }
 }
