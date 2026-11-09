@@ -87,6 +87,36 @@ pub(crate) fn resolve_route_program(
     }
 }
 
+/// [`resolve_route_program`] for a playlist request: a request made before the route announces
+/// its program is held up to [`BLOCKING_RELOAD_TIMEOUT`] (RFC 8216bis section 6.2.5.2: a Server
+/// that cannot provide the Playlist after blocking SHOULD answer 503) when the route holds cold
+/// playlist requests, and a give-up is a `503` with `Retry-After`.
+pub(crate) async fn resolve_route_program_held(
+    route: &crate::route::RouteHandle,
+) -> core::result::Result<Arc<ProgramServing>, Box<Response>> {
+    match route
+        .resolve_program_held(crate::route::SPTS_PROGRAM_ID, BLOCKING_RELOAD_TIMEOUT)
+        .await
+    {
+        crate::route::ProgramResolution::Found(serving) => Ok(serving),
+        crate::route::ProgramResolution::NotYetAnnounced if route.holds_cold_playlist() => {
+            Err(Box::new(
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [(axum::http::header::RETRY_AFTER, "1")],
+                )
+                    .into_response(),
+            ))
+        }
+        crate::route::ProgramResolution::NotYetAnnounced => {
+            Err(Box::new(StatusCode::SERVICE_UNAVAILABLE.into_response()))
+        }
+        crate::route::ProgramResolution::NotFound => {
+            Err(Box::new(StatusCode::NOT_FOUND.into_response()))
+        }
+    }
+}
+
 pub(crate) const PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 
 /// `GET /master.m3u8` for an HLS route: the origin's own master (measured peak

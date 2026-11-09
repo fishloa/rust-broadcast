@@ -1455,13 +1455,19 @@ impl RouteHandle {
     }
 
     /// Sets whether a media-playlist request without `_HLS_msn`/`_HLS_part`
-    /// is held until the first segment closes; defaults to
+    /// is held until the first segment closes, and a playlist request made before the route
+    /// announces its program until it does (bounded by the blocking-reload timeout, then `503`);
+    /// defaults to
     /// [`hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT`] and production
     /// routes set it from [`crate::config::Config::hold_cold_playlist`].
     #[must_use]
     pub fn with_hold_cold_playlist(mut self, hold: bool) -> Self {
         self.hold_cold_playlist = hold;
         self
+    }
+
+    pub(crate) fn holds_cold_playlist(&self) -> bool {
+        self.hold_cold_playlist
     }
 
     /// Where this route's live HLS playlists get their
@@ -1793,6 +1799,29 @@ impl RouteHandle {
     /// one instead of going silent.
     pub async fn await_trunk_change(&self, current: &Arc<Trunk>) -> Arc<Trunk> {
         self.await_trunk_other_than(Some(current)).await
+    }
+
+    /// [`Self::resolve_program`], parking a `NotYetAnnounced` answer until a program is published
+    /// or `timeout` passes when the route holds cold playlist requests (see
+    /// [`Self::with_hold_cold_playlist`]); a timeout answers `NotYetAnnounced`.
+    pub(crate) async fn resolve_program_held(
+        &self,
+        program: ProgramId,
+        timeout: Duration,
+    ) -> ProgramResolution {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let notified = self.program_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            match self.resolve_program(program) {
+                ProgramResolution::NotYetAnnounced if self.hold_cold_playlist => {}
+                resolved => return resolved,
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return self.resolve_program(program);
+            }
+        }
     }
 
     async fn await_trunk_other_than(&self, current: Option<&Arc<Trunk>>) -> Arc<Trunk> {
