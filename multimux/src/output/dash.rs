@@ -173,21 +173,15 @@ impl ServedEgress for MpdOrigin {
 /// §5.3.9.5.3 requires (issue #1058).
 pub(crate) const FIRST_SEGMENT_NUMBER: u64 = 1;
 
-/// `SegmentTemplate@startNumber` for `route`'s current program: the public
-/// number of its first segment, [`FIRST_SEGMENT_NUMBER`] shifted by the
-/// route's [`crate::route::ProgramEpoch::seq_offset`]. After a source
-/// reconnect the new program's `Trunk` numbers from `1` again while the
-/// resource route, the HLS playlist and the DVR archive keep counting, so the
-/// MPD names the numbers they actually serve. The single-`Period` packager has
-/// no Period boundary to draw there; the reconnect shows as the program's new
-/// `availabilityStartTime` together with this `startNumber`, a self-consistent
-/// pair that makes the client re-derive its live edge.
+/// `SegmentTemplate@startNumber`: the public number of the first segment the
+/// route ever served, unchanged by a source reconnect. The numbers keep
+/// counting through the reconnect (the resource route, the HLS playlist and
+/// the DVR archive share them), `availabilityStartTime` and the Period are
+/// unchanged, and only the segments still in the window are advertised.
 pub(crate) fn start_number(route: &RouteHandle) -> u64 {
     route
         .epoch(crate::route::SPTS_PROGRAM_ID)
-        .map_or(FIRST_SEGMENT_NUMBER, |epoch| {
-            epoch.seq_offset.saturating_add(FIRST_SEGMENT_NUMBER)
-        })
+        .map_or(FIRST_SEGMENT_NUMBER, |epoch| epoch.first_number)
 }
 
 /// Select the first of `specs` that produces a derivable RFC 6381 codec

@@ -340,10 +340,16 @@ pub struct DashWindowSegment {
 /// `start_pts_ns`), which a fresh `Trunk` would otherwise restart from
 /// segment 1 and position 0. One value per published program, computed once
 /// in [`RouteHandle::publish_program`] so no output keeps its own copy.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ProgramEpoch {
     pub(crate) seq_offset: u64,
     pub(crate) timeline_base_ns: u64,
+    /// The first public number the route ever served: DASH `startNumber`.
+    pub(crate) first_number: u64,
+    /// The route's first presentation start: DASH `availabilityStartTime`,
+    /// which an update of a dynamic MPD must not change
+    /// (`private/specs-verified/dash/etsi-ts-103-285/ch04-dash-constraints-http-sync.md` 4.8.3).
+    pub(crate) presentation_origin: SystemTime,
 }
 
 /// The small `Trunk`-drained state DASH/LL-DASH rendering needs beyond any
@@ -358,13 +364,12 @@ pub(crate) struct DashState {
     window: Mutex<VecDeque<DashWindowSegment>>,
     capacity: usize,
     track_specs: Mutex<Vec<TrackSpec>>,
-    /// Wall-clock instant this program's presentation began: when its `Trunk`
-    /// (timeline position `0`, segment number `1`) was minted. The source of
+    /// Wall-clock instant the route's presentation began: when its first
+    /// `Trunk` was minted, carried unchanged across a reconnect. The source of
     /// `MPD@availabilityStartTime` (ISO/IEC 23009-1 §5.3.1.2 Table 3: "the
     /// anchor for the MPD in wall-clock time", the time from which every
     /// segment's availability is measured, §5.3.9.5.3) — NOT the route's
-    /// construction time, which precedes ingest and does not move when a
-    /// reconnect mints a fresh `Trunk` that restarts at segment 1 (#1187).
+    /// construction time, which precedes ingest (#1187).
     presentation_origin: SystemTime,
     epoch: ProgramEpoch,
     timeline_end_ns: AtomicU64,
@@ -379,7 +384,7 @@ impl DashState {
             window: Mutex::new(VecDeque::new()),
             capacity: window_segments.get(),
             track_specs: Mutex::new(Vec::new()),
-            presentation_origin: SystemTime::now(),
+            presentation_origin: epoch.presentation_origin,
         }
     }
 
@@ -405,7 +410,10 @@ impl DashState {
                 window.push_back(DashWindowSegment {
                     segment_seq: entry.sequence_number,
                     duration_secs: entry.duration.as_secs_f64(),
-                    timeline_position_ns: entry.timeline_position.as_nanos(),
+                    timeline_position_ns: self
+                        .epoch
+                        .timeline_base_ns
+                        .saturating_add(entry.timeline_position.as_nanos()),
                     public_seq: self
                         .epoch
                         .seq_offset
@@ -1662,11 +1670,15 @@ impl RouteHandle {
             // ...and never at or below what the DVR archive already holds
             // (a previous process's numbers).
             .max(u64::from(self.archive_floor));
+        let previous_epoch = programs.get(&program).map(|previous| previous.epoch());
         let epoch = ProgramEpoch {
             seq_offset,
             timeline_base_ns: programs
                 .get(&program)
                 .map_or(0, |previous| previous.dash.timeline_end_ns()),
+            first_number: previous_epoch.map_or(seq_offset.saturating_add(1), |e| e.first_number),
+            presentation_origin: previous_epoch
+                .map_or_else(SystemTime::now, |e| e.presentation_origin),
         };
         let serving = match ProgramServing::new(
             Arc::clone(&trunk),
@@ -2057,13 +2069,11 @@ impl RouteHandle {
         self.part_target_ms
     }
 
-    /// The wall-clock instant `program`'s presentation began (its `Trunk` was
-    /// minted) — `MPD@availabilityStartTime`'s source
+    /// The wall-clock instant `program`'s presentation began (its first
+    /// `Trunk` was minted; a reconnect keeps it) — `MPD@availabilityStartTime`'s source
     /// (`crate::output::dash`/`crate::output::ll_dash`, ISO/IEC 23009-1
     /// §5.3.1.2). `None` if `program` is not registered. Unlike
-    /// [`Self::created_at`] it restarts with the program's own segment
-    /// numbering, so `AST + (N - startNumber) * duration` stays true across a
-    /// reconnect (#1187).
+    /// [`Self::created_at`] it starts with ingest, not with the route.
     pub fn presentation_origin(&self, program: ProgramId) -> Option<SystemTime> {
         self.serving(program).map(|s| s.presentation_origin())
     }

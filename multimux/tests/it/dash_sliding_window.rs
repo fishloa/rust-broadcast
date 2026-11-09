@@ -248,64 +248,84 @@ fn publish_run(
     panic!("fixture too short for {segments} segments");
 }
 
-/// Request the first three numbers a client derives from the current MPD.
-async fn derived_numbers_not_served(
-    route: Arc<RouteHandle>,
-    output: Arc<dyn Output>,
-    manifest_path: &str,
-) -> (Vec<String>, String) {
-    let mut streams = HashMap::new();
-    streams.insert("cam".to_string(), (route, vec![output]));
-    let app = router(Arc::new(AppState::new(streams)));
-
-    let resp = app.clone().oneshot(get(manifest_path)).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let xml = body_string(resp).await;
-    let edge = read_mpd(&xml);
-    let mut failures = Vec::new();
-    for n in edge.start_number..edge.start_number + 3 {
-        let uri = edge
-            .media
-            .replace("$RepresentationID$", "1")
-            .replace("$Number$", &n.to_string());
-        let resp = app
-            .clone()
-            .oneshot(get(&format!("/cam/{uri}")))
-            .await
-            .unwrap();
-        if resp.status() != StatusCode::OK {
-            failures.push(format!("{uri} -> {}", resp.status()));
-        }
-    }
-    (failures, xml)
+fn attribute(xml: &str, key: &str) -> String {
+    let at = xml.find(key).unwrap_or_else(|| panic!("{key} in {xml}")) + key.len();
+    xml[at..]
+        .split('"')
+        .next()
+        .expect("closing quote")
+        .to_string()
 }
 
+fn period_open_tag(xml: &str) -> String {
+    let at = xml.find("<Period").expect("Period");
+    xml[at..].split('>').next().expect("tag end").to_string()
+}
+
+async fn fetch(app: &axum::Router, path: &str) -> (StatusCode, String) {
+    let resp = app.clone().oneshot(get(path)).await.unwrap();
+    let status = resp.status();
+    (status, body_string(resp).await)
+}
+
+/// A reconnect leaves `availabilityStartTime` and the Period untouched
+/// (`private/specs-verified/dash/etsi-ts-103-285/ch04-dash-constraints-http-sync.md`
+/// 4.8.3 items 2 and 5), keeps the numbers counting, and advertises only
+/// numbers that are served, with `publishTime` moving forward.
 async fn run_then_reconnect_then_run(output: Arc<dyn Output>, manifest_path: &str) {
     let track = fixture_video_track();
     let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
     let program = media_plane::ProgramId(0);
+    let mut streams = HashMap::new();
+    streams.insert("cam".to_string(), (route.clone(), vec![output]));
+    let app = router(Arc::new(AppState::new(streams)));
+
     let first = route.publish_new_program(program);
     publish_run(&route, program, &track, 3);
+    let (status, before) = fetch(&app, manifest_path).await;
+    assert_eq!(status, StatusCode::OK);
+
     route.release_program(program, &first);
     route.publish_new_program(program);
     publish_run(&route, program, &track, 3);
-    let (failures, xml) = derived_numbers_not_served(route, output, manifest_path).await;
-    assert!(
-        failures.is_empty(),
-        "segments derived from the post-reconnect MPD are not served: {failures:?}\n{xml}"
-    );
-}
+    let (status, after) = fetch(&app, manifest_path).await;
+    assert_eq!(status, StatusCode::OK);
 
-#[tokio::test]
-async fn dash_segments_derived_from_the_mpd_are_served_without_a_reconnect() {
-    let track = fixture_video_track();
-    let route = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, 8));
-    let program = media_plane::ProgramId(0);
-    route.publish_new_program(program);
-    publish_run(&route, program, &track, 3);
-    let (failures, xml) =
-        derived_numbers_not_served(route, Arc::new(DashOutput), "/cam/manifest.mpd").await;
-    assert!(failures.is_empty(), "{failures:?}\n{xml}");
+    for key in ["availabilityStartTime=\"", "startNumber=\""] {
+        assert_eq!(
+            attribute(&before, key),
+            attribute(&after, key),
+            "{key} changed"
+        );
+    }
+    assert_eq!(period_open_tag(&before), period_open_tag(&after));
+    assert!(
+        attribute(&before, "publishTime=\"") < attribute(&after, "publishTime=\""),
+        "publishTime must move forward across the reconnect"
+    );
+
+    let edge = read_mpd(&after);
+    // The replaced program's open segment keeps its number (RFC 8216bis
+    // §6.2.2 shared offset), so the new run's segments are 5..=7.
+    let range = derivable(&edge, 7.0 * edge.seg_secs);
+    assert_eq!(range, 5..=7);
+    for n in range {
+        let uri = edge
+            .media
+            .replace("$RepresentationID$", "1")
+            .replace("$Number$", &n.to_string());
+        let status = app
+            .clone()
+            .oneshot(get(&format!("/cam/{uri}")))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{uri} advertised after the reconnect"
+        );
+    }
 }
 
 #[tokio::test]
