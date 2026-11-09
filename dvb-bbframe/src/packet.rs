@@ -1331,7 +1331,10 @@ mod tests {
         let (a, crc_a) = nm_frame(0, 0x11);
         let (b, _) = nm_frame(crc_a, 0x22);
         let stream: Vec<u8> = a.iter().chain(b.iter()).copied().collect();
-        assert!(ex.feed_nm(&nm_frame_header(0, 100), &stream[..100]).is_empty());
+        assert!(
+            ex.feed_nm(&nm_frame_header(0, 100), &stream[..100])
+                .is_empty()
+        );
         let out = ex.feed_nm(&nm_frame_header(0xFFFF, stream.len() - 100), &stream[100..]);
         assert_eq!(out.len(), 2);
         assert_eq!(out[1][1], 0x22);
@@ -1355,7 +1358,11 @@ mod tests {
             ex.feed_hem(&hem_header(0, 100), &stream[..100], false)
                 .is_empty()
         );
-        let out = ex.feed_hem(&hem_header(0xFFFF, stream.len() - 100), &stream[100..], false);
+        let out = ex.feed_hem(
+            &hem_header(0xFFFF, stream.len() - 100),
+            &stream[100..],
+            false,
+        );
         assert_eq!(out.len(), 2);
         assert_eq!(out[1][1], 0x22);
     }
