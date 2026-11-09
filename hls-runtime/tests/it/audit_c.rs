@@ -181,4 +181,40 @@ mod client {
             .count();
         assert_eq!(discontinuities, 1);
     }
+
+    const OPEN_WITH_ONE_PART: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n\
+#EXT-X-PART:DURATION=0.5,URI=\"p0.0.m4s\",INDEPENDENT=YES\n";
+
+    const DISCONTINUOUS_SEGMENT_CLOSED: &str = "#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:4\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-DISCONTINUITY\n#EXTINF:1.0,\nseg0.m4s\n";
+
+    /// A discontinuity that is only revealed when its segment closes, after
+    /// every part of the segment was already delivered while it was open, is
+    /// documented as "signalled late". It is never signalled: the only
+    /// emission site is the delivery of a resource of that segment.
+    #[test]
+    fn a_discontinuity_revealed_at_segment_close_is_signalled_late_not_never() {
+        let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
+        let fragment = test_fixtures::read("hls/cmaf-fmp4/index0.m4s");
+        let mut client = HlsClient::new(URL);
+        drain(&mut client);
+        client.on_playlist(OPEN_WITH_ONE_PART.as_bytes()).unwrap();
+        drain(&mut client);
+        client.on_resource(ResourceId::Init, &init).unwrap();
+        client
+            .on_resource(ResourceId::Part { msn: 0, part: 0 }, &fragment)
+            .unwrap();
+        client
+            .on_playlist(DISCONTINUOUS_SEGMENT_CLOSED.as_bytes())
+            .unwrap();
+        let fetched = fetches(&drain(&mut client));
+        assert!(fetched.is_empty(), "nothing left to fetch: {fetched:?}");
+        let discontinuities = std::iter::from_fn(|| client.next_output())
+            .filter(|o| matches!(o, Output::Discontinuity))
+            .count();
+        assert_eq!(discontinuities, 1);
+    }
 }
