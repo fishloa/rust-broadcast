@@ -4,6 +4,7 @@ use std::fmt;
 use broadcast_client::{Action, BufferEvent, Config, Event, PauseReason, Session, TrackId};
 
 use crate::support;
+use crate::support::video_run::VideoRun;
 use crate::support::replay::open_live;
 use crate::support::ts_shift::{PACKET, Shift, packet_has_pcr, packet_pid, shift_pes};
 
@@ -444,6 +445,7 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
     let mut out = Outcome::default();
     let mut kinds: BTreeMap<u32, (u32, bool, bool)> = BTreeMap::new();
     let mut ends: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut runs: BTreeMap<u32, VideoRun> = BTreeMap::new();
     let mut rendered: Vec<u32> = Vec::new();
     let mut intended: Vec<u32> = vec![MISSING_TRACK];
     let mut starved = std::collections::BTreeSet::new();
@@ -512,8 +514,19 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
                     }
                 }
                 Event::Sample { track, sample, .. } => {
-                    if let (Some(pts), Some((ts, _, _))) = (sample.pts, kinds.get(&track.value())) {
-                        let end = i128::from(pts) + i128::from(sample.duration.unwrap_or(0));
+                    if let (Some(pts), Some((ts, is_video, _))) =
+                        (sample.pts, kinds.get(&track.value()))
+                    {
+                        let dur = i64::from(sample.duration.unwrap_or(0));
+                        let end = if *is_video {
+                            i128::from(
+                                runs.entry(track.value())
+                                    .or_insert_with(VideoRun::new)
+                                    .push(pts, sample.dts.unwrap_or(pts), dur),
+                            )
+                        } else {
+                            i128::from(pts) + i128::from(dur)
+                        };
                         let end27 = u64::try_from(
                             end * i128::from(PES_PTS_HZ * PCR_PER_PTS_TICK) / i128::from(*ts),
                         )
