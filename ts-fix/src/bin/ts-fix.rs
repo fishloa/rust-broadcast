@@ -183,7 +183,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // mid-packet, carries a corrupted sync byte, or is 204-byte RS-coded
     // must still be repaired, not aborted (#1101 W-TF-5).
     let mut resync = TsResync::new();
-    for pkt in resync.feed(&input) {
+    let tail = {
+        let mut packets = resync.feed(&input);
+        resync.finish();
+        packets.extend(resync.take_tail_packets());
+        packets
+    };
+    for pkt in tail {
         engine.push(&pkt, |pkt| output.extend_from_slice(pkt))?;
     }
     engine.finish(|pkt| output.extend_from_slice(pkt));

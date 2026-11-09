@@ -301,3 +301,59 @@ fn committed_fixtures_have_no_unexpected_sync_loss() {
         assert_eq!(s, 0, "{}: {:?}", p.display(), m.degraded);
     }
 }
+
+fn total_sample_bytes(m: &Media) -> usize {
+    m.tracks
+        .iter()
+        .flat_map(|t| t.samples.iter())
+        .map(|s| s.data.len())
+        .sum()
+}
+
+/// After a corrupt sync byte only four aligned packets remain: too few to
+/// re-lock, but at end of input they are real packets and must be demuxed.
+#[test]
+fn aligned_tail_shorter_than_the_lock_window_is_demuxed() {
+    let Some(path) = test_fixtures::require(ORF1, "ts_sync_loss_degraded") else {
+        return;
+    };
+    let whole = std::fs::read(path).unwrap();
+    let clean = &whole[(56392 - PR_LEAD_IN_PACKETS) * PKT..56392 * PKT];
+    let pid = |i: usize| u16::from_be_bytes([clean[i * PKT + 1] & 0x1F, clean[i * PKT + 2]]);
+    let has_payload = |i: usize| clean[i * PKT + 3] & 0x10 != 0;
+    let ends: Vec<usize> = (1000..clean.len() / PKT)
+        .filter(|&end| {
+            let tail = end - 4..end;
+            pid(end - 1) > 0x20
+                && pid(end - 1) != 0x1FFF
+                && tail
+                    .clone()
+                    .all(|i| pid(i) == pid(end - 1) && has_payload(i))
+        })
+        .take(3)
+        .collect();
+    assert!(
+        !ends.is_empty(),
+        "fixture has a run of four ES payload packets"
+    );
+    for packets in ends {
+        let window = &clean[..packets * PKT];
+        let bad = packets - 5;
+        let mut damaged = window.to_vec();
+        damaged[bad * PKT] = 0x00;
+        let removed: Vec<u8> = window
+            .chunks(PKT)
+            .enumerate()
+            .filter(|(i, _)| *i != bad)
+            .flat_map(|(_, c)| c.iter().copied())
+            .collect();
+        let media = demux(&damaged);
+        let reference = demux(&removed);
+        assert_eq!(
+            total_sample_bytes(&media),
+            total_sample_bytes(&reference),
+            "{packets} packets: the four aligned packets after the loss must reach the demuxer"
+        );
+        assert_eq!(counts(&media), counts(&reference));
+    }
+}

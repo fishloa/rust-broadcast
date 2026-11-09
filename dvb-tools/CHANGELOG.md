@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- File readers (`dump`, `pids`, ...) count the aligned packets at the end of the capture, and a capture shorter than five packets, which `TsResync` could not confirm before end of input.
+
 ## [13.0.0] - 2026-11-07
 ### Changed
 - Lockstep release 13.0.0: no functional change; the CLI builds against `dvb-si` 13, `dvb-t2mi` 13 and `mpeg-ts` 0.7.

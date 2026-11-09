@@ -464,3 +464,41 @@ fn service_extract_re_observes_pat_version_change() {
         "old PMT PID 0x0100 must be dropped after the PAT moved the programme, got {phase2_pids:?}"
     );
 }
+
+#[test]
+fn service_extract_ignores_a_next_pat_and_a_next_pmt() {
+    let next_pat = PatSection::new(1, 3, false, 0, 0, vec![PatEntry::new(1, PMT2_PID)]);
+    let mut stream = Vec::new();
+    for p in SectionPacketiser::new(PAT_PID).packetise(&[&serialize_pat(&next_pat)]) {
+        stream.extend_from_slice(&p);
+    }
+    let next_pmt = PmtSection::new(
+        1,
+        3,
+        false,
+        0,
+        0,
+        P2_PCR_PID,
+        DescriptorLoop::new(&[]),
+        vec![PmtStream::new(
+            StreamType::Mpeg2Video,
+            P2_VIDEO_PID,
+            DescriptorLoop::new(&[]),
+        )],
+    );
+    for p in SectionPacketiser::new(PMT1_PID).packetise(&[&serialize_pmt(&next_pmt)]) {
+        stream.extend_from_slice(&p);
+    }
+    stream.extend_from_slice(&build_two_program_ts(2));
+
+    let output = run(&stream, PidFilter::service(1));
+    let pids = all_pids_in(&output);
+    assert!(
+        pids.contains(&P1_VIDEO_PID) && pids.contains(&PMT1_PID),
+        "the current PAT/PMT must define the service, got {pids:?}"
+    );
+    assert!(
+        !pids.contains(&PMT2_PID) && !pids.contains(&P2_VIDEO_PID),
+        "a table with current_next_indicator=0 must not be adopted, got {pids:?}"
+    );
+}

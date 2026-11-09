@@ -151,3 +151,24 @@ fn temp_paths(prefix: &str) -> (PathBuf, PathBuf) {
         dir.join(format!("tsfix-cli-{prefix}-{}.out", std::process::id() + n)),
     )
 }
+
+/// A clean aligned capture shorter than the lock window must come out whole,
+/// not as an empty file.
+#[test]
+fn cli_emits_a_stream_shorter_than_the_lock_window() {
+    let fixture = fs::read(fixture_path()).expect("fixture");
+    let input = &fixture[..4 * TS_PACKET_SIZE];
+    assert!(input.chunks(TS_PACKET_SIZE).all(|p| p[0] == SYNC_BYTE));
+
+    let (input_path, output_path) = temp_paths("short");
+    fs::write(&input_path, input).expect("write input");
+    let (ok, stderr_text) = run_cli(&input_path, &output_path);
+    assert!(ok, "CLI must accept a 4-packet capture: {stderr_text}");
+
+    let output = fs::read(&output_path).expect("output must be written");
+    assert!(
+        !output.is_empty(),
+        "a 4-packet aligned capture must not produce an empty file"
+    );
+    assert!(output.chunks(TS_PACKET_SIZE).all(|p| p[0] == SYNC_BYTE));
+}

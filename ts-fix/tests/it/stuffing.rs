@@ -8,6 +8,7 @@
 
 use mpeg_ts::pid::Pid;
 use std::{fs, path::PathBuf};
+use ts_fix::{Stuffing, TsFix};
 fn fixture_path() -> PathBuf {
     test_fixtures::path("ts/m6-single.ts")
 }
@@ -293,4 +294,28 @@ fn pad_to_preserves_input_packets() {
             "packet {idx} should be byte-identical after pad_to"
         );
     }
+}
+
+#[test]
+fn pad_to_rejects_rates_that_are_not_finite_or_out_of_range() {
+    for rate in [
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        0.5,
+        -1.0,
+        Stuffing::MAX_PACKETS_PER_INPUT * 2.0,
+    ] {
+        let err = TsFix::builder()
+            .stuffing(Stuffing::pad_to(rate))
+            .build()
+            .err();
+        assert_eq!(err, Some(ts_fix::Error::InvalidPadRate), "rate {rate}");
+    }
+    assert!(
+        TsFix::builder()
+            .stuffing(Stuffing::pad_to(Stuffing::MAX_PACKETS_PER_INPUT))
+            .build()
+            .is_ok()
+    );
 }

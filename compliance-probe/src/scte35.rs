@@ -38,16 +38,21 @@ const PTS_HALF: u64 = broadcast_common::clock33::WRAP_33BIT_HALF;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Scte35Sanity {
-    /// The `splice_info_section` bytes did not parse, or were
-    /// `encrypted_packet` with no accessible clear view. Wire path only.
+    /// The `splice_info_section` bytes did not parse. Wire path only.
     Malformed,
+    /// A well-formed `encrypted_packet` section: the command is not
+    /// inspectable without the key, so there is nothing to judge.
+    Encrypted,
+    /// A `splice_insert` with `splice_event_cancel_indicator == 1`: it names
+    /// an earlier event to cancel and carries no timing or mode fields.
+    Cancelled,
     /// Parsed, but not a `splice_insert` (e.g. `splice_null`, `time_signal`,
     /// `splice_schedule`) — this module only judges `splice_insert`'s
     /// `pts_time`, so there is nothing further to check.
     NotSpliceInsert,
-    /// A `splice_insert` with `time_specified_flag == 0` (ANSI/SCTE 35
-    /// §9.7.3.1) — an immediate splice has no `pts_time` to judge
-    /// future-vs-past against.
+    /// A `splice_insert` with `splice_immediate_flag == 1`, or whose
+    /// `splice_time()` has `time_specified_flag == 0` (ANSI/SCTE 35
+    /// §9.7.3.1) — it has no `pts_time` to judge future-vs-past against.
     Immediate,
     /// The cue's target `pts_time` is at or ahead of the reference "now" —
     /// the ordinary, healthy case.
@@ -64,6 +69,8 @@ impl Scte35Sanity {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Malformed => "malformed",
+            Self::Encrypted => "encrypted",
+            Self::Cancelled => "cancelled",
             Self::NotSpliceInsert => "not_splice_insert",
             Self::Immediate => "immediate",
             Self::InFuture => "in_future",
@@ -100,32 +107,53 @@ pub fn check_section(section: &[u8], now_pts: u64) -> Scte35Sanity {
         return Scte35Sanity::Malformed;
     };
     let Some(clear) = &sis.clear else {
-        // `encrypted_packet` with no accessible clear view: nothing in the
-        // command can be inspected.
-        record_counter!(crate::metric_names::SCTE35_MALFORMED_TOTAL);
-        return Scte35Sanity::Malformed;
+        record_counter!(crate::metric_names::SCTE35_ENCRYPTED_TOTAL);
+        return Scte35Sanity::Encrypted;
     };
     let AnyCommand::SpliceInsert(si) = &clear.command else {
         record_counter!(crate::metric_names::SCTE35_CUES_TOTAL, "kind" => "other");
         return Scte35Sanity::NotSpliceInsert;
     };
 
+    if si.splice_event_cancel_indicator {
+        record_counter!(crate::metric_names::SCTE35_CUES_TOTAL, "kind" => "cancel");
+        return Scte35Sanity::Cancelled;
+    }
+
     record_counter!(
         crate::metric_names::SCTE35_CUES_TOTAL,
         "kind" => kind_label(si.out_of_network_indicator)
     );
 
-    let Some(pts_time) = si.splice_time.as_ref().and_then(|st| st.pts_time) else {
+    let program_time = si.splice_time.as_ref().and_then(|st| st.pts_time);
+    let component_times = si
+        .components
+        .iter()
+        .filter_map(|c| c.splice_time.as_ref().and_then(|st| st.pts_time));
+    let mut times: alloc::vec::Vec<u64> = if si.program_splice_flag {
+        program_time.into_iter().collect()
+    } else {
+        component_times.collect()
+    };
+    if si.splice_immediate_flag || times.is_empty() {
         record_counter!(crate::metric_names::SCTE35_IMMEDIATE_TOTAL);
         return Scte35Sanity::Immediate;
-    };
+    }
 
     // §9.6.1 defines the effective splice time as `pts_time + pts_adjustment`
     // (mod 2^33) — the field exists precisely so a downstream splicer/remux
     // can rebase cues without rewriting them (W-CP-1).
-    let effective_pts = scte35_splice::time::pts_add_wrapping(pts_time, sis.pts_adjustment);
+    for pts_time in &mut times {
+        *pts_time = scte35_splice::time::pts_add_wrapping(*pts_time, sis.pts_adjustment);
+    }
 
-    judge(effective_pts, now_pts)
+    let mut verdict = Scte35Sanity::InFuture;
+    for effective_pts in times {
+        if judge(effective_pts, now_pts) == Scte35Sanity::InPast {
+            verdict = Scte35Sanity::InPast;
+        }
+    }
+    verdict
 }
 
 /// The future-vs-past judgement shared by both entry points: a forward
@@ -147,7 +175,7 @@ mod tests {
     use super::*;
     use broadcast_common::Serialize;
     use scte35_splice::SpliceInfoSection;
-    use scte35_splice::commands::SpliceInsert;
+    use scte35_splice::commands::{SpliceInsert, SpliceInsertComponent};
     use scte35_splice::time::{PTS_MODULUS, SpliceTime};
 
     fn splice_insert_section(pts_time: Option<u64>, out_of_network: bool) -> alloc::vec::Vec<u8> {
@@ -251,5 +279,96 @@ mod tests {
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).unwrap();
         assert_eq!(check_section(&buf, 0), Scte35Sanity::NotSpliceInsert);
+    }
+
+    fn bytes(section: &SpliceInfoSection<'_>) -> alloc::vec::Vec<u8> {
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).unwrap();
+        buf
+    }
+
+    #[test]
+    fn cancelled_splice_insert_is_cancelled_not_immediate() {
+        let si = SpliceInsert {
+            splice_event_id: 7,
+            splice_event_cancel_indicator: true,
+            ..SpliceInsert::default()
+        };
+        let b = bytes(&SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            &[],
+        ));
+        assert_eq!(check_section(&b, 90_000), Scte35Sanity::Cancelled);
+    }
+
+    #[test]
+    fn component_mode_cue_is_judged_by_its_component_times() {
+        let component_mode = |tags_and_pts: &[(u8, u64)]| {
+            let si = SpliceInsert {
+                splice_event_id: 8,
+                out_of_network_indicator: true,
+                program_splice_flag: false,
+                splice_immediate_flag: false,
+                components: tags_and_pts
+                    .iter()
+                    .map(|&(component_tag, pts)| SpliceInsertComponent {
+                        component_tag,
+                        splice_time: Some(SpliceTime::with_pts(pts)),
+                    })
+                    .collect(),
+                ..SpliceInsert::default()
+            };
+            bytes(&SpliceInfoSection::new_clear(
+                AnyCommand::SpliceInsert(si),
+                &[],
+            ))
+        };
+        let now = 90_000 * 10;
+        assert_eq!(
+            check_section(&component_mode(&[(1, 90_000 * 3)]), now),
+            Scte35Sanity::InPast
+        );
+        assert_eq!(
+            check_section(&component_mode(&[(1, now + 90_000), (2, 90_000 * 3)]), now),
+            Scte35Sanity::InPast,
+            "one elapsed component makes the cue late"
+        );
+        assert_eq!(
+            check_section(
+                &component_mode(&[(1, now + 90_000), (2, now + 180_000)]),
+                now
+            ),
+            Scte35Sanity::InFuture
+        );
+    }
+
+    #[test]
+    fn immediate_flag_wins_over_any_time_field() {
+        let si = SpliceInsert {
+            splice_event_id: 9,
+            program_splice_flag: true,
+            splice_immediate_flag: true,
+            ..SpliceInsert::default()
+        };
+        let b = bytes(&SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            &[],
+        ));
+        assert_eq!(check_section(&b, 0), Scte35Sanity::Immediate);
+    }
+
+    #[test]
+    fn well_formed_encrypted_section_is_encrypted_not_malformed() {
+        use broadcast_common::Parse;
+        let mut s =
+            SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(SpliceInsert::default()), &[]);
+        s.encrypted_packet = true;
+        s.clear = None;
+        let payload = [0x5Au8; 24];
+        s.encrypted_payload = Some(&payload);
+        s.encrypted_splice_command_length = Some(20);
+        let b = bytes(&s);
+        assert!(SpliceInfoSection::parse(&b).is_ok(), "fixture must parse");
+        assert_eq!(check_section(&b, 0), Scte35Sanity::Encrypted);
     }
 }

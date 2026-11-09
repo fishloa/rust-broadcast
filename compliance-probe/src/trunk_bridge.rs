@@ -78,6 +78,10 @@ impl Probe {
     /// exposes no such reset), so a rate of TR 101 290 events immediately
     /// following a nonzero `TAP_LAGGED_TOTAL` delta should be read with that
     /// caveat, exactly as a real gap in delivery would be.
+    ///
+    /// Every packet of one [`TapItem::Data`] chunk gets that chunk's arrival
+    /// time, so a large chunk makes the PCR drift estimate skip samples and
+    /// 2.3a measure chunk gaps rather than packet gaps.
     pub fn drain_byte_tap(
         &mut self,
         bridge: &mut TrunkBridge,

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- `TsResync::finish` keeps the aligned packets that never reached a full `LOCK_CONFIRMATIONS` window (the tail after a corrupt sync byte, or a whole stream shorter than the window) instead of dropping them.
+### Added
+- `TsResync::take_tail_packets`: drains the aligned packets `finish` recovered at end of input (`finish` keeps its signature).
+
 ## [0.7.0] - 2026-11-07
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `into_raw`.

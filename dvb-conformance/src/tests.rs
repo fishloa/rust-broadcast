@@ -214,8 +214,16 @@ fn build_pmt_section_versioned(
 
 /// Packetise a section into 188-byte TS packets.
 fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
-    let mut pktizer = SectionPacketiser::new(Pid::new(pid));
-    pktizer.packetise(&[section])
+    extern crate std;
+    std::thread_local! {
+        static NEXT_CC: core::cell::RefCell<alloc::collections::BTreeMap<u16, u8>> =
+            const { core::cell::RefCell::new(alloc::collections::BTreeMap::new()) };
+    }
+    let cc = NEXT_CC.with(|m| m.borrow().get(&pid).copied().unwrap_or(0));
+    let mut pktizer = SectionPacketiser::with_continuity(Pid::new(pid), cc);
+    let packets = pktizer.packetise(&[section]);
+    NEXT_CC.with(|m| m.borrow_mut().insert(pid, pktizer.continuity_counter()));
+    packets
 }
 
 /// Corrupt the trailing CRC-32 of a long-form section so it still parses but
@@ -224,6 +232,12 @@ fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
 fn corrupt_crc(section: &mut [u8]) {
     let len = section.len();
     section[len - 1] ^= 0xFF;
+}
+
+fn refresh_crc(section: &mut [u8]) {
+    let body = section.len() - 4;
+    let crc = broadcast_common::crc32_mpeg2::compute(&section[..body]);
+    section[body..].copy_from_slice(&crc.to_be_bytes());
 }
 
 /// Feed packets to the monitor and collect all events.
@@ -526,6 +540,7 @@ fn pat_error_wrong_table_id() {
 
     let mut section = build_pat_section(&[(1, 0x100)]);
     section[0] = 0x01; // wrong table_id
+    refresh_crc(&mut section);
 
     let packets = packetise_section(PID_PAT, &section);
     let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
@@ -633,6 +648,7 @@ fn pat_error_timeout_when_sections_carry_wrong_table_id() {
     // wrong-table_id dimension of 1.3.a).
     let mut section = build_pat_section(&[(1, 0x100)]);
     section[0] = 0x01; // wrong table_id
+    refresh_crc(&mut section);
     let packets = packetise_section(PID_PAT, &section);
     let first = feed_all(&mut monitor, &packets, ms(5), ms(1));
     assert_eq!(
@@ -2596,5 +2612,359 @@ fn epoch_based_caller_clock_anchors_all_timers() {
             && !has_indicator(&events, Indicator::SiRepetitionError),
         "T-STD windows and SI repetition timers must anchor to the first \
          observed t, not Duration::ZERO: {events:#?}"
+    );
+}
+
+#[test]
+fn pcr_pid_that_keeps_sending_without_pcr_raises_repetition_error() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pcr_pid: u16 = 0x0200;
+    let af = make_pcr_adaptation(90_000, 0, false, false);
+    monitor.feed(
+        &make_ts_packet(pcr_pid, 0, false, true, &af, &[0xAB]),
+        ms(0),
+    );
+    let mut silent = Vec::new();
+    for i in 1..=5u8 {
+        let pkt = make_ts_packet(pcr_pid, i, false, false, &[], &[0xAB]);
+        silent.extend(monitor.feed(&pkt, ms(u64::from(i) * 50)).to_vec());
+    }
+    assert_eq!(
+        silent
+            .iter()
+            .filter(|e| e.indicator == Indicator::PcrRepetitionError)
+            .count(),
+        1,
+        "250 ms without a PCR on a PID that keeps sending: {silent:#?}"
+    );
+    let af = make_pcr_adaptation(90_000 + 22_500, 0, false, false);
+    let events = monitor.feed(
+        &make_ts_packet(pcr_pid, 6, false, true, &af, &[0xAB]),
+        ms(300),
+    );
+    assert!(
+        !has_indicator(events, Indicator::PcrRepetitionError),
+        "the stretch already reported must not be reported again when the PCR returns: {events:#?}"
+    );
+}
+
+#[test]
+fn pts_check_ignores_stream_ids_without_an_optional_pes_header() {
+    let es_pid: u16 = 0x0200;
+    for stream_id in [0xBCu8, 0xBE, 0xBF, 0xF0, 0xF1, 0xF2, 0xF8, 0xFF] {
+        let mut monitor = ConformanceMonitor::new();
+        setup_monitor_with_es(&mut monitor, es_pid);
+        let pes = make_pes_header_with_pts(stream_id, 10);
+        monitor.feed(&make_ts_packet(es_pid, 0, true, false, &[], &pes), ms(20));
+        let events = monitor.feed(
+            &make_ts_packet(es_pid, 1, true, false, &[], &pes),
+            ms(1_000),
+        );
+        assert!(
+            !has_indicator(events, Indicator::PtsError),
+            "stream_id 0x{stream_id:02X} has no PTS to check: {events:#?}"
+        );
+    }
+}
+
+#[test]
+fn eit_pf_pairing_state_is_bounded() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let distinct = 1_024u16 + 64;
+    let mut pz = SectionPacketiser::new(Pid::new(PID_EIT));
+    let mut t = 5u64;
+    let mut pf_errors = 0;
+    for service_id in 1..=distinct {
+        let section = build_eit_pf_actual_section_keyed(0, service_id, 1, 1);
+        for pkt in pz.packetise(&[&section[..]]) {
+            pf_errors += monitor
+                .feed(&pkt, ms(t))
+                .iter()
+                .filter(|e| e.indicator == Indicator::EitPfError)
+                .count();
+        }
+        t += 30;
+    }
+    for i in 0..100u8 {
+        let pkt = make_ts_packet(PID_NULL, i, false, false, &[], &[]);
+        pf_errors += monitor
+            .feed(&pkt, ms(t + 4_000 + u64::from(i) * 10))
+            .iter()
+            .filter(|e| e.indicator == Indicator::EitPfError)
+            .count();
+    }
+    assert_eq!(
+        pf_errors, 1_024,
+        "only the first 1024 sub-tables are tracked; the rest cannot raise 3.6.c"
+    );
+}
+
+// ── Scenario rig: whole-monitor behaviour over packetised sections ────────
+
+struct Rig {
+    m: ConformanceMonitor,
+    events: Vec<crate::ConformanceEvent>,
+    null_cc: u8,
+    t: u64,
+}
+
+impl Rig {
+    fn new() -> Self {
+        let mut r = Self {
+            m: ConformanceMonitor::new(),
+            events: Vec::new(),
+            null_cc: 0,
+            t: 0,
+        };
+        for _ in 0..6 {
+            r.null();
+        }
+        r
+    }
+
+    fn feed(&mut self, pkt: &[u8], at_ms: u64) {
+        self.t = self.t.max(at_ms);
+        let ev = self.m.feed(pkt, ms(at_ms));
+        self.events.extend(ev.iter().cloned());
+    }
+
+    fn null(&mut self) {
+        let mut p = [0xFFu8; TS_PACKET_SIZE];
+        p[0] = 0x47;
+        p[1] = 0x1F;
+        p[2] = 0xFF;
+        p[3] = 0x10 | (self.null_cc & 0x0F);
+        self.null_cc = self.null_cc.wrapping_add(1);
+        let t = self.t;
+        self.feed(&p, t);
+    }
+
+    fn idle_until(&mut self, end_ms: u64) {
+        while self.t + 50 <= end_ms {
+            let t = self.t + 50;
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = 0x1F;
+            p[2] = 0xFF;
+            p[3] = 0x10 | (self.null_cc & 0x0F);
+            self.null_cc = self.null_cc.wrapping_add(1);
+            self.feed(&p, t);
+        }
+    }
+
+    fn count(&self, i: Indicator) -> usize {
+        self.events.iter().filter(|e| e.indicator == i).count()
+    }
+}
+
+fn rig_pat_bytes(programs: &[(u16, u16)]) -> Vec<u8> {
+    let pat = PatSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        programs
+            .iter()
+            .map(|&(n, p)| PatEntry::new(n, Pid::new(p)))
+            .collect(),
+    );
+    let mut b = vec![0u8; pat.serialized_len()];
+    pat.serialize_into(&mut b).unwrap();
+    b
+}
+
+fn rig_nit_bytes(kind: NitKind, section_number: u8) -> Vec<u8> {
+    let nit = NitSection::new(
+        kind,
+        1,
+        0,
+        true,
+        section_number,
+        0,
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
+    let mut b = vec![0u8; nit.serialized_len()];
+    nit.serialize_into(&mut b).unwrap();
+    b
+}
+
+fn rig_eit_pf_bytes(section_number: u8, service_id: u16) -> Vec<u8> {
+    let eit = EitSection::new(
+        EitKind::PresentFollowingActual,
+        dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        service_id,
+        0,
+        true,
+        section_number,
+        0,
+        1,
+        1,
+        0,
+        dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        vec![],
+    );
+    let mut b = vec![0u8; eit.serialized_len()];
+    eit.serialize_into(&mut b).unwrap();
+    b
+}
+
+fn rig_send(rig: &mut Rig, pz: &mut SectionPacketiser, section: &[u8], at_ms: u64) {
+    for p in pz.packetise(&[section]) {
+        rig.feed(&p, at_ms);
+    }
+}
+
+#[test]
+fn crc_corrupt_pat_must_not_start_tracking_a_bogus_pmt_pid() {
+    let mut rig = Rig::new();
+    let mut pz = SectionPacketiser::new(Pid::new(0));
+    rig_send(&mut rig, &mut pz, &rig_pat_bytes(&[(1, 0x100)]), 10);
+    let mut bad = rig_pat_bytes(&[(1, 0x200)]);
+    corrupt_crc(&mut bad);
+    rig_send(&mut rig, &mut pz, &bad, 100);
+    rig.idle_until(1_000);
+    let bogus: Vec<_> = rig
+        .events
+        .iter()
+        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(Pid::new(0x200)))
+        .collect();
+    assert!(
+        bogus.is_empty(),
+        "PMT_error_2 raised for PID 0x200, which no CRC-valid PAT ever referenced: {bogus:?}"
+    );
+}
+
+#[test]
+fn crc_corrupt_nit_actual_must_not_satisfy_si_repetition() {
+    let mut rig = Rig::new();
+    let mut pz = SectionPacketiser::new(Pid::new(0x10));
+    rig_send(&mut rig, &mut pz, &rig_nit_bytes(NitKind::Actual, 0), 10);
+    let mut bad = rig_nit_bytes(NitKind::Actual, 0);
+    corrupt_crc(&mut bad);
+    for k in 1..=13u64 {
+        rig.idle_until(k * 1_000 - 100);
+        rig_send(&mut rig, &mut pz, &bad, k * 1_000);
+    }
+    assert!(rig.count(Indicator::CrcError) >= 13);
+    assert_eq!(
+        rig.count(Indicator::SiRepetitionError),
+        1,
+        "no CRC-valid NIT_actual for 13 s (limit 10 s): 3.2 must fire"
+    );
+}
+
+#[test]
+fn crc_corrupt_eit_pf_must_not_create_a_phantom_sub_table() {
+    let mut rig = Rig::new();
+    let mut pz = SectionPacketiser::new(Pid::new(0x12));
+    rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(0, 1), 10);
+    rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(1, 1), 20);
+    let mut bad = rig_eit_pf_bytes(0, 99);
+    corrupt_crc(&mut bad);
+    rig_send(&mut rig, &mut pz, &bad, 100);
+    rig.idle_until(4_000);
+    assert_eq!(rig.count(Indicator::CrcError), 1);
+    assert_eq!(
+        rig.count(Indicator::EitPfError),
+        0,
+        "EIT_PF_error for service 99 that only exists in a CRC-failed section: {:?}",
+        rig.events
+            .iter()
+            .filter(|e| e.indicator == Indicator::EitPfError)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn nit_other_repetition_is_reported_again_after_the_table_recovers() {
+    let mut rig = Rig::new();
+    let mut pz = SectionPacketiser::new(Pid::new(0x10));
+    let s = rig_nit_bytes(NitKind::Other, 0);
+    for t in [0u64, 1_000, 20_000, 21_000, 22_000, 45_000] {
+        rig_send(&mut rig, &mut pz, &s, t);
+    }
+    assert_eq!(
+        rig.count(Indicator::NitOtherError),
+        2,
+        "gaps of 19 s and 23 s against a 10 s limit are two separate failures"
+    );
+}
+
+fn pcr_only_packet(pid: u16, cc: u8, pcr_ticks: u64) -> [u8; TS_PACKET_SIZE] {
+    let base = pcr_ticks / 300;
+    let ext = (pcr_ticks % 300) as u16;
+    let mut p = [0xFFu8; TS_PACKET_SIZE];
+    p[0] = 0x47;
+    p[1] = ((pid >> 8) as u8) & 0x1F;
+    p[2] = pid as u8;
+    p[3] = 0x20 | (cc & 0x0F);
+    p[4] = 183;
+    p[5] = 0x10;
+    p[6] = (base >> 25) as u8;
+    p[7] = (base >> 17) as u8;
+    p[8] = (base >> 9) as u8;
+    p[9] = (base >> 1) as u8;
+    p[10] = (((base & 1) << 7) as u8) | 0x7E | ((ext >> 8) & 1) as u8;
+    p[11] = (ext & 0xFF) as u8;
+    p
+}
+
+#[test]
+fn pcr_step_of_100_5_ms_is_outside_the_0_to_100_ms_range() {
+    let mut rig = Rig::new();
+    let t0 = broadcast_common::clock33::PCR_HZ * 10;
+    rig.feed(&pcr_only_packet(0x100, 0, t0), 20);
+    rig.feed(&pcr_only_packet(0x100, 0, t0 + 2_713_500), 40);
+    assert_eq!(
+        rig.count(Indicator::PcrDiscontinuityError),
+        1,
+        "PCR advanced 100.5 ms with discontinuity_indicator=0"
+    );
+}
+
+#[test]
+fn legal_duplicate_continuation_packet_must_not_corrupt_the_section() {
+    let programs: Vec<(u16, u16)> = (0..100u16).map(|i| (i + 1, 0x100 + i)).collect();
+    let section = rig_pat_bytes(&programs);
+    let mut pz = SectionPacketiser::new(Pid::new(0));
+    let pkts = pz.packetise(&[&section[..]]);
+    assert_eq!(pkts.len(), 3);
+    let mut rig = Rig::new();
+    rig.feed(&pkts[0], 10);
+    rig.feed(&pkts[1], 11);
+    rig.feed(&pkts[1], 12);
+    rig.feed(&pkts[2], 13);
+    assert_eq!(
+        rig.count(Indicator::ContinuityCountError),
+        0,
+        "a single byte-identical repeat is a legal duplicate (H.222.0 2.4.3.3)"
+    );
+    assert_eq!(
+        rig.count(Indicator::CrcError),
+        0,
+        "the PAT carried by the three packets is intact; the duplicate must not be appended into the section"
+    );
+}
+
+#[test]
+fn eit_following_section_vanishing_after_both_were_seen_is_detected() {
+    let mut rig = Rig::new();
+    let mut pz = SectionPacketiser::new(Pid::new(0x12));
+    rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(0, 1), 10);
+    rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(1, 1), 20);
+    let mut t = 500u64;
+    while t <= 8_000 {
+        rig.idle_until(t - 10);
+        rig_send(&mut rig, &mut pz, &rig_eit_pf_bytes(0, 1), t);
+        t += 500;
+    }
+    let pf_related = rig.count(Indicator::EitPfError) + rig.count(Indicator::EitError);
+    assert!(
+        pf_related >= 1,
+        "section '1' (following) of the P/F sub-table absent for 8 s (limit 2 s) while section '0' keeps arriving: no 3.6.a/3.6.c indication was raised"
     );
 }

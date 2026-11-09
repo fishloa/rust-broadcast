@@ -86,7 +86,11 @@ impl Iterator for PacketReader {
                 return None;
             }
             match read_chunk(&mut self.file, &mut self.chunk) {
-                Ok(0) => self.done = true,
+                Ok(0) => {
+                    self.resync.finish();
+                    self.pending = self.resync.take_tail_packets().into_iter();
+                    self.done = true;
+                }
                 Ok(n) => self.pending = self.resync.feed(&self.chunk[..n]).into_iter(),
                 Err(e) => {
                     self.error = Some(e);

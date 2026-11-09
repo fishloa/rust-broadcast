@@ -70,12 +70,14 @@ impl TsFix {
 pub struct TsFixBuilder {
     /// Ops paired with their `OpKind` for canonical ordering at `build()` time.
     ops: alloc::vec::Vec<(OpKind, ops::BoxedOp)>,
+    invalid: Option<Error>,
 }
 
 impl TsFixBuilder {
     fn new() -> Self {
         Self {
             ops: alloc::vec::Vec::new(),
+            invalid: None,
         }
     }
 
@@ -90,6 +92,10 @@ impl TsFixBuilder {
     /// this order regardless of the order in which builder methods were
     /// called.
     pub fn build(mut self) -> Result<TsFix, Error> {
+        if let Some(err) = self.invalid {
+            return Err(err);
+        }
+
         // If no ops were configured, install the identity no-op so the engine
         // always has something to call.  This keeps `engine::Engine::push`
         // simple and ensures zero-op builds are provably correct.
@@ -263,6 +269,9 @@ impl TsFixBuilder {
     ///     .unwrap();
     /// ```
     pub fn stuffing(mut self, cfg: Stuffing) -> Self {
+        if let Err(err) = cfg.validate() {
+            self.invalid.get_or_insert(err);
+        }
         self.ops.push((
             OpKind::Stuffing,
             alloc::boxed::Box::new(ops::stuffing::StuffingOp::new(cfg)),

@@ -138,6 +138,24 @@ const DEFAULT_SI_OTHER_INTERVAL_SECS: u64 = 10;
 /// and the 27 MHz clock rate: both owned by `broadcast_common::clock33`.
 use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, pcr_forward_distance};
 
+const MICROS_PER_SEC: u64 = 1_000_000;
+
+/// Upper bound on tracked EIT P/F sub-tables, so a noisy or hostile EIT PID
+/// cannot grow the pairing map without limit; further sub-tables go unpaired.
+const MAX_EIT_PF_SUBTABLES: usize = 1024;
+
+/// EIT P/F sections that carry a presence requirement: '0' (present) and '1'
+/// (following).
+const EIT_PF_SECTIONS: usize = 2;
+
+/// `stream_id`s whose PES packet has no optional header after
+/// `PES_packet_length` (ISO/IEC 13818-1 §2.4.3.7): program_stream_map,
+/// padding_stream, private_stream_2, ECM, EMM, DSMCC_stream,
+/// ITU-T H.222.1 type E and program_stream_directory.
+const PES_STREAM_IDS_WITHOUT_HEADER: [u8; 8] = [0xBC, 0xBE, 0xBF, 0xF0, 0xF1, 0xF2, 0xF8, 0xFF];
+/// Offset of `stream_id` within a PES packet.
+const PES_STREAM_ID_OFFSET: usize = 3;
+
 /// PES start-code prefix byte 0 (ISO/IEC 13818-1 §2.4.3.6, Table 2-21).
 const PES_PREFIX_0: u8 = 0x00;
 /// PES start-code prefix byte 1.
@@ -657,6 +675,9 @@ struct PcrState {
     last_pcr_27mhz: u64,
     last_pcr_time: Duration,
     initialised: bool,
+    /// 2.3a already raised for the current silent stretch; the next PCR
+    /// clears it.
+    silence_reported: bool,
 }
 
 /// Per-PID PTS tracking state (indicator 2.5).
@@ -677,6 +698,16 @@ struct SiRepetitionTimer {
     last_seen: Duration,
     reported: bool,
     armed: bool,
+}
+
+impl SiRepetitionTimer {
+    const fn unarmed() -> Self {
+        Self {
+            last_seen: Duration::ZERO,
+            reported: false,
+            armed: false,
+        }
+    }
 }
 
 /// Tracking state for a candidate Unreferenced_PID (indicator 3.4): the time
@@ -714,8 +745,6 @@ struct OtherRepetitionState {
     occurrences: u64,
     /// Time of the most recent section.
     last_seen: Duration,
-    /// Whether the absence has already been reported for this key.
-    reported: bool,
 }
 
 /// Per-sub-table EIT P/F pairing state (indicator 3.6.c).
@@ -793,6 +822,7 @@ pub struct ConformanceMonitor {
 
     // SI repetition-interval timers keyed by table_id (3.2)
     si_timers: BTreeMap<u8, SiRepetitionTimer>,
+    eit_pf_section_timers: [SiRepetitionTimer; EIT_PF_SECTIONS],
 
     // Unreferenced_PID candidate tracking (3.4)
     unreferenced_pid_timers: BTreeMap<Pid, UnreferencedPidTracking>,
@@ -809,6 +839,10 @@ pub struct ConformanceMonitor {
 
     // T-STD buffer model (3.3, 3.9, 3.10)
     tstd: TstdModel,
+}
+
+fn section_crc_valid(section_bytes: &[u8]) -> bool {
+    Section::parse(section_bytes).is_ok_and(|s| s.validate_crc(section_bytes).is_ok())
 }
 
 impl ConformanceMonitor {
@@ -850,6 +884,7 @@ impl ConformanceMonitor {
             cat_seen: false,
             scrambled_without_cat_reported: false,
             si_timers: BTreeMap::new(),
+            eit_pf_section_timers: [SiRepetitionTimer::unarmed(), SiRepetitionTimer::unarmed()],
             unreferenced_pid_timers: BTreeMap::new(),
             min_gap_timers: BTreeMap::new(),
             other_repetition_timers: BTreeMap::new(),
@@ -902,6 +937,7 @@ impl ConformanceMonitor {
         }
 
         // ── Step 5: Continuity_count_error (1.4) ─────────────────────────
+        let mut duplicate = false;
         if pid != PID_NULL {
             // W-CONF-5 (#1096): the discontinuity indicator is taken from the
             // adaptation field `TsPacket::parse` already decoded, so the
@@ -911,7 +947,7 @@ impl ConformanceMonitor {
                 .adaptation_field()
                 .and_then(|af| af.ok())
                 .is_some_and(|af| af.discontinuity_indicator);
-            self.check_cc(
+            duplicate = self.check_cc(
                 pid,
                 header.continuity_counter,
                 header.has_payload,
@@ -937,9 +973,9 @@ impl ConformanceMonitor {
         }
 
         let payload = packet.payload;
-        self.feed_pat(pid, header, payload, t);
-        self.feed_pmt(pid, header, payload, t);
-        self.feed_si(pid, header, payload, t);
+        self.feed_pat(pid, header, payload, duplicate, t);
+        self.feed_pmt(pid, header, payload, duplicate, t);
+        self.feed_si(pid, header, payload, duplicate, t);
 
         // Also CRC-check completed PAT/PMT sections via the si_reassemblies
         // map (these share the same PID). PAT and PMT already have their own
@@ -957,6 +993,8 @@ impl ConformanceMonitor {
             && let Some(pcr) = af.pcr
         {
             self.check_pcr(pid, pcr.as_27mhz(), af.discontinuity_indicator, t);
+        } else {
+            self.check_pcr_silence(pid, t);
         }
 
         // ── 2.5: PTS check (Table 5.0b indicator 2.5) ───────────────────
@@ -1051,14 +1089,23 @@ impl ConformanceMonitor {
         }
     }
 
-    fn feed_pat(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+    fn feed_pat(
+        &mut self,
+        pid: Pid,
+        header: &TsHeader,
+        payload: Option<&[u8]>,
+        duplicate: bool,
+        t: Duration,
+    ) {
         if pid == PID_PAT && header.has_payload {
             if let Some(payload) = payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
                 // physically arrive — not once with the whole section's
                 // length once it has fully reassembled (issue #1035).
                 self.feed_tbsys_bytes(payload.len() as u64, pid, t);
-                self.pat_reassembler.feed(payload, header.pusi);
+                if !duplicate {
+                    self.pat_reassembler.feed(payload, header.pusi);
+                }
             }
             // W-CONF-1 (#1096): 1.3.a checks *section* presence, so the timer
             // is refreshed only by a completed CRC-valid table_id 0x00 section
@@ -1069,14 +1116,21 @@ impl ConformanceMonitor {
         }
     }
 
-    fn feed_pmt(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+    fn feed_pmt(
+        &mut self,
+        pid: Pid,
+        header: &TsHeader,
+        payload: Option<&[u8]>,
+        duplicate: bool,
+        t: Duration,
+    ) {
         if self.pmt_trackings.contains_key(&pid) && header.has_payload {
             if let Some(payload) = payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
                 // physically arrive — not once with the whole section's
                 // length once it has fully reassembled (issue #1035).
                 self.feed_tbsys_bytes(payload.len() as u64, pid, t);
-                if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
+                if !duplicate && let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
                     tracking.reassembler.feed(payload, header.pusi);
                 }
             }
@@ -1091,7 +1145,14 @@ impl ConformanceMonitor {
         }
     }
 
-    fn feed_si(&mut self, pid: Pid, header: &TsHeader, payload: Option<&[u8]>, t: Duration) {
+    fn feed_si(
+        &mut self,
+        pid: Pid,
+        header: &TsHeader,
+        payload: Option<&[u8]>,
+        duplicate: bool,
+        t: Duration,
+    ) {
         if pid != PID_PAT
             && !self.pmt_trackings.contains_key(&pid)
             && self.si_reassemblies.contains_key(&pid)
@@ -1110,7 +1171,7 @@ impl ConformanceMonitor {
                 if pid == PID_CAT || pid == PID_NIT {
                     self.feed_tbsys_bytes(payload.len() as u64, pid, t);
                 }
-                if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
+                if !duplicate && let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
                     si_ra.reassembler.feed(payload, header.pusi);
                 }
             }
@@ -1130,6 +1191,9 @@ impl ConformanceMonitor {
                 let Ok(section) = Section::parse(section_bytes) else {
                     continue;
                 };
+                if section.validate_crc(section_bytes).is_err() {
+                    continue;
+                }
                 self.update_si_repetition(&section, t);
                 self.check_si_min_gap(&section, pid, t);
                 self.check_si_other_section(section_bytes, pid, t);
@@ -1175,7 +1239,7 @@ impl ConformanceMonitor {
         t: Duration,
         raw: &[u8],
         discontinuity: bool,
-    ) {
+    ) -> bool {
         // `discontinuity` is the `discontinuity_indicator` decoded from the
         // parsed adaptation field by the caller (W-CONF-5, #1096). It is not
         // re-derived from `raw` here: the previous raw bit-masking read
@@ -1198,7 +1262,7 @@ impl ConformanceMonitor {
                 state.initialised = true;
                 state.last_packet.clear();
                 state.last_packet.extend_from_slice(raw);
-                return;
+                return false;
             }
 
             if discontinuity {
@@ -1292,6 +1356,7 @@ impl ConformanceMonitor {
             state.last_packet.clear();
             state.last_packet.extend_from_slice(raw);
         }
+        is_duplicate
     }
 
     /// CRC-check a completed section and, if on PID_PAT, process it.
@@ -1312,7 +1377,9 @@ impl ConformanceMonitor {
             self.pat_timer.refresh(t);
         }
 
-        self.process_pat_section(section_bytes, t);
+        if section_crc_valid(section_bytes) {
+            self.process_pat_section(section_bytes, t);
+        }
     }
 
     /// CRC-check a completed section and, if on a PMT PID, process it.
@@ -1333,7 +1400,9 @@ impl ConformanceMonitor {
             tracking.timer.refresh(t);
         }
 
-        self.process_pmt_section(section_bytes, pid, t);
+        if section_crc_valid(section_bytes) {
+            self.process_pmt_section(section_bytes, pid, t);
+        }
     }
 
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.2 — CRC_error.
@@ -1818,6 +1887,7 @@ impl ConformanceMonitor {
             last_pcr_27mhz: 0,
             last_pcr_time: Duration::ZERO,
             initialised: false,
+            silence_reported: false,
         });
 
         if !state.initialised {
@@ -1834,14 +1904,18 @@ impl ConformanceMonitor {
         // 2.3a: PCR_repetition_error — interval between consecutive PCR
         // values exceeds the configured limit.
         let rep_interval = t.saturating_sub(last_pcr_time);
-        let should_emit_rep = rep_interval > self.config.pcr_repetition_limit;
+        let should_emit_rep =
+            rep_interval > self.config.pcr_repetition_limit && !state.silence_reported;
 
         // 2.3b: PCR_discontinuity_indicator_error — PCR delta exceeds 100 ms
         // without a signalled discontinuity.
         let delta = pcr_forward_distance(last_pcr_27mhz, pcr_27mhz);
         let delta_ms = delta * 1000 / CLOCK_27MHZ;
         let limit_ms = self.config.pcr_discontinuity_limit.as_millis() as u64;
-        let should_emit_disc = delta_ms > limit_ms && !discontinuity;
+        let limit_ticks = (self.config.pcr_discontinuity_limit.as_micros() as u64)
+            .saturating_mul(CLOCK_27MHZ)
+            / MICROS_PER_SEC;
+        let should_emit_disc = delta > limit_ticks && !discontinuity;
 
         if should_emit_rep {
             self.emit(
@@ -1870,6 +1944,32 @@ impl ConformanceMonitor {
         let state = self.pcr_states.get_mut(&pid).unwrap();
         state.last_pcr_27mhz = pcr_27mhz;
         state.last_pcr_time = t;
+        state.silence_reported = false;
+    }
+
+    /// 2.3a for a PCR PID that keeps sending packets but no longer carries a
+    /// PCR: the repetition limit is judged at every packet of the PID, not
+    /// only when the next PCR finally arrives.
+    fn check_pcr_silence(&mut self, pid: Pid, t: Duration) {
+        let limit = self.config.pcr_repetition_limit;
+        let Some(state) = self.pcr_states.get_mut(&pid) else {
+            return;
+        };
+        let interval = t.saturating_sub(state.last_pcr_time);
+        if !state.initialised || state.silence_reported || interval <= limit {
+            return;
+        }
+        state.silence_reported = true;
+        self.emit(
+            Indicator::PcrRepetitionError,
+            Some(pid),
+            t,
+            format!(
+                "no PCR for {} ms (limit {} ms) while PID 0x{pid:04X} keeps sending",
+                interval.as_millis(),
+                limit.as_millis(),
+            ),
+        );
     }
 
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.5 — PTS_error.
@@ -1882,6 +1982,10 @@ impl ConformanceMonitor {
             return;
         }
         if payload[0] != PES_PREFIX_0 || payload[1] != PES_PREFIX_1 || payload[2] != PES_PREFIX_2 {
+            return;
+        }
+
+        if PES_STREAM_IDS_WITHOUT_HEADER.contains(&payload[PES_STREAM_ID_OFFSET]) {
             return;
         }
 
@@ -1960,6 +2064,16 @@ impl ConformanceMonitor {
         timer.last_seen = t;
         timer.reported = false;
         timer.armed = true;
+
+        if table_id == EIT_PF_ACTUAL_TABLE_ID
+            && let Some(timer) = self
+                .eit_pf_section_timers
+                .get_mut(usize::from(section.section_number))
+        {
+            timer.last_seen = t;
+            timer.reported = false;
+            timer.armed = true;
+        }
     }
 
     /// TR 101 290 v1.4.1 Table 5.0c — 25 ms minimum-gap check shared by
@@ -2040,22 +2154,18 @@ impl ConformanceMonitor {
                 .or_insert_with(|| OtherRepetitionState {
                     occurrences: 0,
                     last_seen: Duration::ZERO,
-                    reported: false,
                 });
 
         entry.occurrences += 1;
 
         // Snapshot what we need before any emit.
         let should_report = entry.occurrences >= 2
-            && !entry.reported
             && t.saturating_sub(entry.last_seen) > self.config.si_other_interval;
         let last_seen = entry.last_seen;
 
         entry.last_seen = t;
 
         if should_report {
-            entry.reported = true;
-
             let indicator = match table_id {
                 NIT_OTHER_TABLE_ID => Indicator::NitOtherError,
                 SDT_OTHER_TABLE_ID => Indicator::SdtOtherError,
@@ -2111,6 +2221,11 @@ impl ConformanceMonitor {
             transport_stream_id: eit.transport_stream_id,
             original_network_id: eit.original_network_id,
         };
+
+        if self.eit_pf_pairs.len() >= MAX_EIT_PF_SUBTABLES && !self.eit_pf_pairs.contains_key(&key)
+        {
+            return;
+        }
 
         let entry = self
             .eit_pf_pairs
@@ -2537,6 +2652,33 @@ impl ConformanceMonitor {
                     Some(pid),
                     t,
                     format!("no {table_name} section on PID 0x{pid:04X} within {limit_ms} ms"),
+                );
+            }
+        }
+
+        // 3.6.a: one EIT_PF_actual section ('0' or '1') absent while its
+        // partner keeps arriving. Both absent is the table-level 3.2 timer's.
+        let eit_limit = self.config.si_eit_pf_interval;
+        for section in 0..EIT_PF_SECTIONS {
+            let own = &self.eit_pf_section_timers[section];
+            let partner = &self.eit_pf_section_timers[EIT_PF_SECTIONS - 1 - section];
+            let gap = t.saturating_sub(own.last_seen);
+            if own.armed
+                && !own.reported
+                && gap > eit_limit
+                && partner.armed
+                && t.saturating_sub(partner.last_seen) <= eit_limit
+            {
+                self.eit_pf_section_timers[section].reported = true;
+                self.emit(
+                    Indicator::EitError,
+                    Some(PID_EIT),
+                    t,
+                    format!(
+                        "EIT_P/F_actual section '{section}' absent for {} ms (limit {} ms) while the other section keeps arriving",
+                        gap.as_millis(),
+                        eit_limit.as_millis(),
+                    ),
                 );
             }
         }
