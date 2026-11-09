@@ -2292,6 +2292,9 @@ impl HlsClient {
     /// byte-range cursor exactly as fetching it would have (a segment with
     /// parts is addressed by its parts' ranges, a plain one by its own).
     fn skip_segment(&mut self, msn: u64, seg: &MediaSegment) -> Result<()> {
+        if self.delivered_segments.contains(&msn) {
+            return Ok(());
+        }
         if seg.parts.is_empty() {
             let url = url::resolve(self.base(), &seg.uri);
             self.resolve_byte_range(&url, &seg.byte_range)?;

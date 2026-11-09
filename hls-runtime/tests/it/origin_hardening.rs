@@ -1275,3 +1275,32 @@ fn a_bare_msn_reload_is_answered_only_with_a_playlist_that_lists_that_segment() 
         other => panic!("{other:?}"),
     }
 }
+
+/// A blocking reload for a part that already exists in a just-closed segment
+/// (the closing publish follows the last part immediately) must be answered
+/// from the playlist that already lists it, not parked until the next
+/// segment's first part appears.
+#[test]
+fn a_blocking_reload_for_an_existing_part_of_the_just_closed_segment_is_answered() {
+    let (_t, w, o) = fresh_origin(0);
+    publish_part(&w, 1, 0);
+    publish_part(&w, 1, 1);
+    publish_seg(&w, 1, 4, false);
+    let (now, policy) = patient();
+    let response = o.resolve(
+        HlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery {
+                hls_msn: Some(1),
+                hls_part: Some(1),
+                ..BlockingQuery::default()
+            },
+        },
+        now,
+        policy,
+    );
+    assert!(
+        matches!(response, EgressResponse::Ready { .. }),
+        "got {response:?}"
+    );
+}
