@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Internal: the service-extract filter state is boxed (clippy `large_enum_variant` after `SectionReassembler` grew a continuity-counter field).
 
 ### Fixed
 - `repair_continuity` keeps a legal duplicate of a repaired packet a duplicate (it carries the CC the original was given) instead of renumbering it into a second distinct packet.

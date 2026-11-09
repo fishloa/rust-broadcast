@@ -228,7 +228,7 @@ enum FilterState {
     /// Keep exactly this set of PIDs.
     KeepSet(BTreeSet<Pid>),
     /// Service extract — stateful.
-    Service(ServiceState),
+    Service(Box<ServiceState>),
 }
 
 impl PidFilterOp {
@@ -236,10 +236,10 @@ impl PidFilterOp {
         let state = match cfg {
             PidFilter::Keep { pids } => FilterState::KeepSet(pids),
             PidFilter::Service { program_number } => {
-                FilterState::Service(ServiceState::WaitingPat {
+                FilterState::Service(Box::new(ServiceState::WaitingPat {
                     program_number,
                     pat_reasm: SectionReassembler::default(),
-                })
+                }))
             }
         };
         Self { state }
@@ -249,7 +249,7 @@ impl PidFilterOp {
     fn should_keep(&self, pid: Pid) -> bool {
         match &self.state {
             FilterState::KeepSet(set) => set.contains(&pid),
-            FilterState::Service(svc_state) => match svc_state {
+            FilterState::Service(svc_state) => match &**svc_state {
                 ServiceState::WaitingPat { .. } => {
                     // Before PAT seen: only let PAT through.
                     pid == PAT_PID
@@ -267,7 +267,7 @@ impl PidFilterOp {
     fn observe(&mut self, packet: &[u8]) {
         let state = match &mut self.state {
             FilterState::KeepSet(_) => return,
-            FilterState::Service(s) => s,
+            FilterState::Service(s) => &mut **s,
         };
         let Some(pid) = pid_of(packet) else {
             return;
