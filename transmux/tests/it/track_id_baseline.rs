@@ -30,6 +30,7 @@
 //!   (bug audit E). Both are lossy live captures: a continuity-counter gap at the
 //!   `payload_unit_start` after a packet that filled its whole payload marks an unbounded PES
 //!   that lost its tail, and the truncated access unit is now dropped instead of emitted.
+//! - `private/fixtures/ts/france-tnt-uhf32-si-audio.ts` track 6 `6x569` -> `6x108` (issue #1950): track 6 is the H.264 video track in an excerpt made by deleting video packets, so the old 569 "samples" were mostly truncated fragments; PR #1760 drops a video unit whose tail was lost instead of delivering it truncated (lost-tail rule), so the golden value was what was wrong.
 //!
 //! Regenerate (only for an intentional behaviour change):
 //! `RUST_BROADCAST_SOAK=1 TRACK_ID_BLESS=1 cargo test -p transmux --all-features --test track_id_baseline`
