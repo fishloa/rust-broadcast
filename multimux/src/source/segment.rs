@@ -164,6 +164,13 @@ enum AnySegmenter {
 }
 
 impl AnySegmenter {
+    fn set_start_time_ns(&mut self, start_ns: u64) {
+        match self {
+            AnySegmenter::Fmp4(seg) => seg.set_start_time_ns(start_ns),
+            AnySegmenter::Ts(seg) => seg.set_start_time_ns(start_ns),
+        }
+    }
+
     fn push(&mut self, track_id: TrackId, sample: Sample) -> transmux::Result<()> {
         match self {
             AnySegmenter::Fmp4(seg) => seg.push(track_id, sample),
@@ -384,6 +391,10 @@ pub struct ProgramSegmenter {
     timescale_moves: HashMap<TrackId, (u32, u32)>,
     segment_writer: SegmentWriter,
     seg: AnySegmenter,
+    /// The next segment published opens a replacement run, so it carries
+    /// `EXT-X-DISCONTINUITY` (RFC 8216bis 6.2.1: a change of timing or
+    /// encoding is signalled with it).
+    mark_next_discontinuous: bool,
     /// Cumulative nanoseconds of segment duration published so far by this
     /// segmenter — mirrors `crate::route::RouteHandle`'s own
     /// `next_timeline_ns`, kept per-program here since each program's
@@ -685,6 +696,33 @@ pub(super) fn drain_publish_queue(
 }
 
 impl ProgramSegmenter {
+    /// Start this run's media timeline where `route_handle` says `program`'s
+    /// serving begins it (a no-op for the first run on a route): call once,
+    /// right after [`Self::try_new`] and the program's publication, before
+    /// the first [`Self::pump`].
+    pub fn continue_after_reconnect(&mut self, route_handle: &RouteHandle, program: ProgramId) {
+        if let Some(epoch) = route_handle.epoch(program) {
+            self.continue_media_timeline(epoch.media_start_ns);
+        }
+    }
+
+    /// Start this run's media timeline at `start_ns` instead of zero: the
+    /// leader's and every follower's decode clock and the segment timeline.
+    pub(crate) fn continue_media_timeline(&mut self, start_ns: u64) {
+        if start_ns == 0 {
+            return;
+        }
+        self.seg.set_start_time_ns(start_ns);
+        self.next_timeline_ns = start_ns;
+        self.mark_next_discontinuous = true;
+        for follower in &mut self.followers {
+            follower.set_start_time_ns(start_ns);
+        }
+        for follower in &mut self.subtitle_followers {
+            follower.set_start_time_ns(start_ns);
+        }
+    }
+
     /// Attempt to start segmenting `trunk`. `None` if its track set hasn't
     /// landed yet (a `NewProgram` announcement with samples pending is
     /// unusual but not impossible — retried on the next call), if its
@@ -822,6 +860,7 @@ impl ProgramSegmenter {
             cursor: trunk.subscribe_from_backlog(),
             segment_writer,
             seg,
+            mark_next_discontinuous: false,
             next_timeline_ns: 0,
             track_generation: trunk.track_generation(),
             pending: VecDeque::new(),
@@ -1604,14 +1643,14 @@ impl ProgramSegmenter {
         self.next_timeline_ns = self
             .next_timeline_ns
             .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+        let discontinuous =
+            segment.discontinuous || std::mem::take(&mut self.mark_next_discontinuous);
         self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
             segment.bytes,
             segment.segment_seq,
             duration,
             Timestamp::from_nanos(start_ns),
-            SegmentMeta {
-                discontinuous: segment.discontinuous,
-            },
+            SegmentMeta { discontinuous },
         )));
     }
 
@@ -1756,7 +1795,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         let Some(trunk) = driver.trunk(program) else {
             continue;
         };
-        let Some(segmenter) = ProgramSegmenter::try_new(
+        let Some(mut segmenter) = ProgramSegmenter::try_new(
             trunk,
             route_handle,
             route_handle.target_duration_secs(),
@@ -1764,6 +1803,7 @@ pub(crate) fn drive_program_segmenters<S: IngestSession>(
         ) else {
             continue;
         };
+        segmenter.continue_after_reconnect(route_handle, program);
         // Push the fMP4 init segment for every program — DVR recording
         // needs it regardless of whether HTTP egress addresses this
         // program yet (issue #805 task 6's MPTS-addressing doc).
@@ -3247,6 +3287,7 @@ mod tests {
             cursor: trunk.subscribe_from_backlog(),
             segment_writer,
             seg,
+            mark_next_discontinuous: false,
             next_timeline_ns: 0,
             track_generation: trunk.track_generation(),
             pending: VecDeque::new(),

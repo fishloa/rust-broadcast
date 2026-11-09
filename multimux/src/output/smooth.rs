@@ -285,19 +285,25 @@ struct TrackChunks {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ChunkTiming {
-    segment_seq: u32,
+    segment_seq: u64,
     start_ticks: u64,
     duration_ticks: u64,
 }
 
 impl TrackChunks {
     /// The segment whose chunk starts at `start_ticks`, if any.
-    fn segment_for_start(&self, start_ticks: u64) -> Option<u32> {
+    fn segment_for_start(&self, start_ticks: u64) -> Option<u64> {
         self.chunks
             .iter()
             .find(|c| c.start_ticks == start_ticks)
             .map(|c| c.segment_seq)
     }
+}
+
+/// `mfhd.sequence_number` for the public segment number `public_seq`, held at
+/// `u32::MAX` once the number outgrows the box field.
+fn mfhd_sequence(public_seq: u64) -> u32 {
+    u32::try_from(public_seq).unwrap_or(u32::MAX)
 }
 
 /// Rescale a media-timescale tick count to [`SMOOTH_TIMESCALE`] with
@@ -316,14 +322,14 @@ fn to_smooth_ticks(ticks: u64, timescale: u32) -> u64 {
 fn track_chunks(
     init: Option<&[u8]>,
     window: &[DashWindowSegment],
-    segments: &std::collections::HashMap<media_plane::ids::SegmentSeq, bytes::Bytes>,
+    segments: &std::collections::HashMap<u64, bytes::Bytes>,
     stream_type: SmoothStreamType,
     quality_index: u32,
 ) -> Option<TrackChunks> {
     let init = init?;
     let mut chunks: Vec<ChunkTiming> = Vec::with_capacity(window.len());
     for seg in window {
-        let Some(bytes) = segments.get(&seg.segment_seq) else {
+        let Some(bytes) = segments.get(&seg.public_seq) else {
             continue;
         };
         let mut combined = Vec::with_capacity(init.len() + bytes.len());
@@ -357,11 +363,11 @@ fn track_chunks(
         let duration_ticks = SmoothPackager {
             target_duration_secs: SINGLE_SEGMENT_FRAGMENT_TARGET_SECS,
         }
-        .package_track_fragment(track, seg.segment_seq.value(), chain_start)
+        .package_track_fragment(track, mfhd_sequence(seg.public_seq), chain_start)
         .map(|f| f.duration)
         .unwrap_or(0);
         chunks.push(ChunkTiming {
-            segment_seq: seg.segment_seq.value(),
+            segment_seq: seg.public_seq,
             start_ticks: chain_start,
             duration_ticks,
         });
@@ -399,10 +405,10 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
     }
     let init = route.init_bytes(crate::route::SPTS_PROGRAM_ID)?;
     let ll_hls = serving.ll_hls();
-    let mut segments: std::collections::HashMap<media_plane::ids::SegmentSeq, bytes::Bytes> =
+    let mut segments: std::collections::HashMap<u64, bytes::Bytes> =
         std::collections::HashMap::with_capacity(window.len());
     for seg in &window {
-        let name = format!("seg-{DEFAULT_TRACK_ID}-{}.m4s", seg.segment_seq);
+        let name = format!("seg-{DEFAULT_TRACK_ID}-{}.m4s", seg.public_seq);
         if let EgressResponse::Ready {
             body: HlsBody::Resource(bytes),
             ..
@@ -411,7 +417,7 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
             Timestamp::from_nanos(0),
             AwaitPolicy::new(Timestamp::from_nanos(u64::MAX)),
         ) {
-            segments.insert(seg.segment_seq, bytes);
+            segments.insert(seg.public_seq, bytes);
         }
     }
     if segments.is_empty() {
@@ -513,7 +519,7 @@ impl WindowLayout {
 /// sequence number `segment_seq`.
 #[derive(Debug, Clone, Copy)]
 struct SegmentRequest {
-    segment_seq: u32,
+    segment_seq: u64,
 }
 
 /// Build the per-track Smooth fragment for `segment` (the muxed programme
@@ -530,7 +536,7 @@ fn build_track_fragment(
     segment: &[u8],
     request: &SmoothFragmentRequest,
     start_ticks: u64,
-    segment_seq: u32,
+    segment_seq: u64,
     ordinal: u32,
 ) -> Option<Vec<u8>> {
     let init = init?;
@@ -555,7 +561,7 @@ fn build_track_fragment(
     // number is the segment's, so `mfhd.sequence_number` is monotonic rather
     // than a constant track ordinal.
     let fragment = packager
-        .package_track_fragment(wanted, segment_seq, start_ticks)
+        .package_track_fragment(wanted, mfhd_sequence(segment_seq), start_ticks)
         .ok()?;
     if fragment.data.is_empty() {
         return None;
@@ -917,6 +923,57 @@ fn smooth_codec_params(config: &CodecConfig) -> Option<SmoothCodecParams> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn manifest_chunks(
+        app: &axum::Router,
+    ) -> (transmux::smooth_parse::StreamIndex, Vec<(u64, u64)>) {
+        let (status, body) = crate::testutil::get_bytes(app, "/cam/Manifest").await;
+        assert_eq!(status, StatusCode::OK);
+        let manifest = transmux::SmoothManifest::parse(&String::from_utf8(body).expect("utf8"))
+            .expect("manifest parses");
+        let stream = manifest.streams[0].clone();
+        let chunks = stream.enumerate_chunks().expect("chunks");
+        (stream, chunks)
+    }
+
+    /// A source reconnect continues the Smooth timeline: the first chunk of
+    /// the new run starts at or after the end of the previous run's last
+    /// chunk, and every advertised chunk is served with a `tfxd` equal to the
+    /// `c@t` the manifest advertises for it.
+    #[tokio::test]
+    async fn smooth_continues_across_a_source_reconnect() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let app = crate::testutil::app_with(&route, Arc::new(SmoothOutput));
+
+        let first = crate::testutil::ingest_run(&route, 8).await;
+        let (_, before) = manifest_chunks(&app).await;
+        let (last_t, last_d) = *before.last().expect("chunks before");
+
+        crate::source::release_route(&first, &route);
+        let _second = crate::testutil::ingest_run(&route, 8).await;
+        let (stream, after) = manifest_chunks(&app).await;
+        assert_eq!(
+            after[0].0,
+            (before.len() as u64 + 1) * SMOOTH_TIMESCALE,
+            "the first chunk starts at the time its number derives, past the previous end {}",
+            last_t + last_d
+        );
+        assert!(after[0].0 >= last_t + last_d);
+
+        let bitrate = stream.qualities.first().map_or(0, |q| q.bitrate);
+        for (start, _) in &after {
+            let url = format!("/cam/{}", stream.resolve_fragment_url(bitrate, *start));
+            let (status, fragment) = crate::testutil::get_bytes(&app, &url).await;
+            assert_eq!(status, StatusCode::OK, "{url}");
+            let at = fragment
+                .windows(transmux::smooth::TFXD_UUID.len())
+                .position(|w| w == transmux::smooth::TFXD_UUID)
+                .expect("tfxd box");
+            let body = at + transmux::smooth::TFXD_UUID.len() + 4;
+            let tfxd = u64::from_be_bytes(fragment[body..body + 8].try_into().expect("8 bytes"));
+            assert_eq!(tfxd, *start, "{url}: tfxd is not the advertised c@t");
+        }
+    }
     use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     use transmux::nalu_types::{AvcPps, AvcSps};
 
@@ -929,7 +986,7 @@ mod tests {
             TrackChunks {
                 chunks: (0..n)
                     .map(|i| ChunkTiming {
-                        segment_seq: i as u32,
+                        segment_seq: i,
                         start_ticks: i * dur,
                         duration_ticks: dur,
                     })

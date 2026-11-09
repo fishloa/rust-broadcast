@@ -29,13 +29,13 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        987,
+        1085,
         "spawn_blocking DVR persist; awaited inline",
     ),
-    ("dvr.rs", 595, "spawn_blocking DVR write; awaited inline"),
+    ("dvr.rs", 603, "spawn_blocking DVR write; awaited inline"),
     (
         "source/pull.rs",
-        174,
+        196,
         "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",
     ),
     (
@@ -111,28 +111,8 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/catchup.rs",
-        167,
-        "spawn_blocking archive scan; awaited inline",
-    ),
-    (
-        "output/catchup.rs",
-        250,
-        "spawn_blocking archive scan; awaited inline",
-    ),
-    (
-        "output/catchup.rs",
-        353,
-        "spawn_blocking archived-segment lookup; awaited inline",
-    ),
-    (
-        "output/catchup.rs",
-        366,
-        "spawn_blocking archived-segment read; awaited inline",
-    ),
-    (
-        "output/catchup.rs",
-        448,
-        "spawn_blocking archived-segment read; awaited inline",
+        343,
+        "spawn_blocking catch-up scan under an owned scan permit; awaited inline, and the permit rides the blocking task",
     ),
     (
         "output/smooth.rs",

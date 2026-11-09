@@ -497,6 +497,17 @@ pub(crate) mod test_support {
     /// not inline bytes" discipline this project requires, since a
     /// hand-built TS risks missing real PSI/PES framing quirks.
     pub(crate) fn build_ts_bytes(track_id: TrackId, nal_byte: u8, count: u32) -> Vec<u8> {
+        build_ts_bytes_with_gop(track_id, nal_byte, count, u32::MAX)
+    }
+
+    /// [`build_ts_bytes`] with a sync sample every `gop` frames, so the
+    /// segmenter closes a segment per `gop` frames.
+    pub(crate) fn build_ts_bytes_with_gop(
+        track_id: TrackId,
+        nal_byte: u8,
+        count: u32,
+        gop: u32,
+    ) -> Vec<u8> {
         use broadcast_common::Package;
         let spec = track_spec(track_id);
         let frame_dur = 90_000 / 30;
@@ -510,7 +521,7 @@ pub(crate) mod test_support {
                     Some(i64::from(i) * i64::from(frame_dur)),
                     Some(i64::from(i) * i64::from(frame_dur)),
                     Some(frame_dur),
-                    i == 0,
+                    i % gop == 0,
                 )
             })
             .collect();

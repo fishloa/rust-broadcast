@@ -1147,3 +1147,29 @@ fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
         "a part must be cut on its fifth frame, not the sixth: {cut_at:?}"
     );
 }
+
+#[test]
+fn start_time_moves_every_tfdt_and_nothing_else() {
+    let tfdts = |start_ns: Option<u64>| {
+        let mut seg =
+            LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 1.0, 334).unwrap();
+        if let Some(ns) = start_ns {
+            seg.set_start_time_ns(ns);
+        }
+        for i in 0..31u8 {
+            seg.push(TrackId::new(1), vsample(i % 30 == 0, i)).unwrap();
+        }
+        seg.take_ready_parts()
+            .iter()
+            .filter_map(|p| part_tfdt_for(&p.bytes, 1))
+            .collect::<Vec<_>>()
+    };
+    let from_zero = tfdts(None);
+    let from_five_seconds = tfdts(Some(5_000_000_000));
+    assert!(!from_zero.is_empty());
+    assert_eq!(from_zero[0], 0);
+    assert_eq!(from_zero.len(), from_five_seconds.len());
+    for (a, b) in from_zero.iter().zip(&from_five_seconds) {
+        assert_eq!(*b, *a + 5 * 1000 * 90, "tfdt moved by the start time");
+    }
+}

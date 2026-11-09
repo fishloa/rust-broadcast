@@ -163,9 +163,7 @@ async fn catchup_playlist(
     // shared with the DVR persist, so an unauthenticated catch-up flood must
     // not be able to occupy every blocking thread and delay a route's
     // recording (whose `StallIngest` pin would then force-expire at 30 s).
-    let _permit = scan_permit().acquire().await;
-    let archived = match tokio::task::spawn_blocking(move || catchup::scan_archive(&scan_dir)).await
-    {
+    let archived = match run_scan(move || catchup::scan_archive(&scan_dir)).await {
         Ok(a) => a,
         Err(e) => {
             tracing::error!(error = %e, "catch-up: archive scan task failed");
@@ -245,9 +243,8 @@ async fn vod_playlist(
     // Audit run 7, W3: the index read/parse and the directory listing are
     // synchronous filesystem I/O — off the runtime worker, and bounded by the
     // same scan semaphore as the archive-wide scan (item 4).
-    let _permit = scan_permit().acquire().await;
     let read_dir = dir.clone();
-    let (segments, period_nums) = match tokio::task::spawn_blocking(move || {
+    let (segments, period_nums) = match run_scan(move || {
         (
             catchup::read_period_segments(&read_dir, period_num),
             catchup::list_period_nums(&read_dir),
@@ -313,9 +310,41 @@ async fn vod_playlist(
 /// Conservative ceiling: the DVR persist must always be able to run.
 const MAX_CONCURRENT_SCANS: usize = 4;
 
-fn scan_permit() -> &'static tokio::sync::Semaphore {
-    static SEM: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
-    SEM.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_SCANS))
+fn scan_permit() -> &'static Arc<tokio::sync::Semaphore> {
+    static SEM: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    SEM.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SCANS)))
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ScanError {
+    #[error("scan pool closed")]
+    Closed,
+    #[error(transparent)]
+    Task(#[from] tokio::task::JoinError),
+}
+
+/// Run `scan` on the blocking pool under a scan permit. The permit moves into
+/// the blocking task, so a request dropped mid-scan (a client disconnect)
+/// does not free the slot while the scan it bounds is still running.
+async fn run_scan<T: Send + 'static>(
+    scan: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ScanError> {
+    run_scan_on(scan_permit(), scan).await
+}
+
+async fn run_scan_on<T: Send + 'static>(
+    pool: &Arc<tokio::sync::Semaphore>,
+    scan: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ScanError> {
+    let permit = Arc::clone(pool)
+        .acquire_owned()
+        .await
+        .map_err(|_| ScanError::Closed)?;
+    Ok(tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        scan()
+    })
+    .await?)
 }
 
 fn parse_period_filename(file: &str) -> Option<u32> {
@@ -348,9 +377,8 @@ async fn catchup_resource(
     // match, then `read_archived_bytes` reads the whole segment — both
     // synchronous disk I/O, so both run on the blocking pool, bounded by the
     // same scan semaphore (item 4).
-    let _permit = scan_permit().acquire().await;
     let find_dir = dir.clone();
-    let found = match tokio::task::spawn_blocking(move || {
+    let found = match run_scan(move || {
         catchup::find_archived_segment(&find_dir, media_plane::ids::SegmentSeq::new(seq))
     })
     .await
@@ -363,7 +391,7 @@ async fn catchup_resource(
     };
     if let Some(seg) = found {
         let read_dir = dir.clone();
-        let read = tokio::task::spawn_blocking(move || {
+        let read = run_scan(move || {
             catchup::read_archived_bytes(
                 &read_dir,
                 ext,
@@ -444,8 +472,7 @@ async fn catchup_init(route: &RouteHandle, ext: &'static str, period: u32) -> Re
         return StatusCode::NOT_FOUND.into_response();
     }
     let dir: PathBuf = catchup::archive_dir(dvr, route.name());
-    let _permit = scan_permit().acquire().await;
-    let read = tokio::task::spawn_blocking(move || {
+    let read = run_scan(move || {
         let init_len = catchup::read_period_segments(&dir, period)
             .first()
             .map(|s| s.byte_offset)?;
@@ -591,7 +618,6 @@ mod tests {
                     .with_dvr(dvr_config(&tmp)),
             );
             route.publish_new_program(SPTS_PROGRAM_ID);
-            route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
             const SEG_LEN: usize = 4096;
             route
                 .add_segment(
@@ -652,6 +678,40 @@ mod tests {
 
             cleanup(&tmp);
         });
+    }
+
+    /// A scan whose request is dropped mid-scan (a client disconnect) keeps
+    /// its permit until the blocking task itself ends, so the bound on
+    /// concurrent scans holds for the work actually running.
+    #[tokio::test]
+    async fn a_dropped_scan_request_keeps_its_permit_until_the_scan_ends() {
+        let pool = Arc::new(tokio::sync::Semaphore::new(1));
+        let (release, hold) = std::sync::mpsc::channel::<()>();
+        let (started_tx, started) = tokio::sync::oneshot::channel::<()>();
+        let request = tokio::spawn({
+            let pool = Arc::clone(&pool);
+            async move {
+                run_scan_on(&pool, move || {
+                    let _ = started_tx.send(());
+                    let _ = hold.recv();
+                })
+                .await
+            }
+        });
+        started.await.expect("the scan started");
+        request.abort();
+        let _ = request.await;
+        assert_eq!(
+            pool.available_permits(),
+            0,
+            "the permit was released while the blocking scan was still running"
+        );
+
+        release.send(()).expect("scan still waiting");
+        let _permit = tokio::time::timeout(std::time::Duration::from_secs(5), pool.acquire())
+            .await
+            .expect("the permit returns when the scan ends")
+            .expect("pool open");
     }
 
     // --- item 4: every catch-up scan path is bounded by the scan semaphore ---
@@ -1323,5 +1383,119 @@ mod tests {
             "validator MUST-level findings: {errors:#?}"
         );
         cleanup(&tmp);
+    }
+
+    fn archived_seq_periods(dir: &std::path::Path) -> Vec<(u32, u32)> {
+        catchup::scan_archive(dir)
+            .iter()
+            .map(|s| (s.seq.value(), s.period_num))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_segment_closed_under_the_old_init_is_archived_with_the_old_init() {
+        let root = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(2.0, 500, 8)
+                .with_name("r")
+                .with_dvr(dvr_config(&root)),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xA1))
+            .expect("add");
+        route.drain_dvr().await;
+
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
+            .expect("add");
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_B".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(3, 0xB3))
+            .expect("add");
+        route.drain_dvr().await;
+
+        assert_eq!(
+            archived_seq_periods(&root.join("r")),
+            vec![(1, 0), (2, 0), (3, 1)],
+            "segment 2 was closed under INIT_A and belongs in the INIT_A period"
+        );
+        cleanup(&root);
+    }
+
+    #[tokio::test]
+    async fn segments_closed_before_a_source_reconnect_are_archived() {
+        let root = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(2.0, 500, 8)
+                .with_name("r")
+                .with_dvr(dvr_config(&root)),
+        );
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xA1))
+            .expect("add");
+        route.drain_dvr().await;
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
+            .expect("add");
+
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xB1))
+            .expect("add");
+        route.drain_dvr().await;
+
+        let seqs: Vec<u32> = archived_seq_periods(&root.join("r"))
+            .iter()
+            .map(|s| s.0)
+            .collect();
+        assert_eq!(
+            seqs,
+            vec![1, 2, 4],
+            "segment 2 was closed on the old Trunk before the reconnect"
+        );
+        cleanup(&root);
+    }
+
+    #[tokio::test]
+    async fn the_archive_timeline_does_not_go_backwards_across_a_source_reconnect() {
+        let root = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(2.0, 500, 8)
+                .with_name("r")
+                .with_dvr(dvr_config(&root)),
+        );
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xA1))
+            .expect("add");
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0xA2))
+            .expect("add");
+        route.drain_dvr().await;
+
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, b"INIT_A".to_vec());
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0xB1))
+            .expect("add");
+        route.drain_dvr().await;
+
+        let starts: Vec<u64> = catchup::scan_archive(&root.join("r"))
+            .iter()
+            .map(|s| s.start_pts_ns)
+            .collect();
+        assert!(
+            starts.windows(2).all(|w| w[0] < w[1]),
+            "archived start_pts_ns must increase across the reconnect: {starts:?}"
+        );
+        cleanup(&root);
     }
 }

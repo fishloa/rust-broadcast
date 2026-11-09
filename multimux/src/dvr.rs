@@ -456,6 +456,14 @@ pub struct IndexEntry {
     pub discontinuous: bool,
 }
 
+/// An fMP4 init segment and the first `Trunk` segment number closed under it
+/// (see [`DvrRecorder::poll_and_persist_inits`]).
+#[derive(Debug, Clone)]
+pub struct InitGeneration {
+    pub first_seq: SegmentSeq,
+    pub init: bytes::Bytes,
+}
+
 /// In-memory record of one stored period file.
 struct PeriodRecord {
     /// Period number (0-based).
@@ -941,28 +949,32 @@ impl DvrRecorder {
     }
 
     pub fn poll_and_persist(&mut self, init_bytes: Option<&[u8]>) -> Result<(), String> {
+        let inits: Vec<InitGeneration> = init_bytes
+            .map(|init| InitGeneration {
+                first_seq: SegmentSeq::new(0),
+                init: bytes::Bytes::copy_from_slice(init),
+            })
+            .into_iter()
+            .collect();
+        self.poll_and_persist_inits(&inits)
+    }
+
+    /// [`Self::poll_and_persist`] for a route that records every init change
+    /// ([`InitGeneration`], oldest first): a pending segment is archived under
+    /// the init it was closed under, and the period rolls to the next init
+    /// only when the first segment closed under it (or the end of the
+    /// pending segments) is reached, so the last segment before a track
+    /// change never lands in the new init's period.
+    pub fn poll_and_persist_inits(&mut self, inits: &[InitGeneration]) -> Result<(), String> {
         if !self.seeded {
             self.seed_from_disk()?;
         }
-        // --- fMP4 init management ---
-        if self.ext == ".m4s" {
-            match (init_bytes, &self.last_init) {
-                // Init is available for the first time — start period 0.
-                (Some(new), None) => {
-                    self.start_period(Some(new))?;
-                }
-                // Init changed mid-stream — roll the period.
-                (Some(new), Some(old)) if new != old.as_slice() => {
-                    tracing::info!(
-                        route = %self.route_name,
-                        "DVR init segment changed — rolling period"
-                    );
-                    self.start_period(Some(new))?;
-                }
-                // No init yet — segments arriving before init are skipped
-                // (they'd be undecodable without it).
-                _ => {}
-            }
+        let mut upcoming = inits.iter().peekable();
+        if self.ext == ".m4s"
+            && self.last_init.is_none()
+            && let Some(first) = upcoming.next()
+        {
+            self.start_period(Some(&first.init))?;
         }
 
         // --- Time-based period rollover ---
@@ -992,32 +1004,39 @@ impl DvrRecorder {
 
         // --- Draining the cursor ---
         while let Some(item) = self.cursor.poll() {
+            if let SegmentCursorItem::Segment(entry) = &item {
+                while let Some(generation) =
+                    upcoming.next_if(|g| g.first_seq.value() <= entry.sequence_number.value())
+                {
+                    self.roll_to_init(&generation.init)?;
+                }
+            }
             self.on_segment(&item)?;
         }
+        for generation in upcoming {
+            self.roll_to_init(&generation.init)?;
+        }
         Ok(())
+    }
+
+    fn roll_to_init(&mut self, init: &[u8]) -> Result<(), String> {
+        if self.ext != ".m4s" || self.last_init.as_deref() == Some(init) {
+            return Ok(());
+        }
+        tracing::info!(
+            route = %self.route_name,
+            "DVR init segment changed — rolling period"
+        );
+        self.start_period(Some(init))
     }
 
     /// Open a new period container file. If `init_bytes` is `Some` and the
     /// extension is `.m4s`, writes the init as the first bytes. The
     /// previous period file (if any) is left as-is on disk.
     fn start_period(&mut self, init_bytes: Option<&[u8]>) -> Result<(), String> {
-        // Close the current file if open.
-        if let Some(file) = self.current_file.take() {
-            drop(file);
-        }
-
-        // If we already have a period, record it before advancing.
-        if !self.index.is_empty() || self.write_offset > 0 {
-            let file_bytes = self.write_offset;
-            self.periods.push(PeriodRecord {
-                num: self.period,
-                file_bytes,
-            });
-            self.total_bytes += file_bytes;
-            self.period += 1;
-        }
-
-        let path = self.period_path();
+        let rolls = !self.index.is_empty() || self.write_offset > 0;
+        let next_period = if rolls { self.period + 1 } else { self.period };
+        let path = self.period_path_for(next_period);
         fs::create_dir_all(&self.archive_dir).map_err(|e| format!("creating archive dir: {e}"))?;
 
         let mut file = OpenOptions::new()
@@ -1026,28 +1045,48 @@ impl DvrRecorder {
             .open(&path)
             .map_err(|e| format!("opening period file {}: {e}", path.display()))?;
 
-        self.write_offset = file.metadata().map(|m| m.len()).unwrap_or(0);
-
-        self.init_len = 0;
+        let mut write_offset = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut init_len = 0;
+        let mut written_init = None;
         if let Some(init) = init_bytes
             && self.ext == ".m4s"
             && !init.is_empty()
-            && self.write_offset == 0
+            && write_offset == 0
         {
-            file.write_all(init)
-                .map_err(|e| format!("writing init: {e}"))?;
-            file.flush().map_err(|e| format!("flushing init: {e}"))?;
-            self.init_len = u64::try_from(init.len()).unwrap_or(u64::MAX);
-            self.write_offset = self.init_len;
-            self.last_init = Some(init.to_vec());
+            if let Err(e) = file.write_all(init).and_then(|()| file.flush()) {
+                drop(file);
+                let _ = fs::remove_file(&path);
+                return Err(format!("writing init: {e}"));
+            }
+            init_len = u64::try_from(init.len()).unwrap_or(u64::MAX);
+            write_offset = init_len;
+            written_init = Some(init.to_vec());
             tracing::debug!(
                 route = %self.route_name,
-                period = self.period,
+                period = next_period,
                 len = init.len(),
                 "wrote fMP4 init at period file head"
             );
         }
 
+        // Everything above can fail; nothing below can, so a failed roll
+        // leaves the recorder exactly as it was and the next attempt starts
+        // from the same period number.
+        drop(self.current_file.take());
+        if rolls {
+            let file_bytes = self.write_offset;
+            self.periods.push(PeriodRecord {
+                num: self.period,
+                file_bytes,
+            });
+            self.total_bytes += file_bytes;
+            self.period = next_period;
+        }
+        self.write_offset = write_offset;
+        self.init_len = init_len;
+        if written_init.is_some() {
+            self.last_init = written_init;
+        }
         self.current_file = Some(file);
         self.period_opened_at = Some(SystemTime::now());
         self.index.clear();
@@ -1406,8 +1445,12 @@ impl DvrRecorder {
 
     /// Period container file path: `pN.<ext>`.
     fn period_path(&self) -> PathBuf {
+        self.period_path_for(self.period)
+    }
+
+    fn period_path_for(&self, period: u32) -> PathBuf {
         self.archive_dir
-            .join(format!("p{}.{}", self.period, &self.ext[1..]))
+            .join(format!("p{period}.{}", &self.ext[1..]))
     }
 
     /// Period index sidecar path: `pN.idx`.
@@ -1493,27 +1536,23 @@ impl DvrRecorder {
         // racing catch-up request). Removing the index first makes that
         // window impossible — the period disappears from the archive
         // atomically (issue #1083, item 3).
-        if let Err(e) = fs::remove_file(&idx_path)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(
-                route = %self.route_name,
-                period = num,
-                path = %idx_path.display(),
-                error = %e,
-                "failed to remove evicted period index"
-            );
-        }
-        if let Err(e) = fs::remove_file(&file_path)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(
-                route = %self.route_name,
-                period = num,
-                path = %file_path.display(),
-                error = %e,
-                "failed to remove evicted period file"
-            );
+        let sidecar_path = self.archive_dir.join(format!("p{num}.event.json"));
+        for (path, what) in [
+            (&idx_path, "index"),
+            (&file_path, "file"),
+            (&sidecar_path, "programme sidecar"),
+        ] {
+            if let Err(e) = fs::remove_file(path)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(
+                    route = %self.route_name,
+                    period = num,
+                    path = %path.display(),
+                    error = %e,
+                    "failed to remove evicted period {what}"
+                );
+            }
         }
 
         self.total_bytes = self.total_bytes.saturating_sub(file_bytes);
@@ -3462,5 +3501,88 @@ mod tests {
         );
 
         cleanup_temp(&tmp);
+    }
+
+    #[test]
+    fn a_failed_period_roll_leaves_the_next_period_starting_with_the_init() {
+        let root = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("writer");
+        let mut rec =
+            DvrRecorder::new("r".into(), dvr_config(&root, 10), ".m4s", &trunk).expect("rec");
+        rec.poll_and_persist(Some(b"INIT")).expect("open p0");
+        writer
+            .publish_segment(dummy_segment(1, 1))
+            .expect("publish");
+        rec.poll_and_persist(Some(b"INIT")).expect("persist 1");
+
+        let dir = root.join("r");
+        fs::create_dir(dir.join("p1.m4s")).expect("blocker");
+        rec.period_opened_at = Some(SystemTime::now() - Duration::from_secs(7200));
+        assert!(
+            rec.poll_and_persist(Some(b"INIT")).is_err(),
+            "roll must fail"
+        );
+        fs::remove_dir(dir.join("p1.m4s")).expect("unblock");
+
+        writer
+            .publish_segment(dummy_segment(2, 2))
+            .expect("publish");
+        rec.poll_and_persist(Some(b"INIT")).expect("persist 2");
+
+        let holder = dir.join("p1.m4s");
+        let bytes = fs::read(&holder).expect("the retried roll opened p1");
+        assert!(
+            bytes.starts_with(b"INIT") && bytes.contains(&2u8),
+            "{} must hold segment 2 behind the init, found {:?}",
+            holder.display(),
+            &bytes[..bytes.len().min(8)]
+        );
+        assert!(
+            !dir.join("p2.m4s").exists(),
+            "the failed roll must not consume a period number"
+        );
+        cleanup_temp(&root);
+    }
+
+    #[test]
+    fn retention_removes_the_programme_sidecar_with_its_period() {
+        let root = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("writer");
+        let mut rec =
+            DvrRecorder::new("r".into(), dvr_config(&root, 1), ".m4s", &trunk).expect("rec");
+        rec.current_programme = Some(EitProgramme {
+            event_id: 7,
+            service_id: 1,
+            title: Some("t".into()),
+            start: None,
+            duration_secs: None,
+        });
+        rec.poll_and_persist(Some(b"INIT_0")).expect("p0");
+        for (n, init) in [(1u32, b"INIT_1"), (2, b"INIT_2"), (3, b"INIT_3")] {
+            writer
+                .publish_segment(dummy_segment(n, 1))
+                .expect("publish");
+            rec.poll_and_persist(Some(init)).expect("roll");
+        }
+        let dir = root.join("r");
+        let names_ending = |suffix: &str| -> Vec<String> {
+            let mut names: Vec<String> = fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(suffix))
+                .collect();
+            names.sort();
+            names
+        };
+        let kept = names_ending(".idx");
+        let sidecars = names_ending(".event.json");
+        assert!(
+            sidecars.len() <= kept.len(),
+            "retention keeps {kept:?} but .event.json sidecars remain for {sidecars:?}"
+        );
+        cleanup_temp(&root);
     }
 }

@@ -108,9 +108,34 @@ pub(crate) struct PendingFetch<K> {
 /// The single fetch/retry/wait engine for the pull sources.
 pub(crate) struct PullScheduler<K: Send + 'static> {
     inflight: JoinSet<(K, FetchResult)>,
-    backlog: VecDeque<PendingFetch<K>>,
-    retries: VecDeque<PendingFetch<K>>,
+    backlog: VecDeque<QueuedFetch<K>>,
+    retries: VecDeque<QueuedFetch<K>>,
     max_inflight: usize,
+}
+
+/// A fetch waiting for a slot, with the instant it first may run. It takes an
+/// in-flight slot only once due, so a fetch sleeping out a backoff or a pacing
+/// floor never keeps a ready fetch from starting.
+struct QueuedFetch<K> {
+    due: tokio::time::Instant,
+    fut: FetchFuture<K>,
+}
+
+impl<K> QueuedFetch<K> {
+    fn after(fetch: PendingFetch<K>) -> Self {
+        Self {
+            due: tokio::time::Instant::now() + fetch.delay,
+            fut: fetch.fut,
+        }
+    }
+}
+
+fn pop_due<K>(
+    queue: &mut VecDeque<QueuedFetch<K>>,
+    now: tokio::time::Instant,
+) -> Option<QueuedFetch<K>> {
+    let index = queue.iter().position(|queued| queued.due <= now)?;
+    queue.remove(index)
 }
 
 impl<K: Send + 'static> PullScheduler<K> {
@@ -126,28 +151,25 @@ impl<K: Send + 'static> PullScheduler<K> {
 
     /// Queue a fetch behind everything already backlogged.
     pub fn push(&mut self, fetch: PendingFetch<K>) {
-        self.backlog.push_back(fetch);
+        self.backlog.push_back(QueuedFetch::after(fetch));
     }
 
     /// Queue a *paced* fetch: it is dispatched no earlier than `not_before`
     /// (a pacing floor — see the module doc's `WaitMs` section). The floor is
     /// resolved against the current instant here, so later pump/backlog
     /// churn cannot shorten or lengthen it.
-    pub fn push_at(
-        &mut self,
-        mut fetch: PendingFetch<K>,
-        not_before: Option<tokio::time::Instant>,
-    ) {
+    pub fn push_at(&mut self, fetch: PendingFetch<K>, not_before: Option<tokio::time::Instant>) {
+        let mut queued = QueuedFetch::after(fetch);
         if let Some(not_before) = not_before {
-            fetch.delay = not_before.saturating_duration_since(tokio::time::Instant::now());
+            queued.due = not_before.max(tokio::time::Instant::now());
         }
-        self.backlog.push_back(fetch);
+        self.backlog.push_back(queued);
     }
 
     /// Queue a due retry — a retry takes a free slot before the backlog, so
     /// an eviction race is repaired before new work is started.
     pub fn push_retry(&mut self, fetch: PendingFetch<K>) {
-        self.retries.push_back(fetch);
+        self.retries.push_back(QueuedFetch::after(fetch));
     }
 
     /// How many fetches are running (used by the cap test).
@@ -161,23 +183,27 @@ impl<K: Send + 'static> PullScheduler<K> {
         self.inflight.is_empty() && self.backlog.is_empty() && self.retries.is_empty()
     }
 
-    /// Fill free slots, retries first, applying each fetch's own delay.
+    /// Fill free slots with due fetches, retries first. A fetch that is not
+    /// due yet stays queued and takes no slot.
     pub fn pump(&mut self) {
+        let now = tokio::time::Instant::now();
         while self.inflight.len() < self.max_inflight {
-            let Some(PendingFetch { delay, fut }) = self
-                .retries
-                .pop_front()
-                .or_else(|| self.backlog.pop_front())
+            let Some(QueuedFetch { fut, .. }) =
+                pop_due(&mut self.retries, now).or_else(|| pop_due(&mut self.backlog, now))
             else {
                 break;
             };
-            self.inflight.spawn(async move {
-                if !delay.is_zero() {
-                    tokio::time::sleep(delay).await;
-                }
-                fut.await
-            });
+            self.inflight.spawn(fut);
         }
+    }
+
+    /// The earliest instant a queued fetch becomes due.
+    fn next_due(&self) -> Option<tokio::time::Instant> {
+        self.retries
+            .iter()
+            .chain(self.backlog.iter())
+            .map(|queued| queued.due)
+            .min()
     }
 
     /// Join one fetch, bounded by `wait_hint` when the session gave one
@@ -192,25 +218,52 @@ impl<K: Send + 'static> PullScheduler<K> {
         wait_hint: Option<Duration>,
         idle_park: Duration,
     ) -> Option<FetchOutcome<K>> {
-        if self.inflight.is_empty() {
-            tokio::time::sleep(wait_hint.unwrap_or(idle_park)).await;
-            return None;
-        }
-        let joined = match wait_hint {
-            Some(hint) => {
-                tokio::select! {
-                    joined = self.inflight.join_next() => joined,
-                    () = tokio::time::sleep(hint) => return None,
+        let deadline = wait_hint.map(|hint| tokio::time::Instant::now() + hint);
+        loop {
+            self.pump();
+            let free_slot = self.inflight.len() < self.max_inflight;
+            let due = if free_slot { self.next_due() } else { None };
+            if self.inflight.is_empty() {
+                match (due, deadline) {
+                    (None, _) => {
+                        tokio::time::sleep(wait_hint.unwrap_or(idle_park)).await;
+                        return None;
+                    }
+                    (Some(due), Some(deadline)) if deadline < due => {
+                        tokio::time::sleep_until(deadline).await;
+                        return None;
+                    }
+                    (Some(due), _) => {
+                        tokio::time::sleep_until(due).await;
+                        continue;
+                    }
                 }
             }
-            None => self.inflight.join_next().await,
-        };
-        match joined {
-            Some(Ok((key, FetchResult::Ready(bytes)))) => Some(FetchOutcome::Ready(key, bytes)),
-            Some(Ok((key, FetchResult::Failed(e)))) => Some(FetchOutcome::Failed(key, e)),
-            Some(Ok((key, FetchResult::NotReady(e)))) => Some(FetchOutcome::NotReady(key, e)),
-            Some(Err(e)) => Some(FetchOutcome::TaskPanic(e.to_string())),
-            None => None,
+            let wake = match (due, deadline) {
+                (Some(due), Some(deadline)) => Some(due.min(deadline)),
+                (due, deadline) => due.or(deadline),
+            };
+            let joined = match wake {
+                Some(wake) => {
+                    tokio::select! {
+                        joined = self.inflight.join_next() => joined,
+                        () = tokio::time::sleep_until(wake) => {
+                            if deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+                                return None;
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => self.inflight.join_next().await,
+            };
+            return match joined {
+                Some(Ok((key, FetchResult::Ready(bytes)))) => Some(FetchOutcome::Ready(key, bytes)),
+                Some(Ok((key, FetchResult::Failed(e)))) => Some(FetchOutcome::Failed(key, e)),
+                Some(Ok((key, FetchResult::NotReady(e)))) => Some(FetchOutcome::NotReady(key, e)),
+                Some(Err(e)) => Some(FetchOutcome::TaskPanic(e.to_string())),
+                None => None,
+            };
         }
     }
 }
@@ -338,6 +391,37 @@ mod tests {
         }
         s.pump();
         assert_eq!(s.inflight_len(), 2, "pump must stop at the cap");
+    }
+
+    /// A fetch sleeping out its backoff must not hold an in-flight slot: with
+    /// one slot, a ready fetch queued behind a delayed retry starts at once.
+    #[tokio::test(start_paused = true)]
+    async fn a_delayed_fetch_does_not_hold_a_slot_while_it_waits() {
+        let t0 = Instant::now();
+        let mut s = PullScheduler::<u32>::new(1);
+        s.push_retry(PendingFetch {
+            delay: Duration::from_secs(10),
+            fut: Box::pin(async { (1u32, FetchResult::Ready(b"retry".to_vec())) }),
+        });
+        s.push(fetch_after(2, Duration::ZERO, b"ready"));
+        s.pump();
+        assert_eq!(s.inflight_len(), 1);
+        let first = s.next(None, Duration::from_millis(5)).await;
+        assert!(
+            matches!(first, Some(FetchOutcome::Ready(2, _))),
+            "{first:?}"
+        );
+        assert_eq!(
+            t0.elapsed(),
+            Duration::ZERO,
+            "the ready fetch waited behind a sleeping retry"
+        );
+        let second = s.next(None, Duration::from_millis(5)).await;
+        assert!(
+            matches!(second, Some(FetchOutcome::Ready(1, _))),
+            "{second:?}"
+        );
+        assert_eq!(t0.elapsed(), Duration::from_secs(10));
     }
 
     /// A retry's own delay is applied before its fetch runs.

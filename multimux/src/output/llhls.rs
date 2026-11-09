@@ -375,6 +375,171 @@ mod tests {
     use std::time::Duration;
     use transmux::ll_hls::{PartInfo, SegmentInfo};
 
+    async fn playlist_text(app: &axum::Router) -> String {
+        let (status, body) = crate::testutil::get_bytes(app, "/cam/media.m3u8").await;
+        assert_eq!(status, StatusCode::OK);
+        String::from_utf8(body).expect("utf8")
+    }
+
+    fn segment_number(uri: &str) -> u64 {
+        let stem = uri.strip_suffix(".m4s").expect("segment uri");
+        stem.rsplit('-')
+            .next()
+            .expect("number")
+            .parse()
+            .expect("number")
+    }
+
+    async fn every_listed_resource_is_served(
+        app: &axum::Router,
+        playlist: &broadcast_hls::MediaPlaylist,
+    ) {
+        let mut uris: Vec<String> = Vec::new();
+        for segment in &playlist.segments {
+            uris.push(segment.uri.clone());
+            uris.extend(segment.parts.iter().map(|p| p.uri.clone()));
+            if let Some(map) = &segment.map {
+                uris.push(map.uri.clone());
+            }
+        }
+        for uri in uris {
+            let (status, _) = crate::testutil::get_bytes(app, &format!("/cam/{uri}")).await;
+            assert_eq!(status, StatusCode::OK, "{uri} is listed but not served");
+        }
+    }
+
+    async fn validator_findings(
+        app: &axum::Router,
+        tag: &str,
+    ) -> Vec<test_fixtures::process::msv::Finding> {
+        let scratch =
+            std::env::temp_dir().join(format!("llhls-reconnect-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch");
+        let text = playlist_text(app).await;
+        std::fs::write(scratch.join("media.m3u8"), &text).expect("playlist");
+        for line in text.lines() {
+            let uri = line
+                .split_once("URI=\"")
+                .and_then(|(_, rest)| rest.split('"').next())
+                .or_else(|| (!line.starts_with('#') && !line.is_empty()).then_some(line));
+            if let Some(uri) = uri {
+                let (status, body) = crate::testutil::get_bytes(app, &format!("/cam/{uri}")).await;
+                if status == StatusCode::OK {
+                    std::fs::write(scratch.join(uri), body).expect("resource");
+                }
+            }
+        }
+        let report = test_fixtures::process::msv::run_report(
+            &scratch,
+            "media.m3u8",
+            Duration::from_secs(60),
+        );
+        let findings = test_fixtures::process::msv::findings(&report);
+        for f in &findings {
+            eprintln!("VALIDATOR[{tag}]: {} level={} {}", f.0, f.1, f.2);
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
+        findings
+    }
+
+    /// Apple's `mediastreamvalidator` raises no finding at its MUST level for
+    /// the playlist after a reconnect that it did not already raise before.
+    /// Skips loudly where the tool is not on `PATH`.
+    #[tokio::test]
+    async fn mediastreamvalidator_accepts_the_playlist_across_a_source_reconnect() {
+        if !test_fixtures::process::msv::available() {
+            eprintln!(
+                "SKIP mediastreamvalidator_accepts_the_playlist_across_a_source_reconnect: `mediastreamvalidator` not on PATH"
+            );
+            return;
+        }
+        let route = std::sync::Arc::new(RouteHandle::new(1.0, 500, 8));
+        let app = crate::testutil::app_with(&route, std::sync::Arc::new(LlHlsOutput::default()));
+        let first = crate::testutil::ingest_run(&route, 8).await;
+        let before = validator_findings(&app, "before").await;
+        crate::source::release_route(&first, &route);
+        let _second = crate::testutil::ingest_run(&route, 8).await;
+        let after = validator_findings(&app, "after").await;
+        let new_must: Vec<_> = after
+            .iter()
+            .filter(|f| f.1 <= 1 && !before.iter().any(|b| b.2 == f.2))
+            .collect();
+        assert!(new_must.is_empty(), "new MUST-level findings: {new_must:?}");
+    }
+
+    /// A source reconnect keeps the media playlist valid (RFC 8216bis section
+    /// 6.2.1/6.2.2 in `private/specs-verified/hls/ietf/`): the Media Sequence
+    /// Number only grows and numbers the segments implicitly, the first
+    /// segment of the new run carries `EXT-X-DISCONTINUITY`, the
+    /// Discontinuity Sequence does not decrease, and everything listed is
+    /// served.
+    #[tokio::test]
+    async fn the_media_playlist_stays_valid_across_a_source_reconnect() {
+        let route = std::sync::Arc::new(RouteHandle::new(1.0, 500, 8));
+        let app = crate::testutil::app_with(&route, std::sync::Arc::new(LlHlsOutput::default()));
+        let first = crate::testutil::ingest_run(&route, 8).await;
+        let before_text = playlist_text(&app).await;
+        let before = broadcast_hls::MediaPlaylist::parse(&before_text).expect("parses");
+
+        crate::source::release_route(&first, &route);
+        let _second = crate::testutil::ingest_run(&route, 8).await;
+        let after_text = playlist_text(&app).await;
+        let after = broadcast_hls::MediaPlaylist::parse(&after_text).expect("parses");
+
+        for (name, text) in [("before", &before_text), ("after", &after_text)] {
+            let mut report = media_doctor::Report::new();
+            media_doctor::check_hls_playlist(text, &mut report);
+            assert!(
+                report.findings().is_empty(),
+                "{name}: {:?}\n{text}",
+                report.findings()
+            );
+        }
+
+        let seen = before
+            .segments
+            .iter()
+            .map(|s| segment_number(&s.uri))
+            .max()
+            .expect("segments");
+        for (playlist, label) in [(&before, "before"), (&after, "after")] {
+            for (index, segment) in playlist.segments.iter().enumerate() {
+                assert_eq!(
+                    segment_number(&segment.uri),
+                    playlist.media_sequence + index as u64,
+                    "{label}: segment {index} is not numbered MEDIA-SEQUENCE + index"
+                );
+            }
+        }
+        assert!(
+            after.media_sequence > seen,
+            "the Media Sequence Number must not go back to a number a client already saw"
+        );
+        assert!(
+            after.segments[0].discontinuous,
+            "the new run opens with a discontinuity"
+        );
+        assert!(
+            after.discontinuity_sequence >= before.discontinuity_sequence,
+            "DISCONTINUITY-SEQUENCE decreased"
+        );
+        assert!(after.segments[1..].iter().all(|s| !s.discontinuous));
+        every_listed_resource_is_served(&app, &after).await;
+
+        crate::source::release_route(&_second, &route);
+        let _third = crate::testutil::ingest_run(&route, 8).await;
+        let third =
+            broadcast_hls::MediaPlaylist::parse(&playlist_text(&app).await).expect("parses");
+        assert!(third.media_sequence > after.media_sequence + after.segments.len() as u64 - 1);
+        assert!(third.segments[0].discontinuous);
+        assert!(
+            third.discontinuity_sequence > after.discontinuity_sequence,
+            "the first reconnect's discontinuity rolled off: DISCONTINUITY-SEQUENCE must count it"
+        );
+        every_listed_resource_is_served(&app, &third).await;
+    }
+
     fn part(seq: u32, idx: u32) -> PartInfo {
         PartInfo {
             bytes: vec![0x10 + idx as u8; 4],

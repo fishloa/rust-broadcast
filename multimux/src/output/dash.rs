@@ -173,6 +173,17 @@ impl ServedEgress for MpdOrigin {
 /// §5.3.9.5.3 requires (issue #1058).
 pub(crate) const FIRST_SEGMENT_NUMBER: u64 = 1;
 
+/// `SegmentTemplate@startNumber`: the public number of the first segment the
+/// route ever served, unchanged by a source reconnect. The numbers keep
+/// counting through the reconnect (the resource route, the HLS playlist and
+/// the DVR archive share them), `availabilityStartTime` and the Period are
+/// unchanged, and only the segments still in the window are advertised.
+pub(crate) fn start_number(route: &RouteHandle) -> u64 {
+    route
+        .epoch(crate::route::SPTS_PROGRAM_ID)
+        .map_or(FIRST_SEGMENT_NUMBER, |epoch| epoch.first_number)
+}
+
 /// Select the first of `specs` that produces a derivable RFC 6381 codec
 /// string, preferring a video-shaped codec over any other kind (audio,
 /// or a future codec this classifier doesn't recognise) — see this
@@ -235,7 +246,7 @@ pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> 
     // live edge from `availabilityStartTime` + `startNumber`. A startNumber
     // that slid with the window while AST stayed fixed made it request
     // segments that do not exist (404) once the window slid (issue #1058).
-    let start_number = FIRST_SEGMENT_NUMBER;
+    let start_number = start_number(route);
     // `@duration` is the nominal target, constant across MPD refreshes (the
     // window's own first-segment duration changes as it slides, which would
     // change the client's whole number<->time mapping).
@@ -419,6 +430,15 @@ mod tests {
     use super::*;
     use crate::testutil::video_spec;
     use transmux::CodecConfig;
+
+    #[tokio::test]
+    async fn dash_continues_across_a_source_reconnect() {
+        crate::testutil::assert_dash_continues_across_a_reconnect(
+            Arc::new(DashOutput),
+            "/cam/manifest.mpd",
+        )
+        .await;
+    }
 
     /// Howard Hinnant's `civil_from_days` — the PRE-jiff algorithm, retained
     /// only to prove the old spelling and `jiff` agree (SP5). Not used by any

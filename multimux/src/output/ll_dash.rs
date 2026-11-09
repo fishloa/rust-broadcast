@@ -159,7 +159,7 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<
     // fixed `availabilityStartTime` a sliding startNumber makes the client
     // derive a live edge of segments that do not exist -- issue #1058).
     let window = route.window_segments(crate::route::SPTS_PROGRAM_ID);
-    let start_number = crate::output::dash::FIRST_SEGMENT_NUMBER;
+    let start_number = crate::output::dash::start_number(route);
 
     let target_duration_secs = route.target_duration_secs();
     let nominal_duration_ticks =
@@ -234,6 +234,15 @@ mod tests {
     use super::*;
     use crate::output::dash::DASH_MANIFEST_CONTENT_TYPE;
     use crate::testutil::video_spec;
+
+    #[tokio::test]
+    async fn ll_dash_continues_across_a_source_reconnect() {
+        crate::testutil::assert_dash_continues_across_a_reconnect(
+            Arc::new(LlDashOutput),
+            "/cam/manifest-ll.mpd",
+        )
+        .await;
+    }
     use axum::http::{StatusCode, header};
 
     use transmux::ll_hls::PartInfo;

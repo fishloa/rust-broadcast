@@ -827,6 +827,20 @@ fn audio_discontinuity_trigger(old: &CodecConfig, new: &CodecConfig) -> bool {
 }
 
 impl StreamingTsHlsSegmenter {
+    /// Start every track's decode clock at `start_ns` nanoseconds instead of
+    /// zero, so a run that continues an earlier one (a source reconnect)
+    /// carries on from where it ended. Call before the first
+    /// [`push`](Self::push); a no-op once any track holds samples.
+    pub fn set_start_time_ns(&mut self, start_ns: u64) {
+        if self.tracks.iter().any(|t| !t.pending.is_empty()) {
+            return;
+        }
+        for t in &mut self.tracks {
+            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale) / 1_000_000_000;
+            t.base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
+        }
+    }
+
     /// Create a streaming segmenter for `tracks`, cutting segments roughly
     /// every `target_secs` seconds (clamped to at least 1) on the anchor
     /// track's keyframes, and keeping at most `window` segments in the

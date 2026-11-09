@@ -59,6 +59,7 @@ use crate::route::{MAX_SUBTITLE_RENDITIONS, RouteHandle, SubtitleServing, subtit
 
 const PTS_HZ: i128 = 90_000;
 const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
+const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /// `MPEGTS` of every segment's `X-TIMESTAMP-MAP`: the 90 kHz output time the
 /// leader's fMP4 timeline has at the timeline origin, which is its `tfdt` 0.
@@ -330,6 +331,7 @@ struct Core<D: CueDecoder> {
     next_msn: Option<u32>,
     closed: Vec<Cue>,
     edge: i64,
+    mpegts_at_origin: u64,
 }
 
 fn rescale_90k(value: i64, timescale: u32) -> i64 {
@@ -350,6 +352,7 @@ impl<D: CueDecoder> Core<D> {
             next_msn: None,
             closed: Vec::new(),
             edge: 0,
+            mpegts_at_origin: MPEGTS_AT_ORIGIN,
         }
     }
 
@@ -507,8 +510,10 @@ impl<D: CueDecoder> Core<D> {
             });
         }
         cues.sort_by_key(|c| c.start.0);
-        let mut body =
-            format!("WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{MPEGTS_AT_ORIGIN}\n\n");
+        let mut body = format!(
+            "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
+            self.mpegts_at_origin % clock33::WRAP_33BIT
+        );
         for cue in &cues {
             body.push_str(&cue_block(cue));
             body.push('\n');
@@ -536,6 +541,7 @@ pub(super) struct SubtitleFollower {
     pending: VecDeque<PendingPublish>,
     pending_since: Option<Instant>,
     next_timeline_ns: u64,
+    first_discontinuous: bool,
 }
 
 impl SubtitleFollower {
@@ -549,7 +555,15 @@ impl SubtitleFollower {
             pending: VecDeque::new(),
             pending_since: None,
             next_timeline_ns: 0,
+            first_discontinuous: false,
         })
+    }
+
+    pub(super) fn set_start_time_ns(&mut self, start_ns: u64) {
+        self.next_timeline_ns = start_ns;
+        self.first_discontinuous = true;
+        self.core.mpegts_at_origin =
+            u64::try_from(i128::from(start_ns) * PTS_HZ / i128::from(NANOS_PER_SEC)).unwrap_or(0);
     }
 
     pub(super) fn push(&mut self, sample: &Sample) {
@@ -595,7 +609,7 @@ impl SubtitleFollower {
                             Duration::from_secs_f64(segment.duration_secs),
                             Timestamp::from_nanos(start_ns),
                             SegmentMeta {
-                                discontinuous: false,
+                                discontinuous: std::mem::take(&mut self.first_discontinuous),
                             },
                         )));
                 }
@@ -734,6 +748,17 @@ mod tests {
                 .contains("00:00:00.111 --> 00:00:01.333\nhello"),
             "third part carries the real end:\n{}",
             parts(&ready)[0].body
+        );
+    }
+
+    #[test]
+    fn a_reconnected_run_maps_local_zero_to_its_start_on_the_media_timeline() {
+        let mut core = core();
+        core.mpegts_at_origin = 8 * 90_000;
+        let ready = core.on_parts(&[part(9, 0, 0)], &LeaderDurations::new());
+        assert_eq!(
+            parts(&ready)[0].body,
+            "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:720000\n\n"
         );
     }
 

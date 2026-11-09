@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `LlHlsSegmenter::set_start_time_ns` and `StreamingTsHlsSegmenter::set_start_time_ns` start the decode clock (`tfdt`, TS PES times) at a given time instead of zero, so a segmenter for a reconnected source continues the previous run's timeline.
 
 ### Fixed
 - `StreamingTsDemux::finish` demuxes the aligned packets at the end of input that `TsResync` could not yet confirm (up to four after a corrupt sync byte) instead of dropping them.

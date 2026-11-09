@@ -326,6 +326,37 @@ pub struct DashWindowSegment {
     /// follow-up): the window-relative cumulative sum changes on every slide,
     /// this does not.
     pub timeline_position_ns: u64,
+    /// The number the shared resource route and the HLS playlist show this
+    /// segment under: the `Trunk`'s own number plus the offset the
+    /// route carries over from the program a reconnect replaced, so it keeps
+    /// counting up across a source reconnect.
+    pub public_seq: u64,
+}
+
+/// What a replacement program continues from its predecessor on the same
+/// route: the public segment numbering ([`HlsOrigin`]'s media sequence
+/// offset, the DVR archive's index, DASH `startNumber`, Smooth fragment
+/// names) and the program timeline ([`DashState`]'s window and the DVR's
+/// `start_pts_ns`), which a fresh `Trunk` would otherwise restart from
+/// segment 1 and position 0. One value per published program, computed once
+/// in [`RouteHandle::publish_program`] so no output keeps its own copy.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProgramEpoch {
+    pub(crate) seq_offset: u64,
+    /// Where this program's media timeline starts: the time the DASH
+    /// manifest derives for its first number, `(first public number -
+    /// startNumber)` nominal segments, so the segment bytes, the manifests
+    /// and the DVR agree. `0` for the first program.
+    pub(crate) media_start_ns: u64,
+    /// The previous origin's Discontinuity Sequence Number, so
+    /// `EXT-X-DISCONTINUITY-SEQUENCE` never decreases across a reconnect.
+    pub(crate) discontinuity_sequence: u64,
+    /// The first public number the route ever served: DASH `startNumber`.
+    pub(crate) first_number: u64,
+    /// The route's first presentation start: DASH `availabilityStartTime`,
+    /// which an update of a dynamic MPD must not change
+    /// (`private/specs-verified/dash/etsi-ts-103-285/ch04-dash-constraints-http-sync.md` 4.8.3).
+    pub(crate) presentation_origin: SystemTime,
 }
 
 /// The small `Trunk`-drained state DASH/LL-DASH rendering needs beyond any
@@ -340,24 +371,25 @@ pub(crate) struct DashState {
     window: Mutex<VecDeque<DashWindowSegment>>,
     capacity: usize,
     track_specs: Mutex<Vec<TrackSpec>>,
-    /// Wall-clock instant this program's presentation began: when its `Trunk`
-    /// (timeline position `0`, segment number `1`) was minted. The source of
+    /// Wall-clock instant the route's presentation began: when its first
+    /// `Trunk` was minted, carried unchanged across a reconnect. The source of
     /// `MPD@availabilityStartTime` (ISO/IEC 23009-1 §5.3.1.2 Table 3: "the
     /// anchor for the MPD in wall-clock time", the time from which every
     /// segment's availability is measured, §5.3.9.5.3) — NOT the route's
-    /// construction time, which precedes ingest and does not move when a
-    /// reconnect mints a fresh `Trunk` that restarts at segment 1 (#1187).
+    /// construction time, which precedes ingest (#1187).
     presentation_origin: SystemTime,
+    epoch: ProgramEpoch,
 }
 
 impl DashState {
-    fn new(trunk: &Arc<Trunk>, window_segments: NonZeroUsize) -> Self {
+    fn new(trunk: &Arc<Trunk>, window_segments: NonZeroUsize, epoch: ProgramEpoch) -> Self {
         DashState {
+            epoch,
             cursor: Mutex::new(trunk.subscribe_segments()),
             window: Mutex::new(VecDeque::new()),
             capacity: window_segments.get(),
             track_specs: Mutex::new(Vec::new()),
-            presentation_origin: SystemTime::now(),
+            presentation_origin: epoch.presentation_origin,
         }
     }
 
@@ -384,6 +416,10 @@ impl DashState {
                     segment_seq: entry.sequence_number,
                     duration_secs: entry.duration.as_secs_f64(),
                     timeline_position_ns: entry.timeline_position.as_nanos(),
+                    public_seq: self
+                        .epoch
+                        .seq_offset
+                        .saturating_add(u64::from(entry.sequence_number.value())),
                 });
             }
         }
@@ -436,6 +472,18 @@ pub(crate) struct ProgramServing {
     /// does not have DVR enabled. Owns a pinning `SegmentCursor`, drained
     /// by [`Self::poll_dvr`].
     dvr: Mutex<Option<DvrRecorder>>,
+    /// Whether `dvr` still holds a recorder; cleared when a persist panic
+    /// drops it, so [`Self::set_init`] stops logging init changes nobody
+    /// will archive.
+    dvr_recording: std::sync::atomic::AtomicBool,
+    /// Every init change since the recorder last archived under it, with the
+    /// segment it starts at, so the recorder archives each pending segment
+    /// under the init it was closed under.
+    init_log: Mutex<Vec<crate::dvr::InitGeneration>>,
+    /// The program this one replaced on a reconnect, until the first persist
+    /// of this program's recorder has flushed the segments it had closed but
+    /// not yet archived (see [`Self::flush_predecessor`]).
+    predecessor: Mutex<Option<Arc<ProgramServing>>>,
     /// Lazily-acquired write handle for [`RouteHandle::add_segment`]/
     /// [`RouteHandle::add_part`] (this crate's own direct-`Trunk`-write test
     /// helpers, standing in for a real `crate::source::segment::ProgramSegmenter`).
@@ -474,6 +522,7 @@ struct SiblingParams {
     part_target_ms: u32,
     window_segments: NonZeroUsize,
     media_sequence_offset: u64,
+    discontinuity_sequence: u64,
     program_date_time: crate::config::ProgramDateTimeSource,
     hold_cold_playlist: bool,
 }
@@ -552,7 +601,7 @@ impl ProgramServing {
         container: Container,
         dvr_config: Option<crate::dvr::DvrConfig>,
         route_name: &str,
-        media_sequence_offset: u64,
+        epoch: ProgramEpoch,
         program_date_time: crate::config::ProgramDateTimeSource,
         declared_bandwidth_bps: Option<u64>,
         audio_renditions: Vec<hls_runtime::server::AudioRenditionDecl>,
@@ -560,11 +609,13 @@ impl ProgramServing {
         split_audio: bool,
         hold_cold_playlist: bool,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
+        let media_sequence_offset = epoch.seq_offset;
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
             .window_segments(window_segments)
             .container(container)
             .media_sequence_offset(media_sequence_offset)
+            .discontinuity_sequence(epoch.discontinuity_sequence)
             .hold_cold_playlist(hold_cold_playlist);
         if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
             builder = builder
@@ -606,6 +657,7 @@ impl ProgramServing {
                 .window_segments(window_segments)
                 .container(Container::Fmp4)
                 .media_sequence_offset(media_sequence_offset)
+                .discontinuity_sequence(epoch.discontinuity_sequence)
                 .hold_cold_playlist(hold_cold_playlist);
             if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
                 ab = ab.program_date_time_arrival(Arc::new(|| {
@@ -638,7 +690,7 @@ impl ProgramServing {
             .collect();
         wire_rendition_siblings(&ll_hls, &audio_entries);
 
-        let dash = Arc::new(DashState::new(&trunk, window_segments));
+        let dash = Arc::new(DashState::new(&trunk, window_segments, epoch));
 
         let ext = match container {
             Container::Fmp4 => ".m4s",
@@ -674,9 +726,12 @@ impl ProgramServing {
             route_name: route_name.to_string(),
             #[cfg(test)]
             panic_on_persist: std::sync::atomic::AtomicBool::new(false),
+            dvr_recording: std::sync::atomic::AtomicBool::new(dvr.is_some()),
             dvr: Mutex::new(dvr),
+            init_log: Mutex::new(Vec::new()),
+            predecessor: Mutex::new(None),
             segment_writer: Mutex::new(None),
-            next_timeline_ns: AtomicU64::new(0),
+            next_timeline_ns: AtomicU64::new(epoch.media_start_ns),
             audio_rendition_servings: audio_servings,
             subtitle_servings: Mutex::new(Vec::new()),
             sibling_params: SiblingParams {
@@ -684,6 +739,7 @@ impl ProgramServing {
                 part_target_ms,
                 window_segments,
                 media_sequence_offset,
+                discontinuity_sequence: epoch.discontinuity_sequence,
                 program_date_time,
                 hold_cold_playlist,
             },
@@ -702,7 +758,44 @@ impl ProgramServing {
     }
 
     fn set_init(&self, bytes: impl Into<Bytes>) {
+        let bytes = bytes.into();
+        if self.dvr_recording.load(Ordering::SeqCst)
+            && self.ll_hls.init_bytes().as_ref() != Some(&bytes)
+        {
+            let first_seq = self
+                .trunk
+                .last_closed_segment()
+                .unwrap_or(media_plane::ids::SegmentSeq::new(0))
+                .saturating_next();
+            self.init_log.lock().push(crate::dvr::InitGeneration {
+                first_seq,
+                init: bytes.clone(),
+            });
+        }
         self.ll_hls.set_init(bytes);
+    }
+
+    /// The init changes the recorder has yet to archive under, oldest first;
+    /// with none logged, the current init applies to every pending segment.
+    fn init_generations(&self) -> Vec<crate::dvr::InitGeneration> {
+        let logged = self.init_log.lock().clone();
+        if !logged.is_empty() {
+            return logged;
+        }
+        self.init_bytes()
+            .map(|init| crate::dvr::InitGeneration {
+                first_seq: media_plane::ids::SegmentSeq::new(0),
+                init,
+            })
+            .into_iter()
+            .collect()
+    }
+
+    fn flush_predecessor(&self) {
+        let predecessor = self.predecessor.lock().take();
+        if let Some(predecessor) = predecessor {
+            predecessor.poll_dvr_blocking();
+        }
     }
 
     pub(crate) fn set_audio_init(&self, index: usize, bytes: impl Into<Bytes>) {
@@ -769,6 +862,7 @@ impl ProgramServing {
                 .window_segments(params.window_segments)
                 .container(Container::WebVtt)
                 .media_sequence_offset(params.media_sequence_offset)
+                .discontinuity_sequence(params.discontinuity_sequence)
                 .hold_cold_playlist(params.hold_cold_playlist)
                 .low_latency(params.part_target_ms)
                 .playlist_uri(decl.uri.clone());
@@ -858,6 +952,10 @@ impl ProgramServing {
 
     fn presentation_origin(&self) -> SystemTime {
         self.dash.presentation_origin
+    }
+
+    fn epoch(&self) -> ProgramEpoch {
+        self.dash.epoch
     }
 
     /// Runs `f` against this program's `Trunk` segment writer, acquiring it
@@ -1006,12 +1104,13 @@ impl ProgramServing {
     fn poll_dvr_blocking(&self) {
         use std::panic::{AssertUnwindSafe, catch_unwind};
 
+        self.flush_predecessor();
         let mut dvr_guard = self.dvr.lock();
         let Some(recorder) = dvr_guard.as_mut() else {
             return;
         };
-        let init_bytes = self.init_bytes();
-        let init_slice = init_bytes.as_deref();
+        let inits = self.init_generations();
+        let logged = self.init_log.lock().len();
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             #[cfg(test)]
             if self
@@ -1020,10 +1119,15 @@ impl ProgramServing {
             {
                 panic!("injected DVR persist panic (test)");
             }
-            recorder.poll_and_persist(init_slice)
+            recorder.poll_and_persist_inits(&inits)
         }));
         match outcome {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => {
+                let mut log = self.init_log.lock();
+                if logged > 1 {
+                    log.drain(..logged - 1);
+                }
+            }
             Ok(Err(e)) => {
                 tracing::error!(
                     "DVR poll_and_persist failed: {e}; \
@@ -1036,6 +1140,8 @@ impl ProgramServing {
                 // archive (fail closed).
                 let _ = payload;
                 *dvr_guard = None;
+                self.dvr_recording.store(false, Ordering::SeqCst);
+                self.init_log.lock().clear();
                 tracing::error!(
                     route = %self.route_name,
                     "DVR persist panicked; recording stopped for this program \
@@ -1541,7 +1647,7 @@ impl RouteHandle {
         // fresh `Trunk`, which numbers its segments from 1 again) continues
         // the previous origin's Media Sequence Number, so clients never see
         // it decrease (RFC 8216bis §6.2.2).
-        let media_sequence_offset = programs
+        let seq_offset = programs
             .get(&program)
             .map_or(0, |previous| {
                 previous
@@ -1558,6 +1664,20 @@ impl RouteHandle {
             // ...and never at or below what the DVR archive already holds
             // (a previous process's numbers).
             .max(u64::from(self.archive_floor));
+        let previous_epoch = programs.get(&program).map(|previous| previous.epoch());
+        let epoch = ProgramEpoch {
+            seq_offset,
+            media_start_ns: previous_epoch.map_or(0, |e| {
+                let slots = seq_offset.saturating_add(1).saturating_sub(e.first_number);
+                (slots as f64 * self.target_duration_secs * 1e9) as u64
+            }),
+            discontinuity_sequence: programs
+                .get(&program)
+                .map_or(0, |previous| previous.ll_hls.discontinuity_sequence_after()),
+            first_number: previous_epoch.map_or(seq_offset.saturating_add(1), |e| e.first_number),
+            presentation_origin: previous_epoch
+                .map_or_else(SystemTime::now, |e| e.presentation_origin),
+        };
         let serving = match ProgramServing::new(
             Arc::clone(&trunk),
             self.target_duration_secs,
@@ -1566,7 +1686,7 @@ impl RouteHandle {
             self.container,
             self.dvr_config.clone(),
             &self.name,
-            media_sequence_offset,
+            epoch,
             self.program_date_time,
             self.declared_bandwidth_bps,
             self.audio_renditions.clone(),
@@ -1592,6 +1712,12 @@ impl RouteHandle {
                 return;
             }
         };
+        if let Some(previous) = programs.get(&program)
+            && previous.dvr_recording.load(Ordering::SeqCst)
+            && serving.dvr_recording.load(Ordering::SeqCst)
+        {
+            *serving.predecessor.lock() = Some(Arc::clone(previous));
+        }
         programs.insert(program, serving);
         self.program_notify.notify_waiters();
     }
@@ -1941,15 +2067,17 @@ impl RouteHandle {
         self.part_target_ms
     }
 
-    /// The wall-clock instant `program`'s presentation began (its `Trunk` was
-    /// minted) — `MPD@availabilityStartTime`'s source
+    /// The wall-clock instant `program`'s presentation began (its first
+    /// `Trunk` was minted; a reconnect keeps it) — `MPD@availabilityStartTime`'s source
     /// (`crate::output::dash`/`crate::output::ll_dash`, ISO/IEC 23009-1
     /// §5.3.1.2). `None` if `program` is not registered. Unlike
-    /// [`Self::created_at`] it restarts with the program's own segment
-    /// numbering, so `AST + (N - startNumber) * duration` stays true across a
-    /// reconnect (#1187).
+    /// [`Self::created_at`] it starts with ingest, not with the route.
     pub fn presentation_origin(&self, program: ProgramId) -> Option<SystemTime> {
         self.serving(program).map(|s| s.presentation_origin())
+    }
+
+    pub(crate) fn epoch(&self, program: ProgramId) -> Option<ProgramEpoch> {
+        self.serving(program).map(|s| s.epoch())
     }
 
     /// When this route was constructed (admin status only; NOT the DASH

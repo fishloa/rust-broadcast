@@ -1515,6 +1515,7 @@ pub struct HlsOriginBuilder {
     container: Container,
     part_target_ms: Option<u32>,
     media_sequence_offset: u64,
+    discontinuity_sequence: u64,
     instance: Option<u64>,
     arrival_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
     declared_bandwidth_bps: Option<u64>,
@@ -1538,6 +1539,7 @@ impl HlsOriginBuilder {
             container: Container::default(),
             part_target_ms: None,
             media_sequence_offset: 0,
+            discontinuity_sequence: 0,
             instance: None,
             arrival_clock: None,
             declared_bandwidth_bps: None,
@@ -1620,6 +1622,15 @@ impl HlsOriginBuilder {
     /// its parts were already served (see [`HlsOrigin::next_media_sequence`]).
     pub fn media_sequence_offset(mut self, offset: u64) -> Self {
         self.media_sequence_offset = offset;
+        self
+    }
+
+    /// Start the playlist's `EXT-X-DISCONTINUITY-SEQUENCE` at `base` instead of
+    /// `0`. An origin replacing another (a reconnect) passes
+    /// `previous.discontinuity_sequence_after()` so the value clients see
+    /// never decreases (RFC 8216bis section 6.2.2).
+    pub fn discontinuity_sequence(mut self, base: u64) -> Self {
+        self.discontinuity_sequence = base;
         self
     }
 
@@ -1808,7 +1819,11 @@ impl HlsOriginBuilder {
             cursor: Mutex::new(cursor),
             drained_through: AtomicU64::new(UNDRAINED),
             drain_gate: Mutex::new(()),
-            window: Mutex::new(Window::new(window_segments)),
+            window: Mutex::new({
+                let mut window = Window::new(window_segments);
+                window.discontinuity_sequence = self.discontinuity_sequence;
+                window
+            }),
             init: Mutex::new(InitStore::default()),
             codecs: Mutex::new(None),
             video_codecs: Mutex::new(None),
@@ -2722,6 +2737,18 @@ impl HlsOrigin {
                 .unwrap_or(SegmentSeq::new(0))
                 .saturating_next(),
         )
+    }
+
+    /// The Discontinuity Sequence Number of the newest segment in the window:
+    /// the value to pass to [`HlsOriginBuilder::discontinuity_sequence`] for
+    /// an origin that replaces this one.
+    pub fn discontinuity_sequence_after(&self) -> u64 {
+        self.drain();
+        let window = locked(&self.window);
+        let tagged = window.segments.iter().filter(|s| s.discontinuous).count();
+        window
+            .discontinuity_sequence
+            .saturating_add(u64::try_from(tagged).unwrap_or(u64::MAX))
     }
 
     /// HTTP Priority signalling for `request` (RFC 8216bis §6.2.6): the
