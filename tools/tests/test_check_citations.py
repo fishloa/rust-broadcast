@@ -372,3 +372,18 @@ def test_bare_spec_file_name_naming_a_real_file_passes(tmp_path, monkeypatch, ca
 def test_bare_spec_file_name_skipped_without_private(tmp_path, monkeypatch, capsys) -> None:
     _scratch(tmp_path, {"foo/src/a.rs": "//! Per en_301_192.md Table 44\n"})
     assert _errors(monkeypatch, tmp_path, capsys) == ""
+
+
+def test_k_iso15_edition_required(tmp_path, monkeypatch) -> None:
+    _scratch(tmp_path, {"a.md": "see ISO/IEC 14496-15 §5.3.3\n"})
+    assert _run(monkeypatch, tmp_path) == 1
+
+
+def test_k_iso15_wrong_edition_fails(tmp_path, monkeypatch) -> None:
+    _scratch(tmp_path, {"a.md": "see ISO/IEC 14496-15:2012 §5.3.3\n"})
+    assert _run(monkeypatch, tmp_path) == 1
+
+
+def test_k_iso15_edition_passes(tmp_path, monkeypatch) -> None:
+    _scratch(tmp_path, {"a.md": "ISO/IEC 14496-15:2017 §5.3.3, 14496-15:2022 §11, x-14496-15.md\n"})
+    assert _run(monkeypatch, tmp_path) == 0

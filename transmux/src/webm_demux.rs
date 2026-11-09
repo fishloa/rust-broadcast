@@ -154,10 +154,10 @@ const CODEC_V_VP9: &[u8] = b"V_VP9";
 /// VP8 video CodecID.
 const CODEC_V_VP8: &[u8] = b"V_VP8";
 /// H.264/AVC video CodecID; `CodecPrivate` is the raw `AVCDecoderConfigurationRecord`
-/// (ISO/IEC 14496-15 §5.3.3 — the `avcC` box body, with no box header).
+/// (ISO/IEC 14496-15:2017 §5.3.3 — the `avcC` box body, with no box header).
 const CODEC_V_AVC: &[u8] = b"V_MPEG4/ISO/AVC";
 /// H.265/HEVC video CodecID; `CodecPrivate` is the raw `HEVCDecoderConfigurationRecord`
-/// (ISO/IEC 14496-15 §8.3.3.1 — the `hvcC` box body, with no box header).
+/// (ISO/IEC 14496-15:2017 §8.3.3.1 — the `hvcC` box body, with no box header).
 const CODEC_V_HEVC: &[u8] = b"V_MPEGH/ISO/HEVC";
 /// Opus audio CodecID.
 const CODEC_A_OPUS: &[u8] = b"A_OPUS";
@@ -1123,7 +1123,7 @@ fn codec_config_for(
 }
 
 /// Build a [`CodecConfig::Avc`] from an H.264 [`TrackInfo`]: `CodecPrivate` is
-/// the raw `AVCDecoderConfigurationRecord` (ISO/IEC 14496-15 §5.3.3); the coded
+/// the raw `AVCDecoderConfigurationRecord` (ISO/IEC 14496-15:2017 §5.3.3); the coded
 /// dimensions come from the `Video` element (§27, `PixelWidth`/`PixelHeight`) —
 /// mirrors [`crate::mkv_mux::MkvMux`]'s inverse `CodecPrivate` emission.
 ///
@@ -1149,7 +1149,7 @@ fn avc_config(info: &TrackInfo) -> Result<(CodecConfig, Option<usize>)> {
 }
 
 /// Build a [`CodecConfig::Hevc`] from an H.265 [`TrackInfo`]: `CodecPrivate` is
-/// the raw `HEVCDecoderConfigurationRecord` (ISO/IEC 14496-15 §8.3.3.1); the
+/// the raw `HEVCDecoderConfigurationRecord` (ISO/IEC 14496-15:2017 §8.3.3.1); the
 /// coded dimensions come from the `Video` element, as [`avc_config`]. Also
 /// returns the record's NAL length-prefix size (`lengthSizeMinusOne + 1`), and
 /// rewrites the emitted record's `lengthSizeMinusOne` to the canonical 4-byte

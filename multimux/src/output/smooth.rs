@@ -1208,7 +1208,7 @@ mod tests {
     }
 
     /// A minimal, valid `HEVCDecoderConfigurationRecord` body (ISO/IEC
-    /// 14496-15 §8.3.3).
+    /// 14496-15:2017 §8.3.3).
     fn hevc_config_body() -> Vec<u8> {
         let mut body = vec![0x01, 0x01];
         body.extend_from_slice(&[0u8; 4]);

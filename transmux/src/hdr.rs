@@ -219,7 +219,7 @@ impl HdrStaticMetadata {
     }
 
     /// A prefix SEI NAL unit holding only the declarative `mdcv` / `clli`
-    /// messages (ISO/IEC 14496-15 restricts the `hvcC` SEI array to
+    /// messages (ISO/IEC 14496-15:2017 §8.3.3.1.1 restricts the `hvcC` SEI array to
     /// declarative messages); `None` when empty.
     pub fn to_hevc_declarative_sei_nal(&self) -> Result<Option<Vec<u8>>> {
         let mut payloads: Vec<(u32, Vec<u8>)> = Vec::new();

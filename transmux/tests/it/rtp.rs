@@ -583,7 +583,7 @@ fn zero_clock_rate_is_rejected() {
 /// Both sides come from ffmpeg 8.1 over the same input: the SDP.as_str() from
 /// `-c copy -f rtp -sdp_file` (what an RTSP camera's DESCRIBE returns) and the
 /// avcC from `-c copy out.mp4`. Pre-fix the record omitted ISO/IEC
-/// 14496-15 §5.3.3.1.2's High profile chroma/bit-depth trailer, so it was
+/// 14496-15:2017 §5.3.3.1.2's High profile chroma/bit-depth trailer, so it was
 /// four bytes short of ffmpeg's own and a strict reader would mis-parse.
 #[test]
 fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
@@ -622,7 +622,7 @@ fn high_profile_sdp_becomes_ffmpeg_byte_exact_avcc() {
 }
 
 /// The same oracle against a Baseline stream: no trailer on either side
-/// (ISO/IEC 14496-15 §5.3.3.1.2 conditions it on the profile).
+/// (ISO/IEC 14496-15:2017 §5.3.3.1.2 conditions it on the profile).
 #[test]
 fn baseline_profile_sdp_writes_no_trailer() {
     static SDP: std::sync::LazyLock<String> =

@@ -717,7 +717,7 @@ pub fn caption_cc_data(codec: NalCodec, au: &[u8], length_prefixed: bool) -> Vec
 /// Largest parameter-set NAL a decoder configuration record can carry: the
 /// per-NAL length field is `unsigned int(16)` in both
 /// `AVCDecoderConfigurationRecord` (`sequenceParameterSetLength` /
-/// `pictureParameterSetLength`, ISO/IEC 14496-15 §5.3.3.1.2) and
+/// `pictureParameterSetLength`, ISO/IEC 14496-15:2017 §5.3.3.1.2) and
 /// `HEVCDecoderConfigurationRecord` (`nalUnitLength`, §8.3.3.1.2). A longer
 /// "parameter set" cannot be serialized into an `avcC`/`hvcC`.
 pub(crate) const MAX_PARAMETER_SET_LEN: usize = u16::MAX as usize;

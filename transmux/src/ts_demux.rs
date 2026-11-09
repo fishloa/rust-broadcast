@@ -62,7 +62,7 @@
 //! per PES access unit — see [`crate::ac3`] / [`crate::dts`]) so real
 //! durations and exact PES-boundary timestamps survive into the IR.
 //! **Field-coded (PAFF) H.264 (issue #1161).** Broadcast PAFF carries one coded
-//! field per PES, but an ISO/IEC 14496-15 sample is a whole access unit; the
+//! field per PES, but an ISO/IEC 14496-15:2017 sample is a whole access unit; the
 //! video path parses each access unit's slice header ([`crate::slice_header`])
 //! and merges the second field of a complementary field pair (ITU-T H.264
 //! §3.35-3.37) into the first field's sample, which keeps the first field's
@@ -1621,7 +1621,7 @@ struct PendingDisplayEvents {
 
 /// H.264 PAFF (field-coded) pairing state of one video track (issue #1161).
 ///
-/// Broadcast PAFF carries one coded *field* per PES, but an ISO/IEC 14496-15
+/// Broadcast PAFF carries one coded *field* per PES, but an ISO/IEC 14496-15:2017
 /// sample is a whole access unit — both fields of a complementary field pair
 /// (ITU-T H.264 §3.35-3.37). While a first field is the pending (one-behind)
 /// sample, `first_field` remembers its identity so the next access unit can be
@@ -3503,7 +3503,7 @@ fn finalize_probe(
                 .unwrap_or((0, 0));
             // The avcC high-profile extension (chroma_format_idc + bit depths)
             // exists only for the High-family profiles that carry it
-            // (ISO/IEC 14496-15 §5.3.3.1). Populate it from the SPS for those —
+            // (ISO/IEC 14496-15:2017 §5.3.3.1). Populate it from the SPS for those —
             // previously hardcoded None, so a High 10/4:2:2/4:4:4 TS lost its
             // chroma/bit-depth in the recovered avcC (#563 flagged; #582 owns
             // this file). Gate matches the serializer's emission set via the
@@ -3514,7 +3514,7 @@ fn finalize_probe(
             let record = AVCDecoderConfigurationRecord {
                 configuration_version: 1,
                 // profile_idc / constraint_flags / level_idc live at SPS bytes
-                // 1..=3 (after the 1-byte NAL header) — ISO/IEC 14496-15 §5.3.3.1.
+                // 1..=3 (after the 1-byte NAL header) — ISO/IEC 14496-15:2017 §5.3.3.1.
                 profile_indication: sps_bytes[1],
                 profile_compatibility: sps_bytes[2],
                 level_indication: sps_bytes[3],
