@@ -277,6 +277,9 @@ pub(crate) fn range(
     if lo > max || hi > max {
         return err(format!("{what}: {v:?} exceeds {max}"));
     }
+    if hi < lo {
+        return err(format!("{what}: {v:?} is a reversed range"));
+    }
     Ok((lo, hi))
 }
 

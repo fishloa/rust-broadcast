@@ -20,7 +20,12 @@ use rtsp_types::{Message, Method, Request, Response, StatusCode, Version, header
 
 use crate::error::{Error, MessageKind, Result};
 use crate::state::{SessionState, server_next_state};
-use crate::transport::Transport;
+use crate::transport::{LowerTransport, Transport};
+
+const SDP_CONTENT_TYPE: &str = "application/sdp";
+
+const IMPLEMENTED_PUBLIC: &str =
+    "OPTIONS, DESCRIBE, ANNOUNCE, GET_PARAMETER, SET_PARAMETER, SETUP, PLAY, PAUSE, RECORD, TEARDOWN";
 
 /// A message body type: owned bytes.
 type Body = Vec<u8>;
@@ -74,6 +79,8 @@ pub struct ServerSession {
     session_ids: SessionIdSource,
     negotiated_transport: Option<Transport>,
     server_header: String,
+    describe_sdp: Option<Vec<u8>>,
+    server_ports: Option<(u16, u16)>,
 }
 
 impl core::fmt::Debug for ServerSession {
@@ -112,7 +119,23 @@ impl ServerSession {
             session_ids: Box::new(session_ids),
             negotiated_transport: None,
             server_header: "rtsp-runtime".to_string(),
+            describe_sdp: None,
+            server_ports: None,
         }
+    }
+
+    /// Sets the SDP body a `DESCRIBE` is answered with (`Content-Type:
+    /// application/sdp`). Without it `DESCRIBE` is answered with a bare `200 OK`.
+    pub fn with_describe_sdp(mut self, sdp: impl Into<Vec<u8>>) -> Self {
+        self.describe_sdp = Some(sdp.into());
+        self
+    }
+
+    /// Sets the RTP/RTCP port pair a UDP `SETUP` reply advertises as
+    /// `server_port` (RFC 2326 §12.39).
+    pub fn with_server_ports(mut self, rtp: u16, rtcp: u16) -> Self {
+        self.server_ports = Some((rtp, rtcp));
+        self
     }
 
     /// Sets the timeout (seconds) advertised in the `Session` header on SETUP.
@@ -218,6 +241,12 @@ impl ServerSession {
                 return Ok((serialize(&Message::from(resp))?, events));
             };
             // §12.39: the reply carries the one spec the server selected.
+            let mut chosen = chosen;
+            if chosen.lower_transport != Some(LowerTransport::Tcp)
+                && chosen.server_port.is_none()
+            {
+                chosen.server_port = self.server_ports;
+            }
             let transport = Transport::single(chosen);
             let session_id = self
                 .session_id
@@ -248,11 +277,29 @@ impl ServerSession {
             return Ok((serialize(&Message::from(resp))?, events));
         }
 
+        if let (Method::Describe, Some(sdp)) = (&method, self.describe_sdp.clone()) {
+            let resp = Response::builder(Version::V1_0, StatusCode::Ok)
+                .header(headers::CSEQ, cseq.to_string())
+                .header(headers::SERVER, self.server_header.clone())
+                .header(headers::CONTENT_TYPE, SDP_CONTENT_TYPE)
+                .build(sdp);
+            self.state = next_state;
+            events.push(ServerEvent::RequestAccepted {
+                method,
+                cseq,
+                state: self.state,
+            });
+            return Ok((serialize(&Message::from(resp))?, events));
+        }
+
         // Other methods: echo Session if we have one, send 200, transition.
         let session_hdr = self.session_id.clone();
         let resp = self.build_response(StatusCode::Ok, cseq, |mut b| {
             if let Some(sid) = &session_hdr {
                 b = b.header(headers::SESSION, sid.clone());
+            }
+            if method == Method::Options {
+                b = b.header(headers::PUBLIC, IMPLEMENTED_PUBLIC);
             }
             b
         });
