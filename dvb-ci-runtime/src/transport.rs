@@ -45,6 +45,9 @@ pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Conventional reply timeout for an expected `R_TPDU` (the §A.4 Figure 6/7
 /// "Timeout" arc; value implementation-chosen).
 pub const DEFAULT_REPLY_TIMEOUT: Duration = Duration::from_millis(1000);
+/// Number of `Create_T_C` attempts (the first plus retries) made before
+/// [`TransportError::SetupTimeout`] is reported (implementation-chosen).
+pub const MAX_SETUP_ATTEMPTS: u8 = 5;
 
 /// Transport connection state (EN 50221 §A.4, Figures 6/7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +155,7 @@ pub struct Transport {
     reassembly: Vec<u8>,
     poll_interval: Duration,
     reply_timeout: Duration,
+    setup_attempts: u8,
     /// Time accumulated since the last poll (drives the poll cadence).
     since_poll: Duration,
     /// Time accumulated since a command that expects a reply (drives the
@@ -182,6 +186,7 @@ impl Transport {
             reassembly: Vec::new(),
             poll_interval: DEFAULT_POLL_INTERVAL,
             reply_timeout: DEFAULT_REPLY_TIMEOUT,
+            setup_attempts: 0,
             since_poll: Duration::ZERO,
             awaiting: None,
             outbound: VecDeque::new(),
@@ -231,6 +236,11 @@ impl Transport {
 
     /// Open the connection: emit `Create_T_C` and arm the reply timeout.
     pub fn init(&mut self) -> Out {
+        self.setup_attempts = 1;
+        self.create()
+    }
+
+    fn create(&mut self) -> Out {
         self.state = TcState::Creating;
         self.awaiting = Some(Duration::ZERO);
         let obj: TcObject = create_t_c(self.tcid);
@@ -301,6 +311,10 @@ impl Transport {
                 if let Some(w) = self.awaiting.as_mut() {
                     *w += elapsed;
                     if *w >= self.reply_timeout {
+                        if self.setup_attempts < MAX_SETUP_ATTEMPTS {
+                            self.setup_attempts += 1;
+                            return self.create();
+                        }
                         self.state = TcState::Idle;
                         self.awaiting = None;
                         // r10-W-17: SPDUs queued against the failed
@@ -333,6 +347,7 @@ impl Transport {
                     *w += elapsed;
                     if *w >= self.reply_timeout {
                         self.awaiting = None;
+                        self.reassembly.clear();
                         return Out {
                             error: Some(TransportError::ReplyTimeout),
                             timer: Some(self.poll_interval),
@@ -523,7 +538,7 @@ mod tests {
     fn setup_times_out_to_idle() {
         let mut t = Transport::new(1);
         t.init();
-        let out = t.tick(DEFAULT_REPLY_TIMEOUT);
+        let out = tick_through_setup_attempts(&mut t, DEFAULT_REPLY_TIMEOUT);
         assert_eq!(out.error, Some(TransportError::SetupTimeout));
         assert_eq!(t.state(), TcState::Idle);
     }
@@ -805,7 +820,7 @@ mod tests {
         // the new attempt time out.
         t.init();
         assert_eq!(t.state(), TcState::Creating);
-        let out = t.tick(DEFAULT_REPLY_TIMEOUT);
+        let out = tick_through_setup_attempts(&mut t, DEFAULT_REPLY_TIMEOUT);
         assert_eq!(out.error, Some(TransportError::SetupTimeout));
         assert!(
             t.outbound.is_empty(),
@@ -865,7 +880,16 @@ mod tests {
         let poll = Duration::from_millis(3);
         let mut t = Transport::new(1).with_timing(poll, reply);
         assert_eq!(t.init().timer, Some(reply));
-        let out = t.tick(reply);
+        let out = tick_through_setup_attempts(&mut t, reply);
         assert_eq!(out.error, Some(TransportError::SetupTimeout));
+    }
+
+    fn tick_through_setup_attempts(t: &mut Transport, reply_timeout: Duration) -> Out {
+        for _ in 1..MAX_SETUP_ATTEMPTS {
+            let out = t.tick(reply_timeout);
+            assert_eq!(out.error, None);
+            assert_eq!(out.writes, vec![vec![tags::CREATE_T_C, 0x01, 0x01]]);
+        }
+        t.tick(reply_timeout)
     }
 }
