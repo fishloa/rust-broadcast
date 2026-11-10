@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-11-10
 ### Added
 - `Error::BadMarker(&'static str)` for a wrong ESCR marker bit, `P-STD_buffer` `'01'` prefix or `program_packet_sequence_counter` marker bit (#1945).
 

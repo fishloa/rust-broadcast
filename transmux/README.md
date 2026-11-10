@@ -96,7 +96,7 @@ Header parse and the container box only; no encode or decode.
 `serde` is opt-in and off by default; enable it explicitly:
 
 ```toml
-transmux = { version = "0.30", features = ["serde"] }
+transmux = { version = "0.31", features = ["serde"] }
 ```
 
 ## Quick start

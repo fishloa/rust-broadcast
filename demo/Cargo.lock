@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "11.0.0"
+version = "11.0.1"
 dependencies = [
  "chrono",
  "erased-serde",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -237,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -628,7 +628,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -778,7 +778,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scte35-splice"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "base64",
  "broadcast-common",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "aes",
  "base64",

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-10
 ### Fixed
 - `SectionReassembler` (via `feed_with_continuity`) no longer loses a multi-packet section to a retransmitted continuation packet; `dvb-si`'s `SiDemux` uses it.
 - `TsResync::finish` keeps the aligned packets that never reached a full `LOCK_CONFIRMATIONS` window (the tail after a corrupt sync byte, or a whole stream shorter than the window) instead of dropping them.

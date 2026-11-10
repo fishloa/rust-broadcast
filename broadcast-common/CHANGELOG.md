@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [11.0.1] - 2026-11-10
 ### Fixed
 - `clock33::unwrap_delta` resolves a step of exactly half the range forward (`+2^32`), inside its documented `(-2^32, 2^32]` and agreeing with `signed_distance` (#1940).
 - `seq::SeqSpace` ordering is antisymmetric at exactly half the space: `gt`/`geq` now answer `false` there like `lt`/`leq`; new `SeqSpace::is_tie`; `diff` still reports `+half` for both orders (#1941).

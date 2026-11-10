@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # container-probe 0.3.1
 
 _Released 2026-11-10._

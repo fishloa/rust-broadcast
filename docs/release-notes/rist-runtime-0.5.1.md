@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # rist-runtime 0.5.1
 
 _Released 2026-11-10._

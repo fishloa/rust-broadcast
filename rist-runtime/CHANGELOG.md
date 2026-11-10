@@ -3,6 +3,8 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
+## [0.5.1] - 2026-11-10
 ### Fixed
 - `arq::Receiver::feed` resyncs, after the usual confirmed run, when a sender restarts at a lower sequence further behind than `max_gap` instead of dropping every packet as a late duplicate until the sequence passes the old highest again; a gap of exactly half the sequence space counts as a resync (backward) jump (#1947).
 

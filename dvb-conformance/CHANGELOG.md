@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [13.1.0] - 2026-11-10
 ### Fixed
 - A CRC-failed PAT, PMT, NIT, SDT, EIT or other SI section no longer changes monitor state: it no longer rebuilds the referenced PID sets (false PMT_error_2 / lost tracking) or refreshes the 3.2 repetition timers, min-gap trackers, `_other` trackers and EIT P/F pairing, so a permanently corrupt NIT now raises 3.2 and a bit-flipped service_id no longer creates a phantom EIT_PF_error.
 - The `_other` repetition errors (3.1.b, 3.5.b, 3.6.b) are raised again on every later outage; the per-key once-per-lifetime latch is gone.

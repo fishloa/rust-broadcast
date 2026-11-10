@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.18.0] - 2026-11-10
 ### Changed
 - LL-HLS and TS-HLS outputs now share one HLS media-playlist implementation (parameterised by held/insert-priority), removing the duplicated route/playlist code.
 - The test-only feature set now uses one spelling: `webrtc-runtime/test-support` becomes `webrtc-runtime/test-seams`, matching `test-seams` and the workspace convention (c6 C6-09).

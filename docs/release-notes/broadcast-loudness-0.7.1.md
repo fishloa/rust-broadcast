@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # broadcast-loudness 0.7.1
 
 _Released 2026-11-10._

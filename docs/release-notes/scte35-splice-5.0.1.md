@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # scte35-splice 5.0.1
 
 _Released 2026-11-10._

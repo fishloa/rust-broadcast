@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # compliance-probe 0.8.0
 
 _Released 2026-11-10._

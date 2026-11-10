@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # rtmp-runtime 0.9.1
 
 _Released 2026-11-10._

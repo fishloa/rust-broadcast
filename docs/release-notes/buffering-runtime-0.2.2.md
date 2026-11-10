@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # buffering-runtime 0.2.2
 
 _Released 2026-11-10._

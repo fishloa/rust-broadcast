@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # timed-metadata 0.10.0
 
 _Released 2026-11-10._

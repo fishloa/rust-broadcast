@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # multimux-cli 0.16.0
 
 _Released 2026-11-10._

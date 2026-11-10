@@ -4,6 +4,11 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-10
+
+### Changed
+- Dependency/epoch bump only (follows multimux); no functional change.
+
 ## [0.15.0] - 2026-11-08
 ### Dependencies
 - Sibling crates move to a new epoch: `multimux` 0.16 -> 0.17. The `Cargo.toml` requirement names the new version; no other manifest change.

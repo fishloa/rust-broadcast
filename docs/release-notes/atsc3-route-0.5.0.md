@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # atsc3-route 0.5.0
 
 _Released 2026-11-10._

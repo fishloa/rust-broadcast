@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [13.1.0] - 2026-11-10
 ### Added
 - `TableId`, `DescriptorTag` and `ExtensionTag` implement the workspace label convention (`name()` + `Display` via `broadcast_common::impl_spec_display!`).
 

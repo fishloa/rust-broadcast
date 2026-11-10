@@ -3,6 +3,8 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-10
 ### Changed
 - BREAKING: the non-default test-hook feature is renamed `test-support` -> `test-seams`; only a test suite enabling it by name is affected (c6 C6-09).
 ### Fixed

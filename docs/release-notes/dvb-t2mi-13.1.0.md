@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # dvb-t2mi 13.1.0
 
 _Released 2026-11-10._

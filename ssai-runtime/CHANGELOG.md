@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-11-10
 ### Added
 - `SessionStore` is bounded: `DEFAULT_MAX_SESSIONS` (65 536) by default, `with_max_sessions` to change it, `Error::SessionStoreFull` when `begin_break` is called for a new session at the bound. `advance(now_us)` feeds the store a clock and `expire_idle(ttl_us)` evicts sessions untouched for longer than the TTL. `Error::BreakAlreadyResumed` (`Error` is `#[non_exhaustive]`).
 ### Fixed

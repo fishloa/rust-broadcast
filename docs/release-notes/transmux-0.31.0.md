@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # transmux 0.31.0
 
 _Released 2026-11-10._

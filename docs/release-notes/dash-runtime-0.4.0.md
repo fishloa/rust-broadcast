@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # dash-runtime 0.4.0
 
 _Released 2026-11-10._

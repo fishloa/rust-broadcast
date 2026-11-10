@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # dvb-ci-runtime 0.20.0
 
 _Released 2026-11-10._

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-10
 ### Fixed
 - SCTE-35 `check_section`: a `splice_event_cancel_indicator = 1` message is `Scte35Sanity::Cancelled` and a component-mode `splice_insert` is judged by its component times (it was `Immediate` in both cases); `Immediate` now follows `splice_immediate_flag` or an absent `pts_time`.
 - A well-formed encrypted `splice_info_section` is `Scte35Sanity::Encrypted` (new `compliance_probe_scte35_encrypted_total` counter), no longer counted malformed.

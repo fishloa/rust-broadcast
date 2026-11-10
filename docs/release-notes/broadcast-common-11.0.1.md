@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # broadcast-common 11.0.1
 
 _Released 2026-11-10._

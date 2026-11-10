@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # ttml-subtitle 0.6.1
 
 _Released 2026-11-10._

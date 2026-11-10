@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # hls-runtime 0.13.0
 
 _Released 2026-11-10._

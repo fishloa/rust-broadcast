@@ -11,7 +11,7 @@ independently versioned.
 
 ```toml
 [dependencies]
-timed-metadata = "0.9"
+timed-metadata = "0.10"
 ```
 
 ## What it does / what it does not
@@ -67,7 +67,7 @@ below); for SRT/TTML conversion use `caption-convert`, which wraps these extract
 `serde` is opt-in and off by default; enable it explicitly:
 
 ```toml
-timed-metadata = { version = "0.9", features = ["serde"] }
+timed-metadata = { version = "0.10", features = ["serde"] }
 ```
 
 ## Quick start

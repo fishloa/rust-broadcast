@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # multimux 0.18.0
 
 _Released 2026-11-10._

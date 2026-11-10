@@ -1,6 +1,3 @@
----
-status: DRAFT
----
 # media-doctor 0.15.0
 
 _Released 2026-11-10._
