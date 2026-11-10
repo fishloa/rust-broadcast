@@ -13,7 +13,7 @@
 //! splits a [`Message`] into `fmt` 0 + 3 chunks at the configured chunk
 //! size).
 
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 use std::collections::HashMap;
 
 use broadcast_common::{Parse, Serialize};
@@ -294,18 +294,18 @@ impl Serialize for BasicHeader {
 
         match form {
             BasicHeaderForm::One => {
-                need_in(buf, 1, "chunk basic header output (1-byte form)")?;
+                need_out(buf, 1)?;
                 buf[0] = fmt_bits | (self.chunk_stream_id as u8);
                 Ok(1)
             }
             BasicHeaderForm::Two => {
-                need_in(buf, 2, "chunk basic header output (2-byte form)")?;
+                need_out(buf, 2)?;
                 buf[0] = fmt_bits | BASIC_HEADER_2BYTE_MARKER;
                 buf[1] = (self.chunk_stream_id - BASIC_HEADER_CSID_OFFSET) as u8;
                 Ok(2)
             }
             BasicHeaderForm::Three => {
-                need_in(buf, 3, "chunk basic header output (3-byte form)")?;
+                need_out(buf, 3)?;
                 buf[0] = fmt_bits | BASIC_HEADER_3BYTE_MARKER;
                 let rel = self.chunk_stream_id - BASIC_HEADER_CSID_OFFSET;
                 buf[1] = rel as u8;
@@ -486,7 +486,7 @@ impl Serialize for MessageHeader {
             } => {
                 let extended = needs_extended_timestamp(timestamp);
                 let written = TYPE0_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
-                need_in(buf, written, "type 0 message header output")?;
+                need_out(buf, written)?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {
@@ -512,7 +512,7 @@ impl Serialize for MessageHeader {
             } => {
                 let extended = needs_extended_timestamp(timestamp_delta);
                 let written = TYPE1_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
-                need_in(buf, written, "type 1 message header output")?;
+                need_out(buf, written)?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {
@@ -533,7 +533,7 @@ impl Serialize for MessageHeader {
             MessageHeader::Type2 { timestamp_delta } => {
                 let extended = needs_extended_timestamp(timestamp_delta);
                 let written = TYPE2_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
-                need_in(buf, written, "type 2 message header output")?;
+                need_out(buf, written)?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {
@@ -1424,6 +1424,53 @@ mod tests {
         write_u24_be(0x00FF_FFFF, &mut buf, "t").unwrap();
         assert_eq!(buf, [0xFF, 0xFF, 0xFF]);
         assert_eq!(read_u24_be(&buf), 0x00FF_FFFF);
+    }
+
+    /// #2269: a too-small output buffer is an output-buffer error, not a
+    /// parse-side input-truncation error.
+    #[test]
+    fn serialize_into_too_small_output_reports_output_buffer_error() {
+        let basic = BasicHeader {
+            fmt: Fmt::Type0,
+            chunk_stream_id: 3,
+        };
+        let mut buf = [0u8; 0];
+        assert!(matches!(
+            basic.serialize_into(&mut buf),
+            Err(RtmpError::OutputBufferTooSmall(_))
+        ));
+
+        let hdr = MessageHeader::Type0 {
+            timestamp: 0,
+            message_length: 16,
+            message_type_id: 9,
+            message_stream_id: 1,
+        };
+        let mut buf = [0u8; TYPE0_LEN - 1];
+        assert!(matches!(
+            hdr.serialize_into(&mut buf),
+            Err(RtmpError::OutputBufferTooSmall(_))
+        ));
+
+        let hdr = MessageHeader::Type1 {
+            timestamp_delta: 0,
+            message_length: 16,
+            message_type_id: 9,
+        };
+        let mut buf = [0u8; TYPE1_LEN - 1];
+        assert!(matches!(
+            hdr.serialize_into(&mut buf),
+            Err(RtmpError::OutputBufferTooSmall(_))
+        ));
+
+        let hdr = MessageHeader::Type2 {
+            timestamp_delta: 0,
+        };
+        let mut buf = [0u8; TYPE2_LEN - 1];
+        assert!(matches!(
+            hdr.serialize_into(&mut buf),
+            Err(RtmpError::OutputBufferTooSmall(_))
+        ));
     }
 
     /// #1129: a `message_length` above 24 bits is an error, not masked.

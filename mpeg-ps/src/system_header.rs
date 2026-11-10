@@ -382,6 +382,26 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    /// #2269: a too-small output buffer is an output-buffer error, not a
+    /// parse-side input-truncation error.
+    #[test]
+    fn serialize_into_too_small_output_reports_output_buffer_error() {
+        let bytes = vec![
+            0x00, 0x00, 0x01, 0xBB, // start_code
+            0x00, 0x06, // header_length = 6 (just the fixed part)
+            0x80, 0x00, 0x01, // rate_bound=0, markers
+            0x04, // audio_bound=1, fixed=0, CSPS=0
+            0x20, // audio_lock=0, video_lock=0, marker=1, video_bound=0
+            0xFF, // packet_rate=1, reserved=0x7F
+        ];
+        let h = SystemHeader::parse(&bytes).unwrap();
+        let mut out = vec![0u8; h.serialized_len() - 1];
+        assert!(matches!(
+            h.serialize_into(&mut out),
+            Err(Error::OutputBufferTooSmall(_))
+        ));
+    }
+
     #[test]
     fn system_header_round_trip_no_streams() {
         let bytes = vec![
