@@ -138,7 +138,7 @@ impl InterstitialDateRange {
         if !self.snap.is_empty() {
             for mode in &self.snap {
                 if let SnapMode::Other(t) = mode
-                    && (t.contains('"') || t.contains(',') || t.contains('\r') || t.contains('\n'))
+                    && is_unsafe_list_token(t)
                 {
                     return Err(Error::TagParse("invalid X-SNAP token".to_string()));
                 }
@@ -154,7 +154,7 @@ impl InterstitialDateRange {
         if !self.restrict.is_empty() {
             for mode in &self.restrict {
                 if let RestrictMode::Other(t) = mode
-                    && (t.contains('"') || t.contains(',') || t.contains('\r') || t.contains('\n'))
+                    && is_unsafe_list_token(t)
                 {
                     return Err(Error::TagParse("invalid X-RESTRICT token".to_string()));
                 }
@@ -425,6 +425,10 @@ fn parse_checked_secs(what: &'static str, v: &str, sign: Sign) -> Result<f64> {
     Ok(parsed)
 }
 
+fn is_unsafe_list_token(token: &str) -> bool {
+    token.contains(['"', ',', '\r', '\n'])
+}
+
 fn parse_snap_list(v: &str) -> Vec<SnapMode> {
     v.split(',')
         .map(str::trim)
@@ -598,6 +602,21 @@ mod tests {
                 Error::InvalidDuration { .. }
             ));
         }
+    }
+
+    #[test]
+    fn to_tag_line_rejects_unsafe_other_list_tokens() {
+        for bad in ["a\"b", "a,b", "a\rb", "a\nb"] {
+            let mut dr = sample();
+            dr.snap = vec![SnapMode::Other(bad.to_string())];
+            assert!(matches!(dr.to_tag_line().unwrap_err(), Error::TagParse(_)), "snap {bad:?}");
+            let mut dr = sample();
+            dr.restrict = vec![RestrictMode::Other(bad.to_string())];
+            assert!(matches!(dr.to_tag_line().unwrap_err(), Error::TagParse(_)), "restrict {bad:?}");
+        }
+        let mut dr = sample();
+        dr.snap = vec![SnapMode::Other("X-CUSTOM".to_string())];
+        assert!(dr.to_tag_line().is_ok());
     }
 
     #[test]
