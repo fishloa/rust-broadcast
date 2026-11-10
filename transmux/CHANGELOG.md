@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-- BREAKING: `klv::UasLocalSet::serialize_with_checksum` returns `Result<Vec<u8>>`, so a value whose BER length cannot be encoded is reported instead of producing a packet with a corrupt length field (#2341).
-- BREAKING: `klv::encode_ber_length_vec` and `klv::ber_length_usize` are removed; they duplicated `broadcast_common::klv`'s BER length codec in a second shape, and `encode_ber_length_vec` returned an empty vector when encoding failed. Use `broadcast_common::klv::{encode_ber_length, decode_ber_length, ber_length_size}` directly (#2341).
+- BREAKING: KLV framing comes from `broadcast_common::klv` (SMPTE ST 336, #2341). Removed from `transmux::klv` and the crate root: `encode_ber_length`, `ber_length`, `KlvItem`, `UniversalLabel` and `UNIVERSAL_LABEL_LEN`; use `broadcast_common::klv::{encode_ber_length, decode_ber_length, ber_length_size, KlvItem, UniversalLabel, UNIVERSAL_LABEL_LEN}`. The MISB ST 0601 Local Set (`UasLocalSet`, `LocalSetItem`, BER-OID tags, checksum) stays in transmux.
+- BREAKING: `klv::UasLocalSet::serialize_with_checksum` returns `Result<Vec<u8>>`: a value whose BER length cannot be encoded is reported instead of producing a packet with a corrupt length field.
 
 ## [0.31.0] - 2026-11-10
 ### Changed
