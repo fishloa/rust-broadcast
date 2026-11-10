@@ -1142,11 +1142,20 @@ mod tests {
         for len in 0..3usize {
             let buf = vec![0u8; len];
             assert!(Mmi::default().on_apdu(&buf).is_err(), "Mmi len {len}");
-            assert!(ResourceManager::new(vec![]).on_apdu(&buf).is_err(), "RM len {len}");
-            assert!(ApplicationInformation.on_apdu(&buf).is_err(), "AI len {len}");
+            assert!(
+                ResourceManager::new(vec![]).on_apdu(&buf).is_err(),
+                "RM len {len}"
+            );
+            assert!(
+                ApplicationInformation.on_apdu(&buf).is_err(),
+                "AI len {len}"
+            );
             assert!(ConditionalAccess.on_apdu(&buf).is_err(), "CA len {len}");
             assert!(DateTime::default().on_apdu(&buf).is_err(), "DT len {len}");
-            assert!(HostControl::default().on_apdu(&buf).is_err(), "HC len {len}");
+            assert!(
+                HostControl.on_apdu(&buf).is_err(),
+                "HC len {len}"
+            );
         }
     }
 }
