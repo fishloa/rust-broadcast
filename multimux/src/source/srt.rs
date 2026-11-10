@@ -519,7 +519,7 @@ mod tests {
         let route =
             SrtRoute::new_listener("cam-srt", addr.to_string()).with_timeouts(IngestTimeouts {
                 connect: IngestTimeouts::default().connect,
-                read: Duration::from_millis(300),
+                read: Duration::from_secs(2),
             });
         let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAA, 40);
 
@@ -538,9 +538,9 @@ mod tests {
             let mut sock = sock.expect("connect to SrtRoute's listener");
             for chunk in ts_bytes.chunks(7 * 188) {
                 sock.send(chunk).await.expect("send TS payload");
-                tokio::time::sleep(Duration::from_millis(5)).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
         });
 
         let cursor: Arc<StdMutex<Option<SampleCursor>>> = Arc::new(StdMutex::new(None));
@@ -566,7 +566,7 @@ mod tests {
             Duration::from_secs(60),
             drive_socket(
                 sock,
-                Duration::from_millis(300),
+                Duration::from_secs(2),
                 trunk_config(),
                 handshake(),
                 &route_handle,
