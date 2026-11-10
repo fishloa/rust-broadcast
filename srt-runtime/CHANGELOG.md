@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Avoid the per-packet `payload.to_vec()` copy on the non-encrypted send path in `SrtSocket::send_one` (#2031).
 ### Added
 - `CallerHandshake`, `ListenerHandshake` and `RendezvousHandshake` gain `set_elapsed(Duration)`: the time since the connection started, stamped on every handshake packet they build.
 ### Fixed
