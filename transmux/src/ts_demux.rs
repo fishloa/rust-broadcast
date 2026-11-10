@@ -2086,6 +2086,13 @@ fn initial_carrier(codec: Codec) -> Carrier {
     }
 }
 
+/// Whether the PES the assembler is currently building is whole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PesAssembly {
+    Whole,
+    Damaged,
+}
+
 /// Per-PID (elementary stream) engine state.
 struct StreamState {
     codec: Codec,
@@ -2159,7 +2166,7 @@ struct StreamState {
     /// delivered truncated (r04-W49). Set once and never cleared by a later
     /// packet in the same unit; only the next `payload_unit_start` starts a
     /// fresh, whole unit. Unused for a non-PES carrier.
-    current_pes_intact: bool,
+    pes_assembly: PesAssembly,
     /// Whether the last packet delivered on this PID filled its whole
     /// 184-byte payload. The final packet of an unbounded PES is normally
     /// short (adaptation-field stuffing), so a full one directly before a
@@ -2229,7 +2236,7 @@ impl StreamState {
         self.last_frame_period = 0;
         self.recent_steps.clear();
         self.pending_rebase = false;
-        self.current_pes_intact = true;
+        self.pes_assembly = PesAssembly::Whole;
         self.last_payload_full = false;
         self.pes_declared_len = 0;
         self.pes_received = 0;
@@ -5450,7 +5457,9 @@ impl StreamingTsDemux {
             // see the rule above.
             let tail_lost =
                 gap_here && pusi && stream.pes_declared_len == 0 && stream.last_payload_full;
-            let completed_intact = stream.current_pes_intact && !short_of_declared && !tail_lost;
+            let completed_intact = matches!(stream.pes_assembly, PesAssembly::Whole)
+                && !short_of_declared
+                && !tail_lost;
             let mut completed_pes = None;
             if gap_here
                 && !pusi
@@ -5462,7 +5471,7 @@ impl StreamingTsDemux {
                 {
                     harvest_damaged_au(stream, pid, &bytes, &mut self.events);
                 }
-                stream.current_pes_intact = false;
+                stream.pes_assembly = PesAssembly::Damaged;
                 clear_audio_carry(stream, &mut self.events);
             } else if matches!(stream.carrier, Carrier::Pes(_)) {
                 completed_pes = feed_pes_bounded(stream, pid, pusi, payload, &mut self.events);
@@ -5497,7 +5506,7 @@ impl StreamingTsDemux {
             if matches!(stream.carrier, Carrier::Pes(_)) {
                 if pusi {
                     // A new unit begins whole from its first byte.
-                    stream.current_pes_intact = true;
+                    stream.pes_assembly = PesAssembly::Whole;
                 } else if gap_here {
                     // The unit in progress lost bytes. Two things are needed:
                     // the mark (so the unit is dropped, never delivered
@@ -5509,7 +5518,7 @@ impl StreamingTsDemux {
                     // is deliberately left alone: `pes_bytes` continues to
                     // count what this PID is buffering, so a runaway PES is
                     // still bounded.
-                    stream.current_pes_intact = false;
+                    stream.pes_assembly = PesAssembly::Damaged;
                     if let Carrier::Pes(assembler) = &mut stream.carrier {
                         let _ = assembler.flush();
                     }
@@ -5778,7 +5787,7 @@ impl StreamingTsDemux {
             last_frame_period: 0,
             recent_steps: Vec::new(),
             pending_rebase: false,
-            current_pes_intact: true,
+            pes_assembly: PesAssembly::Whole,
             last_payload_full: false,
             pes_declared_len: 0,
             pes_received: 0,
@@ -6615,7 +6624,7 @@ fn drop_scrambled_payload(
     {
         harvest_damaged_au(stream, pid, &bytes, events);
     }
-    stream.current_pes_intact = false;
+    stream.pes_assembly = PesAssembly::Damaged;
     stream.last_payload_full = false;
     clear_audio_carry(stream, events);
 }
@@ -6642,7 +6651,7 @@ fn flush_stream_pes_tail(
         // input would deliver that truncation as if it were complete.
         let short_of_declared = stream.pes_declared_len > 0
             && completed.len() < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
-        if stream.current_pes_intact && !short_of_declared {
+        if matches!(stream.pes_assembly, PesAssembly::Whole) && !short_of_declared {
             on_completed_pes(stream, pid, &completed, epoch, events);
         } else if matches!(stream.codec, Codec::H264 | Codec::Hevc) {
             harvest_damaged_au(stream, pid, &completed, events);

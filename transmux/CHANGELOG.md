@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-- BREAKING: `rtmp::RtmpError` is renamed `rtmp::RtmpFlvError` (re-exported as `transmux::RtmpFlvError`), so it no longer shares a name with `rtmp_runtime::RtmpError` (c6 C6-13).
+- `StreamingTsDemux` tracks the in-flight PES assembly state as one explicit private enum instead of a bare boolean (#2032).
 ### Added
 - `LlHlsSegmenter::set_start_time_ns` and `StreamingTsHlsSegmenter::set_start_time_ns` start the decode clock (`tfdt`, TS PES times) at a given time instead of zero, so a segmenter for a reconnected source continues the previous run's timeline.
 - `SubSampleInformationBoxV2` and `SubSampleReferenceTableBox` (`ssrt`): `subs` version 2 and the new `ssrt` box of ISO/IEC 14496-12:2026 §8.7.7.2 / §8.7.10, byte-exact round trip (#1905).
