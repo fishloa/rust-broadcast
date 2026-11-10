@@ -22,30 +22,13 @@ use broadcast_hls::{
 use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
 use transmux::TrackId;
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
-use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Sample,
-    TrackSpec,
-};
+use transmux::{CodecConfig, Sample, TrackSpec};
+
+use crate::dummy_avc_config::dummy_avc_config;
 
 const INIT_URL: &str = "http://origin/live/init.mp4";
 const PLAYLIST_URL: &str = "http://origin/live/stream.m3u8";
 const VID_DUR: u32 = 3000; // 90 kHz / 30 fps
-
-fn dummy_avc_config() -> AVCConfigurationBox {
-    AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
-        configuration_version: 1,
-        profile_indication: 66,
-        profile_compatibility: 0,
-        level_indication: 30,
-        length_size_minus_one: 3,
-        sps: vec![AvcSps(vec![0x67, 66, 0, 30, 0x00])],
-        pps: vec![AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
-        chroma_format: None,
-        bit_depth_luma_minus8: None,
-        bit_depth_chroma_minus8: None,
-        sps_ext: vec![],
-    })
-}
 
 fn video_track() -> TrackSpec {
     TrackSpec::new(
