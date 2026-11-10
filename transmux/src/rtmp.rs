@@ -315,8 +315,8 @@ impl<'a> Unpackage for RtmpDemux<'a> {
 /// FLV tags, wraps each tag body as the corresponding RTMP message — Audio
 /// (type 8), Video (type 9) or Data (type 18) — on a per-kind chunk stream id,
 /// and chunks them at [`chunk_size`](RtmpMux::chunk_size) (§5.3). The output is
-/// self-describing at any chunk size: above the §5.4.1 default of 128 bytes it
-/// opens with a Set Chunk Size control message, so a peer reassembles it
+/// self-describing at any chunk size: at any size other than the §5.4.1
+/// default of 128 bytes it opens with a Set Chunk Size control message, so a peer reassembles it
 /// without being told the size out of band. The handshake stays the caller's
 /// job.
 #[derive(Debug, Clone)]
