@@ -1676,25 +1676,33 @@ impl Driver {
         self.advance_key_refresh();
 
         #[cfg(feature = "crypto")]
-        let (payload, key_flag) = match self.tx_keys.get(self.tx_parity) {
+        let encrypted: Option<alloc::vec::Vec<u8>> = match self.tx_keys.get(self.tx_parity) {
             Some((sek, salt)) => {
                 let mut enc = payload.to_vec();
                 if crate::crypto::aes_ctr_apply(sek, &salt, self.next_send_seq, &mut enc).is_err() {
                     return;
                 }
-                (enc, key_field_of(self.tx_parity))
+                Some(enc)
             }
-            None => (payload.to_vec(), EncryptionKeyField::NotEncrypted),
+            None => None,
         };
+        #[cfg(feature = "crypto")]
+        let key_flag = if encrypted.is_some() {
+            key_field_of(self.tx_parity)
+        } else {
+            EncryptionKeyField::NotEncrypted
+        };
+        #[cfg(feature = "crypto")]
+        let payload = encrypted.as_deref().unwrap_or(payload);
         #[cfg(not(feature = "crypto"))]
-        let (payload, key_flag) = (payload.to_vec(), EncryptionKeyField::NotEncrypted);
+        let key_flag = EncryptionKeyField::NotEncrypted;
 
         // The counters are kept within their wire widths below, so this cannot
         // be queued; if it ever were, the payload is dropped, not the task.
         let Ok(bytes) = self.sender.on_data_keyed(
             self.next_send_seq,
             self.next_message_number,
-            &payload,
+            payload,
             key_flag,
             now,
         ) else {
