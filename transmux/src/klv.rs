@@ -6,11 +6,10 @@
 //! a Local Set / Global Set) or 1-byte BER-OID tags (the items inside a Local
 //! Set). This module implements:
 //!
-//! - **BER length** encode/decode ([`ber_length_usize`] /
-//!   [`encode_ber_length_vec`]):
-//!   short form (`< 128`) and long form (top bit set, low 7 bits = count of
-//!   big-endian length bytes) — ISO/IEC 8825-1 §8.1.3, via SMPTE ST 336. The
-//!   codec itself is `broadcast_common::klv`'s.
+//! - **BER length** framing: short form (`< 128`) and long form (top bit set,
+//!   low 7 bits = count of big-endian length bytes) — ISO/IEC 8825-1 §8.1.3,
+//!   via SMPTE ST 336. The codec itself is `broadcast_common::klv`'s; this
+//!   module only sizes it and appends it to a packet, propagating its errors.
 //! - **Generic KLV item** ([`KlvItem`]): a 16-byte Universal Label key + owned
 //!   value bytes, serialized through the borrowed shared
 //!   `broadcast_common::klv::KlvItem` with a *computed* (never echoed) minimal
@@ -41,7 +40,7 @@
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::klv::{
-    KlvItem as Item, UNIVERSAL_LABEL_LEN, UniversalLabel, ber_length_size,
+    KlvItem as Item, UNIVERSAL_LABEL_LEN, UniversalLabel, ber_length_size, decode_ber_length,
     encode_ber_length as encode_ber_length_into,
 };
 use broadcast_common::len::{need_in, need_out};
@@ -80,23 +79,36 @@ pub const PRECISION_TIMESTAMP_LEN: usize = 8;
 // BER length (ISO/IEC 8825-1 §8.1.3, via SMPTE ST 336)
 // ---------------------------------------------------------------------------
 
-/// Encode `len` as the canonical minimal-form BER length (short form `< 128`,
-/// else the shortest long form), as a freshly allocated byte vector.
-pub fn encode_ber_length_vec(len: usize) -> Vec<u8> {
-    let value = u64::try_from(len).unwrap_or(u64::MAX);
-    let mut buf = alloc::vec![0u8; ber_length_size(value)];
-    match encode_ber_length_into(value, &mut buf) {
-        Ok(written) => buf.truncate(written),
-        Err(_) => buf.clear(),
-    }
-    buf
+/// The width of the value's BER length token, as a value exceeding
+/// [`u64::MAX`] is unrepresentable.
+fn value_u64(value: usize) -> Result<u64> {
+    u64::try_from(value).map_err(|_| {
+        Error::InvalidValue(InvalidValue {
+            field: "ber_length",
+            value: 0,
+            reason: "KLV value length exceeds u64 width",
+        })
+    })
 }
 
-/// Decode a BER length from the front of `bytes`. Returns `(length, consumed)`
-/// where `consumed` is the number of length-encoding bytes read (never touches
-/// the value that follows).
-pub fn ber_length_usize(bytes: &[u8]) -> Result<(usize, usize)> {
-    let (len, consumed) = broadcast_common::klv::decode_ber_length(bytes)?;
+/// Bytes the canonical minimal-form BER length of `value.len()` occupies.
+fn length_size(value: usize) -> Result<usize> {
+    Ok(ber_length_size(value_u64(value)?))
+}
+
+/// Append `len`'s canonical minimal-form BER length to `out`.
+fn push_ber_length(out: &mut Vec<u8>, len: usize) -> Result<()> {
+    let value = value_u64(len)?;
+    let size = ber_length_size(value);
+    let start = out.len();
+    out.resize(start + size, 0);
+    encode_ber_length_into(value, &mut out[start..])?;
+    Ok(())
+}
+
+/// Decode a BER length from the front of `bytes` as `(length, consumed)`.
+fn read_ber_length(bytes: &[u8]) -> Result<(usize, usize)> {
+    let (len, consumed) = decode_ber_length(bytes)?;
     let len = usize::try_from(len).map_err(|_| {
         Error::InvalidValue(InvalidValue {
             field: "ber_length",
@@ -237,17 +249,16 @@ impl LocalSetItem {
 
     /// Bytes this item occupies inside the Local Set value: OID tag + BER length
     /// + value.
-    fn encoded_len(&self) -> usize {
-        encode_ber_oid(self.tag).len()
-            + encode_ber_length_vec(self.value.len()).len()
-            + self.value.len()
+    fn encoded_len(&self) -> Result<usize> {
+        Ok(encode_ber_oid(self.tag).len() + length_size(self.value.len())? + self.value.len())
     }
 
     /// Append this item's `tag | BER-length | value` encoding to `out`.
-    fn encode_into(&self, out: &mut Vec<u8>) {
+    fn encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
         out.extend_from_slice(&encode_ber_oid(self.tag));
-        out.extend_from_slice(&encode_ber_length_vec(self.value.len()));
+        push_ber_length(out, self.value.len())?;
         out.extend_from_slice(&self.value);
+        Ok(())
     }
 }
 
@@ -257,7 +268,7 @@ fn parse_local_set_items(mut body: &[u8]) -> Result<Vec<LocalSetItem>> {
     let mut items = Vec::new();
     while !body.is_empty() {
         let (tag, tag_len) = ber_oid(body)?;
-        let (val_len, len_len) = ber_length_usize(&body[tag_len..])?;
+        let (val_len, len_len) = read_ber_length(&body[tag_len..])?;
         let value_start = tag_len + len_len;
         // The BER length is wire-controlled up to `usize::MAX`; bound the end
         // before slicing (r04-C3).
@@ -333,15 +344,15 @@ impl UasLocalSet {
 
     /// Encode the Local Set value section (all items except any checksum, which
     /// is appended by the checksum step) — the items minus the last checksum.
-    fn value_without_checksum(&self) -> Vec<u8> {
+    fn value_without_checksum(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         for item in &self.items {
             if item.tag == TAG_CHECKSUM {
                 continue;
             }
-            item.encode_into(&mut out);
+            item.encode_into(&mut out)?;
         }
-        out
+        Ok(out)
     }
 
     /// Serialize the full UAS Local Set with a freshly computed tag-1 Checksum
@@ -349,18 +360,18 @@ impl UasLocalSet {
     /// checksum tag+length, per MISB ST 0601 tag 1).
     ///
     /// Any checksum item already in `items` is ignored and replaced.
-    pub fn serialize_with_checksum(&self) -> Vec<u8> {
+    pub fn serialize_with_checksum(&self) -> Result<Vec<u8>> {
         // Value section: all non-checksum items, then the checksum item's
         // tag+length (the value bytes are filled in once they are summed).
-        let mut value = self.value_without_checksum();
+        let mut value = self.value_without_checksum()?;
         value.extend_from_slice(&encode_ber_oid(TAG_CHECKSUM));
-        value.extend_from_slice(&encode_ber_length_vec(CHECKSUM_LEN));
+        push_ber_length(&mut value, CHECKSUM_LEN)?;
 
         // Packet prefix = UL key + BER length of (value + 2 value bytes) + value.
         let value_total = value.len() + CHECKSUM_LEN;
         let mut packet = Vec::with_capacity(UNIVERSAL_LABEL_LEN + 4 + value_total);
         packet.extend_from_slice(&UAS_LS_KEY);
-        packet.extend_from_slice(&encode_ber_length_vec(value_total));
+        push_ber_length(&mut packet, value_total)?;
         packet.extend_from_slice(&value);
 
         // ST 0601 §5.5: the sum runs from the first byte of the 16-byte UL key
@@ -368,7 +379,7 @@ impl UasLocalSet {
         // `packet` currently holds, which stops just short of the 2 value bytes.
         let checksum = checksum_bcc16(&packet);
         packet.extend_from_slice(&checksum.to_be_bytes());
-        packet
+        Ok(packet)
     }
 
     /// Verify the tag-1 Checksum of a serialized UAS Local Set: recompute the
@@ -419,20 +430,26 @@ impl Serialize for UasLocalSet {
 
     fn serialized_len(&self) -> usize {
         // Value = non-checksum items + checksum item (tag + len + 2 value bytes).
-        let value_len: usize = self
+        // A length too large for its BER token yields 0 here and a
+        // `serialize_into` error; `serialize_with_checksum` reports it.
+        let value_len = self
             .items
             .iter()
             .filter(|i| i.tag != TAG_CHECKSUM)
-            .map(|i| i.encoded_len())
-            .sum::<usize>()
-            + encode_ber_oid(TAG_CHECKSUM).len()
-            + encode_ber_length_vec(CHECKSUM_LEN).len()
-            + CHECKSUM_LEN;
-        UNIVERSAL_LABEL_LEN + encode_ber_length_vec(value_len).len() + value_len
+            .try_fold(
+                encode_ber_oid(TAG_CHECKSUM).len() + CHECKSUM_LEN,
+                |acc, i| Ok::<usize, Error>(acc + i.encoded_len()?),
+            )
+            .and_then(|sum| Ok(sum + length_size(CHECKSUM_LEN)?))
+            .unwrap_or(0);
+        value_len
+            .checked_add(UNIVERSAL_LABEL_LEN)
+            .and_then(|total| length_size(value_len).ok().map(|size| total + size))
+            .unwrap_or(0)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let bytes = self.serialize_with_checksum();
+        let bytes = self.serialize_with_checksum()?;
         need_out(buf, bytes.len())?;
         buf[..bytes.len()].copy_from_slice(&bytes);
         Ok(bytes.len())
@@ -484,19 +501,6 @@ mod tests {
     }
 
     #[test]
-    fn ber_short_form() {
-        assert_eq!(encode_ber_length_vec(5), alloc::vec![5]);
-        assert_eq!(ber_length_usize(&[5, 0xAA]).unwrap(), (5, 1));
-    }
-
-    #[test]
-    fn ber_long_form_300() {
-        // 300 = 0x012C → 82 01 2C.
-        assert_eq!(encode_ber_length_vec(300), alloc::vec![0x82, 0x01, 0x2C]);
-        assert_eq!(ber_length_usize(&[0x82, 0x01, 0x2C]).unwrap(), (300, 3));
-    }
-
-    #[test]
     fn ber_oid_round_trip() {
         for tag in [1u32, 2, 127, 128, 300, 16_383] {
             let enc = encode_ber_oid(tag);
@@ -529,7 +533,7 @@ mod tests {
         let mut value = vec![TAG_PRECISION_TIMESTAMP as u8, 0x88];
         value.extend_from_slice(&[0xFFu8; 8]);
         let mut packet = UAS_LS_KEY.to_vec();
-        packet.extend_from_slice(&encode_ber_length_vec(value.len()));
+        push_ber_length(&mut packet, value.len()).expect("packet BER length is representable");
         packet.extend_from_slice(&value);
         let err = UasLocalSet::parse(&packet).expect_err("hostile inner BER length must fail");
         assert!(

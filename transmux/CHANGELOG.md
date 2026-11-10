@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- BREAKING: `klv::UasLocalSet::serialize_with_checksum` returns `Result<Vec<u8>>`, so a value whose BER length cannot be encoded is reported instead of producing a packet with a corrupt length field (#2341).
+- BREAKING: `klv::encode_ber_length_vec` and `klv::ber_length_usize` are removed; they duplicated `broadcast_common::klv`'s BER length codec in a second shape, and `encode_ber_length_vec` returned an empty vector when encoding failed. Use `broadcast_common::klv::{encode_ber_length, decode_ber_length, ber_length_size}` directly (#2341).
 
 ## [0.31.0] - 2026-11-10
 ### Changed

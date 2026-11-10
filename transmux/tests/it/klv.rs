@@ -8,8 +8,7 @@ use broadcast_common::klv::UNIVERSAL_LABEL_LEN;
 use broadcast_common::{Parse, Serialize};
 use transmux::klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
-    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UasLocalSet, ber_length_usize, checksum_bcc16,
-    encode_ber_length_vec,
+    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UasLocalSet, checksum_bcc16,
 };
 use transmux::rtp::{depacketise_klv, packetise_klv};
 
@@ -17,55 +16,46 @@ const RTP_HEADER_LEN: usize = 12;
 const RTP_MARKER_MASK: u8 = 0x80;
 
 // ---------------------------------------------------------------------------
-// 1. BER length round-trip (bites)
+// 1. KLV length field (BER framing bites)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ber_length_short_form() {
-    // Short form: length 5 encodes as the single byte 0x05.
-    assert_eq!(encode_ber_length_vec(5), vec![0x05]);
-    let (len, consumed) = ber_length_usize(&[0x05, 0xFF, 0xFF]).unwrap();
-    assert_eq!((len, consumed), (5, 1));
+fn klv_item_value_grows_ber_length_to_long_form() {
+    // The value length drives the on-wire BER length: 255 -> 81 FF, 256 -> 82 01 00.
+    let at_255 = KlvItem::new(UAS_LS_KEY, vec![0xAB; 255]);
+    let b255 = at_255.try_to_bytes().unwrap();
+    assert_eq!(
+        &b255[UNIVERSAL_LABEL_LEN..UNIVERSAL_LABEL_LEN + 2],
+        &[0x81, 0xFF]
+    );
+    assert_eq!(b255.len(), at_255.serialized_len());
+
+    let at_256 = KlvItem::new(UAS_LS_KEY, vec![0xAB; 256]);
+    let b256 = at_256.try_to_bytes().unwrap();
+    assert_eq!(
+        &b256[UNIVERSAL_LABEL_LEN..UNIVERSAL_LABEL_LEN + 3],
+        &[0x82, 0x01, 0x00]
+    );
+    assert_eq!(b256.len(), at_256.serialized_len());
+    assert_eq!(KlvItem::parse(&b256).unwrap(), at_256);
 }
 
 #[test]
-fn ber_length_long_form_300() {
-    // 300 needs 2 length bytes → 82 01 2C.
-    let enc = encode_ber_length_vec(300);
-    assert_eq!(enc, vec![0x82, 0x01, 0x2C]);
-    let (len, consumed) = ber_length_usize(&enc).unwrap();
-    assert_eq!((len, consumed), (300, 3));
-
-    // The 2-length-byte boundary bites: 255 fits in 1 byte, 256 needs 2.
-    assert_eq!(encode_ber_length_vec(255), vec![0x81, 0xFF]);
-    assert_eq!(encode_ber_length_vec(256), vec![0x82, 0x01, 0x00]);
-    assert_eq!(ber_length_usize(&[0x82, 0x01, 0x00]).unwrap().0, 256);
-}
-
-#[test]
-fn ber_length_mutation_bites() {
-    // Mutating the encoded length must change the decoded value: this proves the
-    // decoder reads the value bytes, not a fixed position.
-    let mut enc = encode_ber_length_vec(300);
-    let original = ber_length_usize(&enc).unwrap().0;
-    enc[2] ^= 0x01; // 0x2C -> 0x2D
-    let mutated = ber_length_usize(&enc).unwrap().0;
-    assert_ne!(original, mutated);
-    assert_eq!(mutated, 301);
-}
-
-#[test]
-fn ber_length_indefinite_form_rejected() {
-    // 0x80 alone (indefinite form) is not permitted in KLV → error, no panic.
+fn klv_item_indefinite_form_rejected() {
+    // 0x80 alone (indefinite form) is not permitted in KLV -> error, no panic.
+    let mut bytes = UAS_LS_KEY.to_vec();
+    bytes.push(0x80);
     assert!(matches!(
-        ber_length_usize(&[0x80]),
+        KlvItem::parse(&bytes),
         Err(transmux::error::Error::Klv(
             broadcast_common::klv::KlvError::BerIndefiniteLength
         ))
     ));
-    // Long form promising bytes that aren't there → error, no panic.
+    // Long form promising bytes that aren't there -> error, no panic.
+    bytes[UNIVERSAL_LABEL_LEN] = 0x82;
+    bytes.push(0x01);
     assert!(matches!(
-        ber_length_usize(&[0x82, 0x01]),
+        KlvItem::parse(&bytes),
         Err(transmux::error::Error::Klv(
             broadcast_common::klv::KlvError::BufferTooShort(..)
         ))
@@ -120,7 +110,7 @@ fn local_set_variable_item_not_last_parses() {
     // Wrap in a UAS LS (round-trip through serialize/parse), then check the
     // non-checksum items survived in order with exact values.
     let ls = UasLocalSet::from_items(items.clone());
-    let bytes = ls.serialize_with_checksum();
+    let bytes = ls.serialize_with_checksum().unwrap();
     let parsed = UasLocalSet::parse(&bytes).unwrap();
     let non_checksum: Vec<_> = parsed
         .items
@@ -144,7 +134,7 @@ fn uas_local_set_checksum_vector_and_verify() {
         ts.to_be_bytes().to_vec(),
     )]);
 
-    let packet = ls.serialize_with_checksum();
+    let packet = ls.serialize_with_checksum().unwrap();
 
     // Full packet is exactly 31 bytes (16 UL + 1 len + 10 tag2 + 4 tag1).
     assert_eq!(packet.len(), 31);
@@ -189,6 +179,7 @@ fn uas_local_set_checksum_recomputed_on_change() {
             LocalSetItem::new(10, vec![v]),
         ])
         .serialize_with_checksum()
+        .unwrap()
     };
     let a = mk(0x01);
     let b = mk(0x02);
@@ -213,7 +204,7 @@ fn klv_rtp_fragmentation_round_trip() {
         LocalSetItem::new(TAG_PRECISION_TIMESTAMP, ts.to_be_bytes().to_vec()),
         LocalSetItem::new(11, value),
     ]);
-    let unit = ls.serialize_with_checksum();
+    let unit = ls.serialize_with_checksum().unwrap();
     assert!(unit.len() > 100);
 
     // MTU that forces >= 2 fragments (header 12 + payload budget 50 = 62).
@@ -251,7 +242,7 @@ fn klv_rtp_small_unit_single_packet() {
         TAG_PRECISION_TIMESTAMP,
         0u64.to_be_bytes().to_vec(),
     )]);
-    let unit = ls.serialize_with_checksum();
+    let unit = ls.serialize_with_checksum().unwrap();
     let unit_bytes = bytes::Bytes::from(unit.clone());
     let packets = packetise_klv(&unit_bytes, 98, 7, 42, 0x1234, 1400).unwrap();
     assert_eq!(packets.len(), 1);
@@ -385,7 +376,9 @@ fn serializing_the_published_items_reproduces_a_real_packet() {
         LocalSetItem::new(14, vec![0xCD, 0x6B, 0x78, 0x4E]),
         LocalSetItem::new(15, vec![0x1B, 0xC4]),
     ];
-    let packet = UasLocalSet::from_items(items).serialize_with_checksum();
+    let packet = UasLocalSet::from_items(items)
+        .serialize_with_checksum()
+        .unwrap();
     assert_eq!(
         packet.as_slice(),
         JMISB_LATLONALT_PACKET,
@@ -404,6 +397,7 @@ fn checksum_covers_every_item_before_it() {
             LocalSetItem::new(3, vec![v]),
         ])
         .serialize_with_checksum()
+        .unwrap()
     };
     let a = mk(0x41);
     let b = mk(0x42);
