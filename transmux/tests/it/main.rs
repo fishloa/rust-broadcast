@@ -127,6 +127,8 @@ mod ps_demux;
 mod ps_demux_mpeg2;
 mod ps_demux_substreams;
 mod rebase;
+#[path = "support/ref_mp4.rs"]
+mod ref_mp4;
 mod repackage;
 mod review_findings;
 mod rtcp;
@@ -207,5 +209,8 @@ mod vvc;
 mod webm_demux;
 mod webm_demux_unknown_cluster;
 mod webm_timestamp_scale;
+#[cfg(feature = "std")]
+#[path = "support/xml.rs"]
+mod xml;
 mod xml_escaping;
 mod xml_namespaces;

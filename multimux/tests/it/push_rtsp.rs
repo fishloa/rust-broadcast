@@ -41,6 +41,7 @@ const PROBE_DEADLINE: Duration = Duration::from_secs(10);
 /// read (`-read_intervals %+3`); it is killed and the test fails on overrun.
 const FFPROBE_DEADLINE: Duration = Duration::from_secs(60);
 
+use crate::support::shared_it::fixture_path;
 use multimux::push::{PushTransport, RtspTransport, RtspTransportConfig};
 use transmux::{CodecConfig, TsDemux};
 
@@ -48,10 +49,6 @@ use transmux::{CodecConfig, TsDemux};
 /// is bounded, so a broken connect/push path fails the test rather than
 /// hanging the suite.
 const GUARD: Duration = Duration::from_secs(20);
-
-fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264-aac.ts")
-}
 
 /// Workspace-convention scratch dir (mirrors `golden_gate.rs`'s own
 /// `scratch_dir` — no `tempfile` dependency needed).
@@ -273,7 +270,7 @@ async fn push_and_read_back(
     push_url: String,
     read_url: String,
 ) {
-    let ts = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
+    let ts = std::fs::read(fixture_path("ts/h264-aac.ts")).expect("h264-aac.ts fixture must exist");
     let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
     assert!(
         media

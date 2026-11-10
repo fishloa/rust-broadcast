@@ -68,6 +68,9 @@ const SLEEP_ALLOW: &[&str] = &[
     // The paced UDP TS sender shared by the oracle tests: a pacing sleep inside a sender
     // task (spaces the datagrams so ingest is not starved by the flood), not a wait.
     "udp_origin.rs",
+    // The shared hang-guard wait and its poll pacing, extracted from these
+    // same allowlisted pollers.
+    "shared_it.rs",
     // The paced HTTP origin that delivers a capture at a real-time-ish rate, hang-guard
     // polls on the playlist and admin status, and one fixed 1 s dwell proving a strict
     // route stays empty after it has reported.

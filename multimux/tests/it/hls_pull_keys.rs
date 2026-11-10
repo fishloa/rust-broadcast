@@ -6,7 +6,6 @@
 //! the samples the same route produces from the plaintext segments.
 
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,6 +27,7 @@ use multimux::source::hls_pull::{HlsPullRoute, run_hls_pull};
 use transmux::sample_aes::aes128_encrypt_segment;
 
 use crate::support::listener;
+use crate::support::shared_it::nz;
 
 const TS_PACKET_LEN: usize = 188;
 const LEADING_PACKETS_DROPPED: usize = 3;
@@ -333,10 +333,6 @@ fn plain_files() -> Vec<(&'static str, Resource)> {
         ("/index0.ts", Resource::bytes(seg(0))),
         ("/index1.ts", Resource::bytes(seg(1))),
     ]
-}
-
-fn nz(n: usize) -> NonZeroUsize {
-    NonZeroUsize::new(n).expect("non-zero")
 }
 
 async fn ingest(

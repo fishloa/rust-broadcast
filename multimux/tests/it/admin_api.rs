@@ -23,7 +23,6 @@
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use transmux::TrackId;
@@ -45,13 +44,10 @@ use multimux::{
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 use crate::support::listener;
+use crate::support::shared_it::{nz, poll_until_extinf};
 use listener::bind_tcp;
 
 const ADMIN_TOKEN: &str = "admin-test-token";
-
-fn nz(n: usize) -> NonZeroUsize {
-    NonZeroUsize::new(n).expect("non-zero capacity")
-}
 
 /// Waits until `addr` accepts a bare TCP connection — the origin's own
 /// listener bind happens inside the freshly-`tokio::spawn`ed server task, so
@@ -345,26 +341,6 @@ fn admin_config(media_bind: SocketAddr, admin_bind: SocketAddr, routes: Vec<Rout
 /// `#EXTINF:` line — a generous hang guard (issue #807 style), not a
 /// latency assertion: the synthetic "instant" scheme produces samples with
 /// no real I/O wait, so this normally lands in well under a second.
-async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> String {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Ok(resp) = client.get(playlist_url).send().await
-            && resp.status().is_success()
-            && let Ok(body) = resp.text().await
-            && body.contains("#EXTINF:")
-        {
-            return body;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "no #EXTINF: line appeared in {playlist_url} within the hang guard -- route \
-                 never produced a closed segment"
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 fn media_playlist_url(media_addr: SocketAddr, name: &str) -> String {
     format!("http://{media_addr}/{name}/media.m3u8")
 }

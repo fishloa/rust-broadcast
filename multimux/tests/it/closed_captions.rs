@@ -3,7 +3,6 @@
 //! `ProgramSegmenter::pump` path and read back over the axum router.
 
 use std::collections::{BTreeSet, HashMap};
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,6 +17,7 @@ use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
 use transmux::ts_demux::TsDemux;
 
+use crate::support::shared_it::nz;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::llhls::LlHlsOutput;
@@ -41,10 +41,6 @@ const VALIDATOR_BIN: &str = "/usr/local/bin/mediastreamvalidator";
 const VALIDATOR_DEADLINE: Duration = Duration::from_secs(60);
 const VALIDATOR_TARGET_SECS: &str = "5";
 const MUST_LEVEL: i64 = 1;
-
-fn nz(n: usize) -> NonZeroUsize {
-    NonZeroUsize::new(n).expect("non-zero")
-}
 
 const TS_PACKET_LEN: usize = 188;
 const TS_SYNC: u8 = 0x47;

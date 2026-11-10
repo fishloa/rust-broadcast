@@ -43,11 +43,8 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 
+use crate::support::shared_it::{fixture_path, poll_until_extinf};
 use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
-
-fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264-aac.ts")
-}
 
 /// Locate `bin` on `PATH`, returning its full path.
 fn which(bin: &str) -> Option<PathBuf> {
@@ -94,25 +91,6 @@ fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
 /// `#EXTINF:` line (never satisfied by header-only tags the engine renders
 /// unconditionally). Bounded by a generous hang guard, not a latency
 /// assertion (issue #807).
-async fn poll_until_extinf(client: &reqwest::Client, url: &str) -> String {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Ok(resp) = client.get(url).send().await
-            && resp.status().is_success()
-            && let Ok(body) = resp.text().await
-            && body.contains("#EXTINF:")
-        {
-            return body;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "no #EXTINF: line appeared in {url} within the hang guard -- \
-             TS-HLS ingest never produced a closed segment"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
 fn first_segment_uri(playlist: &str) -> String {
     let start = playlist
         .find("seg-")
@@ -156,7 +134,12 @@ async fn serve_ts_hls_until_extinf() -> Served {
         server,
         stop,
         sender,
-    } = spawn_udp_ts_origin(base_config, &fixture_path(), Duration::from_millis(5)).await;
+    } = spawn_udp_ts_origin(
+        base_config,
+        &fixture_path("ts/h264-aac.ts"),
+        Duration::from_millis(5),
+    )
+    .await;
 
     let url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = tokio::time::timeout(Duration::from_secs(20), poll_until_extinf(&client, &url))

@@ -12,7 +12,6 @@
 //! every timing check below is computed from the shifted track.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -81,10 +80,7 @@ const KNOWN_MISSING_HOLD_BACK_1594: &str = "Missing server control attribute";
 const KNOWN_NO_RENDITION_REPORTS_1595: &str = "No rendition reports in low-latency playlist";
 
 use crate::support::shared;
-
-fn nz(n: usize) -> NonZeroUsize {
-    NonZeroUsize::new(n).expect("non-zero")
-}
+use crate::support::shared_it::nz;
 
 struct Rig {
     app: Router,

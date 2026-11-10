@@ -10,10 +10,10 @@
 //! other step free of a real async wait (zero backoff skips the retry wait),
 //! so the only place the loop can park is that branch.
 
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::support::shared_it::nz;
 use media_plane::trunk::{Trunk, TrunkConfig};
 use multimux::config::{PushFormat, ReconnectPolicy};
 use multimux::push::{PushTransport, drive_push};
@@ -38,10 +38,6 @@ impl PushTransport for NeverConnect {
         Err(NeverErr)
     }
     fn close(&mut self) {}
-}
-
-fn nz(n: usize) -> NonZeroUsize {
-    NonZeroUsize::new(n).unwrap()
 }
 
 /// Zero backoff so the retry-wait is skipped and the only parking point in

@@ -32,12 +32,9 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 
+use crate::support::shared_it::fixture_path;
 use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
 use transmux::smooth_parse::SmoothManifest;
-
-fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264-aac-40s.ts")
-}
 
 fn have_oracle(bin: &str) -> bool {
     Command::new(bin)
@@ -116,7 +113,12 @@ async fn serve_smooth_until_fragment(min_chunks: usize) -> Served {
         server,
         stop,
         sender,
-    } = spawn_udp_ts_origin(base_config, &fixture_path(), Duration::from_millis(3)).await;
+    } = spawn_udp_ts_origin(
+        base_config,
+        &fixture_path("ts/h264-aac-40s.ts"),
+        Duration::from_millis(3),
+    )
+    .await;
 
     let url = format!("http://{bind_addr}/cam/Manifest");
     let manifest = tokio::time::timeout(
