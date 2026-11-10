@@ -19,32 +19,13 @@ pub enum Error {
     #[error(transparent)]
     OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 
-    /// A BER length token used the reserved "unspecified length" value
-    /// (`0x80` with zero following bytes), forbidden in MXF files
-    /// (`private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4).
-    #[error("BER length used the reserved indefinite-length token (0x80)")]
-    BerIndefiniteLength,
-    /// A BER long-form length used more following bytes than an
-    /// unsigned 64-bit length could ever need, or than MXF's own 9-byte
-    /// cap (1 header + up to 8 length bytes, §6.3.4) allows.
-    #[error("BER long-form length has {bytes} following bytes, exceeding the 8-byte cap")]
-    BerLengthTooLong {
-        /// Following-byte count found (or requested on serialize).
-        bytes: usize,
-    },
-    /// [`crate::ber::BerLength::Fixed`] requested a specific on-wire BER
-    /// length-token width that is too small to represent the length being
-    /// serialized (issue #1047). Not reachable by re-serializing a value
-    /// as parsed (its preserved width, by construction, already fit that
-    /// same length) — only by constructing or mutating a value into an
-    /// inconsistent state.
-    #[error("length {len} does not fit in the fixed BER width of {width} byte(s)")]
-    FixedBerLengthTooSmall {
-        /// The length that needed encoding.
-        len: u64,
-        /// The requested fixed total token width, in bytes.
-        width: u8,
-    },
+    /// A KLV triplet or BER length token failure (SMPTE ST 336 framing, as
+    /// constrained for MXF by `private/specs-verified/smpte/st377-1/st377-1.md`
+    /// §6.3.4): an indefinite length, a too-long long form, or a fixed width
+    /// too small for the length being serialized.
+    #[error(transparent)]
+    Klv(#[from] broadcast_common::klv::KlvError),
+
     /// A Partition Pack's Key byte 14 (Partition Kind) was not one of the
     /// three defined values (`private/specs-verified/smpte/st377-1/st377-1.md` §7.1 Table 4).
     #[error("unknown Partition Kind byte: {byte:#04X}")]

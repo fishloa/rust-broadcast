@@ -16,7 +16,10 @@ use core::fmt;
 
 use alloc::vec::Vec;
 
-use crate::ber::{ber_length_size_for, decode_ber_length, encode_ber_length_as};
+pub use crate::ber::{
+    ber_length_size, ber_length_size_for, decode_ber_length, encode_ber_length,
+    encode_ber_length_as,
+};
 use crate::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
 use crate::len::{need_in, need_out};
 use crate::{Parse, Serialize};
@@ -136,7 +139,7 @@ impl BerLength {
     /// (as [`decode_ber_length`] returns it) — always in range since a
     /// successful decode consumes at least 1 and at most 9 bytes.
     #[must_use]
-    pub(crate) fn fixed_from_consumed(consumed: usize) -> Self {
+    pub fn fixed_from_consumed(consumed: usize) -> Self {
         Self::Fixed(
             u8::try_from(consumed)
                 .ok()
