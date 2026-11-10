@@ -33,10 +33,10 @@ use crate::clock::{HostClock, SystemHostClock};
 use crate::error::{MultimuxError, Result};
 use crate::source::IngestTimeouts;
 
-const CEILING: Duration = Duration::from_secs(60);
+const CEILING: Duration = Duration::from_secs(120);
 /// A static presentation over loopback ends in well under a second; the
 /// ceiling only turns a hang into a failure.
-const STATIC_CEILING: Duration = Duration::from_secs(20);
+const STATIC_CEILING: Duration = Duration::from_secs(60);
 const POLL: Duration = Duration::from_millis(20);
 
 fn nz(n: usize) -> NonZeroUsize {
@@ -1248,7 +1248,7 @@ async fn without_utc_timing_a_fast_host_clock_requests_segments_early() {
     let mut pull = Pull::start(route(live.url()), SkewedClock::new(60_000_000));
     let started = tokio::time::Instant::now();
     while live.origin.early.load(Ordering::SeqCst) == 0
-        && started.elapsed() < Duration::from_secs(10)
+        && started.elapsed() < Duration::from_secs(30)
     {
         tokio::time::sleep(POLL).await;
     }

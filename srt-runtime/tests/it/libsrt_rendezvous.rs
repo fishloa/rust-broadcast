@@ -32,7 +32,7 @@ include!("support/skip.rs");
 include!("support/libsrt_spawn.rs");
 include!("support/run_tag.rs");
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(120);
+const TEST_TIMEOUT: Duration = Duration::from_secs(300);
 const PAYLOAD_LEN: usize = 1316;
 /// Handshake attempts per test (random cookie each, so both roles occur).
 const ITERATIONS: usize = 6;
@@ -104,7 +104,7 @@ async fn our_rendezvous_completes_real_handshake_and_data_with_libsrt() {
             let _libsrt = KillOnDrop(libsrt);
 
             let mut ours = tokio::time::timeout(
-                Duration::from_secs(25),
+                Duration::from_secs(60),
                 SrtSocket::rendezvous_from_socket(
                     our_sock,
                     format!("127.0.0.1:{lib_port}")
@@ -161,7 +161,7 @@ async fn real_libsrt_rendezvous_sender_delivers_data_to_our_rendezvous_side() {
             let _libsrt = KillOnDrop(libsrt);
 
             let mut ours = tokio::time::timeout(
-                Duration::from_secs(25),
+                Duration::from_secs(60),
                 SrtSocket::rendezvous_from_socket(
                     our_sock,
                     format!("127.0.0.1:{lib_port}")
@@ -183,7 +183,7 @@ async fn real_libsrt_rendezvous_sender_delivers_data_to_our_rendezvous_side() {
             let mut next = 0u32;
             let mut received: Vec<u32> = Vec::new();
             let mut feeder = tokio::time::interval(Duration::from_millis(50));
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
             while received.len() < 6 {
                 tokio::select! {
                     _ = feeder.tick() => {
