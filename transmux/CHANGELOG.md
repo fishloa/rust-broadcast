@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- `StreamingTsDemux` tracks the in-flight PES assembly state as one explicit private enum instead of a bare boolean (#2032).
 - Avoid the per-section `Bytes::to_vec` copy in `StreamingTsDemux` by reusing the reassembler's `Bytes` directly (#2031).
 - BREAKING: `rtmp::RtmpError` is renamed `rtmp::RtmpFlvError` (re-exported as `transmux::RtmpFlvError`), so it no longer shares a name with `rtmp_runtime::RtmpError` (c6 C6-13).
 ### Added
