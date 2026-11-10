@@ -2650,6 +2650,79 @@ fn pcr_pid_that_keeps_sending_without_pcr_raises_repetition_error() {
 }
 
 #[test]
+fn two_separate_pcr_gaps_raise_two_repetition_errors() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pcr_pid: u16 = 0x0200;
+    let af = make_pcr_adaptation(90_000, 0, false, false);
+    monitor.feed(
+        &make_ts_packet(pcr_pid, 0, false, true, &af, &[0xAB]),
+        ms(0),
+    );
+    // gap 1
+    let mut silent = Vec::new();
+    for i in 1..=5u8 {
+        let pkt = make_ts_packet(pcr_pid, i, false, false, &[], &[0xAB]);
+        silent.extend(monitor.feed(&pkt, ms(u64::from(i) * 50)).to_vec());
+    }
+    // recovery PCR
+    let af = make_pcr_adaptation(90_000 + 22_500, 0, false, false);
+    monitor.feed(
+        &make_ts_packet(pcr_pid, 6, false, true, &af, &[0xAB]),
+        ms(300),
+    );
+    // normal PCRs for a while
+    for i in 7..=9u8 {
+        let af = make_pcr_adaptation(90_000 + u64::from(i - 6) * 22_500, 0, false, false);
+        monitor.feed(
+            &make_ts_packet(pcr_pid, i, false, true, &af, &[0xAB]),
+            ms(300 + u64::from(i - 6) * 50),
+        );
+    }
+    // gap 2
+    let mut silent2 = Vec::new();
+    for i in 10..=14u8 {
+        let pkt = make_ts_packet(pcr_pid, i, false, false, &[], &[0xAB]);
+        silent2.extend(
+            monitor
+                .feed(&pkt, ms(300 + 150 + u64::from(i - 10) * 50))
+                .to_vec(),
+        );
+    }
+    let total = silent
+        .iter()
+        .chain(silent2.iter())
+        .filter(|e| e.indicator == Indicator::PcrRepetitionError)
+        .count();
+    // plus possible on-PCR? none. Also check any emitted during gap2 via monitor? count above.
+    assert_eq!(
+        total, 2,
+        "two separate gaps must raise two 2.3a reports: {silent:#?} {silent2:#?}"
+    );
+}
+
+#[test]
+fn a_pcr_pid_that_stops_and_resumes_after_the_limit_raises_repetition_error() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pcr_pid: u16 = 0x0200;
+    let af = make_pcr_adaptation(90_000, 0, false, false);
+    monitor.feed(
+        &make_ts_packet(pcr_pid, 0, false, true, &af, &[0xAB]),
+        ms(0),
+    );
+    let af = make_pcr_adaptation(90_000 + 22_500, 0, false, false);
+    let events = monitor.feed(
+        &make_ts_packet(pcr_pid, 1, false, true, &af, &[0xAB]),
+        ms(400),
+    );
+    assert!(
+        has_indicator(events, Indicator::PcrRepetitionError),
+        "a PCR PID that goes silent and resumes after the limit must raise 2.3a: {events:#?}"
+    );
+}
+
+#[test]
 fn pts_check_ignores_stream_ids_without_an_optional_pes_header() {
     let es_pid: u16 = 0x0200;
     for stream_id in [0xBCu8, 0xBE, 0xBF, 0xF0, 0xF1, 0xF2, 0xF8, 0xFF] {

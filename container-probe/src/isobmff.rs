@@ -43,6 +43,12 @@ pub(crate) const TYPE_MOOF: [u8; 4] = *b"moof";
 pub(crate) const TYPE_COMPRESSED_MOOV: [u8; 4] = *b"!mov";
 /// The `!mof` compressed movie fragment box type, replacing `moof` (§8.16.7).
 pub(crate) const TYPE_COMPRESSED_MOOF: [u8; 4] = *b"!mof";
+/// The `!six` compressed segment index box type, replacing `sidx`
+/// (ISO/IEC 14496-12:2026 §8.16.8).
+pub(crate) const TYPE_COMPRESSED_SIDX: [u8; 4] = *b"!six";
+/// The `!ssx` compressed subsegment index box type, replacing `ssix`
+/// (ISO/IEC 14496-12:2026 §8.16.9).
+pub(crate) const TYPE_COMPRESSED_SSIX: [u8; 4] = *b"!ssx";
 /// The `skip` box type (§8.1.2).
 const TYPE_SKIP: [u8; 4] = *b"skip";
 /// The `free` box type (§8.1.2).
@@ -56,13 +62,15 @@ const BRAND_LEN: usize = 4;
 /// The 4-byte box types accepted as the FILE's first box (§4.4 / §8.2 / §8.8):
 /// a standalone init segment begins `ftyp`, a CMAF/fMP4 segment `styp`/`moof`,
 /// a progressive file `ftyp`/`moov`, etc.
-const LEADING_BOX_TYPES: [[u8; 4]; 9] = [
+const LEADING_BOX_TYPES: [[u8; 4]; 11] = [
     TYPE_FTYP,
     TYPE_STYP,
     TYPE_MOOV,
     TYPE_MOOF,
     TYPE_COMPRESSED_MOOV,
     TYPE_COMPRESSED_MOOF,
+    TYPE_COMPRESSED_SIDX,
+    TYPE_COMPRESSED_SSIX,
     TYPE_SKIP,
     TYPE_FREE,
     TYPE_MDAT,

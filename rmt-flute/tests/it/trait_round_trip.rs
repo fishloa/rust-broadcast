@@ -13,7 +13,8 @@ fn fixture() -> Vec<u8> {
 
 #[test]
 fn alc_packet_serializes_byte_identically_through_the_trait() {
-    let data = fixture();
+    let mut data = fixture();
+    data[1] |= LCT_RES_MASK;
     let pkt = AlcPacket::parse(&data, FEC_PAYLOAD_ID_128_LEN).unwrap();
     assert_eq!(Serialize::try_to_bytes(&pkt).unwrap(), data);
     assert_eq!(Serialize::serialized_len(&pkt), data.len());

@@ -9,6 +9,7 @@
 - A legal duplicate packet (H.222.0 2.4.3.3) is no longer fed to section reassembly, which appended it to the section in progress and raised a false CRC_error.
 - EIT_PF_actual section '0' or '1' vanishing while its partner keeps arriving is detected after the P/F interval (3.6.a, reported as `EitError`).
 - 2.3a is raised when a PCR PID keeps sending packets but stops carrying a PCR, instead of only when the next PCR finally arrives.
+- 2.3a is reported once per gap: after it fires for a silence the on-PCR-arm 2.3a stays latched until a fresh PCR on that PID resets it, so a later distinct outage (PCR recovered in between) raises a separate 2.3a.
 - 2.5 skips PES packets whose `stream_id` has no optional header (program_stream_map, padding, private_stream_2, ECM, EMM, DSMCC, H.222.1 type E, program_stream_directory).
 - The EIT P/F pairing map is bounded (1024 sub-tables).
 

@@ -247,3 +247,51 @@ fn a_table_id_zero_section_on_another_pid_does_not_change_the_followed_pmt_pids(
         "only the PAT on PID 0 may add PMT PIDs to the watch set"
     );
 }
+
+#[test]
+fn a_next_pat_does_not_unwatch_a_multi_section_current_pat() {
+    use broadcast_common::Serialize;
+    use dvb_si::tables::pat::{PatEntry, PatSection};
+    fn pat_bytes(v: u8, cur: bool, sn: u8, last: u8, pid: u16) -> Vec<u8> {
+        let pat = PatSection::new(
+            0x1111,
+            v,
+            cur,
+            sn,
+            last,
+            vec![PatEntry::new(u16::from(sn) + 1, Pid::new(pid))],
+        );
+        let mut b = vec![0u8; pat.serialized_len()];
+        pat.serialize_into(&mut b).unwrap();
+        b
+    }
+    fn ts_packet(pid: u16, section: &[u8]) -> Vec<u8> {
+        let mut p = vec![0xFFu8; 188];
+        p[0] = 0x47;
+        p[1] = 0x40 | ((pid >> 8) as u8 & 0x1F);
+        p[2] = (pid & 0xFF) as u8;
+        p[3] = 0x10;
+        p[4] = 0x00;
+        p[5..5 + section.len()].copy_from_slice(section);
+        p
+    }
+    let mut d = SiDemux::builder().build();
+    d.feed(&ts_packet(0, &pat_bytes(0, true, 0, 1, 0x0100)))
+        .for_each(drop);
+    d.feed(&ts_packet(0, &pat_bytes(0, true, 1, 1, 0x0101)))
+        .for_each(drop);
+    let sec = pmt_section(1, 0, 0x0111);
+    assert_eq!(d.feed(&ts_packet(0x0100, &sec)).count(), 1);
+    d.feed(&ts_packet(0, &pat_bytes(1, false, 0, 0, 0x0300)))
+        .for_each(drop);
+    let sec2 = pmt_section(2, 0, 0x0111);
+    for &p in &[0x0100u16, 0x0101] {
+        let evts: Vec<_> = d.feed(&ts_packet(p, &sec2)).collect();
+        assert_eq!(
+            evts.len(),
+            1,
+            "PMT PID 0x{:04X} still followed after a next PAT",
+            p
+        );
+    }
+}

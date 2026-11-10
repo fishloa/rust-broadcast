@@ -154,6 +154,18 @@ pub fn parse_webvtt(input: &str) -> Result<ParsedWebVtt, Error> {
     Ok(ParsedWebVtt { cues, lossy })
 }
 
+/// A WebVTT block whose header is `NOTE`, `STYLE` or `REGION` (possibly
+/// followed by a space and more text) is a non-cue block and is dropped.
+fn is_non_cue_block(first: &str) -> bool {
+    first == "NOTE"
+        || first.starts_with("NOTE ")
+        || first.starts_with("NOTE\t")
+        || first == "STYLE"
+        || first.starts_with("STYLE ")
+        || first == "REGION"
+        || first.starts_with("REGION ")
+}
+
 /// Parse one blank-line-delimited block's lines. Returns `Ok(None)` for a
 /// block this crate deliberately drops (`NOTE`/`STYLE`/`REGION`); otherwise
 /// `Ok(Some((cue, block_was_lossy)))`.
@@ -161,14 +173,7 @@ fn parse_block(lines: &[&str]) -> Result<Option<(Cue, bool)>, Error> {
     let mut lossy = false;
     let first = lines[0];
 
-    if first == "NOTE"
-        || first.starts_with("NOTE ")
-        || first.starts_with("NOTE\t")
-        || first == "STYLE"
-        || first.starts_with("STYLE ")
-        || first == "REGION"
-        || first.starts_with("REGION ")
-    {
+    if is_non_cue_block(first) {
         return Ok(None);
     }
 

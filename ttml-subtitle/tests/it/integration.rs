@@ -1147,3 +1147,120 @@ fn validator_rejects_malformed_time_expression_on_nested_div() {
         result.errors
     );
 }
+
+#[test]
+fn validator_rejects_malformed_time_expression_on_nested_div_dur() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter">
+  <body>
+    <div>
+      <div dur="garbage">
+        <p begin="1s" end="2s">hi</p>
+      </div>
+    </div>
+  </body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let result = validator.validate(&doc);
+    assert!(!result.valid);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn validator_rejects_malformed_time_expression_on_nested_div_end() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter">
+  <body>
+    <div>
+      <div end="garbage">
+        <p begin="1s" end="2s">hi</p>
+      </div>
+    </div>
+  </body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let result = validator.validate(&doc);
+    assert!(!result.valid);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn validator_rejects_malformed_time_expression_on_nested_p_begin() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter">
+  <body>
+    <div>
+      <div begin="0s" end="5s">
+        <p begin="garbage" end="2s">hi</p>
+      </div>
+    </div>
+  </body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let result = validator.validate(&doc);
+    assert!(!result.valid);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn validator_rejects_malformed_time_expression_on_nested_image_begin() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tt xml:lang="en" xmlns="http://www.w3.org/ns/ttml"
+   xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+   xmlns:tts="http://www.w3.org/ns/ttml#styling"
+   ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/image"
+   tts:extent="640px 480px"
+   ttp:displayAspectRatio="4 3">
+  <head><layout><region xml:id="r1" tts:extent="640px 480px" tts:origin="0px 0px"/></layout></head>
+  <body>
+    <div region="r1">
+      <div begin="garbage">
+        <image tts:extent="640px 480px" src="test.png" type="image/png"/>
+      </div>
+    </div>
+  </body>
+</tt>"#;
+    let doc = Document::parse_str(xml).unwrap();
+    let validator =
+        validation::Validator::new(validation::Profile::Image, validation::ImscVersion::V1_1);
+    let result = validator.validate(&doc);
+    assert!(!result.valid);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
+}

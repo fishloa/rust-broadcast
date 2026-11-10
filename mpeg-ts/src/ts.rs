@@ -1139,8 +1139,18 @@ impl SectionReassembler {
     /// counter; such a duplicate of the previous packet on this PID is dropped
     /// when it is a continuation (non-PUSI) packet. Call this for payload-bearing
     /// packets only: the counter does not advance on packets without payload.
-    pub fn feed_with_continuity(&mut self, payload: &[u8], pusi: bool, continuity_counter: u8) {
-        let duplicate = self.last_continuity_counter == Some(continuity_counter);
+    /// `discontinuity` is the packet's adaptation-field
+    /// `discontinuity_indicator` (ISO/IEC 13818-1 §2.4.3.5): when it is
+    /// set an unchanged continuity counter is legal and the packet is not a
+    /// duplicate.
+    pub fn feed_with_continuity(
+        &mut self,
+        payload: &[u8],
+        pusi: bool,
+        continuity_counter: u8,
+        discontinuity: bool,
+    ) {
+        let duplicate = !discontinuity && self.last_continuity_counter == Some(continuity_counter);
         self.last_continuity_counter = Some(continuity_counter);
         if duplicate && !pusi {
             return;
@@ -1620,12 +1630,33 @@ mod tests {
         first.extend_from_slice(&section[..183]);
 
         let mut reasm = SectionReassembler::default();
-        reasm.feed_with_continuity(&first, true, 0);
-        reasm.feed_with_continuity(&section[183..250], false, 1);
-        reasm.feed_with_continuity(&section[183..250], false, 1);
-        reasm.feed_with_continuity(&section[250..], false, 2);
+        reasm.feed_with_continuity(&first, true, 0, false);
+        reasm.feed_with_continuity(&section[183..250], false, 1, false);
+        reasm.feed_with_continuity(&section[183..250], false, 1, false);
+        reasm.feed_with_continuity(&section[250..], false, 2, false);
 
         let out = reasm.pop_section().expect("section survives the duplicate");
+        assert_eq!(out.as_ref(), &section[..]);
+        assert!(reasm.pop_section().is_none());
+    }
+
+    #[test]
+    fn a_packet_after_a_discontinuity_with_an_unchanged_counter_is_not_a_duplicate() {
+        let mut section = vec![0x4Eu8, 0xB0, 0x00];
+        section.resize(300, 0x5A);
+        section[1] = 0xB0 | (((300 - 3) >> 8) as u8);
+        section[2] = ((300 - 3) & 0xFF) as u8;
+        let mut first = vec![0x00u8];
+        first.extend_from_slice(&section[..183]);
+
+        let mut reasm = SectionReassembler::default();
+        reasm.feed_with_continuity(&first, true, 0, false);
+        reasm.feed_with_continuity(&section[183..250], false, 0, true);
+        reasm.feed_with_continuity(&section[250..], false, 1, false);
+
+        let out = reasm
+            .pop_section()
+            .expect("section survives the discontinuity");
         assert_eq!(out.as_ref(), &section[..]);
         assert!(reasm.pop_section().is_none());
     }
