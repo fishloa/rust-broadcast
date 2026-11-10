@@ -1,6 +1,7 @@
 mod cc_to_webvtt_fixture;
 mod error_variants;
 mod hostility;
+mod non_cue_blocks;
 mod real_ts_captions;
 mod review_signalling_findings;
 mod scc_reference;
