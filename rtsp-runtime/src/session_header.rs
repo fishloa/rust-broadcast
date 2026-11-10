@@ -98,7 +98,11 @@ impl SessionHeader {
                     .and_then(|v| lex::digits_u64(v, DELTA_SECONDS_DIGITS, PARAM_TIMEOUT).ok());
                 match parsed {
                     // 0 is invalid too: it would make the keepalive deadline "now".
-                    Some(n) if n > 0 => out.timeout = Some(Duration::from_secs(n)),
+                    // Values above u32::MAX keep the pre-change malformed-timeout
+                    // warning path (a value the old u32 parser rejected).
+                    Some(n) if n > 0 && n <= u32::MAX as u64 => {
+                        out.timeout = Some(Duration::from_secs(n))
+                    }
                     _ => {
                         warnings.push(format!(
                             "malformed or zero timeout {value:?}; using the 60 s default"

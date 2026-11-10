@@ -6,7 +6,6 @@
 //!
 //! Spec: `private/specs-verified/rtmp/rtmp-runtime/rtmp.md` sections 6.6 and 9.
 
-use broadcast_common::Serialize;
 
 use crate::RtmpError;
 use crate::chunk::Message;
@@ -88,10 +87,16 @@ const SET_DATA_FRAME: &str = "@setDataFrame";
 /// `payload` without a leading AMF0 `@setDataFrame` string, so the FLV script tag
 /// begins with `onMetaData` as Adobe FLV v10.1 Annex E.4.1 defines it.
 fn strip_set_data_frame(payload: &[u8]) -> &[u8] {
-    let Ok(name) = crate::amf0::Amf0Value::String(SET_DATA_FRAME.to_string()).try_to_bytes() else {
+    const HEADER_LEN: usize = 3; // AMF0 string marker + u16 length
+    let body_len = SET_DATA_FRAME.len();
+    if payload.len() < HEADER_LEN + body_len
+        || payload[0] != crate::amf0::marker::STRING
+        || u16::from_be_bytes([payload[1], payload[2]]) != body_len as u16
+        || payload[HEADER_LEN..HEADER_LEN + body_len] != *SET_DATA_FRAME.as_bytes()
+    {
         return payload;
-    };
-    payload.strip_prefix(name.as_slice()).unwrap_or(payload)
+    }
+    &payload[HEADER_LEN + body_len..]
 }
 
 /// Unpack an Aggregate Message (22, §7.1.6), calling `deliver(tag_type, timestamp, payload)` for

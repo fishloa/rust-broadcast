@@ -28,7 +28,6 @@
 - The HLS, DASH and Smooth pull sources' fetch scheduler spawned a delayed fetch (a retry backoff or a paced playlist reload) at once, so it held an in-flight slot while it slept and could keep ready segment fetches from starting; a fetch now takes a slot only when it is due.
 - The catch-up playlist joined the archive and the live tail with no `EXT-X-DISCONTINUITY` when the tail did not continue the archive's numbering, as after a DVR recorder panic stopped archiving while the live window advanced; the first tail segment is now marked discontinuous.
 
-### Fixed
 - A blank or whitespace-only Bearer token is rejected at config validation (`output_auth.token`, `routes.input.auth.bearer_token`) with `ConfigInvalid`; it previously passed and `Authorization: Bearer ` then authenticated.
 ### Tests
 - WebVTT subtitle renditions after a source reconnect: the run's `X-TIMESTAMP-MAP` starts at the number-derived time and every cue lands where the TSDuck reference puts it on the video timeline, end to end through the production segmenter and the router.

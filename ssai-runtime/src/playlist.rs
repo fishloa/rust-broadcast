@@ -136,6 +136,13 @@ impl InterstitialDateRange {
             ));
         }
         if !self.snap.is_empty() {
+            for mode in &self.snap {
+                if let SnapMode::Other(t) = mode
+                    && (t.contains('"') || t.contains(',') || t.contains('\r') || t.contains('\n'))
+                {
+                    return Err(Error::TagParse("invalid X-SNAP token".to_string()));
+                }
+            }
             let list = self
                 .snap
                 .iter()
@@ -145,6 +152,13 @@ impl InterstitialDateRange {
             attrs.push((String::from("X-SNAP"), AttrValue::quoted(list)?));
         }
         if !self.restrict.is_empty() {
+            for mode in &self.restrict {
+                if let RestrictMode::Other(t) = mode
+                    && (t.contains('"') || t.contains(',') || t.contains('\r') || t.contains('\n'))
+                {
+                    return Err(Error::TagParse("invalid X-RESTRICT token".to_string()));
+                }
+            }
             let list = self
                 .restrict
                 .iter()
@@ -413,6 +427,8 @@ fn parse_checked_secs(what: &'static str, v: &str, sign: Sign) -> Result<f64> {
 
 fn parse_snap_list(v: &str) -> Vec<SnapMode> {
     v.split(',')
+        .map(str::trim)
+        .filter(|tok| !tok.is_empty())
         .map(|tok| match tok {
             "OUT" => SnapMode::Out,
             "IN" => SnapMode::In,
@@ -423,6 +439,8 @@ fn parse_snap_list(v: &str) -> Vec<SnapMode> {
 
 fn parse_restrict_list(v: &str) -> Vec<RestrictMode> {
     v.split(',')
+        .map(str::trim)
+        .filter(|tok| !tok.is_empty())
         .map(|tok| match tok {
             "SKIP" => RestrictMode::Skip,
             "JUMP" => RestrictMode::Jump,

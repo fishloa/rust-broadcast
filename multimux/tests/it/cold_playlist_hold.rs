@@ -216,6 +216,21 @@ async fn a_request_for_a_program_that_never_appears_is_503_with_retry_after() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn cold_llhls_media_playlist_wait_is_single_bounded() {
+    let store = unannounced_route();
+    let app = app(&store);
+
+    let started = Instant::now();
+    let resp = app.clone().oneshot(get("/cam/media.m3u8")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        started.elapsed() <= MIN_BLOCKING_TIMEOUT + Duration::from_secs(1),
+        "waited {:?}, more than one playlist timeout plus slack",
+        started.elapsed()
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn with_the_hold_off_a_request_before_the_program_is_an_immediate_503() {
     let store = Arc::new(
         RouteHandle::new(TARGET_DURATION_SECS, PART_TARGET_MS, 8).with_hold_cold_playlist(false),

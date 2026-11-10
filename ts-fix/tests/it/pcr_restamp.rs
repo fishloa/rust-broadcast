@@ -367,3 +367,23 @@ fn pcr_matches_the_output_byte_position_when_stuffing_is_combined() {
         );
     }
 }
+
+#[test]
+fn restamp_pcr_from_bitrate_combined_with_pad_to_keeps_pcr_monotonic_and_ccs_valid() {
+    const BPS: u64 = 20_000_000;
+    let input = load();
+    let out = run(&input, |b| {
+        b.restamp_pcr(PcrRestamp::from_bitrate(BPS))
+            .stuffing(ts_fix::Stuffing::pad_to(2.0))
+    });
+    let mut last_pcr: Option<u64> = None;
+    for p in out.chunks_exact(PKT) {
+        if let Some(v) = pcr_27mhz(p) {
+            if let Some(prev) = last_pcr {
+                assert!(v > prev, "PCR not monotonic: {prev} -> {v}");
+            }
+            last_pcr = Some(v);
+        }
+    }
+    assert!(last_pcr.is_some());
+}

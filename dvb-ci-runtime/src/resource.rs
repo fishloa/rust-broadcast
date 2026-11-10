@@ -437,7 +437,10 @@ struct MmiChain {
 
 impl Mmi {
     fn chain_more(&mut self, apdu: &[u8], last: ApduTag) -> dvb_ci::Result<()> {
-        let (len, hdr) = dvb_ci::length::decode(&apdu[APDU_TAG_LEN..])?;
+        let tail = apdu
+            .get(APDU_TAG_LEN..)
+            .ok_or(dvb_ci::Error::InvalidLength("short APDU"))?;
+        let (len, hdr) = dvb_ci::length::decode(tail)?;
         let start = APDU_TAG_LEN + hdr;
         let data = apdu
             .get(start..start + len)
@@ -464,7 +467,10 @@ impl Mmi {
         let Some(chain) = self.chain.take().filter(|c| c.last == last) else {
             return Ok(apdu.to_vec());
         };
-        let (len, hdr) = dvb_ci::length::decode(&apdu[APDU_TAG_LEN..])?;
+        let tail = apdu
+            .get(APDU_TAG_LEN..)
+            .ok_or(dvb_ci::Error::InvalidLength("short APDU"))?;
+        let (len, hdr) = dvb_ci::length::decode(tail)?;
         let start = APDU_TAG_LEN + hdr;
         let data = apdu
             .get(start..start + len)

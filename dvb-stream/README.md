@@ -107,7 +107,7 @@ Examples: `cargo run -p dvb-stream --example count_sections` and
 | `UdpSectionStream`, `UdpT2miStream` (`from_socket`, `bind_multicast`, `bind(&MulticastConfig)`, `stats`, `resync_stats`, `take_io_error`) | UDP/multicast sources (`udp` feature) |
 | `udp::MulticastConfig` (`new`, `with_interface`, `with_recv_buffer_size`, `with_reuse_address`, `bind`) | `socket2` socket options; `#[non_exhaustive]` |
 | `TsDecoder` (`new`, `datagram`, `resync_stats`) | `tokio_util::codec::Decoder` for aligned TS packets; `datagram()` resyncs each datagram independently and unwraps RTP |
-| `resync::{resync, TS_PACKET_SIZE, TS_SYNC_BYTE}`, `ResyncStats { resyncs, bytes_discarded, desyncs }` | The 188-byte alignment scan shared by every stream |
+| `resync::{resync, resync_confirmed, unconfirmed_candidate, TS_PACKET_SIZE, TS_SYNC_BYTE}`, `ResyncStats { resyncs, bytes_discarded, desyncs }` | The 188-byte alignment scan shared by every stream |
 
 `take_io_error` surfaces the I/O error that ended a stream (a `Stream` item has
 no error channel).

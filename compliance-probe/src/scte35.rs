@@ -1,6 +1,8 @@
 //! SCTE-35 cue sanity: well-formedness, arrival, and future-vs-past `pts_time`
 //! judgement (ANSI/SCTE 35:2023 §9.7.3.1 `splice_insert`).
 //!
+//! The future-vs-past verdict is computed on the adjusted splice time (`pts_time + pts_adjustment` modulo 2^33), as SCTE 35 defines.
+//!
 //! Two independent entry points, because "well-formed" is only observable at
 //! one of them:
 //!
@@ -270,6 +272,46 @@ mod tests {
             "raw pts_time alone is 7s behind `now`, but pts_adjustment rebases \
              it to 11s ahead — the cue must be judged InFuture, not InPast"
         );
+    }
+
+    #[test]
+    fn pts_adjustment_wrap_edge_large_adjustment_on_zero_pts_is_in_past() {
+        let now = 0u64;
+        let raw_pts_time = 0u64;
+        let adjustment = PTS_MODULUS - 1_000;
+        let si = SpliceInsert {
+            splice_event_id: 7,
+            out_of_network_indicator: true,
+            program_splice_flag: true,
+            splice_immediate_flag: false,
+            splice_time: Some(SpliceTime::with_pts(raw_pts_time)),
+            ..SpliceInsert::default()
+        };
+        let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        section.pts_adjustment = adjustment;
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).unwrap();
+        assert_eq!(check_section(&buf, now), Scte35Sanity::InPast);
+    }
+
+    #[test]
+    fn pts_adjustment_wrap_edge_near_top_pts_wraps_to_future() {
+        let now = 0u64;
+        let raw_pts_time = PTS_MODULUS - 10;
+        let adjustment = 100u64;
+        let si = SpliceInsert {
+            splice_event_id: 7,
+            out_of_network_indicator: true,
+            program_splice_flag: true,
+            splice_immediate_flag: false,
+            splice_time: Some(SpliceTime::with_pts(raw_pts_time)),
+            ..SpliceInsert::default()
+        };
+        let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        section.pts_adjustment = adjustment;
+        let mut buf = alloc::vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).unwrap();
+        assert_eq!(check_section(&buf, now), Scte35Sanity::InFuture);
     }
 
     #[test]
