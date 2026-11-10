@@ -174,7 +174,7 @@ impl SectionEvent {
     #[must_use]
     pub fn section_number(&self) -> Option<u8> {
         if self.is_long_form() && self.bytes.len() > 6 {
-            Some(self.bytes[6])
+            Some(self.bytes[SECTION_NUMBER_OFFSET])
         } else {
             None
         }
