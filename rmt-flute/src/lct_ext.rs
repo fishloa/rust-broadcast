@@ -252,7 +252,6 @@ impl ExtTime {
     }
 }
 
-
 impl<'a> broadcast_common::Parse<'a> for ExtTime {
     type Error = crate::Error;
 
@@ -414,4 +413,3 @@ mod tests {
         assert_eq!(t.to_content().unwrap(), content);
     }
 }
-

@@ -180,7 +180,6 @@ pub fn serialize_chain(exts: &[HeaderExtension<'_>], out: &mut [u8]) -> Result<u
     Ok(off)
 }
 
-
 impl<'a> broadcast_common::Parse<'a> for HeaderExtension<'a> {
     type Error = crate::Error;
 
@@ -256,4 +255,3 @@ mod tests {
         assert_eq!(parsed, exts);
     }
 }
-
