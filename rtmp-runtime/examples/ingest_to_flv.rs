@@ -1,6 +1,6 @@
 //! Replay a captured RTMP publish through the sans-IO [`ServerSession`] and
 //! emit the resulting FLV — no socket, no tokio, pure `rtmp_runtime` public
-//! API (mirrors `tests/it/ingest_fixture.rs`, but as a runnable example rather
+//! API (mirrors `transmux/tests/it/rtmp_ingest_fixture.rs`, but as a runnable example rather
 //! than an assertion).
 //!
 //! Reads `../fixtures/rtmp/obs-publish.bin` (a real `ffmpeg -f flv` publish,
