@@ -4,11 +4,12 @@
 //! UAS Datalink Local Set, RFC 6597 KLV-over-RTP. See
 //! `private/specs-verified/mpeg/transmux/klv/klv-misb0601.md`.
 
+use broadcast_common::klv::UNIVERSAL_LABEL_LEN;
 use broadcast_common::{Parse, Serialize};
 use transmux::klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
-    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, ber_length,
-    checksum_bcc16, encode_ber_length,
+    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UasLocalSet, ber_length_usize, checksum_bcc16,
+    encode_ber_length_vec,
 };
 use transmux::rtp::{depacketise_klv, packetise_klv};
 
@@ -22,33 +23,33 @@ const RTP_MARKER_MASK: u8 = 0x80;
 #[test]
 fn ber_length_short_form() {
     // Short form: length 5 encodes as the single byte 0x05.
-    assert_eq!(encode_ber_length(5), vec![0x05]);
-    let (len, consumed) = ber_length(&[0x05, 0xFF, 0xFF]).unwrap();
+    assert_eq!(encode_ber_length_vec(5), vec![0x05]);
+    let (len, consumed) = ber_length_usize(&[0x05, 0xFF, 0xFF]).unwrap();
     assert_eq!((len, consumed), (5, 1));
 }
 
 #[test]
 fn ber_length_long_form_300() {
     // 300 needs 2 length bytes → 82 01 2C.
-    let enc = encode_ber_length(300);
+    let enc = encode_ber_length_vec(300);
     assert_eq!(enc, vec![0x82, 0x01, 0x2C]);
-    let (len, consumed) = ber_length(&enc).unwrap();
+    let (len, consumed) = ber_length_usize(&enc).unwrap();
     assert_eq!((len, consumed), (300, 3));
 
     // The 2-length-byte boundary bites: 255 fits in 1 byte, 256 needs 2.
-    assert_eq!(encode_ber_length(255), vec![0x81, 0xFF]);
-    assert_eq!(encode_ber_length(256), vec![0x82, 0x01, 0x00]);
-    assert_eq!(ber_length(&[0x82, 0x01, 0x00]).unwrap().0, 256);
+    assert_eq!(encode_ber_length_vec(255), vec![0x81, 0xFF]);
+    assert_eq!(encode_ber_length_vec(256), vec![0x82, 0x01, 0x00]);
+    assert_eq!(ber_length_usize(&[0x82, 0x01, 0x00]).unwrap().0, 256);
 }
 
 #[test]
 fn ber_length_mutation_bites() {
     // Mutating the encoded length must change the decoded value: this proves the
     // decoder reads the value bytes, not a fixed position.
-    let mut enc = encode_ber_length(300);
-    let original = ber_length(&enc).unwrap().0;
+    let mut enc = encode_ber_length_vec(300);
+    let original = ber_length_usize(&enc).unwrap().0;
     enc[2] ^= 0x01; // 0x2C -> 0x2D
-    let mutated = ber_length(&enc).unwrap().0;
+    let mutated = ber_length_usize(&enc).unwrap().0;
     assert_ne!(original, mutated);
     assert_eq!(mutated, 301);
 }
@@ -57,13 +58,17 @@ fn ber_length_mutation_bites() {
 fn ber_length_indefinite_form_rejected() {
     // 0x80 alone (indefinite form) is not permitted in KLV → error, no panic.
     assert!(matches!(
-        ber_length(&[0x80]),
-        Err(transmux::error::Error::InvalidValue(..))
+        ber_length_usize(&[0x80]),
+        Err(transmux::error::Error::Klv(
+            broadcast_common::klv::KlvError::BerIndefiniteLength
+        ))
     ));
     // Long form promising bytes that aren't there → error, no panic.
     assert!(matches!(
-        ber_length(&[0x82, 0x01]),
-        Err(transmux::error::Error::BufferTooShort(..))
+        ber_length_usize(&[0x82, 0x01]),
+        Err(transmux::error::Error::Klv(
+            broadcast_common::klv::KlvError::BufferTooShort(..)
+        ))
     ));
 }
 

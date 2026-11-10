@@ -6,11 +6,15 @@
 //! a Local Set / Global Set) or 1-byte BER-OID tags (the items inside a Local
 //! Set). This module implements:
 //!
-//! - **BER length** encode/decode ([`ber_length`] / [`encode_ber_length`]):
+//! - **BER length** encode/decode ([`decode_ber_length_usize`] /
+//!   [`encode_ber_length_bytes`]):
 //!   short form (`< 128`) and long form (top bit set, low 7 bits = count of
-//!   big-endian length bytes) — ISO/IEC 8825-1 §8.1.3, via SMPTE ST 336.
-//! - **Generic KLV item** ([`KlvItem`]): a 16-byte Universal Label key + a value,
-//!   with a *computed* (never echoed) BER length on serialize.
+//!   big-endian length bytes) — ISO/IEC 8825-1 §8.1.3, via SMPTE ST 336. The
+//!   codec itself is `broadcast_common::klv`'s.
+//! - **Generic KLV item** ([`KlvItem`]): a 16-byte Universal Label key + owned
+//!   value bytes, serialized through the borrowed shared
+//!   `broadcast_common::klv::KlvItem` with a *computed* (never echoed) minimal
+//!   BER length.
 //! - **BER-OID tags** ([`ber_oid`] / [`encode_ber_oid`]): the 1-byte (multi-byte
 //!   continuation on the top bit) integer keys used inside a Local Set.
 //! - **UAS Datalink Local Set** ([`UasLocalSet`]): the MISB ST 0601 packet — the
@@ -36,6 +40,10 @@
 
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
+use broadcast_common::klv::{
+    KlvItem as Item, UNIVERSAL_LABEL_LEN, UniversalLabel, ber_length_size,
+    encode_ber_length as encode_ber_length_into,
+};
 use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
@@ -46,22 +54,12 @@ use crate::error::{Error, Result};
 // Named constants — SMPTE ST 336 / MISB ST 0601 (no magic numbers)
 // ---------------------------------------------------------------------------
 
-/// Length of a SMPTE Universal Label key, in bytes (SMPTE ST 336).
-pub const UNIVERSAL_LABEL_LEN: usize = 16;
-
-/// A 16-byte SMPTE Universal Label (KLV key).
-pub type UniversalLabel = [u8; UNIVERSAL_LABEL_LEN];
-
 /// The MISB ST 0601 UAS Datalink Local Set Universal Label
 /// (`06 0E 2B 34 02 0B 01 01 0E 01 03 01 01 00 00 00`).
 pub const UAS_LS_KEY: UniversalLabel = [
     0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0x00,
 ];
 
-/// BER long-form indicator bit: bit 7 of the first length byte (ISO/IEC 8825-1
-/// §8.1.3.5). When set, the low 7 bits give the count of subsequent big-endian
-/// length bytes; when clear, the byte itself is the (short-form) length.
-const BER_LONG_FORM_FLAG: u8 = 0x80;
 /// Mask for the low 7 bits of a BER length/OID byte (the payload of the octet).
 const BER_LOW7_MASK: u8 = 0x7F;
 /// BER-OID continuation bit: bit 7 of a multi-byte OID tag byte (more bytes
@@ -82,57 +80,31 @@ pub const PRECISION_TIMESTAMP_LEN: usize = 8;
 // BER length (ISO/IEC 8825-1 §8.1.3, via SMPTE ST 336)
 // ---------------------------------------------------------------------------
 
-/// Encode `len` as a BER length: short form (`< 128`) is the single byte; long
-/// form is `0x80 | N` followed by `N` big-endian length bytes (minimal `N`).
-pub fn encode_ber_length(len: usize) -> Vec<u8> {
-    if len < BER_LONG_FORM_FLAG as usize {
-        return alloc::vec![len as u8];
+/// Encode `len` as the canonical minimal-form BER length (short form `< 128`,
+/// else the shortest long form), as a freshly allocated byte vector.
+pub fn encode_ber_length_vec(len: usize) -> Vec<u8> {
+    let value = u64::try_from(len).unwrap_or(u64::MAX);
+    let mut buf = alloc::vec![0u8; ber_length_size(value)];
+    match encode_ber_length_into(value, &mut buf) {
+        Ok(written) => buf.truncate(written),
+        Err(_) => buf.clear(),
     }
-    // Minimal big-endian byte count for the value.
-    let be = (len as u64).to_be_bytes();
-    let first = be.iter().position(|&b| b != 0).unwrap_or(be.len() - 1);
-    let value_bytes = &be[first..];
-    let mut out = Vec::with_capacity(1 + value_bytes.len());
-    out.push(BER_LONG_FORM_FLAG | (value_bytes.len() as u8));
-    out.extend_from_slice(value_bytes);
-    out
+    buf
 }
 
 /// Decode a BER length from the front of `bytes`. Returns `(length, consumed)`
 /// where `consumed` is the number of length-encoding bytes read (never touches
 /// the value that follows).
-pub fn ber_length(bytes: &[u8]) -> Result<(usize, usize)> {
-    let first = *bytes.first().ok_or(Error::BufferTooShort(BufferTooShort {
-        need: 1,
-        have: 0,
-        what: "BER length first byte",
-    }))?;
-    if first & BER_LONG_FORM_FLAG == 0 {
-        // Short form: the byte is the length.
-        return Ok((first as usize, 1));
-    }
-    let n = (first & BER_LOW7_MASK) as usize;
-    if n == 0 {
-        // Indefinite form (0x80 alone) — not used in KLV/MISB.
-        return Err(Error::InvalidValue(InvalidValue {
+pub fn ber_length_usize(bytes: &[u8]) -> Result<(usize, usize)> {
+    let (len, consumed) = broadcast_common::klv::decode_ber_length(bytes)?;
+    let len = usize::try_from(len).map_err(|_| {
+        Error::InvalidValue(InvalidValue {
             field: "ber_length",
-            value: first as u64,
-            reason: "indefinite BER length form is not permitted in KLV",
-        }));
-    }
-    if n > core::mem::size_of::<usize>() {
-        return Err(Error::InvalidValue(InvalidValue {
-            field: "ber_length",
-            value: n as u64,
-            reason: "BER long-form length exceeds usize width",
-        }));
-    }
-    need_in(bytes, 1 + n, "BER long-form length bytes")?;
-    let mut value: usize = 0;
-    for &b in &bytes[1..1 + n] {
-        value = (value << 8) | b as usize;
-    }
-    Ok((value, 1 + n))
+            value: len,
+            reason: "BER length exceeds usize width",
+        })
+    })?;
+    Ok((len, consumed))
 }
 
 // ---------------------------------------------------------------------------
@@ -190,14 +162,12 @@ pub fn ber_oid(bytes: &[u8]) -> Result<(u32, usize)> {
     Ok((value, consumed))
 }
 
-// ---------------------------------------------------------------------------
-// KlvItem — a 16-byte UL key + value, with a computed BER length
-// ---------------------------------------------------------------------------
-
-/// A single generic KLV triplet: a 16-byte Universal Label key and its value.
+/// A single generic KLV triplet: a 16-byte Universal Label key and its owned
+/// value bytes.
 ///
-/// The length is *computed* from the value on [`Serialize`]; it is never stored,
-/// so the wire length field can never drift from the actual value length.
+/// The wire form is the shared borrowed [`KlvItem`] from `broadcast_common`,
+/// serialized with the canonical minimal BER length; only the owned value
+/// bytes live here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct KlvItem {
@@ -212,30 +182,22 @@ impl KlvItem {
     pub fn new(key: UniversalLabel, value: Vec<u8>) -> Self {
         Self { key, value }
     }
+
+    /// The borrowed triplet this item serializes as.
+    #[must_use]
+    pub fn as_item(&self) -> Item<'_> {
+        Item::new(self.key, &self.value)
+    }
 }
 
 impl<'a> Parse<'a> for KlvItem {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        need_in(bytes, UNIVERSAL_LABEL_LEN, "KLV Universal Label key")?;
-        let mut key: UniversalLabel = [0u8; UNIVERSAL_LABEL_LEN];
-        key.copy_from_slice(&bytes[..UNIVERSAL_LABEL_LEN]);
-        let (len, consumed) = ber_length(&bytes[UNIVERSAL_LABEL_LEN..])?;
-        let value_start = UNIVERSAL_LABEL_LEN + consumed;
-        // The BER length is wire-controlled up to `usize::MAX`; bound the end
-        // before slicing (r04-C3).
-        let value_end = value_start
-            .checked_add(len)
-            .filter(|&end| end <= bytes.len())
-            .ok_or(Error::BufferTooShort(BufferTooShort {
-                need: value_start.saturating_add(len),
-                have: bytes.len(),
-                what: "KLV item value",
-            }))?;
+        let item = Item::parse(bytes)?;
         Ok(Self {
-            key,
-            value: bytes[value_start..value_end].to_vec(),
+            key: item.key,
+            value: item.value.to_vec(),
         })
     }
 }
@@ -244,21 +206,11 @@ impl Serialize for KlvItem {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        UNIVERSAL_LABEL_LEN + encode_ber_length(self.value.len()).len() + self.value.len()
+        self.as_item().serialized_len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        need_out(buf, need)?;
-        let mut off = 0;
-        buf[off..off + UNIVERSAL_LABEL_LEN].copy_from_slice(&self.key);
-        off += UNIVERSAL_LABEL_LEN;
-        let ber = encode_ber_length(self.value.len());
-        buf[off..off + ber.len()].copy_from_slice(&ber);
-        off += ber.len();
-        buf[off..off + self.value.len()].copy_from_slice(&self.value);
-        off += self.value.len();
-        Ok(off)
+        Ok(self.as_item().serialize_into(buf)?)
     }
 }
 
@@ -287,14 +239,14 @@ impl LocalSetItem {
     /// + value.
     fn encoded_len(&self) -> usize {
         encode_ber_oid(self.tag).len()
-            + encode_ber_length(self.value.len()).len()
+            + encode_ber_length_vec(self.value.len()).len()
             + self.value.len()
     }
 
     /// Append this item's `tag | BER-length | value` encoding to `out`.
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&encode_ber_oid(self.tag));
-        out.extend_from_slice(&encode_ber_length(self.value.len()));
+        out.extend_from_slice(&encode_ber_length_vec(self.value.len()));
         out.extend_from_slice(&self.value);
     }
 }
@@ -305,7 +257,7 @@ fn parse_local_set_items(mut body: &[u8]) -> Result<Vec<LocalSetItem>> {
     let mut items = Vec::new();
     while !body.is_empty() {
         let (tag, tag_len) = ber_oid(body)?;
-        let (val_len, len_len) = ber_length(&body[tag_len..])?;
+        let (val_len, len_len) = ber_length_usize(&body[tag_len..])?;
         let value_start = tag_len + len_len;
         // The BER length is wire-controlled up to `usize::MAX`; bound the end
         // before slicing (r04-C3).
@@ -402,13 +354,13 @@ impl UasLocalSet {
         // tag+length (the value bytes are filled in once they are summed).
         let mut value = self.value_without_checksum();
         value.extend_from_slice(&encode_ber_oid(TAG_CHECKSUM));
-        value.extend_from_slice(&encode_ber_length(CHECKSUM_LEN));
+        value.extend_from_slice(&encode_ber_length_vec(CHECKSUM_LEN));
 
         // Packet prefix = UL key + BER length of (value + 2 value bytes) + value.
         let value_total = value.len() + CHECKSUM_LEN;
         let mut packet = Vec::with_capacity(UNIVERSAL_LABEL_LEN + 4 + value_total);
         packet.extend_from_slice(&UAS_LS_KEY);
-        packet.extend_from_slice(&encode_ber_length(value_total));
+        packet.extend_from_slice(&encode_ber_length_vec(value_total));
         packet.extend_from_slice(&value);
 
         // ST 0601 §5.5: the sum runs from the first byte of the 16-byte UL key
@@ -474,9 +426,9 @@ impl Serialize for UasLocalSet {
             .map(|i| i.encoded_len())
             .sum::<usize>()
             + encode_ber_oid(TAG_CHECKSUM).len()
-            + encode_ber_length(CHECKSUM_LEN).len()
+            + encode_ber_length_vec(CHECKSUM_LEN).len()
             + CHECKSUM_LEN;
-        UNIVERSAL_LABEL_LEN + encode_ber_length(value_len).len() + value_len
+        UNIVERSAL_LABEL_LEN + encode_ber_length_vec(value_len).len() + value_len
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -533,15 +485,15 @@ mod tests {
 
     #[test]
     fn ber_short_form() {
-        assert_eq!(encode_ber_length(5), alloc::vec![5]);
-        assert_eq!(ber_length(&[5, 0xAA]).unwrap(), (5, 1));
+        assert_eq!(encode_ber_length_vec(5), alloc::vec![5]);
+        assert_eq!(ber_length_usize(&[5, 0xAA]).unwrap(), (5, 1));
     }
 
     #[test]
     fn ber_long_form_300() {
         // 300 = 0x012C → 82 01 2C.
-        assert_eq!(encode_ber_length(300), alloc::vec![0x82, 0x01, 0x2C]);
-        assert_eq!(ber_length(&[0x82, 0x01, 0x2C]).unwrap(), (300, 3));
+        assert_eq!(encode_ber_length_vec(300), alloc::vec![0x82, 0x01, 0x2C]);
+        assert_eq!(ber_length_usize(&[0x82, 0x01, 0x2C]).unwrap(), (300, 3));
     }
 
     #[test]
@@ -561,7 +513,10 @@ mod tests {
         bytes.extend_from_slice(&[0xFFu8; 8]);
         let err = KlvItem::parse(&bytes).expect_err("hostile BER length must be rejected");
         assert!(
-            matches!(err, Error::BufferTooShort(..)),
+            matches!(
+                err,
+                Error::Klv(broadcast_common::klv::KlvError::BufferTooShort(..))
+            ),
             "expected BufferTooShort, got {err:?}"
         );
     }
@@ -574,7 +529,7 @@ mod tests {
         let mut value = vec![TAG_PRECISION_TIMESTAMP as u8, 0x88];
         value.extend_from_slice(&[0xFFu8; 8]);
         let mut packet = UAS_LS_KEY.to_vec();
-        packet.extend_from_slice(&encode_ber_length(value.len()));
+        packet.extend_from_slice(&encode_ber_length_vec(value.len()));
         packet.extend_from_slice(&value);
         let err = UasLocalSet::parse(&packet).expect_err("hostile inner BER length must fail");
         assert!(
