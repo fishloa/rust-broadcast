@@ -38,6 +38,8 @@ use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -583,6 +585,21 @@ mod tests {
             ),
             "expected FieldOverflow for amf0 object key length, got {err:?}"
         );
+    }
+
+    /// The AMF0 String marker carries a 16-bit length prefix, so a longer
+    /// value is rejected (`Unsupported`, pointing at the Long String marker)
+    /// rather than written with a wrapped length.
+    #[test]
+    fn string_beyond_the_16_bit_prefix_is_rejected() {
+        let value = Amf0Value::String("x".repeat(0x1_0000));
+        let err = value.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(err, RtmpError::Unsupported { .. }),
+            "expected Unsupported for a 65 536-byte string, got {err:?}"
+        );
+        let boundary = Amf0Value::String("x".repeat(usize::from(u16::MAX)));
+        round_trip(&boundary);
     }
 
     /// The boundary: exactly 65 535 bytes (u16::MAX) still round-trips.

@@ -10,6 +10,8 @@ use broadcast_common::Serialize;
 
 use crate::RtmpError;
 use crate::chunk::Message;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 

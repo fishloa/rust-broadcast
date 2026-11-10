@@ -9,7 +9,7 @@ use rtmp_runtime::client::{ClientConfig, ClientEvent, ClientMode, ClientSession}
 use rtmp_runtime::message::{UserControl, msg_type};
 use transmux::{FlvDemux, Media, StreamingFlvDemux};
 
-use super::play_peer::{PLAY_STREAM_ID, PeerConfig, PlayPeer, Seen};
+use super::rtmp_play_peer::{PLAY_STREAM_ID, PeerConfig, PlayPeer, Seen};
 
 const FIXTURE: &str = "flv/av.flv";
 const FLV_HEADER_LEN: usize = 9;

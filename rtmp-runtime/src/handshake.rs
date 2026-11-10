@@ -31,6 +31,8 @@ use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
+use alloc::vec;
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 

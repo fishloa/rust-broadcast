@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.31.0] - 2026-11-10
 ### Changed
+- BREAKING: the RTMP spokes `RtmpDemux` and `RtmpMux` run on `rtmp-runtime`'s chunk stream (`ChunkAssembler`, `ChunkWriter`), and transmux's own copy of the RTMP wire layer is removed (#2339). Removed from `transmux` and `transmux::rtmp`: `AmfValue`, `BasicHeader`, `Command`, `DEFAULT_CHUNK_SIZE`, `HANDSHAKE_PACKET_LEN`, `Handshake0`/`Handshake1`/`Handshake2`, `Message`, `MessageHeader`, `ProtocolControl`, `RTMP_VERSION`, `read_chunks` and `write_chunks`. Use `rtmp_runtime::handshake`, `rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message, DEFAULT_CHUNK_SIZE}`, `rtmp_runtime::message::ProtocolControl` and `rtmp_runtime::amf0` instead. `RtmpFlvError` wraps wire errors as `RtmpFlvError::Rtmp(rtmp_runtime::RtmpError)` and adds `ChunkSizeTooLarge`; transmux gains a dependency on `rtmp-runtime`.
+- `RtmpDemux` now applies the limits of `rtmp-runtime`'s assembler: a single RTMP message larger than `rtmp_runtime::chunk::MAX_MESSAGE_LEN` (8 MiB) is rejected instead of buffered without bound.
 - `StreamingTsDemux` tracks the in-flight PES assembly state as one explicit private enum instead of a bare boolean (#2032).
 - Avoid the per-section `Bytes::to_vec` copy in `StreamingTsDemux` by reusing the reassembler's `Bytes` directly (#2031).
 - BREAKING: `rtmp::RtmpError` is renamed `rtmp::RtmpFlvError` (re-exported as `transmux::RtmpFlvError`), so it no longer shares a name with `rtmp_runtime::RtmpError` (c6 C6-13).
@@ -21,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `track_reference` module: `TrackReferenceBox` / `TrackReferenceTypeBox` (ISO/IEC 14496-12:2026 §8.3.3) with `AVCP_REFERENCE_TYPE` (14496-15:2017 §5.4.3.3), and `TrackBox::track_references`, which parses the `tref` that stays an opaque child for in-place round-tripping (#1916).
 
 ### Fixed
+- `RtmpMux::with_chunk_size(n)` with `n` other than 128 now opens its output with a Set Chunk Size control message (Adobe RTMP 1.0 §5.4.1), and `RtmpDemux` applies a Set Chunk Size it meets mid-stream. The output used to be chunked at `n` with no announcement, so neither `RtmpDemux` nor any peer could reassemble it (#2339).
 - A signalled TS time-base discontinuity lifts every stream of the program by one common offset (the first stream to reach the new base fixes it), so the new base's own A/V skew survives the splice; each PID used to be lifted independently to its own last stamp plus one period, replacing the new skew with the old one (up to one frame). A stream the shared offset would not keep monotonic falls back to its own lift.
 - `StreamingTsDemux::finish` demuxes the aligned packets at the end of input that `TsResync` could not yet confirm (up to four after a corrupt sync byte) instead of dropping them.
 - `SubSampleInformationBox` rejects `subs` version 2 with a typed error instead of silently reading it with the version 0 layout; parse it with `SubSampleInformationBoxV2` (#1905).

@@ -20,6 +20,10 @@ use crate::handshake::{
     EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
 };
 use crate::message::{ProtocolControl, UserControl, msg_type};
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -433,7 +437,7 @@ impl ClientSession {
         }
 
         if self.handshake.is_done() && !self.handshake_buf.is_empty() {
-            let remaining = std::mem::take(&mut self.handshake_buf);
+            let remaining = core::mem::take(&mut self.handshake_buf);
             self.bytes_received = self.bytes_received.saturating_add(remaining.len() as u64);
             self.assembler.feed(&remaining);
             while let Some(msg) = self.assembler.next_message()? {

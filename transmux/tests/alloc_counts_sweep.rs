@@ -78,37 +78,6 @@ mod ts_demux_copies {
     const TS_BUDGET_X100: usize = 976; // 1008 before r04-O10, 944 after (midway)
 }
 
-mod rtmp_read_chunks {
-    use super::bytes_allocated;
-    use transmux::rtmp::{Message, read_chunks, write_chunks};
-
-    const BODY_LEN: usize = 200_000;
-    const CHUNK_SIZE: usize = 128;
-
-    /// r04-O7: `read_chunks` cloned the whole per-csid context (including the
-    /// in-progress `partial` buffer) for every chunk: O(n^2) bytes for one large
-    /// message. Total bytes allocated, as a multiple of the message size.
-    #[test]
-    fn read_chunks_does_not_clone_the_partial_message_per_chunk() {
-        let msg = Message {
-            csid: 6,
-            message_type_id: 9,
-            message_stream_id: 1,
-            timestamp: 40,
-            body: (0..BODY_LEN).map(|i| (i % 251) as u8).collect(),
-        };
-        let wire = write_chunks(std::slice::from_ref(&msg), CHUNK_SIZE).unwrap();
-        let (out, allocated) = bytes_allocated(|| read_chunks(&wire).unwrap());
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].body, msg.body);
-        let x = allocated / BODY_LEN;
-        eprintln!("read_chunks: {allocated} bytes allocated = {x} x message size");
-        assert!(x <= READ_BUDGET_X, "{x} x message size");
-    }
-
-    const READ_BUDGET_X: usize = 50; // 2343 before r04-O7, 2 after (still bites O(n^2))
-}
-
 mod rtp_stream_copies {
     use super::bytes_allocated;
     use broadcast_common::{Package, Unpackage};

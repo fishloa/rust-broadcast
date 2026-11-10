@@ -13,12 +13,13 @@
 //! splits a [`Message`] into `fmt` 0 + 3 chunks at the configured chunk
 //! size).
 
+use alloc::collections::BTreeMap;
 use broadcast_common::len::{need_in, need_out};
-use std::collections::HashMap;
 
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -646,7 +647,7 @@ struct CsidState {
 #[derive(Debug)]
 pub struct ChunkAssembler {
     chunk_size: u32,
-    csids: HashMap<u32, CsidState>,
+    csids: BTreeMap<u32, CsidState>,
     /// Bytes carried over from a previous `push` call that did not yet form
     /// a complete chunk (partial basic header, message header, extended
     /// timestamp, or payload slice).
@@ -684,7 +685,7 @@ impl ChunkAssembler {
     pub fn new() -> Self {
         Self {
             chunk_size: DEFAULT_CHUNK_SIZE,
-            csids: HashMap::new(),
+            csids: BTreeMap::new(),
             pending: Vec::new(),
             cursor: 0,
             in_progress_bytes: 0,
@@ -785,7 +786,10 @@ impl ChunkAssembler {
     /// calls to [`next_message`](Self::next_message) to parse and dispatch
     /// one message at a time (see [`push`](Self::push)'s docs for why this
     /// matters for Set Chunk Size).
-    pub(crate) fn feed(&mut self, input: &[u8]) {
+    ///
+    /// Nothing is parsed here, so this never fails: an incomplete chunk or
+    /// message stays buffered until more bytes arrive.
+    pub fn feed(&mut self, input: &[u8]) {
         self.pending.extend_from_slice(input);
     }
 
@@ -797,18 +801,59 @@ impl ChunkAssembler {
     /// full message is assembled or the buffered bytes run out.
     ///
     /// Each chunk's payload bytes are appended in place to that csid's own
-    /// persistent [`CsidState::payload`] buffer (never cloned), and the
+    /// persistent `CsidState::payload` buffer (never cloned), and the
     /// consumed prefix of `pending` is only physically dropped once, when
-    /// this call returns (see [`Self::compact`]) — not once per chunk. A
+    /// this call returns (see `Self::compact`) — not once per chunk. A
     /// message split across many small chunks (e.g. an 8 MiB message at a
     /// 1-byte chunk size) used to cost O(`message_length`^2 /
     /// `chunk_size`) — clone the whole accumulated payload on every
     /// continuation chunk, and shift the rest of `pending` down on every
     /// chunk's drain — and now costs O(`message_length`).
     ///
+    /// Because each call stops at one message, the caller can apply that
+    /// message's effect on the chunk stream (a Set Chunk Size, §5.4.1) with
+    /// [`set_chunk_size`](Self::set_chunk_size) before the next call parses
+    /// the bytes that follow it:
+    ///
+    /// ```
+    /// use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message};
+    /// use rtmp_runtime::message::{msg_type, ProtocolControl};
+    ///
+    /// let mut writer = ChunkWriter::new();
+    /// let mut wire = Vec::new();
+    /// let control = ProtocolControl::SetChunkSize(4096).try_to_message()?;
+    /// wire.extend_from_slice(&writer.write(&control)?);
+    /// writer.set_chunk_size(4096);
+    /// let media = Message {
+    ///     chunk_stream_id: 4,
+    ///     timestamp: 0,
+    ///     message_type_id: msg_type::AUDIO,
+    ///     message_stream_id: 1,
+    ///     payload: vec![0u8; 5000],
+    /// };
+    /// wire.extend_from_slice(&writer.write(&media)?);
+    ///
+    /// let mut assembler = ChunkAssembler::new();
+    /// assembler.feed(&wire);
+    /// let mut sizes = Vec::new();
+    /// while let Some(message) = assembler.next_message()? {
+    ///     if message.message_type_id == msg_type::SET_CHUNK_SIZE {
+    ///         if let Some(ProtocolControl::SetChunkSize(size)) =
+    ///             ProtocolControl::from_message(&message)?
+    ///         {
+    ///             assembler.set_chunk_size(size);
+    ///         }
+    ///         continue;
+    ///     }
+    ///     sizes.push(message.payload.len());
+    /// }
+    /// # assert_eq!(sizes, vec![5000]);
+    /// # Ok::<(), rtmp_runtime::RtmpError>(())
+    /// ```
+    ///
     /// # Errors
     /// Same as [`push`](Self::push).
-    pub(crate) fn next_message(&mut self) -> Result<Option<Message>> {
+    pub fn next_message(&mut self) -> Result<Option<Message>> {
         let max_in_progress_bytes = self.max_in_progress_bytes;
         // #1108/RTMP-W1 defence-in-depth: cap the not-yet-parsed `pending`
         // receive buffer at twice the in-progress budget. The primary
@@ -931,7 +976,7 @@ impl ChunkAssembler {
     /// - `Err(_)` — structurally invalid input. `states` is left untouched.
     fn try_parse_one(
         buf: &[u8],
-        states: &mut HashMap<u32, CsidState>,
+        states: &mut BTreeMap<u32, CsidState>,
         chunk_size: u32,
         in_progress_bytes: &mut usize,
         max_in_progress_bytes: usize,
@@ -2432,7 +2477,7 @@ mod tests {
         let mut assembler = ChunkAssembler::new();
         let mut collected = Vec::new();
         for b in &bytes {
-            collected.extend(assembler.push(std::slice::from_ref(b)).unwrap());
+            collected.extend(assembler.push(core::slice::from_ref(b)).unwrap());
         }
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0], original);
@@ -2744,7 +2789,7 @@ mod tests {
                 message_stream_id: 1,
             },
         );
-        input.extend(std::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
+        input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
 
         let err = assembler.push(&input).expect_err(
             "a message_length beyond MAX_MESSAGE_LEN must be rejected before any \
@@ -2775,7 +2820,7 @@ mod tests {
                 message_stream_id: 1,
             },
         );
-        input.extend(std::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
+        input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
 
         // Not yet complete (only one chunk of a much larger message has
         // arrived) but must not be rejected outright.
