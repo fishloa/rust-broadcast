@@ -99,7 +99,7 @@ Runnable programs: `client_server_loopback` and `transport_and_framing` (`cargo 
 ## What is implemented
 
 - `ClientSession`: request builders, `handle_data` (returns `HandleOutcome { events, error }` so frames decoded before a terminal error are never lost) and `handle_data_strict`; `with_credentials`; `AuthRetry` events for `401`; `poll_timeout`/`handle_timeout` keepalive.
-- `ServerSession`: `handle_request` returning response bytes plus `ServerEvent`s (`RequestAccepted`, `MethodNotValid`, `SessionSetup`, `MediaData`), `with_session_timeout`.
+- `ServerSession`: `handle_request` returning response bytes plus `ServerEvent`s (`RequestAccepted`, `MethodNotValid`, `SessionSetup`, `MediaData`), `with_session_timeout`, `with_describe_sdp` (the `DESCRIBE` body and `Content-Type: application/sdp`) and `with_server_ports` (the `server_port` pair a UDP `SETUP` reply advertises).
 - `Transport`, `TransportSpec`, `LowerTransport`, `Delivery`, `TransportMode`: UDP unicast and multicast, TCP interleaved. `SessionHeader`: `Session` id and `timeout`. Both are parsed by this crate over one RFC 2326 §15.1 lexer, because `rtsp-types` 0.1 is exact-case and drops case-variant parameters (a documented, owner-approved exception to the no-hand-roll rule; probe table in `private/specs-verified/rtp/rtsp-runtime/transport-header.md`).
 - `InterleavedFrame` and a streaming demultiplexer (complete frames plus a partial tail).
 - `Credentials` and `Authenticator`, re-exported from `broadcast-auth`.

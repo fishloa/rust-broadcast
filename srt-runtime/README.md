@@ -101,7 +101,7 @@ Runnable programs: `handshake_loopback` and `arq_loss_recovery` (`cargo run -p s
 ## What is implemented
 
 - **`packet`:** `SrtPacket::{Data, Control}`; `DataPacket` (sequence, message number, position, order, retransmit and encryption flags); every `ControlPacket` (Handshake with Handshake Extension, Key Material, Stream ID and Group Membership extensions; KeepAlive; ACK full, small and light; NAK with loss-list coding; Congestion Warning; Shutdown; ACKACK; Message Drop Request; Peer Error). Reserved and fixed-value fields are validated on parse and rebuilt on serialize.
-- **Handshakes:** `CallerHandshake`, `ListenerHandshake`, `RendezvousHandshake` (cookie contest, Initiator or Responder at runtime), shared `HandshakeConfig`, `NegotiatedParams`, `HandshakeOutput`, `RejectionReason`.
+- **Handshakes:** `CallerHandshake`, `ListenerHandshake`, `RendezvousHandshake` (cookie contest, Initiator or Responder at runtime), shared `HandshakeConfig`, `NegotiatedParams`, `HandshakeOutput`, `RejectionReason`; each gains `set_elapsed(Duration)` so the caller/rendezvous machines read no clock, and the driver stamps the elapsed time before each start/feed/tick.
 - **`arq`:** `Sender`, `Receiver`, wrap-safe `seq` arithmetic (over `broadcast_common::seq::SeqSpace`), `rtt::RttEstimator`.
 - **`tsbpd`:** `TsbpdScheduler`. **`livecc`:** `LiveCC` and `MaxBwConfig` (MAXBW_SET, INPUTBW_SET, INPUTBW_ESTIMATED). **`filecc`:** `FileCc` (Slow Start then Congestion Avoidance).
 - **`crypto`, `km_refresh`** (feature `crypto`) and **`io`** (feature `tokio`) as in the features table. The tokio adapter is verified against a real libsrt peer including rendezvous.

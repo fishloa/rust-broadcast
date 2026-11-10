@@ -275,6 +275,7 @@ real CAM drops a second block sent before it answers the first — #337).
   accessors are typed `mpeg_ts::pid::Pid`.
 - `Debug` redacts MMI enquiry answers (whatever the user typed).
 - `thiserror` error types; dispatch enums are `#[non_exhaustive]`.
+- `MAX_MMI_CHAIN_LEN` caps a chained `menu`/`list` body (EN 50221 §8.3.2) so a module that never sends the `_last` block cannot grow host memory past it; `MAX_SETUP_ATTEMPTS` is the number of `Create_T_C` attempts (first plus retries) made before `TransportError::SetupTimeout`.
 
 ## Related crates
 

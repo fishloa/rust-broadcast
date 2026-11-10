@@ -86,6 +86,7 @@ Runnable programs: `cargo run -p broadcast-hls --example build_playlist` and `--
 - **CENC:** `cenc_ext_x_key`, `CENC_KEYFORMAT`, `CENC_KEYFORMATVERSIONS`.
 - **Segment keys (RFC 8216 §4.3.2.4):** `MediaPlaylist::segment_keys` resolves the `#EXT-X-KEY` in effect for each closed segment (carry-forward until the next key of the same `KEYFORMAT`, `METHOD=NONE` resets, only the `identity` format participates) as `MediaKey` (an alias of `SessionKey`), and `open_segment_key` does the same for the open segment. A key with no `URI` is `Error::KeyWithoutUri`; a segment covered only by a non-identity `KEYFORMAT` is `Error::UnsupportedKeyFormat`.
 - **Codec and range signalling:** `SUPPLEMENTAL-CODECS` (round-trips, including the HDR10+ `/cdm4` brand) and the typed `VideoRange` (`SDR`, `HLG`, `PQ`), strict attribute-list parsing (`parse_attribute_list_strict`) that reports a malformed list instead of half-parsing it.
+- **Master groups:** `MasterPlaylist::dangling_group_references()` lists the `AUDIO`/`VIDEO`/`SUBTITLES`/`CLOSED-CAPTIONS` groups an `#EXT-X-STREAM-INF` names that no `#EXT-X-MEDIA` of the same type declares; `to_m3u8` no longer rejects such a playlist and keeps the reference, so a non-conformant third-party playlist round-trips byte-identical.
 
 ## Round-trip fidelity
 

@@ -625,7 +625,10 @@ complete, runnable example.
 
 - **Supervised route lifecycle** — each route reconnects with capped
   exponential backoff on connect failure, pipeline error, or source EOF,
-  rather than dying on the first failure.
+  rather than dying on the first failure. The push reconnect backoff (and
+  attempt budget) reset only after a connection stays up for
+  `push::HEALTHY_CONNECTION` (30 s); a destination that accepts and drops
+  within seconds is treated as failing.
 - **HTTP resource limits + ingest timeouts** — per-request timeout,
   concurrency bound, and request-body cap on the listener
   (`request_timeout_secs`/`max_concurrent_requests`/
