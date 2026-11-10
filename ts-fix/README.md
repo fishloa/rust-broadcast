@@ -118,7 +118,7 @@ wrote 450 packets (84600 bytes) to keep.ts
 | `TsFix` (`builder`, `push(packet, out)`, `finish(out)`), `TsFixBuilder` (`repair_continuity`, `filter_pids`, `regen_psi`, `restamp_pcr`, `honor_pcr_discontinuity`, `stuffing`, `build`) | The engine |
 | `PidFilter` (`keep(iter of Pid)`, `service(program_number)`) | PID filter or live PAT/PMT service extract (PAT, PMT, PCR, ES, ECM, CAT and EMM PIDs retained) |
 | `PcrRestamp` (`interpolate()`, `from_bitrate(bps)`) | PCR restamp onto one continuous timeline, including across an unflagged break; modular 33-bit/27 MHz arithmetic from `broadcast_common::clock33` |
-| `Stuffing` (`drop_nulls()`, `pad_to(packets_per_input)`) | Drop null packets or pad to a rate |
+| `Stuffing` (`drop_nulls()`, `pad_to(packets_per_input)`) | Drop null packets or pad to a rate; `pad_to` rejects a rate below 1.0 or above `Stuffing::MAX_PACKETS_PER_INPUT` with `Error::InvalidPadRate` |
 | `discontinuity::{detect_pcr_discontinuities, PcrDiscontinuity}` | Standalone read-only audit of PCR breaks (flagged vs unflagged) |
 | `pes::{reconstruct_access_units, AccessUnit}` | PES access-unit framing with PTS/DTS (opaque bytes); an input that is not a multiple of 188 bytes is `Error::UnalignedInput` |
 | `Error` (`ShortPacket`, `NoSyncByte`, `UnalignedInput`, ...) | Structured errors |

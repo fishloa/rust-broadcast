@@ -592,7 +592,7 @@ A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 dem
 Bytes-in/actions-out client session: auth layer, redirects, and TS-over-HTTP (`tshttp` module: reconnect/backoff, start and stall timers, 404/410 events), HLS (hls-runtime), DASH (dash-runtime) and RTSP (rtsp-runtime, RTP interleaved over TCP) sources. Caller-supplied monotonic microseconds plus an optional host UTC anchor (`set_wall_clock`) for live DASH, no I/O, std.
 
 - **Standards:** none (implementation-defined policy; requirements from zenith-tv player)
-- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH, RTSP, UDP/RTP and SRT sources.
+- **Cargo description:** Generic sans-IO client session: auth, redirects, and TS-over-HTTP, HLS, DASH, Smooth, RTMP, RTSP, UDP/RTP and SRT sources.
 - **Version (in-tree):** 0.5.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`buffering-runtime`](#buffering-runtime), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`hls-runtime`](#hls-runtime), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`srt-runtime`](#srt-runtime), [`transmux`](#transmux)
 - **Used by (workspace):** [`multimux`](#multimux)

@@ -35,7 +35,7 @@ Typical users: `multimux`'s `whip` and `whep` features, a WebRTC test client, an
 | `std` | yes | A feature name kept for `default-features = false` consumers. The crate is `std` regardless (it speaks `http` and `headers` types). |
 | `serde` | no | `Serialize`/`Deserialize` on `IceServer`. |
 | `media` | no | `media::MediaTransport`: ICE, DTLS-SRTP, SRTP over the `rtc-*` crates. Implies `std`. Optional on dependency weight only. |
-| `test-support` | no | Hidden fault-injection and loopback hooks for downstream test suites. Not public API. |
+| `test-seams` | no | Hidden fault-injection and loopback hooks for downstream test suites. Not public API. |
 
 ## Quick start
 
