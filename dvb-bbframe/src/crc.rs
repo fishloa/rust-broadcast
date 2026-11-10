@@ -2,6 +2,11 @@
 //!
 //! Polynomial: g(X) = (X⁵+X⁴+X³+X²+1)·(X²+X+1)·(X+1)
 //!                      = X⁸+X⁷+X⁶+X⁴+X²+1 = 0xD5
+//!
+//! This is CRC-8/DVB-S2 (EN 302 307-1 §5.1.4), an 8-bit, MSB-first, init-0,
+//! no-final-XOR check — a different width and polynomial from
+//! `broadcast_common`'s CRC-32/MPEG-2 (32-bit, 0x04C11DB7), so it cannot be
+//! replaced by it; it lives here as the BBFrame header's own check.
 
 /// CRC-8 polynomial (0xD5), MSB-first, no reflection.
 pub const CRC8_POLY: u8 = 0xD5;

@@ -89,7 +89,7 @@ use quick_xml::events::Event;
 /// Errors returned while parsing an MPD (ISO/IEC 23009-1) document.
 ///
 /// Distinct from [`crate::Error`] (like
-/// [`FlvError`](crate::flv::FlvError)/[`RtmpError`](crate::rtmp::RtmpError)) —
+/// [`FlvError`](crate::flv::FlvError)/[`RtmpFlvError`](crate::rtmp::RtmpFlvError)) —
 /// this parser never panics on malformed or truncated input; every failure
 /// path returns one of these variants instead.
 #[derive(Debug, Clone, PartialEq, Eq)]

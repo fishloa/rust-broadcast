@@ -184,7 +184,7 @@ fn handshake_byte_layout() {
     assert!(
         matches!(
             Handshake0::parse(&[6]),
-            Err(transmux::rtmp::RtmpError::BadVersion(..))
+            Err(transmux::rtmp::RtmpFlvError::BadVersion(..))
         ),
         "bad version rejected"
     );

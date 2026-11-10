@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The `crc` module doc now states that the T2-MI trailer check is CRC-32/MPEG-2 and calls `broadcast_common::crc32_mpeg2`; the code is unchanged (c6 C6-12).
 
 ## [13.0.0] - 2026-11-07
 ### Removed

@@ -4,6 +4,11 @@
 //! This module keeps the T2-MI-packet-level validator, whose trailer
 //! position semantics come from TS 102 773 §5.1 — a T2-MI-framing
 //! concern, not a CRC primitive.
+//!
+//! The algorithm is CRC-32/MPEG-2 (ISO/IEC 13818-1 Annex B: polynomial
+//! 0x04C11DB7, MSB-first, init 0xFFFF_FFFF, no final XOR), which is exactly
+//! `broadcast_common::crc32_mpeg2`; this module has no hand-written CRC of
+//! its own and calls that shared primitive.
 
 use crate::error::{Error, Result};
 use broadcast_common::crc32_mpeg2;

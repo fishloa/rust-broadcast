@@ -569,13 +569,13 @@ pub struct MediaTransport {
     /// this as a [`MediaEvent::TimerError`] (instead of any real timer drive).
     /// Lets an integration test drive the caller's fatal-timer-error handling
     /// without staging an internal ICE/DTLS timer failure.
-    #[cfg(feature = "test-support")]
+    #[cfg(feature = "test-seams")]
     pending_timer_error: Option<String>,
     /// Test-only: when set, [`Self::poll_timeout`] reports an always-overdue
     /// deadline (a stuck transport whose timer is perpetually due) while
     /// [`Self::handle_timeout`] does nothing — the state the WHEP fairness
     /// test uses to prove a stuck deadline cannot starve the silence reap.
-    #[cfg(feature = "test-support")]
+    #[cfg(feature = "test-seams")]
     stuck_timer: bool,
 }
 
@@ -648,7 +648,7 @@ impl MediaTransport {
     /// exists so an in-tree integration test can drive a real ICE + DTLS +
     /// SRTP handshake against a peer transport without a browser.
     #[doc(hidden)]
-    #[cfg(feature = "test-support")]
+    #[cfg(feature = "test-seams")]
     pub fn with_certificate_for_test(
         config: MediaTransportConfig,
         certificate: Certificate,
@@ -800,9 +800,9 @@ impl MediaTransport {
             remote_candidate_count: 0,
             max_remote_candidates: config.max_remote_candidates,
             known_remote_addrs: HashSet::new(),
-            #[cfg(feature = "test-support")]
+            #[cfg(feature = "test-seams")]
             pending_timer_error: None,
-            #[cfg(feature = "test-support")]
+            #[cfg(feature = "test-seams")]
             stuck_timer: false,
         })
     }
@@ -948,7 +948,7 @@ impl MediaTransport {
         let mut events = Vec::new();
         // Test-only injection: a staged timer error takes the place of a real
         // (hard-to-stage) ICE/DTLS failure, and is single-fire.
-        #[cfg(feature = "test-support")]
+        #[cfg(feature = "test-seams")]
         if let Some(err) = self.pending_timer_error.take() {
             events.push(MediaEvent::TimerError(err));
         }
@@ -987,7 +987,7 @@ impl MediaTransport {
             }
         }
         // A staged timer error (test seam) is due immediately.
-        #[cfg(feature = "test-support")]
+        #[cfg(feature = "test-seams")]
         if self.pending_timer_error.is_some() || self.stuck_timer {
             return Some(Instant::now());
         }
@@ -1027,7 +1027,7 @@ impl MediaTransport {
     /// seam — a real internal timer failure is not something a caller can
     /// stage through the public API.
     #[doc(hidden)]
-    #[cfg(feature = "test-support")]
+    #[cfg(feature = "test-seams")]
     pub fn force_next_timer_error(&mut self, err: impl Into<String>) {
         self.pending_timer_error = Some(err.into());
     }
@@ -1037,7 +1037,7 @@ impl MediaTransport {
     /// "stuck transport deadline" the WHEP fairness test needs to prove an
     /// always-ready timer arm cannot starve the silence reap. `#[doc(hidden)]`.
     #[doc(hidden)]
-    #[cfg(feature = "test-support")]
+    #[cfg(feature = "test-seams")]
     pub fn force_stuck_timer(&mut self) {
         self.stuck_timer = true;
     }
@@ -1552,7 +1552,7 @@ impl MediaTransport {
 /// [`MediaTransport::with_certificate_for_test`] — a caller generating its own
 /// certificate must know the fingerprint to signal it *before* construction.
 #[doc(hidden)]
-#[cfg(feature = "test-support")]
+#[cfg(feature = "test-seams")]
 pub fn certificate_fingerprint(certificate: &Certificate) -> String {
     sha256_fingerprint(certificate.certificate[0].as_ref())
 }

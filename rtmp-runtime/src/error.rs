@@ -55,4 +55,9 @@ pub enum RtmpError {
     /// emitted a misframed chunk stream; this is returned instead.
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+
+    /// The output buffer passed to `serialize_into` was smaller than
+    /// `serialized_len()`.
+    #[error(transparent)]
+    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
 }
