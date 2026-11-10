@@ -746,4 +746,27 @@ mod tests {
         assert!(r.take_tail_packets().is_empty());
         assert_eq!(r.stats().dropped_bytes, 100);
     }
+
+    #[test]
+    fn finish_does_not_emit_a_trailing_partial_packet_starting_with_sync_byte() {
+        let mut input = Vec::new();
+        for tag in 1u8..=10 {
+            input.extend_from_slice(&ts_packet(tag));
+        }
+        input.push(TS_SYNC_BYTE);
+        input.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+
+        let mut r = TsResync::new();
+        let mut packets = r.feed(&input);
+        r.finish();
+        packets.extend(r.take_tail_packets());
+        let tags: Vec<u8> = packets.iter().map(|p| p[1]).collect();
+        assert_eq!(tags, (1u8..=10).collect::<Vec<_>>());
+        assert!(r.take_tail_packets().is_empty());
+        let losses = r.take_losses();
+        assert_eq!(losses.len(), 1);
+        assert!(losses[0].truncated_tail);
+        assert_eq!(losses[0].dropped_bytes, 5);
+    }
+
 }
