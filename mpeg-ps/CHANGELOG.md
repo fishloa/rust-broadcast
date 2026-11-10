@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-11-10
 ### Fixed
 - `ProgramStreamMap` parse and serialize now count `CRC_32` in `program_stream_map_length` as ISO/IEC 13818-1 Table 2-41 requires; before, any real PSM failed to parse (`MapLengthOverflow`, or a `CrcMismatch` that lost the whole pack) and serialize wrote a length 4 short (#1942).
 - The `PackHeader` and `SystemHeader` output-buffer pre-checks used the parse-side `need_in`; a too-small output buffer now reports `Error::OutputBufferTooSmall` as intended instead of `Error::BufferTooShort` (#2269).

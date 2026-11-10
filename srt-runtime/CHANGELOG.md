@@ -5,6 +5,8 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.8.1] - 2026-11-10
 ### Changed
 - Avoid the per-packet `payload.to_vec()` copy on the non-encrypted send path in `SrtSocket::send_one` (#2031).
 ### Added

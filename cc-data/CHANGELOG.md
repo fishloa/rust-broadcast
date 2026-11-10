@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.8.1] - 2026-11-10
 ### Fixed
 - 608 Text Restart (and RTD) no longer erase the caption screen, and characters typed in text mode no longer appear in the channel's caption text: text mode now has its own screen.
 - A 608 control pair after a null pair is no longer suppressed as a doubled control code.

@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-11-10
 ### Changed
 - Digest: an absolute-form `uri` must name the request's own `Host` (RFC 7616 section 3.4, RFC 9110 section 7.2), closing a cross-origin replay; an absolute-form `uri` with no `Host` is refused.
 - BREAKING: `Verifier::forwarded` is removed. It trusted `X-Forwarded-User` from any transport peer, so a client reaching the origin directly could forge it; `Verifier::forwarded_from(user_header, forwarded_for_header, trusted_proxies)` is the only constructor, and an empty list trusts nobody. Every in-workspace caller moved to `forwarded_from`.

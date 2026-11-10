@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-10
 ### Fixed
 - `Driver::add_service` and `update_service` no longer report success and record the service when no `ca_pmt` reached the CAM (no open conditional-access session, inactive connection, full outbound queue); they return the new `CaError::NotSent` (#1920).
 - The transport re-sends `Create_T_C` after a setup timeout, up to `MAX_SETUP_ATTEMPTS` (5) times, before reporting `TransportError::SetupTimeout` (#1921).

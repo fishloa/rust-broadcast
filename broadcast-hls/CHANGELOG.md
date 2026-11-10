@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-11-10
 ### Added
 - `MasterPlaylist::dangling_group_references` lists the groups a variant names that no `#EXT-X-MEDIA` declares, for validators (#1948).
 - `OpenSegment::discontinuous`: an `#EXT-X-DISCONTINUITY` ahead of the live-edge parts is kept on parse and rendered back (#1943).

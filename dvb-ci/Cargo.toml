@@ -17,9 +17,9 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.0.0", default-features = false }
-dvb-si     = { path = "../dvb-si", version = "13.0.0", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts", version = "0.7.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
+dvb-si     = { path = "../dvb-si", version = "13.1.0", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts", version = "0.7.1", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 

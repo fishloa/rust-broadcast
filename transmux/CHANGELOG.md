@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.31.0] - 2026-11-10
 ### Changed
 - `StreamingTsDemux` tracks the in-flight PES assembly state as one explicit private enum instead of a bare boolean (#2032).
 - Avoid the per-section `Bytes::to_vec` copy in `StreamingTsDemux` by reusing the reassembler's `Bytes` directly (#2031).

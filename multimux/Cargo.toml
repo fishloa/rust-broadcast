@@ -1,6 +1,6 @@
 [package]
 name         = "multimux"
-version      = "0.17.0"
+version      = "0.18.0"
 edition      = "2024"
 rust-version.workspace = true
 license      = "MIT OR Apache-2.0"
@@ -19,23 +19,23 @@ rustdoc-args = ["--cfg", "docsrs"]
 # `flv_sequence_header_payloads` / `flv_frame_payloads`, which do not
 # exist in 0.23.0 (verified at the tag). Published multimux 0.8.0 shipped
 # with the understated `"0.23"` bound.
-transmux          = { path = "../transmux",     version = "0.30.0" }
+transmux          = { path = "../transmux",     version = "0.31.0" }
 # Smooth manifest rendering (`output::smooth`) and the Smooth-pull encryption
 # probe: the single XML dependency of the crates that read or write XML.
 quick-xml         = { workspace = true }
-container-probe   = { path = "../container-probe", version = "0.3.0" }
+container-probe   = { path = "../container-probe", version = "0.3.1" }
 # HLS (M3U8) playlist syntax (issue #878): `source::hls_pull` builds/parses
 # playlists via this crate directly rather than through `transmux`.
-broadcast-hls     = { path = "../broadcast-hls", version = "0.6.0" }
-rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.10.0", features = ["tokio"] }
+broadcast-hls     = { path = "../broadcast-hls", version = "0.7.0" }
+rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.11.0", features = ["tokio"] }
 # RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls
 # `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket
 # adapter over the sans-IO `ServerSession`.
-rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.9.0", features = ["tokio"] }
+rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.9.1", features = ["tokio"] }
 # SRT push/pull ingest (`source::srt`, issue #739): the `tokio` feature
 # pulls `srt_runtime::io::{SrtListener, SrtSocket}`, the real-socket adapter
 # over the sans-IO ARQ/TSBPD/handshake engines.
-srt-runtime       = { path = "../srt-runtime",   version = "0.8.0", features = ["tokio"] }
+srt-runtime       = { path = "../srt-runtime",   version = "0.8.1", features = ["tokio"] }
 # The LL-HLS origin engine itself (rolling window/store, blocking-reload +
 # part-availability decision logic, playlist rendering — issue #663/#717
 # Stage 2). multimux is now a thin tokio+axum adapter over
@@ -47,15 +47,15 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.8.0", features = [
 # `HlsOrigin::closed_segments()`, which do not exist in the published
 # 0.5.0 (verified: 0 hits at the hls-runtime-v0.5.0 tag). hls-runtime
 # must publish 0.6.0 before multimux can publish.
-hls-runtime       = { path = "../hls-runtime",   version = "0.12.0", features = ["std", "tokio", "serde"] }
+hls-runtime       = { path = "../hls-runtime",   version = "0.13.0", features = ["std", "tokio", "serde"] }
 # DASH-pull policy core (`source::dash_pull`): MPD parsing, segment addressing
 # for every Period and selected AdaptationSet, the UTC clock ladder, live
 # refresh/join/availability and failure classification. `dash_pull` keeps the
 # tokio loop and the media-plane mapping; the core is sans-IO.
-dash-runtime      = { path = "../dash-runtime", version = "0.3.0" }
+dash-runtime      = { path = "../dash-runtime", version = "0.4.0" }
 # TS-over-HTTP pull policy core (`source::ts_http`): finite/VOD detection and
 # the post-establishment stall decision; the demuxer stays `ts_program`.
-broadcast-client  = { path = "../broadcast-client", version = "0.4.0" }
+broadcast-client  = { path = "../broadcast-client", version = "0.5.0" }
 # Needed directly (not just via hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
@@ -65,11 +65,11 @@ broadcast-client  = { path = "../broadcast-client", version = "0.4.0" }
 # resolving 9.0/9.1 fails to compile it today. The pin below is 9.3, above
 # that floor, tracking the current published line; same caret bucket, so it
 # is not an epoch change.
-broadcast-common  = { path = "../broadcast-common", version = "11.0.0" }
+broadcast-common  = { path = "../broadcast-common", version = "11.0.1" }
 # The media-plane ingress traits this crate's sources port onto (plan step
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.
-media-plane       = { path = "../media-plane", version = "0.10.0", features = ["std"] }
+media-plane       = { path = "../media-plane", version = "0.11.0", features = ["std"] }
 bytes             = "1"
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
@@ -78,7 +78,7 @@ bytes             = "1"
 # `SignedUrlKeySet`, added in 0.2.1 (#747). A `"0.2"` bound admits 0.2.0,
 # which lacks them — multimux 0.8.0 shipped with that understated bound and
 # fails to compile against a lock that pins 0.2.0.
-broadcast-auth    = { path = "../broadcast-auth", version = "0.5.2" }
+broadcast-auth    = { path = "../broadcast-auth", version = "0.6.0" }
 sdp-types         = { workspace = true }
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = { workspace = true }
@@ -166,7 +166,7 @@ futures-util      = { workspace = true, features = ["std"] }
 # on it (feature off) never pulls `webrtc-runtime`'s own `media` feature —
 # only `multimux`'s `whip`/`whep` features below turn that on. See this
 # crate's `rust-version` note on those features for why the split matters.
-webrtc-runtime    = { path = "../webrtc-runtime", version = "0.6.0", optional = true, default-features = false }
+webrtc-runtime    = { path = "../webrtc-runtime", version = "0.7.0", optional = true, default-features = false }
 # WHEP output (`output::whep`, issue #743) only: builds the typed
 # `rtp_packet::RtpPacket` values `webrtc_runtime::media::MediaTransport::
 # encrypt_rtp` requires — see that method's own signature. Unlike
@@ -180,7 +180,7 @@ rtp-packet        = { path = "../rtp-packet", version = "0.6.0", optional = true
 # clock. `default-features = false` — only `std` (this crate always links
 # std) + `ts` (the section reassembler `SiDemux` needs); `chrono`/`serde`
 # are not needed since `dvr::EitProgramme` decodes MJD+BCD itself.
-dvb-si            = { path = "../dvb-si", version = "13.0.0", default-features = false, features = ["std", "ts"] }
+dvb-si            = { path = "../dvb-si", version = "13.1.0", default-features = false, features = ["std", "ts"] }
 # TS packet/PSI-section framing. Two uses: `mpeg_ts::pid::Pid`, which
 # `dvr::DvrRecorder::new` wraps the EIT PID (`dvb_si::tables::eit::PID`) in
 # to pass to `SiDemux::builder().pid(..)`; and
@@ -188,18 +188,18 @@ dvb-si            = { path = "../dvb-si", version = "13.0.0", default-features =
 # genuine-bytes transition section back into TS packets. Also still used by
 # `source::segment`'s MPTS test (issue #887). Promoted from
 # `[dev-dependencies]` because production code (`dvr.rs`) now needs it too.
-mpeg-ts           = { path = "../mpeg-ts", version = "0.7.0" }
+mpeg-ts           = { path = "../mpeg-ts", version = "0.7.1" }
 # Canonical timed-metadata event types (issue #969): `source::scte35` /
 # `route` ingest `timed_metadata::TimedEvent` values into the trunk's event
 # log, and `origin::resource::inject_segment_events` pattern-matches on
 # `timed_metadata::event::SourcePayload::Scte35`. A transitive dep through
 # `media-plane` alone cannot be named inside a pattern match (edition 2024
 # requires it be declared), hence the direct dependency.
-timed-metadata    = { path = "../timed-metadata", version = "0.9.0", default-features = false }
+timed-metadata    = { path = "../timed-metadata", version = "0.10.0", default-features = false }
 # Teletext subtitle pages -> WebVTT cues (`source::split_subtitle`, issue
 # #1428): the PES data-field decoder and cue extractor behind the SUBTITLES
 # renditions, not re-implemented here.
-caption-convert   = { path = "../caption-convert", version = "0.5.0", default-features = false, features = ["std", "teletext"] }
+caption-convert   = { path = "../caption-convert", version = "0.6.0", default-features = false, features = ["std", "teletext"] }
 
 [features]
 # `tls` is default-on: `rtsps://` sources should work out of the box. It pulls
@@ -261,10 +261,10 @@ required-features = ["whip", "whep", "test-hooks"]
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
 workspace-guards = { path = "../workspace-guards" }
-transmux = { path = "../transmux", version = "0.30.0", features = ["sample-aes"] }
+transmux = { path = "../transmux", version = "0.31.0", features = ["sample-aes"] }
 # `test-seams`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).
-webrtc-runtime   = { path = "../webrtc-runtime", version = "0.6.0", default-features = false, features = ["test-seams"] }
+webrtc-runtime   = { path = "../webrtc-runtime", version = "0.7.0", default-features = false, features = ["test-seams"] }
 # `test-util`: the paused, manually advanced clock the push-flush tests use
 # instead of sleeping (feature-only; no new version in the lock).
 tokio            = { version = "1", features = ["test-util"] }
@@ -281,7 +281,7 @@ reqwest          = { version = "0.13", default-features = false, features = ["js
 # `tests/it/emsg_mp4box.rs` can decode the `message_data` of an emitted DASH
 # `emsg` back to the source section and prove the bytes are the source's own
 # (issue #1083, E).
-scte35-splice    = { path = "../scte35-splice", version = "5.0.0" }
+scte35-splice    = { path = "../scte35-splice", version = "5.0.1" }
 # `rtp-packet` (default-features off, matching the `whep` optional dep) so
 # `tests/it/whip_whep_timers.rs` can build the RTP packet a loopback WebRTC
 # peer encrypts and sends — the only honest way to drive a WHIP session to a
@@ -298,8 +298,8 @@ rtc-dtls         = "0.21"
 # The independent DASH MPD validator `multimux/tests/it/dash_sliding_window.rs` runs over
 # every MPD the origin emits as the window slides (#1058). Dev-only;
 # media-doctor does not depend on multimux (no cycle).
-media-doctor     = { path = "../media-doctor", version = "0.14.0", default-features = false, features = ["std"] }
-dvb-conformance  = { path = "../dvb-conformance", version = "13.0.0", default-features = false, features = ["std"] }
+media-doctor     = { path = "../media-doctor", version = "0.15.0", default-features = false, features = ["std"] }
+dvb-conformance  = { path = "../dvb-conformance", version = "13.1.0", default-features = false, features = ["std"] }
 # A dependency on ourselves, enabling the tiny `test-seams` feature for every
 # test build. Without it a plain `cargo test -p multimux` (default features)
 # would fail to compile any test that uses `Config::prebound`, silently
@@ -315,7 +315,7 @@ multimux         = { path = ".", features = ["test-seams"] }
 socket2          = { workspace = true }
 # `ProgramId` for the SPTS program in `multimux/tests/it/origin_gzip.rs` (already a
 # dependency of the library, so no new lock entry).
-media-plane         = { path = "../media-plane", version = "0.10.0", default-features = false, features = ["std"] }
+media-plane         = { path = "../media-plane", version = "0.11.0", default-features = false, features = ["std"] }
 # `parking_lot::Mutex` so a test can prove the no-poison
 # property directly (the library uses it internally but does not re-export it).
 parking_lot      = "0.13"

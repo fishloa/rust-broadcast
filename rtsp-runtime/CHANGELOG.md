@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-11-10
 ### Changed
 - A `3xx` or `454 Session Not Found` response now resets the session (id, transport, timeout, authenticator) and the caller must `SETUP` again.
 ### Added

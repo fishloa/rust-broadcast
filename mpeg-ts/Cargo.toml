@@ -1,6 +1,6 @@
 [package]
 name         = "mpeg-ts"
-version      = "0.7.0"
+version      = "0.7.1"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -11,7 +11,7 @@ categories   = ["parser-implementations", "multimedia::video", "no-std"]
 exclude      = ["docs/**"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "11.0.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
 thiserror  = { version = "2", default-features = false }
 bytes      = { version = "1", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [13.1.0] - 2026-11-10
 ### Fixed
 - File readers (`dump`, `pids`, ...) count the aligned packets at the end of the capture, and a capture shorter than five packets, which `TsResync` could not confirm before end of input.
 
