@@ -30,5 +30,6 @@ mod mpd_fixtures;
 mod no_clock_guard;
 mod selection;
 mod static_fixtures;
+mod template_match;
 mod timeline_zero_duration;
 mod vectors;

@@ -179,3 +179,316 @@ pub fn substitute(
 ) -> String {
     transmux::SegmentTemplate::resolve(template, representation_id, number, time, Some(bandwidth))
 }
+
+/// A template split into literals and Table 21 identifiers, with each
+/// identifier's format width.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Part<'a> {
+    Literal(&'a str),
+    Escape,
+    RepresentationId,
+    Number(Option<usize>),
+    Time(Option<usize>),
+    Bandwidth(Option<usize>),
+}
+
+fn number_width(ident: &str) -> Option<usize> {
+    let (_, digits) = ident.split_once(TAG_START)?;
+    let digits = digits.strip_suffix(TAG_CONVERSION).unwrap_or(digits);
+    digits.parse().ok().map(|w: usize| w.min(MAX_FORMAT_WIDTH))
+}
+
+fn parts(template: &str) -> Result<Vec<Part<'_>>, TemplateFault> {
+    scan(template)?;
+    let mut out: Vec<Part<'_>> = Vec::new();
+    let mut rest = template;
+    while let Some(at) = rest.find(DELIMITER) {
+        if at > 0 {
+            out.push(Part::Literal(&rest[..at]));
+        }
+        let tail = &rest[at + 1..];
+        if let Some(after) = tail.strip_prefix(DELIMITER) {
+            out.push(Part::Escape);
+            rest = after;
+            continue;
+        }
+        let end = tail
+            .find(DELIMITER)
+            .ok_or(TemplateFault::UnterminatedIdentifier)?;
+        let ident = &tail[..end];
+        let name = match ident.split_once(TAG_START) {
+            Some((n, _)) => n,
+            None => ident,
+        };
+        out.push(match name {
+            IDENT_RESERVED => Part::RepresentationId,
+            IDENT_NUMBER => Part::Number(number_width(ident)),
+            IDENT_TIME => Part::Time(number_width(ident)),
+            IDENT_BANDWIDTH => Part::Bandwidth(number_width(ident)),
+            _ => return Err(TemplateFault::UnknownIdentifier),
+        });
+        rest = &tail[end + 1..];
+    }
+    if !rest.is_empty() {
+        out.push(Part::Literal(rest));
+    }
+    Ok(out)
+}
+
+/// The identifiers a URL was matched against a template: the exact inverse of
+/// [`substitute`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct TemplateMatch {
+    /// The matched `$RepresentationID$` value (empty if the template carried
+    /// none).
+    pub representation_id: String,
+    /// The matched `$Number$` value, if present.
+    pub number: Option<u64>,
+    /// The matched `$Time$` value, if present.
+    pub time: Option<u64>,
+    /// The matched `$Bandwidth$` value, if present.
+    pub bandwidth: Option<u64>,
+}
+
+/// Recover the identifiers that [`substitute`] would have rendered as `url`.
+///
+/// `known_representation_ids` supplies the values `$RepresentationID$` may
+/// take; they are tried longest-first and the whole `url` must match. Returns
+/// `None` when the template is invalid (any [`TemplateFault`]), when a
+/// `$SubNumber$` makes the reading undefined, or when the reading is not
+/// unique.
+#[must_use]
+pub fn match_url(
+    template: &str,
+    url: &str,
+    known_representation_ids: &[&str],
+) -> Option<TemplateMatch> {
+    let parts = parts(template).ok()?;
+    let mut ids: Vec<&str> = known_representation_ids.to_vec();
+    ids.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    ids.dedup();
+    let mut solutions: Vec<TemplateMatch> = Vec::new();
+    walk(
+        &parts,
+        template,
+        &ids,
+        url,
+        0,
+        0,
+        Reading::default(),
+        &mut solutions,
+    );
+    if solutions.len() == 1 {
+        solutions.pop()
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct Reading {
+    matched: TemplateMatch,
+    id: bool,
+    number: bool,
+    time: bool,
+    bandwidth: bool,
+}
+
+fn walk(
+    parts: &[Part<'_>],
+    template: &str,
+    ids: &[&str],
+    url: &str,
+    pi: usize,
+    pos: usize,
+    current: Reading,
+    solutions: &mut Vec<TemplateMatch>,
+) {
+    if solutions.len() >= 2 {
+        return;
+    }
+    let Some(part) = parts.get(pi) else {
+        if pos == url.len() {
+            solutions.push(current.matched);
+        }
+        return;
+    };
+    let rest = &url[pos..];
+    match part {
+        Part::Literal(s) => {
+            if let Some(after) = rest.strip_prefix(*s) {
+                let at = url.len() - after.len();
+                walk(parts, template, ids, url, pi + 1, at, current, solutions);
+            }
+        }
+        Part::Escape => {
+            if let Some(after) = rest.strip_prefix(DELIMITER) {
+                let at = url.len() - after.len();
+                walk(parts, template, ids, url, pi + 1, at, current, solutions);
+            }
+        }
+        Part::RepresentationId => {
+            for id in ids {
+                let Some(after) = rest.strip_prefix(*id) else {
+                    continue;
+                };
+                if current.id && current.matched.representation_id != *id {
+                    continue;
+                }
+                let mut next = current.clone();
+                next.id = true;
+                next.matched.representation_id = (*id).to_owned();
+                walk(
+                    parts,
+                    template,
+                    ids,
+                    url,
+                    pi + 1,
+                    url.len() - after.len(),
+                    next,
+                    solutions,
+                );
+                if solutions.len() >= 2 {
+                    return;
+                }
+            }
+        }
+        Part::Number(width) => numeric(
+            parts,
+            template,
+            ids,
+            url,
+            pi,
+            pos,
+            rest,
+            *width,
+            &current,
+            solutions,
+            Field::Number,
+        ),
+        Part::Time(width) => numeric(
+            parts,
+            template,
+            ids,
+            url,
+            pi,
+            pos,
+            rest,
+            *width,
+            &current,
+            solutions,
+            Field::Time,
+        ),
+        Part::Bandwidth(width) => numeric(
+            parts,
+            template,
+            ids,
+            url,
+            pi,
+            pos,
+            rest,
+            *width,
+            &current,
+            solutions,
+            Field::Bandwidth,
+        ),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Field {
+    Number,
+    Time,
+    Bandwidth,
+}
+
+impl Reading {
+    fn set(&mut self, field: Field, value: u64) -> Option<&mut Self> {
+        let slot = match field {
+            Field::Number => &mut self.matched.number,
+            Field::Time => &mut self.matched.time,
+            Field::Bandwidth => &mut self.matched.bandwidth,
+        };
+        match *slot {
+            Some(seen) if seen != value => return None,
+            _ => *slot = Some(value),
+        }
+        match field {
+            Field::Number => self.number = true,
+            Field::Time => self.time = true,
+            Field::Bandwidth => self.bandwidth = true,
+        }
+        Some(self)
+    }
+}
+
+fn digit_run(rest: &str) -> usize {
+    rest.find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len())
+}
+
+#[must_use]
+pub fn format_width(n: u64, width: usize) -> String {
+    let width = width.clamp(1, MAX_FORMAT_WIDTH);
+    let digits = n.to_string();
+    if digits.len() >= width {
+        digits
+    } else {
+        let mut out = String::with_capacity(width);
+        for _ in 0..(width - digits.len()) {
+            out.push('0');
+        }
+        out.push_str(&digits);
+        out
+    }
+}
+
+fn numeric(
+    parts: &[Part<'_>],
+    template: &str,
+    ids: &[&str],
+    url: &str,
+    pi: usize,
+    pos: usize,
+    rest: &str,
+    width: Option<usize>,
+    current: &Reading,
+    solutions: &mut Vec<TemplateMatch>,
+    field: Field,
+) {
+    let max_len = digit_run(rest);
+    let w = width.map_or(1, |w| w.clamp(1, MAX_FORMAT_WIDTH));
+    let min_len = w.min(max_len).max(1);
+    if max_len == 0 || min_len > max_len {
+        return;
+    }
+    for len in (min_len..=max_len).rev() {
+        let Some(sub) = rest.get(..len) else {
+            continue;
+        };
+        let Ok(value) = sub.parse::<u64>() else {
+            continue;
+        };
+        if format_width(value, w) != sub {
+            continue;
+        }
+        let mut next = current.clone();
+        if next.set(field, value).is_none() {
+            continue;
+        }
+        walk(
+            parts,
+            template,
+            ids,
+            url,
+            pi + 1,
+            pos + len,
+            next,
+            solutions,
+        );
+        if solutions.len() >= 2 {
+            return;
+        }
+    }
+}
