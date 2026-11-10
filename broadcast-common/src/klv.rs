@@ -1,23 +1,150 @@
-//! Generic KLV (Key-Length-Value) triplet — SMPTE ST 377-1:2019 §6.3
-//! (`private/specs-verified/smpte/st377-1/st377-1.md`), the base framing primitive every other KLV item in
-//! an MXF file (Partition Packs, the Primer Pack, Header Metadata Sets,
-//! Index Table Segments, the Random Index Pack, and every Essence Container
-//! element) rides on.
+//! Generic KLV (Key-Length-Value) triplet and its BER length — SMPTE ST 336
+//! "Data Encoding Protocol Using Key-Length-Value", as constrained for MXF by
+//! SMPTE ST 377-1:2019 §6.3 (`private/specs-verified/smpte/st377-1/st377-1.md`)
+//! and for MISB metadata by MISB ST 0601.
 //!
-//! Zero-copy: [`KlvItem`] borrows its `value` from the input buffer, so
-//! walking a (potentially huge, essence-carrying) MXF file never copies
-//! sample bytes.
+//! The base framing primitive every KLV item in an MXF file (Partition Packs,
+//! the Primer Pack, Header Metadata Sets, Index Table Segments, the Random
+//! Index Pack, and every Essence Container element) and every MISB Local Set
+//! packet rides on: a 16-byte [`UniversalLabel`] key, a [`BerLength`]-encoded
+//! length (ISO/IEC 8825-1 §8.1.3), and the value bytes it describes.
+//!
+//! Zero-copy: [`KlvItem`] borrows its `value` from the input buffer, so walking
+//! a (potentially huge, essence-carrying) file never copies sample bytes.
 
-extern crate alloc;
+use core::fmt;
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use crate::ber::{ber_length_size_for, decode_ber_length, encode_ber_length_as};
+use crate::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
+use crate::len::{need_in, need_out};
+use crate::{Parse, Serialize};
 
-use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
-use crate::error::{Error, Result};
-use crate::types::{UlBytes, ul_bytes_from_prefix};
+/// Length of a SMPTE Universal Label key, in bytes (SMPTE ST 336).
+pub const UNIVERSAL_LABEL_LEN: usize = 16;
+
+/// A 16-byte SMPTE Universal Label (KLV key).
+pub type UniversalLabel = [u8; UNIVERSAL_LABEL_LEN];
+
+/// Copy the first [`UNIVERSAL_LABEL_LEN`] bytes of `bytes` into a key.
+fn universal_label_from_prefix(bytes: &[u8]) -> UniversalLabel {
+    let mut out = [0u8; UNIVERSAL_LABEL_LEN];
+    let mut i = 0;
+    while i < UNIVERSAL_LABEL_LEN {
+        out[i] = bytes[i];
+        i += 1;
+    }
+    out
+}
+
+/// An error from the KLV triplet / BER length codec (SMPTE ST 336,
+/// ISO/IEC 8825-1 §8.1.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum KlvError {
+    /// The input buffer was shorter than the triplet being parsed.
+    BufferTooShort(BufferTooShort),
+    /// The caller's output buffer was smaller than the serialized triplet.
+    OutputBufferTooSmall(OutputBufferTooSmall),
+    /// A BER length token used the reserved "unspecified length" form (a
+    /// long-form first byte claiming zero following bytes).
+    BerIndefiniteLength,
+    /// A BER long-form length used more following bytes than an unsigned
+    /// 64-bit length could need, or than the 9-byte token cap allows.
+    BerLengthTooLong {
+        /// Following-byte count found (or requested on serialize).
+        bytes: usize,
+    },
+    /// [`BerLength::Fixed`] requested a specific on-wire token width too small
+    /// to represent the length being serialized.
+    FixedBerLengthTooSmall {
+        /// The length that needed encoding.
+        len: u64,
+        /// The requested fixed total token width, in bytes.
+        width: u8,
+    },
+    /// A BER length field was structurally invalid (a value the spec does not
+    /// allow, carrying the reason).
+    InvalidLength(InvalidValue),
+}
+
+impl fmt::Display for KlvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BufferTooShort(e) => write!(f, "{e}"),
+            Self::OutputBufferTooSmall(e) => write!(f, "{e}"),
+            Self::BerIndefiniteLength => {
+                f.write_str("BER length used the reserved indefinite-length token (0x80)")
+            }
+            Self::BerLengthTooLong { bytes } => write!(
+                f,
+                "BER long-form length has {bytes} following bytes, exceeding the 8-byte cap"
+            ),
+            Self::FixedBerLengthTooSmall { len, width } => write!(
+                f,
+                "length {len} does not fit in the fixed BER width of {width} byte(s)"
+            ),
+            Self::InvalidLength(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl core::error::Error for KlvError {}
+
+impl From<BufferTooShort> for KlvError {
+    fn from(e: BufferTooShort) -> Self {
+        Self::BufferTooShort(e)
+    }
+}
+
+impl From<OutputBufferTooSmall> for KlvError {
+    fn from(e: OutputBufferTooSmall) -> Self {
+        Self::OutputBufferTooSmall(e)
+    }
+}
+
+/// Result alias for the KLV codec.
+pub type Result<T> = core::result::Result<T, KlvError>;
+
+/// The BER length-field width to serialize a value's length with (issue
+/// #1047 / audit MX-C1). `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4 permits any valid BER
+/// form for a length token; real MXF encoders routinely write a longer,
+/// fixed-width long form (rather than the shortest one that fits) so a
+/// pack can be rewritten in place later without shifting every later
+/// absolute offset. Every type that owns a top-level Key-Length-Value
+/// envelope (`KlvItem`, `PartitionPack`, `PrimerPack`, `RandomIndexPack`,
+/// `LocalSet`) stores one of these, set to `Fixed` from the on-wire width
+/// on parse so `serialize_into` reproduces it exactly, and defaulting to
+/// `Minimal` for a freshly built value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum BerLength {
+    /// Always (re)compute the canonical minimal-width encoding for
+    /// whatever length is being serialized.
+    #[default]
+    Minimal,
+    /// Reproduce this specific on-wire total token width in bytes: `1` is
+    /// short form; `2..=9` is long form with `width - 1` following length
+    /// bytes.
+    Fixed(core::num::NonZeroU8),
+}
+
+impl BerLength {
+    /// Build a [`Self::Fixed`] from a length token's total consumed width
+    /// (as [`decode_ber_length`] returns it) — always in range since a
+    /// successful decode consumes at least 1 and at most 9 bytes.
+    #[must_use]
+    pub(crate) fn fixed_from_consumed(consumed: usize) -> Self {
+        Self::Fixed(
+            u8::try_from(consumed)
+                .ok()
+                .and_then(core::num::NonZeroU8::new)
+                .unwrap_or(core::num::NonZeroU8::MIN),
+        )
+    }
+}
 
 /// A single KLV triplet: a 16-byte Key, a BER-encoded Length, and the Value
 /// bytes it describes (`private/specs-verified/smpte/st377-1/st377-1.md` §6.3).
@@ -34,7 +161,7 @@ use crate::types::{UlBytes, ul_bytes_from_prefix};
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KlvItem<'a> {
     /// The 16-byte Key.
-    pub key: UlBytes,
+    pub key: UniversalLabel,
     /// The Value bytes (borrowed from the input).
     pub value: &'a [u8],
     /// The on-wire BER length-field width (issue #1047 / audit MX-C1) —
@@ -57,7 +184,7 @@ impl<'a> KlvItem<'a> {
     /// Build a freshly-constructed item that serializes with the
     /// canonical minimal BER length form (`len_size: BerLength::Minimal`).
     #[must_use]
-    pub fn new(key: UlBytes, value: &'a [u8]) -> Self {
+    pub fn new(key: UniversalLabel, value: &'a [u8]) -> Self {
         Self {
             key,
             value,
@@ -66,45 +193,29 @@ impl<'a> KlvItem<'a> {
     }
 }
 
-/// The KLV Fill item key (§6.3.3), matching byte 8 (the version number) as
-/// a wildcard per the spec's own note ("MXF decoders shall ignore the
-/// version number byte ... when determining if a KLV key is the Fill item
-/// key" — some early encoders wrote `0x01` there instead of the RP 210
-/// value `0x02`).
-pub const FILL_ITEM_KEY_PREFIX: [u8; 7] = [0x06, 0x0E, 0x2B, 0x34, 0x01, 0x01, 0x01];
-/// Byte 8 (version) is a wildcard; bytes 9-16 of the Fill item key.
-pub const FILL_ITEM_KEY_SUFFIX: [u8; 8] = [0x03, 0x01, 0x02, 0x10, 0x01, 0x00, 0x00, 0x00];
-
-/// True if `key` is the KLV Fill item key (§6.3.3), ignoring byte 8 (the
-/// version number) per the spec's own decoder rule.
-#[must_use]
-pub fn is_fill_item_key(key: &UlBytes) -> bool {
-    key[..7] == FILL_ITEM_KEY_PREFIX && key[8..] == FILL_ITEM_KEY_SUFFIX
-}
-
 impl<'a> KlvItem<'a> {
     /// Parse one KLV triplet from the start of `bytes`, returning it along
     /// with the total number of bytes consumed (key + length + value) — use
     /// this to walk a sequence of KLV items in a stream.
     pub fn parse_prefix(bytes: &'a [u8]) -> Result<(Self, usize)> {
-        need_in(bytes, 16, "KLV key")?;
-        let key: UlBytes = ul_bytes_from_prefix(bytes);
-        let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
-        let value_start = 16 + len_token_size;
+        need_in(bytes, UNIVERSAL_LABEL_LEN, "KLV key")?;
+        let key: UniversalLabel = universal_label_from_prefix(bytes);
+        let (len, len_token_size) = decode_ber_length(&bytes[UNIVERSAL_LABEL_LEN..])?;
+        let value_start = UNIVERSAL_LABEL_LEN + len_token_size;
         let len = usize::try_from(len).map_err(|_| {
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            KlvError::BufferTooShort(BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "KLV value (length exceeds platform usize)",
             })
         })?;
-        let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+        let value_end = value_start
+            .checked_add(len)
+            .ok_or(KlvError::BufferTooShort(BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "KLV value (length overflow)",
-            },
-        ))?;
+            }))?;
         need_in(bytes, value_end, "KLV value")?;
         Ok((
             KlvItem {
@@ -118,37 +229,43 @@ impl<'a> KlvItem<'a> {
 }
 
 impl<'a> Parse<'a> for KlvItem<'a> {
-    type Error = Error;
+    type Error = KlvError;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (item, consumed) = Self::parse_prefix(bytes)?;
         if consumed != bytes.len() {
-            return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: consumed,
-                    have: bytes.len(),
-                    what: "KLV item (trailing bytes after exact-fit parse)",
-                },
-            ));
+            return Err(KlvError::BufferTooShort(BufferTooShort {
+                need: consumed,
+                have: bytes.len(),
+                what: "KLV item (trailing bytes after exact-fit parse)",
+            }));
         }
         Ok(item)
     }
 }
 
 impl Serialize for KlvItem<'_> {
-    type Error = Error;
+    type Error = KlvError;
 
     fn serialized_len(&self) -> usize {
-        16 + ber_length_size_for(self.value.len() as u64, self.len_size) + self.value.len()
+        UNIVERSAL_LABEL_LEN
+            + ber_length_size_for(
+                u64::try_from(self.value.len()).unwrap_or(u64::MAX),
+                self.len_size,
+            )
+            + self.value.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
         need_out(buf, total)?;
-        buf[..16].copy_from_slice(&self.key);
-        let len_size =
-            encode_ber_length_as(self.value.len() as u64, self.len_size, &mut buf[16..])?;
-        let value_start = 16 + len_size;
+        buf[..UNIVERSAL_LABEL_LEN].copy_from_slice(&self.key);
+        let len_size = encode_ber_length_as(
+            u64::try_from(self.value.len()).unwrap_or(u64::MAX),
+            self.len_size,
+            &mut buf[UNIVERSAL_LABEL_LEN..],
+        )?;
+        let value_start = UNIVERSAL_LABEL_LEN + len_size;
         buf[value_start..value_start + self.value.len()].copy_from_slice(self.value);
         Ok(total)
     }
@@ -195,12 +312,10 @@ mod tests {
         let mut buf = alloc::vec![0u8; need - 1];
         assert_eq!(
             item.serialize_into(&mut buf),
-            Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
-                    need,
-                    have: need - 1
-                }
-            ))
+            Err(KlvError::OutputBufferTooSmall(OutputBufferTooSmall {
+                need,
+                have: need - 1
+            }))
         );
     }
 
@@ -252,25 +367,10 @@ mod tests {
     }
 
     #[test]
-    fn fill_item_key_matches_ignoring_version_byte() {
-        let rp210 = [
-            0x06, 0x0E, 0x2B, 0x34, 0x01, 0x01, 0x01, 0x02, 0x03, 0x01, 0x02, 0x10, 0x01, 0x00,
-            0x00, 0x00,
-        ];
-        let legacy = [
-            0x06, 0x0E, 0x2B, 0x34, 0x01, 0x01, 0x01, 0x01, 0x03, 0x01, 0x02, 0x10, 0x01, 0x00,
-            0x00, 0x00,
-        ];
-        assert!(is_fill_item_key(&rp210));
-        assert!(is_fill_item_key(&legacy));
-        assert!(!is_fill_item_key(&[0u8; 16]));
-    }
-
-    #[test]
     fn truncated_key_is_error() {
         assert!(matches!(
             KlvItem::parse(&[0u8; 10]),
-            Err(Error::BufferTooShort(..))
+            Err(KlvError::BufferTooShort(..))
         ));
     }
 

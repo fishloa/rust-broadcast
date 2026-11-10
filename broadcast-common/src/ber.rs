@@ -9,68 +9,36 @@
 //!   bytes) and caps the encoding at 9 bytes total (1 header + up to 8
 //!   length bytes) — `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4.
 
-use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
+use crate::error::BufferTooShort;
+use crate::klv::{BerLength, KlvError};
+use crate::len::{need_in, need_out};
+
+/// Result alias for the BER length codec.
+pub type Result<T> = core::result::Result<T, KlvError>;
 
 /// High bit of the first BER length byte: set means long form (X.690 §8.1.3).
-const BER_LONG_FORM_FLAG: u8 = 0x80;
+pub(crate) const BER_LONG_FORM_FLAG: u8 = 0x80;
 /// Low 7 bits of a long-form first byte: the count of following length bytes.
-const BER_LONG_FORM_COUNT_MASK: u8 = 0x7F;
+pub(crate) const BER_LONG_FORM_COUNT_MASK: u8 = 0x7F;
 /// Largest length representable in short form (one byte, high bit clear).
-const BER_SHORT_FORM_MAX: u64 = 0x7F;
+pub(crate) const BER_SHORT_FORM_MAX: u64 = 0x7F;
 /// Longest BER length token: 1 header byte + 8 length bytes (ST 377-1 §6.3.4).
-const BER_MAX_TOKEN_LEN: usize = 9;
-
-/// The BER length-field width to serialize a value's length with (issue
-/// #1047 / audit MX-C1). `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4 permits any valid BER
-/// form for a length token; real MXF encoders routinely write a longer,
-/// fixed-width long form (rather than the shortest one that fits) so a
-/// pack can be rewritten in place later without shifting every later
-/// absolute offset. Every type that owns a top-level Key-Length-Value
-/// envelope (`KlvItem`, `PartitionPack`, `PrimerPack`, `RandomIndexPack`,
-/// `LocalSet`) stores one of these, set to `Fixed` from the on-wire width
-/// on parse so `serialize_into` reproduces it exactly, and defaulting to
-/// `Minimal` for a freshly built value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub enum BerLength {
-    /// Always (re)compute the canonical minimal-width encoding for
-    /// whatever length is being serialized.
-    #[default]
-    Minimal,
-    /// Reproduce this specific on-wire total token width in bytes: `1` is
-    /// short form; `2..=9` is long form with `width - 1` following length
-    /// bytes.
-    Fixed(core::num::NonZeroU8),
-}
-
-impl BerLength {
-    /// Build a [`Self::Fixed`] from a length token's total consumed width
-    /// (as [`decode_ber_length`] returns it) — always in range since a
-    /// successful decode consumes at least 1 and at most 9 bytes.
-    #[must_use]
-    pub(crate) fn fixed_from_consumed(consumed: usize) -> Self {
-        Self::Fixed(core::num::NonZeroU8::new(consumed as u8).unwrap_or(
-            // Unreachable in practice (decode_ber_length never returns 0 or
-            // >9), but never panics even if that invariant is ever loosened.
-            core::num::NonZeroU8::MIN,
-        ))
-    }
-}
+pub(crate) const BER_MAX_TOKEN_LEN: usize = 9;
+/// Longest long form: the following length bytes of a full-width token.
+pub(crate) const BER_MAX_LONG_FORM_BYTES: usize = BER_MAX_TOKEN_LEN - 1;
 
 /// Decode a BER length token at the start of `bytes`.
 ///
 /// Returns `(length, bytes_consumed_by_the_length_token_itself)`. Does not
 /// touch the value bytes that follow.
 pub fn decode_ber_length(bytes: &[u8]) -> Result<(u64, usize)> {
-    let first = *bytes.first().ok_or(Error::BufferTooShort(
-        broadcast_common::error::BufferTooShort {
+    let first = *bytes
+        .first()
+        .ok_or(KlvError::BufferTooShort(BufferTooShort {
             need: 1,
             have: 0,
             what: "BER length first byte",
-        },
-    ))?;
+        }))?;
 
     if first & BER_LONG_FORM_FLAG == 0 {
         // Short form: value is the byte itself.
@@ -80,10 +48,10 @@ pub fn decode_ber_length(bytes: &[u8]) -> Result<(u64, usize)> {
     let following = usize::from(first & BER_LONG_FORM_COUNT_MASK);
     if following == 0 {
         // 0x80 alone: reserved "unspecified length" — forbidden in MXF.
-        return Err(Error::BerIndefiniteLength);
+        return Err(KlvError::BerIndefiniteLength);
     }
-    if following > 8 {
-        return Err(Error::BerLengthTooLong { bytes: following });
+    if following > BER_MAX_LONG_FORM_BYTES {
+        return Err(KlvError::BerLengthTooLong { bytes: following });
     }
     need_in(bytes, 1 + following, "BER long-form length bytes")?;
 
@@ -102,7 +70,8 @@ pub fn ber_length_size(len: u64) -> usize {
     if len <= BER_SHORT_FORM_MAX {
         1
     } else {
-        let bytes_needed = (64 - len.leading_zeros()).div_ceil(8) as usize;
+        let bytes_needed =
+            usize::try_from((64 - len.leading_zeros()).div_ceil(8)).unwrap_or(usize::MAX);
         1 + bytes_needed
     }
 }
@@ -113,10 +82,10 @@ pub fn encode_ber_length(len: u64, buf: &mut [u8]) -> Result<usize> {
     let size = ber_length_size(len);
     need_out(buf, size)?;
     if len <= BER_SHORT_FORM_MAX {
-        buf[0] = len as u8;
+        buf[0] = u8::try_from(len).unwrap_or(u8::MAX);
     } else {
         let following = size - 1;
-        buf[0] = BER_LONG_FORM_FLAG | (following as u8);
+        buf[0] = BER_LONG_FORM_FLAG | u8::try_from(following).unwrap_or(u8::MAX);
         let be = len.to_be_bytes();
         buf[1..size].copy_from_slice(&be[8 - following..]);
     }
@@ -143,11 +112,11 @@ pub fn ber_length_size_for(len: u64, width: BerLength) -> usize {
 /// Errors (never produced by parsing a well-formed file; only reachable by
 /// building/mutating a value by hand into an inconsistent state):
 /// - `Fixed(n)` with `n > 9` (more than the 8 following length bytes §6.3.4
-///   allows): [`Error::BerLengthTooLong`], checked before anything else.
+///   allows): [`KlvError::BerLengthTooLong`], checked before anything else.
 /// - `BufferTooShort`, when `buf` is shorter than the fixed width.
 /// - `Fixed(1)` (short form) when `len > 0x7F`, or `Fixed(n)` (long form,
 ///   `n - 1` length bytes) when `len` doesn't fit in `n - 1` bytes:
-///   [`Error::FixedBerLengthTooSmall`], since the requested fixed width
+///   [`KlvError::FixedBerLengthTooSmall`], since the requested fixed width
 ///   cannot represent this length.
 pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Result<usize> {
     match width {
@@ -155,26 +124,26 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
         BerLength::Fixed(n) => {
             let size = usize::from(n.get());
             if size > BER_MAX_TOKEN_LEN {
-                return Err(Error::BerLengthTooLong { bytes: size - 1 });
+                return Err(KlvError::BerLengthTooLong { bytes: size - 1 });
             }
             need_out(buf, size)?;
             if size == 1 {
                 if len > BER_SHORT_FORM_MAX {
-                    return Err(Error::FixedBerLengthTooSmall {
+                    return Err(KlvError::FixedBerLengthTooSmall {
                         len,
                         width: n.get(),
                     });
                 }
-                buf[0] = len as u8;
+                buf[0] = u8::try_from(len).unwrap_or(u8::MAX);
             } else {
                 let following = size - 1;
-                if following < 8 && len >= (1u64 << (following * 8)) {
-                    return Err(Error::FixedBerLengthTooSmall {
+                if following < BER_MAX_LONG_FORM_BYTES && len >= (1u64 << (following * 8)) {
+                    return Err(KlvError::FixedBerLengthTooSmall {
                         len,
                         width: n.get(),
                     });
                 }
-                buf[0] = BER_LONG_FORM_FLAG | (following as u8);
+                buf[0] = BER_LONG_FORM_FLAG | u8::try_from(following).unwrap_or(u8::MAX);
                 let be = len.to_be_bytes();
                 buf[1..size].copy_from_slice(&be[8 - following..]);
             }
@@ -195,7 +164,7 @@ mod tests {
             let w = BerLength::Fixed(NonZeroU8::new(width).unwrap());
             assert_eq!(
                 encode_ber_length_as(5, w, &mut buf),
-                Err(Error::BerLengthTooLong {
+                Err(KlvError::BerLengthTooLong {
                     bytes: usize::from(width) - 1
                 }),
                 "width {width}"
@@ -245,7 +214,7 @@ mod tests {
     fn indefinite_length_rejected() {
         assert_eq!(
             decode_ber_length(&[0x80]).unwrap_err(),
-            Error::BerIndefiniteLength
+            KlvError::BerIndefiniteLength
         );
     }
 
@@ -254,7 +223,7 @@ mod tests {
         // 0x89 claims 9 following bytes, exceeding the 8-byte cap.
         assert_eq!(
             decode_ber_length(&[0x89, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap_err(),
-            Error::BerLengthTooLong { bytes: 9 }
+            KlvError::BerLengthTooLong { bytes: 9 }
         );
     }
 
@@ -262,7 +231,7 @@ mod tests {
     fn truncated_long_form_rejected() {
         assert!(matches!(
             decode_ber_length(&[0x84, 0, 0]).unwrap_err(),
-            Error::BufferTooShort(..)
+            KlvError::BufferTooShort(..)
         ));
     }
 
@@ -270,7 +239,7 @@ mod tests {
     fn empty_buffer_rejected() {
         assert!(matches!(
             decode_ber_length(&[]).unwrap_err(),
-            Error::BufferTooShort(..)
+            KlvError::BufferTooShort(..)
         ));
     }
 
@@ -282,7 +251,7 @@ mod tests {
             let w = BerLength::Fixed(NonZeroU8::new(width).unwrap());
             assert_eq!(
                 encode_ber_length_as(len, w, &mut buf),
-                Err(Error::FixedBerLengthTooSmall { len, width })
+                Err(KlvError::FixedBerLengthTooSmall { len, width })
             );
         }
     }
