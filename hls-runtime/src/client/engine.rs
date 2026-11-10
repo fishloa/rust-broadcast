@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use container_probe::segment;
+use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
@@ -19,15 +20,6 @@ use super::action::{Action, BlockingReload, KeyId, ResourceId};
 use super::error::{Error, Result};
 use super::output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 use super::url;
-
-/// First byte of every MPEG-2 TS packet (ITU-T H.222.0 / ISO/IEC 13818-1
-/// §2.4.3.2 `sync_byte`). Classic MPEG-TS-segment HLS (HLS v3, RFC 8216 —
-/// the dominant legacy/IPTV form) has no `EXT-X-MAP`/init segment at all:
-/// each `.ts` segment is a self-contained PAT/PMT/PES stream, so this byte
-/// is the only available signal to distinguish one from an fMP4/CMAF
-/// segment (which starts with an ISOBMFF box: `ftyp`/`styp`/`moof`) once the
-/// playlist itself has never advertised a Media Initialization Section.
-const TS_SYNC_BYTE: u8 = 0x47;
 
 /// Movie timescale of the init segment synthesized for classic TS-segment
 /// HLS: the 90 kHz MPEG-2 system clock the PES PTS/DTS are expressed in
@@ -1654,10 +1646,12 @@ impl HlsClient {
     /// requested it, including any map it carries, so this check is never
     /// stale) **and** `bytes` starts with the MPEG-TS sync byte — an
     /// fMP4/CMAF resource always starts with an ISOBMFF box
-    /// (`ftyp`/`styp`/`moof`), never [`TS_SYNC_BYTE`].
+    /// (`ftyp`/`styp`/`moof`), never [`TS_SYNC_BYTE`] — the classic TS
+    /// form has no `EXT-X-MAP` at all.
     fn is_ts_segment(&self, bytes: &[u8]) -> bool {
         self.inits.is_empty()
-            && (bytes.first() == Some(&TS_SYNC_BYTE) || segment::ts_structure(bytes))
+            && (bytes.first() == Some(&TS_SYNC_BYTE)
+                || segment::ts_structure(bytes))
     }
 
     /// Report that a previously requested [`ResourceId`] (or the playlist

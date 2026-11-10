@@ -1753,6 +1753,7 @@ dependencies = [
  "jiff",
  "media-doctor",
  "media-plane",
+ "mpeg-ts",
  "reqwest",
  "serde",
  "test-fixtures",
