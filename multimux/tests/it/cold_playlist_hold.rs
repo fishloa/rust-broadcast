@@ -200,6 +200,37 @@ async fn a_request_before_the_program_is_announced_is_held_until_the_first_segme
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_program_announced_late_without_a_segment_waits_one_bound_in_total() {
+    const ANNOUNCE_AT: Duration = Duration::from_millis(4500);
+    let store = unannounced_route();
+    let app = app(&store);
+
+    let started = Instant::now();
+    let request = app.clone().oneshot(get("/cam/media.m3u8"));
+    let announce = async {
+        tokio::time::sleep(ANNOUNCE_AT).await;
+        let _seg = feed_open_segment(
+            &store,
+            vec![video_track_spec()],
+            video_batches_n(COLD_FRAMES),
+        );
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    };
+    let resp = tokio::select! {
+        resp = request => resp.unwrap(),
+        () = announce => panic!("the request never finished"),
+    };
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let playlist_timeout =
+        MIN_BLOCKING_TIMEOUT.max(Duration::from_secs_f64(TARGET_DURATION_SECS * 3.0));
+    assert!(
+        started.elapsed() <= playlist_timeout + Duration::from_secs(1),
+        "waited {:?}, more than one playlist timeout ({playlist_timeout:?}) plus 1 s",
+        started.elapsed()
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_request_for_a_program_that_never_appears_is_503_with_retry_after() {
     let store = unannounced_route();
     let app = app(&store);
@@ -211,21 +242,6 @@ async fn a_request_for_a_program_that_never_appears_is_503_with_retry_after() {
     assert!(
         started.elapsed() >= MIN_BLOCKING_TIMEOUT - Duration::from_millis(100),
         "gave up after {:?}",
-        started.elapsed()
-    );
-}
-
-#[tokio::test(start_paused = true)]
-async fn cold_llhls_media_playlist_wait_is_single_bounded() {
-    let store = unannounced_route();
-    let app = app(&store);
-
-    let started = Instant::now();
-    let resp = app.clone().oneshot(get("/cam/media.m3u8")).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(
-        started.elapsed() <= MIN_BLOCKING_TIMEOUT + Duration::from_secs(1),
-        "waited {:?}, more than one playlist timeout plus slack",
         started.elapsed()
     );
 }

@@ -26,7 +26,7 @@ pub(crate) async fn media_playlist(
     flavour: HlsFlavour,
     q: BlockingReloadQuery,
 ) -> Response {
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let serving = if flavour == HlsFlavour::LowLatency {
         match http::resolve_route_program_held(&route).await {
             Ok(s) => s,
