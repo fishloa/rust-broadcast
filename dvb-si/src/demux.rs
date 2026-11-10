@@ -420,6 +420,10 @@ impl SiDemux {
                             payload,
                             ts.header.pusi,
                             ts.header.continuity_counter,
+                            ts.adaptation_field()
+                                .and_then(|r| r.ok())
+                                .map(|af| af.discontinuity_indicator)
+                                .unwrap_or(false),
                         ),
                         None => reasm.feed(payload, ts.header.pusi),
                     }
