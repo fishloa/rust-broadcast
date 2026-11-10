@@ -3,6 +3,8 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- BREAKING: the non-default test-hook feature is renamed `test-support` -> `test-seams`; only a test suite enabling it by name is affected (c6 C6-09).
 ### Fixed
 - A trickle PATCH answered `412 Precondition Failed` (RFC 9725 §4.3.1, outdated entity-tag) adopts the `ETag` the response carries, so the retry sends the current `If-Match` instead of the stale one. A failed `DELETE` consuming its pending marker is not a defect: each request pushes its own marker, and a retried `DELETE` terminates (pinned).
 - The client and player track every in-flight request in send order, so a trickle PATCH's `204` can no longer be taken for the answer to a `DELETE` sent after it (the session closed and emitted `Terminated` before the server answered the `DELETE`).

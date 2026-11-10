@@ -7,7 +7,7 @@ mod session_state;
 mod srtp_rfc3711_vectors;
 #[cfg(feature = "media")]
 mod stun_rfc5769_vectors;
-mod test_support_is_gated;
+mod test_seams_is_gated;
 mod whep_round_trip;
 mod whip_http_headers;
 mod whip_round_trip;

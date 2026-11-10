@@ -231,8 +231,8 @@ whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
 test-seams  = []
 # WebRTC fault injection (`WhipRouteShared::force_next_timer_error`) that stages
 # a fatal transport timer error. Non-default; implies `test-seams` plus
-# `webrtc-runtime/test-support`. `tests/it/whip_whep_timers.rs` requires it.
-test-hooks  = ["test-seams", "dep:webrtc-runtime", "webrtc-runtime/test-support"]
+# `webrtc-runtime/test-seams`. `tests/it/whip_whep_timers.rs` requires it.
+test-hooks  = ["test-seams", "dep:webrtc-runtime", "webrtc-runtime/test-seams"]
 # WHEP (draft-ietf-wish-whep) egress (issue #743): accepts a viewer's HTTP
 # `POST` + SDP offer, negotiates ICE/DTLS-SRTP, and pushes the route's
 # `Trunk` samples out as SRTP RTP — the mirror image of `whip` (see
@@ -262,9 +262,9 @@ required-features = ["whip", "whep", "test-hooks"]
 test-fixtures = { path = "../test-fixtures" }
 workspace-guards = { path = "../workspace-guards" }
 transmux = { path = "../transmux", version = "0.30.0", features = ["sample-aes"] }
-# `test-support`: webrtc-runtime's hidden fault-injection hooks (inert without
+# `test-seams`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).
-webrtc-runtime   = { path = "../webrtc-runtime", version = "0.6.0", default-features = false, features = ["test-support"] }
+webrtc-runtime   = { path = "../webrtc-runtime", version = "0.6.0", default-features = false, features = ["test-seams"] }
 # `test-util`: the paused, manually advanced clock the push-flush tests use
 # instead of sleeping (feature-only; no new version in the lock).
 tokio            = { version = "1", features = ["test-util"] }

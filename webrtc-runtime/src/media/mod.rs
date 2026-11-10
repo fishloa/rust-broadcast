@@ -97,7 +97,7 @@
 mod gather;
 mod transport;
 
-#[cfg(feature = "test-support")]
+#[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub use transport::certificate_fingerprint;
 pub use transport::{

@@ -67,7 +67,7 @@ serde   = ["dep:serde"]
 # `media::certificate_fingerprint`). NOT part of the public API and never on by
 # default; consumers' test suites (multimux) enable it from `[dev-dependencies]`.
 # Only has an effect together with `media`.
-test-support = []
+test-seams = []
 # ICE + DTLS-SRTP media transport. Optional on dependency weight alone —
 # it used to also require a newer rustc than the workspace MSRV (`rcgen`
 # needs 1.88, the MSRV was 1.86), but the MSRV is now 1.95.0 (issue #949).
