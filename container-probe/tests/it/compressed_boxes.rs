@@ -111,9 +111,14 @@ fn a_compressed_fragment_is_a_media_fragment() {
 fn a_compressed_init_segment_is_a_movie_and_a_compressed_moof_ends_its_progressive_claim() {
     let init = compress_top_level(&test_fixtures::read("hls/cmaf-fmp4/init.mp4"));
     assert!(progressive_movie(&init));
+    assert_eq!(
+        layout(&init),
+        (Confidence::STRUCTURAL, IsobmffLayout::Progressive)
+    );
     let mut both = boxed(COMPRESSED_MOVIE, &deflate_stored(b"m"));
     both.extend(boxed(COMPRESSED_FRAGMENT, &deflate_stored(b"f")));
     assert!(!progressive_movie(&both));
+    assert_eq!(layout(&both).0, Confidence::STRUCTURAL);
 }
 
 #[test]
