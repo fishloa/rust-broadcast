@@ -8,6 +8,8 @@ use container_probe::{Confidence, Detail::Isobmff, Format, IsobmffLayout, Probe}
 
 const COMPRESSED_MOVIE: &[u8; 4] = b"!mov";
 const COMPRESSED_FRAGMENT: &[u8; 4] = b"!mof";
+const COMPRESSED_SEGMENT_INDEX: &[u8; 4] = b"!six";
+const COMPRESSED_SUBSEGMENT_INDEX: &[u8; 4] = b"!ssx";
 const ORIGINAL_FILE_TYPE: &[u8; 4] = b"otyp";
 const BOX_HEADER: usize = 8;
 const STORED_BLOCK_MAX: usize = 0xFFFF;
@@ -131,6 +133,21 @@ fn a_file_that_starts_with_a_compressed_box_is_isobmff() {
                 assert_eq!(confidence, Confidence::HEURISTIC);
                 assert_eq!(layout, expected);
             }
+            other => panic!("{kind:?}: expected Isobmff, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_file_that_starts_with_a_compressed_index_box_is_isobmff() {
+    for kind in [COMPRESSED_SEGMENT_INDEX, COMPRESSED_SUBSEGMENT_INDEX] {
+        let bytes = boxed(kind, &deflate_stored(&[0u8; 64]));
+        match container_probe::probe(&bytes) {
+            container_probe::Probe::Identified {
+                format: container_probe::Format::Isobmff,
+                confidence: container_probe::Confidence::HEURISTIC,
+                ..
+            } => {}
             other => panic!("{kind:?}: expected Isobmff, got {other:?}"),
         }
     }
