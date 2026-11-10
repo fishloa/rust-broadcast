@@ -609,10 +609,16 @@ mod tests {
         for bad in ["a\"b", "a,b", "a\rb", "a\nb"] {
             let mut dr = sample();
             dr.snap = vec![SnapMode::Other(bad.to_string())];
-            assert!(matches!(dr.to_tag_line().unwrap_err(), Error::TagParse(_)), "snap {bad:?}");
+            assert!(
+                matches!(dr.to_tag_line().unwrap_err(), Error::TagParse(_)),
+                "snap {bad:?}"
+            );
             let mut dr = sample();
             dr.restrict = vec![RestrictMode::Other(bad.to_string())];
-            assert!(matches!(dr.to_tag_line().unwrap_err(), Error::TagParse(_)), "restrict {bad:?}");
+            assert!(
+                matches!(dr.to_tag_line().unwrap_err(), Error::TagParse(_)),
+                "restrict {bad:?}"
+            );
         }
         let mut dr = sample();
         dr.snap = vec![SnapMode::Other("X-CUSTOM".to_string())];
@@ -630,7 +636,8 @@ mod tests {
         assert_eq!(dr.snap, vec![SnapMode::Out, SnapMode::In]);
         let dr = InterstitialDateRange::parse_tag_line(&with("X-SNAP=\"OUT,\"")).unwrap();
         assert_eq!(dr.snap, vec![SnapMode::Out]);
-        let dr = InterstitialDateRange::parse_tag_line(&with("X-RESTRICT=\" SKIP , JUMP \"")).unwrap();
+        let dr =
+            InterstitialDateRange::parse_tag_line(&with("X-RESTRICT=\" SKIP , JUMP \"")).unwrap();
         assert_eq!(dr.restrict, vec![RestrictMode::Skip, RestrictMode::Jump]);
         let dr = InterstitialDateRange::parse_tag_line(&with("X-RESTRICT=\"SKIP,\"")).unwrap();
         assert_eq!(dr.restrict, vec![RestrictMode::Skip]);
