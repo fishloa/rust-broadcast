@@ -58,7 +58,7 @@ impl DiffState {
     }
 
     fn unroll(&mut self, pts33: u64) -> u64 {
-        self.unroller.unroll(pts33).max(0) as u64
+        self.unroller.unroll(pts33)
     }
 
     /// Observe the decoded text at `ticks`; push a completed cue into `cues`
