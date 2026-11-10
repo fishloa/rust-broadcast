@@ -15,13 +15,18 @@ use crate::output::llhls::BlockingReloadQuery;
 use crate::route::RouteHandle;
 use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
 
-pub async fn media_playlist(
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HlsFlavour {
+    LowLatency,
+    Segmented,
+}
+
+pub(crate) async fn media_playlist(
     route: Arc<RouteHandle>,
-    held: bool,
-    insert_priority: bool,
+    flavour: HlsFlavour,
     q: BlockingReloadQuery,
 ) -> Response {
-    let serving = if held {
+    let serving = if flavour == HlsFlavour::LowLatency {
         match http::resolve_route_program_held(&route).await {
             Ok(s) => s,
             Err(resp) => return *resp,
@@ -51,7 +56,7 @@ pub async fn media_playlist(
         HlsBody::Playlist(m) => {
             let mut resp =
                 ([(header::CONTENT_TYPE, http::PLAYLIST_CONTENT_TYPE)], m).into_response();
-            if insert_priority
+            if flavour == HlsFlavour::LowLatency
                 && let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency))
             {
                 resp.headers_mut().insert("priority", value);

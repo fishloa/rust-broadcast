@@ -132,7 +132,12 @@ pub(crate) async fn media_playlist(
     State(state): State<TsHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    crate::output::hls::media_playlist(state.route.clone(), false, false, q).await
+    crate::output::hls::media_playlist(
+        state.route.clone(),
+        crate::output::hls::HlsFlavour::Segmented,
+        q,
+    )
+    .await
 }
 
 #[cfg(test)]

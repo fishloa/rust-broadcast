@@ -224,7 +224,12 @@ pub(crate) async fn media_playlist(
     State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    crate::output::hls::media_playlist(state.route.clone(), true, true, q).await
+    crate::output::hls::media_playlist(
+        state.route.clone(),
+        crate::output::hls::HlsFlavour::LowLatency,
+        q,
+    )
+    .await
 }
 
 /// `GET /{audio uri}` — the LL-HLS media playlist for one audio rendition
