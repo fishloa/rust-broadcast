@@ -180,6 +180,14 @@ pub fn serialize_chain(exts: &[HeaderExtension<'_>], out: &mut [u8]) -> Result<u
     Ok(off)
 }
 
+impl<'a> broadcast_common::Parse<'a> for HeaderExtension<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        Ok(HeaderExtension::parse(bytes)?.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

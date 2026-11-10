@@ -39,6 +39,7 @@ mod serialize_field_width_guard;
 mod serialize_mask_overflow;
 mod serializer_length_truncation;
 mod spec_drift;
+mod spec_labels;
 mod table_dispatch;
 mod table_reserved_bits;
 mod truncation_no_panic;

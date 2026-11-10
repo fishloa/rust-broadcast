@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `TableId`, `DescriptorTag` and `ExtensionTag` implement the workspace label convention (`name()` + `Display` via `broadcast_common::impl_spec_display!`).
+
 ### Changed
 - The carousel CRC32 descriptor module doc now states that its `CRC_32` is the same CRC-32/MPEG-2 as `broadcast_common::crc32_mpeg2` and that the check calls it; the code is unchanged (c6 C6-12).
 ### Fixed

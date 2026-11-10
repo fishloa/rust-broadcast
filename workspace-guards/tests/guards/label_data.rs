@@ -576,9 +576,6 @@ pub const TABLE: &[Crate] = &[
             "PhyStreamId",
             "AnyCarouselDescriptor",
             "AnyTableSection",
-            "DescriptorTag",
-            "TableId",
-            "ExtensionTag",
             "SatTableId",
             // data-carrying / wrapper / body ADTs
             "BiopMessage",

@@ -64,6 +64,55 @@ pub enum TableId {
 }
 
 impl TableId {
+    /// Human-readable spec name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Pat => "program_association_section",
+            Self::Cat => "conditional_access_section",
+            Self::Pmt => "program_map_section",
+            Self::TransportStreamDescription => "transport_stream_description_section",
+            Self::Iso14496SceneDescription => "ISO_IEC_14496_scene_description_section",
+            Self::Iso14496ObjectDescriptor => "ISO_IEC_14496_object_descriptor_section",
+            Self::Metadata => "Metadata_section",
+            Self::Iso14496 => "ISO_IEC_14496_section",
+            Self::GreenAccessUnit => "ISO/IEC 23001-11 green access unit section",
+            Self::NetworkInformationActual => "network_information_section - actual network",
+            Self::NetworkInformationOther => "network_information_section - other network",
+            Self::ServiceDescriptionActual => {
+                "service_description_section - actual DVB transport stream"
+            }
+            Self::ServiceDescriptionOther => {
+                "service_description_section - other DVB transport stream"
+            }
+            Self::BouquetAssociation => "bouquet_association_section",
+            Self::UpdateNotification => "update notification table section",
+            Self::IpMacNotification => "IP/MAC_notification_section",
+            Self::SatelliteAccess => "satellite_access_section",
+            Self::EventInformationPfActual => {
+                "event_information_section - actual DVB transport stream, present/following"
+            }
+            Self::EventInformationPfOther => {
+                "event_information_section - other DVB transport stream, present/following"
+            }
+            Self::TimeAndDate => "time_date_section",
+            Self::RunningStatus => "running_status_section",
+            Self::Stuffing => "stuffing_section",
+            Self::TimeOffset => "time_offset_section",
+            Self::ApplicationInformation => "application information section",
+            Self::Container => "container section",
+            Self::RelatedContent => "related content section",
+            Self::ContentIdentifier => "content identifier section",
+            Self::MpeFec => "MPE-FEC section",
+            Self::ResolutionNotification => "resolution provider notification section",
+            Self::MpeIfec => "MPE-IFEC section",
+            Self::ProtectionMessage => "protection message section",
+            Self::DownloadableFontInfo => "downloadable font info section",
+            Self::DiscontinuityInformation => "discontinuity_information_section",
+            Self::SelectionInformation => "selection_information_section",
+        }
+    }
+
     /// If `v` is an EIT-schedule-actual `table_id` (0x50..=0x5F), return its
     /// segment index 0..=15. Otherwise `None`.
     #[must_use]
@@ -143,3 +192,5 @@ mod tests {
         assert_eq!(matched, 34, "expected 34 matched variants");
     }
 }
+
+broadcast_common::impl_spec_display!(TableId);

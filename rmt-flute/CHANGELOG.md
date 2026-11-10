@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `broadcast_common::Parse` implemented for `LctHeader`, `HeaderExtension` and `ExtTime` (delegating to the existing inherent methods).
 ### Fixed
 - `LctHeader` keeps the two reserved `Res` bits (RFC 5651 §5.1) so parse then serialize is byte-exact; a value over 2 bits is rejected on serialize (#1937).
 - `NormCmd` keeps the sub-type word bytes that EOT, CC, REPAIR_ADV, ACK_REQ and APPLICATION leave reserved (RFC 5740 §4.2.3), so parse then serialize is byte-exact (#1938).

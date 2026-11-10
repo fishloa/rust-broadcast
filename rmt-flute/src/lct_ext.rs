@@ -2,7 +2,7 @@
 //! (RFC 5651 §5.2.1, §5.2.2, §9.2).
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{HeaderExtension, WORD};
@@ -249,6 +249,29 @@ impl ExtTime {
     pub fn to_extension<'a>(&self, scratch: &'a mut Vec<u8>) -> Result<HeaderExtension<'a>> {
         *scratch = self.to_content()?;
         Ok(HeaderExtension::new(HET_EXT_TIME, scratch))
+    }
+}
+
+impl<'a> broadcast_common::Parse<'a> for ExtTime {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        ExtTime::parse(bytes)
+    }
+}
+
+impl broadcast_common::Serialize for ExtTime {
+    type Error = crate::Error;
+
+    fn serialized_len(&self) -> usize {
+        ExtTime::serialized_len(self)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
+        let bytes = self.to_content()?;
+        need_out(buf, bytes.len())?;
+        buf[..bytes.len()].copy_from_slice(&bytes);
+        Ok(bytes.len())
     }
 }
 

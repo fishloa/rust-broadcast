@@ -237,6 +237,44 @@ pub enum ExtensionTag {
     /// S2Xv2_satellite_delivery_system_descriptor (Tables 144a–144c, §6.4.6.5.3).
     S2Xv2SatelliteDeliverySystem = 0x24,
 }
+impl ExtensionTag {
+    /// Human-readable spec name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ImageIcon => "image_icon_descriptor",
+            Self::CpcmDeliverySignalling => "cpcm_delivery_signalling_descriptor",
+            Self::Cp => "CP_descriptor",
+            Self::CpIdentifier => "CP_identifier_descriptor",
+            Self::T2DeliverySystem => "T2_delivery_system_descriptor",
+            Self::ShDeliverySystem => "SH_delivery_system_descriptor",
+            Self::SupplementaryAudio => "supplementary_audio_descriptor",
+            Self::NetworkChangeNotify => "network_change_notify_descriptor",
+            Self::Message => "message_descriptor",
+            Self::TargetRegion => "target_region_descriptor",
+            Self::TargetRegionName => "target_region_name_descriptor",
+            Self::ServiceRelocated => "service_relocated_descriptor",
+            Self::XaitPid => "xait_pid_descriptor",
+            Self::C2DeliverySystem => "C2_delivery_system_descriptor",
+            Self::DtsHd => "DTS-HD_descriptor",
+            Self::DtsNeural => "DTS_Neural_descriptor",
+            Self::VideoDepthRange => "video_depth_range_descriptor",
+            Self::T2mi => "T2-MI_descriptor",
+            Self::UriLinkage => "URI_linkage_descriptor",
+            Self::CiAncillaryData => "CI_ancillary_data_descriptor",
+            Self::Ac4 => "AC-4_descriptor",
+            Self::C2BundleDeliverySystem => "C2_bundle_delivery_system_descriptor",
+            Self::S2XSatelliteDeliverySystem => "S2X_satellite_delivery_system_descriptor",
+            Self::ProtectionMessage => "protection_message_descriptor",
+            Self::AudioPreselection => "audio_preselection_descriptor",
+            Self::TtmlSubtitling => "TTML_subtitling_descriptor",
+            Self::DtsUhd => "DTS-UHD_descriptor",
+            Self::ServiceProminence => "service_prominence_descriptor",
+            Self::VvcSubpictures => "vvc_subpictures_descriptor",
+            Self::S2Xv2SatelliteDeliverySystem => "S2Xv2_satellite_delivery_system_descriptor",
+        }
+    }
+}
 
 /// Generates the extension-body dispatch from one list (ADR-0001): the
 /// [`ExtensionBody`] enum (+ a `Raw` fall-through), the `parse_body`
@@ -828,3 +866,5 @@ mod tests {
         ));
     }
 }
+
+broadcast_common::impl_spec_display!(ExtensionTag);
