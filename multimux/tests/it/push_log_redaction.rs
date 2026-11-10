@@ -8,10 +8,10 @@
 //! scoped capture subscriber miss events when this lived among the lib tests.
 
 use std::fmt::Write as _;
-use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::support::shared_it::nz;
 use media_plane::trunk::{Trunk, TrunkConfig};
 use multimux::config::{PushFormat, ReconnectPolicy};
 use multimux::push::{
@@ -48,10 +48,6 @@ impl tracing::Subscriber for CaptureEvents {
     }
     fn enter(&self, _: &tracing::span::Id) {}
     fn exit(&self, _: &tracing::span::Id) {}
-}
-
-fn nz(n: usize) -> NonZeroUsize {
-    NonZeroUsize::new(n).expect("non-zero")
 }
 
 /// A transport whose connect error echoes the URL it was given — the worst

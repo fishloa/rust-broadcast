@@ -33,6 +33,7 @@ use multimux::serve_with_registry_on;
 use transmux::TrackId;
 
 use crate::support::listener;
+use crate::support::shared_it::poll_until_extinf_yield;
 use listener::bind_tcp;
 use transmux::ll_hls::LlHlsSegmenter;
 
@@ -344,23 +345,6 @@ fn file_config(
     cfg
 }
 
-async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> String {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
-    loop {
-        if let Ok(resp) = client.get(playlist_url).send().await
-            && resp.status().is_success()
-            && let Ok(body) = resp.text().await
-            && body.contains("#EXTINF:")
-        {
-            return body;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!("no #EXTINF: line appeared in {playlist_url} within hang guard");
-        }
-        tokio::task::yield_now().await;
-    }
-}
-
 #[tokio::test]
 async fn config_default_arrival_emits_pdt() {
     let (bind_addr, bind_listener) = bind_tcp();
@@ -374,7 +358,7 @@ async fn config_default_arrival_emits_pdt() {
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let clock_before_ms = jiff::Timestamp::now().as_millisecond();
-    let playlist = poll_until_extinf(&client, &playlist_url).await;
+    let playlist = poll_until_extinf_yield(&client, &playlist_url).await;
     assert!(
         playlist.contains("EXT-X-PROGRAM-DATE-TIME"),
         "default config must emit PDT:\n{playlist}"
@@ -408,7 +392,7 @@ async fn config_off_emits_no_pdt() {
     ));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
-    let playlist = poll_until_extinf(&client, &playlist_url).await;
+    let playlist = poll_until_extinf_yield(&client, &playlist_url).await;
     assert!(
         !playlist.contains("EXT-X-PROGRAM-DATE-TIME"),
         "off config must not emit PDT:\n{playlist}"

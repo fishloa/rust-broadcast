@@ -78,12 +78,9 @@ use multimux::registry::SchemeRegistry;
 use multimux::serve_with_registry_on;
 
 use crate::support::listener;
+use crate::support::shared_it::{fixture_path, poll_until_extinf};
 use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
 use listener::{bind_tcp, bind_udp};
-
-fn fixture_path() -> PathBuf {
-    test_fixtures::path("ts/h264-aac.ts")
-}
 
 /// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
 /// H.264+AAC) -- see `../fixtures/ts/PROVENANCE.md`.
@@ -155,26 +152,6 @@ fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
 /// comfortably faster than this bound in practice; the bound exists only so
 /// a genuinely broken/dead dispatch path fails the test instead of hanging
 /// the suite forever.
-async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> String {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Ok(resp) = client.get(playlist_url).send().await
-            && resp.status().is_success()
-            && let Ok(body) = resp.text().await
-            && body.contains("#EXTINF:")
-        {
-            return body;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "no #EXTINF: line appeared in {playlist_url} within the hang guard -- \
-                 dispatched ingest never produced a closed segment"
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
 /// Extracts the first `seg-{track}-{seq}.m4s` URI out of a rendered media
 /// playlist body (mirrors `multimux/tests/it/origin_llhls.rs`'s own helper).
 fn first_segment_uri(playlist: &str) -> &str {
@@ -240,7 +217,8 @@ async fn ts_udp_dispatch_serves_real_media_end_to_end() {
         SchemeRegistry::new(),
     ));
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
+    let ts_bytes =
+        std::fs::read(fixture_path("ts/h264-aac.ts")).expect("h264-aac.ts fixture must exist");
     // Resend the whole fixture on a loop (rather than once) so the (async,
     // therefore not synchronized with this test) socket bind inside
     // `serve_with_registry`'s spawned ingest task has ample opportunity to
@@ -306,7 +284,8 @@ async fn ts_http_dispatch_serves_real_media_end_to_end() {
     use axum::response::IntoResponse;
     use axum::routing::get;
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
+    let ts_bytes =
+        std::fs::read(fixture_path("ts/h264-aac.ts")).expect("h264-aac.ts fixture must exist");
 
     async fn handler(body: axum::extract::State<Vec<u8>>) -> axum::response::Response {
         let chunks: Vec<std::result::Result<Vec<u8>, std::io::Error>> =
@@ -477,7 +456,8 @@ mod custom_dispatch_driver_backed {
     /// bytes in, not `ts_program::test_support::build_ts_bytes`'s
     /// hand-faked NAL payload.
     fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
-        let ts = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
+        let ts =
+            std::fs::read(fixture_path("ts/h264-aac.ts")).expect("h264-aac.ts fixture must exist");
         let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
         let video = media
             .tracks
@@ -1032,7 +1012,7 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
             c.routes[0].outputs = vec![OutputKind::Dash];
             c
         },
-        &fixture_path(),
+        &fixture_path("ts/h264-aac.ts"),
         Duration::from_millis(5),
     )
     .await;
@@ -1083,7 +1063,7 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
             c.routes[0].outputs = vec![OutputKind::LlDash];
             c
         },
-        &fixture_path(),
+        &fixture_path("ts/h264-aac.ts"),
         Duration::from_millis(5),
     )
     .await;

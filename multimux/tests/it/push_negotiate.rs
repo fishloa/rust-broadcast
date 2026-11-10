@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use transmux::TrackId;
 
+use crate::support::shared_it::nz;
 use broadcast_common::Unpackage;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use multimux::config::{PushFormat, ReconnectPolicy};
@@ -31,10 +32,6 @@ static FLV: std::sync::LazyLock<Vec<u8>> =
 
 /// HANG GUARD (workspace precedent, issue #826).
 const GUARD: Duration = Duration::from_secs(20);
-
-fn nz(n: usize) -> std::num::NonZeroUsize {
-    std::num::NonZeroUsize::new(n).unwrap()
-}
 
 /// A `TrackSpec` no push output in this crate can carry (neither FLV.as_slice()'s
 /// AVC+AAC nor — deliberately, to make the point sharpest — anything TS

@@ -19,18 +19,13 @@ use multimux::registry::SchemeRegistry;
 use multimux::serve_with_registry_on;
 
 use crate::support::listener;
+use crate::support::shared_it::{fixture_string, poll_until_extinf};
 use listener::bind_tcp;
 
 /// Length of `h264-aac.ts` (video PTS 133200 -> 399600 at 90 kHz), and the
 /// tolerance (one part) for segmenter boundary rounding.
 const FIXTURE_SECS: f64 = 2.955;
 const TAIL_TOLERANCE_SECS: f64 = 0.1;
-
-fn fixture_path() -> String {
-    test_fixtures::path("ts/h264-aac.ts")
-        .to_string_lossy()
-        .into_owned()
-}
 
 /// One LL-HLS-only route named `"cam"`, bound at `bind`, ingesting a
 /// `File` route for `path` with `loop: false`. Short segments (0.5 s /
@@ -63,26 +58,6 @@ fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
 /// `#EXTINF:` line — never satisfied by `#EXT-X-MAP`/`#EXT-X-PART-INF`, so a
 /// route with zero closed segments (the `advance_route`-removed mutation)
 /// cannot pass. Generous hang guard, not a latency assertion.
-async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> String {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Ok(resp) = client.get(playlist_url).send().await
-            && resp.status().is_success()
-            && let Ok(body) = resp.text().await
-            && body.contains("#EXTINF:")
-        {
-            return body;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "no #EXTINF: line appeared in {playlist_url} within the hang guard -- \
-                 file route never produced a servable closed segment"
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
 /// A `File` route serves: after `serve_with_registry` spawns its ingest
 /// (which drives the file through `advance_route`), the route's served LL-HLS
 /// media playlist carries a real closed-segment `#EXTINF:` line — not merely
@@ -101,7 +76,7 @@ async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> Stri
 #[tokio::test]
 async fn file_route_serves_real_media_segments() {
     let (bind_addr, bind_listener) = bind_tcp();
-    let config = file_config(bind_addr, fixture_path(), false);
+    let config = file_config(bind_addr, fixture_string("ts/h264-aac.ts"), false);
 
     let server = tokio::spawn(serve_with_registry_on(
         bind_listener,
@@ -184,7 +159,7 @@ fn total_extinf_secs(playlist: &str) -> f64 {
 #[tokio::test]
 async fn file_route_loop_false_stops() {
     let (bind, bind_listener) = bind_tcp();
-    let config = file_config(bind, fixture_path(), false);
+    let config = file_config(bind, fixture_string("ts/h264-aac.ts"), false);
     let server = tokio::spawn(serve_with_registry_on(
         bind_listener,
         config,
@@ -281,7 +256,7 @@ async fn file_route_loop_false_stops() {
 #[tokio::test]
 async fn file_route_loop_true_keeps_serving_and_paces_across_the_loop_point() {
     let (bind, bind_listener) = bind_tcp();
-    let config = file_config(bind, fixture_path(), true);
+    let config = file_config(bind, fixture_string("ts/h264-aac.ts"), true);
     let server = tokio::spawn(serve_with_registry_on(
         bind_listener,
         config,

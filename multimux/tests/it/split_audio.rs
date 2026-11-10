@@ -5,7 +5,6 @@
 //! the axum router the way a player would.
 
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use axum::Router;
@@ -23,6 +22,7 @@ use transmux::validate::{Severity, validate_init_segment, validate_media_segment
 
 use crate::support::shared;
 
+use crate::support::shared_it::nz;
 use multimux::config::{AudioTrackSelector, Config};
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
@@ -104,7 +104,6 @@ fn index_selectors(n: u32) -> Vec<AudioTrackSelector> {
 }
 
 fn new_trunk() -> Arc<Trunk> {
-    let nz = |n: usize| NonZeroUsize::new(n).expect("non-zero");
     Trunk::new(TrunkConfig::new(
         nz(RING),
         nz(64),

@@ -4,4 +4,6 @@ pub mod origin;
 pub mod raw_http;
 pub mod segmenter_feed;
 pub mod shared;
+#[path = "../it/support/shared_it.rs"]
+pub mod shared_it;
 pub mod udp_origin;
