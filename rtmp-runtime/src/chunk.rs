@@ -13,12 +13,13 @@
 //! splits a [`Message`] into `fmt` 0 + 3 chunks at the configured chunk
 //! size).
 
+use alloc::collections::BTreeMap as HashMap;
 use broadcast_common::len::{need_in, need_out};
-use std::collections::HashMap;
 
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -2432,7 +2433,7 @@ mod tests {
         let mut assembler = ChunkAssembler::new();
         let mut collected = Vec::new();
         for b in &bytes {
-            collected.extend(assembler.push(std::slice::from_ref(b)).unwrap());
+            collected.extend(assembler.push(core::slice::from_ref(b)).unwrap());
         }
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0], original);
@@ -2744,7 +2745,7 @@ mod tests {
                 message_stream_id: 1,
             },
         );
-        input.extend(std::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
+        input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
 
         let err = assembler.push(&input).expect_err(
             "a message_length beyond MAX_MESSAGE_LEN must be rejected before any \
@@ -2775,7 +2776,7 @@ mod tests {
                 message_stream_id: 1,
             },
         );
-        input.extend(std::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
+        input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
 
         // Not yet complete (only one chunk of a much larger message has
         // arrived) but must not be rejected outright.

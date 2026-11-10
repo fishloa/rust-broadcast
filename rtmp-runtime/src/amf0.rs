@@ -38,6 +38,8 @@ use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 

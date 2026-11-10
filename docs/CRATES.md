@@ -81,7 +81,7 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**60 workspace members.** 54 are on crates.io; 46 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**60 workspace members.** 54 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -115,7 +115,7 @@ builds (see the table above against the in-tree versions below).
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.3.1 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
 | [`transmux`](#transmux) | Containers and adaptive streaming | 0.31.0 | [![crates.io](https://img.shields.io/crates/v/transmux.svg)](https://crates.io/crates/transmux) | yes | 3 | on crates.io |
 | [`buffering-runtime`](#buffering-runtime) | Live transport protocols | 0.2.2 | [![crates.io](https://img.shields.io/crates/v/buffering-runtime.svg)](https://crates.io/crates/buffering-runtime) | yes | 1 | on crates.io |
-| [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.9.1 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | no | 1 | on crates.io |
+| [`rtmp-runtime`](#rtmp-runtime) | Live transport protocols | 0.9.1 | [![crates.io](https://img.shields.io/crates/v/rtmp-runtime.svg)](https://crates.io/crates/rtmp-runtime) | yes | 1 | on crates.io |
 | [`rtp-packet`](#rtp-packet) | Live transport protocols | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/rtp-packet.svg)](https://crates.io/crates/rtp-packet) | yes | 1 | on crates.io |
 | [`rtsp-runtime`](#rtsp-runtime) | Live transport protocols | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/rtsp-runtime.svg)](https://crates.io/crates/rtsp-runtime) | no | 1 | on crates.io |
 | [`srt-runtime`](#srt-runtime) | Live transport protocols | 0.8.1 | [![crates.io](https://img.shields.io/crates/v/srt-runtime.svg)](https://crates.io/crates/srt-runtime) | yes | 1 | on crates.io |
@@ -494,7 +494,7 @@ Server-side publish session engine (`connect` -> `createStream` -> `publish`) ov
 
 - **Standards:** Adobe RTMP 1.0 (Dec 2012); AMF0
 - **Cargo description:** Sans-IO RTMP 1.0 (Adobe Real-Time Messaging Protocol) ingest session engine — a driveable server-side publish state machine over the handshake, chunk stream, AMF0, and message layers; optional tokio socket adapter.
-- **Version (in-tree):** 0.9.1 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
+- **Version (in-tree):** 0.9.1 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../rtmp-runtime/README.md) · [CHANGELOG](../rtmp-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/rtmp-runtime) · [docs.rs](https://docs.rs/rtmp-runtime)

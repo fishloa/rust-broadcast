@@ -69,6 +69,10 @@ use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, M
 use crate::flv_bridge::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::Handshake;
 use crate::message::{LimitType, ProtocolControl, UserControl, msg_type};
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -432,12 +436,12 @@ impl ServerSession {
         &mut self,
         input: &'a [u8],
         out: &mut Vec<u8>,
-    ) -> Result<Option<std::borrow::Cow<'a, [u8]>>> {
+    ) -> Result<Option<alloc::borrow::Cow<'a, [u8]>>> {
         if self.handshake.is_done() {
             // Borrowed: the steady-state path used to copy every inbound
             // read into a fresh Vec before the assembler copied it again
             // (r08-RTMP-O1).
-            return Ok(Some(std::borrow::Cow::Borrowed(input)));
+            return Ok(Some(alloc::borrow::Cow::Borrowed(input)));
         }
 
         self.handshake_buf.extend_from_slice(input);
@@ -456,7 +460,7 @@ impl ServerSession {
         }
 
         if self.handshake.is_done() {
-            Ok(Some(std::borrow::Cow::Owned(core::mem::take(
+            Ok(Some(alloc::borrow::Cow::Owned(core::mem::take(
                 &mut self.handshake_buf,
             ))))
         } else {
