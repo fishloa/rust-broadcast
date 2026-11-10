@@ -6,8 +6,8 @@
 //! a Local Set / Global Set) or 1-byte BER-OID tags (the items inside a Local
 //! Set). This module implements:
 //!
-//! - **BER length** encode/decode ([`decode_ber_length_usize`] /
-//!   [`encode_ber_length_bytes`]):
+//! - **BER length** encode/decode ([`ber_length_usize`] /
+//!   [`encode_ber_length_vec`]):
 //!   short form (`< 128`) and long form (top bit set, low 7 bits = count of
 //!   big-endian length bytes) — ISO/IEC 8825-1 §8.1.3, via SMPTE ST 336. The
 //!   codec itself is `broadcast_common::klv`'s.
