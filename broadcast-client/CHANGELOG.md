@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The test-only feature is renamed `__test-seams` -> `test-seams`, the one spelling the workspace uses for test seams (c6 C6-09).
 ### Fixed
 - The join-point screen compares audio ends with the video join point wrap-safely (`clock33::pcr_signed_distance`). transmux unrolls each PID's PTS from its own first value, so a 2^33 wrap between the first audio and the first video PES put audio a whole wrap above video, every pre-join audio end passed, and `Start` came up to the audio-behind-video skew early.
 - Every sample handed to the host has its end reported to the buffer controller in the same call. Samples released by `on_closed` (the TS demux tail, the RTSP depacketiser flush), `poll` (RTSP/RTMP timers, the TS track hold), `reconnect` and `next_event` used to be reported only at the next `on_data` chunk, so the controller judged the lead short of what the host held.

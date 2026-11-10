@@ -1,11 +1,11 @@
 use broadcast_common::{Package, Unpackage};
-use transmux::{AmfValue, FlvDemux, FlvError, MkvMux, ProtocolControl, RtmpError, TsDemux};
+use transmux::{AmfValue, FlvDemux, FlvError, MkvMux, ProtocolControl, RtmpFlvError, TsDemux};
 
 #[test]
 fn a_short_control_body_names_the_message_type_and_both_lengths() {
     assert_eq!(
         ProtocolControl::parse(1, &[0, 0]).unwrap_err(),
-        RtmpError::BadControlLength {
+        RtmpFlvError::BadControlLength {
             msg_type: 1,
             need: 4,
             have: 2,
@@ -17,7 +17,7 @@ fn a_short_control_body_names_the_message_type_and_both_lengths() {
 fn an_unsupported_amf0_marker_is_reported() {
     assert_eq!(
         AmfValue::parse(&[0x07]).unwrap_err(),
-        RtmpError::UnsupportedAmf0Marker(0x07)
+        RtmpFlvError::UnsupportedAmf0Marker(0x07)
     );
 }
 
@@ -27,7 +27,7 @@ fn an_amf0_string_beyond_the_16_bit_prefix_is_too_long() {
     let mut out = Vec::new();
     assert_eq!(
         value.write_into(&mut out).unwrap_err(),
-        RtmpError::AmfStringTooLong { len: 0x1_0000 }
+        RtmpFlvError::AmfStringTooLong { len: 0x1_0000 }
     );
 }
 

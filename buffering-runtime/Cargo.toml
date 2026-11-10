@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "11.0.0", default-features = false }
+thiserror        = { version = "2", default-features = false }
 serde            = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [dev-dependencies]
@@ -27,7 +28,7 @@ serde_json    = { workspace = true }
 [features]
 default = ["std"]
 # `std` links the standard library; without it the crate is `#![no_std]` + `alloc`.
-std = ["broadcast-common/std", "serde?/std"]
+std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 # `serde::Serialize` on every public data type; `Deserialize` on the configs and
 # the stall-memory snapshot (the two things a caller persists).
 serde = ["dep:serde"]

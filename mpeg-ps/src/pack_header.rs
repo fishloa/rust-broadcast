@@ -169,6 +169,21 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    /// #2269: a too-small output buffer is an output-buffer error, not a
+    /// parse-side input-truncation error.
+    #[test]
+    fn serialize_into_too_small_output_reports_output_buffer_error() {
+        let bytes = vec![
+            0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x43, 0x36, 0x3B, 0xF8,
+        ];
+        let h = PackHeader::parse(&bytes).unwrap();
+        let mut out = vec![0u8; h.serialized_len() - 1];
+        assert!(matches!(
+            h.serialize_into(&mut out),
+            Err(Error::OutputBufferTooSmall(_))
+        ));
+    }
+
     #[test]
     fn pack_header_round_trip_fixture_pattern() {
         // Byte-for-byte the real fixture's first pack header (fixtures/ps/

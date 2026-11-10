@@ -397,7 +397,7 @@ pub use rtcp::{
 pub use rtmp::{
     AmfValue, BasicHeader, Command, DEFAULT_CHUNK_SIZE, HANDSHAKE_PACKET_LEN, Handshake0,
     Handshake1, Handshake2, Message, MessageHeader, ProtocolControl, RTMP_VERSION, RtmpDemux,
-    RtmpError, RtmpMux,
+    RtmpFlvError, RtmpMux,
 };
 #[cfg(feature = "std")]
 pub use rtp::build_sdp_with_connection;

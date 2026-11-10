@@ -11,7 +11,7 @@ mod audit_1495;
 mod audit_1495_rtsp;
 mod audit_1498;
 mod audit_1498_hls;
-#[cfg(feature = "__test-seams")]
+#[cfg(feature = "test-seams")]
 mod audit_1498_live;
 mod audit_1498_rtsp;
 mod audit_r5_discontinuity;
@@ -23,7 +23,7 @@ mod audit_r7_rtsp;
 mod audit_r7_ts;
 mod audit_r8_segments;
 mod auth;
-#[cfg(feature = "__test-seams")]
+#[cfg(feature = "test-seams")]
 mod buffer;
 mod cookies;
 mod dash_clock_surface;
@@ -48,7 +48,7 @@ mod input_log;
 mod mtls;
 mod no_clock_guard;
 mod opening_burst;
-#[cfg(feature = "__test-seams")]
+#[cfg(feature = "test-seams")]
 mod playout;
 mod pts_wrap_session;
 mod r5_hls_dropped;
@@ -59,7 +59,7 @@ mod r6_config;
 mod r6_hls_containers;
 mod r6_hls_fmp4;
 mod r6_rtsp_codecs;
-#[cfg(feature = "__test-seams")]
+#[cfg(feature = "test-seams")]
 mod r6_ts_tracks;
 mod r6_video_kinds;
 mod redirect;
@@ -80,7 +80,7 @@ mod srt;
 mod srt_wire;
 mod start_gate;
 #[macro_use]
-#[cfg(feature = "__test-seams")]
+#[cfg(feature = "test-seams")]
 mod timeline_jump;
 mod srt_rejections;
 mod tracks_hold_config;

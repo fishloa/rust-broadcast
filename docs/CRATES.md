@@ -197,7 +197,7 @@ Generic MPEG-2 Transport Stream framing: zero-copy and owned 188-byte packets, t
 - **Cargo description:** MPEG-2 Transport Stream framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetisation, resync. no_std.
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`compliance-probe`](#compliance-probe), [`dvb-ci`](#dvb-ci), [`dvb-ci-runtime`](#dvb-ci-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-csa`](#dvb-csa), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`dvb-t2mi`](#dvb-t2mi), [`dvb-tools`](#dvb-tools), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`compliance-probe`](#compliance-probe), [`dvb-ci`](#dvb-ci), [`dvb-ci-runtime`](#dvb-ci-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-csa`](#dvb-csa), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`dvb-t2mi`](#dvb-t2mi), [`dvb-tools`](#dvb-tools), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
 - **Links:** [README](../mpeg-ts/README.md) · [CHANGELOG](../mpeg-ts/CHANGELOG.md) · [crates.io](https://crates.io/crates/mpeg-ts) · [docs.rs](https://docs.rs/mpeg-ts)
 
 #### mpeg-ps
@@ -583,7 +583,7 @@ A caller-driven LL-HLS playback client (blocking reload, part prefetch, fMP4 dem
 - **Standards:** RFC 8216; draft-pantos-hls-rfc8216bis (LL-HLS)
 - **Cargo description:** Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter.
 - **Version (in-tree):** 0.12.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 5
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`media-plane`](#media-plane), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../hls-runtime/README.md) · [CHANGELOG](../hls-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/hls-runtime) · [docs.rs](https://docs.rs/hls-runtime)
 
