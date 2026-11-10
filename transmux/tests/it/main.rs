@@ -209,6 +209,7 @@ mod vvc;
 mod webm_demux;
 mod webm_demux_unknown_cluster;
 mod webm_timestamp_scale;
+#[cfg(feature = "std")]
 #[path = "support/xml.rs"]
 mod xml;
 mod xml_escaping;
