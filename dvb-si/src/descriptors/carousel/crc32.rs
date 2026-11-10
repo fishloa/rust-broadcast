@@ -4,6 +4,11 @@
 //!
 //! The 32-bit `CRC_32` computed over a complete module (ISO/IEC 13818-1
 //! Annex B, i.e. the MPEG-2 CRC-32).
+//!
+//! That is the same algorithm as `broadcast_common::crc32_mpeg2` (polynomial
+//! 0x04C11DB7, MSB-first, init 0xFFFF_FFFF, no final XOR), so the check
+//! called here is that shared primitive; this module is the descriptor's
+//! wire framing, not a second CRC implementation.
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
