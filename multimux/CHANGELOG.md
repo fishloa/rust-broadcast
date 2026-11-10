@@ -3,6 +3,7 @@
 ## [Unreleased]
 ### Changed
 - The test-only feature set now uses one spelling: `webrtc-runtime/test-support` becomes `webrtc-runtime/test-seams`, matching `test-seams` and the workspace convention (c6 C6-09).
+- The DASH period stitcher's microsecond-to-ticks conversion uses `broadcast_common::timescale::from_micros`; the rounding is unchanged, pinned by a test against the old arithmetic (c6 F7).
 ### Added
 - `OutputAuthSpec::Forwarded::trusted_proxies`: the IPs and CIDR blocks allowed to set the forwarded-user header. Omitted means loopback only (`127.0.0.0/8` and `::1`).
 - `Config::hold_cold_playlist` (default `true`) and `RouteHandle::with_hold_cold_playlist`.

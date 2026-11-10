@@ -1650,8 +1650,7 @@ impl HlsClient {
     /// form has no `EXT-X-MAP` at all.
     fn is_ts_segment(&self, bytes: &[u8]) -> bool {
         self.inits.is_empty()
-            && (bytes.first() == Some(&TS_SYNC_BYTE)
-                || segment::ts_structure(bytes))
+            && (bytes.first() == Some(&TS_SYNC_BYTE) || segment::ts_structure(bytes))
     }
 
     /// Report that a previously requested [`ResourceId`] (or the playlist

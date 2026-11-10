@@ -1463,9 +1463,7 @@ mod tests {
             Err(RtmpError::OutputBufferTooSmall(_))
         ));
 
-        let hdr = MessageHeader::Type2 {
-            timestamp_delta: 0,
-        };
+        let hdr = MessageHeader::Type2 { timestamp_delta: 0 };
         let mut buf = [0u8; TYPE2_LEN - 1];
         assert!(matches!(
             hdr.serialize_into(&mut buf),

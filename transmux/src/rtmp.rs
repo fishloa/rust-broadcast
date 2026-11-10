@@ -235,7 +235,9 @@ impl fmt::Display for RtmpFlvError {
                     "RTMP truncated while parsing {what}: need {need}, have {have}"
                 )
             }
-            RtmpFlvError::BadVersion(v) => write!(f, "RTMP bad version {v} (expected {RTMP_VERSION})"),
+            RtmpFlvError::BadVersion(v) => {
+                write!(f, "RTMP bad version {v} (expected {RTMP_VERSION})")
+            }
             RtmpFlvError::NoChunkContext(csid) => {
                 write!(
                     f,
@@ -858,7 +860,10 @@ fn write_amf0_string(out: &mut Vec<u8>, s: &str) -> Result<(), RtmpFlvError> {
     Ok(())
 }
 
-fn write_amf0_members(out: &mut Vec<u8>, members: &[(String, AmfValue)]) -> Result<(), RtmpFlvError> {
+fn write_amf0_members(
+    out: &mut Vec<u8>,
+    members: &[(String, AmfValue)],
+) -> Result<(), RtmpFlvError> {
     for (k, v) in members {
         write_amf0_string(out, k)?;
         v.write_into(out)?;
