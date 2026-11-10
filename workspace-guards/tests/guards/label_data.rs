@@ -576,9 +576,6 @@ pub const TABLE: &[Crate] = &[
             "PhyStreamId",
             "AnyCarouselDescriptor",
             "AnyTableSection",
-            "DescriptorTag",
-            "TableId",
-            "ExtensionTag",
             "SatTableId",
             // data-carrying / wrapper / body ADTs
             "BiopMessage",
@@ -1592,12 +1589,12 @@ pub const TABLE: &[Crate] = &[
             // human-readable message, not a spec-token label)
             "Error",
             "FlvError",
-            "RtmpError",
+            "RtmpFlvError",
             "CliError",
             // `dash_parse::DashParseError` (issue #758 T1): a structured parse error,
             // labelled via a hand-written `Display` impl (matching `FlvError`), not
             // the spec-token convention — already satisfied by that `Display` impl,
-            // listed here for the same documentation reason `FlvError`/`RtmpError` are.
+            // listed here for the same documentation reason `FlvError`/`RtmpFlvError` are.
             "DashParseError",
             // `smooth_parse::SmoothParseError` (issue #759 T1): a structured parse
             // error, labelled via a hand-written `Display` impl mirroring

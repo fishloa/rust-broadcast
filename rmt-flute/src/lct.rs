@@ -321,6 +321,14 @@ impl broadcast_common::Serialize for LctHeader<'_> {
     }
 }
 
+impl<'a> broadcast_common::Parse<'a> for LctHeader<'a> {
+    type Error = crate::Error;
+
+    fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
+        Ok(LctHeader::parse(bytes)?.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,4 +1,4 @@
-//! The fault-injection hooks live behind the non-default `test-support`
+//! The fault-injection hooks live behind the non-default `test-seams`
 //! feature (and `#[doc(hidden)]`): a default build must not contain them.
 //! A source scan, because the absence of a symbol cannot be compiled-against.
 
@@ -11,7 +11,7 @@ const HOOKS: &[&str] = &[
     "fn certificate_fingerprint",
     "use transport::certificate_fingerprint",
 ];
-const GATE: &str = "#[cfg(feature = \"test-support\")]";
+const GATE: &str = "#[cfg(feature = \"test-seams\")]";
 
 #[test]
 fn every_hook_item_is_cfg_gated() {
@@ -59,12 +59,12 @@ fn every_hook_item_is_cfg_gated() {
 }
 
 #[test]
-fn test_support_is_not_a_default_feature() {
+fn test_seams_is_not_a_default_feature() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let toml = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     let default = toml
         .lines()
         .find(|l| l.trim_start().starts_with("default"))
         .expect("default feature line");
-    assert!(!default.contains("test-support"), "{default}");
+    assert!(!default.contains("test-seams"), "{default}");
 }

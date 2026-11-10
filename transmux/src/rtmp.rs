@@ -149,11 +149,11 @@ pub mod amf0 {
 // ---------------------------------------------------------------------------
 
 /// Errors specific to RTMP transport framing (Adobe RTMP 1.0).
-// No longer `Eq` (only `PartialEq`): `RtmpError::Flv` wraps `FlvError`,
+// No longer `Eq` (only `PartialEq`): `RtmpFlvError::Flv` wraps `FlvError`,
 // which lost `Eq` for the same reason (issue #1140 T12 cascade).
 #[derive(Debug, PartialEq, Clone)]
 #[non_exhaustive]
-pub enum RtmpError {
+pub enum RtmpFlvError {
     /// A buffer ended before a field could be read.
     Truncated {
         /// What was being parsed when the buffer ran out.
@@ -225,23 +225,25 @@ pub enum RtmpError {
 /// while keeping the parser's stack use bounded whatever a peer sends.
 pub const MAX_AMF0_DEPTH: usize = 32;
 
-impl fmt::Display for RtmpError {
+impl fmt::Display for RtmpFlvError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RtmpError::Truncated { what, need, have } => {
+            RtmpFlvError::Truncated { what, need, have } => {
                 write!(
                     f,
                     "RTMP truncated while parsing {what}: need {need}, have {have}"
                 )
             }
-            RtmpError::BadVersion(v) => write!(f, "RTMP bad version {v} (expected {RTMP_VERSION})"),
-            RtmpError::NoChunkContext(csid) => {
+            RtmpFlvError::BadVersion(v) => {
+                write!(f, "RTMP bad version {v} (expected {RTMP_VERSION})")
+            }
+            RtmpFlvError::NoChunkContext(csid) => {
                 write!(
                     f,
                     "RTMP chunk on csid {csid} has no Type-0 context to inherit"
                 )
             }
-            RtmpError::BadControlLength {
+            RtmpFlvError::BadControlLength {
                 msg_type,
                 need,
                 have,
@@ -249,23 +251,23 @@ impl fmt::Display for RtmpError {
                 f,
                 "RTMP control message type {msg_type} bad length: need {need}, have {have}"
             ),
-            RtmpError::UnknownControlMsgType(t) => {
+            RtmpFlvError::UnknownControlMsgType(t) => {
                 write!(f, "RTMP unknown protocol-control message type {t}")
             }
-            RtmpError::UnsupportedAmf0Marker(m) => {
+            RtmpFlvError::UnsupportedAmf0Marker(m) => {
                 write!(f, "RTMP unsupported AMF0 marker 0x{m:02X}")
             }
-            RtmpError::Amf0TooDeep { depth } => write!(
+            RtmpFlvError::Amf0TooDeep { depth } => write!(
                 f,
                 "RTMP AMF0 nesting depth {depth} exceeds the {MAX_AMF0_DEPTH}-level cap"
             ),
-            RtmpError::AmfStringTooLong { len } => {
+            RtmpFlvError::AmfStringTooLong { len } => {
                 write!(
                     f,
                     "RTMP AMF0 string of {len} bytes exceeds the u16 length prefix (long string type not implemented)"
                 )
             }
-            RtmpError::IncompleteMessage {
+            RtmpFlvError::IncompleteMessage {
                 csid,
                 declared,
                 collected,
@@ -273,24 +275,24 @@ impl fmt::Display for RtmpError {
                 f,
                 "RTMP incomplete message on csid {csid}: declared {declared}, collected {collected}"
             ),
-            RtmpError::Flv(e) => write!(f, "RTMP FLV routing: {e}"),
-            RtmpError::FieldOverflow(e) => write!(f, "RTMP {e}"),
+            RtmpFlvError::Flv(e) => write!(f, "RTMP FLV routing: {e}"),
+            RtmpFlvError::FieldOverflow(e) => write!(f, "RTMP {e}"),
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for RtmpError {}
+impl std::error::Error for RtmpFlvError {}
 
-impl From<FlvError> for RtmpError {
+impl From<FlvError> for RtmpFlvError {
     fn from(e: FlvError) -> Self {
-        RtmpError::Flv(e)
+        RtmpFlvError::Flv(e)
     }
 }
 
-impl From<broadcast_common::len::FieldOverflow> for RtmpError {
+impl From<broadcast_common::len::FieldOverflow> for RtmpFlvError {
     fn from(e: broadcast_common::len::FieldOverflow) -> Self {
-        RtmpError::FieldOverflow(e)
+        RtmpFlvError::FieldOverflow(e)
     }
 }
 
@@ -307,14 +309,14 @@ pub struct Handshake0 {
 
 impl Handshake0 {
     /// Parse a C0/S0 byte, rejecting an unspoken version.
-    pub fn parse(input: &[u8]) -> Result<Self, RtmpError> {
-        let v = *input.first().ok_or(RtmpError::Truncated {
+    pub fn parse(input: &[u8]) -> Result<Self, RtmpFlvError> {
+        let v = *input.first().ok_or(RtmpFlvError::Truncated {
             what: "C0/S0 version",
             need: 1,
             have: 0,
         })?;
         if v != RTMP_VERSION {
-            return Err(RtmpError::BadVersion(v));
+            return Err(RtmpFlvError::BadVersion(v));
         }
         Ok(Self { version: v })
     }
@@ -336,9 +338,9 @@ pub struct Handshake1 {
 
 impl Handshake1 {
     /// Parse a C1/S1 packet (validates length and that `zero` is all zeros).
-    pub fn parse(input: &[u8]) -> Result<Self, RtmpError> {
+    pub fn parse(input: &[u8]) -> Result<Self, RtmpFlvError> {
         if input.len() < HANDSHAKE_PACKET_LEN {
-            return Err(RtmpError::Truncated {
+            return Err(RtmpFlvError::Truncated {
                 what: "C1/S1",
                 need: HANDSHAKE_PACKET_LEN,
                 have: input.len(),
@@ -375,9 +377,9 @@ pub struct Handshake2 {
 
 impl Handshake2 {
     /// Parse a C2/S2 packet.
-    pub fn parse(input: &[u8]) -> Result<Self, RtmpError> {
+    pub fn parse(input: &[u8]) -> Result<Self, RtmpFlvError> {
         if input.len() < HANDSHAKE_PACKET_LEN {
-            return Err(RtmpError::Truncated {
+            return Err(RtmpFlvError::Truncated {
                 what: "C2/S2",
                 need: HANDSHAKE_PACKET_LEN,
                 have: input.len(),
@@ -448,8 +450,8 @@ impl BasicHeader {
     }
 
     /// Parse a basic header, returning the header and the bytes consumed.
-    pub fn parse(input: &[u8]) -> Result<(Self, usize), RtmpError> {
-        let b0 = *input.first().ok_or(RtmpError::Truncated {
+    pub fn parse(input: &[u8]) -> Result<(Self, usize), RtmpFlvError> {
+        let b0 = *input.first().ok_or(RtmpFlvError::Truncated {
             what: "basic header",
             need: 1,
             have: 0,
@@ -457,7 +459,7 @@ impl BasicHeader {
         let fmt = b0 >> 6;
         let marker = b0 & 0x3F;
         if marker == CSID_MARKER_2BYTE {
-            let b1 = *input.get(1).ok_or(RtmpError::Truncated {
+            let b1 = *input.get(1).ok_or(RtmpFlvError::Truncated {
                 what: "basic header (2-byte)",
                 need: 2,
                 have: input.len(),
@@ -471,7 +473,7 @@ impl BasicHeader {
             ))
         } else if marker == CSID_MARKER_3BYTE {
             if input.len() < 3 {
-                return Err(RtmpError::Truncated {
+                return Err(RtmpFlvError::Truncated {
                     what: "basic header (3-byte)",
                     need: 3,
                     have: input.len(),
@@ -559,10 +561,10 @@ impl MessageHeader {
     /// Parse the fmt-relevant fields (not the extended timestamp) into a header,
     /// returning the header and bytes consumed. `ts24` is returned separately so
     /// the caller can decide whether an Extended Timestamp follows.
-    fn parse_fields(fmt: u8, input: &[u8]) -> Result<(Self, u32, usize), RtmpError> {
+    fn parse_fields(fmt: u8, input: &[u8]) -> Result<(Self, u32, usize), RtmpFlvError> {
         let need = Self::serialized_len(fmt);
         if input.len() < need {
-            return Err(RtmpError::Truncated {
+            return Err(RtmpFlvError::Truncated {
                 what: "message header",
                 need,
                 have: input.len(),
@@ -682,13 +684,13 @@ impl ProtocolControl {
 
     /// Parse a protocol control message body given its message type id.
     ///
-    /// Returns [`RtmpError::UnknownControlMsgType`] for a type id that is not
+    /// Returns [`RtmpFlvError::UnknownControlMsgType`] for a type id that is not
     /// protocol control at all — check [`is_control_type`](Self::is_control_type)
     /// first when that is an expected case rather than an error.
-    pub fn parse(msg_type_id: u8, body: &[u8]) -> Result<Self, RtmpError> {
-        let want_u32 = |what_len: usize| -> Result<u32, RtmpError> {
+    pub fn parse(msg_type_id: u8, body: &[u8]) -> Result<Self, RtmpFlvError> {
+        let want_u32 = |what_len: usize| -> Result<u32, RtmpFlvError> {
             if body.len() < what_len {
-                Err(RtmpError::BadControlLength {
+                Err(RtmpFlvError::BadControlLength {
                     msg_type: msg_type_id,
                     need: what_len,
                     have: body.len(),
@@ -706,7 +708,7 @@ impl ProtocolControl {
             msg_type::WINDOW_ACK_SIZE => Ok(ProtocolControl::WindowAckSize(want_u32(4)?)),
             msg_type::SET_PEER_BANDWIDTH => {
                 if body.len() < 5 {
-                    return Err(RtmpError::BadControlLength {
+                    return Err(RtmpFlvError::BadControlLength {
                         msg_type: msg_type_id,
                         need: 5,
                         have: body.len(),
@@ -717,7 +719,7 @@ impl ProtocolControl {
                     limit_type: body[4],
                 })
             }
-            other => Err(RtmpError::UnknownControlMsgType(other)),
+            other => Err(RtmpFlvError::UnknownControlMsgType(other)),
         }
     }
 }
@@ -747,10 +749,10 @@ pub enum AmfValue {
 impl AmfValue {
     /// Encode this value (marker + payload) into `out` (AMF0 §2).
     ///
-    /// Errors with [`RtmpError::AmfStringTooLong`] if a `String` (or an
+    /// Errors with [`RtmpFlvError::AmfStringTooLong`] if a `String` (or an
     /// `Object`/`EcmaArray` member key) exceeds the 16-bit AMF0 String length
     /// prefix — this crate does not implement the AMF0 Long String type.
-    pub fn write_into(&self, out: &mut Vec<u8>) -> Result<(), RtmpError> {
+    pub fn write_into(&self, out: &mut Vec<u8>) -> Result<(), RtmpFlvError> {
         match self {
             AmfValue::Number(n) => {
                 out.push(amf0::NUMBER);
@@ -785,16 +787,16 @@ impl AmfValue {
     /// format has no depth limit and this is the entry point for peer-supplied
     /// command bytes, so an uncapped recursive descent would overflow the stack
     /// (an abort, not a catchable error) on a hostile or corrupt message.
-    pub fn parse(input: &[u8]) -> Result<(Self, usize), RtmpError> {
+    pub fn parse(input: &[u8]) -> Result<(Self, usize), RtmpFlvError> {
         Self::parse_at_depth(input, 0)
     }
 
     /// [`parse`](Self::parse) with the current nesting depth threaded through.
-    fn parse_at_depth(input: &[u8], depth: usize) -> Result<(Self, usize), RtmpError> {
+    fn parse_at_depth(input: &[u8], depth: usize) -> Result<(Self, usize), RtmpFlvError> {
         if depth > MAX_AMF0_DEPTH {
-            return Err(RtmpError::Amf0TooDeep { depth });
+            return Err(RtmpFlvError::Amf0TooDeep { depth });
         }
-        let marker = *input.first().ok_or(RtmpError::Truncated {
+        let marker = *input.first().ok_or(RtmpFlvError::Truncated {
             what: "AMF0 marker",
             need: 1,
             have: 0,
@@ -803,7 +805,7 @@ impl AmfValue {
         match marker {
             amf0::NUMBER => {
                 if rest.len() < 8 {
-                    return Err(RtmpError::Truncated {
+                    return Err(RtmpFlvError::Truncated {
                         what: "AMF0 number",
                         need: 8,
                         have: rest.len(),
@@ -814,7 +816,7 @@ impl AmfValue {
                 Ok((AmfValue::Number(f64::from_be_bytes(b)), 9))
             }
             amf0::BOOLEAN => {
-                let v = *rest.first().ok_or(RtmpError::Truncated {
+                let v = *rest.first().ok_or(RtmpFlvError::Truncated {
                     what: "AMF0 boolean",
                     need: 1,
                     have: 0,
@@ -832,7 +834,7 @@ impl AmfValue {
             }
             amf0::ECMA_ARRAY => {
                 if rest.len() < 4 {
-                    return Err(RtmpError::Truncated {
+                    return Err(RtmpFlvError::Truncated {
                         what: "AMF0 ECMA array count",
                         need: 4,
                         have: rest.len(),
@@ -843,21 +845,24 @@ impl AmfValue {
                 let (members, n) = read_amf0_members(&rest[4..], depth + 1)?;
                 Ok((AmfValue::EcmaArray(members), 1 + 4 + n))
             }
-            other => Err(RtmpError::UnsupportedAmf0Marker(other)),
+            other => Err(RtmpFlvError::UnsupportedAmf0Marker(other)),
         }
     }
 }
 
-fn write_amf0_string(out: &mut Vec<u8>, s: &str) -> Result<(), RtmpError> {
+fn write_amf0_string(out: &mut Vec<u8>, s: &str) -> Result<(), RtmpFlvError> {
     if s.len() > usize::from(u16::MAX) {
-        return Err(RtmpError::AmfStringTooLong { len: s.len() });
+        return Err(RtmpFlvError::AmfStringTooLong { len: s.len() });
     }
     out.extend_from_slice(&(s.len() as u16).to_be_bytes());
     out.extend_from_slice(s.as_bytes());
     Ok(())
 }
 
-fn write_amf0_members(out: &mut Vec<u8>, members: &[(String, AmfValue)]) -> Result<(), RtmpError> {
+fn write_amf0_members(
+    out: &mut Vec<u8>,
+    members: &[(String, AmfValue)],
+) -> Result<(), RtmpFlvError> {
     for (k, v) in members {
         write_amf0_string(out, k)?;
         v.write_into(out)?;
@@ -869,9 +874,9 @@ fn write_amf0_members(out: &mut Vec<u8>, members: &[(String, AmfValue)]) -> Resu
 }
 
 /// Read a length-prefixed AMF0 UTF-8 string, returning (string, bytes consumed).
-fn read_amf0_string(input: &[u8]) -> Result<(String, usize), RtmpError> {
+fn read_amf0_string(input: &[u8]) -> Result<(String, usize), RtmpFlvError> {
     if input.len() < 2 {
-        return Err(RtmpError::Truncated {
+        return Err(RtmpFlvError::Truncated {
             what: "AMF0 string length",
             need: 2,
             have: input.len(),
@@ -879,7 +884,7 @@ fn read_amf0_string(input: &[u8]) -> Result<(String, usize), RtmpError> {
     }
     let len = u16::from_be_bytes([input[0], input[1]]) as usize;
     if input.len() < 2 + len {
-        return Err(RtmpError::Truncated {
+        return Err(RtmpFlvError::Truncated {
             what: "AMF0 string body",
             need: 2 + len,
             have: input.len(),
@@ -894,7 +899,7 @@ fn read_amf0_string(input: &[u8]) -> Result<(String, usize), RtmpError> {
 fn read_amf0_members(
     input: &[u8],
     depth: usize,
-) -> Result<(Vec<(String, AmfValue)>, usize), RtmpError> {
+) -> Result<(Vec<(String, AmfValue)>, usize), RtmpFlvError> {
     let mut members = Vec::new();
     let mut off = 0;
     loop {
@@ -902,7 +907,7 @@ fn read_amf0_members(
         let (key, kn) = read_amf0_string(&input[off..])?;
         // Empty key followed by the object-end marker terminates (§2.11).
         if key.is_empty() {
-            let end = *input.get(off + kn).ok_or(RtmpError::Truncated {
+            let end = *input.get(off + kn).ok_or(RtmpFlvError::Truncated {
                 what: "AMF0 object-end marker",
                 need: off + kn + 1,
                 have: input.len(),
@@ -936,10 +941,10 @@ pub struct Command {
 impl Command {
     /// Encode the AMF0 command body (name + transaction id + arguments).
     ///
-    /// Errors with [`RtmpError::AmfStringTooLong`] if the command name or any
+    /// Errors with [`RtmpFlvError::AmfStringTooLong`] if the command name or any
     /// argument String (or object/array member key) exceeds the AMF0 String
     /// length prefix.
-    pub fn to_body(&self) -> Result<Vec<u8>, RtmpError> {
+    pub fn to_body(&self) -> Result<Vec<u8>, RtmpFlvError> {
         let mut out = Vec::new();
         AmfValue::String(self.name.clone()).write_into(&mut out)?;
         AmfValue::Number(self.transaction_id).write_into(&mut out)?;
@@ -950,10 +955,10 @@ impl Command {
     }
 
     /// Decode an AMF0 command body.
-    pub fn parse(body: &[u8]) -> Result<Self, RtmpError> {
+    pub fn parse(body: &[u8]) -> Result<Self, RtmpFlvError> {
         let (name_v, mut off) = AmfValue::parse(body)?;
         let AmfValue::String(name) = name_v else {
-            return Err(RtmpError::UnsupportedAmf0Marker(
+            return Err(RtmpFlvError::UnsupportedAmf0Marker(
                 body.first().copied().unwrap_or(0),
             ));
         };
@@ -1004,9 +1009,9 @@ pub struct Message {
 ///
 /// # Errors
 ///
-/// Returns [`RtmpError::FieldOverflow`] if a message body is 16 MiB (2^24) or
+/// Returns [`RtmpFlvError::FieldOverflow`] if a message body is 16 MiB (2^24) or
 /// larger — `message_length` is a UI24 field (§5.3.1.2) and cannot represent it.
-pub fn write_chunks(messages: &[Message], chunk_size: usize) -> Result<Vec<u8>, RtmpError> {
+pub fn write_chunks(messages: &[Message], chunk_size: usize) -> Result<Vec<u8>, RtmpFlvError> {
     let chunk_size = chunk_size.max(1);
     let mut out = Vec::new();
     for m in messages {
@@ -1062,7 +1067,7 @@ struct ChunkContext {
 
 /// Reassemble a chunk stream into complete [`Message`]s, honouring Set Chunk
 /// Size control messages inline (§5.3 / §5.4.1).
-pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
+pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpFlvError> {
     let mut chunk_size = DEFAULT_CHUNK_SIZE;
     let mut ctx: Vec<(u32, ChunkContext)> = Vec::new();
     let mut out = Vec::new();
@@ -1095,7 +1100,7 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
         };
         let ext_ts = if ext_present {
             if input.len() < off + EXT_TIMESTAMP_LEN {
-                return Err(RtmpError::Truncated {
+                return Err(RtmpFlvError::Truncated {
                     what: "extended timestamp",
                     need: off + EXT_TIMESTAMP_LEN,
                     have: input.len(),
@@ -1128,7 +1133,7 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
                 partial: Vec::new(),
             },
             1 => {
-                let p = prev.ok_or(RtmpError::NoChunkContext(bh.csid))?;
+                let p = prev.ok_or(RtmpFlvError::NoChunkContext(bh.csid))?;
                 ChunkContext {
                     message_type_id: mh.message_type_id,
                     message_length: mh.message_length as usize,
@@ -1143,7 +1148,7 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
                 }
             }
             2 => {
-                let p = prev.ok_or(RtmpError::NoChunkContext(bh.csid))?;
+                let p = prev.ok_or(RtmpFlvError::NoChunkContext(bh.csid))?;
                 ChunkContext {
                     message_type_id: p.message_type_id,
                     message_length: p.message_length,
@@ -1159,7 +1164,7 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
                 // fmt 3: inherit the previous chunk's header outright, and
                 // either continue its message or (when nothing is buffered)
                 // begin a new one (§5.3.1.2.4).
-                let mut p = prev.ok_or(RtmpError::NoChunkContext(bh.csid))?;
+                let mut p = prev.ok_or(RtmpFlvError::NoChunkContext(bh.csid))?;
                 let starting_new_message = p.partial.is_empty();
                 if starting_new_message {
                     // §5.3.1.2.4: this is the framing used for "a stream of
@@ -1198,7 +1203,7 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
         // takes at most `remaining`, so `len <= message_length` holds — but the
         // length is wire-declared, so don't let a hostile stream underflow it.
         let remaining = cx.message_length.checked_sub(cx.partial.len()).ok_or(
-            RtmpError::IncompleteMessage {
+            RtmpFlvError::IncompleteMessage {
                 csid: bh.csid,
                 declared: cx.message_length,
                 collected: cx.partial.len(),
@@ -1206,7 +1211,7 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
         )?;
         let take = core::cmp::min(chunk_size, remaining);
         if input.len() < off + take {
-            return Err(RtmpError::Truncated {
+            return Err(RtmpFlvError::Truncated {
                 what: "chunk data",
                 need: off + take,
                 have: input.len(),
@@ -1300,13 +1305,13 @@ const FLV_TAG_SCRIPT: u8 = msg_type::DATA_AMF0;
 ///
 /// # Errors
 ///
-/// Returns [`RtmpError::FieldOverflow`] if a tag body is 16 MiB (2^24) or
+/// Returns [`RtmpFlvError::FieldOverflow`] if a tag body is 16 MiB (2^24) or
 /// larger — `DataSize` is a UI24 field (§E.4.1) and cannot represent it.
 fn build_flv(
     tags: &[(u8, u32, Vec<u8>)],
     has_video: bool,
     has_audio: bool,
-) -> Result<Vec<u8>, RtmpError> {
+) -> Result<Vec<u8>, RtmpFlvError> {
     let mut out = Vec::new();
     out.extend_from_slice(&FLV_SIGNATURE);
     out.push(FLV_VERSION);
@@ -1339,9 +1344,9 @@ fn build_flv(
 }
 
 /// Walk an FLV byte stream into `(tag_type, timestamp_ms, body)` tags (§E.4.1).
-fn split_flv(flv: &[u8]) -> Result<Vec<(u8, u32, Vec<u8>)>, RtmpError> {
+fn split_flv(flv: &[u8]) -> Result<Vec<(u8, u32, Vec<u8>)>, RtmpFlvError> {
     if flv.len() < FLV_HEADER_LEN as usize + FLV_PREV_TAG_SIZE_LEN {
-        return Err(RtmpError::Truncated {
+        return Err(RtmpFlvError::Truncated {
             what: "FLV header",
             need: FLV_HEADER_LEN as usize + FLV_PREV_TAG_SIZE_LEN,
             have: flv.len(),
@@ -1359,7 +1364,7 @@ fn split_flv(flv: &[u8]) -> Result<Vec<(u8, u32, Vec<u8>)>, RtmpError> {
         let body_start = off + FLV_TAG_HEADER_LEN;
         let body_end = body_start + data_size;
         if body_end + FLV_PREV_TAG_SIZE_LEN > flv.len() {
-            return Err(RtmpError::Truncated {
+            return Err(RtmpFlvError::Truncated {
                 what: "FLV tag body",
                 need: body_end + FLV_PREV_TAG_SIZE_LEN,
                 have: flv.len(),
@@ -1403,9 +1408,9 @@ impl RtmpDemux<'_> {
 impl<'a> Unpackage for RtmpDemux<'a> {
     type Input = &'a [u8];
     type Media = Media;
-    type Error = RtmpError;
+    type Error = RtmpFlvError;
 
-    fn unpackage(&mut self, input: &'a [u8]) -> Result<Media, RtmpError> {
+    fn unpackage(&mut self, input: &'a [u8]) -> Result<Media, RtmpFlvError> {
         let messages = read_chunks(input)?;
         let mut tags: Vec<(u8, u32, Vec<u8>)> = Vec::new();
         let mut has_video = false;
@@ -1428,7 +1433,7 @@ impl<'a> Unpackage for RtmpDemux<'a> {
         }
         let flv = build_flv(&tags, has_video, has_audio)?;
         let mut demux = FlvDemux::new();
-        demux.unpackage(&flv).map_err(RtmpError::Flv)
+        demux.unpackage(&flv).map_err(RtmpFlvError::Flv)
     }
 }
 
@@ -1480,11 +1485,11 @@ impl RtmpMux {
 impl Package for RtmpMux {
     type Media = Media;
     type Output = Vec<u8>;
-    type Error = RtmpError;
+    type Error = RtmpFlvError;
 
-    fn package(&mut self, media: &Media) -> Result<Vec<u8>, RtmpError> {
+    fn package(&mut self, media: &Media) -> Result<Vec<u8>, RtmpFlvError> {
         let mut flv_mux = FlvMux::new();
-        let flv = flv_mux.package(media).map_err(RtmpError::Flv)?;
+        let flv = flv_mux.package(media).map_err(RtmpFlvError::Flv)?;
         let tags = split_flv(&flv)?;
 
         let mut messages = Vec::with_capacity(tags.len());
@@ -1646,7 +1651,7 @@ mod tests {
             // ...and `parse` agrees, so the guard is not a second source of truth.
             assert!(matches!(
                 ProtocolControl::parse(t, &[]),
-                Err(crate::rtmp::RtmpError::UnknownControlMsgType(..))
+                Err(crate::rtmp::RtmpFlvError::UnknownControlMsgType(..))
             ));
         }
     }
@@ -1667,7 +1672,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                RtmpFlvError::FieldOverflow(broadcast_common::len::FieldOverflow {
                     field: "message_length",
                     ..
                 })
@@ -1716,7 +1721,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                RtmpFlvError::FieldOverflow(broadcast_common::len::FieldOverflow {
                     field: "DataSize",
                     ..
                 })
@@ -1887,20 +1892,20 @@ mod tests {
         );
         let err33 = AmfValue::parse(&nested(33)).expect_err("33 levels must be rejected");
         assert!(
-            matches!(err33, RtmpError::Amf0TooDeep { depth: 33 }),
+            matches!(err33, RtmpFlvError::Amf0TooDeep { depth: 33 }),
             "expected Amf0TooDeep {{ depth: 33 }}, got {err33:?}"
         );
         let err = AmfValue::parse(&nested(MAX_AMF0_DEPTH + 1))
             .expect_err("nesting past the cap must be rejected");
         assert!(
-            matches!(err, RtmpError::Amf0TooDeep { .. }),
+            matches!(err, RtmpFlvError::Amf0TooDeep { .. }),
             "expected Amf0TooDeep, got {err:?}"
         );
         // And a message built to exhaust the stack (~250k levels from ~1 MiB)
         // is rejected immediately rather than aborting.
         assert!(matches!(
             AmfValue::parse(&nested(250_000)),
-            Err(RtmpError::Amf0TooDeep { .. })
+            Err(RtmpFlvError::Amf0TooDeep { .. })
         ));
     }
 

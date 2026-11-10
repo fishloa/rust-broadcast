@@ -15,13 +15,9 @@
 
 use std::collections::HashMap;
 
-use broadcast_common::timescale::{Rounding, to_micros};
+use broadcast_common::timescale::{Rounding, from_micros, to_micros};
 
 use transmux::{Sample, TrackId, TrackSpec};
-
-const MICROS_PER_SECOND_U32: u32 = 1_000_000;
-const MICROS_PER_SECOND: i128 = MICROS_PER_SECOND_U32 as i128;
-const HALF_SECOND_US: i128 = MICROS_PER_SECOND / 2;
 
 struct TrackClock {
     timescale: u32,
@@ -42,8 +38,11 @@ fn ticks_to_us(ticks: i64, timescale: u32) -> i128 {
     to_micros(i128::from(ticks), timescale, Rounding::TowardZero)
 }
 
+/// `us` microseconds as ticks at `timescale`, saturating at the `i64` range.
+/// Uses `broadcast_common::timescale` so the conversion lives in one place;
+/// `us_to_ticks_agrees_with_the_old_arithmetic` pins the rounding.
 fn us_to_ticks(us: i128, timescale: u32) -> i64 {
-    let ticks = (us * i128::from(timescale) + HALF_SECOND_US).div_euclid(MICROS_PER_SECOND);
+    let ticks = from_micros(us, timescale, Rounding::Nearest);
     i64::try_from(ticks.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).unwrap_or(0)
 }
 
@@ -132,6 +131,39 @@ mod tests {
     #[test]
     fn a_zero_timescale_converts_without_dividing_by_zero() {
         assert_eq!(ticks_to_us(5, 0), 5_000_000);
+    }
+
+    fn old_us_to_ticks(us: i128, timescale: u32) -> i64 {
+        const MICROS_PER_SECOND: i128 = 1_000_000;
+        let ticks =
+            (us * i128::from(timescale) + MICROS_PER_SECOND / 2).div_euclid(MICROS_PER_SECOND);
+        i64::try_from(ticks.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).unwrap_or(0)
+    }
+
+    #[test]
+    fn us_to_ticks_agrees_with_the_old_arithmetic() {
+        let cases = [
+            (0i128, 1u32),
+            (500, 1),
+            (1_500, 1),
+            (-500, 1),
+            (-1_500, 1),
+            (1_000, 1),
+            (1_500, 90_000),
+            (33_333, 90_000),
+            (1_000_000, 90_000),
+            (4_200_000, 90_000),
+            (-1_500, 90_000),
+            (1_000_000, 48_000),
+            (2_500, 48_000),
+        ];
+        for (us, timescale) in cases {
+            assert_eq!(
+                us_to_ticks(us, timescale),
+                old_us_to_ticks(us, timescale),
+                "us={us} timescale={timescale}"
+            );
+        }
     }
 
     #[test]

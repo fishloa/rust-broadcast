@@ -955,7 +955,7 @@ impl Session {
 
     /// Inputs recorded and not yet drained, without removing them. Empty unless
     /// [`Config::record_buffer_inputs`] is set.
-    #[cfg(feature = "__test-seams")]
+    #[cfg(feature = "test-seams")]
     #[doc(hidden)]
     pub fn buffer_input_log(&self) -> &[buffering_runtime::input_log::Input] {
         self.buffer.log.peek()
@@ -1647,7 +1647,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "__test-seams")]
+    #[cfg(feature = "test-seams")]
     fn pcr_hints(session: &Session) -> usize {
         session
             .buffer_input_log()
@@ -1664,7 +1664,7 @@ mod tests {
             .count()
     }
 
-    #[cfg(feature = "__test-seams")]
+    #[cfg(feature = "test-seams")]
     #[test]
     fn a_pcr_discontinuity_coinciding_with_a_jump_hints_and_rearms_once() {
         use broadcast_common::Unpackage;

@@ -123,10 +123,7 @@ pub(crate) fn serialize_flat_table<E>(
 ) -> Result<usize> {
     let need = flat_table_len(entries.len(), entry_len);
     need_out(buf, need)?;
-    let mut c = crate::box_types::write_box_header(buf, fourcc, need)?;
-    buf[c] = version;
-    buf[c + 1..c + 4].copy_from_slice(&flags.to_be_bytes()[1..]);
-    c += 4;
+    let mut c = crate::box_types::write_full_box_header(buf, fourcc, need, version, flags, false)?;
     let entry_count = broadcast_common::len::fit_u32(entries.len(), "entry_count")?;
     buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
     c += 4;
@@ -677,12 +674,14 @@ impl Serialize for MovieHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_compact_box_header(buf, b"mvhd", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"mvhd",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         let (ct_sz, mt_sz, dur_sz) = if self.version == 0 {
             (4u8, 4u8, 4u8)
         } else {
@@ -829,12 +828,14 @@ impl Serialize for TrackHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_compact_box_header(buf, b"tkhd", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"tkhd",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         if self.version == 0 {
             buf[c..c + 4].copy_from_slice(
                 &(broadcast_common::len::fit_bits(self.creation_time, 32, "tkhd creation_time")?
@@ -965,12 +966,14 @@ impl Serialize for MediaHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_compact_box_header(buf, b"mdhd", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"mdhd",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         if self.version == 0 {
             buf[c..c + 4].copy_from_slice(
                 &(broadcast_common::len::fit_bits(self.creation_time, 32, "mdhd creation_time")?
@@ -1062,12 +1065,14 @@ impl Serialize for HandlerBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"hdlr", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"hdlr",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         // pre_defined(32) = 0, written rather than skipped (r04-W45).
         buf[c..c + 4].fill(0);
         c += 4;
@@ -1125,12 +1130,14 @@ impl Serialize for VideoMediaHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_compact_box_header(buf, b"vmhd", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"vmhd",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         buf[c..c + 2].copy_from_slice(&self.graphicsmode.to_be_bytes());
         c += 2;
         buf[c..c + 2].copy_from_slice(&self.opcolor[0].to_be_bytes());
@@ -1178,12 +1185,14 @@ impl Serialize for SoundMediaHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_compact_box_header(buf, b"smhd", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"smhd",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         buf[c..c + 2].copy_from_slice(&self.balance.to_be_bytes());
         c += 2;
         // reserved(16) = 0, written rather than skipped (r04-W45).
@@ -1324,12 +1333,14 @@ impl Serialize for DataReferenceBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"dref", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"dref",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
@@ -1384,12 +1395,14 @@ impl Serialize for DataEntryUrlBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"url ", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"url ",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         if !self.location.is_empty() {
             buf[c..c + self.location.len()].copy_from_slice(&self.location);
             c += self.location.len();
@@ -1430,11 +1443,7 @@ fn write_data_entry_header(
     version: u8,
     flags: u32,
 ) -> Result<usize> {
-    let mut c = crate::box_types::write_box_header(buf, ty, need)?;
-    buf[c] = version;
-    buf[c + 1..c + 4].copy_from_slice(&flags.to_be_bytes()[1..]);
-    c += FULL_HDR;
-    Ok(c)
+    crate::box_types::write_full_box_header(buf, ty, need, version, flags, false)
 }
 
 /// Data Entry URN Box (`urn `) — §8.7.2.2: `utf8string name; utf8string
@@ -1656,12 +1665,14 @@ impl Serialize for SampleToChunkBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"stsc", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"stsc",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
@@ -1770,12 +1781,14 @@ impl Serialize for SampleSizeBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"stsz", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"stsz",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         buf[c..c + 4].copy_from_slice(&self.sample_size.to_be_bytes());
         c += 4;
         buf[c..c + 4].copy_from_slice(&self.sample_count.to_be_bytes());
@@ -3086,12 +3099,14 @@ impl Serialize for SampleDescriptionBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"stsd", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"stsd",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;

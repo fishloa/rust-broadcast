@@ -339,13 +339,14 @@ impl Serialize for CompositionToDecodeBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0;
-        c += crate::box_types::write_compact_box_header(buf, b"cslg", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"cslg",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         let write_i64 = |buf: &mut [u8], off: usize, sz: usize, v: i64| {
             if sz == 4 {
                 buf[off..off + 4].copy_from_slice(&(v as i32).to_be_bytes());
@@ -706,13 +707,14 @@ impl Serialize for SegmentIndexBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0;
-        c += crate::box_types::write_compact_box_header(buf, b"sidx", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"sidx",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         buf[c..c + 4].copy_from_slice(&self.reference_id.to_be_bytes());
         c += 4;
         buf[c..c + 4].copy_from_slice(&self.timescale.to_be_bytes());

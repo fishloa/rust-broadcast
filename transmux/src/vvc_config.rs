@@ -615,12 +615,14 @@ impl Serialize for VvcConfigurationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = 0usize;
-        cursor += crate::box_types::write_box_header(buf, b"vvcC", need)?;
-        // FullBox version + flags.
-        buf[cursor] = self.version;
-        cursor += 1;
-        buf[cursor..cursor + 3].copy_from_slice(&self.flags.to_be_bytes()[1..]);
-        cursor += 3;
+        cursor += crate::box_types::write_full_box_header(
+            buf,
+            b"vvcC",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         cursor += self.config.serialize_into(&mut buf[cursor..])?;
         Ok(cursor)
     }

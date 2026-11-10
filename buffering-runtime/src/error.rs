@@ -64,23 +64,14 @@ impl ConfigField {
 broadcast_common::impl_spec_display!(ConfigField);
 
 /// Construction / validation failure.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum Error {
     /// A configuration field is out of range.
+    #[error("invalid configuration: {0}")]
     InvalidConfig(ConfigField),
     /// `min_window_us` is zero (a zero-length sliding window has no minimum).
+    #[error("zero-length minimum window")]
     ZeroLengthWindow,
 }
-
-impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidConfig(field) => write!(f, "invalid configuration: {field}"),
-            Self::ZeroLengthWindow => f.write_str("zero-length minimum window"),
-        }
-    }
-}
-
-impl core::error::Error for Error {}

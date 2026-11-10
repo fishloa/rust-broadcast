@@ -214,13 +214,14 @@ impl Serialize for ProducerReferenceTimeBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0;
-        c += crate::box_types::write_compact_box_header(buf, b"prft", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"prft",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         buf[c..c + 4].copy_from_slice(&self.reference_track_id.value().to_be_bytes());
         c += 4;
         buf[c..c + 8].copy_from_slice(&self.ntp_timestamp.to_be_bytes());
@@ -504,13 +505,14 @@ impl Serialize for SampleGroupDescriptionBox {
         need_out(buf, need)?;
         let (effective_dl, per_entry_prefix) = self.effective_default_length();
         let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"sgpd", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"sgpd",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         buf[c..c + 4].copy_from_slice(&self.grouping_type.to_be_bytes());
         c += 4;
         if self.version >= SGPD_VERSION_DEFAULT_LENGTH {
@@ -685,13 +687,14 @@ impl Serialize for SampleToGroupBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"sbgp", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"sbgp",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         buf[c..c + 4].copy_from_slice(&self.grouping_type.to_be_bytes());
         c += 4;
         if self.version == 1 {
@@ -889,13 +892,14 @@ impl Serialize for SubSampleInformationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"subs", need)?;
-        buf[c] = self.version;
-        let fb = self.flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"subs",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
@@ -1259,10 +1263,14 @@ impl Serialize for SubSampleInformationBoxV2 {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut c = crate::box_types::write_box_header(buf, b"subs", need)?;
-        buf[c] = SUBS_VERSION_REFERENCE;
-        buf[c + 1..c + 4].copy_from_slice(&self.flags.to_be_bytes()[1..]);
-        c += 4;
+        let mut c = crate::box_types::write_full_box_header(
+            buf,
+            b"subs",
+            need,
+            SUBS_VERSION_REFERENCE,
+            self.flags,
+            false,
+        )?;
         let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
@@ -1406,10 +1414,8 @@ impl Serialize for SubSampleReferenceTableBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut c = crate::box_types::write_box_header(buf, b"ssrt", need)?;
-        buf[c] = 0;
-        buf[c + 1..c + 4].copy_from_slice(&self.flags.to_be_bytes()[1..]);
-        c += 4;
+        let mut c =
+            crate::box_types::write_full_box_header(buf, b"ssrt", need, 0, self.flags, false)?;
         let bits = if self.is_short_ref {
             SHORT_REF_BITS
         } else {
