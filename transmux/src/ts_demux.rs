@@ -5329,9 +5329,9 @@ impl StreamingTsDemux {
 
         if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
             pmt_state.reasm.feed(payload, pusi);
-            let mut sections: Vec<Vec<u8>> = Vec::new();
+            let mut sections: Vec<bytes::Bytes> = Vec::new();
             while let Some(section) = pmt_state.reasm.pop_section() {
-                sections.push(section.to_vec());
+                sections.push(section);
             }
             let program_number = pmt_state.program_number;
             let mut to_apply: Option<Vec<(Pid, Codec, Vec<u8>)>> = None;
@@ -5401,7 +5401,7 @@ impl StreamingTsDemux {
                 self.try_promote_ready();
                 return;
             }
-            let mut sections: Vec<Vec<u8>> = Vec::new();
+            let mut sections: Vec<bytes::Bytes> = Vec::new();
             // ── r04-W49 intactness rule ────────────────────────────────────
             //
             // An access unit is delivered only when nothing was lost from it:
@@ -5469,7 +5469,7 @@ impl StreamingTsDemux {
             } else if let Carrier::Section(reasm) = &mut stream.carrier {
                 reasm.feed(payload, pusi);
                 while let Some(s) = reasm.pop_section() {
-                    sections.push(s.to_vec());
+                    sections.push(s);
                 }
             }
             // `completed_intact` false means dropped, not delivered (r04-W49).
@@ -5516,7 +5516,7 @@ impl StreamingTsDemux {
                 }
             }
             for s in sections {
-                on_completed_section(stream, pid, &s, &mut self.events);
+                on_completed_section(stream, pid, &s[..], &mut self.events);
             }
         } else if pid != NULL_PACKET_PID && !self.removed_pids.contains(&pid) {
             self.unattributed
@@ -5810,7 +5810,7 @@ impl StreamingTsDemux {
             for (buf_pusi, buf_payload) in buffered {
                 stream.payload_packets = stream.payload_packets.saturating_add(1);
                 self.unattributed_bytes = self.unattributed_bytes.saturating_sub(buf_payload.len());
-                let mut sections: Vec<Vec<u8>> = Vec::new();
+                let mut sections: Vec<bytes::Bytes> = Vec::new();
                 let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
                     feed_pes_bounded(
                         &mut stream,
@@ -5822,7 +5822,7 @@ impl StreamingTsDemux {
                 } else if let Carrier::Section(reasm) = &mut stream.carrier {
                     reasm.feed(&buf_payload, buf_pusi);
                     while let Some(s) = reasm.pop_section() {
-                        sections.push(s.to_vec());
+                        sections.push(s);
                     }
                     None
                 } else {
@@ -5833,7 +5833,7 @@ impl StreamingTsDemux {
                     on_completed_pes(&mut stream, es_pid, &completed, epoch, &mut self.events);
                 }
                 for s in sections {
-                    on_completed_section(&mut stream, es_pid, &s, &mut self.events);
+                    on_completed_section(&mut stream, es_pid, &s[..], &mut self.events);
                 }
             }
         }

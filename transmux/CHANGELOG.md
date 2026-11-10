@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- Avoid the per-section `Bytes::to_vec` copy in `StreamingTsDemux` by reusing the reassembler's `Bytes` directly (#2031).
 - BREAKING: `rtmp::RtmpError` is renamed `rtmp::RtmpFlvError` (re-exported as `transmux::RtmpFlvError`), so it no longer shares a name with `rtmp_runtime::RtmpError` (c6 C6-13).
 ### Added
 - `LlHlsSegmenter::set_start_time_ns` and `StreamingTsHlsSegmenter::set_start_time_ns` start the decode clock (`tfdt`, TS PES times) at a given time instead of zero, so a segmenter for a reconnected source continues the previous run's timeline.
