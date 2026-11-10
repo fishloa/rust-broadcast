@@ -12,8 +12,8 @@
 //! writes, which is the only thing that would notice.
 
 use broadcast_common::{Package, Unpackage};
-use rtmp_runtime::chunk::{ChunkAssembler, Message};
-use rtmp_runtime::message::msg_type;
+use rtmp_runtime::chunk::ChunkAssembler;
+use rtmp_runtime::message::{ProtocolControl, msg_type};
 use transmux::{FlvDemux, FlvMux, Media, RtmpDemux, RtmpMux};
 
 const FIXTURES: &[&str] = &["flv/av.flv", "flv/aac-7-1.flv"];
@@ -21,11 +21,10 @@ const FIXTURES: &[&str] = &["flv/av.flv", "flv/aac-7-1.flv"];
 const FLV_TAG_AUDIO: u8 = msg_type::AUDIO;
 const FLV_TAG_VIDEO: u8 = msg_type::VIDEO;
 
-/// The §5.3 default chunk size. Any other size is currently refused by
-/// `rtmp_runtime::chunk::ChunkAssembler` when the stream carries more than
-/// one kind of message (a real rtmp-runtime defect, independent of this
-/// spoke: the muxer's own bytes are chunked exactly as §5.3 prescribes).
-const CHUNK_SIZES: &[usize] = &[128];
+/// Chunk sizes the spoke must round-trip: the §5.3 default, sizes that make
+/// small messages span several chunks (1, 192), and a size larger than any
+/// message (4096).
+const CHUNK_SIZES: &[usize] = &[1, 128, 192, 4096];
 
 fn track_summary(media: &Media) -> Vec<(String, usize, Vec<usize>)> {
     media
@@ -122,12 +121,25 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
                 !wire.is_empty(),
                 "{rel}: the RTMP wire is non-empty at chunk size {chunk_size}"
             );
-            let carried: Vec<(u8, u32, Vec<u8>)> = ChunkAssembler::new()
-                .push(&wire)
-                .unwrap_or_else(|e| panic!("{rel} at chunk size {chunk_size}: chunk stream: {e}"))
-                .into_iter()
-                .map(|m: Message| (m.message_type_id, m.timestamp, m.payload))
-                .collect();
+            let carried: Vec<(u8, u32, Vec<u8>)> = {
+                let mut assembler = ChunkAssembler::new();
+                assembler.feed(&wire);
+                let mut out = Vec::new();
+                while let Some(m) = assembler.next_message().unwrap_or_else(|e| {
+                    panic!("{rel} at chunk size {chunk_size}: chunk stream: {e}")
+                }) {
+                    if m.message_type_id == msg_type::SET_CHUNK_SIZE {
+                        if let Some(ProtocolControl::SetChunkSize(size)) =
+                            ProtocolControl::from_message(&m).expect("valid set chunk size")
+                        {
+                            assembler.set_chunk_size(size);
+                        }
+                        continue;
+                    }
+                    out.push((m.message_type_id, m.timestamp, m.payload));
+                }
+                out
+            };
             assert_eq!(
                 carried, expected,
                 "{rel} at chunk size {chunk_size}: every FLV tag crosses as one message"
@@ -156,5 +168,41 @@ fn the_default_chunk_size_is_the_rtmp_runtime_default() {
     assert_eq!(
         RtmpMux::default().chunk_size,
         usize::try_from(rtmp_runtime::chunk::DEFAULT_CHUNK_SIZE).expect("default chunk size fits"),
+    );
+}
+/// The first message of a chunk stream, decoded incrementally (a Set Chunk
+/// Size takes effect for the chunks that follow it within the same buffer).
+fn first_message(wire: &[u8]) -> Option<rtmp_runtime::chunk::Message> {
+    let mut assembler = ChunkAssembler::new();
+    assembler.feed(wire);
+    assembler.next_message().expect("chunk stream parses")
+}
+
+#[test]
+fn a_non_default_chunk_size_is_announced_in_band() {
+    let bytes = test_fixtures::read(FIXTURES[0]);
+    let media = normalised_media(bytes.as_slice());
+
+    let wire = RtmpMux::with_chunk_size(4096)
+        .package(&media)
+        .expect("IR → RTMP at 4096");
+    let first = first_message(&wire).expect("a non-empty chunk stream");
+    assert_eq!(
+        first.message_type_id,
+        msg_type::SET_CHUNK_SIZE,
+        "the stream opens by announcing its chunk size"
+    );
+    assert_eq!(
+        ProtocolControl::from_message(&first).expect("valid protocol control"),
+        Some(ProtocolControl::SetChunkSize(4096)),
+        "the announced size is the one the muxer chunks at"
+    );
+
+    let default_wire = RtmpMux::new().package(&media).expect("IR → RTMP at 128");
+    let default_first = first_message(&default_wire).expect("a non-empty chunk stream");
+    assert_ne!(
+        default_first.message_type_id,
+        msg_type::SET_CHUNK_SIZE,
+        "at the §5.4.1 default there is nothing to announce"
     );
 }

@@ -33,7 +33,7 @@ use core::fmt;
 
 use broadcast_common::{Package, Unpackage};
 use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE, Message};
-use rtmp_runtime::message::msg_type;
+use rtmp_runtime::message::{ProtocolControl, msg_type};
 
 use crate::flv::{FlvDemux, FlvError, FlvMux};
 use crate::media::Media;
@@ -271,12 +271,20 @@ impl<'a> Unpackage for RtmpDemux<'a> {
     type Error = RtmpFlvError;
 
     fn unpackage(&mut self, input: &'a [u8]) -> Result<Media, RtmpFlvError> {
-        let messages = ChunkAssembler::new().push(input)?;
+        let mut assembler = ChunkAssembler::new();
+        assembler.feed(input);
         let mut tags: Vec<(u8, u32, Vec<u8>)> = Vec::new();
         let mut has_video = false;
         let mut has_audio = false;
-        for m in messages {
+        while let Some(m) = assembler.next_message()? {
             match m.message_type_id {
+                msg_type::SET_CHUNK_SIZE => {
+                    if let Some(ProtocolControl::SetChunkSize(size)) =
+                        ProtocolControl::from_message(&m)?
+                    {
+                        assembler.set_chunk_size(size);
+                    }
+                }
                 msg_type::AUDIO => {
                     has_audio = true;
                     tags.push((FLV_TAG_AUDIO, m.timestamp, m.payload));
@@ -307,9 +315,10 @@ impl<'a> Unpackage for RtmpDemux<'a> {
 /// FLV tags, wraps each tag body as the corresponding RTMP message — Audio
 /// (type 8), Video (type 9) or Data (type 18) — on a per-kind chunk stream id,
 /// and chunks them at [`chunk_size`](RtmpMux::chunk_size) (§5.3). The output is
-/// the post-handshake chunk stream (emit a Set Chunk Size control message and
-/// the handshake separately if the peer needs them). A peer may only reassemble
-/// it while `chunk_size` is at least §5.4.1's 128-byte convention.
+/// self-describing at any chunk size: above the §5.4.1 default of 128 bytes it
+/// opens with a Set Chunk Size control message, so a peer reassembles it
+/// without being told the size out of band. The handshake stays the caller's
+/// job.
 #[derive(Debug, Clone)]
 pub struct RtmpMux {
     /// Maximum chunk size (§5.4.1); a smaller value fragments large video
@@ -358,9 +367,12 @@ impl Package for RtmpMux {
         let tags = split_flv(&flv)?;
 
         let mut writer = ChunkWriter::new();
-        writer.set_chunk_size(chunk_size);
-
         let mut out = Vec::new();
+        if chunk_size != DEFAULT_CHUNK_SIZE {
+            let control = ProtocolControl::SetChunkSize(chunk_size).try_to_message()?;
+            out.extend_from_slice(&writer.write(&control)?);
+            writer.set_chunk_size(chunk_size);
+        }
         for (tag_type, ts, body) in tags {
             let (chunk_stream_id, message_type_id) = match tag_type {
                 FLV_TAG_AUDIO => (CSID_AUDIO, msg_type::AUDIO),
