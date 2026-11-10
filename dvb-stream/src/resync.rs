@@ -54,7 +54,7 @@ pub fn resync(buf: &[u8]) -> Option<usize> {
 /// buf[0] = TS_SYNC_BYTE;
 /// buf[TS_PACKET_SIZE] = TS_SYNC_BYTE;
 /// assert_eq!(resync_confirmed(&buf), Some(0));
-/// assert_eq!(unconfirmed_candidate(&buf), None);
+/// assert_eq!(unconfirmed_candidate(&buf), Some(TS_PACKET_SIZE));
 /// ```
 ///
 /// Unlike [`resync`] this never accepts a lone sync byte: a `0x47` with no
