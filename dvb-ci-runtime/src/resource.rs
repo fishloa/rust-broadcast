@@ -1152,10 +1152,7 @@ mod tests {
             );
             assert!(ConditionalAccess.on_apdu(&buf).is_err(), "CA len {len}");
             assert!(DateTime::default().on_apdu(&buf).is_err(), "DT len {len}");
-            assert!(
-                HostControl.on_apdu(&buf).is_err(),
-                "HC len {len}"
-            );
+            assert!(HostControl.on_apdu(&buf).is_err(), "HC len {len}");
         }
     }
 }
