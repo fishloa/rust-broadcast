@@ -144,6 +144,9 @@ impl Resource for ResourceManager {
     }
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
+        if apdu.len() < APDU_TAG_LEN {
+            return Err(dvb_ci::Error::InvalidLength("short APDU"));
+        }
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
             // Module asks for the host's profile → reply with our resource list.
@@ -220,6 +223,9 @@ impl Resource for ApplicationInformation {
     }
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
+        if apdu.len() < APDU_TAG_LEN {
+            return Err(dvb_ci::Error::InvalidLength("short APDU"));
+        }
         let mut out = ResourceOut::default();
         if peek_tag(apdu) == Some(tag::APPLICATION_INFO) {
             let ai = ApplicationInfo::parse(apdu)?;
@@ -255,6 +261,9 @@ impl Resource for ConditionalAccess {
     }
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
+        if apdu.len() < APDU_TAG_LEN {
+            return Err(dvb_ci::Error::InvalidLength("short APDU"));
+        }
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
             Some(t) if t == tag::CA_INFO => {
@@ -378,6 +387,9 @@ impl Resource for DateTime {
     }
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
+        if apdu.len() < APDU_TAG_LEN {
+            return Err(dvb_ci::Error::InvalidLength("short APDU"));
+        }
         let mut out = ResourceOut::default();
         if peek_tag(apdu) == Some(tag::DATE_TIME_ENQ) {
             let enq = DateTimeEnq::parse(apdu)?;
@@ -492,6 +504,9 @@ impl Resource for Mmi {
     }
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
+        if apdu.len() < APDU_TAG_LEN {
+            return Err(dvb_ci::Error::InvalidLength("short APDU"));
+        }
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
             Some(t) if t == tag::ENQ => {
@@ -578,6 +593,9 @@ impl Resource for HostControl {
     }
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
+        if apdu.len() < APDU_TAG_LEN {
+            return Err(dvb_ci::Error::InvalidLength("short APDU"));
+        }
         let mut out = ResourceOut::default();
         // A CAM-originated host-control APDU that fails to parse (e.g. a padded
         // `tune`) is a protocol error: `?` surfaces it as `Notification::Error`
@@ -1117,5 +1135,18 @@ mod tests {
                 descrambling_ok: false,
             }]
         );
+    }
+
+    #[test]
+    fn short_apdu_returns_err() {
+        for len in 0..3usize {
+            let buf = vec![0u8; len];
+            assert!(Mmi::default().on_apdu(&buf).is_err(), "Mmi len {len}");
+            assert!(ResourceManager::new(vec![]).on_apdu(&buf).is_err(), "RM len {len}");
+            assert!(ApplicationInformation.on_apdu(&buf).is_err(), "AI len {len}");
+            assert!(ConditionalAccess.on_apdu(&buf).is_err(), "CA len {len}");
+            assert!(DateTime::default().on_apdu(&buf).is_err(), "DT len {len}");
+            assert!(HostControl::default().on_apdu(&buf).is_err(), "HC len {len}");
+        }
     }
 }
