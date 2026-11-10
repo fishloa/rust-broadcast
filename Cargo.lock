@@ -4603,7 +4603,6 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "quick-xml",
- "rtmp-runtime",
  "rtp-packet",
  "scte35-splice",
  "sdp-types",

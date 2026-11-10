@@ -35,9 +35,6 @@ mpeg-ts    = { path = "../mpeg-ts",  version = "0.7.0", default-features = false
 mpeg-pes   = { path = "../mpeg-pes", version = "0.7.0", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.7.0", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.6.0", default-features = false }
-# The RTMP chunk-size default: `rtmp.rs` re-exports `DEFAULT_CHUNK_SIZE` from
-# the RTMP session engine's own spec constant rather than declaring a copy.
-rtmp-runtime = { path = "../rtmp-runtime", version = "0.9.0", default-features = false }
 bytes      = { version = "1", default-features = false }
 # Caption presence detection (`caption_detect`): `cc_data()` triplets and the 708 service decoder.
 cc-data    = { path = "../cc-data", version = "0.8.0", default-features = false, features = ["decode"] }

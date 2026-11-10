@@ -52,9 +52,8 @@ const HANDSHAKE_TIME_LEN: usize = 4;
 /// Length of the random (C1/S1) / random-echo (C2/S2) field (§5.2.3 / §5.2.4).
 pub const HANDSHAKE_RANDOM_LEN: usize = HANDSHAKE_PACKET_LEN - 2 * HANDSHAKE_TIME_LEN;
 
-/// Default maximum chunk size before any Set Chunk Size (§5.4 / §5.4.1),
-/// re-exported from `rtmp-runtime` so both RTMP engines share one default.
-pub const DEFAULT_CHUNK_SIZE: usize = rtmp_runtime::chunk::DEFAULT_CHUNK_SIZE as usize;
+/// Default maximum chunk size before any Set Chunk Size (§5.4 / §5.4.1).
+pub const DEFAULT_CHUNK_SIZE: usize = 128;
 
 /// Chunk stream id reserved for protocol control messages and commands (§5.4:
 /// control messages are sent on chunk stream 2 with message stream id 0).
