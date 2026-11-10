@@ -587,6 +587,21 @@ mod tests {
         );
     }
 
+    /// The AMF0 String marker carries a 16-bit length prefix, so a longer
+    /// value is rejected (`Unsupported`, pointing at the Long String marker)
+    /// rather than written with a wrapped length.
+    #[test]
+    fn string_beyond_the_16_bit_prefix_is_rejected() {
+        let value = Amf0Value::String("x".repeat(0x1_0000));
+        let err = value.try_to_bytes().unwrap_err();
+        assert!(
+            matches!(err, RtmpError::Unsupported { .. }),
+            "expected Unsupported for a 65 536-byte string, got {err:?}"
+        );
+        let boundary = Amf0Value::String("x".repeat(usize::from(u16::MAX)));
+        round_trip(&boundary);
+    }
+
     /// The boundary: exactly 65 535 bytes (u16::MAX) still round-trips.
     #[test]
     fn object_max_key_length_round_trips() {

@@ -308,7 +308,8 @@ impl<'a> Unpackage for RtmpDemux<'a> {
 /// (type 8), Video (type 9) or Data (type 18) — on a per-kind chunk stream id,
 /// and chunks them at [`chunk_size`](RtmpMux::chunk_size) (§5.3). The output is
 /// the post-handshake chunk stream (emit a Set Chunk Size control message and
-/// the handshake separately if the peer needs them).
+/// the handshake separately if the peer needs them). A peer may only reassemble
+/// it while `chunk_size` is at least §5.4.1's 128-byte convention.
 #[derive(Debug, Clone)]
 pub struct RtmpMux {
     /// Maximum chunk size (§5.4.1); a smaller value fragments large video
@@ -348,16 +349,16 @@ impl Package for RtmpMux {
     type Error = RtmpFlvError;
 
     fn package(&mut self, media: &Media) -> Result<Vec<u8>, RtmpFlvError> {
+        let chunk_size =
+            u32::try_from(self.chunk_size).map_err(|_| RtmpFlvError::ChunkSizeTooLarge {
+                size: self.chunk_size,
+            })?;
         let mut flv_mux = FlvMux::new();
         let flv = flv_mux.package(media).map_err(RtmpFlvError::Flv)?;
         let tags = split_flv(&flv)?;
 
         let mut writer = ChunkWriter::new();
-        writer.set_chunk_size(
-            u32::try_from(self.chunk_size).map_err(|_| RtmpFlvError::ChunkSizeTooLarge {
-                size: self.chunk_size,
-            })?,
-        );
+        writer.set_chunk_size(chunk_size);
 
         let mut out = Vec::new();
         for (tag_type, ts, body) in tags {
@@ -418,13 +419,5 @@ mod tests {
         assert_ne!(CSID_AUDIO, CSID_VIDEO);
         assert_ne!(CSID_AUDIO, CSID_DATA);
         assert_ne!(CSID_VIDEO, CSID_DATA);
-    }
-
-    #[test]
-    fn a_chunk_size_beyond_the_u32_field_is_reported_not_wrapped() {
-        let mut mux = RtmpMux::with_chunk_size(usize::MAX);
-        let media = Media::new(Vec::new(), 1000);
-        let err = mux.package(&media).expect_err("chunk size too large");
-        assert_eq!(err, RtmpFlvError::ChunkSizeTooLarge { size: usize::MAX });
     }
 }

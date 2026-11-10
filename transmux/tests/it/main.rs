@@ -137,6 +137,7 @@ mod rtmp;
 mod rtmp_client_play;
 mod rtmp_ingest_fixture;
 mod rtmp_play_peer;
+mod rtmp_spoke_equivalence;
 mod rtp;
 mod rtp_stream;
 mod rtp_stream_paff;

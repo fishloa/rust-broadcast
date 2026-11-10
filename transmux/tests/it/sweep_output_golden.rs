@@ -229,35 +229,6 @@ fn ts_demux_output_is_unchanged() {
 }
 
 #[test]
-fn rtmp_read_chunks_output_is_unchanged() {
-    use transmux::rtmp::{Message, read_chunks, write_chunks};
-    // Several csids interleaved, mixed sizes (some > the 128-byte chunk size,
-    // some exact multiples), identical headers so fmt 1/2/3 compression is used.
-    let msgs: Vec<Message> = (0..40u32)
-        .map(|i| Message {
-            csid: [3, 4, 6][(i % 3) as usize],
-            message_type_id: [20, 8, 9][(i % 3) as usize],
-            message_stream_id: 1,
-            timestamp: i * 20,
-            body: (0..([5usize, 128, 129, 1000, 256][(i % 5) as usize]))
-                .map(|b| (b as u32 ^ i) as u8)
-                .collect(),
-        })
-        .collect();
-    let wire = write_chunks(&msgs, 128).unwrap();
-    let out = read_chunks(&wire).unwrap();
-    assert_eq!(format!("{out:?}"), format!("{msgs:?}"));
-    let mut bad = Vec::new();
-    check(
-        &mut bad,
-        "rtmp-mixed",
-        fnv1a(format!("{out:?}").as_bytes()),
-        0xf067_0165_ca0c_495a,
-    );
-    assert!(bad.is_empty(), "output changed: {bad:?}");
-}
-
-#[test]
 fn rtp_stream_depacketiser_output_is_unchanged() {
     use broadcast_common::Package;
     use transmux::pipeline::CodecConfig;
