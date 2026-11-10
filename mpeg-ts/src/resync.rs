@@ -768,5 +768,4 @@ mod tests {
         assert!(losses[0].truncated_tail);
         assert_eq!(losses[0].dropped_bytes, 5);
     }
-
 }

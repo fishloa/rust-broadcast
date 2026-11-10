@@ -1654,7 +1654,9 @@ mod tests {
         reasm.feed_with_continuity(&section[183..250], false, 0, true);
         reasm.feed_with_continuity(&section[250..], false, 1, false);
 
-        let out = reasm.pop_section().expect("section survives the discontinuity");
+        let out = reasm
+            .pop_section()
+            .expect("section survives the discontinuity");
         assert_eq!(out.as_ref(), &section[..]);
         assert!(reasm.pop_section().is_none());
     }
