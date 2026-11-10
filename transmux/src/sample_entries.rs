@@ -196,6 +196,31 @@ impl OpaqueBox {
     }
 }
 
+/// Write one visual sample entry: its box header, the fixed
+/// `VisualSampleEntry` fields (ISO/IEC 14496-12:2026 §12.1.3), the codec
+/// configuration box `config`, then every `extra_boxes` child. Shared by the
+/// `avc1`/`hvc1`/`vvc1` entries (#2005).
+pub(crate) fn serialize_visual_sample_entry(
+    buf: &mut [u8],
+    codec_type: &[u8; 4],
+    need: usize,
+    visual: &VisualSampleEntryFields,
+    config: &[u8],
+    extra_boxes: &[OpaqueBox],
+) -> Result<usize> {
+    need_out(buf, need)?;
+    let mut cursor = crate::box_types::write_box_header(buf, codec_type, need)?;
+    cursor += visual.serialize_into(&mut buf[cursor..])?;
+    let end = cursor + config.len();
+    need_out(buf, end)?;
+    buf[cursor..end].copy_from_slice(config);
+    cursor = end;
+    for eb in extra_boxes {
+        cursor += eb.serialize_into(&mut buf[cursor..])?;
+    }
+    Ok(cursor)
+}
+
 /// Find a config box (e.g. `avcC`) inside the sample entry's config region.
 /// Returns the full box bytes (including 8-byte header).
 ///
@@ -405,15 +430,16 @@ impl Serialize for AVCSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        need_out(buf, need)?;
-        let mut cursor = 0usize;
-        cursor += crate::box_types::write_box_header(buf, &self.codec_type, need)?;
-        cursor += self.visual.serialize_into(&mut buf[cursor..])?;
-        cursor += self.config.serialize_into(&mut buf[cursor..])?;
-        for eb in &self.extra_boxes {
-            cursor += eb.serialize_into(&mut buf[cursor..])?;
-        }
-        Ok(cursor)
+        let mut config = alloc::vec![0u8; self.config.serialized_len()];
+        self.config.serialize_into(&mut config)?;
+        serialize_visual_sample_entry(
+            buf,
+            &self.codec_type,
+            need,
+            &self.visual,
+            &config,
+            &self.extra_boxes,
+        )
     }
 }
 
@@ -678,15 +704,16 @@ impl Serialize for HEVCSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        need_out(buf, need)?;
-        let mut cursor = 0usize;
-        cursor += crate::box_types::write_box_header(buf, &self.codec_type, need)?;
-        cursor += self.visual.serialize_into(&mut buf[cursor..])?;
-        cursor += self.config.serialize_into(&mut buf[cursor..])?;
-        for eb in &self.extra_boxes {
-            cursor += eb.serialize_into(&mut buf[cursor..])?;
-        }
-        Ok(cursor)
+        let mut config = alloc::vec![0u8; self.config.serialized_len()];
+        self.config.serialize_into(&mut config)?;
+        serialize_visual_sample_entry(
+            buf,
+            &self.codec_type,
+            need,
+            &self.visual,
+            &config,
+            &self.extra_boxes,
+        )
     }
 }
 
@@ -788,15 +815,16 @@ impl Serialize for VVCSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        need_out(buf, need)?;
-        let mut cursor = 0usize;
-        cursor += crate::box_types::write_box_header(buf, &self.codec_type, need)?;
-        cursor += self.visual.serialize_into(&mut buf[cursor..])?;
-        cursor += self.config.serialize_into(&mut buf[cursor..])?;
-        for eb in &self.extra_boxes {
-            cursor += eb.serialize_into(&mut buf[cursor..])?;
-        }
-        Ok(cursor)
+        let mut config = alloc::vec![0u8; self.config.serialized_len()];
+        self.config.serialize_into(&mut config)?;
+        serialize_visual_sample_entry(
+            buf,
+            &self.codec_type,
+            need,
+            &self.visual,
+            &config,
+            &self.extra_boxes,
+        )
     }
 }
 

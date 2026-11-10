@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SampleAuxInfoSizesBox` reads and writes `saiz` versions 1 and 2 (16- and 32-bit `default_sample_info_size` / `sample_info_size[]`, ISO/IEC 14496-12:2026 §8.7.8.2) instead of reading every version as 8-bit sizes; a version above 2 is rejected with a typed error (#1907).
 - `DataReferenceBox` keeps each entry's four-CC: a `urn `, `imdt` or `snim` entry was parsed as `url ` and re-serialized with the type rewritten, so the round trip was not byte-identical and the entry changed meaning (#1908).
 - The demuxed `TrackSpec::display` takes the sample aspect ratio from the sample entry's `pasp` even when the SPS VUI declares a different one, as ISO/IEC 14496-12:2026 §12.1.4.1 says `pasp` over-rides the codec's own structures (it used to fill in only an unspecified VUI ratio). For an in-band (`avc3`/`hev1`) track `pasp` applies to the access units whose SPS declares the sample entry's ratio; a later in-band SPS with a different ratio is reported as it is. `clap` crop precedence is not applied (#1909, follow-up #1918).
+### Changed
+- The container box writers share one FullBox header writer and one visual sample entry writer, and the fragmented-init `trak` is assembled from a small builder per box instead of one function; written bytes are unchanged (#2004, #2005, #2023).
 ### Added
 - `InputDegradation::Scrambled` (on the `#[non_exhaustive]` enum, so not breaking): reported once per payload packet with `transport_scrambling_control != 0` on a PES-carried PID.
 
