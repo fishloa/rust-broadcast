@@ -334,18 +334,7 @@ impl Serialize for TrackFragmentHeaderBox {
         let flags = self.effective_flags();
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let len = broadcast_common::len::fit_u32(need, "tfhd size")?;
-        let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&len.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"tfhd");
-        c += 4;
-        buf[c] = 0;
-        let fb = flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
+        let mut c = crate::box_types::write_full_box_header(buf, b"tfhd", need, 0, flags, true)?;
         buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
         c += 4;
         if let Some(v) = self.base_data_offset {
@@ -443,12 +432,7 @@ impl Serialize for TrackFragmentBaseMediaDecodeTimeBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0;
-        c += crate::box_types::write_compact_box_header(buf, b"tfdt", need)?;
-        buf[c] = self.version;
-        buf[c + 1] = 0;
-        buf[c + 2] = 0;
-        buf[c + 3] = 0;
-        c += 4;
+        c += crate::box_types::write_full_box_header(buf, b"tfdt", need, self.version, 0, true)?;
         if self.version == 0 {
             buf[c..c + 4].copy_from_slice(&self.v0.to_be_bytes());
             c += 4;
@@ -768,7 +752,6 @@ impl Serialize for TrackFragmentRunBox {
         self.check_sample_fields(flags)?;
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut c = crate::box_types::write_box_header(buf, b"trun", need)?;
         // §8.8.8.2: version 1 makes `sample_composition_time_offset` *signed*.
         // Writing version 0 with a negative offset would reinterpret it as a
         // huge positive one (a two's-complement wrap in most readers), so any
@@ -780,12 +763,8 @@ impl Serialize for TrackFragmentRunBox {
             .iter()
             .any(|s| s.sample_composition_time_offset.is_some_and(|v| v < 0));
         let version = if needs_v1 { 1 } else { self.version };
-        buf[c] = version;
-        let fb = flags.to_be_bytes();
-        buf[c + 1] = fb[1];
-        buf[c + 2] = fb[2];
-        buf[c + 3] = fb[3];
-        c += 4;
+        let mut c =
+            crate::box_types::write_full_box_header(buf, b"trun", need, version, flags, false)?;
         let sample_count = broadcast_common::len::fit_u32(self.samples.len(), "sample_count")?;
         buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
         c += 4;

@@ -366,6 +366,31 @@ pub(crate) fn write_compact_box_header(
     Ok(BOX_HEADER_MIN_SIZE)
 }
 
+/// Write a FullBox header: box header (size + type) followed by the 4-byte
+/// FullBox extension (`version`(8) + `flags`(24)), returning the number of
+/// bytes written. Replaces the per-box copy of this sequence (#2004).
+pub(crate) fn write_full_box_header(
+    buf: &mut [u8],
+    fourcc: &[u8; 4],
+    need: usize,
+    version: u8,
+    flags: u32,
+    compact: bool,
+) -> Result<usize> {
+    let mut c = if compact {
+        write_compact_box_header(buf, fourcc, need)?
+    } else {
+        write_box_header(buf, fourcc, need)?
+    };
+    need_out(buf, c + FULLBOX_EXTRA_SIZE)?;
+    buf[c] = version;
+    c += 1;
+    let fb = flags.to_be_bytes();
+    buf[c..c + 3].copy_from_slice(&fb[1..]);
+    c += 3;
+    Ok(c)
+}
+
 /// The whole box `bytes` in the compact 8-byte-header form.
 ///
 /// Typed box readers index a box's fields at fixed offsets from the start of
