@@ -39,13 +39,13 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
+#[cfg(test)]
+use axum::http::StatusCode;
+use axum::response::Response;
 use axum::routing::get;
-use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
 
 use crate::http;
-use crate::origin::resource::{BlockingRequestGuard, cors_preflight};
+use crate::origin::resource::cors_preflight;
 use crate::output::llhls::BlockingReloadQuery;
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
@@ -132,34 +132,7 @@ pub(crate) async fn media_playlist(
     State(state): State<TsHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    let serving = match http::resolve_route_program(&state.route) {
-        Ok(serving) => serving,
-        Err(resp) => return *resp,
-    };
-    let trunk = serving.trunk();
-    let ll_hls = serving.ll_hls();
-    let request = HlsRequest::Playlist {
-        track_id: DEFAULT_TRACK_ID,
-        query: q.into(),
-    };
-    let (resp, timed_out) = http::resolve_blocking_timed(
-        &trunk,
-        ll_hls.as_ref(),
-        request,
-        http::playlist_reload_timeout(&ll_hls),
-        BlockingRequestGuard::new,
-    )
-    .await;
-    http::into_playlist_response(resp, timed_out, |body| match body {
-        HlsBody::Playlist(m) => {
-            ([(header::CONTENT_TYPE, http::PLAYLIST_CONTENT_TYPE)], m).into_response()
-        }
-        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        // `HlsBody` is `#[non_exhaustive]`; a future body variant this
-        // playlist route doesn't understand is treated the same as a
-        // resource body -- not found here.
-        _ => StatusCode::NOT_FOUND.into_response(),
-    })
+    crate::output::hls::media_playlist(state.route.clone(), false, false, q).await
 }
 
 #[cfg(test)]
