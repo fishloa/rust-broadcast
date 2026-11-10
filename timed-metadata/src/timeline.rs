@@ -115,6 +115,12 @@ impl PtsUnroller {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_cue_just_before_the_origin_clamps_to_the_origin() {
+        let mut u = PtsUnroller::seeded(0);
+        assert_eq!(u.unroll(PTS_WRAP - 90_000), 0);
+    }
+
     fn splice_2002() -> alloc::vec::Vec<u8> {
         test_fixtures::read("scte35/splice-insert-2002.bin")
     }
