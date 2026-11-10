@@ -5,6 +5,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 ## [Unreleased]
 ### Fixed
 - Two Start Box..End Box segments on one Teletext row are separated by a space instead of being glued together.
+- `PtsUnroller::unroll` now returns the interpretation nearest the previous value, so a cue 1 s before the anchor modulo 2^33 is placed 1 s before the origin instead of ~26.5 h later.
 - `Timeline` now seeds its 33-bit PTS unroller from the anchor, so a cue just after a PTS wrap that follows an anchor just before it is placed 2 s after the anchor instead of ~26.5 h before it (wrong `START-DATE`).
 
 ## [0.9.0] - 2026-11-07
