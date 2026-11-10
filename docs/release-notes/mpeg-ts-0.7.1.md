@@ -5,12 +5,12 @@ status: DRAFT
 
 _Released 2026-11-10._
 
-Patch release: section reassembly and resync fixes.
+Additive release: a continuity-aware section-reassembly entry point and resync tail recovery, plus the fixes they carry. Nothing published changes signature.
 
 Version: 0.7.0 -> 0.7.1.
 
 ## Added
-- `SectionReassembler::feed_with_continuity`: `feed` plus the packet's `continuity_counter`, discarding a legally retransmitted (same-counter) continuation packet instead of appending it twice (ISO/IEC 13818-1 §2.4.3.3).
+- `SectionReassembler::feed_with_continuity(payload, pusi, continuity_counter, discontinuity)`: `feed` plus the packet's `continuity_counter` and adaptation-field `discontinuity_indicator`, discarding a legally retransmitted (same-counter) continuation packet instead of appending it twice (ISO/IEC 13818-1 §2.4.3.3); with `discontinuity` set an unchanged counter is legal and the packet is processed.
 - `TsResync::take_tail_packets`: drains the aligned packets `finish` recovered at end of input (`finish` keeps its signature).
 
 ## Fixed

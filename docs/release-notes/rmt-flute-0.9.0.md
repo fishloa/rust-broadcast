@@ -5,7 +5,7 @@ status: DRAFT
 
 _Released 2026-11-10._
 
-Minor release: byte-exact round trips for LCT/NORM/ExtTime plus a `Parse` impl, with breaking struct changes.
+Breaking-class release (0.8 -> 0.9): `LctHeader` and `NormCmd` gain their reserved fields so parse then serialize is byte-exact, and `ExtTime`'s builders become fallible. Also adds `Parse` impls for `LctHeader`, `HeaderExtension` and `ExtTime`.
 
 Version: 0.8.0 -> 0.9.0.
 
