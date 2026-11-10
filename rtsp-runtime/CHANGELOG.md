@@ -5,6 +5,8 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- A `3xx` or `454 Session Not Found` response now resets the session (id, transport, timeout, authenticator) and the caller must `SETUP` again.
 ### Added
 - `ServerSession::with_describe_sdp` (the `DESCRIBE` body, `Content-Type: application/sdp`) and `with_server_ports` (the `server_port` pair a UDP `SETUP` reply advertises); an `OPTIONS` reply now carries `Public` listing the implemented methods (audit B).
 ### Fixed

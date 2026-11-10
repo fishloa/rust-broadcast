@@ -46,6 +46,17 @@ pub fn resync(buf: &[u8]) -> Option<usize> {
 /// Find the byte offset of the first sync byte in `buf` that is confirmed by a
 /// second sync byte exactly one packet later.
 ///
+/// # Examples
+///
+/// ```
+/// use dvb_stream::resync::{resync_confirmed, unconfirmed_candidate, TS_PACKET_SIZE, TS_SYNC_BYTE};
+/// let mut buf = vec![0u8; TS_PACKET_SIZE * 2];
+/// buf[0] = TS_SYNC_BYTE;
+/// buf[TS_PACKET_SIZE] = TS_SYNC_BYTE;
+/// assert_eq!(resync_confirmed(&buf), Some(0));
+/// assert_eq!(unconfirmed_candidate(&buf), Some(TS_PACKET_SIZE));
+/// ```
+///
 /// Unlike [`resync`] this never accepts a lone sync byte: a `0x47` with no
 /// following packet in `buf` is "not yet known" and yields `None`, so a
 /// byte-stream caller can wait for more input instead of locking onto a

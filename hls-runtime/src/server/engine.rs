@@ -3661,6 +3661,9 @@ impl HlsOrigin {
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<HlsBody> {
+        if query.hls_msn.is_none() && self.hold_cold_playlist && !self.has_closed_segment() {
+            return EgressResponse::pending(await_policy, now, now);
+        }
         // RFC 8216bis §6.2.5.2: `_HLS_part` without `_HLS_msn` MUST be a Bad
         // Request. With `_HLS_msn` it is legitimate on a playlist without
         // Partial Segments (Apple's validator sends `_HLS_msn=M&_HLS_part=N`
@@ -4204,6 +4207,14 @@ mod tests {
         }
     }
 
+    fn iframe_playlist_request(query: BlockingQuery) -> HlsRequest {
+        HlsRequest::IFramePlaylist {
+            track_id: DEFAULT_TRACK_ID,
+            query,
+            media_playlist_name: "media.m3u8".to_string(),
+        }
+    }
+
     fn resolve_with_deadline(
         origin: &HlsOrigin,
         request: HlsRequest,
@@ -4267,6 +4278,64 @@ mod tests {
             panic!("expected Ready(Playlist), got {response:?}");
         };
         assert!(body.contains("#EXTINF:"), "body: {body}");
+    }
+
+    #[test]
+    fn cold_iframe_playlist_request_without_msn_awaits() {
+        let (_trunk, origin, writer) = make_cold_origin(true);
+        part(&writer, 1, 0, true);
+        let response = resolve_with_deadline(
+            &origin,
+            iframe_playlist_request(BlockingQuery::default()),
+            0,
+            COLD_HOLD_DEADLINE_NS,
+        );
+        assert!(
+            matches!(response, EgressResponse::Await { .. }),
+            "got {response:?}"
+        );
+    }
+
+    #[test]
+    fn cold_iframe_playlist_request_is_answered_once_a_segment_closes() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let writer = trunk.segment_writer().expect("first segment writer");
+        let origin = HlsOrigin::builder(Arc::clone(&trunk))
+            .target_duration_secs(4.0)
+            .window_segments(nz(4))
+            .low_latency(500)
+            .instance(7)
+            .hold_cold_playlist(true)
+            .build()
+            .expect("both required fields set");
+        let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
+        origin.set_init(Bytes::from(init));
+        let bytes = test_fixtures::read("hls/cmaf-fmp4/index0.m4s");
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(bytes),
+                SegmentSeq::new(1),
+                Duration::from_secs(1),
+                Timestamp::from_nanos(0),
+                SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish");
+        let response = resolve_with_deadline(
+            &origin,
+            iframe_playlist_request(BlockingQuery::default()),
+            0,
+            COLD_HOLD_DEADLINE_NS,
+        );
+        let EgressResponse::Ready {
+            body: HlsBody::Playlist(body),
+            ..
+        } = response
+        else {
+            panic!("expected Ready(Playlist), got {response:?}");
+        };
+        assert!(body.contains("#EXT-X-I-FRAMES-ONLY"), "body: {body}");
     }
 
     #[test]

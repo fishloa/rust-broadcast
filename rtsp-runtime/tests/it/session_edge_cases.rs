@@ -36,11 +36,9 @@ fn server_picks_the_first_supported_transport_spec_instead_of_answering_461() {
 
 #[test]
 fn session_timeout_above_u32_is_kept_not_replaced_by_the_default() {
-    let h = SessionHeader::parse("abc;timeout=4294967296").unwrap();
-    assert_eq!(
-        h.timeout,
-        Some(std::time::Duration::from_secs(4_294_967_296))
-    );
+    let (h, w) = SessionHeader::parse_with_warnings("abc;timeout=4294967296").unwrap();
+    assert_eq!(h.timeout, Some(std::time::Duration::from_secs(60)));
+    assert_eq!(w.len(), 1);
 }
 
 #[test]
