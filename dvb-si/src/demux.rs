@@ -102,6 +102,8 @@ const KEY_EXT_SHIFT: u32 = 21;
 const KEY_SECTION_NUMBER_SHIFT: u32 = 37;
 /// Gate-key bit position of `table_id`.
 const KEY_TABLE_ID_SHIFT: u32 = 13;
+/// Offset of `section_number` within a long-form section.
+const SECTION_NUMBER_OFFSET: usize = 6;
 /// Offset of `last_section_number` within a long-form section.
 const LAST_SECTION_NUMBER_OFFSET: usize = 7;
 /// Trailing CRC-32 length.
@@ -374,7 +376,7 @@ pub struct SiDemux {
     pmt_pids: BTreeSet<Pid>,
     /// `(transport_stream_id, version_number)` of the PAT whose sections are
     /// being accumulated in `pat_sections`.
-    pat_generation: Option<(u16, u8)>,
+    pat_generation: Option<(u16, u8, bool)>,
     /// PMT PIDs named by each section (keyed by `section_number`) of the
     /// current PAT generation.
     pat_sections: BTreeMap<u8, BTreeSet<Pid>>,
@@ -568,7 +570,16 @@ impl SiDemux {
         let Ok(pat) = PatSection::parse(bytes) else {
             return;
         };
-        let generation = (pat.transport_stream_id, pat.version_number);
+        // Only a current PAT changes the followed PMT PIDs; a next PAT
+        // must not touch the accumulator.
+        if !pat.current_next_indicator {
+            return;
+        }
+        let generation = (
+            pat.transport_stream_id,
+            pat.version_number,
+            pat.current_next_indicator,
+        );
         if self.pat_generation != Some(generation) {
             self.pat_generation = Some(generation);
             self.pat_sections.clear();
@@ -582,7 +593,8 @@ impl SiDemux {
         for &pid in &section_pids {
             self.pids.entry(pid).or_default();
         }
-        self.pat_sections.insert(bytes[6], section_pids);
+        self.pat_sections
+            .insert(bytes[SECTION_NUMBER_OFFSET], section_pids);
         let last_section = bytes[LAST_SECTION_NUMBER_OFFSET];
         let complete = (0..=last_section).all(|n| self.pat_sections.contains_key(&n));
         let mut union: BTreeSet<Pid> = self.pat_sections.values().flatten().copied().collect();
@@ -763,5 +775,47 @@ mod tests {
         assert_eq!(demux.feed(&pkt).count(), 1, "emit_repeats re-emits");
         assert_eq!(demux.stats().suppressed, 0);
         assert_eq!(demux.stats().emitted, 2);
+    }
+
+    #[test]
+    fn a_next_pat_does_not_change_the_followed_pmt_pids() {
+        use crate::tables::pat::{PatEntry, PatSection};
+        use broadcast_common::Serialize;
+        use mpeg_ts::pid::Pid;
+
+        fn pat_bytes(v: u8, cur: bool, sn: u8, last: u8, pid: u16) -> Vec<u8> {
+            let pat = PatSection::new(
+                0x1111,
+                v,
+                cur,
+                sn,
+                last,
+                vec![PatEntry::new(sn as u16 + 1, Pid::new(pid))],
+            );
+            let mut b = vec![0u8; pat.serialized_len()];
+            pat.serialize_into(&mut b).unwrap();
+            b
+        }
+
+        let mut d = SiDemux::builder().build();
+        d.feed(&ts_packet(0, &pat_bytes(0, true, 0, 1, 0x0100)))
+            .for_each(drop);
+        d.feed(&ts_packet(0, &pat_bytes(0, true, 1, 1, 0x0101)))
+            .for_each(drop);
+
+        // A "next" PAT (current_next=0), different version, single section.
+        d.feed(&ts_packet(0, &pat_bytes(1, false, 0, 0, 0x0300)))
+            .for_each(drop);
+
+        for &p in &[0x0100u16, 0x0101] {
+            let sec = pmt_section(1, 0, 0x0111);
+            let evts: Vec<_> = d.feed(&ts_packet(p, &sec)).collect();
+            assert_eq!(
+                evts.len(),
+                1,
+                "PMT 0x{:04X} should stay followed after next PAT",
+                p
+            );
+        }
     }
 }
