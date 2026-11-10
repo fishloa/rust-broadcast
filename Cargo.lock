@@ -3600,7 +3600,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
- "transmux",
  "url",
 ]
 
@@ -4587,6 +4586,7 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "quick-xml",
+ "rtmp-runtime",
  "rtp-packet",
  "scte35-splice",
  "sdp-types",

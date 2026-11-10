@@ -42,7 +42,6 @@ name = "capture_publish"
 required-features = ["tokio"]
 
 [dev-dependencies]
-transmux   = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
 serde_json = { workspace = true }
 test-alloc = { path = "../test-alloc" }
 test-fixtures = { path = "../test-fixtures" }
