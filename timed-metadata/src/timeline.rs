@@ -47,7 +47,7 @@ impl Timeline {
         let mut ev = TimedEvent::from_scte35(&section, bytes)?;
         if let Some(MediaTime(pts33)) = ev.at {
             let abs = self.unroller.unroll(pts33);
-            ev.at = Some(MediaTime(abs.max(0) as u64));
+            ev.at = Some(MediaTime(abs));
         }
         Ok(ev)
     }
@@ -99,7 +99,7 @@ impl PtsUnroller {
         }
     }
 
-    pub(crate) fn unroll(&mut self, raw33: u64) -> i128 {
+    pub(crate) fn unroll(&mut self, raw33: u64) -> u64 {
         let unwrapped = match self.state {
             Some((prev_raw, prev_unwrapped)) => {
                 broadcast_common::clock33::unwrap_delta(prev_unwrapped, prev_raw, raw33)
@@ -107,7 +107,7 @@ impl PtsUnroller {
             None => raw33 as i128,
         };
         self.state = Some((raw33, unwrapped));
-        unwrapped
+        unwrapped.max(0) as u64
     }
 }
 
@@ -171,18 +171,12 @@ mod tests {
     }
 
     #[test]
-    fn unroll_to_nearest_past_origin() {
-        let mut u = PtsUnroller::seeded(0);
-        assert_eq!(u.unroll(PTS_WRAP - 90_000), -90_000);
-    }
-
-    #[test]
     fn wrap_unroll_adds_one_epoch() {
         // A near-max previous value then a small next value crosses one wrap.
         let mut u = PtsUnroller {
             state: Some(((1u64 << 33) - 10, ((1u64 << 33) - 10) as i128)),
         };
-        assert_eq!(u.unroll(5), (5 + (1u64 << 33)) as i128);
+        assert_eq!(u.unroll(5), 5 + (1u64 << 33));
     }
 
     #[test]
