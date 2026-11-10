@@ -13,7 +13,7 @@
 //! splits a [`Message`] into `fmt` 0 + 3 chunks at the configured chunk
 //! size).
 
-use alloc::collections::BTreeMap as HashMap;
+use alloc::collections::BTreeMap;
 use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
@@ -647,7 +647,7 @@ struct CsidState {
 #[derive(Debug)]
 pub struct ChunkAssembler {
     chunk_size: u32,
-    csids: HashMap<u32, CsidState>,
+    csids: BTreeMap<u32, CsidState>,
     /// Bytes carried over from a previous `push` call that did not yet form
     /// a complete chunk (partial basic header, message header, extended
     /// timestamp, or payload slice).
@@ -685,7 +685,7 @@ impl ChunkAssembler {
     pub fn new() -> Self {
         Self {
             chunk_size: DEFAULT_CHUNK_SIZE,
-            csids: HashMap::new(),
+            csids: BTreeMap::new(),
             pending: Vec::new(),
             cursor: 0,
             in_progress_bytes: 0,
@@ -932,7 +932,7 @@ impl ChunkAssembler {
     /// - `Err(_)` — structurally invalid input. `states` is left untouched.
     fn try_parse_one(
         buf: &[u8],
-        states: &mut HashMap<u32, CsidState>,
+        states: &mut BTreeMap<u32, CsidState>,
         chunk_size: u32,
         in_progress_bytes: &mut usize,
         max_in_progress_bytes: usize,
