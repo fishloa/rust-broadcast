@@ -145,15 +145,7 @@ impl Serialize for TrackEncryptionBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_compact_box_header(buf, b"tenc", need)?;
-        buf[c] = self.version;
-        c += 1;
-        buf[c] = 0;
-        c += 1;
-        buf[c] = 0;
-        c += 1;
-        buf[c] = 0;
-        c += 1;
+        c += crate::box_types::write_full_box_header(buf, b"tenc", need, self.version, 0, true)?;
         // reserved (8)
         buf[c] = 0;
         c += 1;
@@ -375,12 +367,14 @@ impl Serialize for SampleEncryptionBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"senc", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"senc",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         let sample_count = broadcast_common::len::fit_u32(self.entries.len(), "sample_count")?;
         buf[c..c + 4].copy_from_slice(&sample_count.to_be_bytes());
         c += 4;
@@ -509,15 +503,7 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"pssh", need)?;
-        buf[c] = self.version;
-        c += 1;
-        buf[c] = 0;
-        c += 1;
-        buf[c] = 0;
-        c += 1;
-        buf[c] = 0;
-        c += 1;
+        c += crate::box_types::write_full_box_header(buf, b"pssh", need, self.version, 0, false)?;
         buf[c..c + 16].copy_from_slice(&self.system_id);
         c += 16;
         if self.version > 0 {
@@ -681,12 +667,14 @@ impl Serialize for SampleAuxInfoSizesBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"saiz", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"saiz",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         if (self.flags & 0x01) != 0 {
             let ty = self.aux_info_type.unwrap_or(0);
             let param = self.aux_info_type_parameter.unwrap_or(0);
@@ -825,12 +813,14 @@ impl Serialize for SampleAuxInfoOffsetsBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"saio", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"saio",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         if (self.flags & 0x01) != 0 {
             let ty = self.aux_info_type.unwrap_or(0);
             let param = self.aux_info_type_parameter.unwrap_or(0);
@@ -949,12 +939,14 @@ impl Serialize for SchemeTypeBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"schm", need)?;
-        buf[c] = self.version;
-        c += 1;
-        let fb = self.flags.to_be_bytes();
-        buf[c..c + 3].copy_from_slice(&fb[1..]);
-        c += 3;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"schm",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         buf[c..c + 4].copy_from_slice(&self.scheme_type);
         c += 4;
         buf[c..c + 4].copy_from_slice(&self.scheme_version.to_be_bytes());

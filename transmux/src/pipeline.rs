@@ -600,26 +600,22 @@ fn tkhd_presentation_size(
     )
 }
 
-/// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
-fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
-    let audio = t.config.is_audio();
-    let stsd::TrackMedia {
-        entry: stsd_entry,
-        kind,
-        tkhd_w,
-        tkhd_h,
-    } = stsd::track_media(t)?;
-    let (vmhd, smhd) = (kind.vmhd(), kind.smhd());
-    let minf_header = kind.minf_header();
-    let (handler_type, handler_name) = (kind.handler_type(), kind.handler_name());
+/// An empty `stsd` holding the track's single sample entry: the init segment
+/// declares the codec, and every sample arrives through the fragments.
+fn empty_sample_description(entry: SampleEntryVariant) -> SampleDescriptionBox {
+    SampleDescriptionBox {
+        version: entry.required_stsd_version(),
+        flags: 0,
+        entries: vec![entry],
+    }
+}
 
-    let stbl = SampleTableBox {
+/// The empty `stbl` of a fragmented init: `stsd` plus the four sample tables a
+/// fragmenting writer leaves unpopulated (their entries land in `moof`).
+fn empty_sample_table(stsd: SampleDescriptionBox) -> SampleTableBox {
+    SampleTableBox {
         children: vec![
-            StblChild::Stsd(SampleDescriptionBox {
-                version: stsd_entry.required_stsd_version(),
-                flags: 0,
-                entries: vec![stsd_entry],
-            }),
+            StblChild::Stsd(stsd),
             StblChild::Stts(TimeToSampleBox {
                 version: 0,
                 flags: 0,
@@ -643,13 +639,16 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 entries: vec![],
             }),
         ],
-    };
+    }
+}
 
-    let dinf = DataInformationBox::new(
+/// The `dinf` of a self-contained track: one `url ` entry with flags bit 0 set
+/// (media in this file).
+fn self_contained_data_information() -> DataInformationBox {
+    DataInformationBox::new(
         Some(DataReferenceBox {
             version: 0,
             flags: 0,
-            // A single self-contained URL entry (flags bit 0 = media in this file).
             entries: vec![DataEntry::Url(DataEntryUrlBox {
                 version: 0,
                 flags: 1,
@@ -657,48 +656,94 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             })],
         }),
         vec![],
-    );
+    )
+}
 
-    let mut minf = MediaInformationBox::new(vmhd, smhd, Some(dinf), Some(stbl), vec![]);
+/// The `minf` of one track: the media header for its `kind`, the shared
+/// `dinf`, the empty `stbl`, and any header the handler requires ahead of its
+/// children.
+fn track_media_information(
+    kind: stsd::MediaKind,
+    stbl: SampleTableBox,
+    minf_header: Option<OpaqueBox>,
+) -> MediaInformationBox {
+    let (vmhd, smhd) = (kind.vmhd(), kind.smhd());
+    let mut minf = MediaInformationBox::new(
+        vmhd,
+        smhd,
+        Some(self_contained_data_information()),
+        Some(stbl),
+        vec![],
+    );
     if let Some(h) = minf_header {
         minf.set_leading_opaque_header(h);
     }
+    minf
+}
 
-    let mdhd = MediaHeaderBox {
+/// The `mdhd` of a fragmented init: zero timeline, per-track timescale, and
+/// the `und` language.
+fn track_media_header(timescale: u32) -> MediaHeaderBox {
+    MediaHeaderBox {
         version: 0,
         flags: 0,
         creation_time: 0,
         modification_time: 0,
-        timescale: t.timescale,
+        timescale,
         duration: 0,
         language: LANG_UND,
-    };
+    }
+}
 
-    let hdlr = HandlerBox {
+/// The `hdlr` naming the track's handler type.
+fn track_handler(kind: &stsd::MediaKind) -> HandlerBox {
+    HandlerBox {
         version: 0,
         flags: 0,
-        handler_type,
-        name: handler_name,
-    };
+        handler_type: kind.handler_type(),
+        name: kind.handler_name(),
+    }
+}
 
-    let mdia = MediaBox::new(Some(mdhd), Some(hdlr), Some(minf), vec![]);
-
-    let tkhd = TrackHeaderBox {
+/// The `tkhd` of a fragmented init: enabled in movie, zero timeline, and the
+/// presentation size (audio carries no visual size, only the volume field).
+fn track_header(track_id: TrackId, audio: bool, width: u32, height: u32) -> TrackHeaderBox {
+    TrackHeaderBox {
         version: 0,
         flags: TKHD_ENABLED_IN_MOVIE,
         creation_time: 0,
         modification_time: 0,
-        track_id: t.track_id,
+        track_id,
         duration: 0,
         layer: 0,
         alternate_group: 0,
         volume: if audio { 0x0100 } else { 0 },
         matrix: IDENTITY_MATRIX,
-        width: tkhd_w,
-        height: tkhd_h,
+        width,
+        height,
         // Anamorphic tkhd presentation size (ISO/IEC 14496-12:2026 §8.3.2) is a follow-up; coded size retained.
-    };
+    }
+}
 
+/// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
+fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
+    let stsd::TrackMedia {
+        entry: stsd_entry,
+        kind,
+        tkhd_w,
+        tkhd_h,
+    } = stsd::track_media(t)?;
+    let stbl = empty_sample_table(empty_sample_description(stsd_entry));
+    let minf_header = kind.minf_header();
+    let handler = track_handler(&kind);
+    let minf = track_media_information(kind, stbl, minf_header);
+    let mdia = MediaBox::new(
+        Some(track_media_header(t.timescale)),
+        Some(handler),
+        Some(minf),
+        vec![],
+    );
+    let tkhd = track_header(t.track_id, t.config.is_audio(), tkhd_w, tkhd_h);
     Ok(TrackBox::new(tkhd, None, Some(mdia), vec![]))
 }
 
