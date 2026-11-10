@@ -1162,10 +1162,18 @@ fn validator_rejects_malformed_time_expression_on_nested_div_dur() {
   </body>
 </tt>"#;
     let doc = Document::parse_str(xml).unwrap();
-    let validator = validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
     let result = validator.validate(&doc);
     assert!(!result.valid);
-    assert!(result.errors.iter().any(|e| e.constraint.contains("12.3.1")), "{:?}", result.errors);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
 }
 
 #[test]
@@ -1182,10 +1190,18 @@ fn validator_rejects_malformed_time_expression_on_nested_div_end() {
   </body>
 </tt>"#;
     let doc = Document::parse_str(xml).unwrap();
-    let validator = validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
     let result = validator.validate(&doc);
     assert!(!result.valid);
-    assert!(result.errors.iter().any(|e| e.constraint.contains("12.3.1")), "{:?}", result.errors);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
 }
 
 #[test]
@@ -1202,10 +1218,18 @@ fn validator_rejects_malformed_time_expression_on_nested_p_begin() {
   </body>
 </tt>"#;
     let doc = Document::parse_str(xml).unwrap();
-    let validator = validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
+    let validator =
+        validation::Validator::new(validation::Profile::Text, validation::ImscVersion::V1_1);
     let result = validator.validate(&doc);
     assert!(!result.valid);
-    assert!(result.errors.iter().any(|e| e.constraint.contains("12.3.1")), "{:?}", result.errors);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
 }
 
 #[test]
@@ -1227,8 +1251,16 @@ fn validator_rejects_malformed_time_expression_on_nested_image_begin() {
   </body>
 </tt>"#;
     let doc = Document::parse_str(xml).unwrap();
-    let validator = validation::Validator::new(validation::Profile::Image, validation::ImscVersion::V1_1);
+    let validator =
+        validation::Validator::new(validation::Profile::Image, validation::ImscVersion::V1_1);
     let result = validator.validate(&doc);
     assert!(!result.valid);
-    assert!(result.errors.iter().any(|e| e.constraint.contains("12.3.1")), "{:?}", result.errors);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.constraint.contains("12.3.1")),
+        "{:?}",
+        result.errors
+    );
 }

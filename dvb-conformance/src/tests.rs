@@ -2683,7 +2683,11 @@ fn two_separate_pcr_gaps_raise_two_repetition_errors() {
     let mut silent2 = Vec::new();
     for i in 10..=14u8 {
         let pkt = make_ts_packet(pcr_pid, i, false, false, &[], &[0xAB]);
-        silent2.extend(monitor.feed(&pkt, ms(300 + 150 + u64::from(i - 10) * 50)).to_vec());
+        silent2.extend(
+            monitor
+                .feed(&pkt, ms(300 + 150 + u64::from(i - 10) * 50))
+                .to_vec(),
+        );
     }
     let total = silent
         .iter()
@@ -2691,7 +2695,10 @@ fn two_separate_pcr_gaps_raise_two_repetition_errors() {
         .filter(|e| e.indicator == Indicator::PcrRepetitionError)
         .count();
     // plus possible on-PCR? none. Also check any emitted during gap2 via monitor? count above.
-    assert_eq!(total, 2, "two separate gaps must raise two 2.3a reports: {silent:#?} {silent2:#?}");
+    assert_eq!(
+        total, 2,
+        "two separate gaps must raise two 2.3a reports: {silent:#?} {silent2:#?}"
+    );
 }
 
 #[test]
