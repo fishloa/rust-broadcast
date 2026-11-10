@@ -127,3 +127,43 @@ fn norm_cmd_ack_req_reserved_byte_round_trips_byte_exact() {
 fn norm_cmd_application_reserved_word_round_trips_byte_exact() {
     assert_norm_cmd_round_trips("APPLICATION", norm_cmd_wire(7, 0xAA, 0xBB, 0xCC, &[]));
 }
+
+#[test]
+fn lct_header_parses_and_round_trips_through_the_trait() {
+    let data = fixture();
+    let pkt = AlcPacket::parse(&data, FEC_PAYLOAD_ID_128_LEN).unwrap();
+    let hdr_bytes = pkt.lct.hdr_len() * 4;
+    let hdr = <rmt_flute::LctHeader as Parse>::parse(&data[..hdr_bytes]).unwrap();
+    let wire = Serialize::try_to_bytes(&hdr).unwrap();
+    assert_eq!(wire, &data[..hdr_bytes]);
+    let mut changed = hdr.clone();
+    changed.codepoint ^= 0x01;
+    assert_ne!(Serialize::try_to_bytes(&changed).unwrap(), wire);
+}
+
+#[test]
+fn header_extension_parses_and_round_trips_through_the_trait() {
+    let data = fixture();
+    let pkt = AlcPacket::parse(&data, FEC_PAYLOAD_ID_128_LEN).unwrap();
+    let ext = &pkt.lct.extensions[0];
+    let wire = Serialize::try_to_bytes(ext).unwrap();
+    let parsed = <rmt_flute::HeaderExtension as Parse>::parse(&wire).unwrap();
+    assert_eq!(Serialize::try_to_bytes(&parsed).unwrap(), wire);
+    let mut changed = parsed.clone();
+    changed.het ^= 0x01;
+    // het change may alter length; just assert bytes differ when possible
+    if let Ok(w2) = Serialize::try_to_bytes(&changed) {
+        assert_ne!(w2, wire);
+    }
+}
+
+#[test]
+fn ext_time_parses_and_round_trips_through_the_trait() {
+    let content = [0x01, 0x03, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x20];
+    let t = <rmt_flute::ExtTime as Parse>::parse(&content).unwrap();
+    let wire = Serialize::try_to_bytes(&t).unwrap();
+    assert_eq!(wire, content);
+    let mut changed = t.clone();
+    changed.pi_specific ^= 0x01;
+    assert_ne!(Serialize::try_to_bytes(&changed).unwrap(), wire);
+}
