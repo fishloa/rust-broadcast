@@ -21,6 +21,7 @@
 
 pub mod catchup;
 pub mod dash;
+pub(crate) mod hls;
 pub mod ll_dash;
 pub mod llhls;
 pub mod smooth;

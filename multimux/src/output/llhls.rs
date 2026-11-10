@@ -224,37 +224,12 @@ pub(crate) async fn media_playlist(
     State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    let serving = match http::resolve_route_program_held(&state.route).await {
-        Ok(serving) => serving,
-        Err(resp) => return *resp,
-    };
-    let trunk = serving.trunk();
-    let ll_hls = serving.ll_hls();
-    let request = HlsRequest::Playlist {
-        track_id: DEFAULT_TRACK_ID,
-        query: q.into(),
-    };
-    let priority = ll_hls.http_priority(&request);
-    let (resp, timed_out) = http::resolve_blocking_timed(
-        &trunk,
-        ll_hls.as_ref(),
-        request,
-        http::playlist_reload_timeout(&ll_hls),
-        BlockingRequestGuard::new,
+    crate::output::hls::media_playlist(
+        state.route.clone(),
+        crate::output::hls::HlsFlavour::LowLatency,
+        q,
     )
-    .await;
-    http::into_playlist_response(resp, timed_out, |body| match body {
-        HlsBody::Playlist(m) => {
-            let mut resp =
-                ([(header::CONTENT_TYPE, http::PLAYLIST_CONTENT_TYPE)], m).into_response();
-            if let Ok(value) = header::HeaderValue::from_str(&format!("u={}", priority.urgency)) {
-                resp.headers_mut().insert("priority", value);
-            }
-            resp
-        }
-        HlsBody::Resource(_) => StatusCode::NOT_FOUND.into_response(),
-        _ => StatusCode::NOT_FOUND.into_response(),
-    })
+    .await
 }
 
 /// `GET /{audio uri}` — the LL-HLS media playlist for one audio rendition

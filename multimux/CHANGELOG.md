@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- LL-HLS and TS-HLS outputs now share one HLS media-playlist implementation (parameterised by held/insert-priority), removing the duplicated route/playlist code.
 - The test-only feature set now uses one spelling: `webrtc-runtime/test-support` becomes `webrtc-runtime/test-seams`, matching `test-seams` and the workspace convention (c6 C6-09).
 - The DASH period stitcher's microsecond-to-ticks conversion uses `broadcast_common::timescale::from_micros`; the rounding is unchanged, pinned by a test against the old arithmetic (c6 F7).
 ### Added
