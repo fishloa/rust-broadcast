@@ -26,13 +26,13 @@ use multimux::serve_with_registry_on;
 use transmux::Repackage;
 
 use crate::support::listener;
+use crate::support::shared_it::observe_extinf;
 use listener::bind_tcp;
 
 const SOURCE_SEGMENT_SECS: f64 = 2.0;
 const PLAYLIST_TARGET_DURATION: u32 = 4;
 const WINDOW_SEGMENTS: usize = 4;
 const LIVE_ADVANCE: Duration = Duration::from_millis(300);
-const OBSERVE_CEILING: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const VOD_SETTLE: Duration = Duration::from_secs(4);
 const ROUTE_TARGET_DURATION_SECS: f64 = 1.0;
@@ -156,22 +156,6 @@ fn route_config(bind: SocketAddr, upstream: String) -> Config {
     }
 }
 
-async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> Option<String> {
-    let deadline = tokio::time::Instant::now() + OBSERVE_CEILING;
-    let mut tick = tokio::time::interval(POLL_INTERVAL);
-    while tokio::time::Instant::now() < deadline {
-        tick.tick().await;
-        if let Ok(resp) = client.get(playlist_url).send().await
-            && resp.status().is_success()
-            && let Ok(body) = resp.text().await
-            && body.contains("#EXTINF:")
-        {
-            return Some(body);
-        }
-    }
-    None
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_sliding_window_live_playlist_closes_segments_on_the_output() {
     let (upstream, _origin) = serve_origin(Mode::Live).await;
@@ -183,7 +167,7 @@ async fn a_sliding_window_live_playlist_closes_segments_on_the_output() {
     ));
 
     let client = reqwest::Client::new();
-    let playlist = poll_until_extinf(&client, &format!("http://{bind}/pulled/media.m3u8")).await;
+    let playlist = observe_extinf(&client, &format!("http://{bind}/pulled/media.m3u8")).await;
     server.abort();
     assert!(
         playlist.is_some(),
@@ -203,7 +187,7 @@ async fn a_finite_playlist_is_fetched_once_and_served() {
     ));
 
     let client = reqwest::Client::new();
-    let playlist = poll_until_extinf(&client, &format!("http://{bind}/pulled/media.m3u8")).await;
+    let playlist = observe_extinf(&client, &format!("http://{bind}/pulled/media.m3u8")).await;
     assert!(playlist.is_some(), "the finished VOD must be served");
 
     let settled = tokio::time::Instant::now() + VOD_SETTLE;

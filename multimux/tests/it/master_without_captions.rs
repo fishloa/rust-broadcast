@@ -2,7 +2,6 @@
 //! it did before caption detection existed (issue #1428).
 
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -13,6 +12,7 @@ use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
 use transmux::ts_demux::TsDemux;
 
+use crate::support::shared_it::nz;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
 use multimux::output::llhls::LlHlsOutput;
@@ -30,10 +30,6 @@ const STREAM: &str = "cam";
 
 /// Captured from origin/main before caption detection landed.
 const EXPECTED_MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16000000,AVERAGE-BANDWIDTH=164357,CODECS=\"avc1.4D400D,mp4a.40.2\",RESOLUTION=320x240,FRAME-RATE=25.000\nmedia.m3u8\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=39288,AVERAGE-BANDWIDTH=37933,CODECS=\"avc1.4D400D\",RESOLUTION=320x240,URI=\"iframe.m3u8\"\n";
-
-fn nz(n: usize) -> NonZeroUsize {
-    NonZeroUsize::new(n).expect("non-zero")
-}
 
 #[tokio::test]
 async fn master_without_captions_is_unchanged() {

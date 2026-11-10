@@ -3,7 +3,6 @@
 //! cleanly, a mid-body stall fails with the stall reason, and 3xx responses
 //! are followed. Media is the committed `ts-hls` fixture over loopback HTTP.
 
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +21,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 use crate::support::listener;
+use crate::support::shared_it::nz;
 
 const FIXTURE: &str = "hls/ts-hls/index0.ts";
 const TS_CHUNK: usize = 7 * 188;
@@ -33,10 +33,6 @@ const RUN_CEILING: Duration = Duration::from_secs(30);
 const STALL_CEILING: Duration = Duration::from_secs(15);
 const MISSING_PROMISE_BYTES: usize = 1_000_000;
 const TRUNK_WAIT: Duration = Duration::from_secs(5);
-
-fn nz(n: usize) -> NonZeroUsize {
-    NonZeroUsize::new(n).expect("non-zero")
-}
 
 fn fixture() -> Vec<u8> {
     test_fixtures::read(FIXTURE)
