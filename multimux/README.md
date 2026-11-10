@@ -494,6 +494,8 @@ exceed 5.0 (the LL-HLS blocking-reload cap) or a legitimate long-poll
 request would be cut off by the HTTP layer before the LL-HLS engine gets a
 chance to resolve it.
 
+`hold_cold_playlist` (default `true`) holds a media-playlist request made before the first segment closes until one closes, then answers with at least one `EXTINF`; set it `false` for an immediate `503`.
+
 With `audio_rendition_sources` set (separate audio renditions, #1428), a
 rendition's `language`, `name`, `characteristics` and `channels` may be left
 empty: they are derived from the stream's PMT (ISO 639-2 language code, canonicalised to a
