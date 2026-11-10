@@ -237,6 +237,44 @@ pub enum ExtensionTag {
     /// S2Xv2_satellite_delivery_system_descriptor (Tables 144a–144c, §6.4.6.5.3).
     S2Xv2SatelliteDeliverySystem = 0x24,
 }
+impl ExtensionTag {
+    /// Human-readable spec name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ImageIcon => "ImageIcon",
+            Self::CpcmDeliverySignalling => "CpcmDeliverySignalling",
+            Self::Cp => "Cp",
+            Self::CpIdentifier => "CpIdentifier",
+            Self::T2DeliverySystem => "T2DeliverySystem",
+            Self::ShDeliverySystem => "ShDeliverySystem",
+            Self::SupplementaryAudio => "SupplementaryAudio",
+            Self::NetworkChangeNotify => "NetworkChangeNotify",
+            Self::Message => "Message",
+            Self::TargetRegion => "TargetRegion",
+            Self::TargetRegionName => "TargetRegionName",
+            Self::ServiceRelocated => "ServiceRelocated",
+            Self::XaitPid => "XaitPid",
+            Self::C2DeliverySystem => "C2DeliverySystem",
+            Self::DtsHd => "DtsHd",
+            Self::DtsNeural => "DtsNeural",
+            Self::VideoDepthRange => "VideoDepthRange",
+            Self::T2mi => "T2mi",
+            Self::UriLinkage => "UriLinkage",
+            Self::CiAncillaryData => "CiAncillaryData",
+            Self::Ac4 => "Ac4",
+            Self::C2BundleDeliverySystem => "C2BundleDeliverySystem",
+            Self::S2XSatelliteDeliverySystem => "S2XSatelliteDeliverySystem",
+            Self::ProtectionMessage => "ProtectionMessage",
+            Self::AudioPreselection => "AudioPreselection",
+            Self::TtmlSubtitling => "TtmlSubtitling",
+            Self::DtsUhd => "DtsUhd",
+            Self::ServiceProminence => "ServiceProminence",
+            Self::VvcSubpictures => "VvcSubpictures",
+            Self::S2Xv2SatelliteDeliverySystem => "S2Xv2SatelliteDeliverySystem",
+        }
+    }
+}
 
 /// Generates the extension-body dispatch from one list (ADR-0001): the
 /// [`ExtensionBody`] enum (+ a `Raw` fall-through), the `parse_body`
@@ -828,3 +866,5 @@ mod tests {
         ));
     }
 }
+
+broadcast_common::impl_spec_display!(ExtensionTag);

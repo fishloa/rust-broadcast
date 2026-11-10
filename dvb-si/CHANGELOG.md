@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `TableId`, `DescriptorTag` and `ExtensionTag` implement the workspace label convention (`name()` + `Display` via `broadcast_common::impl_spec_display!`).
 ### Fixed
 - `ModuleReassembler`: the completed-module FIFO no longer grows by one entry per completed module version (it is now removed together with its record and never duplicated), so a long-lived carousel that cycles versions stays bounded and a stale entry cannot evict a live record.
 - `ModuleReassembler::note_dii`: a DII repeat that announces the same module version with a different `module_size` or `block_size` replaces the slot instead of leaving DDBs validated against stale geometry.

@@ -64,6 +64,47 @@ pub enum TableId {
 }
 
 impl TableId {
+    /// Human-readable spec name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Pat => "Pat",
+            Self::Cat => "Cat",
+            Self::Pmt => "Pmt",
+            Self::TransportStreamDescription => "TransportStreamDescription",
+            Self::Iso14496SceneDescription => "Iso14496SceneDescription",
+            Self::Iso14496ObjectDescriptor => "Iso14496ObjectDescriptor",
+            Self::Metadata => "Metadata",
+            Self::Iso14496 => "Iso14496",
+            Self::GreenAccessUnit => "GreenAccessUnit",
+            Self::NetworkInformationActual => "NetworkInformationActual",
+            Self::NetworkInformationOther => "NetworkInformationOther",
+            Self::ServiceDescriptionActual => "ServiceDescriptionActual",
+            Self::ServiceDescriptionOther => "ServiceDescriptionOther",
+            Self::BouquetAssociation => "BouquetAssociation",
+            Self::UpdateNotification => "UpdateNotification",
+            Self::IpMacNotification => "IpMacNotification",
+            Self::SatelliteAccess => "SatelliteAccess",
+            Self::EventInformationPfActual => "EventInformationPfActual",
+            Self::EventInformationPfOther => "EventInformationPfOther",
+            Self::TimeAndDate => "TimeAndDate",
+            Self::RunningStatus => "RunningStatus",
+            Self::Stuffing => "Stuffing",
+            Self::TimeOffset => "TimeOffset",
+            Self::ApplicationInformation => "ApplicationInformation",
+            Self::Container => "Container",
+            Self::RelatedContent => "RelatedContent",
+            Self::ContentIdentifier => "ContentIdentifier",
+            Self::MpeFec => "MpeFec",
+            Self::ResolutionNotification => "ResolutionNotification",
+            Self::MpeIfec => "MpeIfec",
+            Self::ProtectionMessage => "ProtectionMessage",
+            Self::DownloadableFontInfo => "DownloadableFontInfo",
+            Self::DiscontinuityInformation => "DiscontinuityInformation",
+            Self::SelectionInformation => "SelectionInformation",
+        }
+    }
+
     /// If `v` is an EIT-schedule-actual `table_id` (0x50..=0x5F), return its
     /// segment index 0..=15. Otherwise `None`.
     #[must_use]
@@ -143,3 +184,5 @@ mod tests {
         assert_eq!(matched, 34, "expected 34 matched variants");
     }
 }
+
+broadcast_common::impl_spec_display!(TableId);
