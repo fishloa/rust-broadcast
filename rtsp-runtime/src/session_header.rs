@@ -98,7 +98,9 @@ impl SessionHeader {
                     .and_then(|v| lex::digits_u64(v, DELTA_SECONDS_DIGITS, PARAM_TIMEOUT).ok());
                 match parsed {
                     // 0 is invalid too: it would make the keepalive deadline "now".
-                    Some(n) if n > 0 => out.timeout = Some(Duration::from_secs(n)),
+                    Some(n) if n > 0 && n <= u64::from(u32::MAX) => {
+                        out.timeout = Some(Duration::from_secs(n))
+                    }
                     _ => {
                         warnings.push(format!(
                             "malformed or zero timeout {value:?}; using the 60 s default"
@@ -201,6 +203,16 @@ mod tests {
         ));
         assert!(SessionHeader::parse("  ;timeout=5").is_err());
         assert_eq!(p("12345678").timeout, None);
+    }
+
+    #[test]
+    fn a_timeout_above_u32_max_is_malformed() {
+        let (h, w) = SessionHeader::parse_with_warnings("abc;timeout=4294967296").unwrap();
+        assert_eq!(h.timeout, Some(DEFAULT_SESSION_TIMEOUT));
+        assert_eq!(w.len(), 1);
+        let (h, w) = SessionHeader::parse_with_warnings("abc;timeout=4294967295").unwrap();
+        assert_eq!(h.timeout, Some(Duration::from_secs(4_294_967_295)));
+        assert!(w.is_empty());
     }
 
     #[test]

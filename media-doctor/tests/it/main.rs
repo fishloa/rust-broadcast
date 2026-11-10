@@ -7,6 +7,7 @@ mod hevc_array_findings;
 mod hls_fixture;
 mod hls_validator_fixture;
 mod integration;
+mod moov_compressed;
 mod pcr_fixture;
 mod pts_fixture;
 mod scte35_fixture;

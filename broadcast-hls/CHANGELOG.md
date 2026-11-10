@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `MediaPlaylist::parse` no longer drops an `#EXT-X-DISCONTINUITY` that precedes the open segment's parts (#1943).
-- `MasterPlaylist::to_m3u8` no longer fails with "group not found" for an `#EXT-X-STREAM-INF` whose AUDIO/VIDEO/SUBTITLES/CLOSED-CAPTIONS group has no `#EXT-X-MEDIA`; parse keeps the reference and render emits it unchanged, so a non-conformant third-party playlist round-trips byte-identical (#1948).
+- BREAKING (behaviour): `MasterPlaylist::to_m3u8` no longer fails with "group not found" for an `#EXT-X-STREAM-INF` whose AUDIO/VIDEO/SUBTITLES/CLOSED-CAPTIONS group has no `#EXT-X-MEDIA`; parse keeps the reference and render emits it unchanged, so a non-conformant third-party playlist round-trips byte-identical (#1948). Callers that relied on `to_m3u8` as a validator must now call `dangling_group_references()`.
 
 ## [0.6.0] - 2026-11-07
 ### Documentation

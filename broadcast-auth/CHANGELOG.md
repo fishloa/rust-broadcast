@@ -6,6 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Changed
+- Digest: an absolute-form `uri` must name the request's own `Host` (RFC 7616 section 3.4, RFC 9110 section 7.2), closing a cross-origin replay; an absolute-form `uri` with no `Host` is refused.
 - BREAKING: `Verifier::forwarded` is removed. It trusted `X-Forwarded-User` from any transport peer, so a client reaching the origin directly could forge it; `Verifier::forwarded_from(user_header, forwarded_for_header, trusted_proxies)` is the only constructor, and an empty list trusts nobody. Every in-workspace caller moved to `forwarded_from`.
 - BREAKING: `AuthResult::BadRequest` (the enum is `#[non_exhaustive]`, so the variant is additive; a caller that treats every non-`Ok` result as a 401 now has to map it to 400): a Basic, Digest or Bearer verifier returns it when the request carries more than one `Authorization` header, where the first used to win silently. New `RequestContext::header_count`.
 ### Added

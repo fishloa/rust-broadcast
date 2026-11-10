@@ -26,6 +26,7 @@ pub(crate) async fn media_playlist(
     flavour: HlsFlavour,
     q: BlockingReloadQuery,
 ) -> Response {
+    let started = tokio::time::Instant::now();
     let serving = if flavour == HlsFlavour::LowLatency {
         match http::resolve_route_program_held(&route).await {
             Ok(s) => s,
@@ -44,11 +45,13 @@ pub(crate) async fn media_playlist(
         query: q.into(),
     };
     let priority = origin.http_priority(&request);
+    let playlist_timeout = http::playlist_reload_timeout(&origin);
+    let remaining = playlist_timeout.saturating_sub(started.elapsed());
     let (resp, timed_out) = http::resolve_blocking_timed(
         &trunk,
         origin.as_ref(),
         request,
-        http::playlist_reload_timeout(&origin),
+        remaining,
         BlockingRequestGuard::new,
     )
     .await;
