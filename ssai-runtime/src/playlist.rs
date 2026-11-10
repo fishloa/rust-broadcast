@@ -620,6 +620,23 @@ mod tests {
     }
 
     #[test]
+    fn snap_and_restrict_lists_trim_tokens_and_drop_empty_ones() {
+        let line = sample().to_tag_line().unwrap();
+        let with = |attr: &str| {
+            let base = line.replace(",X-RESTRICT=\"SKIP,JUMP\"", "");
+            format!("{base},{attr}")
+        };
+        let dr = InterstitialDateRange::parse_tag_line(&with("X-SNAP=\" OUT , IN \"")).unwrap();
+        assert_eq!(dr.snap, vec![SnapMode::Out, SnapMode::In]);
+        let dr = InterstitialDateRange::parse_tag_line(&with("X-SNAP=\"OUT,\"")).unwrap();
+        assert_eq!(dr.snap, vec![SnapMode::Out]);
+        let dr = InterstitialDateRange::parse_tag_line(&with("X-RESTRICT=\" SKIP , JUMP \"")).unwrap();
+        assert_eq!(dr.restrict, vec![RestrictMode::Skip, RestrictMode::Jump]);
+        let dr = InterstitialDateRange::parse_tag_line(&with("X-RESTRICT=\"SKIP,\"")).unwrap();
+        assert_eq!(dr.restrict, vec![RestrictMode::Skip]);
+    }
+
+    #[test]
     fn negative_resume_offset_round_trips() {
         let mut dr = sample();
         dr.resume_offset = Some(-5.0);

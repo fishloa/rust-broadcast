@@ -10,6 +10,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 - BREAKING: `InterstitialDateRange::parse_tag_line` keeps an unknown `X-SNAP`/`X-RESTRICT` identifier verbatim in the new `SnapMode::Other` / `RestrictMode::Other` (it dropped it, so a parse then render changed the tag); `token()` returns the wire token. Both enums lose `Copy` (they carry a `String` now). It also rejects a quoted `DURATION`/`X-RESUME-OFFSET`/`X-PLAYOUT-LIMIT` or an unquoted `ID`/`START-DATE`/`X-ASSET-URI`/`X-ASSET-LIST`/`X-SNAP`/`X-RESTRICT`, as typed in `private/specs-verified/hls/ietf/rfc8216bis-interstitials.md` (Appendix D attribute table) and RFC 8216bis section 4.2.
 - `X-RESUME-OFFSET` is a signed-decimal-floating-point (RFC 8216bis, `private/specs-verified/hls/ietf/rfc8216bis-interstitials.md`): a negative value now renders and parses instead of failing with `Error::InvalidDuration`. `DURATION` and `X-PLAYOUT-LIMIT` stay non-negative.
 - A `DURATION` of exactly 2^63 seconds no longer renders as `i64::MAX`; the integer shortcut is used only below 2^53.
+- `X-SNAP` and `X-RESTRICT` tokens are trimmed and empty tokens are dropped when parsing (`X-SNAP=" OUT , IN "` is `[Out, In]`, `X-SNAP="OUT,"` is `[Out]`); unknown tokens are still kept as `Other`."
 
 ## [0.5.0] - 2026-11-07
 ### Changed
