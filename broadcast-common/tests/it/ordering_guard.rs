@@ -437,9 +437,9 @@ fn named_const_blocks_ascending() {
     );
     consts_ascending(
         &r,
-        "transmux/src/rtmp.rs",
+        "rtmp-runtime/src/message.rs",
         "pub const SET_CHUNK_SIZE",
-        "pub const COMMAND_AMF0",
+        "pub const AGGREGATE",
     );
     consts_ascending(
         &r,

@@ -394,11 +394,7 @@ pub use rtcp::{
     RtcpPacket, RtcpPacketType, SDES_CNAME, SDES_EMAIL, SDES_LOC, SDES_NAME, SDES_NOTE, SDES_PHONE,
     SDES_PRIV, SDES_TOOL, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
-pub use rtmp::{
-    AmfValue, BasicHeader, Command, DEFAULT_CHUNK_SIZE, HANDSHAKE_PACKET_LEN, Handshake0,
-    Handshake1, Handshake2, Message, MessageHeader, ProtocolControl, RTMP_VERSION, RtmpDemux,
-    RtmpFlvError, RtmpMux,
-};
+pub use rtmp::{RtmpDemux, RtmpFlvError, RtmpMux};
 #[cfg(feature = "std")]
 pub use rtp::build_sdp_with_connection;
 pub use rtp::{

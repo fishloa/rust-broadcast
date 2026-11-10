@@ -1,34 +1,13 @@
 use broadcast_common::{Package, Unpackage};
-use transmux::{AmfValue, FlvDemux, FlvError, MkvMux, ProtocolControl, RtmpFlvError, TsDemux};
+use transmux::{FlvDemux, FlvError, Media, MkvMux, RtmpFlvError, RtmpMux, TsDemux};
 
 #[test]
-fn a_short_control_body_names_the_message_type_and_both_lengths() {
-    assert_eq!(
-        ProtocolControl::parse(1, &[0, 0]).unwrap_err(),
-        RtmpFlvError::BadControlLength {
-            msg_type: 1,
-            need: 4,
-            have: 2,
-        }
-    );
-}
-
-#[test]
-fn an_unsupported_amf0_marker_is_reported() {
-    assert_eq!(
-        AmfValue::parse(&[0x07]).unwrap_err(),
-        RtmpFlvError::UnsupportedAmf0Marker(0x07)
-    );
-}
-
-#[test]
-fn an_amf0_string_beyond_the_16_bit_prefix_is_too_long() {
-    let value = AmfValue::String("x".repeat(0x1_0000));
-    let mut out = Vec::new();
-    assert_eq!(
-        value.write_into(&mut out).unwrap_err(),
-        RtmpFlvError::AmfStringTooLong { len: 0x1_0000 }
-    );
+fn an_rtmp_chunk_size_beyond_the_u32_field_is_reported_not_wrapped() {
+    let media = Media::new(Vec::new(), 1000);
+    let err = RtmpMux::with_chunk_size(usize::MAX)
+        .package(&media)
+        .unwrap_err();
+    assert_eq!(err, RtmpFlvError::ChunkSizeTooLarge { size: usize::MAX });
 }
 
 #[test]

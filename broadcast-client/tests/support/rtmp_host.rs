@@ -5,7 +5,7 @@ use broadcast_common::Unpackage;
 use rtmp_runtime::message::msg_type;
 use transmux::{FlvDemux, Media};
 
-#[path = "../../../rtmp-runtime/tests/it/play_peer.rs"]
+#[path = "../../../transmux/tests/it/rtmp_play_peer.rs"]
 pub mod play_peer;
 
 #[allow(unused_imports)]

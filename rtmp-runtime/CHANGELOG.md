@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ## [0.9.1] - 2026-11-10
+### Added
+- The sans-IO core (handshake, chunk stream, AMF0, messages, client and server sessions) builds `no_std` + `alloc`; only the `tokio` adapter needs `std`. This lets `transmux` depend on rtmp-runtime for its RTMP spokes (#2339).
+- `ChunkAssembler::feed` and `ChunkAssembler::next_message` are public: the incremental form a caller needs when one input buffer carries a Set Chunk Size followed by chunks framed at the new size (`push` uses one chunk size for the whole buffer).
+### Changed
+- rtmp-runtime no longer dev-depends on `transmux`; the tests that decoded its FLV output with `transmux::FlvDemux` moved into transmux's test suite (#2339).
 ### Fixed
 - A Data-AMF0 message that begins with the AMF0 string `@setDataFrame` is forwarded as an FLV script tag that begins with `onMetaData`; the publisher-to-server handler name used to be forwarded verbatim as the script tag name.
 - `ServerSession` refuses a second `connect` while publishing with `RtmpError::UnexpectedState` and keeps publishing; it used to demote the session to `Connected` and silently drop all following media (bug audit E).

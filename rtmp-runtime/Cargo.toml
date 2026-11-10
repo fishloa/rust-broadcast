@@ -18,10 +18,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "11.0.1", default-features = false }
-thiserror = "2"
+thiserror = { version = "2", default-features = false }
 # Constant-time stream-key comparison (issue #1142).
 subtle    = { version = "2", default-features = false }
-serde     = { version = "1", optional = true, features = ["derive"] }
+serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
 # `tokio` adapter (real sockets) — feature-gated; the sans-IO core needs none of it.
 tokio = { version = "1", optional = true, features = ["net", "io-util", "rt", "macros", "sync", "time"] }
@@ -42,7 +42,6 @@ name = "capture_publish"
 required-features = ["tokio"]
 
 [dev-dependencies]
-transmux   = { path = "../transmux", version = "0.31.0", default-features = false, features = ["std"] }
 serde_json = { workspace = true }
 test-alloc = { path = "../test-alloc" }
 test-fixtures = { path = "../test-fixtures" }

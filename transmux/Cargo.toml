@@ -58,6 +58,11 @@ cbc        = { version = "0.2", default-features = false, optional = true }
 zeroize    = { version = "1", default-features = false, features = ["alloc"], optional = true }
 subtle     = { version = "2", default-features = false, optional = true }
 clap       = { workspace = true, optional = true, features = ["derive"] }
+# RTMP wire layer (`rtmp.rs` is only the FLV-carrying container spoke): the
+# handshake, chunk stream, protocol control messages and AMF0 commands live in
+# rtmp-runtime, whose core is no_std + alloc. rtmp-runtime does not depend on
+# transmux, so there is no cycle.
+rtmp-runtime = { path = "../rtmp-runtime", version = "0.9.1", default-features = false }
 # `cli` container detection (issue #960 / audit r05-W29): the CLI's
 # `detect_container` used a fixed-offset TS check that missed M2TS (192-byte
 # stride) and mid-packet captures; `container-probe` is the crate built to
