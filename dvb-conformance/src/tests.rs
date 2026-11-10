@@ -2695,6 +2695,27 @@ fn two_separate_pcr_gaps_raise_two_repetition_errors() {
 }
 
 #[test]
+fn a_pcr_pid_that_stops_and_resumes_after_the_limit_raises_repetition_error() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pcr_pid: u16 = 0x0200;
+    let af = make_pcr_adaptation(90_000, 0, false, false);
+    monitor.feed(
+        &make_ts_packet(pcr_pid, 0, false, true, &af, &[0xAB]),
+        ms(0),
+    );
+    let af = make_pcr_adaptation(90_000 + 22_500, 0, false, false);
+    let events = monitor.feed(
+        &make_ts_packet(pcr_pid, 1, false, true, &af, &[0xAB]),
+        ms(400),
+    );
+    assert!(
+        has_indicator(events, Indicator::PcrRepetitionError),
+        "a PCR PID that goes silent and resumes after the limit must raise 2.3a: {events:#?}"
+    );
+}
+
+#[test]
 fn pts_check_ignores_stream_ids_without_an_optional_pes_header() {
     let es_pid: u16 = 0x0200;
     for stream_id in [0xBCu8, 0xBE, 0xBF, 0xF0, 0xF1, 0xF2, 0xF8, 0xFF] {
