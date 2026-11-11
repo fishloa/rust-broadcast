@@ -553,6 +553,187 @@ impl From<FlvErrorAsError> for Error {
     }
 }
 
+/// Golden for the tag walk: what it yields — the tag count, the damaged-span
+/// offsets, the truncated-tail flag and every tag's `(offset, type, timestamp,
+/// body length)` — for every committed FLV fixture and for the damage and
+/// truncation shapes the FLV tests build.
+///
+/// It lives beside the walker because the walk and its result are crate-private.
+/// The record was taken from the walker before its logic moved into
+/// `rtmp_runtime::flv::tags_resync`; the move had to reproduce it byte for byte,
+/// so it is never re-blessed. `REGENERATE_FLV_WALK_GOLDEN=1` rewrites it.
+#[cfg(test)]
+mod walk_golden {
+    use std::env;
+    use std::fmt::Write as _;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::{FlvTag, iter_tags};
+
+    /// Environment variable that rewrites the golden instead of comparing it.
+    const REGENERATE_ENV: &str = "REGENERATE_FLV_WALK_GOLDEN";
+    /// The golden record (public fixtures tier, `docs/FIXTURES.md` layout).
+    const GOLDEN: &str = "golden/flv/tag-walk.golden";
+    /// FLV header (9 bytes) and its `PreviousTagSize0` (4 bytes).
+    const FLV_HEADER_PLUS_PREV: usize = 13;
+    /// FLV tag header (§E.4.1).
+    const TAG_HEADER_LEN: usize = 11;
+    /// The one-byte `PreviousTagSize` cut the truncation shapes use.
+    const CUT_TAIL: usize = 40;
+
+    const FIXTURES: &[&str] = &["flv/av.flv", "flv/aac-7-1.flv", "flv/oversize-dims.flv"];
+
+    /// `(offset, tag_type, data_size)` of every tag, walked strictly by `DataSize`.
+    fn tags(bytes: &[u8]) -> Vec<(usize, u8, usize)> {
+        let mut out = Vec::new();
+        let mut off = FLV_HEADER_PLUS_PREV;
+        while off + TAG_HEADER_LEN <= bytes.len() {
+            let size =
+                u32::from_be_bytes([0, bytes[off + 1], bytes[off + 2], bytes[off + 3]]) as usize;
+            out.push((off, bytes[off], size));
+            off += TAG_HEADER_LEN + size + 4;
+        }
+        out
+    }
+
+    /// The first mid-stream video tag whose body has more than 20 bytes, when
+    /// the fixture carries one.
+    fn mid_video_tag(bytes: &[u8]) -> Option<(usize, usize)> {
+        let all = tags(bytes);
+        all.iter()
+            .copied()
+            .skip(all.len() / 2)
+            .find(|&(_, tag_type, size)| tag_type == 9 && size > 20)
+            .map(|(off, _, size)| (off, size))
+    }
+
+    /// `(name, bytes)` for every input the walker must keep reproducing.
+    fn inputs() -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        for rel in FIXTURES {
+            let bytes = test_fixtures::read(rel);
+            let name = rel.replace('/', "-");
+            out.push((name.clone(), bytes.clone()));
+            out.push((
+                format!("{name}-cut-tail"),
+                bytes[..bytes.len() - CUT_TAIL].to_vec(),
+            ));
+            let (last, last_size) = tags(&bytes)
+                .last()
+                .copied()
+                .map(|(off, _, size)| (off, size))
+                .expect("fixture carries tags");
+            let last_body_ends = last + last_size;
+            out.push((
+                format!("{name}-cut-last-tag-body"),
+                bytes[..last_body_ends.saturating_sub(1)].to_vec(),
+            ));
+            out.push((
+                format!("{name}-cut-previous-tag-size"),
+                bytes[..bytes.len() - 4].to_vec(),
+            ));
+            out.push((
+                format!("{name}-header-only"),
+                bytes[..FLV_HEADER_PLUS_PREV].to_vec(),
+            ));
+            out.push((
+                format!("{name}-cut-before-first-tag-body"),
+                bytes[..FLV_HEADER_PLUS_PREV + TAG_HEADER_LEN + 5].to_vec(),
+            ));
+            if let Some((victim, size)) = mid_video_tag(&bytes) {
+                let mut inflated = bytes.clone();
+                let bad = u32::try_from(size + 5).expect("DataSize fits");
+                inflated[victim + 1..victim + 4].copy_from_slice(&bad.to_be_bytes()[1..]);
+                out.push((format!("{name}-inflated-datasize"), inflated));
+
+                let mut garbled = bytes.clone();
+                garbled[victim..victim + TAG_HEADER_LEN].fill(0xFF);
+                out.push((format!("{name}-garbled-tag-header"), garbled));
+            }
+        }
+        out
+    }
+
+    /// One record per input: the tag count, the damaged offsets, the
+    /// truncated-tail flag and every tag, in the walker's own order.
+    fn render(name: &str, bytes: &[u8]) -> String {
+        match iter_tags(bytes) {
+            Ok(walk) => {
+                let (tags, damaged, truncated_tail) =
+                    (walk.tags, walk.damaged, walk.truncated_tail);
+                let mut line = format!(
+                    "{name} tags={} damaged={damaged:?} truncated_tail={truncated_tail}",
+                    tags.len()
+                );
+                for tag in &tags {
+                    let FlvTag {
+                        offset,
+                        tag_type,
+                        timestamp,
+                        body,
+                    } = tag;
+                    write!(
+                        line,
+                        "\n  offset={offset} type={} timestamp={timestamp} body_len={}",
+                        tag_type.to_byte(),
+                        body.len()
+                    )
+                    .expect("write to String");
+                }
+                line.push('\n');
+                line
+            }
+            Err(e) => format!("{name} error={e}\n"),
+        }
+    }
+
+    fn golden_path() -> PathBuf {
+        test_fixtures::path(GOLDEN)
+    }
+
+    #[test]
+    fn the_tag_walk_reproduces_its_golden() {
+        let mut actual = String::new();
+        for (name, bytes) in &inputs() {
+            actual.push_str(&render(name, bytes));
+        }
+        let path = golden_path();
+        if env::var_os(REGENERATE_ENV).is_some() {
+            fs::write(&path, &actual).unwrap_or_else(|e| panic!("write {path:?}: {e}"));
+            return;
+        }
+        let expected = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        assert_eq!(
+            actual, expected,
+            "the tag walk changed; the golden was recorded from the walker before the move and is never re-blessed"
+        );
+    }
+
+    /// The record covers damage and truncation, not only clean fixtures: a walk
+    /// that stopped noticing either would still match a record of fixtures only.
+    #[test]
+    fn the_record_exercises_damage_truncation_and_refusal() {
+        let text = fs::read_to_string(golden_path()).expect("the golden is committed");
+        assert!(
+            text.lines().any(|line| {
+                line.split_once("damaged=[")
+                    .and_then(|(_, rest)| rest.split_once(']'))
+                    .is_some_and(|(spans, _)| !spans.is_empty())
+            }),
+            "a damaged span is recorded"
+        );
+        assert!(
+            text.contains("truncated_tail=true"),
+            "a truncated tail is recorded"
+        );
+        assert!(
+            text.contains(" error="),
+            "an unrecoverable input is recorded"
+        );
+    }
+}
+
 impl<'a> Unpackage for FlvDemux<'a> {
     type Input = &'a [u8];
     type Media = Media;
