@@ -203,7 +203,7 @@ spec's own canonical values. Used by `timed-metadata/tests/it/webvtt_teletext_fi
 
 ## `teletext-subtitle-boxed.ts` + `teletext-subtitle-boxed.tsduck-oracle.srt`
 
-Independent-tool oracle for issue #1041 (`timed-metadata/tests/it/webvtt_teletext_tsduck_oracle.rs`).
+Independent-tool oracle for issue #1041 (`transmux/tests/it/timed_metadata_teletext_tsduck_oracle.rs`).
 `teletext-subtitle-synthetic.txt`'s oracle is this project's own reading of EN
 300 706 and a hand-generated fixture; this pair instead cross-checks this
 crate's Teletext decode against **TSDuck 3.44-4676's own independent Teletext

@@ -4335,7 +4335,6 @@ dependencies = [
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
- "transmux",
 ]
 
 [[package]]
@@ -4578,6 +4577,7 @@ dependencies = [
  "ctr 0.10.1",
  "dvb-conformance",
  "dvb-si",
+ "dvb-vbi",
  "hex",
  "jiff",
  "memchr",
