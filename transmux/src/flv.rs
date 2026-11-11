@@ -48,6 +48,7 @@ use broadcast_common::len::need_in;
 use core::fmt;
 use core::marker::PhantomData;
 use rtmp_runtime::RtmpError;
+use rtmp_runtime::amf0::{Amf0Value, amf0_values};
 use rtmp_runtime::flv::FlvHeader;
 use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
 use rtmp_runtime::flv::TagType;
@@ -470,7 +471,7 @@ impl From<FlvErrorAsError> for Error {
 /// `rtmp_runtime::flv::tags_resync`; the move had to reproduce it byte for byte,
 /// so it is never re-blessed. `REGENERATE_FLV_WALK_GOLDEN=1` rewrites it.
 #[cfg(test)]
-mod tests {
+mod walk_golden {
     use std::env;
     use std::fmt::Write as _;
     use std::fs;
@@ -1379,7 +1380,13 @@ impl Package for FlvMux {
             _ => (0, 0),
         };
         let duration_s = media_duration_seconds(media);
-        let meta = build_onmetadata(duration_s, width, height, video.is_some(), audio.is_some());
+        let props =
+            onmetadata_properties(duration_s, width, height, video.is_some(), audio.is_some());
+        let meta = amf0_values(&[
+            Amf0Value::String("onMetaData".to_string()),
+            Amf0Value::EcmaArray(props),
+        ])
+        .map_err(|e| Error::FieldOverflow(field_overflow(e)))?;
         OutTag {
             tag_type: TagType::Script,
             timestamp: 0,
@@ -1517,83 +1524,40 @@ fn media_duration_seconds(media: &Media) -> f64 {
     max
 }
 
-// --- Minimal AMF0 onMetaData (Adobe FLV v10.1 §E.4.1, AMF0 §2) --------------
+// --- onMetaData (Adobe FLV v10.1 §E.4.1, AMF0 §2), encoded by rtmp-runtime -----
 
-/// AMF0 type marker: number (double, §2.2).
-const AMF0_NUMBER: u8 = 0x00;
-/// AMF0 type marker: boolean (§2.3).
-const AMF0_BOOLEAN: u8 = 0x01;
-/// AMF0 type marker: string (§2.4).
-const AMF0_STRING: u8 = 0x02;
-/// AMF0 type marker: ECMA array (§2.10).
-const AMF0_ECMA_ARRAY: u8 = 0x08;
-/// AMF0 object-end marker (§2.11): a 0-length key followed by 0x09.
-const AMF0_OBJECT_END: u8 = 0x09;
 /// FLV `videocodecid` for AVC (= `CodecID` 7).
 const META_VIDEOCODECID_AVC: f64 = 7.0;
 /// FLV `audiocodecid` for AAC (= `SoundFormat` 10).
 const META_AUDIOCODECID_AAC: f64 = 10.0;
 
-fn amf0_string(out: &mut Vec<u8>, s: &str) {
-    out.extend_from_slice(&(s.len() as u16).to_be_bytes());
-    out.extend_from_slice(s.as_bytes());
-}
-
-fn amf0_named_number(out: &mut Vec<u8>, key: &str, v: f64) {
-    amf0_string(out, key);
-    out.push(AMF0_NUMBER);
-    out.extend_from_slice(&v.to_be_bytes());
-}
-
-fn amf0_named_bool(out: &mut Vec<u8>, key: &str, v: bool) {
-    amf0_string(out, key);
-    out.push(AMF0_BOOLEAN);
-    out.push(v as u8);
-}
-
-/// Build the `onMetaData` script-tag body: an AMF0 string `"onMetaData"`
-/// followed by an ECMA array of the standard informational properties.
-fn build_onmetadata(
+/// The onMetaData property list of one media: the informational keys FLV
+/// players read, in the order they are written (AMF0 §2.10).
+fn onmetadata_properties(
     duration: f64,
     width: u16,
     height: u16,
     has_video: bool,
     has_audio: bool,
-) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.push(AMF0_STRING);
-    amf0_string(&mut out, "onMetaData");
-
-    out.push(AMF0_ECMA_ARRAY);
-    // Count properties for the ECMA-array header (approximate is legal; players
-    // read to the object-end marker regardless — §2.10).
-    let mut props: Vec<(&str, Prop)> = Vec::new();
-    props.push(("duration", Prop::Num(duration)));
+) -> Vec<(String, Amf0Value)> {
+    let mut props: Vec<(String, Amf0Value)> = Vec::new();
+    props.push(("duration".to_string(), Amf0Value::Number(duration)));
     if has_video {
-        props.push(("width", Prop::Num(width as f64)));
-        props.push(("height", Prop::Num(height as f64)));
-        props.push(("videocodecid", Prop::Num(META_VIDEOCODECID_AVC)));
+        props.push(("width".to_string(), Amf0Value::Number(f64::from(width))));
+        props.push(("height".to_string(), Amf0Value::Number(f64::from(height))));
+        props.push((
+            "videocodecid".to_string(),
+            Amf0Value::Number(META_VIDEOCODECID_AVC),
+        ));
     }
     if has_audio {
-        props.push(("audiocodecid", Prop::Num(META_AUDIOCODECID_AAC)));
-        props.push(("stereo", Prop::Bool(true)));
+        props.push((
+            "audiocodecid".to_string(),
+            Amf0Value::Number(META_AUDIOCODECID_AAC),
+        ));
+        props.push(("stereo".to_string(), Amf0Value::Boolean(true)));
     }
-    out.extend_from_slice(&(props.len() as u32).to_be_bytes());
-    for (k, v) in &props {
-        match v {
-            Prop::Num(n) => amf0_named_number(&mut out, k, *n),
-            Prop::Bool(b) => amf0_named_bool(&mut out, k, *b),
-        }
-    }
-    // Object end: empty key (u16 len 0) + object-end marker.
-    out.extend_from_slice(&0u16.to_be_bytes());
-    out.push(AMF0_OBJECT_END);
-    out
-}
-
-enum Prop {
-    Num(f64),
-    Bool(bool),
+    props
 }
 
 #[cfg(test)]

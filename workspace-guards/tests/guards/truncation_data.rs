@@ -225,16 +225,6 @@ pub const TABLE: &[Crate] = &[
                      the reassembler caps (FU-A / STAP-A), never near 4 GiB.",
             ),
             (
-                "src/flv.rs",
-                "out.extend_from_slice(&(s.len() as u16).to_be_bytes());",
-                "AMF0 string length (§2.1.2): the onMetaData keys are crate constants and its string values are short names, all far below 65536; the whole body is replaced by rtmp-runtime's encoder (round 2 task B).",
-            ),
-            (
-                "src/flv.rs",
-                "out.extend_from_slice(&(props.len() as u32).to_be_bytes());",
-                "AMF0 ECMA-array count (§2.10): props is the fixed set of onMetaData keys this function pushes, never over u32::MAX; the whole body is replaced by rtmp-runtime's encoder (round 2 task B).",
-            ),
-            (
                 "src/h262.rs",
                 "u8::try_from(aspect).unwrap_or(u8::MAX),",
                 "Annex E aspect_ratio_information is a 4-bit code copied through from a parsed sequence header; these builders only re-emit parsed fields.",
