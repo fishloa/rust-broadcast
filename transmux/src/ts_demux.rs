@@ -2408,7 +2408,8 @@ fn annexb_to_length_prefixed_no_aud(annexb: &[u8]) -> Vec<u8> {
         if nal_unit_type(NalCodec::Avc, nal) == Some(crate::slice_header::NAL_AUD) {
             continue;
         }
-        out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+        let len = u32::try_from(nal.len()).unwrap_or(u32::MAX);
+        out.extend_from_slice(&len.to_be_bytes());
         out.extend_from_slice(nal);
     }
     out

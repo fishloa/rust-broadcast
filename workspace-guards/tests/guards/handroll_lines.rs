@@ -17,132 +17,25 @@ pub struct Crate {
     pub allow: &'static [(&'static str, &'static str, &'static str, &'static str)],
 }
 
-/// Net `{` minus `}` on a line, ignoring string/char literals and `//` comments.
-fn brace_delta(line: &str) -> (i64, bool) {
-    let mut delta = 0i64;
-    let mut seen_open = false;
-    let mut chars = line.chars().peekable();
-    let mut in_str = false;
-    while let Some(c) = chars.next() {
-        if in_str {
-            match c {
-                '\\' => {
-                    chars.next();
-                }
-                '"' => in_str = false,
-                _ => {}
-            }
-            continue;
-        }
-        match c {
-            // Single-line raw string `r"..."` / `r#"..."#`: skip it whole (a
-            // multi-line raw string is not handled).
-            'r' if matches!(chars.peek(), Some('"' | '#')) => {
-                let mut hashes = 0usize;
-                while chars.peek() == Some(&'#') {
-                    chars.next();
-                    hashes += 1;
-                }
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    let close: String = core::iter::once('"')
-                        .chain(core::iter::repeat_n('#', hashes))
-                        .collect();
-                    let rest: String = chars.clone().collect();
-                    if let Some(end) = rest.find(&close) {
-                        for _ in 0..rest[..end + close.len()].chars().count() {
-                            chars.next();
-                        }
-                    }
-                }
-            }
-            '"' => in_str = true,
-            '/' if chars.peek() == Some(&'/') => break,
-            '\'' => {
-                // A char literal ('{', '\n', ...) — skip it; lifetimes have no closing quote.
-                let rest: String = chars.clone().take(3).collect();
-                if let Some(end) = rest.find('\'') {
-                    for _ in 0..=end {
-                        chars.next();
-                    }
-                }
-            }
-            '{' => {
-                delta += 1;
-                seen_open = true;
-            }
-            '}' => delta -= 1,
-            _ => {}
-        }
-    }
-    (delta, seen_open)
-}
-
-/// Whether the item after the attribute line at `attr` is a `mod`.
-fn next_item_is_mod(lines: &[&str], attr: usize) -> Option<usize> {
-    let mut j = attr + 1;
-    while j < lines.len() && lines[j].trim_start().starts_with("#[") {
-        j += 1;
-    }
-    let t = lines.get(j)?.trim_start();
-    let t = t.strip_prefix("pub").map_or(t, |r| {
-        let r = r.trim_start();
-        if r.starts_with('(') {
-            r.find(')').map_or(r, |i| r[i + 1..].trim_start())
-        } else {
-            r
-        }
-    });
-    t.starts_with("mod ").then_some(j)
-}
-
-/// Index of the last line of the brace-matched block that starts on `from`
-/// (`mod x;` with no body ends on its own line). The block ends on the line
-/// where the running depth returns to zero after a `{` was seen — which may
-/// be a later line than the one that opened it.
-fn end_of_block(lines: &[&str], from: usize) -> usize {
-    let mut depth = 0i64;
-    let mut opened = false;
-    for (k, line) in lines.iter().enumerate().skip(from) {
-        let (d, saw_open) = brace_delta(line);
-        depth += d;
-        opened |= saw_open;
-        if opened && depth <= 0 {
-            return k;
-        }
-        if !opened && line.trim_end().ends_with(';') {
-            return k;
-        }
-    }
-    lines.len().saturating_sub(1)
-}
-
-/// The production code of a file as `(line number, line)` pairs: comment
-/// lines are dropped and ONLY the brace-matched body of a `#[cfg(test)]`
-/// (or `#[cfg(all(test, ...))]`) `mod` is skipped.
-fn code_lines(text: &str) -> Vec<(usize, &str)> {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        let t = lines[i].trim_start();
-        if (t.starts_with("#[cfg(test)]") || t.starts_with("#[cfg(all(test"))
-            && let Some(m) = next_item_is_mod(&lines, i)
-        {
-            i = end_of_block(&lines, m) + 1;
-            continue;
-        }
-        if !t.starts_with("//") {
-            out.push((i + 1, lines[i]));
-        }
-        i += 1;
-    }
-    out
+/// The production code of a file as `(line number, line)` pairs: comment lines
+/// are dropped and every item carrying `#[cfg(test)]` or
+/// `#[cfg(all(test, ..))]` is blanked with the shared lexer, so production
+/// code after a mid-file test module is still scanned.
+fn code_lines(text: &str) -> Vec<(usize, String)> {
+    workspace_guards::scan::without_attributed_items(text, |attr| {
+        attr.starts_with("#[cfg(test)]") || attr.starts_with("#[cfg(all(test")
+    })
+    .lines()
+    .enumerate()
+    .filter(|(_, line)| !line.trim_start().starts_with("//"))
+    .map(|(no, line)| (no + 1, line.to_string()))
+    .collect()
 }
 
 fn hits_in(c: &Crate, path: &str, text: &str) -> Vec<String> {
     let mut hits = Vec::new();
     for (line_no, line) in code_lines(text) {
+        let line = line.as_str();
         for (pat, why) in c.patterns {
             if line.contains(pat)
                 && !c.allow.iter().any(|(f, p, l, r)| {
@@ -241,4 +134,11 @@ fn guard_detects_a_synthetic_offender() {
             .all(|h| h.contains("synthetic.rs:1:") || h.contains("synthetic.rs:15:")),
         "comment and test-module bodies must not be reported: {hits:?}"
     );
+}
+
+#[test]
+fn a_test_module_in_the_middle_does_not_hide_the_code_after_it() {
+    let src = "#[cfg(test)]\nmod t {\n    fn f() {}\n}\nfn g() {\n    std::thread::sleep(d);\n}\n";
+    let hits = hits_in(&synthetic(), "src/mid.rs", src);
+    assert!(hits.iter().any(|h| h.contains("mid.rs:6:")), "{hits:?}");
 }

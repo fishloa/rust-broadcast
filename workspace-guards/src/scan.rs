@@ -11,6 +11,17 @@ use std::path::Path;
 /// comments, strings (including multi-line and raw strings) and char literals, so an
 /// unbalanced brace or quote inside a string cannot desynchronise it.
 pub fn non_test_source(src: &str) -> String {
+    non_test_source_masked(src, false)
+}
+
+/// [`non_test_source`], but every removed `#[cfg(test)]` item keeps its line
+/// breaks as empty lines, so a line number in what is left is still the line
+/// number in `src` — what a guard that reports `file:line` needs.
+pub fn non_test_source_blanked(src: &str) -> String {
+    non_test_source_masked(src, true)
+}
+
+fn non_test_source_masked(src: &str, blank: bool) -> String {
     let b = src.as_bytes();
     let mut out = String::new();
     let mut i = 0;
@@ -22,6 +33,9 @@ pub fn non_test_source(src: &str) -> String {
                 .starts_with("#[cfg(test)]")
             && let Some(end) = test_mod_end(b, i)
         {
+            if blank {
+                out.extend(src[i..end].chars().filter(|c| *c == '\n'));
+            }
             i = end;
             continue;
         }
@@ -44,6 +58,7 @@ fn skip_ws(b: &[u8], mut i: usize) -> usize {
 /// the index just past that module (its closing brace, or the `;`).
 fn test_mod_end(b: &[u8], i: usize) -> Option<usize> {
     let mut j = skip_ws(b, i);
+    let mut consumed = false;
     // one or more attributes
     while b[j..].starts_with(b"#[") {
         let mut depth = 0i32;
@@ -61,10 +76,19 @@ fn test_mod_end(b: &[u8], i: usize) -> Option<usize> {
             }
             j += 1;
         }
+        consumed = true;
         j = skip_ws(b, j);
     }
-    if b[j..].starts_with(b"pub ") {
-        j = skip_ws(b, j + 4);
+    if !consumed {
+        return None;
+    }
+    if let Some(rest) = b[j..].strip_prefix(b"pub") {
+        j = skip_ws(b, b.len() - rest.len());
+    }
+    if b[j..].starts_with(b"(")
+        && let Some(close) = b[j..].iter().position(|c| *c == b')')
+    {
+        j = skip_ws(b, j + close + 1);
     }
     if !b[j..].starts_with(b"mod ") {
         return None;
@@ -181,6 +205,136 @@ fn skip_raw_string(b: &[u8], i: usize) -> usize {
         j += 1;
     }
     j + close.len()
+}
+
+/// Source with every item carrying an attribute `matches` accepts removed —
+/// a `mod … { … }` block, an out-of-line `mod …;`, or a `fn … { … }`. Line
+/// breaks of a removed item are kept as empty lines, so a line number in what
+/// is left is the line number in `src`. Other attributes in the same stack
+/// (`#[cfg(test)]` above `#[path = "…"]` above `#[ignore]` above `fn f()`) are
+/// skipped, and the item is found with the same string/comment-aware lexer as
+/// [`non_test_source`].
+pub fn without_attributed_items(src: &str, matches: impl Fn(&str) -> bool) -> String {
+    let b = src.as_bytes();
+    let mut out = String::new();
+    let mut i = 0;
+    let mut line_start = true;
+    while i < b.len() {
+        if line_start && let Some(end) = attributed_item_end(src, b, i, &matches) {
+            out.extend(src[i..end].chars().filter(|c| *c == '\n'));
+            i = end;
+            line_start = true;
+            continue;
+        }
+        line_start = b[i] == b'\n' || (line_start && (b[i] == b' ' || b[i] == b'\t'));
+        let ch = src[i..].chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// If the line starting at `i` opens an attribute stack whose attributes
+/// `matches` accepts and ends in an item, the index just past that item.
+fn attributed_item_end(
+    src: &str,
+    b: &[u8],
+    i: usize,
+    matches: &impl Fn(&str) -> bool,
+) -> Option<usize> {
+    let mut j = i;
+    let mut found = false;
+    loop {
+        let rest = src.get(j..)?;
+        let indent = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        j += indent;
+        if !b[j..].starts_with(b"#[") {
+            break;
+        }
+        let start = j;
+        let mut depth = 0i32;
+        while j < b.len() {
+            match b[j] {
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        j += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        found |= matches(&src[start..j]);
+        j = skip_ws(b, j);
+    }
+    found.then(|| item_end(b, j))?
+}
+
+/// Index just past the item whose head starts at `j`: a `;`-terminated
+/// declaration or a `{`-delimited body, scanning the head with the same lexer
+/// so a `{` or `;` inside a string, a char literal, a comment or an angle
+/// bracket cannot end it early.
+fn item_end(b: &[u8], start: usize) -> Option<usize> {
+    let mut j = start;
+    while j < b.len() {
+        match b[j] {
+            b'/' if b.get(j + 1) == Some(&b'/') => {
+                while j < b.len() && b[j] != b'\n' {
+                    j += 1;
+                }
+            }
+            b'/' if b.get(j + 1) == Some(&b'*') => j = skip_comment(b, j),
+            b'r' | b'b' if is_raw_string_start(b, j) => j = skip_raw_string(b, j),
+            b'"' => {
+                j += 1;
+                while j < b.len() && b[j] != b'"' {
+                    j += if b[j] == b'\\' { 2 } else { 1 };
+                }
+                j += 1;
+            }
+            b'\'' => j = skip_char_literal(b, j),
+            b';' => return Some(j + 1),
+            b'{' => return Some(skip_block(b, j)),
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// Index just past the char literal starting at `i` (a lifetime `'a` is not
+/// one and is left to the caller).
+fn skip_char_literal(b: &[u8], i: usize) -> usize {
+    let mut j = i + 1;
+    if b.get(j) == Some(&b'\\') {
+        j += 2;
+    } else if b.get(j).is_some_and(u8::is_ascii) {
+        j += 1;
+    }
+    if b.get(j) == Some(&b'\'') {
+        j + 1
+    } else {
+        i + 1
+    }
+}
+
+/// Index just past the block comment starting at `i`.
+fn skip_comment(b: &[u8], i: usize) -> usize {
+    let (mut j, mut depth) = (i + 2, 1);
+    while j < b.len() && depth > 0 {
+        if b[j..].starts_with(b"/*") {
+            depth += 1;
+            j += 2;
+        } else if b[j..].starts_with(b"*/") {
+            depth -= 1;
+            j += 2;
+        } else {
+            j += 1;
+        }
+    }
+    j
 }
 
 /// Source files that exist only as `#[cfg(test)] mod name;` bodies of another

@@ -44,40 +44,16 @@ const BANNED: &[(&str, &str)] = &[
     ("sleep(", "sleep in non-test code"),
 ];
 
-/// The source with every `#[cfg(test)]` item (a `mod … { … }` block, or a single
-/// line item) and every `//` comment line removed. Braces inside string
-/// literals can fool the brace counter; that is within the tripwire's tolerance.
+/// The source with every `#[cfg(test)]` item (blanked, so line numbers still
+/// match the file) and every `//` comment line removed, from the shared lexer
+/// so a brace or quote inside a string cannot desynchronise it.
 fn non_test_lines(src: &str) -> Vec<(usize, String)> {
-    let mut out = Vec::new();
-    let mut lines = src.lines().enumerate().peekable();
-    while let Some((no, line)) = lines.next() {
-        let t = line.trim_start();
-        if t.starts_with("#[cfg(test)]") || t.starts_with("#[cfg(all(test") {
-            let mut depth = 0i32;
-            let mut opened = false;
-            for (_, item) in lines.by_ref() {
-                for c in item.chars() {
-                    match c {
-                        '{' => {
-                            depth += 1;
-                            opened = true;
-                        }
-                        '}' => depth -= 1,
-                        _ => {}
-                    }
-                }
-                if (opened && depth <= 0) || (!opened && item.trim_end().ends_with(';')) {
-                    break;
-                }
-            }
-            continue;
-        }
-        if t.starts_with("//") {
-            continue;
-        }
-        out.push((no + 1, line.to_string()));
-    }
-    out
+    workspace_guards::scan::non_test_source_blanked(src)
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim_start().starts_with("//"))
+        .map(|(no, line)| (no + 1, line.to_string()))
+        .collect()
 }
 
 fn banned_in_line(line: &str) -> Vec<(&'static str, &'static str)> {
@@ -157,4 +133,18 @@ fn stale_allow_entry_is_reported() {
     let v = check(&c, &[("src/a.rs".into(), "fn a() { sleep(d); }\n".into())]);
     assert_eq!(v.len(), 2, "{v:?}");
     assert!(v[0].starts_with("synthetic: src/a.rs:1:"), "{v:?}");
+}
+
+#[test]
+fn a_test_module_in_the_middle_does_not_hide_the_code_after_it() {
+    let src =
+        "#[cfg(test)]\nmod t {\n    fn f() {}\n}\nfn g() {\n    let _ = \"HTTP/1.1 404\";\n}\n";
+    let lines = non_test_lines(src);
+    assert!(
+        lines
+            .iter()
+            .any(|(no, line)| *no == 6
+                && banned_in_line(line).iter().any(|(n, _)| *n == "\"HTTP/1.")),
+        "{lines:?}"
+    );
 }

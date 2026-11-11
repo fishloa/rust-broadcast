@@ -470,7 +470,7 @@ impl From<FlvErrorAsError> for Error {
 /// `rtmp_runtime::flv::tags_resync`; the move had to reproduce it byte for byte,
 /// so it is never re-blessed. `REGENERATE_FLV_WALK_GOLDEN=1` rewrites it.
 #[cfg(test)]
-mod walk_golden {
+mod tests {
     use std::env;
     use std::fmt::Write as _;
     use std::fs;

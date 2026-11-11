@@ -74,7 +74,7 @@ fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
     let mut used = vec![false; c.allowlist.len()];
     let c_name = c.name;
     for (rel, body) in files {
-        let prod = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
+        let prod = workspace_guards::scan::non_test_source_blanked(body);
         let lines: Vec<&str> = prod.lines().collect();
         for (n, line) in lines.iter().enumerate() {
             let t = line.trim();
@@ -194,4 +194,19 @@ fn guard_detector_bites() {
     assert!(!clamps_u8("assert!(IS_PRIVATE < 255);"));
     assert!(has_guard("fn f() { let n = fit_u8(x.len(), \"a\")?; }"));
     assert!(has_guard("fn f() {\n if x.len() > 255 { return; }\n }"));
+}
+
+#[test]
+fn a_test_module_in_the_middle_does_not_hide_the_code_after_it() {
+    let c = Crate {
+        name: "synthetic",
+        allowlist: &[],
+    };
+    let files = vec![(
+        "src/a.rs".to_string(),
+        "#[cfg(test)]\nmod t {\n    fn f() {}\n}\nfn g() { buf[0] = x.len() as u8; }\n".to_string(),
+    )];
+    let p = check(&c, &files);
+    assert_eq!(p.len(), 1, "{p:?}");
+    assert!(p[0].contains("src/a.rs:5:"), "{p:?}");
 }
