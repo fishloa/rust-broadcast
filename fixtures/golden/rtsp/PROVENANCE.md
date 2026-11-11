@@ -201,3 +201,7 @@ Pinned by `multimux/tests/it/push_rtsp_wire.rs`:
 ```bash
 cargo test -p multimux --all-features --locked --test it push_rtsp_wire
 ```
+
+## `pull-multimux.txt` / `pull-broadcast-client.txt`
+
+RTSP pull wire and sample goldens (#2372, Step 0), recorded from current code at commit `ecb70c658d4ed710f7494d7063723737bb70aa87` before the play flow moves.

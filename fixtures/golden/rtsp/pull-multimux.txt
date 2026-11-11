@@ -1,0 +1,18 @@
+DESCRIBE rtsp://<loopback>/test RTSP/1.0
+Accept: application/sdp
+CSeq: 1
+User-Agent: rtsp-runtime
+===
+SETUP rtsp://<loopback>/streamid=0 RTSP/1.0
+CSeq: 2
+Transport: RTP/AVP/TCP;unicast;interleaved=0-1
+User-Agent: rtsp-runtime
+===
+PLAY rtsp://<loopback>/test RTSP/1.0
+CSeq: 3
+Session: 00000001
+User-Agent: rtsp-runtime
+===
+SAMPLES
+track=1 dts=1000 pts=1000 sync=true len=7 fnv=6a6cbdfb09defe28
+track=1 dts=4000 pts=4000 sync=false len=7 fnv=74b449fa7dcb3ce4

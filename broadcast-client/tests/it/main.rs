@@ -67,6 +67,7 @@ mod rendered_redeclare_start;
 mod rtmp;
 mod rtmp_pull;
 mod rtsp;
+mod rtsp_pull_golden;
 mod rtsp_avsync;
 mod rtsp_chunking;
 mod rtsp_clock_offset;
