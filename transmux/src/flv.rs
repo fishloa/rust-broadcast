@@ -47,6 +47,10 @@ use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
 use core::fmt;
 use core::marker::PhantomData;
+use rtmp_runtime::RtmpError;
+use rtmp_runtime::flv::FlvHeader;
+use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
+use rtmp_runtime::flv::TagType;
 
 use broadcast_common::timescale::{Rounding, rescale_i64};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
@@ -66,29 +70,24 @@ use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 // Spec constants (Adobe FLV v10.1 Annex E) — no magic numbers outside tests.
 // ---------------------------------------------------------------------------
 
-/// FLV signature `"FLV"` (§E.2).
+/// FLV signature `"FLV"` (§E.2), from the shared FLV codec.
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738) to
-/// validate the header incrementally without duplicating this constant.
-pub(crate) const FLV_SIGNATURE: [u8; 3] = *b"FLV";
-/// FLV file-format version this crate emits (§E.2).
-const FLV_VERSION: u8 = 1;
-/// FLV header length in bytes (§E.2): signature(3) + version(1) + flags(1) + data_offset(4).
+/// validate the header incrementally without duplicating the constant.
+pub(crate) const FLV_SIGNATURE: [u8; 3] = rtmp_runtime::flv::FLV_SIGNATURE;
+/// FLV header length in bytes (§E.2), from the shared FLV codec.
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
-pub(crate) const FLV_HEADER_LEN: usize = 9;
-/// `TypeFlags` bit 0 — audio tags present (§E.2).
-const TYPE_FLAG_AUDIO: u8 = 0x04;
-/// `TypeFlags` bit 2 — video tags present (§E.2).
-const TYPE_FLAG_VIDEO: u8 = 0x01;
-/// Size of a tag header before its body (§E.4.1): type(1)+size(3)+ts(3)+tsext(1)+stream(3).
+pub(crate) const FLV_HEADER_LEN: usize = rtmp_runtime::flv::FLV_HEADER_LEN;
+/// Size of a tag header before its body (§E.4.1), from the shared FLV codec.
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
-pub(crate) const TAG_HEADER_LEN: usize = 11;
-/// Size of the `PreviousTagSize` trailer after every tag (§E.4.1).
+pub(crate) const TAG_HEADER_LEN: usize = rtmp_runtime::flv::FLV_TAG_HEADER_LEN;
+/// Size of the `PreviousTagSize` trailer after every tag (§E.4.1), from the
+/// shared FLV codec.
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
-pub(crate) const PREV_TAG_SIZE_LEN: usize = 4;
+pub(crate) const PREV_TAG_SIZE_LEN: usize = rtmp_runtime::flv::FLV_PREV_TAG_SIZE_LEN;
 /// A generous upper bound on a conformant `DataOffset` (§E.2): the header
 /// itself is always [`FLV_HEADER_LEN`] (9) bytes; this crate's own
 /// [`FlvMux`] never emits a `DataOffset` other than 9. A value far beyond
@@ -352,7 +351,8 @@ impl FlvDemux<'_> {
 struct FlvTag<'a> {
     /// Byte offset of the tag header in the input (for degradation reports).
     offset: usize,
-    tag_type: u8,
+    /// The tag's `TagType` (§E.4.1), parsed by the shared FLV codec.
+    tag_type: TagType,
     timestamp: u32,
     body: &'a [u8],
 }
@@ -452,18 +452,17 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
             off = next;
             continue;
         }
-        let tag_type = input[off];
-        let data_size =
-            u32::from_be_bytes([0, input[off + 1], input[off + 2], input[off + 3]]) as usize;
-        // Timestamp: UI24 low + UI8 extended high byte → 32-bit ms.
-        let ts_lo = u32::from_be_bytes([0, input[off + 4], input[off + 5], input[off + 6]]);
-        let ts_ext = input[off + 7] as u32;
-        let timestamp = (ts_ext << 24) | ts_lo;
-        // input[off+8..off+11] = StreamID (always 0), ignored.
-        let body_start = off + TAG_HEADER_LEN;
+        // The declared body size and time come from the shared codec's own tag
+        // layout (§E.4.1), read from the header that is already present.
+        let Some(header) = input.get(off..off.saturating_add(TAG_HEADER_LEN)) else {
+            break;
+        };
+        let Ok(size) = RtmpFlvTag::data_size(header) else {
+            break;
+        };
         // Checked: a hostile `DataSize` (up to 2^24-1) added at a near-`usize::MAX`
         // offset would otherwise wrap.
-        let Some(body_end) = body_start.checked_add(data_size) else {
+        let Some(body_end) = off.saturating_add(TAG_HEADER_LEN).checked_add(size) else {
             return Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
                 offset: off,
                 need: usize::MAX,
@@ -477,7 +476,7 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
             if tags.is_empty() {
                 return Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
                     offset: off,
-                    need: body_end + PREV_TAG_SIZE_LEN,
+                    need: body_end.saturating_add(PREV_TAG_SIZE_LEN),
                     have: input.len(),
                 })));
             }
@@ -487,11 +486,29 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
                 damaged,
             });
         }
+        // The whole tag is present, so the codec decodes it strictly (its
+        // `PreviousTagSize` may still be the cut-off final field, which §E.4.1
+        // makes redundant and the codec therefore does not require).
+        let codec_end = body_end.saturating_add(PREV_TAG_SIZE_LEN).min(input.len());
+        let tag = RtmpFlvTag::parse(input.get(off..codec_end).unwrap_or_default());
+        let Ok(RtmpFlvTag {
+            tag_type,
+            timestamp,
+            body,
+            ..
+        }) = tag
+        else {
+            return Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
+                offset: off,
+                need: body_end.saturating_add(PREV_TAG_SIZE_LEN),
+                have: input.len(),
+            })));
+        };
         tags.push(FlvTag {
             offset: off,
             tag_type,
             timestamp,
-            body: &input[body_start..body_end],
+            body,
         });
         // Advance past the body and its trailing PreviousTagSize. A tag whose
         // body is complete but whose `PreviousTagSize` is cut off is still a
@@ -582,7 +599,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
 
         for tag in &tags {
             match tag.tag_type {
-                tag_type::VIDEO => {
+                TagType::Video => {
                     if tag.body.len() < 2 {
                         continue;
                     }
@@ -663,7 +680,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         _ => {}
                     }
                 }
-                tag_type::AUDIO => {
+                TagType::Audio => {
                     if tag.body.is_empty() {
                         continue;
                     }
@@ -710,7 +727,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         _ => {}
                     }
                 }
-                tag_type::SCRIPT => { /* onMetaData — informational, skipped */ }
+                TagType::Script => { /* onMetaData — informational, skipped */ }
                 _ => { /* unknown tag type — skipped leniently */ }
             }
         }
@@ -913,28 +930,33 @@ impl FlvMux {
 }
 
 /// A tag ready to serialise: its type, timestamp (ms) and fully-built body.
+/// The `FieldOverflow` behind a shared-codec serialize error: the only failure
+/// a tag or header serializer can have is a field that did not fit.
+fn field_overflow(error: RtmpError) -> broadcast_common::len::FieldOverflow {
+    match error {
+        RtmpError::FieldOverflow(overflow) => overflow,
+        _ => broadcast_common::len::FieldOverflow {
+            field: "FLV tag",
+            value: 0,
+            max: 0,
+        },
+    }
+}
+
 struct OutTag {
-    tag_type: u8,
+    tag_type: TagType,
     timestamp: u32,
     body: Vec<u8>,
 }
 
 impl OutTag {
+    /// Append this tag's framing to `out` through the shared FLV codec.
     fn write_into(&self, out: &mut Vec<u8>) -> core::result::Result<(), FlvError> {
-        let data_size = broadcast_common::len::fit_u24(self.body.len(), "DataSize")
-            .map_err(Error::FieldOverflow)?;
-        let start = out.len();
-        out.push(self.tag_type);
-        out.extend_from_slice(&data_size.to_be_bytes()[1..]); // UI24
-        let ts = self.timestamp;
-        out.push((ts >> 16) as u8);
-        out.push((ts >> 8) as u8);
-        out.push(ts as u8);
-        out.push((ts >> 24) as u8); // TimestampExtended
-        out.extend_from_slice(&[0, 0, 0]); // StreamID = 0
-        out.extend_from_slice(&self.body);
-        let tag_size = (out.len() - start) as u32;
-        out.extend_from_slice(&tag_size.to_be_bytes()); // PreviousTagSize
+        let tag = RtmpFlvTag::new(self.tag_type, self.timestamp, &self.body);
+        let bytes = tag
+            .try_to_bytes()
+            .map_err(|e| Error::FieldOverflow(field_overflow(e)))?;
+        out.extend_from_slice(&bytes);
         Ok(())
     }
 }
@@ -1256,18 +1278,12 @@ impl Package for FlvMux {
         let mut out = Vec::new();
 
         // --- Header (§E.2) ---
-        let mut type_flags = 0u8;
-        if video.is_some() {
-            type_flags |= TYPE_FLAG_VIDEO;
-        }
-        if audio.is_some() {
-            type_flags |= TYPE_FLAG_AUDIO;
-        }
-        out.extend_from_slice(&FLV_SIGNATURE);
-        out.push(FLV_VERSION);
-        out.push(type_flags);
-        out.extend_from_slice(&(FLV_HEADER_LEN as u32).to_be_bytes());
-        out.extend_from_slice(&0u32.to_be_bytes()); // PreviousTagSize0 = 0
+        let header = FlvHeader::new(audio.is_some(), video.is_some());
+        out.extend_from_slice(
+            &header
+                .try_to_bytes()
+                .map_err(|e| Error::FieldOverflow(field_overflow(e)))?,
+        );
 
         // --- onMetaData script tag (§E.4.1) ---
         let (width, height) = match video.map(|t| &t.spec.config) {
@@ -1277,7 +1293,7 @@ impl Package for FlvMux {
         let duration_s = media_duration_seconds(media);
         let meta = build_onmetadata(duration_s, width, height, video.is_some(), audio.is_some());
         OutTag {
-            tag_type: tag_type::SCRIPT,
+            tag_type: TagType::Script,
             timestamp: 0,
             body: meta,
         }
@@ -1288,7 +1304,7 @@ impl Package for FlvMux {
             && let Some(body) = video_sequence_header_body(vt)?
         {
             OutTag {
-                tag_type: tag_type::VIDEO,
+                tag_type: TagType::Video,
                 timestamp: 0,
                 body,
             }
@@ -1299,7 +1315,7 @@ impl Package for FlvMux {
             && let Some(body) = audio_sequence_header_body(at)?
         {
             OutTag {
-                tag_type: tag_type::AUDIO,
+                tag_type: TagType::Audio,
                 timestamp: 0,
                 body,
             }
@@ -1335,7 +1351,7 @@ impl Package for FlvMux {
                     dts,
                     seq,
                     OutTag {
-                        tag_type: tag_type::VIDEO,
+                        tag_type: TagType::Video,
                         timestamp: dts,
                         body,
                     },
@@ -1354,7 +1370,7 @@ impl Package for FlvMux {
                     dts,
                     seq,
                     OutTag {
-                        tag_type: tag_type::AUDIO,
+                        tag_type: TagType::Audio,
                         timestamp: dts,
                         body,
                     },
@@ -1518,7 +1534,7 @@ mod tests {
     #[test]
     fn oversized_tag_body_errors() {
         let tag = OutTag {
-            tag_type: tag_type::VIDEO,
+            tag_type: TagType::Video,
             timestamp: 0,
             body: alloc::vec![0u8; 1 << 24],
         };
@@ -1541,7 +1557,7 @@ mod tests {
     #[test]
     fn max_tag_body_round_trips() {
         let tag = OutTag {
-            tag_type: tag_type::VIDEO,
+            tag_type: TagType::Video,
             timestamp: 0,
             body: alloc::vec![0xAAu8; (1 << 24) - 1],
         };

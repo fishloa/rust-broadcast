@@ -66,7 +66,7 @@ use broadcast_common::error::BufferTooShort;
 use crate::RtmpError;
 use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
-use crate::flv_bridge::{FlvTagWriter, unpack_aggregate};
+use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::Handshake;
 use crate::message::{LimitType, ProtocolControl, UserControl, msg_type};
 use alloc::format;
@@ -887,7 +887,7 @@ impl ServerSession {
 
     /// Unpack an Aggregate Message (22, §7.1.6) and deliver each contained
     /// sub-message exactly as an ordinary Audio/Video/Data-AMF0 message
-    /// would be delivered; see [`crate::flv_bridge::unpack_aggregate`].
+    /// would be delivered; see [`crate::flv::unpack_aggregate`].
     ///
     /// # Errors
     /// [`RtmpError::Malformed`] on a truncated header/data/`Back Pointer`,
@@ -904,9 +904,7 @@ impl ServerSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flv_bridge::{
-        FLV_HEADER_SIZE, FLV_PREV_TAG_SIZE_LEN, FLV_TAG_HEADER_LEN, flv_file_header,
-    };
+    use crate::flv::{FLV_HEADER_LEN, FLV_PREV_TAG_SIZE_LEN, FLV_TAG_HEADER_LEN, FlvHeader};
     use crate::handshake::{HANDSHAKE_PACKET_LEN, RTMP_VERSION};
     use crate::message::CONTROL_CHUNK_STREAM_ID as CTRL_CSID;
     use broadcast_common::Serialize;
@@ -1772,7 +1770,7 @@ mod tests {
             flv.starts_with(b"FLV"),
             "the first Media event must carry the FLV file header"
         );
-        let tag_type = flv[FLV_HEADER_SIZE as usize + FLV_PREV_TAG_SIZE_LEN];
+        let tag_type = flv[FLV_HEADER_LEN + FLV_PREV_TAG_SIZE_LEN];
         assert_eq!(
             tag_type,
             msg_type::DATA_AMF0,
@@ -1802,7 +1800,7 @@ mod tests {
         let ServerEvent::Media { flv } = &events[0] else {
             panic!("expected Media event");
         };
-        let body_at = FLV_HEADER_SIZE as usize + FLV_PREV_TAG_SIZE_LEN + FLV_TAG_HEADER_LEN;
+        let body_at = FLV_HEADER_LEN + FLV_PREV_TAG_SIZE_LEN + FLV_TAG_HEADER_LEN;
         assert_eq!(
             &flv[body_at..body_at + metadata.len()],
             metadata.as_slice(),
@@ -2033,7 +2031,7 @@ mod tests {
 
     #[test]
     fn mutation_check_flv_file_header_bytes_are_exact() {
-        let header = flv_file_header();
+        let header = FlvHeader::new(true, true).try_to_bytes().unwrap();
         assert_eq!(
             header,
             vec![
