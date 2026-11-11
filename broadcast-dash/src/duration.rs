@@ -243,7 +243,10 @@ mod tests {
     fn format_round_trips() {
         for s in ["PT0S", "PT4S", "PT1H2M3.5S", "P1DT2H"] {
             let d = parse_iso8601_duration(s).unwrap();
-            assert_eq!(parse_iso8601_duration(&format_iso8601_duration(d)).unwrap(), d);
+            assert_eq!(
+                parse_iso8601_duration(&format_iso8601_duration(d)).unwrap(),
+                d
+            );
         }
     }
 }
