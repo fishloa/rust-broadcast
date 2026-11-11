@@ -124,7 +124,7 @@
 //!   preserved, only the "reads don't hang forever" property), freeing its
 //!   `max_sessions` slot for the next publisher.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -143,21 +143,14 @@ use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{DemuxEvent, StreamingFlvDemux};
 
 use media_plane::ingress::{
-    AcceptOutcome, HandshakePolicy, IngestSession, ListenDriver, Listener, ProgramId, SessionEvent,
-    SessionId,
+    AdmittedDriver, HandshakePolicy, IngestSession, ListenDriver, Listener, ProgramId,
+    SessionEvent, SessionId,
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
-use crate::source::SessionClocks;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
-
-/// Per-session [`DriverProgress`] bookkeeping — one entry per admitted
-/// [`SessionId`], mirroring every other driver-backed source's own
-/// (single-session) `progress: DriverProgress`, just keyed one level deeper
-/// since [`run_rtmp`] drives many sessions at once.
-type ProgressBySession = HashMap<SessionId, DriverProgress>;
 
 /// One [`read_one`] call, boxed so [`run_rtmp`] can hold many of them (one
 /// per admitted session) in a single [`FuturesUnordered`].
@@ -659,33 +652,21 @@ fn read_one(
     })
 }
 
-/// Publishes session `id`'s progress (registry + segmenters, via the
-/// [`crate::source::advance_route`] facade) and, if that left it terminal,
-/// releases whatever it published (`crate::source::release_route` — see
-/// `RouteHandle::publish_program`'s doc on the second-concurrent-publisher
-/// rejection this is the counterpart to) and reaps it — the per-session
-/// equivalent of every other driver-backed source's single-`IngestDriver`
-/// "feed, advance, check `is_running`" sequence, reassembled from
-/// [`ListenDriver::driver`]/[`ListenDriver::reap_if_terminal`] because
-/// [`ListenDriver::feed`]'s `&[u8]`-pinned convenience wrapper doesn't fit
-/// [`RtmpIngestSession`]'s `Stage::In` (see the module doc).
-async fn report_and_maybe_reap(
-    driver: &mut ListenDriver<RtmpListener>,
+/// Publish and segment session `id`'s programs once its read made progress,
+/// then release them if that left it terminal — the order `AdmittedDriver`
+/// documents (its programs must reach the route before its slot frees).
+async fn advance(
+    admitted: &mut AdmittedDriver<RtmpListener, DriverProgress>,
     id: SessionId,
     route_handle: &Arc<RouteHandle>,
-    progress: &mut ProgressBySession,
-) -> bool {
-    if let Some(d) = driver.driver(id) {
-        crate::source::advance_route(d, route_handle, progress.entry(id).or_default()).await;
-        if !d.health().is_running() {
-            crate::source::release_route(d, route_handle);
-        }
+) {
+    let Some((driver, state)) = admitted.session_parts(id) else {
+        return;
+    };
+    crate::source::advance_route(driver, route_handle, state).await;
+    if !driver.health().is_running() {
+        crate::source::release_route(driver, route_handle);
     }
-    let reaped = driver.reap_if_terminal(id).is_some();
-    if reaped {
-        progress.remove(&id);
-    }
-    reaped
 }
 
 /// Test harness handle over a running `RtmpRoute`: the monotonic admission
@@ -808,7 +789,7 @@ pub async fn run_rtmp(
 /// [`run_rtmp`] with an injectable wall clock: every instant the loop reads —
 /// the route's start and each session's admission and feed — comes from
 /// `clock`, so a test can move time deterministically instead of sleeping
-/// (see the `SessionClocks` tests).
+/// (see `AdmittedDriver`'s own clock-origin tests in media-plane).
 pub(crate) async fn run_rtmp_with_clock(
     route: &RtmpRoute,
     trunk_config: TrunkConfig,
@@ -820,24 +801,27 @@ pub(crate) async fn run_rtmp_with_clock(
         Ok(infra) => infra,
         Err(e) => return e,
     };
-    let listener = RtmpListener {
-        accept_rx: Arc::clone(&infra.accept_rx),
-        app: route.app.clone(),
-        max_sessions: route.max_sessions,
-    };
-    let mut driver: ListenDriver<RtmpListener> = ListenDriver::new(
-        listener,
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
-    );
     let start = clock();
     let read_timeout = route.timeouts.read;
-
-    let mut progress: ProgressBySession = HashMap::new();
-    // Each session's own clock origin (see `SessionClocks`).
-    let mut clocks = SessionClocks::new(start);
     let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
+
+    // The shared admitted-session driver (media-plane): admission, the
+    // per-session clock origin, publish-then-reap and the live-session gauge
+    // are its bookkeeping, identical to every other concurrently-admitting
+    // push ingest.
+    let mut admitted: AdmittedDriver<RtmpListener, DriverProgress> = AdmittedDriver::new(
+        ListenDriver::new(
+            RtmpListener {
+                accept_rx: Arc::clone(&infra.accept_rx),
+                app: route.app.clone(),
+                max_sessions: route.max_sessions,
+            },
+            trunk_config,
+            handshake,
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        ),
+        start,
+    );
 
     loop {
         // Admits on a wake-up from the accept pump AND after every read,
@@ -847,48 +831,32 @@ pub(crate) async fn run_rtmp_with_clock(
         // and reset the poll sleep before it ever fired).
         tokio::select! {
             () = infra.admit_notify.notified() => {
-                clocks.retain(|id| progress.contains_key(id));
+                admitted.prune_clocks();
             }
             Some((id, outcome)) = reads.next(), if !reads.is_empty() => {
-                let now = clocks.now(id, clock());
+                let now = admitted.now(id, clock());
                 match outcome {
-                    ReadOutcome::Events(events) => {
-                        if let Some(d) = driver.driver_mut(id) {
-                            d.feed(&events[..], now);
-                        }
-                        let reaped =
-                            report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
-                        infra.session_count.store(progress.len(), Ordering::SeqCst);
-                        if !reaped
-                            && let Some(d) = driver.driver(id)
-                        {
-                            let conn = d.session().conn_handle();
-                            reads.push(read_one(id, conn, read_timeout));
-                        }
-                    }
-                    ReadOutcome::Eof => {
-                        if let Some(d) = driver.driver_mut(id) {
-                            d.finish();
-                        }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
-                        infra.session_count.store(progress.len(), Ordering::SeqCst);
-                    }
+                    ReadOutcome::Events(events) => admitted.feed(id, &events[..], now),
+                    ReadOutcome::Eof => admitted.finish(id),
                     ReadOutcome::TransportError(reason) => {
                         tracing::warn!(error = %reason, "rtmp: session read failed");
-                        if let Some(d) = driver.driver_mut(id) {
-                            d.finish();
-                        }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
-                        infra.session_count.store(progress.len(), Ordering::SeqCst);
+                        admitted.finish(id);
                     }
                     ReadOutcome::TimedOut => {
                         tracing::warn!("rtmp: session idle past read timeout");
-                        if let Some(d) = driver.driver_mut(id) {
-                            d.finish();
-                        }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
-                        infra.session_count.store(progress.len(), Ordering::SeqCst);
+                        admitted.finish(id);
                     }
+                }
+                advance(&mut admitted, id, route_handle).await;
+                let reaped = admitted.reap(id);
+                infra
+                    .session_count
+                    .store(admitted.session_count(), Ordering::SeqCst);
+                if !reaped
+                    && let Some(d) = admitted.driver(id)
+                {
+                    let conn = d.session().conn_handle();
+                    reads.push(read_one(id, conn, read_timeout));
                 }
             }
         }
@@ -896,34 +864,20 @@ pub(crate) async fn run_rtmp_with_clock(
         // Drain every accepted connection and queue its first read, on every
         // loop iteration (whichever arm won): a continuously-ready read can
         // no longer starve an accept.
-        loop {
-            match driver.poll_accept() {
-                AcceptOutcome::Idle => break,
-                AcceptOutcome::Refused => {
-                    tracing::warn!("rtmp: connection refused, max_sessions reached");
-                }
-                AcceptOutcome::Error(e) => return e,
-                AcceptOutcome::Admitted(id) => {
-                    let conn = driver
-                        .driver(id)
-                        .expect("just admitted by poll_accept")
-                        .session()
-                        .conn_handle();
-                    infra.session_count.fetch_add(1, Ordering::SeqCst);
-                    infra.admitted_total.fetch_add(1, Ordering::SeqCst);
-                    infra.admit_count_notify.notify_waiters();
-                    progress.insert(id, DriverProgress::new());
-                    clocks.admit(id, clock());
-                    reads.push(read_one(id, conn, read_timeout));
-                }
-                // `AcceptOutcome` is `#[non_exhaustive]`; an unrecognized
-                // variant stops this tick like `Idle`.
-                _ => break,
-            }
+        let admitted_now = match admitted.accept() {
+            Ok(ids) => ids,
+            Err(e) => return e,
+        };
+        for id in admitted_now {
+            admitted.register(id, clock());
+            let conn = admitted.driver(id).map(|d| d.session().conn_handle());
+            let Some(conn) = conn else { continue };
+            infra.admitted_total.fetch_add(1, Ordering::SeqCst);
+            infra.admit_count_notify.notify_waiters();
+            reads.push(read_one(id, conn, read_timeout));
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1310,37 +1264,6 @@ mod tests {
             landed,
             "a publisher connecting after the route's own handshake budget was reaped"
         );
-    }
-
-    /// The shared clock logic both ingest loops use, with hand-made instants:
-    /// a session's clock starts at its own admission; an unknown session falls
-    /// back to the route's start; a retired session is forgotten.
-    #[test]
-    fn session_clocks_measure_from_each_sessions_admission() {
-        use media_plane::ingress::SessionId;
-        let base = Instant::now();
-        let at = |s: u64| base + Duration::from_secs(s);
-        let mut clocks = crate::source::SessionClocks::new(base);
-        let (a, b) = (SessionId(1), SessionId(2));
-        clocks.admit(a, at(0));
-        clocks.admit(b, at(100));
-        // A fed 150 s into the route's life, B 5 s after its own admission.
-        assert_eq!(
-            clocks.now(a, at(150)),
-            Timestamp::from_nanos(150_000_000_000)
-        );
-        assert_eq!(clocks.now(b, at(105)), Timestamp::from_nanos(5_000_000_000));
-        // Never admitted: the route's start.
-        assert_eq!(
-            clocks.now(SessionId(9), at(7)),
-            Timestamp::from_nanos(7_000_000_000)
-        );
-        clocks.retain(|id| *id == b);
-        assert_eq!(
-            clocks.now(a, at(150)),
-            Timestamp::from_nanos(150_000_000_000)
-        );
-        assert_eq!(clocks.now(b, at(105)), Timestamp::from_nanos(5_000_000_000));
     }
 
     /// Biting test (issue #805 task 4, the concurrency fix): a first

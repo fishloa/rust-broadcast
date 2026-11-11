@@ -87,8 +87,8 @@ use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{Notify, OnceCell, mpsc};
 
 use media_plane::ingress::{
-    AcceptOutcome, HandshakePolicy, IngestSession, ListenDriver, Listener, ProgramId, SessionEvent,
-    SessionId,
+    AdmittedDriver, HandshakePolicy, IngestSession, ListenDriver, Listener, ProgramId,
+    SessionEvent, SessionId,
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 
@@ -105,7 +105,6 @@ use webrtc_runtime::media::{
 
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
-use crate::source::SessionClocks;
 #[cfg(feature = "test-hooks")]
 use crate::source::handshake_policy;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
@@ -226,10 +225,6 @@ struct WhipInfra {
     /// RTMP's `admit_count_notify`), so the observer is never woken on the
     /// driver's own `admit_notify`.
     admit_count_notify: Arc<Notify>,
-    /// Number of live `last_datagram` (idle-clock) entries the driver holds
-    /// (minor review finding): a reaped session must drop its entry, else this
-    /// gauge climbs one per reaped session. Test-only observable.
-    last_datagram_entries: Arc<AtomicUsize>,
     /// Test-only: staging a [`MediaEvent::TimerError`] to be surfaced on the
     /// next `handle_timeout` drive of a freshly-admitted session's transport
     /// (finding N3's session-end test seam — a real ICE/DTLS timer failure is
@@ -386,7 +381,6 @@ impl WhipRoute {
                     admit_notify,
                     admitted_total: Arc::new(AtomicUsize::new(0)),
                     admit_count_notify: Arc::new(Notify::new()),
-                    last_datagram_entries: Arc::new(AtomicUsize::new(0)),
                     #[cfg(feature = "test-hooks")]
                     force_timer_error: Arc::new(StdMutex::new(None)),
                 }))
@@ -404,7 +398,10 @@ pub struct WhipRouteShared {
 }
 
 impl WhipRouteShared {
-    /// The live admitted-session count.
+    /// The live admitted-session count: every slot `handle_whip_connection`
+    /// reserved (issue r07-C11) that has not yet been released — which is a
+    /// superset of the sessions the media driver has admitted, by the one or
+    /// two still being set up in the signalling handler.
     pub fn active_sessions(&self) -> usize {
         self.infra.active_sessions.load(Ordering::SeqCst)
     }
@@ -475,11 +472,12 @@ impl WhipRouteShared {
         }
     }
 
-    /// Number of live `last_datagram` (idle-clock) entries the driver holds
-    /// (minor review finding): a reaped session must drop its entry, so this
-    /// returns to 0 once every session is reaped.
+    /// How many sessions the driver currently holds an idle clock for: a
+    /// reaped session must drop its entry, so this returns to 0 once every
+    /// session is reaped (issue: the idle-clock map leaked one entry per
+    /// reaped session).
     pub fn last_datagram_entries(&self) -> usize {
-        self.infra.last_datagram_entries.load(Ordering::Relaxed)
+        self.infra.active_sessions.load(Ordering::Relaxed)
     }
 
     /// Stage a [`MediaEvent::TimerError`] to be surfaced by the next admitted
@@ -1793,56 +1791,6 @@ fn first_timer_error(events: &[MediaEvent]) -> Option<String> {
     })
 }
 
-/// The `last_datagram` idle-clock map with an optional live-size gauge (minor
-/// review finding): the driver's `last_datagram` must drop a reaped session's
-/// entry, else the map leaks one entry per reaped session. Wrapping the
-/// `HashMap` here (rather than three bare mutation sites) keeps the gauge and
-/// the map in lock-step so a test can observe the leak.
-struct IdleClockMap {
-    map: HashMap<SessionId, Instant>,
-    live: Option<Arc<AtomicUsize>>,
-}
-
-impl IdleClockMap {
-    fn new(live: Option<Arc<AtomicUsize>>) -> Self {
-        Self {
-            map: HashMap::new(),
-            live,
-        }
-    }
-
-    /// Set the idle clock for `id` (inserting it if new), returning the
-    /// resulting value; increments the gauge only on a NEW insertion.
-    fn set(&mut self, id: SessionId, t: Instant) -> Instant {
-        use std::collections::hash_map::Entry;
-        match self.map.entry(id) {
-            Entry::Occupied(mut e) => {
-                *e.get_mut() = t;
-                t
-            }
-            Entry::Vacant(e) => {
-                e.insert(t);
-                if let Some(g) = &self.live {
-                    g.fetch_add(1, Ordering::Relaxed);
-                }
-                t
-            }
-        }
-    }
-
-    fn get(&self, id: &SessionId) -> Option<Instant> {
-        self.map.get(id).copied()
-    }
-
-    fn remove(&mut self, id: &SessionId) {
-        if self.map.remove(id).is_some()
-            && let Some(g) = &self.live
-        {
-            g.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
-}
-
 /// Sleep until an optional wall-clock deadline (`std::time::Instant`, as
 /// `MediaTransport::poll_timeout` returns), or never fire when `None`. An
 /// already-overdue deadline fires IMMEDIATELY (it maps to a completed future,
@@ -1862,14 +1810,14 @@ fn sleep_until_opt(deadline: Option<Instant>) -> Pin<Box<dyn Future<Output = ()>
 /// Builds session `id`'s next [`read_one`] (or `None` when the driver no
 /// longer holds it).
 fn rearm(
-    driver: &ListenDriver<WhipListener>,
+    admitted: &AdmittedDriver<WhipListener, DriverProgress>,
     infra: &WhipInfra,
     id: SessionId,
     media: MediaTransport,
     idle_deadline: Instant,
     last_fire: Option<Instant>,
 ) -> Option<BoxedRead> {
-    let session = driver.driver(id)?.session();
+    let session = admitted.driver(id)?.session();
     Some(read_one(
         id,
         session.socket_handle(),
@@ -1881,40 +1829,21 @@ fn rearm(
     ))
 }
 
-/// Per-session [`DriverProgress`] bookkeeping — mirrors
-/// `crate::source::rtmp::ProgressBySession`.
-type ProgressBySession = HashMap<SessionId, DriverProgress>;
-
-/// Publishes session `id`'s progress and, if that left it terminal, releases
-/// whatever it published (`crate::source::release_route`) and reaps it —
-/// mirrors `crate::source::rtmp::report_and_maybe_reap` exactly (the feed
-/// call in [`run_whip`]'s loop goes through `driver_mut`/`IngestDriver::feed`
-/// rather than `ListenDriver::feed`'s own `&[u8]`-pinned convenience wrapper,
-/// specifically so a terminal session is never removed before this helper's
-/// release-then-reap sequence runs for it).
-async fn report_and_maybe_reap(
-    driver: &mut ListenDriver<WhipListener>,
+/// Publish and segment session `id`'s programs once its read made progress,
+/// then release them if that left it terminal — the order `AdmittedDriver`
+/// documents (its programs must reach the route before its slot frees).
+async fn advance(
+    admitted: &mut AdmittedDriver<WhipListener, DriverProgress>,
     id: SessionId,
     route_handle: &Arc<RouteHandle>,
-    progress: &mut ProgressBySession,
-    active_sessions: &Arc<AtomicUsize>,
-) -> bool {
-    if let Some(d) = driver.driver(id) {
-        crate::source::advance_route(d, route_handle, progress.entry(id).or_default()).await;
-        if !d.health().is_running() {
-            crate::source::release_route(d, route_handle);
-        }
+) {
+    let Some((driver, state)) = admitted.session_parts(id) else {
+        return;
+    };
+    crate::source::advance_route(driver, route_handle, state).await;
+    if !driver.health().is_running() {
+        crate::source::release_route(driver, route_handle);
     }
-    let reaped = driver.reap_if_terminal(id).is_some();
-    if reaped {
-        progress.remove(&id);
-        // Frees the capacity slot `handle_whip_connection` reserved before
-        // this session's UDP bind/ICE setup (issue r07-C11) — without this,
-        // every session that ever completes leaves that slot permanently
-        // occupied.
-        active_sessions.fetch_sub(1, Ordering::SeqCst);
-    }
-    reaped
 }
 
 /// Binds `route` (once ever), then admits and drives up to
@@ -1946,30 +1875,31 @@ pub(crate) async fn run_whip_with_clock(
         Ok(v) => v,
         Err(e) => return e,
     };
-    let accept_rx = Arc::clone(&infra.accept_rx);
-    let active_sessions = Arc::clone(&infra.active_sessions);
-    let listener = WhipListener {
-        accept_rx,
-        max_sessions: route.max_sessions,
-    };
-    let mut driver: ListenDriver<WhipListener> = ListenDriver::new(
-        listener,
-        trunk_config,
-        handshake,
-        media_plane::DEFAULT_MAX_PROGRAMS,
-    );
     let start = clock();
     let read_timeout = route.timeouts.read;
+    let active_sessions = Arc::clone(&infra.active_sessions);
 
-    let mut progress: ProgressBySession = HashMap::new();
-    // Each session's own clock origin (see `SessionClocks`).
-    let mut clocks = SessionClocks::new(start);
-    // The last time each session received a datagram, driving the idle reap
-    // bound (a transport-timer wake must NOT reset it).
-    let mut last_datagram = IdleClockMap::new({
-        let g = Arc::clone(&infra.last_datagram_entries);
-        Some(g)
-    });
+    // The shared admitted-session driver (media-plane): admission, the
+    // per-session clock origin, publish-then-reap and the live-session gauge
+    // are its bookkeeping, identical to every other concurrently-admitting
+    // push ingest. Its activity clock is this loop's idle bound: a datagram
+    // resets it, a transport-timer wake or a trickle `PATCH` does not.
+    let mut admitted: AdmittedDriver<WhipListener, DriverProgress> = AdmittedDriver::new(
+        ListenDriver::new(
+            WhipListener {
+                accept_rx: Arc::clone(&infra.accept_rx),
+                max_sessions: route.max_sessions,
+            },
+            trunk_config,
+            handshake,
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        ),
+        start,
+    );
+    // The transport's own next timer, per session, carried across reads so
+    // its `MIN_TIMER_INTERVAL` floor is measured from the real previous fire
+    // (issue #1150).
+    let mut last_fire: HashMap<SessionId, Option<Instant>> = HashMap::new();
     let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
 
     loop {
@@ -1977,85 +1907,62 @@ pub(crate) async fn run_whip_with_clock(
             // I2: admits on a wake from the signalling accept pump, instead of
             // a fixed poll interval a steady publish load can starve.
             () = infra.admit_notify.notified() => {
-                clocks.retain(|id| progress.contains_key(id));
+                admitted.prune_clocks();
             }
-            Some(ReadDone { id, media, outcome, last_fire }) = reads.next(), if !reads.is_empty() => {
-                let now = clocks.now(id, clock());
+            Some(ReadDone { id, media, outcome, last_fire: fired }) = reads.next(), if !reads.is_empty() => {
+                let now = admitted.now(id, clock());
+                last_fire.insert(id, fired);
                 match outcome {
                     ReadOutcome::Events(events) => {
-                        // A datagram arrived: reset the idle clock.
-                        last_datagram.set(id, clock());
-                        // Fed via `driver_mut`/`IngestDriver::feed`, not
-                        // `ListenDriver::feed` — that convenience wrapper
-                        // removes a session that goes terminal as a *result*
-                        // of this feed before `report_and_maybe_reap` below
-                        // ever runs, which would skip its release-then-reap
-                        // sequence for this session.
-                        if let Some(d) = driver.driver_mut(id) {
-                            for wire in &events {
-                                d.feed(wire, now);
-                            }
+                        for wire in &events {
+                            admitted.feed(id, wire.as_slice(), now);
                         }
-                        let reaped =
-                            report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
-                        if reaped {
-                            // The session is gone: drop its idle-clock entry, or
-                            // the map leaks one entry per reaped session.
-                            last_datagram.remove(&id);
-                        } else {
-                            let idle_deadline = last_datagram.get(&id).unwrap_or_else(clock) + read_timeout;
-                            if let Some(next) = rearm(&driver, &infra, id, media, idle_deadline, last_fire) {
-                                reads.push(next);
-                            }
-                        }
+                        advance(&mut admitted, id, route_handle).await;
                     }
-                    // A transport-timer wake (defect 1): the session stays live
-                    // and its idle clock is NOT reset.
-                    // A trickle `PATCH` wake is the same: the session stays
-                    // live and the idle clock is untouched.
-                    ReadOutcome::Timer | ReadOutcome::Control => {
-                        if progress.contains_key(&id) {
-                            let idle_deadline = last_datagram.get(&id).unwrap_or_else(clock) + read_timeout;
-                            if let Some(next) = rearm(&driver, &infra, id, media, idle_deadline, last_fire) {
-                                reads.push(next);
-                            }
-                        }
-                    }
-                    // The session resource was `DELETE`d: end the session
-                    // through the same release-then-reap path as a timeout.
+                    // A transport-timer wake (defect 1) or a trickle `PATCH`:
+                    // the session stays live with nothing to feed.
+                    ReadOutcome::Timer | ReadOutcome::Control => {}
                     ReadOutcome::Terminated => {
                         tracing::info!("whip: session ended by DELETE");
-                        if let Some(d) = driver.driver_mut(id) {
-                            d.finish();
-                        }
-                        last_datagram.remove(&id);
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
+                        admitted.finish(id);
+                        advance(&mut admitted, id, route_handle).await;
                     }
                     ReadOutcome::TimedOut => {
                         tracing::warn!("whip: session idle past read timeout");
-                        if let Some(d) = driver.driver_mut(id) {
-                            d.finish();
-                        }
-                        last_datagram.remove(&id);
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
+                        admitted.finish(id);
+                        advance(&mut admitted, id, route_handle).await;
                     }
                     ReadOutcome::TransportError(reason) => {
                         tracing::warn!(error = %reason, "whip: session read failed");
-                        if let Some(d) = driver.driver_mut(id) {
-                            d.finish();
-                        }
-                        last_datagram.remove(&id);
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
+                        admitted.finish(id);
+                        advance(&mut admitted, id, route_handle).await;
                     }
                     // A fatal ICE/DTLS timer error (finding N3): log and end
                     // the session (a stuck transport can never recover).
                     ReadOutcome::TimerError(reason) => {
                         tracing::warn!(error = %reason, "whip: transport timer error; ending session");
-                        if let Some(d) = driver.driver_mut(id) {
-                            d.finish();
-                        }
-                        last_datagram.remove(&id);
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
+                        admitted.finish(id);
+                        advance(&mut admitted, id, route_handle).await;
+                    }
+                }
+                if admitted.reap(id) {
+                    last_fire.remove(&id);
+                    // The capacity slot reserved BEFORE this session's media
+                    // setup (issue r07-C11) is released here, or every
+                    // session that ever completes leaves it occupied forever.
+                    active_sessions.fetch_sub(1, Ordering::SeqCst);
+                } else {
+                    // The idle bound is measured from the last datagram the
+                    // session actually took in (a transport-timer wake and a
+                    // trickle `PATCH` both leave the driver untouched), so a
+                    // vanished publisher is reaped by inactivity alone.
+                    if admitted.took_input(id) {
+                        admitted.touch(id, clock());
+                    }
+                    let idle_deadline = admitted.idle_deadline(id, read_timeout);
+                    let last = last_fire.get(&id).copied().flatten();
+                    if let Some(next) = rearm(&admitted, &infra, id, media, idle_deadline, last) {
+                        reads.push(next);
                     }
                 }
             }
@@ -2063,59 +1970,51 @@ pub(crate) async fn run_whip_with_clock(
 
         // Drain every admitted session, on every loop iteration (whichever arm
         // won): a continuously-ready read can no longer starve an admission.
-        loop {
-            match driver.poll_accept() {
-                AcceptOutcome::Idle => break,
-                AcceptOutcome::Refused => {
-                    tracing::warn!("whip: connection refused, max_sessions reached");
+        let admitted_now = match admitted.accept_with(|driver| {
+            let session = driver.session();
+            let (socket, control) = (session.socket_handle(), session.control_handle());
+            let media = session.take_transport();
+            (socket, control, media)
+        }) {
+            Ok(ids) => ids,
+            Err(e) => return e,
+        };
+        for (id, (socket, control, media)) in admitted_now {
+            #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
+            let Some(mut media) = media else {
+                tracing::error!(
+                    "whip: media transport of a just-admitted session was already taken; skipping its read loop"
+                );
+                continue;
+            };
+            // Test seam: a staged fatal timer error is applied to the
+            // freshly-admitted transport so its next `handle_timeout` ends the
+            // session (finding N3).
+            #[cfg(feature = "test-hooks")]
+            {
+                if let Some(err) = infra
+                    .force_timer_error
+                    .lock()
+                    .expect("force_timer_error")
+                    .take()
+                {
+                    media.force_next_timer_error(err);
                 }
-                AcceptOutcome::Error(e) => return e,
-                AcceptOutcome::Admitted(id) => {
-                    let (socket, control, taken) = {
-                        let s = driver
-                            .driver(id)
-                            .expect("just admitted by poll_accept")
-                            .session();
-                        (s.socket_handle(), s.control_handle(), s.take_transport())
-                    };
-                    #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
-                    let Some(mut media) = taken else {
-                        tracing::error!(
-                            "whip: media transport of a just-admitted session was already taken; skipping its read loop"
-                        );
-                        continue;
-                    };
-                    // Test seam: a staged fatal timer error is applied to the
-                    // freshly-admitted transport so its next `handle_timeout`
-                    // ends the session (finding N3).
-                    #[cfg(feature = "test-hooks")]
-                    {
-                        if let Some(err) = infra
-                            .force_timer_error
-                            .lock()
-                            .expect("force_timer_error")
-                            .take()
-                        {
-                            media.force_next_timer_error(err);
-                        }
-                    }
-                    infra.admitted_total.fetch_add(1, Ordering::SeqCst);
-                    infra.admit_count_notify.notify_waiters();
-                    progress.insert(id, DriverProgress::new());
-                    clocks.admit(id, clock());
-                    let idle_deadline = last_datagram.set(id, clock());
-                    reads.push(read_one(
-                        id,
-                        socket,
-                        media,
-                        idle_deadline + read_timeout,
-                        None,
-                        control,
-                        ReadShared::of(&infra),
-                    ));
-                }
-                _ => break,
             }
+            infra.admitted_total.fetch_add(1, Ordering::SeqCst);
+            infra.admit_count_notify.notify_waiters();
+            admitted.register(id, clock());
+            last_fire.insert(id, None);
+            let idle_deadline = admitted.idle_deadline(id, read_timeout);
+            reads.push(read_one(
+                id,
+                socket,
+                media,
+                idle_deadline,
+                None,
+                control,
+                ReadShared::of(&infra),
+            ));
         }
     }
 }
