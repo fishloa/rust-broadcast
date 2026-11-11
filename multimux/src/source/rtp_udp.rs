@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use transmux::TrackId;
 
-use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_common::{Demand, Parse, Stage, Timestamp};
 use media_plane::ingress::{Dialer, IngestSession, ProgramId, SessionEvent};
 use media_plane::trunk::RetentionClass;
 use tokio::net::UdpSocket;
@@ -51,13 +51,6 @@ use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
 /// Max UDP datagram this source reads in one `recv` — comfortably above the
 /// largest legal UDP payload (65 507 bytes over IPv4).
 const MAX_UDP_DATAGRAM: usize = 65_536;
-
-/// RFC 3550 §5.1 fixed RTP header length (before any CSRC/extension).
-const RTP_MIN_HEADER_LEN: usize = 12;
-
-/// Mask for the 7-bit payload-type field (RTP header byte 1, bit 7 is the
-/// marker bit).
-const RTP_PT_MASK: u8 = 0x7F;
 
 /// A raw RTP-over-UDP route: no control plane — a bind address and an
 /// out-of-band SDP describing the codec/fmtp. Replaces the old (pre-5a)
@@ -269,10 +262,9 @@ impl IngestSession for RtpUdpIngestSession {
 /// `[6:0]`) from a wire packet, or `None` if it's too short to even carry a
 /// fixed RTP header.
 fn payload_type_of(packet: &[u8]) -> Option<u8> {
-    if packet.len() < RTP_MIN_HEADER_LEN {
-        return None;
-    }
-    Some(packet[1] & RTP_PT_MASK)
+    rtp_packet::RtpPacket::parse(packet)
+        .ok()
+        .map(|rtp| rtp.payload_type)
 }
 
 /// Constructs an [`RtpUdpIngestSession`] from the route's out-of-band SDP —
