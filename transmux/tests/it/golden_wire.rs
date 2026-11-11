@@ -1,5 +1,6 @@
 //! Goldens for the RTP SDP and the HLS IV text, generated from unmodified
-//! `main` (see `fixtures/golden/<topic>/PROVENANCE.md`). `GOLDEN_BLESS=<dir>` writes.
+//! `main` (see `fixtures/golden/<topic>/PROVENANCE.md`). `GOLDEN_BLESS=<dir>`
+//! writes; a run with `CI` set refuses to write.
 #![cfg(feature = "std")]
 
 use std::fs;
@@ -11,6 +12,10 @@ use transmux::{RtpPacketiser, TsDemux, build_sdp_with_connection};
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "GOLDEN_BLESS rewrites committed goldens and is refused under CI"
+        );
         fs::create_dir_all(&dir).expect("create golden dir");
         fs::write(Path::new(&dir).join(name), actual).expect("write golden");
         return;

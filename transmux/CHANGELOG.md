@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- The DVB-DASH HDR branch of the MPD writer is covered by a golden recorded from an HEVC HDR10+ stream (`fixtures/golden/dash/dash-cover-dvb-hdr10plus.mpd`), and the coverage test pins the values of `HDR_METADATA_SCHEME` and `DVB_HDR_DMI_SCHEME` as well as the element and attribute names. `GOLDEN_BLESS` and `REGENERATE_FLV_WALK_GOLDEN` refuse to rewrite a committed golden when `CI` is set.
 - `FlvDemux` and `StreamingFlvDemux` report an FLV header whose signature is `"FLV"` but whose `DataOffset` is below the 9-byte header as the new `FlvError::Header(rtmp_runtime::RtmpError)`, and keep `FlvError::BadSignature` for a wrong signature. Both demuxers now reject such a header (they used to clamp its `DataOffset` up to 9).
 - `RtmpMux` frames at exactly the chunk size it announces: a `chunk_size` of 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE` (16 MiB) is rejected with `RtmpFlvError::ChunkSizeTooLarge` instead of announcing it and framing at the writer's clamped value. A tag body over `rtmp_runtime::chunk::MAX_MESSAGE_LEN` (8 MiB) is rejected with the new `RtmpFlvError::MessageTooLarge { len, max }` instead of producing a message `RtmpDemux` refuses.
 ### Changed

@@ -496,6 +496,9 @@ mod walk_golden {
 
     /// Environment variable that rewrites the golden instead of comparing it.
     const REGENERATE_ENV: &str = "REGENERATE_FLV_WALK_GOLDEN";
+    /// The variable CI sets; a rewrite is refused there, so a CI run can never
+    /// replace the record it is meant to check.
+    const CI_ENV: &str = "CI";
     /// The golden record (public fixtures tier, `docs/FIXTURES.md` layout).
     const GOLDEN: &str = "golden/flv/tag-walk.golden";
     /// FLV header (9 bytes) and its `PreviousTagSize0` (4 bytes).
@@ -623,6 +626,10 @@ mod walk_golden {
         }
         let path = golden_path();
         if env::var_os(REGENERATE_ENV).is_some() {
+            assert!(
+                env::var_os(CI_ENV).is_none(),
+                "{REGENERATE_ENV} rewrites a committed golden and is refused under {CI_ENV}"
+            );
             fs::write(&path, &actual).unwrap_or_else(|e| panic!("write {path:?}: {e}"));
             return;
         }
