@@ -545,18 +545,6 @@ impl RtspSource {
             && url.port().unwrap_or(default_port) == self.port
     }
 
-    fn resolve_control(&self, control: Option<&str>, base: &Url) -> Option<String> {
-        match control {
-            None => Some(self.uri.clone()),
-            Some(CONTROL_AGGREGATE) => Some(base.to_string()),
-            Some(c) => base
-                .join(c)
-                .ok()
-                .filter(|u| self.same_authority(u))
-                .map(|u| u.to_string()),
-        }
-    }
-
     fn on_client_event(&mut self, event: ClientEvent, now: u64, auth: &mut AuthState) {
         match event {
             ClientEvent::AuthRetry { request, .. } => {
@@ -733,7 +721,7 @@ impl RtspSource {
 
     fn on_describe_ok(&mut self, body: &[u8]) -> bool {
         let base = self.base_url();
-        let parsed = parse_tracks(body, |control| self.resolve_control(control, &base));
+        let parsed = parse_tracks(body, |control| rtsp_runtime::sdp::resolve_control(&self.request_url, &base, control));
         let ParsedSdp {
             aggregate,
             tracks,

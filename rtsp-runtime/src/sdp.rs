@@ -72,3 +72,37 @@ pub fn control_url(base: &url::Url) -> crate::Result<String> {
     }
     Ok(url.to_string())
 }
+
+/// Resolve a per-media / session `a=control` value to a SETUP URI using the
+/// broadcast-client semantics (RFC 2326 §C.1.1): an aggregate control value
+/// (`"*"`) and a missing value both resolve to `base`; any other value is
+/// joined onto `base` and kept only when it shares `request_url`'s authority
+/// (scheme/host/port). Returns `None` when the joined URL crosses authorities.
+pub fn resolve_control(
+    request_url: &url::Url,
+    base: &url::Url,
+    control: Option<&str>,
+) -> Option<String> {
+    let default_port = if request_url.scheme() == "rtsps" {
+        322
+    } else {
+        554
+    };
+    // rtsp-runtime constants not available here; use literals matching defaults.
+    let same_authority = |u: &url::Url| {
+        let rp = request_url.port().unwrap_or(default_port);
+        let up = u.port().unwrap_or(if u.scheme() == "rtsps" { 322 } else { 554 });
+        u.scheme() == request_url.scheme()
+            && u.host() == request_url.host()
+            && up == rp
+    };
+    match control {
+        None => Some(request_url.to_string()),
+        Some("*") => Some(base.to_string()),
+        Some(c) => base
+            .join(c)
+            .ok()
+            .filter(|u| same_authority(u))
+            .map(|u| u.to_string()),
+    }
+}

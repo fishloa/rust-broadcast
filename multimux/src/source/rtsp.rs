@@ -79,7 +79,7 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{credentials_from_url, resolve_credentials, strip_userinfo};
 use crate::source::pull_target::{PullKind, PullRoute};
-use crate::source::{TrackInit, sdp::parse_sdp_tracks};
+use crate::source::{TrackInit, sdp::parse_tracks_multimux as parse_sdp_tracks};
 
 /// Interleaved channel offset from a media's RTP channel to its paired RTCP
 /// channel (RFC 2326 §10.12: `interleaved=lo-hi` with `hi = lo + 1`).
@@ -202,7 +202,7 @@ impl RtspIngestSession {
 
     fn begin_setup(&mut self, index: usize) -> Result<()> {
         let track = &self.tracks[index];
-        let uri = resolve_control(&self.base_url, track.control.as_deref())?;
+        let uri = rtsp_runtime::sdp::resolve_control(&self.base_url, &self.base_url, track.control.as_deref()).ok_or_else(|| MultimuxError::Sdp { reason: "control rejected".into() })?;
         let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
             track.channel,
             track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
@@ -242,7 +242,7 @@ impl RtspIngestSession {
                         );
                         return Ok(());
                     }
-                    return Err(response_error(&method, status));
+                    return Err(if matches!(status, StatusCode::Unauthorized | StatusCode::Forbidden) { MultimuxError::Auth { reason: format!("{}: {status}", match method { Method::Describe=>"DESCRIBE", Method::Setup=>"SETUP", Method::Play=>"PLAY", _=>"recv" }) } } else { MultimuxError::Protocol { phase: match method { Method::Describe=>"DESCRIBE", Method::Setup=>"SETUP", Method::Play=>"PLAY", _=>"recv" }, reason: format!("non-success status {status}") } });
                 }
                 match (&self.phase, &method) {
                     (Phase::AwaitDescribe, m) if *m == Method::Describe => {
@@ -588,43 +588,6 @@ fn session_with_credentials(credentials: Option<Credentials>) -> ClientSession {
     }
 }
 
-/// A non-success response status becomes the concrete error the driver
-/// reports (via `Stage::feed`'s `Err`, i.e. `HealthState::Failed`) — a `401`/
-/// `403` maps to [`MultimuxError::Auth`] (matchable), anything else to
-/// [`MultimuxError::Protocol`].
-fn response_error(method: &Method, status: StatusCode) -> MultimuxError {
-    let phase: &'static str = match *method {
-        Method::Describe => "DESCRIBE",
-        Method::Setup => "SETUP",
-        Method::Play => "PLAY",
-        _ => "recv",
-    };
-    if matches!(status, StatusCode::Unauthorized | StatusCode::Forbidden) {
-        MultimuxError::Auth {
-            reason: format!("{phase}: {status}"),
-        }
-    } else {
-        MultimuxError::Protocol {
-            phase,
-            reason: format!("non-success status {status}"),
-        }
-    }
-}
-
-/// Resolves a per-media SETUP URI from the base RTSP URL and its `a=control`
-/// value, per RFC 2326 §C.1.1.
-fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
-    match control {
-        None | Some("*") => Ok(base_url.to_string()),
-        Some(c) => base_url
-            .join(c)
-            .map(|u| u.to_string())
-            .map_err(|e| MultimuxError::Sdp {
-                reason: format!("bad a=control {c:?}: {e}"),
-            }),
-    }
-}
-
 /// Derives the `host:port` connect address from the base URL, defaulting to
 /// [`RTSP_DEFAULT_PORT`]/[`RTSPS_DEFAULT_PORT`].
 fn connect_addr(url: &Url) -> Result<String> {
@@ -940,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_control_falls_back_to_base_on_aggregate_or_missing() {
+    fn control_helper_falls_back_to_base_on_aggregate_or_missing() {
         let base = Url::parse("rtsp://cam/base").unwrap();
         assert_eq!(resolve_control(&base, None).unwrap(), base.to_string());
         assert_eq!(resolve_control(&base, Some("*")).unwrap(), base.to_string());

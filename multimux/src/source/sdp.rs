@@ -22,7 +22,7 @@ const CHANNEL_STEP: u8 = 2;
 
 /// Parse the DESCRIBE SDP body into per-track init, assigning interleaved
 /// channels 0,2,4,… in media order.
-pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
+pub fn parse_tracks_multimux(sdp: &[u8]) -> Result<Vec<TrackInit>> {
     let session = Session::parse(sdp).map_err(|e| MultimuxError::Sdp {
         reason: format!("parse: {e}"),
     })?;
@@ -137,7 +137,7 @@ a=control:streamid=0\r\n";
 
     #[test]
     fn parses_h264_video_track() {
-        let tracks = parse_sdp_tracks(SDP).unwrap();
+        let tracks = parse_tracks_multimux(SDP).unwrap();
         assert_eq!(tracks.len(), 1);
         let t = &tracks[0];
         assert!(matches!(t.kind, RtpMediaKind::H264));
@@ -180,7 +180,7 @@ a=control:streamid=0\r\n";
     fn rejects_sdp_without_media() {
         let sdp = b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n";
         assert!(matches!(
-            parse_sdp_tracks(sdp),
+            parse_tracks_multimux(sdp),
             Err(crate::error::MultimuxError::Sdp { .. })
         ));
     }
