@@ -75,17 +75,7 @@ fn findings() -> String {
     let mut out = String::new();
     for (name, path) in corpus() {
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let mut report = Report::new();
-        check_dash_mpd(&text, &mut report);
-        let mut lines: Vec<String> = report
-            .findings()
-            .iter()
-            .map(|f| format!("{name}\t{}\t{}", f.rule_id, f.severity.name()))
-            .collect();
-        lines.sort();
-        if lines.is_empty() {
-            lines.push(format!("{name}\t{CLEAN}"));
-        }
+        let lines = recorded(&name, &text);
         for line in lines {
             let _ = writeln!(out, "{line}");
         }
@@ -115,8 +105,8 @@ fn findings_match_the_golden_corpus() {
     );
 }
 
-/// The recorded rows for one MPD, with the same `fixture<TAB>rule<TAB>severity`
-/// shape (and the same `clean` fallback) the golden is built from.
+/// The golden rows for one MPD: `fixture<TAB>rule<TAB>severity`, or
+/// `fixture<TAB>clean` when it has no findings.
 fn recorded(name: &str, text: &str) -> Vec<String> {
     let mut report = Report::new();
     check_dash_mpd(text, &mut report);
