@@ -603,3 +603,90 @@ fn control_url_appends_one_track_id_segment() {
         Err(rtsp_runtime::Error::InvalidUrl { .. })
     ));
 }
+
+#[tokio::test]
+async fn start_play_describes_sets_up_and_plays() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return seen,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            while let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+                let body_len = head
+                    .lines()
+                    .find_map(|l| {
+                        let (name, value) = l.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() < end + 4 + body_len {
+                    break;
+                }
+                buf.drain(..end + 4 + body_len);
+                let request_line = head.lines().next().unwrap_or_default().to_string();
+                let is_setup = request_line.starts_with("SETUP ");
+                let cseq = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                seen.push(head);
+                let extra = if is_setup { "Session: 1\r\n" } else { "" };
+                let body = if request_line.starts_with("DESCRIBE ") {
+                    "v=0\r\n"
+                } else {
+                    ""
+                };
+                let response = if body.is_empty() {
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n")
+                } else {
+                    format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n{extra}\r\n{}",
+                        body.len(),
+                        body
+                    )
+                };
+                if sock.write_all(response.as_bytes()).await.is_err() {
+                    return seen;
+                }
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let session = client.start_play(&url, 0).await.unwrap();
+    assert!(session.sdp.contains("v=0"));
+    client.teardown(url.as_str()).await.unwrap();
+    drop(client);
+
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
+    let lines: Vec<&str> = seen
+        .iter()
+        .map(|h| h.lines().next().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![
+            format!("DESCRIBE rtsp://{addr}/live/key RTSP/1.0"),
+            format!("SETUP rtsp://{addr}/live/key/trackID=0 RTSP/1.0"),
+            format!("PLAY rtsp://{addr}/live/key RTSP/1.0"),
+            format!("TEARDOWN rtsp://{addr}/live/key RTSP/1.0"),
+        ]
+    );
+}

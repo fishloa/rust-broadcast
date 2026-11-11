@@ -153,6 +153,15 @@ pub struct AsyncRtspClient<S> {
     timeouts: RtspTimeouts,
 }
 
+/// Result of a successful [`AsyncRtspClient::start_play`].
+#[derive(Debug, Clone)]
+pub struct PlaySession {
+    /// The SDP body returned by `DESCRIBE` (RFC 2326 §10.2).
+    pub sdp: String,
+    /// The interleaved RTP channel the server negotiated on `SETUP`.
+    pub negotiated_channel: u8,
+}
+
 impl AsyncRtspClient<TcpStream> {
     /// Connects a plain-TCP (`rtsp://`) client to `addr`.
     ///
@@ -379,6 +388,71 @@ where
     /// write buffer and the connection is dead** — an interleaved frame cannot
     /// be resynchronised mid-flight, so the caller must reconnect rather than
     /// retry. Bytes already read stay buffered.
+    /// Pulls a stream in one call: DESCRIBE, SETUP, PLAY.
+    pub async fn start_play(
+        &mut self,
+        url: &url::Url,
+        interleaved_channel: u8,
+    ) -> Result<PlaySession> {
+        let uri = url.as_str();
+        let control = crate::sdp::control_url(url)?;
+        let transport = crate::Transport::single(
+            crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
+                interleaved_channel,
+                interleaved_channel.wrapping_add(1),
+            ),
+        );
+
+        let sdp = match self.describe(uri).await? {
+            crate::client::ClientEvent::Response { status, body, .. } if status.is_success() => {
+                String::from_utf8(body).map_err(|_| Error::InvalidUrl { what: "sdp utf8" })?
+            }
+            crate::client::ClientEvent::Response { status, .. } => {
+                return Err(Error::UnexpectedResponse {
+                    method: Method::Describe,
+                    status,
+                });
+            }
+            other => return Err(Error::UnexpectedEvent { event: other }),
+        };
+
+        match self.setup(&control, &transport).await? {
+            crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
+            crate::client::ClientEvent::Response { status, .. } => {
+                return Err(Error::UnexpectedResponse {
+                    method: Method::Setup,
+                    status,
+                });
+            }
+            other => return Err(Error::UnexpectedEvent { event: other }),
+        }
+        let negotiated_channel = self
+            .framed
+            .codec_mut()
+            .session
+            .take_negotiated_transport()
+            .as_ref()
+            .and_then(crate::Transport::first)
+            .and_then(|spec| spec.interleaved.map(|(lo, _)| lo))
+            .unwrap_or(interleaved_channel);
+
+        match self.play(uri).await? {
+            crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
+            crate::client::ClientEvent::Response { status, .. } => {
+                return Err(Error::UnexpectedResponse {
+                    method: Method::Play,
+                    status,
+                });
+            }
+            other => return Err(Error::UnexpectedEvent { event: other }),
+        }
+
+        Ok(PlaySession {
+            sdp,
+            negotiated_channel,
+        })
+    }
+
     pub async fn send_interleaved(&mut self, channel: u8, payload: &[u8]) -> Result<()> {
         self.poll_keepalive().await?;
         self.drain_inbound().await?;
