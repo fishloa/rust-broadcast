@@ -9,6 +9,12 @@ pub(crate) mod auth;
 mod buffer;
 mod cookies;
 pub mod error;
+
+/// Sans-IO fetch cores (retry/backoff policy and helpers).
+pub mod fetch {
+    pub use crate::source::fetch::retry::Backoff;
+    pub use crate::source::fetch::retry::retry_after_us;
+}
 pub mod events;
 mod headers;
 pub mod identity;

@@ -1,5 +1,13 @@
 //! Retry pacing: the backoff schedule, the server-requested `Retry-After`, and the gate that holds
 //! the request queue until a backoff has elapsed.
+//!
+//! ```rust
+//! use broadcast_client::fetch::Backoff;
+//! use broadcast_client::fetch::retry_after_us;
+//! let backoff = Backoff::new(&[500, 1000], 2000);
+//! assert_eq!(backoff.delay_us(1), 500_000);
+//! assert_eq!(retry_after_us(503, &[], 0, None), 0);
+//! ```
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -24,13 +32,15 @@ const HEADER_DATE: &str = "date";
 /// raised to at least one millisecond, so a zero never produces an unbounded burst of retries at
 /// one instant.
 #[derive(Debug, Clone)]
-pub(crate) struct Backoff {
+pub struct Backoff {
     steps_ms: Vec<u64>,
     cap_ms: u64,
 }
 
 impl Backoff {
-    pub(crate) fn new(steps_ms: &[u64], cap_ms: u64) -> Self {
+    /// Build a schedule from `steps_ms` (per-attempt delays) and a `cap_ms` used for every
+    /// later attempt. Every entry and the cap are raised to at least one millisecond.
+    pub fn new(steps_ms: &[u64], cap_ms: u64) -> Self {
         Self {
             steps_ms: steps_ms
                 .iter()
@@ -40,7 +50,9 @@ impl Backoff {
         }
     }
 
-    pub(crate) fn delay_us(&self, attempt: u64) -> u64 {
+    /// Delay for `attempt` (1-based): `steps_ms[attempt - 1]`, or `cap_ms` once the steps are
+    /// exhausted. Attempts beyond the table keep the cap.
+    pub fn delay_us(&self, attempt: u64) -> u64 {
         let idx = usize::try_from(attempt.saturating_sub(1)).unwrap_or(usize::MAX);
         self.steps_ms
             .get(idx)
@@ -57,7 +69,11 @@ impl Backoff {
 /// An HTTP-date counts from "now" as the host's wall clock reads it (`wall` mapped at `now_us`),
 /// else from the response's own `Date` header (the server's idea of now, so a skewed server clock
 /// cancels out), else it is ignored.
-pub(crate) fn retry_after_us(
+/// Parse a `Retry-After` header for a `429`/`503` response (RFC 9110 §10.2.3), returning the
+/// wait in microseconds. Returns `0` for any other status, a missing or unparseable header, or a
+/// past HTTP-date. An HTTP-date is measured against the host wall clock when `wall` is given,
+/// otherwise against the response `Date`. The result is clamped to 60 seconds.
+pub fn retry_after_us(
     status: u16,
     headers: &[(String, String)],
     now_us: u64,
