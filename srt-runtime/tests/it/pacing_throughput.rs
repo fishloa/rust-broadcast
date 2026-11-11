@@ -12,13 +12,20 @@
 //! This test enqueues a fixed volume of 1316-byte payloads — exactly what a
 //! sustained 50 Mbit/s feed would produce over 2 seconds — over real
 //! loopback UDP, and asserts the wall-clock time to deliver all of it
-//! implies an achieved rate clearing 90% of that 50 Mbit/s target:
-//! comfortably above the ~10.5 Mbit/s the pre-fix per-packet-sleep ceiling
-//! would allow (documented pre-fix failure below), and comfortably within
-//! what a fixed, non-blocking pacing schedule should sustain on loopback
-//! well under the default 1 Gbps MAX_BW. (The volume is fixed rather than
-//! "spin-send for 2 wall-clock seconds": an unthrottled spin loop would turn
-//! the test into an open-ended stress test instead of a rate measurement.)
+//! implies an achieved rate clearing twice the pre-fix per-packet-sleep
+//! ceiling (1000 packets/s x 1316 bytes x 8 bits = ~10.5 Mbit/s, see the
+//! pre-fix run documented below).
+//!
+//! The bound is deliberately *relative* to the bug's own ceiling rather than
+//! an absolute fraction of the 50 Mbit/s target: an absolute floor measures
+//! whatever machine (and whatever load) happens to be running the test, and
+//! fails for reasons unrelated to the change under test, while the bug was
+//! a hard ceiling independent of the configured bandwidth. Twice that
+//! ceiling is still far below what the fixed, non-blocking pacing schedule
+//! sustains on loopback under the default 1 Gbps MAX_BW. (The volume is
+//! fixed rather than "spin-send for 2 wall-clock seconds": an unthrottled
+//! spin loop would turn the test into an open-ended stress test instead of a
+//! rate measurement.)
 //!
 //! This is the one deliberately real-time test in the crate: the bug it guards
 //! was tokio's real timer granularity, which a paused clock cannot reproduce.
@@ -38,7 +45,14 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PAYLOAD_LEN: usize = 1316;
 const NOMINAL_DURATION: Duration = Duration::from_secs(2);
 const TARGET_BITS_PER_SEC: u64 = 50_000_000; // 50 Mbit/s
-const MIN_ACCEPTABLE_FRACTION: f64 = 0.90;
+/// The pre-fix `flush_outbound` ceiling: one packet per pacing period, and
+/// the period that tokio's real timer actually ran at was about 1 ms, i.e.
+/// ~1000 packets/s of [`PAYLOAD_LEN`]-byte payloads.
+const PRE_FIX_PACKETS_PER_SEC: u64 = 1_000;
+const PRE_FIX_CEILING_BITS_PER_SEC: f64 = (PRE_FIX_PACKETS_PER_SEC * PAYLOAD_LEN as u64 * 8) as f64;
+/// The achieved rate must clear the pre-fix ceiling by this factor, not just
+/// barely beat it.
+const CEILING_MARGIN: f64 = 2.0;
 /// Payloads sent per 1 ms pause (~84 Mbit/s offered load, still ~1.7x the
 /// target). Queueing the whole volume in one burst overflows the kernel's
 /// default UDP receive buffer on Linux (~208 KB, ~160 packets): the datagrams
@@ -66,7 +80,7 @@ const LATENCY: Duration = Duration::from_millis(1_000);
 /// `io.rs` (`git show HEAD:srt-runtime/src/io.rs`), never `git stash`
 /// (shared worktree), swapped back immediately after.
 #[tokio::test]
-async fn sustained_volume_clears_90_percent_of_50mbit_target() {
+async fn sustained_volume_clears_twice_the_pre_fix_pacing_ceiling() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
         let config = HandshakeConfig {
@@ -125,21 +139,22 @@ async fn sustained_volume_clears_90_percent_of_50mbit_target() {
         );
 
         let achieved_bits_per_sec = (received_count * PAYLOAD_LEN * 8) as f64 / wall.as_secs_f64();
-        let fraction_of_target = achieved_bits_per_sec / TARGET_BITS_PER_SEC as f64;
+        let required_bits_per_sec = CEILING_MARGIN * PRE_FIX_CEILING_BITS_PER_SEC;
 
         eprintln!(
             "delivered {received_count} payloads ({} bytes) in {wall:?} \
-             ({achieved_bits_per_sec:.0} bit/s, {:.1}% of {TARGET_BITS_PER_SEC} bit/s target)",
+             ({achieved_bits_per_sec:.0} bit/s, {:.1}x the pre-fix ceiling of \
+             {PRE_FIX_CEILING_BITS_PER_SEC:.0} bit/s; {:.1}% of {TARGET_BITS_PER_SEC} bit/s target)",
             received_count * PAYLOAD_LEN,
-            fraction_of_target * 100.0
+            achieved_bits_per_sec / PRE_FIX_CEILING_BITS_PER_SEC,
+            achieved_bits_per_sec / TARGET_BITS_PER_SEC as f64 * 100.0
         );
 
         assert!(
-            fraction_of_target >= MIN_ACCEPTABLE_FRACTION,
-            "achieved {achieved_bits_per_sec:.0} bit/s, only {:.1}% of the {TARGET_BITS_PER_SEC} \
-             bit/s target (need >= {:.0}%) — pacing is still capping throughput",
-            fraction_of_target * 100.0,
-            MIN_ACCEPTABLE_FRACTION * 100.0
+            achieved_bits_per_sec >= required_bits_per_sec,
+            "achieved {achieved_bits_per_sec:.0} bit/s, under {CEILING_MARGIN}x the pre-fix \
+             ceiling {PRE_FIX_CEILING_BITS_PER_SEC:.0} bit/s (need >= {required_bits_per_sec:.0} \
+             bit/s) — pacing is still capping throughput"
         );
 
         drop(caller);
