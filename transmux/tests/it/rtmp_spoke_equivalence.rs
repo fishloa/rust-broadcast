@@ -384,9 +384,9 @@ fn a_message_at_the_maximum_round_trips() {
 
 #[test]
 fn a_set_chunk_size_with_the_reserved_bit_set_is_rejected() {
-    // RTMP 1.0 §5.4.1: "The first bit MUST be zero." rtmp-runtime refuses the
-    // message (it does not mask the bit, as this crate did before it owned the
-    // chunk stream), so the demux fails loudly instead of streaming on.
+    // RTMP 1.0 §5.4.1 requires the reserved top bit to be zero. rtmp-runtime
+    // refuses the message (it does not mask the bit), so the demux fails loudly
+    // instead of streaming on.
     let mut writer = rtmp_runtime::chunk::ChunkWriter::new();
     let wire = writer
         .write(&rtmp_runtime::chunk::Message {
