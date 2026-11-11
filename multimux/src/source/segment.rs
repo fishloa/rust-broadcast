@@ -79,6 +79,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use broadcast_common::clock33::PTS_HZ;
 use broadcast_common::timescale::{Rounding, rescale_u64};
 use transmux::TrackId;
 
@@ -529,6 +530,7 @@ const MEDIA_DISCONTINUITY_NS: i64 = 10 * 1_000_000_000;
 /// Nanoseconds per second — for converting the segmenter's internal
 /// nanosecond timeline into the 90 kHz media clock.
 const NANOS_PER_SEC: u64 = 1_000_000_000;
+
 
 /// Rolling-window depth [`StreamingTsHlsSegmenter::new`] is given —
 /// irrelevant to a driver-backed route in practice (its own `.playlist()`
@@ -1625,7 +1627,7 @@ impl ProgramSegmenter {
         // offset — no per-segment rounding accumulation (issue #1083, E).
         if let Some(anchor) = self.anchor {
             let delta_ns = self.next_timeline_ns.saturating_sub(anchor.timeline_ns);
-            let delta_90k = delta_ns.saturating_mul(timed_metadata::PTS_HZ) / NANOS_PER_SEC;
+            let delta_90k = rescale_u64(delta_ns, NANOS_PER_SEC, PTS_HZ, Rounding::Floor);
             let start_90k = anchor.source_90k.saturating_add(delta_90k);
             self.segment_writer
                 .note_segment_start(segment.segment_seq, timed_metadata::MediaTime(start_90k));
@@ -1744,7 +1746,7 @@ fn rescale_to_90k(pts: i64, timescale: u32) -> u64 {
     rescale_u64(
         u64::try_from(pts).unwrap_or(0),
         timescale,
-        timed_metadata::PTS_HZ,
+        PTS_HZ,
         Rounding::Floor,
     )
 }
