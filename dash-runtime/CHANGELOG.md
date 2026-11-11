@@ -4,6 +4,7 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 ### Changed
+- The MPD reader's namespace and hostile-input bound tests lost when the reader moved out of transmux are back, against `dash_runtime::mpd::Mpd` (issue #2340), and the DASH validator golden now has a test that a refused MPD is recorded as `dash-parse-error`, never as `clean`.
 - BREAKING: `address::template::substitute` returns `Result<String, TemplateError>` and `SegmentPlan::get` returns `Result<Option<SegmentRef>, AddressError>`. A template naming `$Number$`/`$Time$` the caller has no value for, or a template that does not parse, is now an error instead of silently dropping the identifier (yielding a URL such as `chunk-.m4s`) or an empty string, which fetched the wrong segment.
 ### Fixed
 - A list presentation (`MPD@type="list"`) is refused with `FatalKind::Unsupported(Unsupported::PresentationTypeList)` instead of `MpdInvalid { reason: "presentation_type_list" }`; the refusal now carries the typed error every other unsupported feature uses.

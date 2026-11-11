@@ -3,8 +3,9 @@
 //! The validator's MPD reader moves from transmux to dash-runtime; the move is
 //! safe only if every fixture yields the same `fixture<TAB>rule_id<TAB>severity`
 //! lines as before; a fixture with no findings is recorded as `clean`, so a
-//! reader that rejected it would show up here. Without a private checkout only
-//! the public rows are compared.
+//! reader that rejected it would show up here
+//! (`a_reader_rejection_is_not_recorded_as_clean` pins that). Without a
+//! private checkout only the public rows are compared.
 #![cfg(feature = "std")]
 
 use std::fmt::Write as _;
@@ -111,5 +112,44 @@ fn findings_match_the_golden_corpus() {
     assert_eq!(
         got, want,
         "DASH validator findings changed on the fixture corpus"
+    );
+}
+
+/// The recorded rows for one MPD, with the same `fixture<TAB>rule<TAB>severity`
+/// shape (and the same `clean` fallback) the golden is built from.
+fn recorded(name: &str, text: &str) -> Vec<String> {
+    let mut report = Report::new();
+    check_dash_mpd(text, &mut report);
+    let mut lines: Vec<String> = report
+        .findings()
+        .iter()
+        .map(|f| format!("{name}\t{}\t{}", f.rule_id, f.severity.name()))
+        .collect();
+    lines.sort();
+    if lines.is_empty() {
+        lines.push(format!("{name}\t{CLEAN}"));
+    }
+    lines
+}
+
+#[test]
+fn a_reader_rejection_is_not_recorded_as_clean() {
+    let wrong_root = format!(r#"<MPD xmlns="urn:evil" profiles="p"/>"#);
+    let rows = recorded("fixtures/deliberately-unparseable.mpd", &wrong_root);
+    assert!(
+        rows.iter().all(|l| !l.ends_with(&format!("\t{CLEAN}"))),
+        "a refused MPD must record its rejection, got {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|l| l.contains("\tdash-parse-error\t")),
+        "a refused MPD records dash-parse-error, got {rows:?}"
+    );
+    let good = recorded(
+        "fixtures/fine.mpd",
+        r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"/>"#,
+    );
+    assert!(
+        good.iter().all(|l| !l.contains("dash-parse-error")),
+        "a well-formed MPD records no parse error, got {good:?}"
     );
 }
