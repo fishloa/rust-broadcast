@@ -340,6 +340,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -531,6 +532,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -733,6 +735,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -898,6 +901,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -1090,6 +1094,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -1385,6 +1390,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -1614,6 +1620,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -1848,6 +1855,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -2050,6 +2058,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -2311,6 +2320,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -2655,6 +2665,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -3046,6 +3057,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -3524,6 +3536,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -4016,6 +4029,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -4498,6 +4512,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -4980,6 +4995,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -5447,6 +5463,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -5834,6 +5851,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -6052,6 +6070,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -6227,6 +6246,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -6543,6 +6563,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -6815,6 +6836,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -7153,6 +7175,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -7487,6 +7510,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -7927,6 +7951,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -8310,6 +8335,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -8664,6 +8690,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -9027,6 +9054,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -9208,6 +9236,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -9389,6 +9418,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -9617,6 +9647,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -9781,6 +9812,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -9945,6 +9977,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -10171,6 +10204,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -10399,6 +10433,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -10565,6 +10600,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -10729,6 +10765,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -11102,6 +11139,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -11607,6 +11645,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -12367,6 +12406,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -12726,6 +12766,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -13211,6 +13252,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: None,
@@ -13234,6 +13276,7 @@ Ok(
                 essential_properties: [],
                 supplemental_properties: [],
                 adaptation_sets: [],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -13677,6 +13720,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -14126,6 +14170,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -14551,6 +14596,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -14805,6 +14851,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -15123,6 +15170,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -15508,6 +15556,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -16178,6 +16227,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -16803,6 +16853,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -17141,6 +17192,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -17566,6 +17618,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -17975,6 +18028,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -18520,6 +18574,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -18956,6 +19011,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -19530,6 +19586,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -19871,6 +19928,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -20105,6 +20163,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -21611,6 +21670,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -22177,6 +22237,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -22579,6 +22640,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -22823,6 +22885,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -23077,6 +23140,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -23322,6 +23386,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -23559,6 +23624,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -23814,6 +23880,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -24099,6 +24166,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -24182,6 +24250,15 @@ Ok(
                 essential_properties: [],
                 supplemental_properties: [],
                 adaptation_sets: [],
+                service_descriptions: [
+                    ServiceDescription {
+                        id: Some(
+                            420,
+                        ),
+                        latency: None,
+                        playback_rate: None,
+                    },
+                ],
             },
             Period {
                 id: Some(
@@ -24211,6 +24288,7 @@ Ok(
                 essential_properties: [],
                 supplemental_properties: [],
                 adaptation_sets: [],
+                service_descriptions: [],
             },
             Period {
                 id: Some(
@@ -24240,6 +24318,7 @@ Ok(
                 essential_properties: [],
                 supplemental_properties: [],
                 adaptation_sets: [],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -24625,6 +24704,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -24831,6 +24911,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -25062,6 +25143,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -25709,6 +25791,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
             Period {
                 id: None,
@@ -26021,6 +26104,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -26356,6 +26440,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -26954,6 +27039,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -27488,6 +27574,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -28019,6 +28106,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -28585,6 +28673,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -28916,6 +29005,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -29686,6 +29776,7 @@ Ok(
                         representations: [],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -30120,6 +30211,7 @@ Ok(
                         ],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
@@ -30333,6 +30425,7 @@ Ok(
                         representations: [],
                     },
                 ],
+                service_descriptions: [],
             },
         ],
         features: MpdFeatures {
