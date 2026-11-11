@@ -1593,6 +1593,11 @@ pub const TABLE: &[Crate] = &[
             "FlvError",
             "RtmpFlvError",
             "CliError",
+            // `dash_parse::DashParseError`: the only variant left is
+            // `InvalidDuration`, a structured parse error labelled via a
+            // hand-written `Display` impl (matching `FlvError`), not the
+            // spec-token convention.
+            "DashParseError",
             // `smooth_parse::SmoothParseError` (issue #759 T1): a structured parse
             // error, labelled via a hand-written `Display` impl (matching
             // `FlvError`), not the spec-token convention — already satisfied by that

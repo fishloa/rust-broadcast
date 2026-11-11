@@ -4,7 +4,7 @@
 //! The scan is strict: a `$` that does not enclose a known identifier makes
 //! the whole template invalid, which the spec resolves by dropping the
 //! containing Representation (5.3.9.4.4 step 2). Format tags are `%0<width>d`
-//! only. Substitution goes through the same [`parts`] the scan builds, so a
+//! only. Substitution reads the same scanned parts the validator builds, so a
 //! width is clamped once (to [`MAX_FORMAT_WIDTH`]) and `$$` is read once.
 
 use broadcast_common::impl_spec_display;
