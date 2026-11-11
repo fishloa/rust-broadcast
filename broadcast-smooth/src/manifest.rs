@@ -42,10 +42,12 @@
 //! # Serializing
 //!
 //! [`SmoothManifest::to_xml`] builds the document from the typed model alone —
-//! nothing is echoed from the parsed source. It emits every element and
-//! attribute the model holds; each manifest element and attribute the writer
-//! emits was recorded as a byte golden from `transmux`'s writer (PR #2360), and
-//! [`SmoothManifest::to_xml`] reproduces those goldens byte-for-byte.
+//! nothing is echoed from the parsed source, and nothing is added to it: one
+//! `c` element per [`C`] in [`StreamIndex::chunks_list`] carrying exactly the
+//! attributes that entry sets (`n`/`t`/`d`/`r`, each only when `Some`). A
+//! model therefore re-parses to itself. A writer that numbers every chunk or
+//! writes a `t` + `r` run as explicit start times does so in the model it
+//! builds (as `transmux`'s `SmoothPackager` does), not here.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -549,8 +551,8 @@ impl QualityLevel {
 /// One `c` (`StreamFragmentElement`) entry (§2.2.2.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct C {
-    /// `@n` — the fragment number within its `StreamIndex`. Parsed and written
-    /// back; an entry built without one is numbered by its position.
+    /// `@n` — the fragment number within its `StreamIndex`, written only when
+    /// present (a manifest may number none, some or all of its `c` entries).
     pub n: Option<u32>,
     /// `@t` — this entry's explicit absolute start time, in the enclosing
     /// stream's `TimeScale` ticks. Only the first `<c>` typically carries it
@@ -584,6 +586,14 @@ impl C {
     #[must_use]
     pub fn at(mut self, t: u64) -> Self {
         self.t = Some(t);
+        self
+    }
+
+    /// This entry numbered `n` (`@n`), the fragment number a writer numbers its
+    /// timeline with.
+    #[must_use]
+    pub fn numbered(mut self, n: u32) -> Self {
+        self.n = Some(n);
         self
     }
 
@@ -1177,10 +1187,11 @@ impl QualityLevel {
 }
 
 impl C {
-    fn attributes(&self, ordinal: u32) -> Vec<Attribute<'static>> {
+    fn attributes(&self) -> Vec<Attribute<'static>> {
         let mut attrs = Vec::new();
-        let n = self.n.unwrap_or(ordinal);
-        attrs.push((ATTR_N, n.to_string()));
+        if let Some(n) = self.n {
+            attrs.push((ATTR_N, n.to_string()));
+        }
         if let Some(t) = self.t {
             attrs.push((ATTR_T, t.to_string()));
         }
@@ -1210,41 +1221,10 @@ fn write_stream_index(w: &mut XmlWriter, stream: &StreamIndex) {
     for quality in &stream.qualities {
         empty(w, ELEMENT_QUALITY_LEVEL, &quality.attributes());
     }
-    for (ordinal, chunk) in enumerate_wire_chunks(&stream.chunks_list)
-        .into_iter()
-        .enumerate()
-    {
-        let ordinal = u32::try_from(ordinal).unwrap_or(u32::MAX);
-        empty(w, ELEMENT_C, &chunk.attributes(ordinal));
+    for chunk in &stream.chunks_list {
+        empty(w, ELEMENT_C, &chunk.attributes());
     }
     close(w, ELEMENT_STREAM_INDEX);
-}
-
-/// The `c` elements to write for a chunk list: an entry carrying both `t` and
-/// `r` is written as explicit start times, one element per repeated fragment,
-/// because a repeat's `t` is derived from the previous entry's `t + d` and
-/// cannot be re-stated (see [`StreamIndex::enumerate_chunks`]).
-fn enumerate_wire_chunks(chunks: &[C]) -> Vec<C> {
-    let mut out = Vec::new();
-    for chunk in chunks {
-        match chunk.t.filter(|_| chunk.r.is_some()) {
-            Some(first) => {
-                let repeats = u64::from(chunk.r.unwrap_or(0)).saturating_add(1);
-                let mut t = Some(first);
-                for _ in 0..repeats.min(MAX_CHUNK_RUN as u64) {
-                    out.push(C {
-                        n: None,
-                        t,
-                        d: chunk.d,
-                        r: None,
-                    });
-                    t = t.and_then(|start| start.checked_add(chunk.d.unwrap_or(0)));
-                }
-            }
-            None => out.push(*chunk),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

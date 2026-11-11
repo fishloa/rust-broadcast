@@ -551,14 +551,16 @@ fn quality_level(stream: &StreamInfo) -> QualityLevel {
     .without_packet_size()
 }
 
-/// One `c` per fragment: `t` on the first only, `d` always.
+/// One `c` per fragment, numbered from 0 (`c@n`); `t` on the first only, `d`
+/// always.
 fn manifest_chunks(stream: &StreamInfo) -> Vec<C> {
     stream
         .fragments
         .iter()
         .enumerate()
         .map(|(i, fragment)| {
-            let chunk = C::new(fragment.duration);
+            let ordinal = u32::try_from(i).unwrap_or(u32::MAX);
+            let chunk = C::new(fragment.duration).numbered(ordinal);
             if i == 0 {
                 chunk.at(fragment.start_time)
             } else {

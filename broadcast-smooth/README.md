@@ -23,8 +23,9 @@ The serializer builds the document from the typed model alone; nothing is echoed
 - attribute order is the writer's, not the source's; the declaration is always `<?xml version="1.0" encoding="utf-8"?>`, indentation is two spaces, and elements without children are written self-closing;
 - attributes the model has no field for are dropped, as are unknown child elements and foreign-namespace content (`ProtectionHeader@SystemID` is such an attribute);
 - `IsLive` is written `"TRUE"` when set (a source spelling it another way, e.g. `"1"`, is read as false);
-- a `c` carrying both `t` and `r` is written as one element per repeated fragment, because a repeat's start time is derived and cannot be re-stated;
-- a `c` without `n` is numbered by its position; a duplicate attribute keeps its first value.
+- a duplicate attribute keeps its first value.
+
+Every `c` element is written exactly as the model holds it — one element per entry, each attribute only when set (`n`, `t`, `d`, `r`) — so a model re-parses to itself; a writer that numbers its chunks or expands a `t` + `r` run does that in the model it builds.
 
 ## Standards supported
 

@@ -31,13 +31,10 @@ fn main() {
         .with_subtype("")
         .with_counts(6, 1)
         .with_chunks(
-            (0..6)
+            (0..6u32)
                 .map(|i| {
-                    if i == 0 {
-                        C::new(LIVE_FRAGMENT_TICKS).at(0)
-                    } else {
-                        C::new(LIVE_FRAGMENT_TICKS)
-                    }
+                    let chunk = C::new(LIVE_FRAGMENT_TICKS).numbered(i);
+                    if i == 0 { chunk.at(0) } else { chunk }
                 })
                 .collect(),
         ),
