@@ -313,7 +313,7 @@ lifecycle = "active"
 domain = "containers"
 summary = "Microsoft Smooth Streaming (MS-SSTR) client Manifest: typed model with parse and serialize."
 standards = "MS-SSTR (Microsoft Open Specifications), client Manifest (transcription in the private repo)"
-what = "Parses and serializes the Smooth `SmoothStreamingMedia` client Manifest: streams, quality levels, the `c` fragment timeline, the live/DVR attributes and the `Protection` header. Extracted from `transmux` so a manifest-only consumer does not pull in the muxing hub; the fragment responses and the codec-config glue that synthesises an init segment stay in `transmux`."
+what = "Parses and serializes the Smooth `SmoothStreamingMedia` client Manifest: streams, quality levels, the `c` fragment timeline, the live/DVR attributes and the `Protection` header; the serializer writes exactly the model. Extracted from `transmux` so a manifest-only consumer does not pull in the muxing hub; the fragment responses and the codec-config glue that synthesises an init segment stay in `transmux`."
 crates_io = true
 lifecycle = "active"
 

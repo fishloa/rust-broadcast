@@ -37,8 +37,8 @@ Every `c` element is written exactly as the model holds it — one element per e
 
 | Feature | Default | Description |
 |---|---|---|
-| `std` | yes | Links the standard library. Without it the crate is `#![no_std]` and needs only `alloc`. |
-| `manifest` | yes | The client Manifest surface: parse and serialize. Needs `std`, because the shared XML module it reads through (`broadcast-common/xml`) is std-only, so it builds no further surface for a bare-metal target. |
+| `std` | yes | Links the standard library. The crate is plain `std` (like `dash-runtime`): the shared XML module it reads through is std-only. |
+| `manifest` | yes | The client Manifest surface: parse and serialize (`std`). |
 
 ## Quick start
 

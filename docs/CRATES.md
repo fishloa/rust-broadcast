@@ -454,7 +454,7 @@ Parses and serializes HLS playlists, including Low-Latency HLS (parts, preload h
 
 #### broadcast-smooth
 
-Parses and serializes the Smooth `SmoothStreamingMedia` client Manifest: streams, quality levels, the `c` fragment timeline, the live/DVR attributes and the `Protection` header. Extracted from `transmux` so a manifest-only consumer does not pull in the muxing hub; the fragment responses and the codec-config glue that synthesises an init segment stay in `transmux`.
+Parses and serializes the Smooth `SmoothStreamingMedia` client Manifest: streams, quality levels, the `c` fragment timeline, the live/DVR attributes and the `Protection` header; the serializer writes exactly the model. Extracted from `transmux` so a manifest-only consumer does not pull in the muxing hub; the fragment responses and the codec-config glue that synthesises an init segment stay in `transmux`.
 
 - **Standards:** MS-SSTR (Microsoft Open Specifications), client Manifest (transcription in the private repo)
 - **Cargo description:** Microsoft Smooth Streaming (MS-SSTR) client Manifest: typed model with parse and serialize.

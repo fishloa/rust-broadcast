@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `SmoothManifest::to_xml` writes exactly the model: one `c` per `StreamIndex::chunks_list` entry, each attribute only when set. It no longer invents a `c@n` from the entry's position, and no longer expands a `t` + `r` entry into separate elements, so `parse(to_xml(m)) == m` holds for models without `n` and for repeat runs. `C::numbered` sets `@n` explicitly for a writer that wants it.
 
+### Changed
+- The crate is plain `std` (like `dash-runtime`): the `no_std` claim is dropped, because the shared XML module the manifest reads through is std-only and the crate could not build without `std`. `manifest` remains a named feature, on with `std`.
+
 ## [0.1.0]
 ### Added
 - The MS-SSTR client Manifest model, `SmoothManifest`/`StreamIndex`/`QualityLevel`/`C`, with `parse`/`parse_with_limits` and `to_xml`, moved from `transmux` (issue #2356). It covers the live/DVR attributes, `Protection`/`ProtectionHeader`, `StreamIndex@QualityLevels`, and the `c@n` fragment number, none of which the old reader kept, so `transmux`'s writer and this reader are now one model.

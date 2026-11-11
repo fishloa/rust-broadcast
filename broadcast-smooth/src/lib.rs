@@ -1,12 +1,6 @@
 #![doc = include_str!("../README.md")]
-#![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
-// `quick-xml` reaches this crate only through `broadcast-common`'s XML module,
-// which the manifest parser drives; without the `manifest` feature there is no
-// parser or serializer to see it, so the unused-dependency lint (all-targets)
-// fires on the bare-metal build.
-#![cfg_attr(not(feature = "manifest"), allow(unused_crate_dependencies))]
 // Runnable examples, embedded so they render on docs.rs and stay in sync with
 // the actual `examples/*.rs` files (shown, not compiled).
 #![doc = "\n## Runnable examples\n"]
