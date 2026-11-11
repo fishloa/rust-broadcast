@@ -466,6 +466,8 @@ fn digit_run(rest: &str) -> usize {
         .unwrap_or(rest.len())
 }
 
+/// `n` zero-padded to `width` digits (5.3.9.4.4 `%0<width>d`), the width
+/// clamped to `1..=`[`MAX_FORMAT_WIDTH`].
 #[must_use]
 pub fn format_width(n: u64, width: usize) -> String {
     let width = width.clamp(1, MAX_FORMAT_WIDTH);

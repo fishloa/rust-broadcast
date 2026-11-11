@@ -250,8 +250,8 @@ test = false
 doc  = false
 
 [[bin]]
-name = "transmux_base_url"
-path = "fuzz_targets/transmux_base_url.rs"
+name = "dash_base_url"
+path = "fuzz_targets/dash_base_url.rs"
 test = false
 doc  = false
 

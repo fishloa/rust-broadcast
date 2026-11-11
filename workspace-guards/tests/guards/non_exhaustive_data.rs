@@ -26,6 +26,15 @@ pub const TABLE: &[Crate] = &[
     plain("atsc3"),
     plain("broadcast-auth"),
     plain("broadcast-client"),
+    Crate {
+        name: "broadcast-common",
+        // `xml::Frame`: a private-to-the-module traversal stack that this
+        // lexical scan reads as public because its line follows an
+        // `impl<N: Namespace> Reader` line in the same file.
+        skip: &["Frame"],
+        variants: false,
+    },
+    plain("broadcast-dash"),
     // `StreamType` is the closed `StreamIndex@Type` token set (video/audio/text):
     // a caller matches all three and the packager converts between it and
     // `transmux`'s `SmoothStreamType` exhaustively, so a fourth token must be a
@@ -35,7 +44,6 @@ pub const TABLE: &[Crate] = &[
         skip: &["StreamType"],
         variants: false,
     },
-    plain("broadcast-common"),
     plain("broadcast-hls"),
     plain("broadcast-loudness"),
     plain("buffering-runtime"),

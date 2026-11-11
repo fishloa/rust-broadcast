@@ -339,6 +339,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-dash"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "jiff",
+ "thiserror",
+]
+
+[[package]]
 name = "broadcast-hls"
 version = "0.7.0"
 dependencies = [
@@ -721,6 +730,7 @@ name = "dash-runtime"
 version = "0.4.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-dash",
  "container-probe",
  "jiff",
  "quick-xml",
@@ -1817,10 +1827,10 @@ name = "media-doctor"
 version = "0.15.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
  "clap",
  "container-probe",
- "dash-runtime",
  "dvb-conformance",
  "dvb-si",
  "http-body-util",

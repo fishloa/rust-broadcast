@@ -24,6 +24,7 @@ dvb-si             = { path = "../dvb-si", version = "13.1.0", default-features 
 mpeg-ts            = { path = "../mpeg-ts", version = "0.7.1", default-features = false, features = ["std"] }
 buffering-runtime  = { path = "../buffering-runtime", version = "0.2.2", default-features = false, features = ["std"] }
 hls-runtime        = { path = "../hls-runtime", version = "0.13.0" }
+
 dash-runtime       = { path = "../dash-runtime", version = "0.4.0" }
 broadcast-hls      = { path = "../broadcast-hls", version = "0.7.0" }
 broadcast-smooth   = { path = "../broadcast-smooth", version = "0.1.0" }
@@ -45,6 +46,7 @@ thiserror          = "2"
 serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc", "std"] }
 
 [dev-dependencies]
+broadcast-dash     = { path = "../broadcast-dash", version = "0.1.0" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 srt-runtime = { path = "../srt-runtime", version = "0.8.1", features = ["tokio", "crypto"] }

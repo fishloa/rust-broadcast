@@ -218,9 +218,9 @@ pub fn resolve_segment_info(
         return Err(InheritError::TemplateAndList);
     }
     if has_template {
-        let mut merged = crate::mpd::model::SegmentTemplate::default();
+        let mut merged = crate::model::SegmentTemplate::default();
         for t in layers.iter().filter_map(|l| l.template.as_ref()) {
-            merged = crate::mpd::model::SegmentTemplate {
+            merged = crate::model::SegmentTemplate {
                 multi: merge_multi(&merged.multi, &t.multi)?,
                 media: t.media.clone().or(merged.media),
                 index: t.index.clone().or(merged.index),

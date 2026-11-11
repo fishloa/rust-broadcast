@@ -13,7 +13,7 @@
 //! It **never encodes or decodes media**: it parses codec *config/parameter
 //! headers* only to build container boxes and derive metadata; coded samples
 //! pass through opaque. `no_std` + `alloc`, except the XML manifest paths
-//! ([`dash`], [`dash_parse`], [`smooth`], [`LlDashPackager`] and
+//! ([`dash`], [`smooth`], [`LlDashPackager`] and
 //! the PlayReady [`playready_wrmheader`]/[`playready_pro`]/[`playready_pssh`]
 //! builders), which are built on `quick-xml` and need the `std` feature.
 //!
@@ -79,8 +79,7 @@
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
 //!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
-//!   URI-reference resolution for DASH `BaseURL`/`SegmentTemplate`
-//!   (`base_url`, `std` only; WHATWG `url::Url::join`); the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
+//!   the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`frag_offsets`]).
 //!
@@ -160,8 +159,6 @@ pub mod avc_parameter_set;
 pub mod avs2;
 pub mod avs3;
 pub mod avs3_audio;
-#[cfg(feature = "std")]
-pub mod base_url;
 pub mod bitreader;
 pub mod box_types;
 pub mod caption_detect;
@@ -176,8 +173,6 @@ pub mod cenc_encrypt;
 pub mod cli;
 #[cfg(feature = "std")]
 pub mod dash;
-#[cfg(feature = "std")]
-pub mod dash_parse;
 pub(crate) mod display_track;
 pub mod dovi;
 pub mod drm;
@@ -293,8 +288,6 @@ pub use dash::{
     TrackSegments, TrickModeAdaptationSet, TrickModeRepr, rfc6381_codec_string,
     rfc6381_track_codec_string,
 };
-#[cfg(feature = "std")]
-pub use dash_parse::{DashParseError, parse_iso8601_duration};
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
     cenc_kid_to_playready, fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc,
@@ -428,8 +421,6 @@ pub use smooth::{
 // Note: `broadcast_smooth::StreamType` (the Smooth `StreamIndex@Type`) is not
 // re-exported at the crate root — it would collide with `mp4esds::StreamType`
 // (an unrelated ES descriptor field); reach it via `broadcast_smooth`.
-#[cfg(feature = "std")]
-pub use base_url::{resolve as resolve_url_reference, resolve_chain as resolve_base_url_chain};
 pub use dovi::{
     DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord, DoviSampleEntryKind,
     DoviVideoStreamDescriptor,

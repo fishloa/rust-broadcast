@@ -1,4 +1,4 @@
-"""Structural pins on the 55 release lanes, the lockstep lane, the pair list and the
+"""Structural pins on the 54 release lanes, the lockstep lane, the pair list and the
 plan document: the audit found every one of these unpinned, and a drift in any of
 them only shows up LIVE, mid-wave, on an immutable crates.io publish."""
 
@@ -24,6 +24,7 @@ ABSORBED: dict[str, str] = {"rtcp-packet": "rtp-packet", "tshttp-runtime": "broa
 UNRELEASED: set[str] = {
     "broadcast-client",
     "dash-runtime",
+    "broadcast-dash",
     "broadcast-smooth",
 }  # lanes staged ahead of owner sign-off; leaves this set when a pairs file plans them
 
@@ -59,7 +60,7 @@ def _planned():
 
 
 def test_lane_set_is_not_vacuous():
-    assert len(LANES) == 53, [p.name for p in LANES]
+    assert len(LANES) == 54, [p.name for p in LANES]
 
 
 REUSABLE = WF / "publish-crate.yml"

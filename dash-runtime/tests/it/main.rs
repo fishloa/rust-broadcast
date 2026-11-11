@@ -1,4 +1,5 @@
 mod availability;
+mod base_url;
 mod client_config;
 mod client_faults;
 mod client_misc;
@@ -13,6 +14,7 @@ mod datetime;
 mod display_sample;
 mod error_variants;
 mod hostile;
+mod http_date;
 mod iso_examples;
 mod list_expand;
 mod live_captures;

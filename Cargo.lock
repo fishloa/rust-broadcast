@@ -438,6 +438,7 @@ version = "0.5.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
  "broadcast-smooth",
  "buffering-runtime",
@@ -483,6 +484,16 @@ dependencies = [
  "hex",
  "quick-xml",
  "serde",
+]
+
+[[package]]
+name = "broadcast-dash"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "jiff",
+ "test-fixtures",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1073,6 +1084,7 @@ name = "dash-runtime"
 version = "0.4.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-dash",
  "container-probe",
  "jiff",
  "percent-encoding",
@@ -2384,6 +2396,7 @@ name = "media-doctor"
 version = "0.15.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
  "clap",
  "container-probe",
@@ -4580,6 +4593,7 @@ dependencies = [
  "aes 0.9.4",
  "base64 0.23.1",
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
  "broadcast-smooth",
  "bytes",

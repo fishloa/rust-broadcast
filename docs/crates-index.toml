@@ -391,11 +391,19 @@ what = "A caller-driven LL-HLS playback client (blocking reload, part prefetch, 
 crates_io = true
 lifecycle = "active"
 
+[crate.broadcast-dash]
+domain = "live"
+summary = "MPEG-DASH (ISO/IEC 23009-1) manifest syntax: the MPD model, its bounded parser, the SegmentTemplate grammar and the xs:duration reader."
+standards = "ISO/IEC 23009-1:2022 (5.3, 5.7, 5.8, Annex B, Annex I); ETSI TS 103 285 (DVB DASH extensions); W3C XML Schema 1.1 Part 2 (xs:duration, xs:dateTime)"
+what = "The read side of DASH, kept below the container hub: a bounded, namespace-aware MPD parser over the shared `broadcast_common::xml` reader with a typed consume-only model (`Mpd`/`Period`/`AdaptationSet`/`Representation` and the three Segment addressing layers), the descriptor scheme vocabulary, attribute inheritance, the `$Identifier$`/`%0Nd` SegmentTemplate grammar, the `UTCTiming` schemes and the `xs:duration`/`xs:dateTime`/NTP readers. It plans, addresses and fetches nothing; that is `dash-runtime`."
+crates_io = false
+lifecycle = "active"
+
 [crate.dash-runtime]
 domain = "live"
 summary = "Sans-IO MPEG-DASH: MPD model and parser, segment addressing, UTC clock and live-edge arithmetic, and a client for static (VOD) and dynamic (live) presentations."
 standards = "ISO/IEC 23009-1:2022 (5.3, 5.6, 5.8.5.7, Annex A, Annex I); DASH-IF IOP v4.3 (live timing); ETSI TS 103 285 (BaseURL priority)"
-what = "A bounded, namespace-aware MPD parser and typed consume-only model, attribute inheritance, a lazy Segment plan (SegmentTemplate, SegmentTimeline, SegmentList, SegmentBase + sidx) with availability windows, a UTC clock fed by UTCTiming measurements, PeriodStart and live-edge arithmetic, and Representation selection. `DashClient` plays static and dynamic MPDs (SegmentTemplate/Timeline/List, on-demand `sidx`, multiple Periods with continuity) to ordered `Fmp4Demux` samples, with typed failure classes and an origin pin; live adds a clock ladder (UTCTiming, host clock, response Date), join at the presentation delay, availability gating, MPD refresh and reset, and early/expired/missing classification. No I/O and no clock reads: every instant is an argument. Not yet published."
+what = "The player on top of `broadcast-dash` (the MPD model and parser live there): a lazy Segment plan (SegmentTemplate, SegmentTimeline, SegmentList, SegmentBase + sidx) with availability windows, a UTC clock fed by UTCTiming measurements, PeriodStart and live-edge arithmetic, and Representation selection. `DashClient` plays static and dynamic MPDs (SegmentTemplate/Timeline/List, on-demand `sidx`, multiple Periods with continuity) to ordered `Fmp4Demux` samples, with typed failure classes and an origin pin; live adds a clock ladder (UTCTiming, host clock, response Date), join at the presentation delay, availability gating, MPD refresh and reset, and early/expired/missing classification. No I/O and no clock reads: every instant is an argument. Not yet published."
 crates_io = false
 lifecycle = "active"
 

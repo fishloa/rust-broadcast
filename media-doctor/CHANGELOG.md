@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `check_dash_mpd` reads MPDs through the new `broadcast-dash` crate (the `dash` feature now enables `dep:broadcast-dash` instead of `dep:dash-runtime`), so the validator depends on the manifest syntax alone, not on a player (#2355).
 ### Fixed
 - A `MPD@type="list"` MPD (ISO/IEC 23009-1 6th edition) is no longer reported with `dash-period-no-adaptation-sets` for Periods that import an MPD (`ImportedMPD`) or with `dash-static-mpd-missing-duration`; both were false positives.
 ### Changed

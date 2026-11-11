@@ -8,7 +8,6 @@ mod audio_srat;
 mod avc_hvc_config;
 mod avc_parameter_set_stream;
 mod base64_lenient;
-mod base_url;
 #[path = "support/bit_writer.rs"]
 mod bit_writer;
 #[path = "support/box_iter.rs"]
@@ -43,7 +42,6 @@ mod damaged_unit_resync_flv;
 mod damaged_unit_resync_webm;
 mod dash;
 #[cfg(feature = "std")]
-mod dash_duration;
 mod dash_mpd;
 mod dash_xsd;
 mod degraded_at_track;

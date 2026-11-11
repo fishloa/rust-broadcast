@@ -192,7 +192,7 @@ pub struct PullLimits {
     /// Representation and AdaptationSet selection policy.
     pub policy: crate::selection::Policy,
     /// MPD parse bounds; `limits.max_bytes` is the MPD body cap.
-    pub limits: crate::limits::Limits,
+    pub limits: broadcast_dash::limits::Limits,
     /// Largest accepted init, index or segment body, bytes.
     pub max_segment_bytes: usize,
     /// Segment requests kept outstanding at once, counting bodies that have
@@ -210,7 +210,7 @@ impl Default for PullLimits {
     fn default() -> Self {
         Self {
             policy: crate::selection::Policy::default(),
-            limits: crate::limits::Limits::default(),
+            limits: broadcast_dash::limits::Limits::default(),
             max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
             max_inflight_segments: DEFAULT_MAX_INFLIGHT_SEGMENTS,
             max_segment_failures: DEFAULT_MAX_SEGMENT_FAILURES,

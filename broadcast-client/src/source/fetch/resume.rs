@@ -12,7 +12,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use dash_runtime::timing::datetime::parse_http_date;
+use dash_runtime::timing::http_date::parse_http_date;
 use headers::{
     AcceptRanges, ContentEncoding, ContentLength, ContentRange, Date, ETag, HeaderMapExt, IfRange,
     LastModified, Range,
