@@ -541,6 +541,28 @@ fn imported_mpd(e: &Elem<Ns>) -> Result<ImportedMpd, MpdError> {
     })
 }
 
+fn service_description(e: &Elem<Ns>) -> Result<ServiceDescription, MpdError> {
+    let latency = e.child("Latency").map(|l| -> Result<Latency, MpdError> {
+        Ok(Latency {
+            target: opt_u64(l, "target")?,
+            min: opt_u64(l, "min")?,
+            max: opt_u64(l, "max")?,
+            reference_id: opt_u32(l, "referenceId")?,
+        })
+    }).transpose()?;
+    let playback_rate = e.child("PlaybackRate").map(|p| -> Result<PlaybackRate, MpdError> {
+        Ok(PlaybackRate {
+            min: opt_str(p, "min"),
+            max: opt_str(p, "max"),
+        })
+    }).transpose()?;
+    Ok(ServiceDescription {
+        id: opt_u64(e, "id")?,
+        latency,
+        playback_rate,
+    })
+}
+
 fn scan_features(e: &Elem<Ns>, f: &mut MpdFeatures) {
     if e.ns == Ns::Mpd {
         match e.name.as_str() {
@@ -645,6 +667,10 @@ impl Mpd {
                 .children_named("Location")
                 .map(|l| l.text.trim().to_owned())
                 .collect(),
+            service_descriptions: root
+                .children_named("ServiceDescription")
+                .map(service_description)
+                .collect::<Result<Vec<_>, _>>()?,
             utc_timings,
             essential_properties: descriptors(&root, "EssentialProperty")?,
             supplemental_properties: descriptors(&root, "SupplementalProperty")?,

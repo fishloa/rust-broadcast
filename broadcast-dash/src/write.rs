@@ -111,6 +111,9 @@ impl Mpd {
             w.write_event(Event::End(BytesEnd::new("Location")))
                 .map_err(io_err)?;
         }
+        for sd in &self.service_descriptions {
+            write_service_description(&mut w, sd)?;
+        }
         for u in &self.utc_timings {
             let mut e = BytesStart::new("UTCTiming");
             e.push_attribute(("schemeIdUri", u.scheme_id_uri.as_str()));
@@ -145,10 +148,6 @@ impl Mpd {
             w.write_event(Event::Empty(BytesStart::new("Preselection")))
                 .map_err(io_err)?;
         }
-        if self.features.service_description {
-            w.write_event(Event::Empty(BytesStart::new("ServiceDescription")))
-                .map_err(io_err)?;
-        }
         if self.features.producer_reference_time {
             w.write_event(Event::Empty(BytesStart::new("ProducerReferenceTime")))
                 .map_err(io_err)?;
@@ -167,6 +166,44 @@ impl Mpd {
         out.push('\n');
         Ok(out)
     }
+}
+
+
+fn write_service_description(w: &mut Writer<Vec<u8>>, sd: &ServiceDescription) -> Result<(), MpdError> {
+    let mut e = BytesStart::new("ServiceDescription");
+    if let Some(v) = sd.id {
+        e.push_attribute(("id", v.to_string().as_str()));
+    }
+    w.write_event(Event::Start(e)).map_err(io_err)?;
+    if let Some(lat) = &sd.latency {
+        let mut le = BytesStart::new("Latency");
+        if let Some(v) = lat.target {
+            le.push_attribute(("target", v.to_string().as_str()));
+        }
+        if let Some(v) = lat.min {
+            le.push_attribute(("min", v.to_string().as_str()));
+        }
+        if let Some(v) = lat.max {
+            le.push_attribute(("max", v.to_string().as_str()));
+        }
+        if let Some(v) = lat.reference_id {
+            le.push_attribute(("referenceId", v.to_string().as_str()));
+        }
+        w.write_event(Event::Empty(le)).map_err(io_err)?;
+    }
+    if let Some(pr) = &sd.playback_rate {
+        let mut pe = BytesStart::new("PlaybackRate");
+        if let Some(v) = &pr.min {
+            pe.push_attribute(("min", v.as_str()));
+        }
+        if let Some(v) = &pr.max {
+            pe.push_attribute(("max", v.as_str()));
+        }
+        w.write_event(Event::Empty(pe)).map_err(io_err)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("ServiceDescription")))
+        .map_err(io_err)?;
+    Ok(())
 }
 
 fn io_err(e: io::Error) -> MpdError {

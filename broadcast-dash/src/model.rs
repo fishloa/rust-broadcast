@@ -536,6 +536,42 @@ pub struct Period {
     pub adaptation_sets: Vec<AdaptationSet>,
 }
 
+/// `Latency` child of `ServiceDescription` (Annex K).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct Latency {
+    /// `@target`, milliseconds.
+    pub target: Option<u64>,
+    /// `@min`, milliseconds.
+    pub min: Option<u64>,
+    /// `@max`, milliseconds.
+    pub max: Option<u64>,
+    /// `@referenceId`.
+    pub reference_id: Option<u32>,
+}
+
+/// `PlaybackRate` child of `ServiceDescription` (Annex K).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct PlaybackRate {
+    /// `@min`, lexical form.
+    pub min: Option<String>,
+    /// `@max`, lexical form.
+    pub max: Option<String>,
+}
+
+/// `ServiceDescription` (Annex K).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct ServiceDescription {
+    /// `@id`.
+    pub id: Option<u64>,
+    /// `Latency`.
+    pub latency: Option<Latency>,
+    /// `PlaybackRate`.
+    pub playback_rate: Option<PlaybackRate>,
+}
+
 /// An `MPD` (5.3.1).
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
@@ -570,6 +606,8 @@ pub struct Mpd {
     pub base_urls: Vec<BaseUrl>,
     /// `Location` texts.
     pub locations: Vec<String>,
+    /// `ServiceDescription`.
+    pub service_descriptions: Vec<ServiceDescription>,
     /// `UTCTiming` elements in document order (alternatives, in preference
     /// order).
     pub utc_timings: Vec<UtcTiming>,
