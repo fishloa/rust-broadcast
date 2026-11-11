@@ -1,12 +1,10 @@
-//! The two pieces of MPD (ISO/IEC 23009-1) handling that stay in `transmux`:
-//! the `xs:duration` reader every duration-valued MPD attribute uses, and the
-//! `$Number$` zero-padding cap the writer clamps to.
+//! The `xs:duration` reader every duration-valued MPD (ISO/IEC 23009-1)
+//! attribute uses.
 //!
 //! **MPD reading is `dash-runtime`'s** (`dash_runtime::mpd`, issue #2340): one
 //! bounded MPD reader in the workspace, the one `DashClient` plays from.
-//! `transmux` only writes MPDs ([`crate::dash`]) and needs these two items:
-//! the writer renders `.`/`S` durations, and `dash-runtime`'s template code
-//! clamps `%0Nd` widths to [`MAX_FORMAT_WIDTH`].
+//! `transmux` only writes MPDs ([`crate::dash`]) and needs this one item,
+//! because the writer renders `.`/`S` durations.
 //!
 //! [`parse_iso8601_duration`] reads the `PnYnMnDTnHnMnS` lexical form (W3C XML
 //! Schema 1.1 Part 2 §3.3.6): the `P`/`T` and every designator are UPPER case,
@@ -49,12 +47,6 @@ impl fmt::Display for DashParseError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for DashParseError {}
-
-/// Cap on the `%0Nd` zero-padding width in a `$Number$` / `$Time$` /
-/// `$Bandwidth$` substitution. A u64 in decimal has at most 20 digits; any
-/// wider padding is meaningless and a hostile `$Number%9999999999d$` would
-/// allocate / loop unboundedly.
-pub const MAX_FORMAT_WIDTH: usize = 20;
 
 // ---------------------------------------------------------------------------
 // xs:duration
