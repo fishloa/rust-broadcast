@@ -466,10 +466,19 @@ fn period(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
         base_urls: base_urls(e, ctx)?,
         segment: segment_layer(e, ctx)?,
         asset_identifier: e.child("AssetIdentifier").map(descriptor).transpose()?,
+        imported_mpd: e.child("ImportedMPD").map(imported_mpd).transpose()?,
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
         adaptation_sets: sets,
     }))
+}
+
+/// `ImportedMPD` (ISO/IEC 23009-1 ed.6 `ImportedMpdType`).
+fn imported_mpd(e: &Elem) -> Result<ImportedMpd, MpdError> {
+    Ok(ImportedMpd {
+        url: e.text.trim().to_owned(),
+        earliest_resolution_time_offset: opt_f64(e, "earliestResolutionTimeOffset")?,
+    })
 }
 
 fn scan_features(e: &Elem, f: &mut MpdFeatures) {
@@ -514,7 +523,7 @@ impl Mpd {
         let kind = match root.attr("type") {
             None | Some("static") => PresentationType::Static,
             Some("dynamic") => PresentationType::Dynamic,
-            Some("list") => return Err(MpdError::Unsupported(Unsupported::PresentationTypeList)),
+            Some("list") => PresentationType::List,
             Some(other) => return Err(invalid("MPD@type", other)),
         };
         let mut periods = Vec::new();

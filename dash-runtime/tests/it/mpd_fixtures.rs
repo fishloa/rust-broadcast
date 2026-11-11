@@ -48,3 +48,36 @@ fn livesim2_dynamic_mpd_values() {
     assert_eq!(mpd.periods[0].adaptation_sets.len(), 2);
     assert_eq!(mpd.utc_timings.len(), 1);
 }
+
+const ISO_LIST_EXAMPLE: &str = "specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd";
+
+#[test]
+fn list_mpd_parses_its_imported_mpds() {
+    let Some(root) = test_fixtures::private_root() else {
+        eprintln!("SKIPPED list_mpd_parses_its_imported_mpds: private checkout absent");
+        return;
+    };
+    let path = root.join(ISO_LIST_EXAMPLE);
+    assert!(
+        path.is_file(),
+        "private checkout present but {} is missing",
+        path.display()
+    );
+    let mpd = Mpd::parse(&std::fs::read(&path).expect("read")).expect("parse");
+    assert_eq!(mpd.kind, PresentationType::List);
+    assert_eq!(mpd.periods.len(), 3);
+    let urls: Vec<&str> = mpd
+        .periods
+        .iter()
+        .map(|p| p.imported_mpd.as_ref().expect("ImportedMPD").url.as_str())
+        .collect();
+    assert_eq!(urls, ["ad0.mpd", "ad1.mpd", "ad2.mpd"]);
+    assert_eq!(
+        mpd.periods[0]
+            .imported_mpd
+            .as_ref()
+            .expect("ImportedMPD")
+            .earliest_resolution_time_offset,
+        Some(0.0)
+    );
+}
