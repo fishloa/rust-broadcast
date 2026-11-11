@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-auth"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "form_urlencoded",
@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-client"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "11.0.0"
+version = "11.0.1"
 dependencies = [
  "chrono",
  "erased-serde",
@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -358,7 +358,7 @@ dependencies = [
 
 [[package]]
 name = "buffering-runtime"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -379,7 +379,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "caption-convert"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "cc-data",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -560,7 +560,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "container-probe"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "broadcast-common",
 ]
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "dash-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "container-probe",
@@ -762,6 +762,7 @@ version = "0.0.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
+ "dash-runtime",
  "dvb-si",
  "dvb-t2mi",
  "media-doctor",
@@ -825,7 +826,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvb-bbframe"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "broadcast-common",
  "num_enum",
@@ -835,7 +836,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -845,7 +846,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -859,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1231,7 +1232,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hls-runtime"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "backon",
  "broadcast-auth",
@@ -1803,12 +1804,13 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
  "clap",
  "container-probe",
+ "dash-runtime",
  "dvb-conformance",
  "dvb-si",
  "http-body-util",
@@ -1830,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1933,7 +1935,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -1942,7 +1944,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -1952,7 +1954,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1962,7 +1964,7 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2499,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -2522,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "rtsp-runtime"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "broadcast-auth",
  "bytes",
@@ -2686,7 +2688,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scte35-splice"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "base64 0.23.1",
  "broadcast-common",
@@ -2922,7 +2924,7 @@ dependencies = [
 
 [[package]]
 name = "srt-runtime"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "aes",
  "aes-kw",
@@ -3072,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "timed-metadata"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -3300,7 +3302,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "aes",
  "base64 0.23.1",
@@ -3321,6 +3323,7 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "quick-xml",
+ "rtmp-runtime",
  "rtp-packet",
  "sdp-types",
  "serde",

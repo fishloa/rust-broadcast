@@ -27,7 +27,7 @@ pub const TABLE: &[Crate] = &[
         name: "media-doctor",
         allowed_types: &[],
         allowed_fns: &[],
-        // its DASH check calls `transmux::Mpd::parse`; the type/entity/markup rules still apply
+        // its DASH check calls `dash_runtime::mpd::Mpd::parse`; the type/entity/markup rules still apply
         needs_xml_module: false,
     },
     Crate {

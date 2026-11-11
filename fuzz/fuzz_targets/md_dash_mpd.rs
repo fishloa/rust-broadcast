@@ -6,7 +6,7 @@ use libfuzzer_sys::fuzz_target;
 mod doctor_text;
 
 // Fuzz `media_doctor::check_dash_mpd` — the validator built on top of
-// `transmux::Mpd::parse` — on arbitrary UTF-8 text. Must not panic on any
+// `dash_runtime::mpd::Mpd::parse` — on arbitrary UTF-8 text. Must not panic on any
 // input, however malformed or adversarial (including invalid XML, truncated
 // documents, and legitimate MPDs with valid spec constructs like a first
 // `<S>` without `@t`).

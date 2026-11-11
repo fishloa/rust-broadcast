@@ -1,5 +1,5 @@
 //! Fixture tests for `check_dash_mpd` — DASH MPD validation using
-//! structured model (transmux::Mpd::parse).
+//! structured model (dash_runtime::mpd::Mpd::parse).
 //!
 //! Fixtures live in `fixtures/dash/`:
 //! - `manifest.mpd` — well-formed static MPD → zero findings.

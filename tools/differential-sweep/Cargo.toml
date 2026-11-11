@@ -25,6 +25,7 @@ mpeg-ts          = { path = "../../mpeg-ts" }
 dvb-si           = { path = "../../dvb-si" }
 dvb-t2mi         = { path = "../../dvb-t2mi" }
 transmux         = { path = "../../transmux", features = ["cli"] }
+dash-runtime     = { path = "../../dash-runtime" }
 scte35-splice    = { path = "../../scte35-splice" }
 st291            = { path = "../../st291", features = ["ts", "rtp"] }
 broadcast-hls    = { path = "../../broadcast-hls" }
