@@ -132,6 +132,21 @@ pub fn parse_srt_url_for_test(url: &str) -> Result<(String, SrtUrlOverrides), sr
     parse_srt_url(url)
 }
 
+/// `#[doc(hidden)]` golden seam (issue #2369): the parse outcome of one
+/// `srt://` URL, rendered as one stable line so the pre-move record can be
+/// compared byte-for-byte after the parser moves to `srt-runtime`.
+#[doc(hidden)]
+#[must_use]
+pub fn srt_url_outcome_for_test(url: &str) -> String {
+    match parse_srt_url(url) {
+        Ok((addr, overrides)) => format!(
+            "ok addr={addr} stream_id={:?} latency_ms={:?}",
+            overrides.stream_id, overrides.latency_ms
+        ),
+        Err(e) => format!("err {e}"),
+    }
+}
+
 /// Normalise an SRT authority into a `host:port` string, or `None` if it has
 /// no host. Accepts `host`, `host:port`, `[v6]`, `[v6]:port`, and a bare
 /// `v6` literal (bracketed for `ToSocketAddrs`); defaults the port.
