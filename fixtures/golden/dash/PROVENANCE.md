@@ -181,7 +181,7 @@ these four files stay byte-identical.
 
 ## Writer element/attribute coverage (`dash-cover-*.mpd`)
 
-`dash-cover-{dvb-hdr,live,sar-par,languages,cbcs,stpp,wvtt}.mpd` record every
+`dash-cover-{dvb-hdr,dvb-hdr10plus,live,sar-par,languages,cbcs,stpp,wvtt}.mpd` record every
 element and attribute name of the DASH MPD writer (`transmux/src/dash.rs`) that
 the older `dash-*.mpd` files above do not exercise, so the move of the writer
 into a syntax crate (issues #2355, #2356) cannot change an unobserved branch.
@@ -196,4 +196,8 @@ copies of the fixture's audio track carrying an `ISO_639_language_descriptor`
 re-signals the fixture's own AVC SPS geometry with a `3:2` VUI sample aspect
 ratio so `@par` and `@sar` disagree. `stpp` is the real AVC + TTML CMAF capture
 (`fixtures/mp4/cmaf-av-subtitle`); `wvtt` is a spec vector (no producer writes
-WebVTT in ISO BMFF).
+WebVTT in ISO BMFF). `dvb-hdr10plus` is the real HEVC HDR10+ stream
+(`private/fixtures/video/hdr10plus/`, see its PROVENANCE.md) under the DVB-DASH
+profile, the one input whose video track carries the HDR10+ flag, recorded from
+the current code at capture commit `65ec7ed6a` (the `dvb-hdr` case above is the
+AVC fixture and has no HDR property).

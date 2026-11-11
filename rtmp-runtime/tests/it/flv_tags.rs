@@ -169,3 +169,92 @@ fn a_bad_signature_or_short_data_offset_is_malformed() {
     bytes[5..FLV_HEADER_LEN].copy_from_slice(&8u32.to_be_bytes());
     assert!(FlvHeader::parse(&bytes).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// `tags_resync`: the tolerant walk (transmux's `FlvDemux` adapts it)
+// ---------------------------------------------------------------------------
+
+/// A body long enough that a tag's header, body and `PreviousTagSize` are all
+/// distinct from a neighbouring tag's framing.
+const RESYNC_BODY_LEN: usize = 32;
+/// How much of a two-tag stream is cut away: part of the final tag's body and
+/// all of its `PreviousTagSize`.
+const RESYNC_TAIL_CUT: usize = 16;
+
+/// The byte offset of every tag in `stream`, in order.
+fn tag_starts(stream: &[u8], header: &FlvHeader) -> Vec<usize> {
+    let mut off = header.first_tag_offset();
+    let mut starts = Vec::new();
+    for tag in rtmp_runtime::flv::tags(stream, header) {
+        starts.push(off);
+        off += tag.unwrap().serialized_len();
+    }
+    starts
+}
+
+#[test]
+fn tags_resync_skips_a_damaged_tag_and_reports_its_offset() {
+    let name = "flv/av.flv";
+    let bytes = test_fixtures::read(name);
+    let header = FlvHeader::parse(&bytes).unwrap_or_else(|e| panic!("{name} header: {e:?}"));
+    let starts = tag_starts(&bytes, &header);
+    let mut stream = bytes.clone();
+    let victim = starts[1];
+    let damage_at = victim + FLV_TAG_HEADER_LEN;
+    stream[damage_at..damage_at + 4].fill(0xAA);
+    let inflated = u32::try_from(stream.len() - victim).unwrap();
+    stream[victim + 1..victim + 4].copy_from_slice(&inflated.to_be_bytes()[1..]);
+
+    let walk = rtmp_runtime::flv::tags_resync(&stream, &header)
+        .unwrap_or_else(|e| panic!("a damaged tag is recoverable: {e:?}"));
+    assert_eq!(
+        walk.damaged,
+        vec![victim],
+        "the damaged tag is skipped and reported at its offset"
+    );
+    let offsets: Vec<usize> = walk.tags.iter().map(|(off, _)| *off).collect();
+    let expected: Vec<usize> = starts
+        .iter()
+        .copied()
+        .filter(|&off| off != victim)
+        .collect();
+    assert_eq!(
+        offsets, expected,
+        "every tag outside the damaged one survives, at its own offset"
+    );
+    assert_eq!(walk.truncated_tail, None);
+}
+
+#[test]
+fn tags_resync_flags_a_truncated_tail() {
+    let mut stream = FlvHeader::new(false, true).try_to_bytes().unwrap();
+    let good = FlvTag::new(TagType::from_byte(9), 0, &[1u8, 2, 3, 4]);
+    stream.extend_from_slice(&good.try_to_bytes().unwrap());
+    let first_at = tag_starts(&stream, &FlvHeader::parse(&stream).unwrap())[0];
+    let cut_off = FlvTag::new(TagType::from_byte(9), 0, &[0xAAu8; RESYNC_BODY_LEN]);
+    stream.extend_from_slice(&cut_off.try_to_bytes().unwrap());
+    stream.truncate(stream.len() - RESYNC_TAIL_CUT);
+
+    let header = FlvHeader::parse(&stream).unwrap();
+    let walk = rtmp_runtime::flv::tags_resync(&stream, &header).expect("the good prefix survives");
+    assert_eq!(walk.tags.len(), 1, "the complete first tag is kept");
+    let (at, need, have) = walk
+        .truncated_tail
+        .expect("the final, cut-off tag is flagged");
+    assert_eq!(at, first_at + good.serialized_len());
+    assert!(
+        need > have,
+        "need {need} must exceed the {have} bytes present"
+    );
+}
+
+#[test]
+fn tags_resync_over_a_header_only_input_yields_no_tags() {
+    let stream = FlvHeader::new(false, true).try_to_bytes().unwrap();
+    let header = FlvHeader::parse(&stream).unwrap();
+    let walk =
+        rtmp_runtime::flv::tags_resync(&stream, &header).expect("header and no tags is no error");
+    assert!(walk.tags.is_empty());
+    assert!(walk.damaged.is_empty());
+    assert_eq!(walk.truncated_tail, None);
+}

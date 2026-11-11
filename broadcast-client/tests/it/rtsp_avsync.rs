@@ -23,6 +23,9 @@ const VIDEO_RATE: f64 = 90_000.0;
 const AUDIO_RATE: f64 = 44_100.0;
 const WALL_ORIGIN_SECONDS: f64 = 3_900_000_000.0;
 const SR_SSRC: u32 = 0x1234_5678;
+/// Offset of the sender report body inside an interleaved RTSP frame (`$`, channel, length).
+const SR_BODY_AT: usize = 4;
+const NTP_FRACTION: f64 = 4_294_967_296.0;
 const SR_AFTER_DIVISOR: usize = 3;
 const MEASURE_AFTER_NUM: usize = 2;
 const MEASURE_AFTER_DEN: usize = 3;
@@ -88,10 +91,19 @@ struct Outcome {
     samples: Vec<(bool, Vec<u8>, f64)>,
     audio_samples: Vec<(f64, u64)>,
     last_sr_us: u64,
-    last_audio_skew: f64,
+    audio_skew_written: Option<f64>,
 }
 
-fn send_sender_reports(host: &mut Host, lanes: &[Lane], i: usize, audio_skew: f64) {
+/// Writes one sender report per lane and returns each lane's `(video, written audio skew)`:
+/// the skew is decoded back from the NTP/RTP pair actually put on the wire, so a test can
+/// assert against what the sender said rather than against the variable that built it.
+fn send_sender_reports(
+    host: &mut Host,
+    lanes: &[Lane],
+    i: usize,
+    audio_skew: f64,
+) -> (bool, Option<f64>) {
+    let mut written = None;
     for lane in lanes {
         let ts = lane.packet_ts[i.min(lane.packet_ts.len() - 1)];
         let rel = f64::from(ts.wrapping_sub(lane.base));
@@ -101,9 +113,44 @@ fn send_sender_reports(host: &mut Host, lanes: &[Lane], i: usize, audio_skew: f6
             (AUDIO_RATE, audio_skew)
         };
         let wall = WALL_ORIGIN_SECONDS + rel / rate + offset;
-        host.deliver(&sender_report_at(lane.channel + 1, SR_SSRC, wall, ts));
+        let frame = sender_report_at(lane.channel + 1, SR_SSRC, wall, ts);
+        if !lane.video {
+            written = Some(sender_report_audio_skew(&frame, lane.base));
+        }
+        host.deliver(&frame);
         host.drain();
     }
+    written.map_or((false, None), |skew| (true, Some(skew)))
+}
+
+/// The NTP-to-RTP mapping a sender report frame carries, as the audio skew it implies:
+/// the NTP time of the report minus what `WALL_ORIGIN_SECONDS + (rtp_timestamp - base) / 44 100`
+/// would make it with no skew. Decoded from the wire, not from the sender's intent.
+fn sender_report_audio_skew(frame: &[u8], base: u32) -> f64 {
+    let body = frame
+        .get(SR_BODY_AT..)
+        .expect("an interleaved sender report");
+    let msw = u32::from_be_bytes(
+        body.get(8..12)
+            .expect("NTP MSW")
+            .try_into()
+            .expect("4 bytes"),
+    );
+    let lsw = u32::from_be_bytes(
+        body.get(12..16)
+            .expect("NTP LSW")
+            .try_into()
+            .expect("4 bytes"),
+    );
+    let ts = u32::from_be_bytes(
+        body.get(16..20)
+            .expect("RTP ts")
+            .try_into()
+            .expect("4 bytes"),
+    );
+    let ntp = f64::from(msw) + f64::from(lsw) / NTP_FRACTION;
+    let rel = f64::from(ts.wrapping_sub(base));
+    ntp - (WALL_ORIGIN_SECONDS + rel / AUDIO_RATE)
 }
 
 fn run(skew_seconds: Option<f64>) -> Outcome {
@@ -183,7 +230,7 @@ fn run_scenario(
         SrAt::AfterFirstVideoAu => first_video_au_end,
     };
     let before_media = matches!(when, SrAt::BeforeFirstSample);
-    let mut last_sr: Option<(u64, f64)> = None;
+    let mut last_sr: Option<(u64, Option<f64>)> = None;
     let reanchor_at = longest * SR_REANCHOR_AT_NUM / SR_REANCHOR_AT_DEN;
     let skew_seconds = match sr {
         Some(SrMove::Skew(skew)) => Some(skew),
@@ -194,8 +241,8 @@ fn run_scenario(
     for i in 0..longest {
         let mut drained = 0u64;
         if let (Some(skew), true, true) = (skew_seconds, before_media, i == 0) {
-            send_sender_reports(&mut host, &lanes, 0, skew);
-            last_sr = Some((host.now, skew));
+            let (_, written) = send_sender_reports(&mut host, &lanes, 0, skew);
+            last_sr = Some((host.now, written));
         }
         for lane in &lanes {
             if let Some(frame) = lane.frames.get(i) {
@@ -206,13 +253,13 @@ fn run_scenario(
             }
         }
         if let (Some(skew), false, true) = (skew_seconds, before_media, i == sr_at) {
-            send_sender_reports(&mut host, &lanes, i, skew);
-            last_sr = Some((host.now, skew));
+            let (_, written) = send_sender_reports(&mut host, &lanes, i, skew);
+            last_sr = Some((host.now, written));
         }
         if let (Some(SrMove::Reanchor), false, true) = (sr, before_media, i == reanchor_at) {
             let moved = SR_REANCHOR_MOVE_FRAMES * AAC_FRAME_SECONDS;
-            send_sender_reports(&mut host, &lanes, i, moved);
-            last_sr = Some((host.now, moved));
+            let (_, written) = send_sender_reports(&mut host, &lanes, i, moved);
+            last_sr = Some((host.now, written));
         }
         all.push((host.events(), drained));
     }
@@ -239,7 +286,7 @@ fn run_scenario(
         samples: Vec::new(),
         audio_samples: Vec::new(),
         last_sr_us: 0,
-        last_audio_skew: 0.0,
+        audio_skew_written: None,
     };
     let mut is_video = BTreeMap::new();
     let mut audio_samples = Vec::new();
@@ -287,9 +334,9 @@ fn run_scenario(
         "too few samples"
     );
     out.audio_samples = audio_samples;
-    if let Some((last_sr_us, last_audio_skew)) = last_sr {
+    if let Some((last_sr_us, written)) = last_sr {
         out.last_sr_us = last_sr_us;
-        out.last_audio_skew = last_audio_skew;
+        out.audio_skew_written = written;
     }
     assert_eq!(out.audio_timescale, AUDIO_RATE);
     assert_eq!(out.video_timescale, VIDEO_RATE);
@@ -331,7 +378,11 @@ fn audio_follows_a_later_sender_report_that_moves_its_clock() {
 }
 
 fn assert_audio_follows_the_last_sender_report(name: &str, o: &Outcome) {
-    let (last_sr_us, last_audio_skew) = (o.last_sr_us, o.last_audio_skew);
+    let (last_sr_us, last_audio_skew) = (
+        o.last_sr_us,
+        o.audio_skew_written
+            .expect("the last sender reports carried an audio report"),
+    );
     let Some(first_after) = o.audio_samples.iter().position(|(_, at)| *at > last_sr_us) else {
         return;
     };

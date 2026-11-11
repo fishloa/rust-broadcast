@@ -3,7 +3,7 @@
 //! dash-runtime's (issue #2340). The expected files in
 //! `fixtures/golden/dash/` were generated from the pre-quick-xml code on `origin/main`
 //! (see `fixtures/golden/dash/PROVENANCE.md`). Set `GOLDEN_BLESS=<dir>` to write the files
-//! instead of comparing.
+//! instead of comparing; a run with `CI` set refuses to write.
 #![cfg(feature = "std")]
 
 use std::fs;
@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 
 use broadcast_common::{Package, Unpackage};
 use transmux::dash::{
-    Addressing, ContentProtectionSystem, DVB_DASH_PROFILE_PREFIX, DashPackager, InbandEventStream,
-    TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
+    Addressing, ContentProtectionSystem, DVB_DASH_PROFILE_PREFIX, DVB_HDR_DMI_SCHEME,
+    DVB_HDR_DMI_ST2094_40, DashPackager, HDR_METADATA_SCHEME, HDR_METADATA_SMPTE2094_40,
+    InbandEventStream, TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
 };
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
@@ -24,9 +25,15 @@ use transmux::{
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "GOLDEN_BLESS rewrites committed goldens and is refused under CI"
+        );
         let path = Path::new(&dir).join(name);
-        fs::create_dir_all(&dir).expect("create golden dir");
-        fs::write(&path, actual).expect("write golden");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create golden dir");
+        }
+        fs::write(&path, actual).unwrap_or_else(|e| panic!("write {path:?}: {e}"));
         return;
     }
     let path = test_fixtures::path(name);
@@ -49,6 +56,19 @@ fn all_hdr10plus(mut media: Media) -> Media {
         track.spec.hdr10plus = true;
     }
     media
+}
+
+/// The real HEVC HDR10+ stream (`private/fixtures/video/hdr10plus/`, see its
+/// PROVENANCE.md): the only committed media whose video track carries an
+/// `hvc1` config and the HDR10+ flag, so it is what exercises the DASH-IF and
+/// DVB-DASH HDR `SupplementalProperty` writers.
+fn hevc_hdr10plus_media() -> Option<Media> {
+    let ts = test_fixtures::require_bytes("video/hdr10plus/tos-256x144-hdr10plus.ts", "hdr10plus")?;
+    let mut media = TsDemux::new().unpackage(&ts[..]).expect("demux hdr10plus");
+    media
+        .tracks
+        .retain(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }));
+    Some(media)
 }
 
 /// The real AVC + `stpp`/TTML capture (`fixtures/mp4/cmaf-av-subtitle`).
@@ -317,6 +337,32 @@ fn dash_mpd_element_coverage_matches_golden() {
     }
 }
 
+/// The DVB-DASH HDR branch: an HEVC HDR10+ track under the DVB-DASH profile
+/// emits both the DASH-IF HDR `SupplementalProperty` and its DVB dynamic-
+/// mapping counterpart. `Option`, because the HEVC capture is a private
+/// fixture: the golden gate skips only when `private/` is not checked out.
+#[test]
+fn dash_mpd_dvb_hdr10plus_coverage_matches_golden() {
+    let Some(media) = hevc_hdr10plus_media() else {
+        return;
+    };
+    let mpd = DashPackager {
+        profiles: format!("{DVB_DASH_PROFILE_PREFIX}2020"),
+        ..DashPackager::default()
+    }
+    .package(&media)
+    .expect("DVB-DASH HDR10+ MPD");
+    for scheme in [HDR_METADATA_SCHEME, DVB_HDR_DMI_SCHEME] {
+        assert!(
+            mpd.contains(&format!("schemeIdUri=\"{scheme}\"")),
+            "the {scheme} property is emitted: {mpd}"
+        );
+    }
+    assert!(mpd.contains(&format!("value=\"{HDR_METADATA_SMPTE2094_40}\"")));
+    assert!(mpd.contains(&format!("value=\"{DVB_HDR_DMI_ST2094_40}\"")));
+    check("golden/dash/dash-cover-dvb-hdr10plus.mpd", &mpd);
+}
+
 #[cfg(feature = "cenc")]
 #[test]
 fn dash_mpd_cbcs_coverage_matches_golden() {
@@ -539,6 +585,8 @@ const WRITER_NAME_EVIDENCE: &[&str] = &[
     "Element KIDS: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
     "Element KID: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
     "Element LA_URL: Spec: §3.2 Golden: golden/smooth/wrm-two-kids.xml",
+    "Attribute schemeIdUri: Spec: DASH-IF-IOP-10.3.2.4 Golden: golden/dash/dash-cover-dvb-hdr10plus.mpd#\"http://dashif.org/metadata/hdr\"",
+    "Attribute schemeIdUri: Spec: ETSI-TS-103-285 Golden: golden/dash/dash-cover-dvb-hdr10plus.mpd#\"urn:dvb:dash:hdr-dmi\"",
     "Attribute xmlns: Spec: §5.3.1.2 Golden: golden/dash/dash-default.mpd",
     "Attribute xmlns:cenc: Spec: 23001-7 Golden: golden/dash/dash-protected.mpd",
     "Attribute profiles: Spec: §5.3.1.2 Golden: golden/dash/dash-default.mpd",
@@ -611,7 +659,7 @@ const WRITER_NAME_EVIDENCE: &[&str] = &[
 
 #[test]
 fn writer_goldens_cover_every_emitted_name() {
-    let mut evidence: Vec<(bool, &str, &str, &str)> = Vec::new();
+    let mut evidence: Vec<(bool, &str, String, String, String)> = Vec::new();
     for entry in WRITER_NAME_EVIDENCE {
         fn part<'a>(entry: &str, (text, rest): &(&'a str, &'a str)) -> (&'a str, &'a str) {
             text.split_once(rest)
@@ -620,10 +668,26 @@ fn writer_goldens_cover_every_emitted_name() {
         let (tag, rest) = part(entry, &(entry, " "));
         let (name, spec_and_golden) = part(entry, &(rest, ": "));
         let (spec, golden) = part(entry, &(spec_and_golden, " Golden: "));
-        let spec = part(entry, &(spec, "Spec: ")).1;
-        evidence.push((tag == "Element", name, spec, golden));
+        let spec = part(entry, &(spec, "Spec:"))
+            .1
+            .trim_start_matches(' ')
+            .to_string();
+        let (golden, needle) = match golden.split_once('#') {
+            None => (golden.to_string(), String::new()),
+            Some((file, needle)) => (file.to_string(), needle.to_string()),
+        };
+        let spec = if needle.is_empty() {
+            spec
+        } else {
+            format!(
+                "{}?{}",
+                spec_value_constant(&spec),
+                needle.trim_matches('"')
+            )
+        };
+        evidence.push((tag == "Element", name, spec, golden, needle));
     }
-    for (is_element, name, _, _) in &evidence {
+    for (is_element, name, _, _, _) in &evidence {
         let list = if *is_element {
             WRITER_ELEMENT_NAMES
         } else {
@@ -636,20 +700,48 @@ fn writer_goldens_cover_every_emitted_name() {
     }
     for name in WRITER_ELEMENT_NAMES.iter().chain(WRITER_ATTRIBUTE_NAMES) {
         assert!(
-            evidence.iter().any(|(_, n, _, _)| n == name),
+            evidence.iter().any(|(_, n, _, _, _)| n == name),
             "{name} has no evidence entry"
         );
     }
 
     let source = writer_source();
-    for (is_element, name, spec, golden) in &evidence {
+    for (is_element, name, spec, golden, needle) in &evidence {
+        let golden = test_fixtures::read_to_string(golden.as_str());
+        let spec = match spec.split_once('?') {
+            None => spec.as_str(),
+            Some((constant, value)) => {
+                let declared = format!("pub const {constant}: &str = \"{value}\";");
+                assert!(
+                    source.contains(&declared),
+                    "{name}: the writer does not declare {declared:?}"
+                );
+                constant
+            }
+        };
         assert!(
             source.contains(spec),
             "{name}: spec citation {spec:?} is not in the writer source"
         );
-        let golden = test_fixtures::read_to_string(golden);
-        let emitted = format!("{}{name}", if *is_element { "<" } else { " " });
+        let emitted = if needle.is_empty() {
+            format!("{}{name}", if *is_element { "<" } else { " " })
+        } else {
+            needle.clone()
+        };
         assert!(golden.contains(&emitted), "{name} is not in {golden:?}");
+    }
+}
+
+/// The `dash.rs` constant that holds an attribute value no source literal
+/// spells out: the DVB-DASH HDR `schemeIdUri`s are emitted through their
+/// constants, so the coverage check pins the constant's declaration (its
+/// name and value) where it would otherwise look for a literal, and checks
+/// the golden against the value the constant declares.
+fn spec_value_constant(spec: &str) -> &'static str {
+    match spec {
+        "DASH-IF-IOP-10.3.2.4" => "HDR_METADATA_SCHEME",
+        "ETSI-TS-103-285" => "DVB_HDR_DMI_SCHEME",
+        other => unreachable!("no constant is named for the spec citation {other:?}"),
     }
 }
 

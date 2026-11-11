@@ -92,6 +92,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
+use rtmp_runtime::RtmpError;
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
@@ -332,6 +333,11 @@ impl StreamingFlvDemux {
                 // remote OOM/DoS).
                 let header = match rtmp_runtime::flv::FlvHeader::parse(&self.pending) {
                     Ok(header) => header,
+                    Err(
+                        err @ RtmpError::Malformed {
+                            what: crate::flv::FLV_DATA_OFFSET,
+                        },
+                    ) => return Err(FlvError::Header(err)),
                     Err(_) => {
                         return Err(FlvError::BadSignature([
                             self.pending[0],

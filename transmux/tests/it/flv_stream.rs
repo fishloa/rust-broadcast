@@ -700,3 +700,67 @@ fn undegraded_samples(media: &transmux::Media) -> Vec<Vec<u8>> {
     out.truncate(out.len().saturating_sub(dropped));
     out
 }
+
+// ---------------------------------------------------------------------------
+// A header rejected for its `DataOffset` is a header error, not a bad
+// signature.
+// ---------------------------------------------------------------------------
+
+/// Exactly 9 header bytes declaring `DataOffset = 0` (the field is the header
+/// length, so the header itself rejects it), then `PreviousTagSize0` and one
+/// tag.
+fn zero_data_offset_header_and_tag() -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"FLV");
+    out.push(0x01);
+    out.push(0x01);
+    out.extend_from_slice(&0u32.to_be_bytes());
+    out.extend_from_slice(&0u32.to_be_bytes());
+    write_tag(&mut out, 9, 0, &avc_seq_body(FIXTURE_AVCC));
+    out
+}
+
+#[test]
+fn a_header_rejected_for_its_data_offset_is_a_header_error() {
+    let input = zero_data_offset_header_and_tag();
+    let mut demux = StreamingFlvDemux::new();
+    let err = demux
+        .feed(&input)
+        .expect_err("DataOffset 0 is not a valid header");
+    assert!(
+        matches!(err, FlvError::Header(_)),
+        "the signature is FLV, so the failure is the header, not the signature: {err:?}"
+    );
+    assert!(
+        !matches!(err, FlvError::BadSignature(_)),
+        "a stream whose signature is exactly FLV must not be reported as not-FLV"
+    );
+
+    let err = FlvDemux::default()
+        .unpackage(&input)
+        .expect_err("DataOffset 0 is not a valid header");
+    assert!(
+        matches!(
+            err,
+            FlvError::Codec(transmux::Error::InvalidInput(
+                "FLV header DataOffset below the header"
+            ))
+        ),
+        "the whole-buffer demuxer reports the same cause: {err:?}"
+    );
+}
+
+#[test]
+fn a_bad_signature_is_still_a_bad_signature() {
+    let mut input = zero_data_offset_header_and_tag();
+    input[..3].copy_from_slice(b"XLV");
+    let mut demux = StreamingFlvDemux::new();
+    assert!(matches!(
+        demux.feed(&input).expect_err("not FLV"),
+        FlvError::BadSignature([b'X', b'L', b'V'])
+    ));
+    assert!(matches!(
+        FlvDemux::default().unpackage(&input).expect_err("not FLV"),
+        FlvError::BadSignature([b'X', b'L', b'V'])
+    ));
+}

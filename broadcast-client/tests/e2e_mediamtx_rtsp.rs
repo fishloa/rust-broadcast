@@ -55,6 +55,16 @@ const SR_FAITHFUL_SECONDS: f64 =
 const BEYOND_BOUND_FACTOR: f64 = 1.5;
 /// A deviation the unit test needs to sit clearly inside `SR_FAITHFUL_SECONDS`.
 const WITHIN_BOUND_DIVISOR: f64 = 2.0;
+/// mediamtx sends a Sender Report about once a second; the A/V checks interpolate the
+/// audio channel's origin at each video report's time, so one report per channel would
+/// leave the drift a single point (vacuous) and zero would report 0 s of drift.
+const MIN_SENDER_REPORTS_PER_TRACK: usize = 2;
+/// A relative move of the video channel's Sender Report origin the drift test applies.
+const SR_RELATIVE_MOVE_SECONDS: f64 = 0.05;
+/// The spacing the drift test's synthetic Sender Reports use.
+const SR_REPORT_SPACING_SECONDS: f64 = 1.0;
+/// The report time after which the drift test's video origin carries its move.
+const SR_RELATIVE_MOVE_AFTER_SECONDS: f64 = 101.0;
 
 struct Tool {
     child: Child,
@@ -825,22 +835,33 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     );
     let sr_faithfulness = median(sr_residual.get_mut(&false).expect("audio"))
         - median(sr_residual.get_mut(&true).expect("video"));
+    for (is_video, origins) in [
+        (&false, &sr_origin_sets[&false]),
+        (&true, &sr_origin_sets[&true]),
+    ] {
+        assert!(
+            origins.len() >= MIN_SENDER_REPORTS_PER_TRACK,
+            "{label}: the {} track carried {} Sender Reports; mediamtx sends one per second, so a run \
+             with fewer is a broken run and the Sender Report and A/V checks cannot be judged",
+            if *is_video { "video" } else { "audio" },
+            origins.len()
+        );
+    }
     let reference_spread = sr_av_reference_drift(&sr_origin_sets[&false], &sr_origin_sets[&true]);
     let reference_consistent = reference_spread <= SR_FAITHFUL_SECONDS;
+    assert!(
+        reference_consistent,
+        "{label}: the server's audio and video Sender Reports moved {reference_spread:.4} s against each other; \
+         the Sender Report mapping (and the A/V offset synced to it) cannot be judged"
+    );
     eprintln!(
         "SRFAITHFUL[{label}] emitted-timeline-minus-SR-mapping audio-vs-video={sr_faithfulness:.4} sr-av-reference-drift={reference_spread:.4}"
     );
-    if !reference_consistent {
-        eprintln!(
-            "SRFAITHFUL[{label}] not checked: the server's audio and video Sender Reports moved {reference_spread:.4} s against each other, so neither they nor the A/V offset synced to them can be judged (the hermetic tests in tests/it/rtsp_avsync.rs are the precise guard)"
-        );
-    } else {
-        assert_eq!(
-            sr_faithfulness_violation(states.last().copied(), sr_faithfulness),
-            None,
-            "{label}: the emitted timeline departs from the Sender Report mapping"
-        );
-    }
+    assert_eq!(
+        sr_faithfulness_violation(states.last().copied(), sr_faithfulness),
+        None,
+        "{label}: the emitted timeline departs from the Sender Report mapping"
+    );
     let video_sent_early_s =
         (ground.audio_median - audio_offset) - (ground.video_median - video_offset);
     eprintln!(
@@ -862,7 +883,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         "first audio is {first_gap} s from first video on the common timeline, expected {expected_first_gap} s"
     );
     assert!(
-        !reference_consistent || av_offset.abs() < COMMON_TIMELINE_BOUND_SECONDS,
+        av_offset.abs() < COMMON_TIMELINE_BOUND_SECONDS,
         "A/V offset (median audio pts-minus-RTP-packet-arrival minus the same for video, after SenderReport sync) is {av_offset} s"
     );
     let configured_start_lead_us = Config::default().buffer.policy.initial_us;
@@ -967,4 +988,52 @@ fn sender_report_faithfulness_binds_only_in_sender_report_mode() {
 fn first_sample_gap_expectation_follows_the_sync_mode() {
     assert_eq!(expected_first_gap(Some(AvSync::SenderReport), 0.127), 0.0);
     assert_eq!(expected_first_gap(Some(AvSync::RtpInfo), 0.127), 0.127);
+}
+
+#[test]
+fn origin_at_interpolates_and_holds_its_ends() {
+    let origins = [(100.0, 1.0), (102.0, 1.4)];
+    assert_eq!(origin_at(&origins, 101.0), 1.2, "halfway between two SRs");
+    assert_eq!(
+        origin_at(&origins, 99.0),
+        0.8,
+        "before the first SR, the first two SRs' slope extended"
+    );
+    assert!(
+        (origin_at(&origins, 105.0) - 2.0).abs() < 1e-9,
+        "after the last SR, the last two SRs' slope extended: {}",
+        origin_at(&origins, 105.0)
+    );
+    assert_eq!(origin_at(&origins[..1], 105.0), 1.0, "one SR is that SR");
+    assert!(origin_at(&[], 0.0).is_nan(), "no SR has no origin");
+}
+
+#[test]
+fn sr_av_reference_drift_reads_equality_as_zero_and_a_relative_move() {
+    let at = |i: u32| (100.0 + SR_REPORT_SPACING_SECONDS * f64::from(i), 5.0);
+    let audio: Vec<(f64, f64)> = (0..4).map(at).collect();
+    let video: Vec<(f64, f64)> = (0..4).map(at).collect();
+    assert!(sr_av_reference_drift(&audio, &video).abs() < 1e-9);
+
+    // The video channel's origin moves part-way through the reports, the shape a stream
+    // whose clock was adjusted mid-run has.
+    let moved: Vec<(f64, f64)> = video
+        .iter()
+        .map(|&(ntp, origin)| {
+            (
+                ntp,
+                origin
+                    + if ntp > SR_RELATIVE_MOVE_AFTER_SECONDS {
+                        SR_RELATIVE_MOVE_SECONDS
+                    } else {
+                        0.0
+                    },
+            )
+        })
+        .collect();
+    let drift = sr_av_reference_drift(&audio, &moved);
+    assert!(
+        (drift - SR_RELATIVE_MOVE_SECONDS).abs() < 1e-9,
+        "a relative move of {SR_RELATIVE_MOVE_SECONDS} s reads as {drift} s"
+    );
 }

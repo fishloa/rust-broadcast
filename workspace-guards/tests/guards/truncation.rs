@@ -105,11 +105,9 @@ fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
                 used[k] = true;
                 continue;
             }
-            let mut start = n;
-            while start > 0 && !lines[start].contains("fn ") {
-                start -= 1;
-            }
-            if !has_guard(&lines[start..=n].join("\n")) {
+            let start = enclosing_fn_line(&lines, n);
+            let header_end = function_header_end(&lines, start, n);
+            if !has_guard(&lines[header_end + 1..=n].join("\n")) {
                 problems.push(format!(
                     "{}: {rel}:{}: unchecked length narrowing or silent u8 clamp (use broadcast_common::len::fit_*): {t}",
                     c.name,
@@ -127,6 +125,86 @@ fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
         }
     }
     problems
+}
+
+/// The line of the `fn` that encloses line `n`.
+fn enclosing_fn_line(lines: &[&str], n: usize) -> usize {
+    let mut start = n;
+    while start > 0 && !lines[start].contains("fn ") {
+        start -= 1;
+    }
+    start
+}
+
+/// The line on which the enclosing function's signature ends: the body is
+/// scanned, never the head, so a `u16`-typed parameter cannot stand in for a
+/// range check the body does not make.
+fn function_header_end(lines: &[&str], start: usize, n: usize) -> usize {
+    (start..n)
+        .find(|&i| lines[i].trim_end().ends_with('{'))
+        .unwrap_or(start)
+}
+
+#[test]
+fn a_u16_parameter_is_not_a_range_check() {
+    let c = Crate {
+        name: "synthetic",
+        allowlist: &[],
+    };
+    let files = vec![(
+        "src/a.rs".to_string(),
+        "fn f(width: u8, len: u16) -> Result<()> {\n    buf[0] = x.len() as u8;\n    Ok(())\n}\n"
+            .to_string(),
+    )];
+    let p = check(&c, &files);
+    assert_eq!(p.len(), 1, "{p:?}");
+    assert!(p[0].contains("src/a.rs:2:"), "{p:?}");
+}
+
+#[test]
+fn the_body_guard_is_what_blesses_a_narrowing() {
+    let c = Crate {
+        name: "synthetic",
+        allowlist: &[],
+    };
+    let files = vec![(
+        "src/a.rs".to_string(),
+        "fn f(len: u16) -> Result<()> {\n    if usize::from(len) > MAX_BODY {\n        return Err(E);\n    }\n    buf[0] = b.len() as u8;\n    Ok(())\n}\n"
+            .to_string(),
+    )];
+    assert!(check(&c, &files).is_empty());
+}
+
+#[test]
+fn cfg_all_test_items_do_not_hide_the_code_after_them() {
+    let c = Crate {
+        name: "synthetic",
+        allowlist: &[],
+    };
+    let files = vec![(
+        "src/a.rs".to_string(),
+        "#[cfg(all(test, unix))]\nmod t {\n    fn f() {}\n}\nfn g() { buf[0] = x.len() as u8; }\n"
+            .to_string(),
+    )];
+    let p = check(&c, &files);
+    assert_eq!(p.len(), 1, "{p:?}");
+    assert!(p[0].contains("src/a.rs:5:"), "{p:?}");
+}
+
+#[test]
+fn a_conditional_predicate_that_is_not_test_only_is_still_scanned() {
+    let c = Crate {
+        name: "synthetic",
+        allowlist: &[],
+    };
+    let files = vec![(
+        "src/a.rs".to_string(),
+        "#[cfg(any(test, feature = \"x\"))]\nmod t {\n    fn f() {\n        buf[0] = x.len() as u8;\n    }\n}\n"
+            .to_string(),
+    )];
+    let p = check(&c, &files);
+    assert_eq!(p.len(), 1, "{p:?}");
+    assert!(p[0].contains("src/a.rs:4:"), "{p:?}");
 }
 
 #[test]

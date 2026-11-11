@@ -35,7 +35,7 @@ mod timecode_component;
 mod track;
 mod types;
 
-pub use ber::BerLength;
+pub use ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 pub use content_storage::ContentStorage;
 pub use error::{Error, Result};
 pub use essence_container_data::EssenceContainerData;

@@ -3,10 +3,15 @@
 //! The BER/KLV codec moved to `broadcast_common::klv` (#2341); st377-1's
 //! `ber` and `klv` modules are private, so only the crate-root re-exports
 //! resolve. Every path the `[Unreleased]` entry names is used here once, so
-//! the entry can never again promise a path that does not compile.
+//! the entry can never again promise a path that does not compile, and the
+//! BER functions it re-exports resolve from the crate root (not only from
+//! `broadcast_common::klv`).
 
 use broadcast_common::Parse;
-use st377_1::{BerLength, KlvItem, collect_klv_items, walk_klv_items};
+use st377_1::{
+    BerLength, KlvItem, ber_length_size_for, collect_klv_items, decode_ber_length,
+    encode_ber_length_as, walk_klv_items,
+};
 
 fn fixture() -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -43,5 +48,18 @@ fn crate_root_reexports_resolve_and_work() {
     assert_eq!(
         KlvItem::parse(&bytes[20..]).expect("exact-fit parse").value,
         &[0x7F]
+    );
+
+    let (len, used) = decode_ber_length(&[0x03]).expect("a short-form length");
+    assert_eq!((len, used), (3, 1));
+    let width = BerLength::fixed_from_consumed(1);
+    assert_eq!(ber_length_size_for(len, width), 1);
+    let mut token = [0u8; 1];
+    assert_eq!(encode_ber_length_as(len, width, &mut token), Ok(1));
+    assert_eq!(token, [0x03]);
+    assert_eq!(
+        broadcast_common::klv::ber_length_size_for(len, width),
+        st377_1::ber_length_size_for(len, width),
+        "the re-export names the same function"
     );
 }

@@ -24,12 +24,13 @@ const FORBIDDEN: &[&str] = &[
     "unimplemented!(",
 ];
 
-/// The source without its test code: every item carrying `#[cfg(test)]` or
-/// `#[cfg(all(test, ..))]`, blanked so line numbers still match the file.
+/// The source without its test code: every test-only item (`#[cfg(test)]`,
+/// `#[cfg(all(test, ..))]`), blanked so line numbers still match the file.
 fn non_test(body: &str) -> String {
-    workspace_guards::scan::without_attributed_items(body, |attr| {
-        attr.starts_with("#[cfg(test)]") || attr.starts_with("#[cfg(all(test")
-    })
+    workspace_guards::scan::without_attributed_items(
+        body,
+        workspace_guards::scan::test_only_attribute,
+    )
 }
 
 fn hits_in(body: &str) -> Vec<(usize, String)> {
