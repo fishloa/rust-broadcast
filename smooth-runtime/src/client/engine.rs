@@ -74,6 +74,11 @@ impl SmoothClient {
         self.manifest_url = url;
     }
 
+    /// True once a manifest has been accepted and the streams are resolved.
+    pub fn is_started(&self) -> bool {
+        self.started
+    }
+
     /// True while the presentation is live and the session has not ended.
     pub fn is_live(&self) -> bool {
         self.is_live && !self.ended
@@ -170,7 +175,7 @@ impl SmoothClient {
     /// The fetch for request `id` produced no usable body.
     pub fn on_failure(&mut self, now: u64, id: RequestId, failure: FetchFailure) {
         if self.take_manifest(id) {
-            if failure.is_not_found() && !self.started {
+            if failure.is_not_found() {
                 self.outputs.push_back(Output::ManifestNotFound);
             }
             return self.manifest_failed(now, ManifestFault::Fetch);

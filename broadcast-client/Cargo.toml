@@ -27,7 +27,7 @@ hls-runtime        = { path = "../hls-runtime", version = "0.13.0" }
 
 dash-runtime       = { path = "../dash-runtime", version = "0.4.0" }
 broadcast-hls      = { path = "../broadcast-hls", version = "0.7.0" }
-broadcast-smooth   = { path = "../broadcast-smooth", version = "0.1.0" }
+smooth-runtime     = { path = "../smooth-runtime", version = "0.1.0" }
 rtsp-runtime       = { path = "../rtsp-runtime", version = "0.11.0", default-features = false }
 sdp-types          = { workspace = true }
 rtp-packet         = { path = "../rtp-packet", version = "0.6.0", default-features = false, features = ["std"] }
