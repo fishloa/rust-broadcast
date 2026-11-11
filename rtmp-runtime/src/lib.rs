@@ -12,7 +12,7 @@ pub mod client;
 #[cfg(feature = "tokio")]
 mod codec;
 pub mod error;
-pub(crate) mod flv_bridge;
+pub mod flv;
 pub mod handshake;
 #[cfg(feature = "tokio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]

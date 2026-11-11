@@ -81,6 +81,7 @@ WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
     "transmux_webm_demux": ("fixtures/mkv/*.webm", "fixtures/mkv/*.mkv"),
     "transmux_progressive_demux": ("fixtures/mp4/h264-aac-prog.mp4", "fixtures/mp4/h264-high.mp4"),
     "hls_client_feed": ("fixtures/hls/handbuilt/*.m3u8", "fixtures/hls/*.m3u8"),
+    "rtmp_flv_tags": ("fixtures/flv/*.flv",),
 }
 
 
