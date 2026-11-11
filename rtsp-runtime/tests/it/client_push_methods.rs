@@ -566,6 +566,9 @@ async fn start_record_fails_a_rejected_request_naming_its_method() {
                 .to_string();
             let response = if text.starts_with("SETUP ") {
                 format!("RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n")
+            } else if text.starts_with("DESCRIBE ") {
+                let body = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n";
+                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{}", body.len(), body)
             } else {
                 format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n")
             };
@@ -645,7 +648,7 @@ async fn start_play_describes_sets_up_and_plays() {
                 seen.push(head);
                 let extra = if is_setup { "Session: 1\r\n" } else { "" };
                 let body = if request_line.starts_with("DESCRIBE ") {
-                    "v=0\r\n"
+                    "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n"
                 } else {
                     ""
                 };
@@ -668,7 +671,8 @@ async fn start_play_describes_sets_up_and_plays() {
     let mut client = AsyncRtspClient::connect(addr).await.unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
     let session = client.start_play(&url, 0).await.unwrap();
-    assert!(session.sdp.contains("v=0"));
+    assert_eq!(session.tracks.len(), 1);
+    assert_eq!(session.tracks[0].channel, 0);
     client.teardown(url.as_str()).await.unwrap();
     drop(client);
 
@@ -722,6 +726,9 @@ async fn start_play_unexpected_response_yields_typed_error() {
                 .to_string();
             let response = if text.starts_with("SETUP ") {
                 format!("RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n")
+            } else if text.starts_with("DESCRIBE ") {
+                let body = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n";
+                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{}", body.len(), body)
             } else {
                 format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n")
             };
@@ -737,31 +744,5 @@ async fn start_play_unexpected_response_yields_typed_error() {
     drop(server);
 }
 
-#[test]
-fn play_session_reports_skipped_list_type() {
-    let s = rtsp_runtime::io::PlaySession {
-        sdp: String::new(),
-        negotiated_channel: 0,
-        skipped: vec!["audio".into()],
-    };
-    assert_eq!(s.skipped.len(), 1);
-}
 
-#[test]
-fn channel_collision_is_detected() {
-    // collision when two tracks share a channel
-    let a = (0u8, 1u8);
-    let b = (0u8, 1u8);
-    assert!(a == b);
-}
 
-#[tokio::test]
-async fn start_play_plays_aggregate_uri() {
-    // reuse start_play test expectation already; minimal: ensure PlaySession exists
-    let s = rtsp_runtime::io::PlaySession {
-        sdp: "v=0".into(),
-        negotiated_channel: 0,
-        skipped: Vec::new(),
-    };
-    assert!(s.sdp.contains("v=0"));
-}

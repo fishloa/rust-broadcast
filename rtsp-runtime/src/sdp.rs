@@ -83,15 +83,16 @@ pub fn resolve_control(
     base: &url::Url,
     control: Option<&str>,
 ) -> Option<String> {
-    let default_port = if request_url.scheme() == "rtsps" {
-        322
-    } else {
-        554
-    };
-    // rtsp-runtime constants not available here; use literals matching defaults.
+    fn default_port(scheme: &str) -> u16 {
+        if scheme == "rtsps" {
+            crate::RTSPS_DEFAULT_PORT
+        } else {
+            crate::RTSP_DEFAULT_PORT
+        }
+    }
     let same_authority = |u: &url::Url| {
-        let rp = request_url.port().unwrap_or(default_port);
-        let up = u.port().unwrap_or(if u.scheme() == "rtsps" { 322 } else { 554 });
+        let rp = request_url.port().unwrap_or(default_port(request_url.scheme()));
+        let up = u.port().unwrap_or(default_port(u.scheme()));
         u.scheme() == request_url.scheme()
             && u.host() == request_url.host()
             && up == rp

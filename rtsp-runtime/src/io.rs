@@ -153,13 +153,25 @@ pub struct AsyncRtspClient<S> {
     timeouts: RtspTimeouts,
 }
 
+/// A track negotiated by [`AsyncRtspClient::start_play`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PlayTrack {
+    /// The SETUP URI used for this track.
+    pub control: String,
+    /// The interleaved RTP channel negotiated for this track.
+    pub channel: u8,
+}
+
 /// Result of a successful [`AsyncRtspClient::start_play`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PlaySession {
     /// The SDP body returned by `DESCRIBE` (RFC 2326 §10.2).
     pub sdp: String,
-    /// The interleaved RTP channel the server negotiated on `SETUP`.
-    pub negotiated_channel: u8,
+    /// The tracks negotiated by the flow.
+    pub tracks: Vec<PlayTrack>,
+    /// Control URLs skipped because they crossed authorities.
     pub skipped: Vec<String>,
 }
 
@@ -389,55 +401,103 @@ where
     /// write buffer and the connection is dead** — an interleaved frame cannot
     /// be resynchronised mid-flight, so the caller must reconnect rather than
     /// retry. Bytes already read stay buffered.
-    /// Pulls a stream in one call: DESCRIBE, SETUP, PLAY.
+    /// Pulls a stream in one call: `DESCRIBE` (RFC 2326 §10.2) for every media
+    /// section, `SETUP` for each kept track (interleaved channel assignment per
+    /// §12.39), then `PLAY` on the aggregate control URI (§C.1.1). Tracks whose
+    /// `a=control` crosses authorities are skipped and reported in
+    /// [`PlaySession::skipped`].
     pub async fn start_play(
         &mut self,
         url: &url::Url,
-        interleaved_channel: u8,
+        first_channel: u8,
     ) -> Result<PlaySession> {
         let uri = url.as_str();
-        let control = crate::sdp::control_url(url)?;
-        let transport = crate::Transport::single(
-            crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
-                interleaved_channel,
-                interleaved_channel.wrapping_add(1),
-            ),
-        );
 
-        let sdp = match self.describe(uri).await? {
-            crate::client::ClientEvent::Response { status, body, .. } if status.is_success() => {
-                String::from_utf8(body).map_err(|_| Error::InvalidUrl { what: "sdp utf8" })?
-            }
-            crate::client::ClientEvent::Response { status, .. } => {
-                return Err(Error::UnexpectedResponse {
-                    method: Method::Describe,
-                    status,
-                });
-            }
+        // DESCRIBE
+        let (status, body) = match self.describe(uri).await? {
+            crate::client::ClientEvent::Response { status, body, .. } => (status, body),
             other => return Err(Error::UnexpectedEvent { event: other }),
         };
-
-        match self.setup(&control, &transport).await? {
-            crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
-            crate::client::ClientEvent::Response { status, .. } => {
-                return Err(Error::UnexpectedResponse {
-                    method: Method::Setup,
-                    status,
-                });
-            }
-            other => return Err(Error::UnexpectedEvent { event: other }),
+        if !status.is_success() {
+            return Err(Error::UnexpectedResponse {
+                method: Method::Describe,
+                status,
+            });
         }
-        let negotiated_channel = self
-            .framed
-            .codec_mut()
-            .session
-            .take_negotiated_transport()
-            .as_ref()
-            .and_then(crate::Transport::first)
-            .and_then(|spec| spec.interleaved.map(|(lo, _)| lo))
-            .unwrap_or(interleaved_channel);
+        let sdp = String::from_utf8(body.clone())
+            .map_err(|_| Error::InvalidUrl { what: "sdp utf8" })?;
+        let session = sdp_types::Session::parse(sdp.as_bytes())
+            .map_err(|_| Error::InvalidSdp("parse".into()))?;
 
-        match self.play(uri).await? {
+        // base URL: request URL, with a trailing slash so relative control
+        // values append rather than replace (RFC 2326 §C.1.1).
+        let mut base = url.clone();
+        if !base.path().ends_with('/') {
+            let p = format!("{}/", base.path());
+            base.set_path(&p);
+        }
+
+        // resolve control per media
+        let mut kept: Vec<String> = Vec::new();
+        let mut skipped: Vec<String> = Vec::new();
+        for media in &session.medias {
+            let control_attr = media.attributes.iter().find_map(|a| {
+                if a.attribute == "control" { a.value.clone() } else { None }
+            });
+            let ctrl = control_attr.as_deref();
+            match crate::sdp::resolve_control(url, &base, ctrl) {
+                Some(u) => kept.push(u),
+                None => {
+                    if let Some(c) = ctrl {
+                        skipped.push(c.to_string());
+                    }
+                }
+            }
+        }
+
+        // SETUP each kept track
+        let mut tracks: Vec<PlayTrack> = Vec::new();
+        let mut used: Vec<u8> = Vec::new();
+        for (i, control) in kept.into_iter().enumerate() {
+            let low = first_channel
+                .checked_add((2 * i) as u8)
+                .ok_or(Error::InvalidUrl { what: "channel overflow" })?;
+            let high = low.checked_add(1).ok_or(Error::InvalidUrl { what: "channel overflow" })?;
+            let transport = crate::Transport::single(
+                crate::transport::TransportSpec::rtp_avp_tcp_interleaved(low, high),
+            );
+            match self.setup(&control, &transport).await? {
+                crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
+                crate::client::ClientEvent::Response { status, .. } => {
+                    return Err(Error::UnexpectedResponse {
+                        method: Method::Setup,
+                        status,
+                    });
+                }
+                other => return Err(Error::UnexpectedEvent { event: other }),
+            }
+            let negotiated = self
+                .framed
+                .codec_mut()
+                .session
+                .take_negotiated_transport()
+                .as_ref()
+                .and_then(crate::Transport::first)
+                .and_then(|spec| spec.interleaved.map(|(lo, _)| lo))
+                .unwrap_or(low);
+            if used.contains(&negotiated) {
+                return Err(Error::InterleavedChannelCollision { channel: negotiated });
+            }
+            used.push(negotiated);
+            tracks.push(PlayTrack {
+                control,
+                channel: negotiated,
+            });
+        }
+
+        // PLAY aggregate
+        let play_uri = url.as_str().to_string();
+        match self.play(&play_uri).await? {
             crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
             crate::client::ClientEvent::Response { status, .. } => {
                 return Err(Error::UnexpectedResponse {
@@ -450,11 +510,13 @@ where
 
         Ok(PlaySession {
             sdp,
-            negotiated_channel,
-            skipped: Vec::new(),
+            tracks,
+            skipped,
         })
     }
 
+
+    /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`.
     pub async fn send_interleaved(&mut self, channel: u8, payload: &[u8]) -> Result<()> {
         self.poll_keepalive().await?;
         self.drain_inbound().await?;
