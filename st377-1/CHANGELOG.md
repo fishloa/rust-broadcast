@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-- The KLV triplet and BER length codec are `broadcast_common::klv`'s (#2341). `st377_1::ber::{BerLength, decode_ber_length, encode_ber_length, ber_length_size}` and `st377_1::klv::{KlvItem, walk_klv_items, collect_klv_items}` are re-exports, so their paths still resolve; MXF items (fill-item keys) stay here.
-- BREAKING: `Error`'s BER/KLV variants (`BerIndefiniteLength`, `BerLengthTooLong`, `FixedBerLengthTooSmall`) are replaced by `Error::Klv(broadcast_common::klv::KlvError)`, which carries the same cases. Match on `Error::Klv(..)` instead.
+- The KLV triplet and BER length codec are `broadcast_common::klv`'s (#2341). The crate root re-exports `st377_1::{BerLength, KlvItem, walk_klv_items, collect_klv_items}`; the `ber` and `klv` modules themselves stay private, so `st377_1::ber::…` and `st377_1::klv::…` do not resolve. `BerLength` is this crate's original type and is gone; use `broadcast_common::klv::BerLength`. The BER codec functions are not re-exported (`decode_ber_length`, `ber_length_size_for`, `encode_ber_length_as` are used internally only; `ber_length_size` and `encode_ber_length` were never public here). The Fill-item key helpers (`FILL_ITEM_KEY_PREFIX`, `FILL_ITEM_KEY_SUFFIX`, `is_fill_item_key`) stay at the crate root.
 - Requires broadcast-common 11.1.0.
+### Breaking
+- `Error`'s BER/KLV variants (`BerIndefiniteLength`, `BerLengthTooLong`, `FixedBerLengthTooSmall`) are removed; every BER/KLV failure is now `Error::Klv(broadcast_common::klv::KlvError)`, which carries the same cases. Match on `Error::Klv(..)` instead.
 
 ## [0.6.0] - 2026-11-07
 ### Fixed
