@@ -395,3 +395,29 @@ fn a_message_at_the_maximum_round_trips() {
         "every FLV tag crosses as one message at exactly its own length"
     );
 }
+
+#[test]
+fn a_set_chunk_size_with_the_reserved_bit_set_is_rejected() {
+    // RTMP 1.0 §5.4.1: "The first bit MUST be zero." rtmp-runtime refuses the
+    // message (it does not mask the bit, as this crate did before it owned the
+    // chunk stream), so the demux fails loudly instead of streaming on.
+    let mut writer = rtmp_runtime::chunk::ChunkWriter::new();
+    let wire = writer
+        .write(&rtmp_runtime::chunk::Message {
+            chunk_stream_id: 2,
+            timestamp: 0,
+            message_type_id: msg_type::SET_CHUNK_SIZE,
+            message_stream_id: 0,
+            payload: RESERVED_BIT_CHUNK_SIZE.to_be_bytes().to_vec(),
+        })
+        .expect("the chunk writer frames the hostile control message");
+    assert!(matches!(
+        RtmpDemux::new().unpackage(&wire),
+        Err(transmux::rtmp::RtmpFlvError::Rtmp(
+            rtmp_runtime::RtmpError::Malformed { .. }
+        ))
+    ));
+}
+
+/// A Set Chunk Size of 4096 with the reserved top bit set.
+const RESERVED_BIT_CHUNK_SIZE: u32 = 0x8000_1000;
