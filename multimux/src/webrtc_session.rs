@@ -608,6 +608,19 @@ pub(crate) fn plan_restart(
     })
 }
 
+#[doc(hidden)]
+#[cfg(feature = "test-hooks")]
+pub fn restart_fragment_for_test(
+    fragment: &[u8],
+    current_remote_ufrag: &str,
+    local_candidates: &[String],
+    token: fn(usize) -> String,
+) -> Option<Vec<u8>> {
+    plan_restart(fragment, current_remote_ufrag, local_candidates, token)
+        .ok()
+        .map(|plan| plan.answer)
+}
+
 /// Queues `plan` for the media task and records the peer's new `ufrag` as the
 /// resource's current ICE generation. `false` (nothing changed) when the
 /// task's pending queue is full.

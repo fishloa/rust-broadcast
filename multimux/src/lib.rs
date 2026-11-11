@@ -22,6 +22,12 @@ pub mod source;
 pub(crate) mod testutil;
 #[cfg(any(feature = "whip", feature = "whep"))]
 mod webrtc_session;
+#[cfg(all(any(feature = "whip", feature = "whep"), feature = "test-hooks"))]
+#[doc(hidden)]
+pub mod webrtc_ice {
+    #[doc(hidden)]
+    pub use crate::webrtc_session::restart_fragment_for_test;
+}
 
 pub use error::{MultimuxError, Result};
 // Re-exported so an external crate wiring up a `crate::registry::SchemeRegistry`
