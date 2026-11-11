@@ -168,8 +168,10 @@ impl Mpd {
     }
 }
 
-
-fn write_service_description(w: &mut Writer<Vec<u8>>, sd: &ServiceDescription) -> Result<(), MpdError> {
+fn write_service_description(
+    w: &mut Writer<Vec<u8>>,
+    sd: &ServiceDescription,
+) -> Result<(), MpdError> {
     let mut e = BytesStart::new("ServiceDescription");
     if let Some(v) = sd.id {
         e.push_attribute(("id", v.to_string().as_str()));

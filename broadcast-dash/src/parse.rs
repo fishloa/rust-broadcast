@@ -546,20 +546,26 @@ fn imported_mpd(e: &Elem<Ns>) -> Result<ImportedMpd, MpdError> {
 }
 
 fn service_description(e: &Elem<Ns>) -> Result<ServiceDescription, MpdError> {
-    let latency = e.child("Latency").map(|l| -> Result<Latency, MpdError> {
-        Ok(Latency {
-            target: opt_u64(l, "target")?,
-            min: opt_u64(l, "min")?,
-            max: opt_u64(l, "max")?,
-            reference_id: opt_u32(l, "referenceId")?,
+    let latency = e
+        .child("Latency")
+        .map(|l| -> Result<Latency, MpdError> {
+            Ok(Latency {
+                target: opt_u64(l, "target")?,
+                min: opt_u64(l, "min")?,
+                max: opt_u64(l, "max")?,
+                reference_id: opt_u32(l, "referenceId")?,
+            })
         })
-    }).transpose()?;
-    let playback_rate = e.child("PlaybackRate").map(|p| -> Result<PlaybackRate, MpdError> {
-        Ok(PlaybackRate {
-            min: opt_str(p, "min"),
-            max: opt_str(p, "max"),
+        .transpose()?;
+    let playback_rate = e
+        .child("PlaybackRate")
+        .map(|p| -> Result<PlaybackRate, MpdError> {
+            Ok(PlaybackRate {
+                min: opt_str(p, "min"),
+                max: opt_str(p, "max"),
+            })
         })
-    }).transpose()?;
+        .transpose()?;
     Ok(ServiceDescription {
         id: opt_u64(e, "id")?,
         latency,
