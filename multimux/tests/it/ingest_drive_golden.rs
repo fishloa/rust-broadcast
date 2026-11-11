@@ -74,10 +74,7 @@ fn render_document(events: &[String], programs: &[String], health: &str) -> Stri
 fn assert_golden(name: &str, actual: &str) {
     let rel = format!("{GOLDEN_DIR}/{name}");
     if std::env::var_os("UPDATE_INGEST_GOLDENS").is_some() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("fixtures")
-            .join(&rel);
+        let path = test_fixtures::path(&rel);
         std::fs::create_dir_all(path.parent().expect("golden parent")).expect("create golden dir");
         std::fs::write(&path, actual).expect("write golden");
         return;

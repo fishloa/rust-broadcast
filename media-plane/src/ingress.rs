@@ -1562,7 +1562,8 @@ impl SessionClocks {
 /// The *read itself* does not: an RTMP session reads parsed event batches
 /// over a socket, a WHIP session reads one decrypted RTP datagram and owns
 /// its `webrtc-runtime` media transport. So the read is a caller-supplied
-/// future ([`Self::read`]), and everything around it lives here once.
+/// future (the caller's own, started when a session is admitted), and
+/// everything around it lives here once.
 ///
 /// # The clock origin is per admission, not per route
 ///

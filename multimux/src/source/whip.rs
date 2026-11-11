@@ -122,7 +122,7 @@ use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
 
 /// The `avcC` record's `lengthSizeMinusOne` for the AVCC-style 4-byte NAL
 /// length prefix [`RtpStreamDepacketiser::push`] emits
-/// (ISO/IEC 14496-15 §5.3.4.1.1).
+/// (ISO/IEC 14496-15:2017 §5.3.4.1.1).
 const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
 
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
