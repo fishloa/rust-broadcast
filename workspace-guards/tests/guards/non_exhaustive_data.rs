@@ -35,6 +35,15 @@ pub const TABLE: &[Crate] = &[
         variants: false,
     },
     plain("broadcast-dash"),
+    // `StreamType` is the closed `StreamIndex@Type` token set (video/audio/text):
+    // a caller matches all three and the packager converts between it and
+    // `transmux`'s `SmoothStreamType` exhaustively, so a fourth token must be a
+    // deliberate change, not a silent fall-through.
+    Crate {
+        name: "broadcast-smooth",
+        skip: &["StreamType"],
+        variants: false,
+    },
     plain("broadcast-hls"),
     plain("broadcast-loudness"),
     plain("buffering-runtime"),

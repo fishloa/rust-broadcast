@@ -1,8 +1,9 @@
-//! The quick-xml pull plumbing the DASH MPD and Smooth Streaming manifest
-//! parsers share: element start/end events with decoded attributes, subtree
-//! skipping, and the attribute lookup/parse helpers. Each parser supplies only
-//! its own error enum through [`XmlWalkError`] and instantiates the wrappers
-//! with [`xml_walk_fns!`].
+//! The quick-xml pull plumbing the Smooth Streaming client Manifest parser
+//! reads through: element start/end events with namespace-resolved, decoded
+//! attributes, subtree skipping, and the attribute lookup/parse helpers. The
+//! parser supplies its own error enum through [`XmlWalkError`] and instantiates
+//! the wrappers with [`xml_walk_fns!`]. Moved verbatim from `transmux` (issue
+//! #2356); a later change switches it to `broadcast_common::xml`.
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -262,6 +263,39 @@ pub(crate) fn finish<E: XmlWalkError>(reader: &mut XmlReader<'_>) -> Result<(), 
     }
 }
 
+/// The character data of an already-open element, up to and including its
+/// matching end tag. Character data is validated like every other text run; a
+/// child element (or foreign-namespace content) inside the element is an
+/// [`XmlWalkError::mismatched_end_tag`] error, the element being expected to
+/// hold text only.
+pub(crate) fn element_text<E: XmlWalkError>(reader: &mut XmlReader<'_>) -> Result<String, E> {
+    loop {
+        let event = read_event(reader)?;
+        if let Some(text) =
+            char_data(&event).map_err(|message| xml_message::<E>(reader, message))?
+        {
+            return match next_tag(reader)? {
+                Some(Tag::Close { .. }) => Ok(text),
+                _ => Err(xml_message(
+                    reader,
+                    "content after the element's text".to_string(),
+                )),
+            };
+        }
+        match event {
+            Event::End(_) => return Ok(String::new()),
+            Event::Eof => return Err(E::unexpected_eof()),
+            Event::Start(_) | Event::Empty(_) => {
+                return Err(xml_message(
+                    reader,
+                    "child element inside a text-only element".to_string(),
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Skip an already-open element's subtree, up to and including its matching
 /// end tag.
 pub(crate) fn skip_element<E: XmlWalkError>(reader: &mut XmlReader<'_>) -> Result<(), E> {
@@ -350,6 +384,10 @@ macro_rules! xml_walk_fns {
 
         fn skip_element(reader: &mut XmlReader<'_>) -> Result<()> {
             $crate::xml_walk::skip_element(reader)
+        }
+
+        fn element_text(reader: &mut XmlReader<'_>) -> Result<String> {
+            $crate::xml_walk::element_text(reader)
         }
 
         fn required_attr_owned(

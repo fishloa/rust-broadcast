@@ -81,7 +81,7 @@ fn asc_sample_rate(asc: &AudioSpecificConfig) -> Result<u32> {
 /// Takes the raw hex VALUE of the `config` parameter (not the full `a=fmtp`
 /// line) — for the full-line entry point see [`aac_config_from_fmtp`]. Hex
 /// decoding delegates to [`aac_config_from_asc_bytes`], the byte-level
-/// building block a non-hex caller (e.g. `smooth_parse`'s Smooth
+/// building block a non-hex caller (e.g. `broadcast_smooth`'s Smooth
 /// `CodecPrivateData`, already decoded to bytes) can use directly.
 pub fn aac_config_from_asc_hex(config_hex: &str) -> Result<CodecConfig> {
     let asc_bytes = hex_decode(config_hex)?;
@@ -127,7 +127,7 @@ pub fn aac_config_from_asc_bytes(asc_bytes: Vec<u8>) -> Result<CodecConfig> {
 /// `profile_compatibility` / `level_indication` (SPS bytes `[1..4]` after the
 /// NAL header). At least one SPS is required. Base64-decodes and classifies
 /// each token, then delegates to [`avc_config_from_sps_pps`], the byte-level
-/// building block a non-base64 caller (e.g. `smooth_parse`'s Annex B
+/// building block a non-base64 caller (e.g. `broadcast_smooth`'s Annex B
 /// `CodecPrivateData`) can use directly.
 pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurationBox> {
     let mut sps: Vec<AvcSps> = Vec::new();

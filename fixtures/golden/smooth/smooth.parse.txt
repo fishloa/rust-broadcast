@@ -8,6 +8,7 @@ SmoothManifest {
     is_live: false,
     look_ahead_fragment_count: None,
     dvr_window_length: None,
+    protection: None,
     streams: [
         StreamIndex {
             stream_type: Video,
@@ -19,6 +20,9 @@ SmoothManifest {
                 2,
             ),
             timescale: None,
+            quality_levels: Some(
+                1,
+            ),
             url: "QualityLevels({bitrate})/Fragments(video={start time})",
             qualities: [
                 QualityLevel {
@@ -79,6 +83,9 @@ SmoothManifest {
             ],
             chunks_list: [
                 C {
+                    n: Some(
+                        0,
+                    ),
                     t: Some(
                         0,
                     ),
@@ -88,6 +95,9 @@ SmoothManifest {
                     r: None,
                 },
                 C {
+                    n: Some(
+                        1,
+                    ),
                     t: None,
                     d: Some(
                         10000000,
@@ -106,6 +116,9 @@ SmoothManifest {
                 2,
             ),
             timescale: None,
+            quality_levels: Some(
+                1,
+            ),
             url: "QualityLevels({bitrate})/Fragments(audio={start time})",
             qualities: [
                 QualityLevel {
@@ -135,6 +148,9 @@ SmoothManifest {
             ],
             chunks_list: [
                 C {
+                    n: Some(
+                        0,
+                    ),
                     t: Some(
                         567574,
                     ),
@@ -144,6 +160,9 @@ SmoothManifest {
                     r: None,
                 },
                 C {
+                    n: Some(
+                        1,
+                    ),
                     t: None,
                     d: Some(
                         10216780,

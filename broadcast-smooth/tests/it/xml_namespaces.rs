@@ -1,13 +1,12 @@
 //! Namespace resolution and hostile-input bounds of the Smooth manifest reader
-//! (issue #1708). The MPD reader is dash-runtime's (tested in that crate);
-//! PlayReady has no reader in transmux (the WRMHEADER is only written), so it
-//! has no case here.
-#![cfg(feature = "std")]
+//! (issue #1708, moved here with the reader in issue #2356). The `Protection`
+//! probe that used to sit with the manifest cases stays in `transmux` (with the
+//! fragment layer it reads for); its namespace cases moved to `transmux`'s
+//! `manifest_protection` integration test.
 
 use broadcast_common::xml_chars::{XmlLimit, XmlLimits};
-use transmux::smooth_fragment::manifest_declares_protection;
-use transmux::smooth_parse::default_limits as smooth_defaults;
-use transmux::smooth_parse::{SmoothManifest, SmoothParseError};
+use broadcast_smooth::default_limits as smooth_defaults;
+use broadcast_smooth::{SmoothManifest, SmoothParseError};
 
 const SMOOTH: &str = r#"MajorVersion="2" MinorVersion="0" TimeScale="10000000""#;
 
@@ -52,29 +51,6 @@ fn smooth_unbound_prefix_trailing_and_depth_are_rejected() {
             ..
         })
     ));
-}
-
-#[test]
-fn protection_probe_ignores_foreign_namespace_look_alikes() {
-    assert!(manifest_declares_protection(&format!(
-        "<SmoothStreamingMedia {SMOOTH}><Protection/></SmoothStreamingMedia>"
-    )));
-    assert!(!manifest_declares_protection(&format!(
-        r#"<SmoothStreamingMedia {SMOOTH} xmlns:ms="urn:x"><ms:Protection/></SmoothStreamingMedia>"#
-    )));
-    assert!(!manifest_declares_protection(&format!(
-        r#"<SmoothStreamingMedia {SMOOTH}><Protection xmlns="urn:x"/></SmoothStreamingMedia>"#
-    )));
-}
-
-#[test]
-fn protection_probe_fails_closed_to_false_past_the_bounds() {
-    let deep = format!(
-        "<SmoothStreamingMedia {SMOOTH}>{}<Protection/>{}</SmoothStreamingMedia>",
-        "<x>".repeat(100),
-        "</x>".repeat(100)
-    );
-    assert!(!manifest_declares_protection(&deep));
 }
 
 fn tight(mut limits: XmlLimits, change: impl FnOnce(&mut XmlLimits)) -> XmlLimits {

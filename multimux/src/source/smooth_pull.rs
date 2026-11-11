@@ -11,7 +11,7 @@
 //! Unlike DASH/CMAF, Smooth has no bootstrapping init segment: a
 //! `QualityLevel@CodecPrivateData` IS the codec config.
 //! [`SmoothIngestSession`] therefore *synthesizes* one per stream via
-//! `transmux::smooth_parse::track_spec_from_quality_level` +
+//! `transmux::track_spec_from_quality_level` +
 //! `build_init_segment` (T1, issue #759) once its first fragment resolves
 //! `local_track_id` — see "Discovering each stream's wire track id" below.
 //!
@@ -59,6 +59,7 @@ use std::time::Duration;
 use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
+use broadcast_smooth::{SmoothManifest, StreamIndex, StreamType};
 use media_plane::ingress::{
     Dialer, HandshakePolicy, IngestSession, ProgramId, SessionEvent, run_dial,
 };
@@ -69,9 +70,7 @@ use transmux::pipeline::build_init_segment;
 use transmux::smooth_fragment::{
     FragmentState, fragment_state, fragment_track_id, manifest_declares_protection,
 };
-use transmux::smooth_parse::{
-    SmoothManifest, StreamIndex, StreamType, track_spec_from_quality_level,
-};
+use transmux::track_spec_from_quality_level;
 use url::Url;
 
 use crate::error::{MultimuxError, Result};
@@ -1125,15 +1124,10 @@ mod tests {
     }
 
     fn stream_index(stream_type: StreamType, name: Option<&str>, url: &str) -> StreamIndex {
-        StreamIndex {
-            stream_type,
-            name: name.map(str::to_string),
-            subtype: None,
-            chunks: None,
-            timescale: None,
-            url: url.to_string(),
-            qualities: Vec::new(),
-            chunks_list: Vec::new(),
+        let index = StreamIndex::new(stream_type, url, Vec::new());
+        match name {
+            Some(name) => index.with_name(name),
+            None => index,
         }
     }
 

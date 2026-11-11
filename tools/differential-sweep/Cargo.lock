@@ -303,6 +303,7 @@ dependencies = [
  "broadcast-auth",
  "broadcast-common",
  "broadcast-hls",
+ "broadcast-smooth",
  "buffering-runtime",
  "cookie",
  "cookie_store",
@@ -353,6 +354,15 @@ dependencies = [
  "broadcast-common",
  "jiff",
  "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "broadcast-smooth"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "quick-xml",
  "thiserror",
 ]
 
@@ -1984,6 +1994,7 @@ dependencies = [
  "broadcast-client",
  "broadcast-common",
  "broadcast-hls",
+ "broadcast-smooth",
  "bytes",
  "caption-convert",
  "container-probe",
@@ -3319,6 +3330,7 @@ dependencies = [
  "base64 0.23.1",
  "broadcast-common",
  "broadcast-hls",
+ "broadcast-smooth",
  "bytes",
  "cbc",
  "cc-data",

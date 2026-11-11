@@ -74,17 +74,33 @@ pub const TABLE: &[Crate] = &[
         needs_xml_module: true,
     },
     Crate {
-        name: "transmux",
-        allowed_types: &[
+        name: "broadcast-smooth",
+        allowed_types: &[(
+            "XmlReader",
+            "private namespace-aware namespace/limits wrapper over quick_xml::NsReader, not a tree",
+        )],
+        allowed_fns: &[
             (
-                "XmlReader",
-                "private alias of quick_xml::Reader, not a tree",
+                "element_text",
+                "reads one text-only element's character data through the shared walker; not a DOM or an escaper",
             ),
             (
-                "XmlSubtitleSampleEntry",
-                "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
+                "xml_error",
+                "maps a quick-xml error to the parser error enum",
+            ),
+            (
+                "xml_message",
+                "builds a positioned parser error from a validation message",
             ),
         ],
+        needs_xml_module: true,
+    },
+    Crate {
+        name: "transmux",
+        allowed_types: &[(
+            "XmlSubtitleSampleEntry",
+            "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
+        )],
         allowed_fns: &[
             (
                 "xml_error",

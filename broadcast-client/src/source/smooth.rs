@@ -7,16 +7,14 @@ use alloc::vec::Vec;
 use std::collections::HashMap;
 
 use broadcast_common::Unpackage;
+use broadcast_smooth::{QualityLevel, SmoothManifest, StreamIndex, StreamType};
 use hls_runtime::client::{MasterSelection, VariantInfo};
 use transmux::dash::rfc6381_track_codec_string;
 use transmux::pipeline::build_init_segment;
 use transmux::smooth_fragment::{
     FragmentState, fragment_state, fragment_tfxd, fragment_track_id, manifest_declares_protection,
 };
-use transmux::smooth_parse::{
-    SmoothManifest, StreamIndex, StreamType, track_spec_from_quality_level,
-};
-use transmux::{Fmp4Demux, TrackId, TrackSpec};
+use transmux::{Fmp4Demux, TrackId, TrackSpec, track_spec_from_quality_level};
 use url::Url;
 
 use crate::auth::{AuthDecision, AuthState};
@@ -54,7 +52,7 @@ struct Req {
 struct StreamRuntime {
     stream: StreamIndex,
     timescale: u64,
-    quality: transmux::smooth_parse::QualityLevel,
+    quality: QualityLevel,
     chunks: Vec<(u64, u64)>,
     next: usize,
     in_flight: bool,

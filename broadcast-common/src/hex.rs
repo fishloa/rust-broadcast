@@ -9,7 +9,9 @@
 //! The encoder delegates to the `hex` crate. Decoding needs an error type, and
 //! each consumer's is its own (and their input-validation policies genuinely
 //! differ — e.g. a manifest parser caps input length where a local helper
-//! does not), so decoders stay with their callers.
+//! does not), so decoders stay with their callers. [`hex_decode`] is the
+//! decoder for the surfaces that must accept either case (Smooth's
+//! `CodecPrivateData` is upper-case on the wire but not universally so).
 
 use alloc::string::String;
 
@@ -29,6 +31,21 @@ pub fn hex_encode(data: &[u8]) -> String {
     ::hex::encode(data)
 }
 
+/// Hex-decode `text` (either case, an even number of digits), or `None` when
+/// it is not hex of even length.
+///
+/// ```
+/// use broadcast_common::hex::hex_decode;
+///
+/// assert_eq!(hex_decode("00Ff"), Some(vec![0x00, 0xff]));
+/// assert_eq!(hex_decode("0"), None);
+/// assert_eq!(hex_decode("zz"), None);
+/// ```
+#[must_use]
+pub fn hex_decode(text: &str) -> Option<alloc::vec::Vec<u8>> {
+    ::hex::decode(text).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,6 +57,14 @@ mod tests {
         assert_eq!(hex_encode(&[0xDE, 0xAD, 0xBE, 0xEF]), "deadbeef");
         // A byte below 0x10 must still occupy two characters.
         assert_eq!(hex_encode(&[0x00, 0x01, 0x0A]), "00010a");
+    }
+
+    #[test]
+    fn decodes_either_case_and_rejects_odd_or_non_hex() {
+        assert_eq!(hex_decode("00Ff12"), Some(alloc::vec![0x00, 0xff, 0x12]));
+        assert_eq!(hex_decode(""), Some(alloc::vec::Vec::new()));
+        assert_eq!(hex_decode("0"), None);
+        assert_eq!(hex_decode("zz"), None);
     }
 
     #[test]

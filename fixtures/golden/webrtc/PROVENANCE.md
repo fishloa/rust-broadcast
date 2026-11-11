@@ -160,3 +160,28 @@ GOLDEN_UPDATE=1 cargo test --locked -p webrtc-runtime --all-features --test gold
 
 `tests/it/golden_http.rs` compares the live output to this file byte-for-byte.
 
+
+## `whip-answer.golden` / `whep-answer.golden` / `whip-restart-fragment.sdpfrag`
+
+Byte-for-byte SDP documents the WHIP (`source/whip.rs`) and WHEP
+(`output/whep.rs`) endpoints SIGNAL: the answer to an offer
+(`application/sdp`) and the ICE-restart answer fragment
+(`application/trickle-ice-sdpfrag`, the `a=`/`m=` lines only, RFC 8840 §4.4).
+Recorded from the pre-#2363 code, whose four session assemblies
+(`output/whep.rs`, `source/whip.rs`, `webrtc_session.rs`) are the source
+commit named below, so the move into `webrtc_runtime::sdp` must reproduce them
+without regenerating. The answer bodies supersede the earlier captures of the
+same names: the offer, local address, ICE credentials, fingerprint, codec
+config and candidate line are all caller-supplied through the
+`render_*_for_test` hooks, and `plan_restart` draws its new credentials from
+the `token` function it is handed (the test passes a constant), so no random
+certificate or candidate value appears. The candidate lines are exactly the
+ones the hooks were given; `MediaTransport`'s own candidate strings (a random
+ICE foundation) are never recorded.
+
+Source commit: `ab0516dde` (`main`, before #2363). Regenerate:
+
+```bash
+GOLDEN_BLESS=$PWD/fixtures cargo test -p multimux --all-features --locked \
+  --test it -- whip_whep_sdp_documents
+```

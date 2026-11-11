@@ -106,6 +106,7 @@ mod ll_hls;
 #[cfg(feature = "std")]
 #[path = "support/ll_packager.rs"]
 mod ll_packager;
+mod manifest_protection;
 mod mkv_mux;
 mod mpeg_legacy;
 mod mpegh;
@@ -219,4 +220,3 @@ mod webm_timestamp_scale;
 #[path = "support/xml.rs"]
 mod xml;
 mod xml_escaping;
-mod xml_namespaces;

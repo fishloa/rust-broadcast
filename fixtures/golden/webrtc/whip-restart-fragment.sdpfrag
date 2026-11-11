@@ -1,0 +1,4 @@
+a=ice-ufrag:11111111
+a=ice-pwd:111111111111111111111111
+m=video 9 UDP/TLS/RTP/SAVPF 0
+a=candidate:0 1 udp 2130706431 127.0.0.1 54321 typ host
