@@ -3,6 +3,11 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- A Representation inherits its AdaptationSet's `SegmentTemplate` timeline when it declares none of its own; the segment plan used to see no timeline there (found by pinning media-doctor's DASH validator on the ISO 23009-1 examples, where example G22 produced 18 timeline findings instead of 3).
+### Added
+- `address::template::match_url`: reverse segment-template matching (an uploaded segment URL to its representation id and `$Number$`/`$Time$`/`$Bandwidth$`), moved here from transmux so dash-runtime is the one MPD reader (#2340).
+- `PresentationType::List` and `Period::imported_mpd` (`ImportedMPD`): the `MPD@type="list"` value and the Period element ISO/IEC 23009-1 6th edition adds. `DashClient` refuses a list MPD with its typed unsupported error rather than playing it as static.
 
 ## [0.4.0] - 2026-11-10
 ### Fixed
