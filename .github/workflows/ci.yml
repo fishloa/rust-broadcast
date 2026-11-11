@@ -286,6 +286,11 @@ jobs:
         run: python3 tools/readme_snippets.py --check
       - name: clippy
         run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
+      # tools/differential-sweep is not a workspace member, so the workspace
+      # build never compiles it; it rotted unseen once (#2350). Build its HEAD
+      # flavour (the baseline flavour needs a checkout of the last release).
+      - name: differential-sweep builds
+        run: cargo build --manifest-path tools/differential-sweep/Cargo.toml --features head --locked
 
   docs:
     name: doc build
