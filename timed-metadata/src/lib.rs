@@ -14,10 +14,8 @@ pub mod timeline;
 pub mod webvtt;
 
 pub use anchor::TimeAnchor;
+pub use broadcast_common::clock33::PTS_HZ;
 pub use daterange::DateRange;
 pub use error::{Error, Result};
 pub use event::{EventKind, MediaDuration, MediaTime, SourcePayload, TimedEvent};
 pub use timeline::Timeline;
-
-/// 90 kHz — the SCTE-35 / MPEG-2 PTS clock.
-pub const PTS_HZ: u64 = 90_000;

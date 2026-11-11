@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `klv` and `ber` modules: the SMPTE ST 336 KLV triplet (`KlvItem<'a>` with a 16-byte `UniversalLabel` key), `walk_klv_items`/`collect_klv_items`, and the BER length codec (`decode_ber_length`, `encode_ber_length`, `ber_length_size`, `BerLength` which keeps the on-wire length width so a parsed item re-serializes byte-identically), with `KlvError`. Moved from st377-1 so st377-1 (MXF) and transmux (MISB KLV) share one implementation (#2341).
 
 ## [11.0.1] - 2026-11-10
 ### Fixed
