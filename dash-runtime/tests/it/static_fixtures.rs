@@ -54,10 +54,13 @@ fn ffmpeg_timeline_manifest_matches_disk() {
         assert!(exists(&l, p, &init.reference));
     }
     // R7: the video timeline starts at S@t=2070 while the first tfdt is 0.
-    let first = video.plan.get(0).unwrap();
+    let first = video.plan.get(0).unwrap().unwrap();
     assert_eq!(first.time_ticks, 2070);
     assert_eq!(first.reference, "chunk-stream0-00001.m4s");
-    assert_eq!(video.plan.get(1).unwrap().time_ticks, 2070 + 90_000);
+    assert_eq!(
+        video.plan.get(1).unwrap().unwrap().time_ticks,
+        2070 + 90_000
+    );
     assert_eq!(first.start_us, 2070 * SECOND_US / 90_000);
     // Audio durations are 41984, 44032, 45056, 3072 samples at 44.1 kHz.
     let durations: Vec<u64> = audio.plan.iter().map(|s| s.duration_ticks).collect();
@@ -224,7 +227,7 @@ fn ondemand_pto_quirk_does_not_overflow() {
         &PlanOptions::default().with_index(&sidx, base_index::anchor_after(&r).unwrap()),
     )
     .unwrap();
-    let first = planned.plan.get(0).unwrap();
+    let first = planned.plan.get(0).unwrap().unwrap();
     assert_eq!(first.time_ticks, 512);
     assert!(
         first.start_us < 0,
@@ -240,12 +243,12 @@ fn multiperiod_restart_plans_each_period_and_keeps_the_tail_quirk() {
     // 2 s-nominal segments with a 13 ms tail; the real files stop at three.
     let (_, p1_video) = &plans[0];
     assert_eq!(p1_video.plan.len(), Some(4));
-    let tail = p1_video.plan.get(3).unwrap();
+    let tail = p1_video.plan.get(3).unwrap().unwrap();
     assert!(tail.duration_us < 14_000, "tail is {} us", tail.duration_us);
     assert!(exists(
         &l,
         p1_video,
-        &p1_video.plan.get(2).unwrap().reference
+        &p1_video.plan.get(2).unwrap().unwrap().reference
     ));
     assert!(
         !exists(&l, p1_video, &tail.reference),
@@ -259,7 +262,7 @@ fn multiperiod_restart_plans_each_period_and_keeps_the_tail_quirk() {
             assert!(exists(&l, p, &seg.reference));
         }
         let first = p.plan.get(0).unwrap();
-        assert_eq!(first.start_us, 0);
+        assert_eq!(first.unwrap().start_us, 0);
         assert_eq!(p.plan.period_start_us(), 6 * SECOND_US);
     }
 }
@@ -288,8 +291,8 @@ fn multiperiod_continuous_numbers_and_pto() {
         }
     }
     // Period b: media time 76800 with PTO 76800 is Period-relative 0.
-    assert_eq!(b.plan.get(0).unwrap().start_us, 0);
-    assert_eq!(b.plan.get(1).unwrap().start_us, 2 * SECOND_US);
+    assert_eq!(b.plan.get(0).unwrap().unwrap().start_us, 0);
+    assert_eq!(b.plan.get(1).unwrap().unwrap().start_us, 2 * SECOND_US);
     assert_eq!(b.plan.period_start_us(), 6 * SECOND_US);
 }
 

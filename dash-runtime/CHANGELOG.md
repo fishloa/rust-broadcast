@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- BREAKING: `address::template::substitute` returns `Result<String, TemplateError>` and `SegmentPlan::get` returns `Result<Option<SegmentRef>, AddressError>`. A template naming `$Number$`/`$Time$` the caller has no value for, or a template that does not parse, is now an error instead of silently dropping the identifier (yielding a URL such as `chunk-.m4s`) or an empty string, which fetched the wrong segment.
 ### Fixed
 - A Representation inherits its AdaptationSet's `SegmentTemplate` timeline when it declares none of its own; the segment plan used to see no timeline there (found by pinning media-doctor's DASH validator on the ISO 23009-1 examples, where example G22 produced 18 timeline findings instead of 3).
 ### Added

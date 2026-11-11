@@ -314,6 +314,7 @@ pub(crate) fn filter_candidates(
 fn address_name(e: &AddressError) -> &'static str {
     match e {
         AddressError::InvalidTemplate { .. } => "invalid_template",
+        AddressError::MissingTemplateValue { .. } => "missing_template_value",
         AddressError::Unsupported(u) => u.name(),
         AddressError::MissingMediaTemplate => "missing_media_template",
         AddressError::MissingDuration => "missing_duration",
@@ -745,6 +746,8 @@ impl DashClient {
                     return Candidate::Idle;
                 };
                 plan.get(rep.next_issue)
+                    .ok()
+                    .flatten()
                     .map_or(Candidate::Idle, |s| Candidate::Ready(s.start_us))
             }
         }
@@ -754,7 +757,11 @@ impl DashClient {
         let lane = &mut self.periods[pi].lanes[li];
         let ri = lane.reps.len() - 1;
         let rep = &mut lane.reps[ri];
-        let Some(seg) = rep.plan.as_ref().and_then(|p| p.get(rep.next_issue)) else {
+        let Some(seg) = rep
+            .plan
+            .as_ref()
+            .and_then(|p| p.get(rep.next_issue).ok().flatten())
+        else {
             return false;
         };
         let range = match range_pair(seg.byte_range) {
@@ -1088,7 +1095,7 @@ impl DashClient {
             range_pair(Some(ix.range))?;
             self.resolve(&state, "", false)?;
         }
-        if let Some(seg) = state.plan.as_ref().and_then(|p| p.get(0)) {
+        if let Some(seg) = state.plan.as_ref().and_then(|p| p.get(0).ok().flatten()) {
             range_pair(seg.byte_range)?;
             self.resolve(&state, &seg.reference, true)?;
         }
@@ -1542,7 +1549,7 @@ impl DashClient {
             && plan.len().is_some_and(|n| n > 1)
             && plan
                 .get(slot.plan_index)
-                .is_some_and(|s| s.duration_us < MISSING_TAIL_MAX_US)
+                .is_ok_and(|s| s.is_some_and(|s| s.duration_us < MISSING_TAIL_MAX_US))
     }
 
     /// Request again a resource that [`DashClient::on_failure`] or a
@@ -2064,14 +2071,15 @@ impl DashClient {
             let lane = &self.periods[pi].lanes[li];
             let cur = lane.reps.last().ok_or(Error::NotSwitchable)?;
             let plan = cur.plan.as_ref().ok_or(Error::NotSwitchable)?;
-            let at_us = match plan.get(cur.next_issue) {
+            let at_us = match plan.get(cur.next_issue).ok().flatten() {
                 Some(seg) => seg.start_us,
-                None => plan
-                    .len()
-                    .and_then(|n| n.checked_sub(1))
-                    .and_then(|last| plan.get(last))
-                    .map(|seg| seg.start_us.saturating_add(seg.duration_us))
-                    .ok_or(Error::NotSwitchable)?,
+                None => {
+                    let last = plan.len().and_then(|n| n.checked_sub(1));
+                    let end = last
+                        .and_then(|last| plan.get(last).ok().flatten())
+                        .map(|seg| seg.start_us.saturating_add(seg.duration_us));
+                    end.ok_or(Error::NotSwitchable)?
+                }
             };
             (cur.at, cur.dead, at_us)
         };
@@ -2107,7 +2115,7 @@ impl DashClient {
                 rep.last_time = rep
                     .next_issue
                     .checked_sub(1)
-                    .and_then(|i| plan.get(i))
+                    .and_then(|i| plan.get(i).ok().flatten())
                     .map(|s| s.time_ticks);
             }
             None => rep.start_time_us = Some(switch_us),

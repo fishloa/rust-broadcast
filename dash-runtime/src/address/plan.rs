@@ -19,7 +19,7 @@ use transmux::SegmentIndexBox;
 use super::AddressError;
 use super::base_index::{self, IndexedSegment};
 use super::list;
-use super::template::{self, TemplateFault, TemplateUse};
+use super::template::{self, TemplateError, TemplateFault, TemplateUse};
 use super::timeline::TimelineIndex;
 use crate::error::Unsupported;
 use crate::mpd::inherit::{ListInfo, ResolvedMulti, SegmentInfo, TemplateInfo};
@@ -272,7 +272,8 @@ impl SegmentPlan {
             let used = template::scan_initialization(tpl).map_err(|f| fault(tpl, f))?;
             reject_sequences(used)?;
             init = Some((
-                template::substitute(tpl, input.representation_id, None, None, input.bandwidth),
+                template::substitute(tpl, input.representation_id, None, None, input.bandwidth)
+                    .map_err(|e| fault(tpl, e.fault()))?,
                 None,
             ));
         }
@@ -282,7 +283,8 @@ impl SegmentPlan {
             reject_sequences(used)?;
             if !used.number && !used.time {
                 index = Some((
-                    template::substitute(tpl, input.representation_id, None, None, input.bandwidth),
+                    template::substitute(tpl, input.representation_id, None, None, input.bandwidth)
+                        .map_err(|e| fault(tpl, e.fault()))?,
                     None,
                 ));
             }
@@ -502,7 +504,12 @@ impl SegmentPlan {
         self.len() == Some(0)
     }
 
-    fn reference(&self, number: u64, time: u64, fixed: Option<&str>) -> String {
+    fn reference(
+        &self,
+        number: u64,
+        time: u64,
+        fixed: Option<&str>,
+    ) -> Result<String, AddressError> {
         match (&self.media, fixed) {
             (Some(m), _) => template::substitute(
                 &m.template,
@@ -510,17 +517,32 @@ impl SegmentPlan {
                 Some(number),
                 Some(time),
                 m.bandwidth,
-            ),
-            (None, Some(r)) => r.to_owned(),
-            (None, None) => String::new(),
+            )
+            .map_err(|e| match e {
+                TemplateError::MissingNumber => AddressError::MissingTemplateValue {
+                    template: m.template.clone(),
+                    which: "number",
+                },
+                TemplateError::MissingTime => AddressError::MissingTemplateValue {
+                    template: m.template.clone(),
+                    which: "time",
+                },
+                TemplateError::Invalid(f) => fault(&m.template, f),
+            }),
+            (None, Some(r)) => Ok(r.to_owned()),
+            (None, None) => Ok(String::new()),
         }
     }
 
-    /// The segment at zero-based `index`.
-    #[must_use]
-    pub fn get(&self, index: u64) -> Option<SegmentRef> {
+    /// The segment at zero-based `index`; `Ok(None)` past the end.
+    ///
+    /// # Errors
+    /// [`AddressError`] when a media template cannot be rendered (a template
+    /// naming a value the plan has none for, which [`SegmentPlan::build`]
+    /// already refuses) or the index arithmetic overflows.
+    pub fn get(&self, index: u64) -> Result<Option<SegmentRef>, AddressError> {
         if self.len().is_some_and(|n| index >= n) {
-            return None;
+            return Ok(None);
         }
         let (number, time, start_ticks, duration, reference, range) = match &self.kind {
             Kind::Duration {
@@ -529,7 +551,9 @@ impl SegmentPlan {
                 count,
                 last_duration,
             } => {
-                let start = index.checked_mul(*d)?;
+                let Some(start) = index.checked_mul(*d) else {
+                    return Err(AddressError::Overflow);
+                };
                 let dur = if count.is_some_and(|c| index + 1 == c) {
                     *last_duration
                 } else {
@@ -541,29 +565,33 @@ impl SegmentPlan {
                     start,
                     i128::from(start),
                     dur,
-                    self.reference(number, start, None),
+                    self.reference(number, start, None)?,
                     None,
                 )
             }
             Kind::Timeline(t) => {
-                let s = t.segment(index)?;
+                let Some(s) = t.segment(index) else {
+                    return Ok(None);
+                };
                 (
                     s.number,
                     s.time,
                     i128::from(s.time) - i128::from(self.pto),
                     s.duration,
-                    self.reference(s.number, s.time, None),
+                    self.reference(s.number, s.time, None)?,
                     None,
                 )
             }
             Kind::Fixed(v) => {
-                let f = v.get(usize::try_from(index).ok()?)?;
+                let Some(f) = usize::try_from(index).ok().and_then(|i| v.get(i)) else {
+                    return Ok(None);
+                };
                 (
                     f.number,
                     f.time,
                     f.start_ticks,
                     f.duration,
-                    self.reference(f.number, f.time, Some(&f.reference)),
+                    self.reference(f.number, f.time, Some(&f.reference))?,
                     f.range,
                 )
             }
@@ -591,7 +619,7 @@ impl SegmentPlan {
             ),
             None => (None, None),
         };
-        Some(SegmentRef {
+        Ok(Some(SegmentRef {
             index,
             number,
             time_ticks: time,
@@ -603,7 +631,7 @@ impl SegmentPlan {
             byte_range: range,
             available_from_us,
             available_until_us,
-        })
+        }))
     }
 
     /// The segments in order. For an open-ended plan this never ends; bound it
@@ -611,7 +639,7 @@ impl SegmentPlan {
     pub fn iter(&self) -> impl Iterator<Item = SegmentRef> + '_ {
         let mut i = 0u64;
         std::iter::from_fn(move || {
-            let r = self.get(i)?;
+            let r = self.get(i).ok().flatten()?;
             i += 1;
             Some(r)
         })
@@ -642,7 +670,7 @@ impl SegmentPlan {
         let until = self
             .len()
             .and_then(|n| n.checked_sub(1))
-            .and_then(|last| self.get(last))
+            .and_then(|last| self.get(last).ok().flatten())
             .and_then(|s| s.available_until_us);
         ResourceRef {
             reference: reference.to_owned(),
@@ -660,10 +688,9 @@ impl SegmentPlan {
         let (mut lo, mut hi) = (0u64, n.unwrap_or(u64::MAX / 2));
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            match self.get(mid) {
+            match self.get(mid).ok().flatten() {
                 Some(s) if s.start_us <= period_time_us => lo = mid + 1,
-                Some(_) => hi = mid,
-                None => hi = mid,
+                Some(_) | None => hi = mid,
             }
         }
         lo.checked_sub(1)
@@ -672,13 +699,13 @@ impl SegmentPlan {
     /// Availability start of the segment at `index`.
     #[must_use]
     pub fn available_from_us(&self, index: u64) -> Option<i128> {
-        self.get(index)?.available_from_us
+        self.get(index).ok().flatten()?.available_from_us
     }
 
     /// Availability end of the segment at `index`.
     #[must_use]
     pub fn available_until_us(&self, index: u64) -> Option<i128> {
-        self.get(index)?.available_until_us
+        self.get(index).ok().flatten()?.available_until_us
     }
 
     /// The first index, and the number of segments, for which `pred` holds on
@@ -688,7 +715,7 @@ impl SegmentPlan {
         let (mut lo, mut hi) = (0u64, bound);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            match self.get(mid) {
+            match self.get(mid).ok().flatten() {
                 Some(s) if pred(&s) => lo = mid + 1,
                 _ => hi = mid,
             }

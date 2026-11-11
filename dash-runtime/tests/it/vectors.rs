@@ -51,7 +51,7 @@ fn iop_table_10_worked_example() {
     // k1 = 1, k2 = ceil(43 / 5) = 9.
     assert_eq!(p.plan.len(), Some(9));
     for k in 1..=8i128 {
-        let seg = p.plan.get(u64::try_from(k - 1).unwrap()).unwrap();
+        let seg = p.plan.get(u64::try_from(k - 1).unwrap()).unwrap().unwrap();
         assert_eq!(seg.number, u64::try_from(k).unwrap());
         assert_eq!(seg.reference, format!("v/{k}.m4s"));
         assert_eq!(seg.available_from_us, Some(start + 5 * k * S), "SAST[{k}]");
@@ -63,7 +63,7 @@ fn iop_table_10_worked_example() {
     }
     // The 9th segment is 3 s long (43 s - 40 s). 5.3.9.5.3 uses its own
     // duration; IOP Table 10 prints the nominal 5 s (START + 45 s, +30 s).
-    let last = p.plan.get(8).unwrap();
+    let last = p.plan.get(8).unwrap().unwrap();
     assert_eq!(last.duration_us, 3 * S);
     assert_eq!(last.available_from_us, Some(start + 43 * S));
     assert_eq!(
@@ -144,12 +144,12 @@ fn start_number_zero_and_one() {
         );
         let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
         assert_eq!(p.plan.len(), Some(5));
-        let seg = p.plan.get(0).unwrap();
+        let seg = p.plan.get(0).unwrap().unwrap();
         assert_eq!(seg.number, first);
         assert_eq!(seg.reference, format!("s{first:03}.m4s"));
         assert_eq!(seg.start_us, 0);
-        assert_eq!(p.plan.get(4).unwrap().number, first + 4);
-        assert_eq!(p.plan.get(4).unwrap().start_us, 8 * S);
+        assert_eq!(p.plan.get(4).unwrap().unwrap().number, first + 4);
+        assert_eq!(p.plan.get(4).unwrap().unwrap().start_us, 8 * S);
     }
 }
 
@@ -184,11 +184,11 @@ fn end_number_caps_and_a_short_last_segment_is_shortened() {
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert_eq!(p.plan.len(), Some(6));
     assert_eq!(
-        p.plan.get(5).unwrap().duration_us,
+        p.plan.get(5).unwrap().unwrap().duration_us,
         S,
         "A.3.3 case 1: PeriodEnd - start"
     );
-    assert_eq!(p.plan.get(4).unwrap().duration_us, 2 * S);
+    assert_eq!(p.plan.get(4).unwrap().unwrap().duration_us, 2 * S);
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn single_segment_when_neither_duration_nor_timeline() {
     );
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert_eq!(p.plan.len(), Some(1));
-    let seg = p.plan.get(0).unwrap();
+    let seg = p.plan.get(0).unwrap().unwrap();
     assert_eq!((seg.number, seg.start_us, seg.duration_us), (3, 0, 9 * S));
 }
 
@@ -378,7 +378,7 @@ fn timeline_rejects_going_backwards_and_bounds_the_count() {
 
 #[test]
 fn template_widths_escapes_and_invalid_forms() {
-    let sub = |t: &str| substitute(t, "rep1", Some(7), Some(1234), 99);
+    let sub = |t: &str| substitute(t, "rep1", Some(7), Some(1234), 99).unwrap();
     assert_eq!(sub("a$Number$"), "a7");
     assert_eq!(sub("a$Number%05d$"), "a00007");
     assert_eq!(sub("a$Number%02d$"), "a07");
@@ -492,8 +492,8 @@ fn inheritance_lower_level_wins_attribute_by_attribute() {
     );
     let a = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     let b = plan_representation(&m, RepRef::at(0, 0, 1), &PlanOptions::default()).unwrap();
-    assert_eq!(a.plan.get(0).unwrap().reference, "p-9.m4s");
-    assert_eq!(b.plan.get(0).unwrap().reference, "b-9.m4s");
+    assert_eq!(a.plan.get(0).unwrap().unwrap().reference, "p-9.m4s");
+    assert_eq!(b.plan.get(0).unwrap().unwrap().reference, "b-9.m4s");
     assert_eq!(a.plan.len(), Some(3));
     assert_eq!(a.plan.timescale(), 1000);
     // A level that introduces a timeline does not inherit @duration.
@@ -506,7 +506,7 @@ fn inheritance_lower_level_wins_attribute_by_attribute() {
     );
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert_eq!(p.plan.len(), Some(2));
-    assert_eq!(p.plan.get(1).unwrap().start_us, 3 * S);
+    assert_eq!(p.plan.get(1).unwrap().unwrap().start_us, 3 * S);
     // A SegmentList below a SegmentTemplate is a violation.
     let m = mpd(
         r#"type="static" mediaPresentationDuration="PT6S""#,
@@ -642,11 +642,11 @@ fn time_substitution_is_the_raw_s_at_even_with_a_presentation_time_offset() {
            </Representation></AdaptationSet></Period>"#,
     );
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
-    let first = p.plan.get(0).unwrap();
+    let first = p.plan.get(0).unwrap().unwrap();
     assert_eq!(first.reference, "5000.m4s");
     assert_eq!(first.start_us, 0);
-    assert_eq!(p.plan.get(1).unwrap().reference, "7000.m4s");
-    assert_eq!(p.plan.get(1).unwrap().start_us, 2 * S);
+    assert_eq!(p.plan.get(1).unwrap().unwrap().reference, "7000.m4s");
+    assert_eq!(p.plan.get(1).unwrap().unwrap().start_us, 2 * S);
 }
 
 #[test]
@@ -664,8 +664,8 @@ fn end_number_truncates_a_timeline() {
         Some(4),
         "a segment numbered above @endNumber is invalid"
     );
-    assert_eq!(p.plan.get(3).unwrap().number, 4);
-    assert!(p.plan.get(4).is_none());
+    assert_eq!(p.plan.get(3).unwrap().unwrap().number, 4);
+    assert!(p.plan.get(4).unwrap().is_none());
 }
 
 #[test]
@@ -719,9 +719,9 @@ fn timescale_defaults_to_one_when_no_level_declares_it() {
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert_eq!(p.plan.timescale(), 1);
     assert_eq!(p.plan.len(), Some(3));
-    assert_eq!(p.plan.get(1).unwrap().start_us, 2 * S);
-    assert_eq!(p.plan.get(1).unwrap().duration_us, 2 * S);
-    assert_eq!(p.plan.get(2).unwrap().reference, "V300/2.m4s");
+    assert_eq!(p.plan.get(1).unwrap().unwrap().start_us, 2 * S);
+    assert_eq!(p.plan.get(1).unwrap().unwrap().duration_us, 2 * S);
+    assert_eq!(p.plan.get(2).unwrap().unwrap().reference, "V300/2.m4s");
 }
 
 fn period_ids(ids: &[&str]) -> Result<Mpd, dash_runtime::error::MpdError> {
