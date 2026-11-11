@@ -70,6 +70,21 @@ pub struct AuthState {
     jar: CookieJar,
 }
 
+impl Clone for AuthState {
+    fn clone(&self) -> Self {
+        Self {
+            origin: self.origin.clone(),
+            extra_headers: self.extra_headers.clone(),
+            credentials: self.credentials.clone(),
+            authenticator: None,
+            last_challenge: self.last_challenge.clone(),
+            proxy: self.proxy,
+            waiting: self.waiting,
+            jar: CookieJar::new(&self.origin),
+        }
+    }
+}
+
 impl AuthState {
     /// Create auth state.
     pub fn new(origin: Url, extra_headers: Vec<(String, String)>) -> Self {
@@ -107,7 +122,7 @@ impl AuthState {
     }
 
     /// The configured credentials.
-    pub(crate) fn credentials(&self) -> Option<&Credentials> {
+    pub fn credentials(&self) -> Option<&Credentials> {
         self.credentials.as_ref()
     }
 

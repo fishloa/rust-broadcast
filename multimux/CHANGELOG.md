@@ -5,6 +5,7 @@
 - `tests/it/ingest_drive_golden.rs` pins the WHIP and RTMP ingest event sequences (`fixtures/golden/ingest/`): the ordered `SessionEvent`s each real publish produces, the program and track specs it lands, and its final health — recorded at the session boundary the #2373 shared drive loop must reproduce. Regenerate with `UPDATE_INGEST_GOLDENS=1`.
 
 ### Changed
+- HTTP pull auth now runs over `broadcast-client::auth::AuthState` instead of multimux-local `ScopedCredentials`.
 - HLS pull retries resource fetches with `broadcast-client::fetch::Backoff` and honours `Retry-After` on 429/503.
 - The WHIP and RTMP ingest loops share one admitted-session driver (`media_plane::ingress::AdmittedDriver`): acceptance, the per-session clock origin, the publish-then-reap sequence and the idle clock are one implementation instead of two copies. The WHIP loop's hand-written idle-clock map is gone (its gauge now reports the driver's live sessions), and the RTMP loop keeps only its own read future and protocol session.
 - The RTMP ingest session's own `RtmpConnection` now drives rtmp-runtime's erased connection (`from_stream_erased`), so the golden tests replay the captured `rtmp/obs-publish.bin` publish through a real connection over an in-memory pipe (rtmp-runtime's `AsyncRtmpServer::accept` now returns the new `AcceptedRtmpConnection`).

@@ -58,6 +58,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use transmux::TrackId;
 
+use broadcast_client::auth::AuthState;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
 use broadcast_smooth::{SmoothManifest, StreamIndex, StreamType};
 use media_plane::ingress::{
@@ -76,8 +77,7 @@ use url::Url;
 use crate::error::{MultimuxError, Result};
 use crate::source::driver::terminal_result;
 use crate::source::http_auth::{
-    ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
-    scope_credentials, strip_userinfo,
+    auth_state, authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
 };
 use crate::source::pull_target::{PullKind, PullRoute};
 
@@ -802,11 +802,12 @@ enum FetchOne {
 async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
-    creds: Option<&ScopedCredentials>,
+    creds: Option<&AuthState>,
     what: &str,
     tolerate_404: bool,
 ) -> Result<FetchOne> {
-    let response = authenticated_get(client, url, creds).await?;
+    let mut creds = creds.cloned();
+    let response = authenticated_get(client, url, creds.as_mut()).await?;
     let status = response.status();
     if tolerate_404 && status == StatusCode::NOT_FOUND {
         return Ok(FetchOne::NotReady);
@@ -819,7 +820,7 @@ async fn fetch_one_bytes(
         .map(FetchOne::Bytes)
 }
 
-fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<ScopedCredentials>)> {
+fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<AuthState>)> {
     let parsed = Url::parse(&route.target.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad Smooth-pull URL {}: {e}",
@@ -829,7 +830,7 @@ fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<Scop
     let credentials =
         resolve_credentials(route.target.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
-    let credentials = scope_credentials(credentials, &clean_url);
+    let credentials = auth_state(credentials, &clean_url);
     let http = HttpClient::builder()
         .redirect(crate::source::redirect_policy(true))
         .build()
@@ -861,7 +862,7 @@ type SmoothPendingFetch = crate::source::pull::PendingFetch<SmoothFetch>;
 #[allow(clippy::too_many_arguments)]
 fn pending_fetch(
     http: HttpClient,
-    creds: Option<ScopedCredentials>,
+    creds: Option<AuthState>,
     id: SmoothResourceId,
     t: u64,
     d: u64,
@@ -886,10 +887,15 @@ fn pending_fetch(
                 Ok(Ok(FetchOne::NotReady)) => FetchResult::NotReady(MultimuxError::Connect {
                     reason: format!("smooth-pull {what} ({id:?}) not ready yet"),
                 }),
-                Ok(Err(e)) => FetchResult::Failed { error: e, retry_after: None },
+                Ok(Err(e)) => FetchResult::Failed {
+                    error: e,
+                    retry_after: None,
+                },
                 Err(_) => FetchResult::Failed {
                     error: MultimuxError::Connect {
-                        reason: format!("smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
+                        reason: format!(
+                            "smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"
+                        ),
                     },
                     retry_after: None,
                 },
@@ -1985,7 +1991,7 @@ mod tests {
     async fn fetch_bytes(
         http: &HttpClient,
         url: &str,
-        creds: Option<&ScopedCredentials>,
+        creds: Option<&AuthState>,
         what: &str,
         tolerate_404: bool,
     ) -> Result<Vec<u8>> {
