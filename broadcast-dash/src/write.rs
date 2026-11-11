@@ -490,6 +490,9 @@ fn write_common(_w: &mut Writer<Vec<u8>>, e: &mut BytesStart<'_>, c: &CommonAttr
     if let Some(v) = c.max_playout_rate {
         e.push_attribute(("maxPlayoutRate", v.to_string().as_str()));
     }
+    if let Some(v) = c.coding_dependency {
+        e.push_attribute(("codingDependency", if v { "true" } else { "false" }));
+    }
 }
 
 fn write_descriptor(w: &mut Writer<Vec<u8>>, name: &str, d: &Descriptor) -> Result<(), MpdError> {
@@ -504,20 +507,31 @@ fn write_descriptor(w: &mut Writer<Vec<u8>>, name: &str, d: &Descriptor) -> Resu
     if let Some(v) = &d.default_kid {
         e.push_attribute(("cenc:default_KID", v.as_str()));
     }
-    if let Some(q) = &d.url_query {
+    let has_children = d.url_query.is_some() || d.pssh.is_some();
+    if has_children {
         w.write_event(Event::Start(e)).map_err(io_err)?;
-        let mut qe = BytesStart::new("urlparam:UrlQueryInfo");
-        qe.push_attribute((
-            "useMPDUrlQuery",
-            if q.use_mpd_url_query { "true" } else { "false" },
-        ));
-        if let Some(v) = &q.query_string {
-            qe.push_attribute(("queryString", v.as_str()));
+        if let Some(p) = &d.pssh {
+            w.write_event(Event::Start(BytesStart::new("cenc:pssh")))
+                .map_err(io_err)?;
+            w.write_event(Event::Text(BytesText::new(p)))
+                .map_err(io_err)?;
+            w.write_event(Event::End(BytesEnd::new("cenc:pssh")))
+                .map_err(io_err)?;
         }
-        if let Some(v) = &q.query_template {
-            qe.push_attribute(("queryTemplate", v.as_str()));
+        if let Some(q) = &d.url_query {
+            let mut qe = BytesStart::new("urlparam:UrlQueryInfo");
+            qe.push_attribute((
+                "useMPDUrlQuery",
+                if q.use_mpd_url_query { "true" } else { "false" },
+            ));
+            if let Some(v) = &q.query_string {
+                qe.push_attribute(("queryString", v.as_str()));
+            }
+            if let Some(v) = &q.query_template {
+                qe.push_attribute(("queryTemplate", v.as_str()));
+            }
+            w.write_event(Event::Empty(qe)).map_err(io_err)?;
         }
-        w.write_event(Event::Empty(qe)).map_err(io_err)?;
         w.write_event(Event::End(BytesEnd::new(name)))
             .map_err(io_err)?;
     } else {
@@ -644,6 +658,9 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
     for d in &a.audio_channel_configurations {
         write_descriptor(w, "AudioChannelConfiguration", d)?;
     }
+    for d in &a.inband_event_streams {
+        write_descriptor(w, "InbandEventStream", d)?;
+    }
     for r in &a.representations {
         write_representation(w, r)?;
     }
@@ -679,6 +696,9 @@ fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(
     }
     for d in &r.audio_channel_configurations {
         write_descriptor(w, "AudioChannelConfiguration", d)?;
+    }
+    for d in &r.inband_event_streams {
+        write_descriptor(w, "InbandEventStream", d)?;
     }
     w.write_event(Event::End(BytesEnd::new("Representation")))
         .map_err(io_err)?;

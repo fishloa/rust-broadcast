@@ -36,6 +36,7 @@ fn a_model_with_every_field_set_round_trips() {
     desc.value = Some("v".to_string());
     desc.id = Some("d".to_string());
     desc.default_kid = Some("kid".to_string());
+    desc.pssh = Some("AAAA".to_string());
     desc.url_query = Some(urlq);
 
     let mut bu = BaseUrl::default();
@@ -180,6 +181,7 @@ fn a_model_with_every_field_set_round_trips() {
     cac.mime_type = Some("video/mp4".to_string());
     cac.codecs = Some("avc1".to_string());
     cac.max_playout_rate = Some(1.5);
+    cac.coding_dependency = Some(false);
     aset.common = cac;
     let mut axl = Xlink::default();
     axl.href = "http://ax".to_string();
@@ -203,6 +205,7 @@ fn a_model_with_every_field_set_round_trips() {
     let mut rcc = CommonAttributes::default();
     rcc.mime_type = Some("video/mp4".to_string());
     rcc.codecs = Some("avc1".to_string());
+    rcc.coding_dependency = Some(true);
     rep.common = rcc;
     let mut rbu = BaseUrl::default();
     rbu.url = "http://rb/".to_string();
@@ -211,6 +214,7 @@ fn a_model_with_every_field_set_round_trips() {
     rep.essential_properties = vec![desc.clone()];
     rep.supplemental_properties = vec![desc.clone()];
     rep.audio_channel_configurations = vec![desc.clone()];
+    rep.inband_event_streams = vec![desc.clone()];
     aset.representations = vec![rep];
 
     period.segment = seg_layer_base;
@@ -236,6 +240,7 @@ fn a_model_with_every_field_set_round_trips() {
     mpd.features.xlink_resolve_to_zero = false;
 
     let xml = mpd.to_xml().unwrap();
+    eprintln!("XML:\n{}", xml);
     let again = Mpd::parse(xml.as_bytes()).unwrap();
     assert_eq!(again, mpd);
 }

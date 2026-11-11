@@ -224,12 +224,18 @@ fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
             })
         })
         .transpose()?;
+    let pssh = e
+        .children
+        .iter()
+        .find(|c| c.ns == Ns::Cenc && c.name == "pssh")
+        .map(|c| c.text.trim().to_owned());
     let _ = url_query.as_ref();
     Ok(Descriptor {
         scheme_id_uri,
         value: opt_str(e, "value"),
         id: opt_str(e, "id"),
         default_kid: e.attr_in(Ns::Cenc, "default_KID").map(str::to_owned),
+        pssh,
         url_query,
     })
 }
@@ -403,6 +409,7 @@ fn common(e: &Elem<Ns>) -> Result<CommonAttributes, MpdError> {
         mime_type: opt_str(e, "mimeType"),
         codecs: opt_str(e, "codecs"),
         max_playout_rate: opt_f64(e, "maxPlayoutRate")?,
+        coding_dependency: opt_bool(e, "codingDependency")?,
     })
 }
 
@@ -428,6 +435,7 @@ fn representation(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Representation, Mpd
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
         audio_channel_configurations: descriptors(e, "AudioChannelConfiguration")?,
+        inband_event_streams: descriptors(e, "InbandEventStream")?,
     })
 }
 
@@ -487,6 +495,7 @@ fn adaptation_set(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSe
         essential_properties: descriptors(e, "EssentialProperty")?,
         supplemental_properties: descriptors(e, "SupplementalProperty")?,
         audio_channel_configurations: descriptors(e, "AudioChannelConfiguration")?,
+        inband_event_streams: descriptors(e, "InbandEventStream")?,
         representations,
     }))
 }

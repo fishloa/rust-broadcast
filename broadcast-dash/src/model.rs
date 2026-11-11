@@ -169,6 +169,8 @@ pub struct Descriptor {
     pub id: Option<String>,
     /// `@cenc:default_KID` on `ContentProtection`.
     pub default_kid: Option<String>,
+    /// `cenc:pssh` child text on `ContentProtection`.
+    pub pssh: Option<String>,
     /// The `UrlQueryInfo` child of an `urn:mpeg:dash:urlparam:2014` property.
     pub url_query: Option<UrlQueryInfo>,
 }
@@ -258,6 +260,8 @@ pub struct CommonAttributes {
     pub codecs: Option<String>,
     /// `@maxPlayoutRate`.
     pub max_playout_rate: Option<f64>,
+    /// `@codingDependency`.
+    pub coding_dependency: Option<bool>,
 }
 
 /// `SegmentBase` / the Segment Base Information fields (Table 16).
@@ -438,6 +442,8 @@ pub struct Representation {
     pub supplemental_properties: Vec<Descriptor>,
     /// `AudioChannelConfiguration`.
     pub audio_channel_configurations: Vec<Descriptor>,
+    /// `InbandEventStream`.
+    pub inband_event_streams: Vec<Descriptor>,
 }
 
 /// An `AdaptationSet` (5.3.3).
@@ -482,6 +488,8 @@ pub struct AdaptationSet {
     pub supplemental_properties: Vec<Descriptor>,
     /// `AudioChannelConfiguration`.
     pub audio_channel_configurations: Vec<Descriptor>,
+    /// `InbandEventStream`.
+    pub inband_event_streams: Vec<Descriptor>,
     /// The Representations.
     pub representations: Vec<Representation>,
 }
