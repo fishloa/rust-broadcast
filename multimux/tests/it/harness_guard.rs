@@ -66,6 +66,8 @@ const SLEEP_ALLOW: &[&str] = &[
     // followed; there is no condition to poll on the client side.
     "push_rtsp_wire.rs",
     "rtsp_ingest.rs",
+    // RTSP pull golden paces the server between RTP frames.
+    "rtsp_pull_golden.rs",
     "server_timeouts.rs",
     "smooth_oracle.rs",
     "ts_hls_oracle.rs",

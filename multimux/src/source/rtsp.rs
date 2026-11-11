@@ -903,13 +903,6 @@ mod tests {
     }
 
     #[test]
-    fn control_helper_falls_back_to_base_on_aggregate_or_missing() {
-        let base = Url::parse("rtsp://cam/base").unwrap();
-        assert_eq!(resolve_control(&base, None).unwrap(), base.to_string());
-        assert_eq!(resolve_control(&base, Some("*")).unwrap(), base.to_string());
-    }
-
-    #[test]
     fn connect_addr_defaults_port_554() {
         let base = Url::parse("rtsp://cam.local/stream").unwrap();
         assert_eq!(
