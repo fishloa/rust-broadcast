@@ -15,6 +15,11 @@
 
 #![allow(clippy::too_many_lines)]
 
+#[cfg(not(any(feature = "head", feature = "baseline")))]
+compile_error!("build with exactly one of `--features head` or `--features baseline` (see README.md)");
+#[cfg(all(feature = "head", feature = "baseline"))]
+compile_error!("`head` and `baseline` are mutually exclusive: enable exactly one");
+
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

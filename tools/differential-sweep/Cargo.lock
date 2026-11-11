@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "11.0.1"
+version = "11.1.0"
 dependencies = [
  "chrono",
  "erased-serde",
