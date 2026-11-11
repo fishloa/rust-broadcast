@@ -563,7 +563,8 @@ impl SubtitleFollower {
         self.next_timeline_ns = start_ns;
         self.first_discontinuous = true;
         self.core.mpegts_at_origin =
-            u64::try_from(i128::from(start_ns) * PTS_HZ_TICKS / i128::from(NANOS_PER_SEC)).unwrap_or(0);
+            u64::try_from(i128::from(start_ns) * PTS_HZ_TICKS / i128::from(NANOS_PER_SEC))
+                .unwrap_or(0);
     }
 
     pub(super) fn push(&mut self, sample: &Sample) {

@@ -82,17 +82,14 @@ pub async fn bind_udp(
 ) -> Result<UdpSocket> {
     let spec = socket_spec(addr, multicast_group, opts)?;
     let wanted_recv = spec.recv_buffer_size;
-    let std_socket =
-        dvb_stream::udp::bind_standard(spec).map_err(|e| MultimuxError::Connect {
-            reason: format!("udp bind {addr}: {e}"),
-        })?;
+    let std_socket = dvb_stream::udp::bind_standard(spec).map_err(|e| MultimuxError::Connect {
+        reason: format!("udp bind {addr}: {e}"),
+    })?;
     if let Some(requested) = wanted_recv {
         match std_socket.recv_buffer_size() {
-            Ok(actual) if actual < requested => tracing::debug!(
-                requested,
-                actual,
-                "SO_RCVBUF clamped by the kernel"
-            ),
+            Ok(actual) if actual < requested => {
+                tracing::debug!(requested, actual, "SO_RCVBUF clamped by the kernel")
+            }
             Ok(_) => {}
             Err(e) => tracing::warn!(
                 requested,
@@ -210,10 +207,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            spec.bind_addr,
-            SocketAddr::from(([127, 0, 0, 1], 5004))
-        );
+        assert_eq!(spec.bind_addr, SocketAddr::from(([127, 0, 0, 1], 5004)));
         assert_eq!(spec.recv_buffer_size, Some(1024));
         assert!(spec.reuse_address);
         assert!(!spec.reuse_port);
@@ -228,8 +222,12 @@ mod tests {
 
     #[test]
     fn spec_defaults_the_receive_buffer_and_the_interface() {
-        let spec = socket_spec("0.0.0.0:5004", Some("239.255.42.1"), UdpBindOptions::default())
-            .unwrap();
+        let spec = socket_spec(
+            "0.0.0.0:5004",
+            Some("239.255.42.1"),
+            UdpBindOptions::default(),
+        )
+        .unwrap();
         assert_eq!(spec.recv_buffer_size, Some(DEFAULT_RECV_BUFFER_BYTES));
         assert_eq!(
             spec.multicast,
@@ -238,31 +236,37 @@ mod tests {
                 interface: Ipv4Addr::UNSPECIFIED,
             })
         );
-        assert!(socket_spec("0.0.0.0:5004", None, UdpBindOptions::default())
-            .unwrap()
-            .multicast
-            .is_none());
+        assert!(
+            socket_spec("0.0.0.0:5004", None, UdpBindOptions::default())
+                .unwrap()
+                .multicast
+                .is_none()
+        );
     }
 
     #[test]
     fn spec_rejects_a_bad_interface() {
-        assert!(socket_spec(
-            "0.0.0.0:5004",
-            Some("239.255.42.1"),
-            UdpBindOptions {
-                multicast_interface: Some("eth0".to_string()),
-                ..UdpBindOptions::default()
-            },
-        )
-        .is_err());
-        assert!(socket_spec(
-            "0.0.0.0:5004",
-            Some("ff3e::1"),
-            UdpBindOptions {
-                multicast_interface: Some("eth0".to_string()),
-                ..UdpBindOptions::default()
-            },
-        )
-        .is_err());
+        assert!(
+            socket_spec(
+                "0.0.0.0:5004",
+                Some("239.255.42.1"),
+                UdpBindOptions {
+                    multicast_interface: Some("eth0".to_string()),
+                    ..UdpBindOptions::default()
+                },
+            )
+            .is_err()
+        );
+        assert!(
+            socket_spec(
+                "0.0.0.0:5004",
+                Some("ff3e::1"),
+                UdpBindOptions {
+                    multicast_interface: Some("eth0".to_string()),
+                    ..UdpBindOptions::default()
+                },
+            )
+            .is_err()
+        );
     }
 }
