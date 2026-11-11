@@ -6,9 +6,9 @@
 extern crate alloc;
 
 mod container_codec;
-// `check_dash_mpd` parses the MPD with `transmux::Mpd`, whose quick-xml parser is
-// `std`-only.
-#[cfg(feature = "std")]
+// `check_dash_mpd` parses the MPD with `dash_runtime::mpd::Mpd`, whose quick-xml
+// parser is `std`-only.
+#[cfg(all(feature = "std", feature = "dash"))]
 mod dash_validator;
 mod diagnostics;
 mod hls_validator;
@@ -23,7 +23,7 @@ mod watch;
 mod watch_metrics;
 
 pub use container_codec::check_container_codec;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "dash"))]
 pub use dash_validator::check_dash_mpd;
 pub use diagnostics::cc_anomaly::CcAnomalyCheck;
 pub use diagnostics::codec_signalling::CodecSignallingCheck;

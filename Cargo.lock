@@ -2376,6 +2376,7 @@ dependencies = [
  "broadcast-hls",
  "clap",
  "container-probe",
+ "dash-runtime",
  "dvb-conformance",
  "dvb-si",
  "http-body-util",

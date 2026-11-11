@@ -1,8 +1,8 @@
 //! DASH MPD manifest validator (ISO/IEC 23009-1).
 //!
 //! Accepts an MPD XML text and a [`Report`](crate::Report), appending findings
-//! for spec violations. Reuses [`transmux::Mpd::parse`] as the structured parse
-//! layer — no regex-based or manual XML re-parsing.
+//! for spec violations. Reuses [`dash_runtime::mpd::Mpd::parse`] as the
+//! structured parse layer — no regex-based or manual XML re-parsing.
 //!
 //! # Rule IDs
 //!
@@ -17,11 +17,35 @@
 
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::collections::BTreeMap;
+use dash_runtime::mpd::PresentationType;
+use dash_runtime::mpd::inherit::{SegmentInfo, resolve_segment_info};
 
-/// Validate a DASH MPD XML text, appending findings for each violation.
-pub fn check_dash_mpd(text: &str, report: &mut Report) {
-    let mpd = match transmux::Mpd::parse(text) {
-        Ok(mpd) => mpd,
+/// The parse bounds this validator reads with: the hostile-input defaults
+/// throughout, except that **nothing is ever too large to validate** — a bound
+/// trip would report a well-formed manifest as unparseable. Per-rule numeric
+/// over-range is a rule's own finding (`dash-segment-timeline-r-range`), not a
+/// parse failure.
+fn relaxed_limits() -> dash_runtime::limits::Limits {
+    let mut limits = dash_runtime::limits::Limits::default();
+    limits.max_bytes = usize::MAX;
+    limits.max_depth = usize::MAX;
+    limits.max_elements = usize::MAX;
+    limits.max_attribute_bytes = usize::MAX;
+    limits.max_attributes = usize::MAX;
+    limits.max_periods = usize::MAX;
+    limits.max_adaptation_sets = usize::MAX;
+    limits.max_representations = usize::MAX;
+    limits.max_timeline_entries = usize::MAX;
+    limits.max_base_urls = usize::MAX;
+    limits.max_segment_urls = usize::MAX;
+    limits
+}
+
+/// Parse an MPD into dash-runtime's model, recording the findings a refused
+/// document earns. `None` means a finding was already recorded.
+fn parse_mpd(text: &str, report: &mut Report) -> Option<dash_runtime::mpd::Mpd> {
+    match dash_runtime::mpd::Mpd::parse_with(text.as_bytes(), &relaxed_limits()) {
+        Ok(mpd) => Some(mpd),
         Err(err) => {
             report.push(Finding::new(
                 Severity::Error,
@@ -29,14 +53,22 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
                 "dash-parse-error",
                 alloc::format!("MPD XML failed to parse: {err}"),
             ));
-            return;
+            None
         }
+    }
+}
+
+/// Validate a DASH MPD XML text, appending findings for each violation.
+pub fn check_dash_mpd(text: &str, report: &mut Report) {
+    let mpd = match parse_mpd(text, report) {
+        Some(mpd) => mpd,
+        None => return,
     };
 
     // dash-static-mpd-missing-duration — ISO/IEC 23009-1:2012 §5.3.1.2 Table 3
     // CM (Conditionally Mandatory) — must be present for @type='static'.
     let last_period_duration = mpd.periods.last().and_then(|p| p.duration);
-    if mpd.mpd_type == transmux::MpdType::Static
+    if mpd.kind == PresentationType::Static
         && mpd.media_presentation_duration.is_none()
         && mpd.minimum_update_period.is_none()
         && last_period_duration.is_none()
@@ -51,7 +83,7 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
 
     // dash-dynamic-mpd-no-availability-start — ISO/IEC 23009-1:2012 §5.3.1.2 Table 3
     // CM (Conditionally Mandatory) — must be present for @type='dynamic'.
-    if mpd.mpd_type == transmux::MpdType::Dynamic && mpd.availability_start_time.is_none() {
+    if mpd.kind == PresentationType::Dynamic && mpd.availability_start_time_us.is_none() {
         report.push(Finding::new(
             Severity::Error,
             Location::new(1, 0),
@@ -62,8 +94,9 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
 
     // Per-Period validation
     for (period_idx, period) in mpd.periods.iter().enumerate() {
-        // dash-period-no-adaptation-sets — §5.3.2
-        if period.adaptation_sets.is_empty() {
+        // dash-period-no-adaptation-sets — §5.3.2. An ed.6 list Period names
+        // an imported MPD instead (`ImportedMPD`), which is all it needs.
+        if period.adaptation_sets.is_empty() && period.imported_mpd.is_none() {
             report.push(Finding::new(
                 Severity::Error,
                 Location::new(period_idx + 1, 0),
@@ -86,14 +119,49 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
             // Per-Representation SegmentTimeline validation
             for (r_idx, repr) in aset.representations.iter().enumerate() {
                 let r_key = alloc::format!("{as_key}.{r_idx}");
-                if let Some(ref st) = repr.segment_template
-                    && let Some(ref timeline) = st.timeline
-                {
-                    validate_segment_timeline(timeline, st.timescale, &r_key, report);
+                if let Some((timeline, timescale)) = effective_timeline(period, aset, repr) {
+                    validate_segment_timeline(timeline, timescale, &r_key, report);
                 }
             }
         }
     }
+}
+
+/// The `SegmentTimeline` a Representation is addressed by, with the timescale
+/// it is read in, each S validated once.
+///
+/// A `SegmentTimeline` nested in an AdaptationSet's `SegmentTemplate` governs
+/// every Representation there that declares no timeline of its own (5.3.9.2.1),
+/// and one timeline is declarable once, so it has one resolved timeline
+/// identity whichever chain it is read through: it is checked once, against
+/// its declaration, and each Representation without a timeline of its own is
+/// then not checked again.
+fn effective_timeline<'a>(
+    period: &'a dash_runtime::mpd::Period,
+    aset: &'a dash_runtime::mpd::AdaptationSet,
+    repr: &'a dash_runtime::mpd::Representation,
+) -> Option<(&'a dash_runtime::mpd::SegmentTimeline, u64)> {
+    let declared = repr
+        .segment
+        .template
+        .as_ref()
+        .and_then(|t| t.multi.timeline.as_ref());
+    if let Some(timeline) = declared {
+        let Ok(SegmentInfo::Template(info)) = resolve_segment_info(period, aset, repr) else {
+            return None;
+        };
+        return Some((timeline, info.multi.timescale));
+    }
+    let inherited = aset.segment.template.as_ref()?.multi.timeline.as_ref()?;
+    let timescale = aset
+        .segment
+        .template
+        .as_ref()?
+        .multi
+        .base
+        .timescale
+        .unwrap_or(1);
+    Some((inherited, timescale))
 }
 
 /// Check for duplicate `@id` values across **every** Representation in one
@@ -104,7 +172,7 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
 /// the realistic error entirely: the same `@id` reused by two different
 /// AdaptationSets of the same Period (audit MD-W12).
 fn check_representation_id_duplicates(
-    period: &transmux::Period,
+    period: &dash_runtime::mpd::Period,
     period_idx: usize,
     report: &mut Report,
 ) {
@@ -112,7 +180,7 @@ fn check_representation_id_duplicates(
     // *unless* the Representations are functionally identical, in which case
     // the duplicate is redundant rather than ambiguous — a Warning, not an
     // Error.
-    let mut seen: BTreeMap<&str, &transmux::Representation> = BTreeMap::new();
+    let mut seen: BTreeMap<&str, &dash_runtime::mpd::Representation> = BTreeMap::new();
     for (as_idx, aset) in period.adaptation_sets.iter().enumerate() {
         for repr in &aset.representations {
             let Some(previous) = seen.insert(&repr.id, repr) else {
@@ -144,16 +212,26 @@ fn check_representation_id_duplicates(
 /// Whether two Representations carrying the same `@id` are functionally
 /// identical — same codec, bandwidth, geometry, framing and addressing, i.e.
 /// the same content described twice (ISO/IEC 23009-1 §5.3.5.2's exception).
-fn functionally_identical(a: &transmux::Representation, b: &transmux::Representation) -> bool {
+fn functionally_identical(
+    a: &dash_runtime::mpd::Representation,
+    b: &dash_runtime::mpd::Representation,
+) -> bool {
     a.bandwidth == b.bandwidth
-        && a.codecs == b.codecs
-        && a.width == b.width
-        && a.height == b.height
-        && a.frame_rate == b.frame_rate
-        && a.audio_sampling_rate == b.audio_sampling_rate
-        && a.mime_type == b.mime_type
-        && a.base_url == b.base_url
-        && a.segment_template == b.segment_template
+        && a.common.codecs == b.common.codecs
+        && a.common.width == b.common.width
+        && a.common.height == b.common.height
+        && a.common.frame_rate == b.common.frame_rate
+        && a.common.audio_sampling_rate == b.common.audio_sampling_rate
+        && a.common.mime_type == b.common.mime_type
+        && a.base_urls == b.base_urls
+        && segment_template(a) == segment_template(b)
+}
+
+/// The `SegmentTemplate` a Representation declares itself (5.3.9.4).
+fn segment_template(
+    repr: &dash_runtime::mpd::Representation,
+) -> Option<&dash_runtime::mpd::SegmentTemplate> {
+    repr.segment.template.as_ref()
 }
 
 /// Validate SegmentTimeline for monotonic time progression.
@@ -163,14 +241,14 @@ fn functionally_identical(a: &transmux::Representation, b: &transmux::Representa
 /// end time. The explicit/computed `@t` must be ≥ the previous element's end
 /// time (a gap is a legal discontinuity; backward time is not).
 fn validate_segment_timeline(
-    timeline: &transmux::SegmentTimeline,
+    timeline: &dash_runtime::mpd::SegmentTimeline,
     timescale: u64,
     r_key: &str,
     report: &mut Report,
 ) {
     let mut prev_end_time: Option<u64> = None;
 
-    for (s_idx, s) in timeline.segments.iter().enumerate() {
+    for (s_idx, s) in timeline.entries.iter().enumerate() {
         let start_time = s.t.unwrap_or_else(|| {
             // §5.3.9.6.2: If @t is not present, it defaults to 0 for the first S
             // element, and to the previous S's end time for subsequent elements.

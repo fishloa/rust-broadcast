@@ -59,9 +59,7 @@ private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G28-3.mpd	clean
 private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G28-4.mpd	clean
 private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G28-5.mpd	clean
 private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-1.mpd	clean
-private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd	dash-period-no-adaptation-sets	error
-private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd	dash-period-no-adaptation-sets	error
-private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd	dash-period-no-adaptation-sets	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd	clean
 private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G3.mpd	clean
 private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G30-1.mpd	clean
 private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G30-2.mpd	clean
