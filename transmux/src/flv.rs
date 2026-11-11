@@ -371,163 +371,70 @@ struct TagWalk<'a> {
     damaged: Vec<usize>,
 }
 
-/// A tag header at `off` that is structurally plausible: the always-zero
-/// 24-bit StreamID (§E.4.1) and, when `known_type`, one of the tag types this
-/// demuxer knows. Unknown types are legal (skipped leniently), so the chain
-/// check along the stream accepts them; only a *resync candidate* is held to a
-/// known type, since it is picked out of arbitrary bytes.
-fn plausible_tag_header(input: &[u8], off: usize, known_type: bool) -> bool {
-    off + TAG_HEADER_LEN <= input.len()
-        && (!known_type
-            || matches!(
-                input[off],
-                tag_type::AUDIO | tag_type::VIDEO | tag_type::SCRIPT
-            ))
-        && input[off + 8..off + 11] == [0, 0, 0]
-}
-
-/// Whether a tag starting at `off` is followed by a consistent chain: its body
-/// fits and what follows it is the end of the buffer or another plausible tag
-/// header.
-fn tag_chain_holds(input: &[u8], off: usize, known_type: bool) -> bool {
-    if !plausible_tag_header(input, off, known_type) {
-        return false;
-    }
-    let data_size =
-        u32::from_be_bytes([0, input[off + 1], input[off + 2], input[off + 3]]) as usize;
-    let body_end = off + TAG_HEADER_LEN + data_size;
-    if body_end > input.len() {
-        return false;
-    }
-    let next = body_end + PREV_TAG_SIZE_LEN;
-    next + TAG_HEADER_LEN > input.len() || plausible_tag_header(input, next, false)
-}
-
-/// First offset at or after `from` where a consistent chain of known-type tags
-/// starts.
-fn resync_tag(input: &[u8], from: usize) -> Option<usize> {
-    (from..input.len()).find(|&p| tag_chain_holds(input, p, true))
-}
-
-/// Iterate the tags of an FLV stream after its 9-byte header, validating each
-/// tag's `DataSize` against the buffer (§E.4.1).
+/// Iterate the tags of an FLV stream after its 9-byte header, keeping what is
+/// readable across damage (§E.4.1).
 ///
-/// A truncated **final** tag is not an error: a recorded or captured live FLV
-/// routinely ends mid-tag, and the tags before it are complete and usable. The
-/// walk stops at the short tail, keeping what it has (`ac3`/`dts`/`mpeg_legacy`
-/// syncframe splitters in this crate take the same "stop at the truncated tail,
-/// never drop the good prefix" position) and reporting it through
-/// [`TagWalk::truncated_tail`], so nothing is dropped silently.
+/// The walk itself is `rtmp_runtime::flv::tags_resync`, the workspace's one FLV
+/// tag walker: a span whose framing is damaged is skipped to the next
+/// consistent tag chain and reported in [`TagWalk::damaged`], and a final tag
+/// whose body overruns the buffer stops the walk as the truncated tail
+/// ([`TagWalk::truncated_tail`]) rather than discarding the good prefix. Two
+/// shapes are *not* truncation: a final tag whose body is complete but whose
+/// 4-byte `PreviousTagSize` is missing (§E.4.1 makes that field redundant) is
+/// kept and the walk ends cleanly, and a header too short to read at the very
+/// end is simply the end of the walk.
 ///
-/// Two shapes are *not* truncation, and both are accepted:
-/// - a final tag whose **body is entirely present** but whose 4-byte
-///   `PreviousTagSize` is missing (`body_end <= len < body_end + 4`): the body
-///   is complete, so it is kept and the walk ends cleanly;
-/// - a tag header at the very end of the buffer that cannot even be read yet
-///   (`off + TAG_HEADER_LEN > len`) — there is nothing to interpret there.
-///
-/// A tag whose body overruns the buffer is only tolerated where it can be
-/// *known* to be the tail, which is exactly what the loop guarantees: it is the
-/// last tag the buffer can start. A stream whose very first tag is already
-/// incomplete has nothing to return at all, so that alone is
-/// [`FlvError::TagOverrun`] — the caller gets a diagnosis rather than a bare
-/// `NoSupportedTrack`.
+/// A stream whose very first tag is already incomplete has nothing to return at
+/// all, so that alone is [`FlvError::TagOverrun`] — the caller gets a diagnosis
+/// rather than a bare `NoSupportedTrack`.
 fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
     need_in(input, FLV_HEADER_LEN + PREV_TAG_SIZE_LEN, "FLV header")?;
-    // DataOffset (bytes [5:9]) points past the header to the first PreviousTagSize0.
-    let data_offset = u32::from_be_bytes([input[5], input[6], input[7], input[8]]) as usize;
-    let mut off = data_offset.max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
-
-    let mut tags = Vec::new();
-    let mut damaged: Vec<usize> = Vec::new();
-    while off + TAG_HEADER_LEN <= input.len() {
-        // Framing damage (a corrupt type byte, StreamID or `DataSize`): the
-        // chain from here does not hold, yet a consistent tag starts later.
-        // Skip to it and report; if none does, fall through to the
-        // truncated-tail / tail handling below (a genuinely cut final tag).
-        if !tag_chain_holds(input, off, false)
-            && let Some(next) = resync_tag(input, off + 1)
-        {
-            damaged.push(off);
-            off = next;
-            continue;
+    let header = FlvHeader::parse(input).map_err(|e| match e {
+        RtmpError::Malformed { what } => Error::InvalidInput(what),
+        RtmpError::BufferTooShort(w) => Error::from(FlvErrorAsError(FlvError::TagOverrun {
+            offset: 0,
+            need: w.need,
+            have: w.have,
+        })),
+        _ => Error::from(FlvErrorAsError(FlvError::BadSignature([
+            input[0], input[1], input[2],
+        ]))),
+    })?;
+    let overrun = |need| {
+        Error::from(FlvErrorAsError(FlvError::TagOverrun {
+            offset: header.first_tag_offset(),
+            need,
+            have: input.len(),
+        }))
+    };
+    let walk = rtmp_runtime::flv::tags_resync(input, &header).map_err(|e| match e {
+        RtmpError::BufferTooShort(w) => overrun(w.need),
+        _ => overrun(input.len().saturating_add(1)),
+    })?;
+    let tags = walk
+        .tags
+        .into_iter()
+        .map(|(offset, tag)| FlvTag {
+            offset,
+            tag_type: tag.tag_type,
+            timestamp: tag.timestamp,
+            body: tag.body,
+        })
+        .collect::<Vec<_>>();
+    match walk.truncated_tail {
+        Some((offset, need, have)) if tags.is_empty() => {
+            Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
+                offset,
+                need,
+                have,
+            })))
         }
-        // The declared body size and time come from the shared codec's own tag
-        // layout (§E.4.1), read from the header that is already present.
-        let Some(header) = input.get(off..off.saturating_add(TAG_HEADER_LEN)) else {
-            break;
-        };
-        let Ok(size) = RtmpFlvTag::data_size(header) else {
-            break;
-        };
-        // Checked: a hostile `DataSize` (up to 2^24-1) added at a near-`usize::MAX`
-        // offset would otherwise wrap.
-        let Some(body_end) = off.saturating_add(TAG_HEADER_LEN).checked_add(size) else {
-            return Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
-                offset: off,
-                need: usize::MAX,
-                have: input.len(),
-            })));
-        };
-        if body_end > input.len() {
-            // The tag's *body* is not all here, so this is the truncated tail —
-            // the only tag that may be treated as one, since it is the last the
-            // buffer can start. Exposed, never dropped silently.
-            if tags.is_empty() {
-                return Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
-                    offset: off,
-                    need: body_end.saturating_add(PREV_TAG_SIZE_LEN),
-                    have: input.len(),
-                })));
-            }
-            return Ok(TagWalk {
-                tags,
-                truncated_tail: true,
-                damaged,
-            });
-        }
-        // The whole tag is present, so the codec decodes it strictly (its
-        // `PreviousTagSize` may still be the cut-off final field, which §E.4.1
-        // makes redundant and the codec therefore does not require).
-        let codec_end = body_end.saturating_add(PREV_TAG_SIZE_LEN).min(input.len());
-        let tag = RtmpFlvTag::parse(input.get(off..codec_end).unwrap_or_default());
-        let Ok(RtmpFlvTag {
-            tag_type,
-            timestamp,
-            body,
-            ..
-        }) = tag
-        else {
-            return Err(Error::from(FlvErrorAsError(FlvError::TagOverrun {
-                offset: off,
-                need: body_end.saturating_add(PREV_TAG_SIZE_LEN),
-                have: input.len(),
-            })));
-        };
-        tags.push(FlvTag {
-            offset: off,
-            tag_type,
-            timestamp,
-            body,
-        });
-        // Advance past the body and its trailing PreviousTagSize. A tag whose
-        // body is complete but whose `PreviousTagSize` is cut off is still a
-        // complete tag (§E.4.1 makes that field redundant — it repeats the
-        // preceding tag's size), so it is kept and the walk simply ends.
-        if body_end + PREV_TAG_SIZE_LEN > input.len() {
-            return Ok(TagWalk {
-                tags,
-                truncated_tail: false,
-                damaged,
-            });
-        }
-        off = body_end + PREV_TAG_SIZE_LEN;
+        tail => Ok(TagWalk {
+            tags,
+            truncated_tail: tail.is_some(),
+            damaged: walk.damaged,
+        }),
     }
-    Ok(TagWalk {
-        tags,
-        truncated_tail: false,
-        damaged,
-    })
 }
 
 // A tiny bridge so `iter_tags` can surface FLV-specific overrun through the

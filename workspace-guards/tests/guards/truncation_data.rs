@@ -219,18 +219,6 @@ pub const TABLE: &[Crate] = &[
                      (ts_demux MAX_PES_BUFFER_BYTES).",
             ),
             (
-                "src/flv.rs",
-                "out.extend_from_slice(&(s.len() as u16).to_be_bytes());",
-                "amf0_string is only ever called with the crate's own static \
-                     property names (`onMetaData`, `duration`, ...), a few bytes each.",
-            ),
-            (
-                "src/flv.rs",
-                "out.extend_from_slice(&(props.len() as u32).to_be_bytes());",
-                "props is the onMetaData property list built from at most 8 \
-                     static entries just above.",
-            ),
-            (
                 "src/rtp.rs",
                 "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
                 "length_prefix_nals: NALs come from RTP depacketisation, bounded by \

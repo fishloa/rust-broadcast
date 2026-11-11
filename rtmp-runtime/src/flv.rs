@@ -563,6 +563,143 @@ impl<'a> Iterator for Tags<'a> {
     }
 }
 
+// ── Tolerant walk (resynchronising) ─────────────────────────────────────
+
+/// A tag header at `off` that is structurally plausible: a readable header,
+/// the always-zero 24-bit `StreamID` (§E.4.1) and, when `known_type`, one of
+/// the tag types a media demuxer reads. Unknown types are legal (a walker
+/// skips them leniently), so the chain check along the stream accepts them;
+/// only a *resync candidate*, picked out of arbitrary bytes, is held to a
+/// known type.
+fn plausible_tag_header(input: &[u8], off: usize, known_type: bool) -> bool {
+    off.saturating_add(FLV_TAG_HEADER_LEN) <= input.len()
+        && (!known_type
+            || matches!(
+                input[off],
+                msg_type::AUDIO | msg_type::VIDEO | msg_type::DATA_AMF0
+            ))
+        && input[off + TAG_STREAM_ID_AT..off + FLV_TAG_HEADER_LEN] == [0, 0, 0]
+}
+
+/// The `DataSize` of the tag whose header starts at `off` (the caller has
+/// checked that the header is readable).
+fn tag_data_size(input: &[u8], off: usize) -> usize {
+    let field = |at: usize| input.get(at).copied().unwrap_or_default();
+    u32::from_be_bytes([0, field(off + 1), field(off + 2), field(off + 3)]) as usize
+}
+
+/// Whether the tag starting at `off` is followed by a consistent chain: its
+/// body fits, and what follows it is the end of the buffer or another
+/// plausible tag header.
+fn tag_chain_holds(input: &[u8], off: usize, known_type: bool) -> bool {
+    if !plausible_tag_header(input, off, known_type) {
+        return false;
+    }
+    let Some(body_end) = off
+        .saturating_add(FLV_TAG_HEADER_LEN)
+        .checked_add(tag_data_size(input, off))
+    else {
+        return false;
+    };
+    if body_end > input.len() {
+        return false;
+    }
+    let next = body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN);
+    next.saturating_add(FLV_TAG_HEADER_LEN) > input.len()
+        || plausible_tag_header(input, next, false)
+}
+
+/// First offset at or after `from` where a consistent chain of known-type tags
+/// starts.
+fn resync_tag(input: &[u8], from: usize) -> Option<usize> {
+    (from..input.len()).find(|&at| tag_chain_holds(input, at, true))
+}
+
+/// An FLV stream walked tolerantly: every tag, the damaged spans skipped, and
+/// whether the input ended on a short tail — see [`tags_resync`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResyncWalk<'a> {
+    /// The complete tags, in order, with their offsets.
+    pub tags: Vec<(usize, FlvTag<'a>)>,
+    /// Offsets of the spans whose tag framing was damaged and skipped.
+    pub damaged: Vec<usize>,
+    /// `Some` when the input ends mid-tag: the tag it stopped at, and the
+    /// bytes that tag would need against the bytes actually present.
+    pub truncated_tail: Option<(usize, usize, usize)>,
+}
+
+/// Walk an FLV stream's tags tolerantly, from `header`'s first tag.
+///
+/// Unlike the strict [`tags`], a stream whose framing is damaged part-way
+/// still yields the tags after the damage: a span whose tag chain does not hold
+/// is skipped to the next consistent chain of known-type tags and reported in
+/// [`ResyncWalk::damaged`], and a final tag whose body overruns the input stops
+/// the walk (reported in [`ResyncWalk::truncated_tail`]) rather than losing the
+/// good prefix. Two shapes are not truncation: a final tag whose body is
+/// complete but whose 4-byte `PreviousTagSize` is missing (§E.4.1 makes that
+/// field redundant — it repeats the tag's own size) is kept and the walk ends
+/// cleanly, and a header too short to read at the very end of the input is
+/// simply the end of the walk.
+///
+/// # Errors
+/// [`RtmpError::BufferTooShort`] when `input` is shorter than the header and
+/// its `PreviousTagSize0`, and when the *first* tag is already incomplete (that
+/// is not a recoverable tail: there is nothing complete to return).
+pub fn tags_resync<'a>(input: &'a [u8], header: &FlvHeader) -> FlvResult<ResyncWalk<'a>> {
+    need_in(
+        input,
+        FLV_HEADER_LEN.saturating_add(FLV_PREV_TAG_SIZE_LEN),
+        "FLV header",
+    )?;
+    let mut off = header.first_tag_offset();
+    let mut walk = ResyncWalk {
+        tags: Vec::new(),
+        damaged: Vec::new(),
+        truncated_tail: None,
+    };
+    while off.saturating_add(FLV_TAG_HEADER_LEN) <= input.len() {
+        if !tag_chain_holds(input, off, false)
+            && let Some(next) = resync_tag(input, off + 1)
+        {
+            walk.damaged.push(off);
+            off = next;
+            continue;
+        }
+        let Some(body_end) = off
+            .saturating_add(FLV_TAG_HEADER_LEN)
+            .checked_add(tag_data_size(input, off))
+        else {
+            return Err(RtmpError::Malformed {
+                what: "FLV tag DataSize",
+            });
+        };
+        if body_end > input.len() {
+            let need = body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN);
+            if walk.tags.is_empty() && walk.damaged.is_empty() {
+                return Err(RtmpError::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need,
+                        have: input.len(),
+                        what: "FLV tag body",
+                    },
+                ));
+            }
+            walk.truncated_tail = Some((off, need, input.len().saturating_sub(off)));
+            return Ok(walk);
+        }
+        let codec_end = body_end
+            .saturating_add(FLV_PREV_TAG_SIZE_LEN)
+            .min(input.len());
+        let tag = FlvTag::parse(input.get(off..codec_end).unwrap_or_default())?;
+        walk.tags.push((off, tag));
+        if body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN) > input.len() {
+            return Ok(walk);
+        }
+        off = body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN);
+    }
+    Ok(walk)
+}
+
 // ── Session writer ──────────────────────────────────────────────────────
 
 /// Builds the FLV byte stream of one RTMP session: the first tag is prefixed
