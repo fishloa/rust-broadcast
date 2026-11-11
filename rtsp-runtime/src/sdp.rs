@@ -106,3 +106,22 @@ pub fn resolve_control(
             .map(|u| u.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use url::Url;
+
+    #[test]
+    fn control_helper_aggregate_or_missing() {
+        let base = Url::parse("rtsp://cam/base").unwrap();
+        assert_eq!(
+            resolve_control(&base, &base, None).unwrap(),
+            base.to_string()
+        );
+        assert_eq!(
+            resolve_control(&base, &base, Some("*")).unwrap(),
+            base.to_string()
+        );
+    }
+}
