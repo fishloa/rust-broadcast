@@ -2114,7 +2114,7 @@ pub fn depacketise_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
 pub const MP2T_PT: u8 = 33;
 
 /// RFC 2250 §2: a MP2T packet carries "no more than seven" whole TS packets.
-pub const MP2T_TS_PACKETS_PER_PACKET: usize = 6;
+pub const MP2T_TS_PACKETS_PER_PACKET: usize = 7;
 
 /// RFC 2250 §2's fixed RTP clock rate for MP2T.
 pub const MP2T_CLOCK_RATE: u32 = 90_000;
@@ -2129,7 +2129,7 @@ pub const MP2T_MAX_PAYLOAD: usize = mpeg_ts::ts::TS_PACKET_SIZE * MP2T_TS_PACKET
 /// Each packet carries up to [`MP2T_TS_PACKETS_PER_PACKET`] whole TS packets
 /// at the caller's 90 kHz timestamp, which is the same for every packet of
 /// one run: RFC 2250 §2 has the timestamp advance with the media clock, which
-/// is the caller's (multimux reads its own [`Instant`]) and never this
+/// is the caller's (an RTSP push reads its own `Instant`) and never this
 /// crate's. Sequence numbers advance from [`initial_seq`](Self::new) and wrap
 /// at 16 bits; the SSRC is fixed per packetiser.
 ///

@@ -25,30 +25,30 @@
 //!   socket — rtsp-runtime computes the retry, but this transport never
 //!   sent it, so an authenticating server (Digest or Basic) always failed
 //!   the push even after rtsp-runtime's own C1 fix.
+//!
+//! The protocol work lives in the crates that own it (issue #2368): the RTP
+//! packets come from [`transmux::rtp::Mp2tPacketiser`] (RFC 2250 §2 over
+//! `rtp-packet`), the control URL from [`rtsp_runtime::sdp::control_url`],
+//! and `ANNOUNCE`/`SETUP`/`RECORD` from
+//! [`rtsp_runtime::AsyncRtspClient::start_record`]. This transport supplies
+//! the SDP's media section and the 90 kHz timestamp — the one place the wall
+//! clock is read — and nothing else.
 
 use crate::push::PushTransport;
 use rtsp_runtime::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::sdp::session_description;
-use rtsp_runtime::transport::{Transport, TransportSpec};
+
 use std::time::Instant;
 use tokio::net::TcpStream;
 use transmux::ir::TrackSpec;
+use transmux::rtp::{MP2T_CLOCK_RATE, MP2T_MAX_PAYLOAD, MP2T_PT, MP2T_TS_PACKETS_PER_PACKET};
 
-/// RFC 3551 §6 static payload type for MPEG2 Transport Stream (RFC 2250 §2).
-const PT_MP2T: u8 = 33;
-use mpeg_ts::ts::TS_PACKET_SIZE as TS_PACKET_LEN;
-/// RFC 2250 §2: "no more than seven ... TS packets" per RTP packet.
-const MAX_TS_PACKETS_PER_RTP: usize = 7;
-/// The resulting cap on one RTP packet's MP2T payload (1316 bytes).
-const MAX_RTP_PAYLOAD: usize = TS_PACKET_LEN * MAX_TS_PACKETS_PER_RTP;
-/// RFC 2250 §2's fixed RTP clock rate for MP2T.
-const RTP_CLOCK_HZ: u64 = 90_000;
-/// RFC 3550 §5.1: the fixed 12-byte RTP header (V/P/X/CC, M/PT, sequence,
-/// timestamp, SSRC) with no CSRCs and no extension.
-const RTP_HEADER_LEN: usize = 12;
-/// RFC 3550 §5.1: the first header byte `V=2, P=0, X=0, CC=0` (`0b10_000000`).
-const RTP_VERSION_2_NO_FLAGS: u8 = 0b1000_0000;
+/// Microseconds in one second, for the 90 kHz RTP clock (RFC 2250 §2).
+const MICROS_PER_SECOND: u32 = 1_000_000;
+/// The sequence number the first RTP packet of a connection carries
+/// (RFC 3550 §5.1 leaves the start to the sender).
+const INITIAL_SEQ: u16 = 0;
 /// The session name (`s=`) the push's SDP carries.
 const SESSION_NAME: &str = "multimux push";
 /// Bound on the best-effort `TEARDOWN` sent from [`RtspTransport::close`].
@@ -70,10 +70,20 @@ pub struct RtspTransportConfig {
     pub test_wire: Option<RtpWireState>,
 }
 
-/// The per-connection values a byte-exact wire golden pins.
-#[cfg(feature = "test-hooks")]
+/// A fresh per-connection SSRC and clock origin: the SSRC from the OS random
+/// source, as a push never negotiates one over RTCP.
+fn per_connection_wire() -> RtpWireState {
+    RtpWireState {
+        ssrc: crate::secure_random::ssrc(),
+        started: Instant::now(),
+    }
+}
+
+/// The per-connection SSRC and RTP clock origin (RFC 3550 §5.1, RFC 2250
+/// §2's 90 kHz clock). Production draws both per connection; a recorded wire
+/// golden pins both.
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 #[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
 pub struct RtpWireState {
     /// The fixed RTP SSRC (RFC 3550 §5.1).
     pub ssrc: u32,
@@ -113,14 +123,16 @@ pub struct RtspTransport {
     channel: u8,
     /// The presentation URL (credentials stripped): OPTIONS/ANNOUNCE/RECORD.
     url: String,
-    /// The one track's control URL (RFC 2326 Appendix C.1.1): SETUP.
-    control_url: String,
-    /// RTP sequence number for the outgoing MP2T stream (RFC 3550 §5.1).
-    seq: u16,
-    /// Pseudo-random per-connection SSRC (no RTCP negotiation on a push).
-    ssrc: u32,
-    /// Wall-clock origin for the RTP timestamp (90 kHz, RFC 2250 §2).
-    started: Instant,
+    /// The same URL, typed, so the publish flow derives the track's control
+    /// URL (RFC 2326 Appendix C.1.1) and rejects a host-less URL up front.
+    publish_url: url::Url,
+    /// The outgoing MP2T stream's SSRC and sequence number (RFC 2250 §2,
+    /// RFC 3550 §5.1).
+    stream: transmux::rtp::Mp2tPacketiser,
+    /// The connection's SSRC and RTP clock origin (RFC 3550 §5.1).
+    wire: RtpWireState,
+    /// The 90 kHz timestamp stamped on the next `send` row's packets.
+    timestamp: u32,
     /// The connection's long-lived TS muxer (issue #1024).
     ts_mux: transmux::StreamingTsMux,
     /// The bounded best-effort `TEARDOWN` task spawned by [`Self::close`],
@@ -178,14 +190,10 @@ impl PushTransport for RtspTransport {
             session = session.with_credentials(creds);
         }
 
-        let control_url = control_url(&parsed)?;
-        #[cfg(feature = "test-hooks")]
-        let (ssrc, started) = match config.test_wire {
-            Some(wire) => (wire.ssrc, wire.started),
-            None => (crate::secure_random::ssrc(), Instant::now()),
-        };
-        #[cfg(not(feature = "test-hooks"))]
-        let (ssrc, started) = (crate::secure_random::ssrc(), Instant::now());
+        // The push's publish flow derives its control URL, so a host-less URL
+        // is rejected here, before dialing.
+        rtsp_runtime::sdp::control_url(&parsed)
+            .map_err(|e| RtspPushError::Connect(e.to_string()))?;
 
         // Every IO the adapter performs is bounded by `config.timeouts`
         // (SP6.1, defect 4): the OPTIONS exchange below and every later
@@ -210,14 +218,18 @@ impl PushTransport for RtspTransport {
             Err(e) => return Err(RtspPushError::Protocol(e.to_string())),
         }
 
+        #[cfg(feature = "test-hooks")]
+        let wire = config.test_wire.unwrap_or_else(per_connection_wire);
+        #[cfg(not(feature = "test-hooks"))]
+        let wire = per_connection_wire();
         Ok(Self {
             client: Some(client),
             channel: 0,
             url: clean_url,
-            control_url,
-            seq: 0,
-            ssrc,
-            started,
+            publish_url: parsed,
+            stream: transmux::rtp::Mp2tPacketiser::new(wire.ssrc, INITIAL_SEQ),
+            wire,
+            timestamp: 0,
             ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         })
@@ -225,37 +237,18 @@ impl PushTransport for RtspTransport {
 
     async fn setup(&mut self, _tracks: &[TrackSpec]) -> Result<(), Self::Error> {
         let sdp = build_sdp()?;
-        // RFC 2326 §12.39: `mode` defaults to PLAY: a RECORD session must
-        // say so explicitly, or a strict server (gortsplib/`mediamtx`:
-        // "transport header contains a invalid mode (null)") rejects SETUP.
-        let mut spec = TransportSpec::rtp_avp_tcp_interleaved(self.channel, self.channel + 1);
-        spec.mode = vec![rtsp_runtime::TransportMode::Record];
-        let transport_spec = Transport::single(spec);
-        let (url, control_url) = (self.url.clone(), self.control_url.clone());
+        let channel = self.channel;
         let client = self
             .client
             .as_mut()
             .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
-
-        for (what, event) in [
-            ("ANNOUNCE", client.announce(&url, &sdp).await),
-            ("SETUP", client.setup(&control_url, &transport_spec).await),
-            ("RECORD", client.record(&url).await),
-        ] {
-            match event {
-                Ok(ClientEvent::Response { status, .. }) if status.is_success() => {}
-                Ok(ClientEvent::Response { status, .. }) => {
-                    return Err(RtspPushError::Protocol(format!(
-                        "{what} rejected: {status:?}"
-                    )));
-                }
-                Ok(_) => {
-                    return Err(RtspPushError::Protocol(format!("{what}: unexpected event")));
-                }
-                Err(e) => return Err(RtspPushError::Protocol(e.to_string())),
+        match client.start_record(&self.publish_url, &sdp, channel).await {
+            Ok(()) => {
+                self.timestamp = self.rtp_timestamp();
+                Ok(())
             }
+            Err(e) => Err(map_rtsp_error(e)),
         }
-        Ok(())
     }
 
     fn ts_mux(&mut self) -> Option<&mut transmux::StreamingTsMux> {
@@ -264,15 +257,12 @@ impl PushTransport for RtspTransport {
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
         let channel = self.channel;
-        // RFC 2250 §2: no more than 7 whole 188-byte TS packets per RTP
-        // packet. `MAX_RTP_PAYLOAD` is a multiple of `TS_PACKET_LEN`, and
-        // `data` is always a whole number of TS packets (it comes from
-        // `TsMux::package`), so every chunk here — including the last — is
-        // itself a whole number of TS packets; none is split mid-packet.
-        let packets: Vec<Vec<u8>> = data
-            .chunks(MAX_RTP_PAYLOAD)
-            .map(|chunk| self.rtp_packet(chunk))
-            .collect();
+        if !data.len().is_multiple_of(mpeg_ts::ts::TS_PACKET_SIZE) {
+            return Err(RtspPushError::Protocol(
+                "RTSP push payload is not a whole number of 188-byte TS packets".to_string(),
+            ));
+        }
+        let packets = self.packetise(data)?;
         let client = self
             .client
             .as_mut()
@@ -344,48 +334,46 @@ fn map_rtsp_error(e: rtsp_runtime::Error) -> RtspPushError {
 }
 
 impl RtspTransport {
-    /// Builds one RTP packet (RFC 3550 §5.1) carrying `payload` as MP2T.
-    fn rtp_packet(&mut self, payload: &[u8]) -> Vec<u8> {
-        let elapsed_micros = self.started.elapsed().as_micros() as u64;
-        let timestamp = ((elapsed_micros * RTP_CLOCK_HZ / 1_000_000) & 0xFFFF_FFFF) as u32;
-        let seq = self.seq;
-        self.seq = self.seq.wrapping_add(1);
-
-        let mut packet = Vec::with_capacity(RTP_HEADER_LEN + payload.len());
-        packet.push(RTP_VERSION_2_NO_FLAGS); // V=2, P=0, X=0, CC=0
-        packet.push(PT_MP2T); // M=0
-        packet.extend_from_slice(&seq.to_be_bytes());
-        packet.extend_from_slice(&timestamp.to_be_bytes());
-        packet.extend_from_slice(&self.ssrc.to_be_bytes());
-        packet.extend_from_slice(payload);
-        packet
+    /// The RTP packets one `send` payload becomes: its TS packets in RFC 2250
+    /// §2 rows of at most seven, packetised by
+    /// [`transmux::rtp::Mp2tPacketiser`].
+    ///
+    /// A row that is not exactly seven TS packets is sent on its own: RFC 2250
+    /// §2 lets a packet carry up to seven, but a row's timestamp is the
+    /// instant of its first TS packet, so a short row appended to a full one
+    /// would misdate the TS packets after it. Rows that are a whole number of
+    /// seven TS packets share the connection's one clock read, which is what a
+    /// TS muxer's batches are.
+    fn packetise(&mut self, data: &[u8]) -> Result<Vec<Vec<u8>>, RtspPushError> {
+        let row_ts = self.timestamp;
+        let mut packets: Vec<Vec<u8>> = Vec::with_capacity(data.len().div_ceil(MP2T_MAX_PAYLOAD));
+        for row in data.chunks(MP2T_TS_PACKETS_PER_PACKET * mpeg_ts::ts::TS_PACKET_SIZE) {
+            let timestamp = if row.len() == MP2T_MAX_PAYLOAD {
+                row_ts
+            } else {
+                self.rtp_timestamp()
+            };
+            packets.extend(
+                self.stream
+                    .packetise(row, timestamp)
+                    .map_err(|e| RtspPushError::Protocol(e.to_string()))?,
+            );
+        }
+        Ok(packets)
     }
-}
 
-/// The RTSP presentation control URL: the base URL with `trackID=0` appended
-/// as a final path segment (RFC 2326 §10.5 `control`). Built via
-/// `Url::path_segments_mut` so a trailing slash never doubles and an IPv6 host
-/// stays bracketed.
-///
-/// Returns an error for a URL with no authority the path segments can be set
-/// on — a "cannot-be-a-base" URL such as `rtsp:cam` (no `//host`), which
-/// `Url::parse` accepts but which has no host to connect to. `connect` calls
-/// this before dialing so an operator's mistyped `rtsp:cam` is a clear
-/// [`RtspPushError`], never a panic.
-fn control_url(base: &url::Url) -> Result<String, RtspPushError> {
-    let mut url = base.clone();
-    {
-        let mut segs = url.path_segments_mut().map_err(|()| {
-            RtspPushError::Connect(
-                "rtsp push URL has no authority (cannot-be-a-base, e.g. `rtsp:cam`); \
-                 expected `rtsp://host[:port]/path`"
-                    .to_string(),
-            )
-        })?;
-        segs.pop_if_empty();
-        segs.push("trackID=0");
+    /// The RTP timestamp for the packets sent from now on: RFC 2250 §2's
+    /// 90 kHz clock, counted from the connection's start and wrapped at 32
+    /// bits (RFC 3550 §5.1). This is the push path's one wall-clock read, and
+    /// every RTP packet of one `send` row carries the value it returned, as
+    /// RFC 2250 §2 stamps a packet with the instant of its first TS packet.
+    fn rtp_timestamp(&self) -> u32 {
+        let micros = u64::try_from(self.wire.started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        u32::try_from(
+            u128::from(micros) * u128::from(MP2T_CLOCK_RATE) / u128::from(MICROS_PER_SECOND),
+        )
+        .unwrap_or(u32::MAX)
     }
-    Ok(url.to_string())
 }
 
 /// `#[doc(hidden)]` test seam: parse `url` and return [`control_url`], so the
@@ -395,7 +383,7 @@ fn control_url(base: &url::Url) -> Result<String, RtspPushError> {
 #[doc(hidden)]
 pub fn control_url_for_test(url: &str) -> Result<String, String> {
     let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
-    control_url(&parsed).map_err(|e| e.to_string())
+    rtsp_runtime::sdp::control_url(&parsed).map_err(|e| e.to_string())
 }
 
 /// Builds the SDP for the push session: one `m=` line for the whole
@@ -430,11 +418,11 @@ fn push_media() -> sdp_types::Media {
         MediaType::Video,
         0,
         TransportProto::RtpAvp,
-        PT_MP2T.to_string(),
+        MP2T_PT.to_string(),
     );
     media.add_attribute(Attribute::with_value(
         "rtpmap",
-        format!("{PT_MP2T} MP2T/{RTP_CLOCK_HZ}"),
+        format!("{MP2T_PT} MP2T/{MP2T_CLOCK_RATE}"),
     ));
     media.add_attribute(Attribute::with_value("control", "trackID=0"));
     media
@@ -474,6 +462,15 @@ pub enum RtspPushError {
 mod tests {
     use super::*;
 
+    /// A fixed SSRC and a fresh clock origin, so a test can assert the exact
+    /// bytes (the timestamp itself is the one field a wall clock sets).
+    fn test_wire() -> RtpWireState {
+        RtpWireState {
+            ssrc: 1,
+            started: Instant::now(),
+        }
+    }
+
     /// Byte-for-byte golden (SP4.1): the ANNOUNCE SDP body the transport
     /// sends equals `golden/rtsp/rtsp-announce.sdp`, captured from the
     /// pre-`sdp-types` `format!` on `origin/main`. `GOLDEN_BLESS=<dir>`
@@ -500,10 +497,11 @@ mod tests {
             client: None,
             channel: 0,
             url: "rtsp://cam.example:554/live/STREAMKEY123?token=abc".to_string(),
-            control_url: "rtsp://cam.example:554/live/STREAMKEY123/trackID=0".to_string(),
-            seq: 0,
-            ssrc: 1,
-            started: Instant::now(),
+            publish_url: url::Url::parse("rtsp://cam.example:554/live/STREAMKEY123?token=abc")
+                .expect("test URL"),
+            stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
+            wire: test_wire(),
+            timestamp: 0,
             ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         };
@@ -530,7 +528,7 @@ mod tests {
             "control attribute must match the one control URL SETUP uses: {sdp}"
         );
         assert!(
-            sdp.contains(&format!("RTP/AVP {PT_MP2T}")),
+            sdp.contains(&format!("RTP/AVP {MP2T_PT}")),
             "must advertise the static MP2T payload type: {sdp}"
         );
         // Exactly one m= line: everything is multiplexed into the one TS
@@ -543,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn control_url_is_appended_with_a_single_slash() {
+    fn publish_control_url_is_appended_with_a_single_slash() {
         // Regression shape for RFC 2326 Appendix C.1.1: no double slash
         // when the presentation URL already ends in one, no missing slash
         // otherwise.
@@ -551,50 +549,72 @@ mod tests {
             ("rtsp://h/push", "rtsp://h/push/trackID=0"),
             ("rtsp://h/push/", "rtsp://h/push/trackID=0"),
         ] {
-            let control_url = if base.ends_with('/') {
-                format!("{base}trackID=0")
-            } else {
-                format!("{base}/trackID=0")
-            };
-            assert_eq!(control_url, expected);
+            assert_eq!(
+                control_url_for_test(base).expect("control URL"),
+                expected,
+                "{base}"
+            );
         }
     }
 
+    /// One `send` payload becomes RFC 2250 §2 rows of at most seven TS
+    /// packets, stamped with the connection's 90 kHz clock and serialized
+    /// entirely by the transmux packetiser.
+    ///
+    /// Revert-check: go back to appending a short row to a full one (or to
+    /// stamping a packet with a fresh read) and the rows no longer line up
+    /// with `MP2T_MAX_PAYLOAD`.
     #[test]
-    fn rtp_packet_header_is_v2_pt33_with_incrementing_seq() {
+    fn a_send_payload_becomes_mp2t_rows_of_at_most_seven_ts_packets() {
         let mut transport = RtspTransport {
             client: None,
             channel: 0,
             url: "rtsp://h/push".to_string(),
-            control_url: "rtsp://h/push/trackID=0".to_string(),
-            seq: 0xFFFF, // exercise the u16 wraparound.
-            ssrc: 0xdead_beef,
-            started: Instant::now(),
+            publish_url: url::Url::parse("rtsp://h/push").expect("test URL"),
+            stream: transmux::rtp::Mp2tPacketiser::new(0xdead_beef, 0x1234),
+            wire: test_wire(),
+            timestamp: 7_500,
             ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         };
-        let payload = [0x47u8; TS_PACKET_LEN]; // one TS sync-byte-led packet.
+        let mut payload = vec![0u8; MP2T_MAX_PAYLOAD + mpeg_ts::ts::TS_PACKET_SIZE];
+        for (i, ts_packet) in payload.chunks_mut(mpeg_ts::ts::TS_PACKET_SIZE).enumerate() {
+            ts_packet[0] = 0x47;
+            ts_packet[1] = u8::try_from(i).unwrap_or(0);
+        }
 
-        let first = transport.rtp_packet(&payload);
-        assert_eq!(first[0], 0x80, "V=2,P=0,X=0,CC=0");
-        assert_eq!(first[1], PT_MP2T, "M=0, PT=33 (RFC 2250 static MP2T)");
-        assert_eq!(u16::from_be_bytes([first[2], first[3]]), 0xFFFF);
-        assert_eq!(
-            u32::from_be_bytes([first[8], first[9], first[10], first[11]]),
-            0xdead_beef
+        let packets = transport.packetise(&payload).expect("packetise");
+        assert_eq!(packets.len(), 2, "a full row, then the one leftover packet");
+        let first =
+            <rtp_packet::RtpPacket as broadcast_common::Parse>::parse(&packets[0]).expect("parse");
+        assert_eq!(first.payload_type, MP2T_PT, "static MP2T payload type");
+        assert_eq!(first.sequence_number, 0x1234);
+        assert_eq!(first.timestamp, 7_500);
+        assert_eq!(first.ssrc, 0xdead_beef);
+        let mut reassembled = first.payload.to_vec();
+        reassembled.extend_from_slice(
+            <rtp_packet::RtpPacket as broadcast_common::Parse>::parse(&packets[1])
+                .expect("parse")
+                .payload,
         );
-        assert_eq!(
-            &first[12..],
-            &payload[..],
-            "payload must pass through verbatim"
-        );
+        assert_eq!(reassembled, payload, "every TS packet, in order");
+    }
 
-        let second = transport.rtp_packet(&payload);
-        assert_eq!(
-            u16::from_be_bytes([second[2], second[3]]),
-            0,
-            "sequence number must wrap u16, not panic"
-        );
+    /// A payload that is not whole TS packets is refused rather than cut.
+    #[test]
+    fn a_partial_ts_packet_in_a_send_payload_is_an_error() {
+        let mut transport = RtspTransport {
+            client: None,
+            channel: 0,
+            url: "rtsp://h/push".to_string(),
+            publish_url: url::Url::parse("rtsp://h/push").expect("test URL"),
+            stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
+            wire: test_wire(),
+            timestamp: 0,
+            ts_mux: transmux::StreamingTsMux::new(),
+            teardown: None,
+        };
+        assert!(transport.packetise(&[0u8; 100]).is_err());
     }
 
     // Regression: this transport's errors can end up in route logs, so the
@@ -610,10 +630,11 @@ mod tests {
             client: None,
             channel: 0,
             url: "rtsp://cam.example:554/live/STREAMKEY123?token=abc".to_string(),
-            control_url: "rtsp://cam.example:554/live/STREAMKEY123/trackID=0".to_string(),
-            seq: 0,
-            ssrc: 1,
-            started: Instant::now(),
+            publish_url: url::Url::parse("rtsp://cam.example:554/live/STREAMKEY123?token=abc")
+                .expect("test URL"),
+            stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
+            wire: test_wire(),
+            timestamp: 0,
             ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         };
@@ -662,10 +683,10 @@ mod tests {
             client: None,
             channel: 0,
             url: "rtsp://h/push".to_string(),
-            control_url: "rtsp://h/push/trackID=0".to_string(),
-            seq: 0,
-            ssrc: 1,
-            started: Instant::now(),
+            publish_url: url::Url::parse("rtsp://h/push").expect("test URL"),
+            stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
+            wire: test_wire(),
+            timestamp: 0,
             ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         };
@@ -739,13 +760,9 @@ mod tests {
         )
         .await
         .expect("connect");
-        let url = format!("rtsp://{addr}/live/key");
+        let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).expect("URL");
         let sdp = build_sdp().expect("sdp");
-        let _ = client.announce(&url, &sdp).await;
-        let mut spec = TransportSpec::rtp_avp_tcp_interleaved(0, 1);
-        spec.mode = vec![rtsp_runtime::TransportMode::Record];
-        let _ = client.setup(&url, &Transport::single(spec)).await;
-        let _ = client.record(&url).await;
+        let _ = client.start_record(&url, &sdp, 0).await;
 
         // Send media until the keepalive (session timeout=1 s) elicits the 454
         // and the drain surfaces it.

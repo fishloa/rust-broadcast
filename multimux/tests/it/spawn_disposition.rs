@@ -40,7 +40,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "push/rtsp.rs",
-        294,
+        307,
         "RTSP push `close` best-effort TEARDOWN: spawned on the current runtime handle (`Handle::try_current`, skipped outside one), the JoinHandle is stored on the transport and an already-running one is aborted on a superseding close, bounded by TEARDOWN_TIMEOUT",
     ),
     ("source/rtmp.rs", 326, "RTMP accept pump TaskTracker"),
@@ -56,17 +56,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/whip.rs",
-        373,
+        363,
         "WHIP signalling server TaskTracker (WhipInfra)",
     ),
     (
         "source/whip.rs",
-        636,
+        626,
         "WHIP run task; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        651,
+        641,
         "WHIP accept pump; owned by the route supervisor handle",
     ),
     (

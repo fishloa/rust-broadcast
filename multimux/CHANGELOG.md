@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- The RTSP push sends RFC 2250 §2 MP2T packets built by `transmux::rtp::Mp2tPacketiser` and records through `rtsp_runtime::AsyncRtspClient::start_record`; multimux now supplies only the SDP media section and the 90 kHz timestamp (its one clock read). Its own RTP header writer, MP2T splitting, control-URL derivation and ANNOUNCE/SETUP/RECORD choreography are gone. The wire is byte-identical: `fixtures/golden/rtsp/push-wire.golden` records every request and interleaved packet from before the move and matches without regeneration (#2368).
 - The RTSP push builds its ANNOUNCE session description with `rtsp_runtime::sdp::session_description` and supplies only its `m=` block, instead of assembling `v=`/`o=`/`s=`/`c=` itself; the body is byte-identical (`fixtures/golden/rtsp/rtsp-announce.sdp`).
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
 
