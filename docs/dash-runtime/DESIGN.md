@@ -208,7 +208,7 @@ frameRate (string), audioSamplingRate, mimeType, first BaseURL, effective Segmen
 | `xlink:href/@actuate` on Period/AdaptationSet/SegmentList | missing | `urn:mpeg:dash:resolve-to-zero:2013` removes the element; any other href: element skipped + `Notice::XlinkSkipped` (not resolved in 0.1.0) | 5.5.3 rule 4 |
 | `EventStream`, `InbandEventStream` | skipped | parsed only to count; `Notice::EventStreamIgnored`; emsg boxes ride along in segments untouched | 5.10 |
 | `Preselection`, `Resync`, `ServiceDescription`/`Latency`, `ProducerReferenceTime`, `PatchLocation`, `ContentSteering` | skipped | skipped; one `Notice` per kind per session | 5.3.11, 5.3.13, Annex K, 5.12, 5.15 |
-| `MPD@type="list"` (Ed.6) | `Static` default | fatal `UnsupportedAddressing{"presentation_type_list"}` | ED6-SCHEMA-DIFF |
+| `MPD@type="list"` (Ed.6) | `Static` default | fatal `FatalKind::Unsupported(Unsupported::PresentationTypeList)` | ED6-SCHEMA-DIFF |
 
 ### 4.2 Decision (D5): new module, `transmux` untouched
 
@@ -366,7 +366,7 @@ reused; `reconnect()` restarts the MPD fetch and rejoins (key/cookie jar kept); 
 ### 6.3 `ErrorKind` additions (all `#[non_exhaustive]`, `name()` snake_case + `impl_spec_display!`, `label_coverage` guard updated)
 
 `MpdParse{reason: &'static str}` (XML/size/namespace problems; non-fatal, one per kind until a success, fatal after `max_key_failures` consecutive with no good MPD between, the init-decode rule), `MpdInvalid{reason}`
-(no Period, no playable set, unprocessable essential group; fatal when nothing can play), `UnsupportedAddressing{reason}` (`presentation_type_list`, `data_url`, `open_ended_range`, `hierarchical_sidx`; fatal only when no Representation is left),
+(no Period, no playable set, unprocessable essential group; fatal when nothing can play), `UnsupportedAddressing{reason}` (`data_url`, `open_ended_range`, `hierarchical_sidx`, and any other `Unsupported` the client refuses; fatal only when no Representation is left),
 `UnsupportedFeature{feature: &'static str}` (non-fatal, 6.1), `LiveEdgeLost` (non-fatal), `ClockUnavailable` (fatal). Reused unchanged: `UnsupportedEncryption`, `TrackDropped`, `UnsupportedContainer`, `SegmentFetchFailed`, `InitFetchFailed`,
 `InitDecodeFailed`, `BodyTooLarge{field}` (fields renamed per Q3), `UnknownRenderedTrack`.
 

@@ -143,6 +143,9 @@ pub enum FatalKind {
         /// What is missing.
         reason: &'static str,
     },
+    /// A feature of the MPD that this client deliberately does not implement,
+    /// with nothing playable left ([`crate::error::Unsupported`]).
+    Unsupported(crate::error::Unsupported),
     /// A URL derived from the MPD was refused.
     UnsupportedAddressing {
         /// Which rule (`cross_origin`, `unusable_url`).
@@ -177,6 +180,7 @@ impl FatalKind {
         match self {
             Self::ClockUnavailable => "clock_unavailable",
             Self::MpdInvalid { .. } => "mpd_invalid",
+            Self::Unsupported(u) => u.name(),
             Self::UnsupportedAddressing { .. } => "unsupported_addressing",
             Self::SegmentFetchFailed { .. } => "segment_fetch_failed",
             Self::InitFetchFailed { .. } => "init_fetch_failed",

@@ -561,9 +561,7 @@ impl DashClient {
         if mpd.kind == PresentationType::List {
             // `@type="list"` (ISO/IEC 23009-1 ed.6) presents imported MPDs the
             // client does not fetch: nothing here is playable as one stream.
-            self.go_fatal(FatalKind::MpdInvalid {
-                reason: "presentation_type_list",
-            });
+            self.go_fatal(FatalKind::Unsupported(Unsupported::PresentationTypeList));
             return Ok(());
         }
         if mpd.periods.is_empty() {
