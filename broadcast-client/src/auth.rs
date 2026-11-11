@@ -1,4 +1,12 @@
 //! Origin-scoped credentials and challenge handling.
+//!
+//! ```rust
+//! use broadcast_client::auth::AuthState;
+//! use url::Url;
+//! let origin = Url::parse("http://example/live.ts").unwrap();
+//! let auth = AuthState::new(origin, vec![]);
+//! assert!(!auth.is_waiting());
+//! ```
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -21,7 +29,7 @@ const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const CHALLENGE_SEPARATOR: &str = ", ";
 
 /// Whether a request's headers carry credentials for the origin or for a proxy.
-pub(crate) fn carries_credentials(headers: &[(String, String)]) -> bool {
+pub fn carries_credentials(headers: &[(String, String)]) -> bool {
     headers.iter().any(|(k, _)| {
         k.eq_ignore_ascii_case(AUTHORIZATION) || k.eq_ignore_ascii_case(PROXY_AUTHORIZATION)
     })
@@ -99,7 +107,7 @@ impl AuthState {
     }
 
     /// The configured credentials.
-    pub(crate) fn credentials(&self) -> Option<&Credentials> {
+    pub fn credentials(&self) -> Option<&Credentials> {
         self.credentials.as_ref()
     }
 

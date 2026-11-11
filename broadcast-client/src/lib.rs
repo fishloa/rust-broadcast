@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-pub(crate) mod auth;
+pub mod auth;
 mod buffer;
 mod cookies;
 pub mod error;
@@ -19,6 +19,7 @@ pub(crate) mod redirect;
 mod rendered;
 pub mod session;
 pub mod source;
+pub use source::fetch as fetch;
 pub mod srt;
 pub mod timeline;
 pub mod tshttp;

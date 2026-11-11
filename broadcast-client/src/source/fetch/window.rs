@@ -5,6 +5,12 @@
 //! delivery stalls on them instead of skipping ahead. [`Lanes`] orders queued actions by the
 //! sequence they were produced in while letting only fresh requests be held back by a full window,
 //! so a retry inside the window is never blocked.
+//!
+//! ```rust
+//! use broadcast_client::fetch::window::Window;
+//! let mut window = Window::<u32>::new(2);
+//! assert!(window.is_open());
+//! ```
 
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::vec::Vec;
@@ -12,7 +18,8 @@ use core::hash::Hash;
 use std::collections::HashMap;
 
 #[derive(Debug)]
-pub(crate) struct Window<K> {
+/// Fetch-window bookkeeping.
+pub struct Window<K> {
     cap: usize,
     order: VecDeque<K>,
     held: HashMap<K, Vec<u8>>,
@@ -21,7 +28,7 @@ pub(crate) struct Window<K> {
 
 impl<K: Copy + Eq + Ord + Hash> Window<K> {
     /// A window of `cap` resources; a cap of zero is raised to one.
-    pub(crate) fn new(cap: usize) -> Self {
+    pub fn new(cap: usize) -> Self {
         Self {
             cap: cap.max(1),
             order: VecDeque::new(),
@@ -31,29 +38,31 @@ impl<K: Copy + Eq + Ord + Hash> Window<K> {
     }
 
     /// Room for another fresh request: fewer than `cap` resources issued and not yet delivered.
-    pub(crate) fn is_open(&self) -> bool {
+    pub fn is_open(&self) -> bool {
         self.order.len() < self.cap
     }
 
-    pub(crate) fn contains(&self, key: &K) -> bool {
+    /// Fetch-window bookkeeping.
+    pub fn contains(&self, key: &K) -> bool {
         self.order.contains(key)
     }
 
     /// Puts `key` last in delivery order, unless it is already in the window, and clears its
     /// failed mark.
-    pub(crate) fn issue(&mut self, key: K) {
+    pub fn issue(&mut self, key: K) {
         self.failed.remove(&key);
         if !self.order.contains(&key) {
             self.order.push_back(key);
         }
     }
 
-    pub(crate) fn hold(&mut self, key: K, body: Vec<u8>) {
+    /// Fetch-window bookkeeping.
+    pub fn hold(&mut self, key: K, body: Vec<u8>) {
         self.held.insert(key, body);
     }
 
     /// The next resource in delivery order if its body is held and it has not failed.
-    pub(crate) fn pop_ready(&mut self) -> Option<(K, Vec<u8>)> {
+    pub fn pop_ready(&mut self) -> Option<(K, Vec<u8>)> {
         let front = self.order.front().copied()?;
         if self.failed.contains(&front) {
             return None;
@@ -63,28 +72,31 @@ impl<K: Copy + Eq + Ord + Hash> Window<K> {
         Some((front, body))
     }
 
-    pub(crate) fn fail(&mut self, key: K) {
+    /// Fetch-window bookkeeping.
+    pub fn fail(&mut self, key: K) {
         self.failed.insert(key);
     }
 
     /// Puts a delivered-then-rejected resource back first in delivery order, marked failed.
-    pub(crate) fn requeue(&mut self, key: K) {
+    pub fn requeue(&mut self, key: K) {
         self.order.push_front(key);
         self.failed.insert(key);
     }
 
     /// Forgets `key` entirely: its place in order, its held body and its failed mark.
-    pub(crate) fn retire(&mut self, key: &K) {
+    pub fn retire(&mut self, key: &K) {
         self.failed.remove(key);
         self.order.retain(|o| o != key);
         self.held.remove(key);
     }
 
-    pub(crate) fn failed(&self) -> Vec<K> {
+    /// Fetch-window bookkeeping.
+    pub fn failed(&self) -> Vec<K> {
         self.failed.iter().copied().collect()
     }
 
-    pub(crate) fn clear(&mut self) {
+    /// Fetch-window bookkeeping.
+    pub fn clear(&mut self) {
         self.order.clear();
         self.held.clear();
         self.failed.clear();
@@ -92,14 +104,19 @@ impl<K: Copy + Eq + Ord + Hash> Window<K> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Lane {
+/// Fetch-window bookkeeping.
+pub enum Lane {
+    /// Fetch-window bookkeeping.
     Other,
+    /// Fetch-window bookkeeping.
     Retry,
+    /// Fetch-window bookkeeping.
     Fresh,
 }
 
-#[derive(Debug)]
-pub(crate) struct Lanes<A> {
+#[derive(Default, Debug)]
+/// Fetch-window bookkeeping.
+pub struct Lanes<A> {
     seq: u64,
     other: VecDeque<(u64, A)>,
     retry: VecDeque<(u64, A)>,
@@ -107,7 +124,8 @@ pub(crate) struct Lanes<A> {
 }
 
 impl<A> Lanes<A> {
-    pub(crate) fn new() -> Self {
+    /// Fetch-window bookkeeping.
+    pub fn new() -> Self {
         Self {
             seq: 0,
             other: VecDeque::new(),
@@ -116,7 +134,8 @@ impl<A> Lanes<A> {
         }
     }
 
-    pub(crate) fn push(&mut self, lane: Lane, action: A) {
+    /// Fetch-window bookkeeping.
+    pub fn push(&mut self, lane: Lane, action: A) {
         let seq = self.seq;
         self.seq = self.seq.wrapping_add(1);
         let queue = match lane {
@@ -129,7 +148,7 @@ impl<A> Lanes<A> {
 
     /// The oldest queued action across the lanes; the fresh lane is skipped while the window is
     /// full.
-    pub(crate) fn next(&mut self, window_open: bool) -> Option<A> {
+    pub fn next(&mut self, window_open: bool) -> Option<A> {
         let head = |queue: &VecDeque<(u64, A)>| queue.front().map(|(seq, _)| *seq);
         let lane = [
             (head(&self.other), Lane::Other),
@@ -148,16 +167,18 @@ impl<A> Lanes<A> {
         queue.pop_front().map(|(_, action)| action)
     }
 
-    pub(crate) fn any_other(&self, mut pred: impl FnMut(&A) -> bool) -> bool {
+    /// Fetch-window bookkeeping.
+    pub fn any_other(&self, mut pred: impl FnMut(&A) -> bool) -> bool {
         self.other.iter().any(|(_, a)| pred(a))
     }
 
     /// The queued retry and fresh actions, retries first.
-    pub(crate) fn resource_actions(&self) -> impl Iterator<Item = &A> {
+    pub fn resource_actions(&self) -> impl Iterator<Item = &A> {
         self.retry.iter().chain(self.fresh.iter()).map(|(_, a)| a)
     }
 
-    pub(crate) fn clear(&mut self) {
+    /// Fetch-window bookkeeping.
+    pub fn clear(&mut self) {
         self.other.clear();
         self.retry.clear();
         self.fresh.clear();

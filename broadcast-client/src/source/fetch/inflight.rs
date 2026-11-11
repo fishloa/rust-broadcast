@@ -18,23 +18,35 @@ use crate::source::fetch::resume::{Basis, Parked, Stash};
 use crate::source::fetch::retry::RefusedCapture;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum TimeoutClass {
+/// Fetch bookkeeping helper.
+pub enum TimeoutClass {
+    /// Fetch bookkeeping helper.
     Manifest,
+    /// Fetch bookkeeping helper.
     Segment,
+    /// Fetch bookkeeping helper.
     Aux,
 }
 
-pub(crate) trait PurposeKind: Copy {
+/// Fetch bookkeeping helper.
+pub trait PurposeKind: Copy {
+    /// Fetch bookkeeping helper.
     fn is_media(self) -> bool;
+    /// Fetch bookkeeping helper.
     fn timeout_class(self) -> TimeoutClass;
+    /// Fetch bookkeeping helper.
     fn oversize_field(self) -> Option<&'static str>;
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Timeouts {
-    pub(crate) manifest_us: u64,
-    pub(crate) segment_us: u64,
-    pub(crate) aux_us: u64,
+/// Fetch bookkeeping helper.
+pub struct Timeouts {
+    /// Fetch bookkeeping helper.
+    pub manifest_us: u64,
+    /// Fetch bookkeeping helper.
+    pub segment_us: u64,
+    /// Fetch bookkeeping helper.
+    pub aux_us: u64,
 }
 
 impl Timeouts {
@@ -47,26 +59,43 @@ impl Timeouts {
     }
 }
 
-pub(crate) struct Req<P, X> {
-    pub(crate) purpose: P,
-    pub(crate) original_url: alloc::string::String,
-    pub(crate) url: Url,
-    pub(crate) byte_range: Option<(u64, u64)>,
-    pub(crate) redirects: u32,
-    pub(crate) authed: bool,
-    pub(crate) stale_replayed: bool,
-    pub(crate) lease: Option<ConnLease>,
-    pub(crate) started_us: u64,
-    pub(crate) last_activity_us: u64,
-    pub(crate) responded_ok: bool,
-    pub(crate) basis: Option<Basis>,
-    pub(crate) resume_from: Option<u64>,
-    pub(crate) body: BodyAcc,
-    pub(crate) extra: X,
+/// Fetch bookkeeping helper.
+pub struct Req<P, X> {
+    /// Fetch bookkeeping helper.
+    pub purpose: P,
+    /// Fetch bookkeeping helper.
+    pub original_url: alloc::string::String,
+    /// Fetch bookkeeping helper.
+    pub url: Url,
+    /// Fetch bookkeeping helper.
+    pub byte_range: Option<(u64, u64)>,
+    /// Fetch bookkeeping helper.
+    pub redirects: u32,
+    /// Fetch bookkeeping helper.
+    pub authed: bool,
+    /// Fetch bookkeeping helper.
+    pub stale_replayed: bool,
+    /// Fetch bookkeeping helper.
+    pub lease: Option<ConnLease>,
+    /// Fetch bookkeeping helper.
+    pub started_us: u64,
+    /// Fetch bookkeeping helper.
+    pub last_activity_us: u64,
+    /// Fetch bookkeeping helper.
+    pub responded_ok: bool,
+    /// Fetch bookkeeping helper.
+    pub basis: Option<Basis>,
+    /// Fetch bookkeeping helper.
+    pub resume_from: Option<u64>,
+    /// Fetch bookkeeping helper.
+    pub body: BodyAcc,
+    /// Fetch bookkeeping helper.
+    pub extra: X,
 }
 
 impl<P: PurposeKind, X> Req<P, X> {
-    pub(crate) fn new(
+    /// Fetch bookkeeping helper.
+    pub fn new(
         purpose: P,
         url: Url,
         byte_range: Option<(u64, u64)>,
@@ -98,16 +127,21 @@ impl<P: PurposeKind, X> Req<P, X> {
     }
 }
 
-pub(crate) struct InFlight<P, X> {
-    pub(crate) reqs: HashMap<u32, Req<P, X>>,
-    pub(crate) deadlines: Deadlines<u32>,
+/// Fetch bookkeeping helper.
+pub struct InFlight<P, X> {
+    /// Fetch bookkeeping helper.
+    pub reqs: HashMap<u32, Req<P, X>>,
+    /// Fetch bookkeeping helper.
+    pub deadlines: Deadlines<u32>,
     inactivity: Inactivity,
     conn_alloc: ConnAlloc,
-    pub(crate) timeouts: Timeouts,
+    /// Fetch bookkeeping helper.
+    pub timeouts: Timeouts,
 }
 
 impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
-    pub(crate) fn new(timeouts: Timeouts, inactivity_us: u64, conn_alloc: ConnAlloc) -> Self {
+    /// Fetch bookkeeping helper.
+    pub fn new(timeouts: Timeouts, inactivity_us: u64, conn_alloc: ConnAlloc) -> Self {
         Self {
             reqs: HashMap::new(),
             deadlines: Deadlines::new(),
@@ -117,7 +151,8 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         }
     }
 
-    pub(crate) fn start(
+    /// Fetch bookkeeping helper.
+    pub fn start(
         &mut self,
         mut req: Req<P, X>,
         mut headers: Vec<(alloc::string::String, alloc::string::String)>,
@@ -178,7 +213,8 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         });
     }
 
-    pub(crate) fn overdue(&mut self, now: u64) -> Vec<u32> {
+    /// Fetch bookkeeping helper.
+    pub fn overdue(&mut self, now: u64) -> Vec<u32> {
         let reqs = &self.reqs;
         let timeouts = &self.timeouts;
         self.deadlines.expire(now, |conn, deadline| {
@@ -187,19 +223,22 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         })
     }
 
-    pub(crate) fn inactive(&mut self, now: u64) -> Expired {
+    /// Fetch bookkeeping helper.
+    pub fn inactive(&mut self, now: u64) -> Expired {
         let reqs = &self.reqs;
         self.inactivity
             .expire(now, |conn| reqs.get(&conn).map(|r| r.last_activity_us))
     }
 
-    pub(crate) fn clear(&mut self) {
+    /// Fetch bookkeeping helper.
+    pub fn clear(&mut self) {
         self.reqs.clear();
         self.deadlines.clear();
         self.inactivity.clear();
     }
 
-    pub(crate) fn on_data(
+    /// Fetch bookkeeping helper.
+    pub fn on_data(
         &mut self,
         conn: u32,
         bytes: &[u8],
@@ -240,7 +279,8 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         Some(req)
     }
 
-    pub(crate) fn stalled_conns(&mut self, now: u64, actions: &mut VecDeque<Action>) -> Vec<u32> {
+    /// Fetch bookkeeping helper.
+    pub fn stalled_conns(&mut self, now: u64, actions: &mut VecDeque<Action>) -> Vec<u32> {
         let expired = self.inactive(now);
         for at in expired.wakes {
             actions.push_back(Action::WakeAt(at));
@@ -248,7 +288,8 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         expired.stalled
     }
 
-    pub(crate) fn stall(
+    /// Fetch bookkeeping helper.
+    pub fn stall(
         &mut self,
         conn: u32,
         stash: &mut Stash<P>,
@@ -283,32 +324,48 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
     }
 }
 
-pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-pub(crate) const STATUS_UNAUTHORIZED: u16 = 401;
-pub(crate) const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
+/// Fetch bookkeeping helper.
+pub const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+/// Fetch bookkeeping helper.
+pub const STATUS_UNAUTHORIZED: u16 = 401;
+/// Fetch bookkeeping helper.
+pub const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const STATUS_TOO_MANY_REQUESTS: u16 = 429;
 const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
 
-pub(crate) enum HeadRoute<P, X> {
+/// Fetch bookkeeping helper.
+pub enum HeadRoute<P, X> {
+    /// Fetch bookkeeping helper.
     Send(Req<P, X>),
+    /// Fetch bookkeeping helper.
     RedirectsExhausted(Req<P, X>),
+    /// Fetch bookkeeping helper.
     Parked,
+    /// Fetch bookkeeping helper.
     Other(Req<P, X>),
 }
 
-pub(crate) struct Outbox<'a> {
-    pub(crate) actions: &'a mut VecDeque<Action>,
-    pub(crate) events: &'a mut VecDeque<Event>,
+/// Fetch bookkeeping helper.
+pub struct Outbox<'a> {
+    /// Fetch bookkeeping helper.
+    pub actions: &'a mut VecDeque<Action>,
+    /// Fetch bookkeeping helper.
+    pub events: &'a mut VecDeque<Event>,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct ResponseHead<'a> {
-    pub(crate) conn: u32,
-    pub(crate) status: u16,
-    pub(crate) headers: &'a [(String, String)],
+/// Fetch bookkeeping helper.
+pub struct ResponseHead<'a> {
+    /// Fetch bookkeeping helper.
+    pub conn: u32,
+    /// Fetch bookkeeping helper.
+    pub status: u16,
+    /// Fetch bookkeeping helper.
+    pub headers: &'a [(String, String)],
 }
 
-pub(crate) fn route_head<P: PurposeKind, X>(
+/// Fetch bookkeeping helper.
+pub fn route_head<P: PurposeKind, X>(
     mut req: Req<P, X>,
     head: ResponseHead<'_>,
     max_redirects: u32,
@@ -353,7 +410,8 @@ pub(crate) fn route_head<P: PurposeKind, X>(
     HeadRoute::Other(req)
 }
 
-pub(crate) fn record_refusal(
+/// Fetch bookkeeping helper.
+pub fn record_refusal(
     head: ResponseHead<'_>,
     retry_after_us: u64,
     refused_captures: &mut BTreeMap<u32, RefusedCapture>,

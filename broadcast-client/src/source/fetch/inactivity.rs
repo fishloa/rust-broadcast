@@ -8,19 +8,24 @@ use alloc::vec::Vec;
 use super::deadlines::Deadlines;
 
 #[derive(Debug)]
-pub(crate) struct Inactivity {
+/// Fetch bookkeeping helper.
+pub struct Inactivity {
     limit_us: u64,
     deadlines: Deadlines<u32>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct Expired {
-    pub(crate) stalled: Vec<u32>,
-    pub(crate) wakes: Vec<u64>,
+/// Fetch bookkeeping helper.
+pub struct Expired {
+    /// Fetch bookkeeping helper.
+    pub stalled: Vec<u32>,
+    /// Fetch bookkeeping helper.
+    pub wakes: Vec<u64>,
 }
 
 impl Inactivity {
-    pub(crate) fn new(limit_us: u64) -> Self {
+    /// Fetch bookkeeping helper.
+    pub fn new(limit_us: u64) -> Self {
         Self {
             limit_us,
             deadlines: Deadlines::new(),
@@ -28,7 +33,7 @@ impl Inactivity {
     }
 
     /// Starts watching `conn`, last active at `now`; the instant the host must poll at by.
-    pub(crate) fn arm(&mut self, conn: u32, now: u64) -> Option<u64> {
+    pub fn arm(&mut self, conn: u32, now: u64) -> Option<u64> {
         let deadline = now.checked_add(self.limit_us)?;
         self.deadlines.arm(conn, deadline);
         Some(deadline)
@@ -36,7 +41,7 @@ impl Inactivity {
 
     /// The connections stalled at `now`, and the new instants to poll at for the ones still
     /// active. `last_activity` is `None` for a connection that is gone.
-    pub(crate) fn expire(
+    pub fn expire(
         &mut self,
         now: u64,
         last_activity: impl Fn(u32) -> Option<u64>,
@@ -64,7 +69,8 @@ impl Inactivity {
         out
     }
 
-    pub(crate) fn compact(&mut self, live: impl Fn() -> Vec<(u32, u64)>) {
+    /// Fetch bookkeeping helper.
+    pub fn compact(&mut self, live: impl Fn() -> Vec<(u32, u64)>) {
         let limit = self.limit_us;
         let live = live();
         self.deadlines.compact(live.len(), || {
@@ -73,7 +79,8 @@ impl Inactivity {
         });
     }
 
-    pub(crate) fn clear(&mut self) {
+    /// Fetch bookkeeping helper.
+    pub fn clear(&mut self) {
         self.deadlines.clear();
     }
 }
