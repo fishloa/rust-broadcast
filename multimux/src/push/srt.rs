@@ -113,10 +113,6 @@ pub(crate) fn validate_srt_url(url: &str) -> Result<(), String> {
     })
 }
 
-/// The SRT-live payload for MPEG-2 TS: seven 188-byte packets (1316 bytes),
-/// the largest whole-packet multiple that fits one 1500-byte-MTU datagram.
-const SRT_LIVE_PAYLOAD: usize = 7 * 188;
-
 #[async_trait::async_trait]
 impl PushTransport for SrtTransport {
     type Config = SrtTransportConfig;
@@ -150,9 +146,10 @@ impl PushTransport for SrtTransport {
         // One SRT message is one UDP datagram (no segmentation in the
         // runtime), and the receiver drops and counts any datagram over its
         // MTU-sized cap. A muxed frame is far larger than that, so split it
-        // into the standard SRT-live TS payload of seven 188-byte packets;
+        // into the standard datagram payload (`mpeg_ts::TS_BYTES_PER_DATAGRAM`,
+        // seven 188-byte packets);
         // before this, every frame over ~1.3 kB was silently lost (#1024).
-        for chunk in data.chunks(SRT_LIVE_PAYLOAD) {
+        for chunk in data.chunks(mpeg_ts::TS_BYTES_PER_DATAGRAM) {
             socket.send(chunk).await?;
         }
         Ok(())
