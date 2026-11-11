@@ -51,6 +51,19 @@ pub enum SrtMode {
     Listener,
 }
 
+impl UrlRejection {
+    /// The `name()` label convention (#204).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            UrlRejection::Authority => "authority",
+            UrlRejection::LatencyNotANumber => "latency-not-a-number",
+            UrlRejection::LatencyTooLarge => "latency-too-large",
+            UrlRejection::Mode => "mode",
+        }
+    }
+}
+
 impl SrtMode {
     /// The `name()` label convention (#204).
     #[must_use]
@@ -63,9 +76,10 @@ impl SrtMode {
 }
 
 broadcast_common::impl_spec_display!(SrtMode);
+broadcast_common::impl_spec_display!(UrlRejection);
 
 /// A parsed `srt://` URL: the endpoint to dial and its Stream ID overrides.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SrtUrl {
     /// The endpoint's host (a domain name or a bracketed IP literal).
@@ -96,6 +110,23 @@ pub enum UrlRejection {
     LatencyTooLarge,
     /// A `mode` other than `caller` or `listener`.
     Mode,
+}
+
+/// Manual `Debug`: a `passphrase` is a secret and never renders.
+impl core::fmt::Debug for SrtUrl {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SrtUrl")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("stream_id", &self.stream_id)
+            .field("latency_ms", &self.latency_ms)
+            .field("mode", &self.mode)
+            .field(
+                "passphrase",
+                &self.passphrase.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl SrtUrl {
@@ -208,6 +239,14 @@ fn percent_decode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_redacts_the_passphrase() {
+        let url = SrtUrl::parse("srt://h?passphrase=SECRET").expect("passphrase");
+        let rendered = format!("{url:?}");
+        assert!(!rendered.contains("SECRET"), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+    }
 
     #[test]
     fn host_only_takes_the_default_port() {

@@ -64,11 +64,18 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "srt-runtime",
-        allow: &[(
-            "src/handshake_sm.rs",
-            "NegotiatedParams",
-            "its `sek` is a SecretBytes, whose Debug prints only the length",
-        )],
+        allow: &[
+            (
+                "src/handshake_sm.rs",
+                "NegotiatedParams",
+                "its `sek` is a SecretBytes, whose Debug prints only the length",
+            ),
+            (
+                "src/url.rs",
+                "SrtUrl",
+                "`SrtUrl` has a hand-written Debug that redacts `passphrase`",
+            ),
+        ],
         ct_compare: true,
     },
     Crate {
