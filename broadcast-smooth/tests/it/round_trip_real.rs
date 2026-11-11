@@ -10,36 +10,43 @@
 
 use broadcast_smooth::SmoothManifest;
 
-fn manifests() -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for dir in ["smooth", "golden/smooth"] {
-        let root = test_fixtures::root().join(dir);
-        let entries = match std::fs::read_dir(&root) {
-            Ok(entries) => entries,
-            Err(e) if dir == "smooth" => {
-                println!("skipping {dir}: only in the private fixture tier ({e})");
-                continue;
-            }
-            Err(e) => panic!("read {dir}: {e}"),
-        };
-        for entry in entries {
-            let path = entry.expect("dir entry").path();
-            let is_manifest = path.is_file()
-                && (path.file_name().is_some_and(|n| n == "Manifest")
-                    || path.extension().is_some_and(|e| e == "xml"));
-            if is_manifest {
-                let name = path
-                    .strip_prefix(test_fixtures::root())
-                    .expect("under fixtures root")
-                    .display()
-                    .to_string();
-                let xml = std::fs::read_to_string(&path)
-                    .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-                out.push((name, xml));
-            }
+fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            walk(&path, out);
+        } else {
+            out.push(path);
         }
     }
-    assert!(!out.is_empty(), "no Smooth manifest fixtures were found");
+}
+
+fn manifests() -> Vec<(String, String)> {
+    let mut paths = Vec::new();
+    for dir in ["smooth", "golden/smooth"] {
+        walk(&test_fixtures::root().join(dir), &mut paths);
+    }
+    paths.sort();
+    let mut out = Vec::new();
+    for path in paths {
+        let is_manifest = path.file_name().is_some_and(|n| n == "Manifest")
+            || path.extension().is_some_and(|e| e == "xml");
+        if is_manifest {
+            let name = path
+                .strip_prefix(test_fixtures::root())
+                .expect("under fixtures root")
+                .display()
+                .to_string();
+            let xml = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            out.push((name, xml));
+        }
+    }
+    assert!(
+        out.iter().any(|(n, _)| n.starts_with("smooth/")),
+        "no ffmpeg Smooth manifest found under fixtures/smooth"
+    );
     out
 }
 
