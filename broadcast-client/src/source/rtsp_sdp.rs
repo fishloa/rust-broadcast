@@ -79,15 +79,11 @@ pub(crate) fn parse_tracks(
         None,
         text,
         FIRST_CHANNEL,
+        MAX_TRACKS,
         |media_index, media| {
             let info = skipped_media(media_index, media);
             described.push(info.clone());
-            let playable = if candidates.len() >= MAX_TRACKS {
-                None
-            } else {
-                supported(media)
-            };
-            match playable {
+            match supported(media) {
                 Some((kind, config, clock_rate, _ready)) => {
                     candidates.push(Candidate {
                         media_index,
@@ -108,7 +104,9 @@ pub(crate) fn parse_tracks(
     skipped.extend(
         plan.skipped()
             .iter()
-            .filter_map(|m| described.get(m.media_index).cloned()),
+            .map(|m| m.media_index)
+            .chain(plan.over_limit().iter().copied())
+            .filter_map(|index| described.get(index).cloned()),
     );
     skipped.sort_by_key(|m| m.media_index);
     let mut tracks: Vec<TrackInit> = Vec::new();

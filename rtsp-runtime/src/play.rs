@@ -67,9 +67,9 @@ pub struct SkippedMedia {
 #[non_exhaustive]
 pub struct PlayPlan {
     play_uri: String,
-    session_control_foreign: bool,
     setups: Vec<PlannedSetup>,
     skipped: Vec<SkippedMedia>,
+    over_limit: Vec<usize>,
     channels: Vec<(u8, u8)>,
 }
 
@@ -81,8 +81,7 @@ fn control_of(attributes: &[sdp_types::Attribute]) -> Option<&str> {
 }
 
 impl PlayPlan {
-    /// Plans every media section of `sdp`, refusing a session-level `a=control`
-    /// on another authority.
+    /// Plans every media section of `sdp`.
     ///
     /// Relative controls resolve against `content_base`, else
     /// `content_location`, else `request_url` kept with a trailing slash so a
@@ -90,14 +89,14 @@ impl PlayPlan {
     /// C.1.1). Track `n` is offered the interleaved pair `first_channel + 2n` /
     /// `first_channel + 2n + 1`. A media control on another authority is
     /// listed in [`skipped`](Self::skipped) instead of set up. `PLAY` goes to
-    /// the session-level control (absent is the request URL, `*` the base).
+    /// the session-level control (`*` is the base); a session-level control
+    /// that is absent, or on another authority, leaves `PLAY` on `request_url`.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidSdp`] when `sdp` does not parse,
-    /// [`Error::InvalidUrl`] when the session-level control crosses
-    /// authorities, and [`Error::InterleavedChannelExhausted`] when the pairs
-    /// no longer fit in a `u8`.
+    /// [`Error::InvalidSdp`] when `sdp` does not parse and
+    /// [`Error::InterleavedChannelExhausted`] when the pairs no longer fit in a
+    /// `u8`.
     pub fn from_describe(
         request_url: &url::Url,
         content_base: Option<&str>,
@@ -105,39 +104,34 @@ impl PlayPlan {
         sdp: &str,
         first_channel: u8,
     ) -> Result<Self> {
-        let plan = Self::from_describe_selecting(
+        Self::from_describe_selecting(
             request_url,
             content_base,
             content_location,
             sdp,
             first_channel,
+            usize::MAX,
             |_, _| true,
-        )?;
-        if plan.session_control_foreign {
-            return Err(Error::InvalidUrl {
-                what: "session control crosses authorities",
-            });
-        }
-        Ok(plan)
+        )
     }
 
     /// Like [`from_describe`](Self::from_describe), but only media sections
-    /// `select` accepts (called with the section's position and description,
-    /// in order) are planned, and a session-level control on another authority
-    /// is not an error: [`play_uri`](Self::play_uri) falls back to
-    /// `request_url` and [`session_control_foreign`](Self::session_control_foreign)
-    /// reports it. A section `select` rejects appears nowhere in the plan.
+    /// `select` accepts (called once per section with its position and
+    /// description, in order) are planned, and at most `max_setups` sections
+    /// are set up: an accepted section with a usable control beyond that
+    /// budget is listed in [`over_limit`](Self::over_limit). A section
+    /// `select` rejects appears nowhere in the plan.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidSdp`] and [`Error::InterleavedChannelExhausted`] as for
-    /// [`from_describe`](Self::from_describe).
+    /// As for [`from_describe`](Self::from_describe).
     pub fn from_describe_selecting(
         request_url: &url::Url,
         content_base: Option<&str>,
         content_location: Option<&str>,
         sdp: &str,
         first_channel: u8,
+        max_setups: usize,
         mut select: impl FnMut(usize, &sdp_types::Media) -> bool,
     ) -> Result<Self> {
         let description = sdp_types::Session::parse(sdp.as_bytes())
@@ -155,13 +149,13 @@ impl PlayPlan {
                 base
             });
 
-        let session_play =
-            crate::sdp::resolve_control(request_url, &base, control_of(&description.attributes));
-        let session_control_foreign = session_play.is_none();
-        let play_uri = session_play.unwrap_or_else(|| request_url.to_string());
+        let play_uri =
+            crate::sdp::resolve_control(request_url, &base, control_of(&description.attributes))
+                .unwrap_or_else(|| request_url.to_string());
 
         let mut setups: Vec<PlannedSetup> = Vec::new();
         let mut skipped: Vec<SkippedMedia> = Vec::new();
+        let mut over_limit: Vec<usize> = Vec::new();
         let mut channels: Vec<(u8, u8)> = Vec::new();
         let mut next_low = Some(first_channel);
         for (media_index, media) in description.medias.iter().enumerate() {
@@ -176,6 +170,10 @@ impl PlayPlan {
                 }));
                 continue;
             };
+            if setups.len() >= max_setups {
+                over_limit.push(media_index);
+                continue;
+            }
             let low = next_low.ok_or(Error::InterleavedChannelExhausted)?;
             let high = low
                 .checked_add(1)
@@ -191,9 +189,9 @@ impl PlayPlan {
 
         Ok(Self {
             play_uri,
-            session_control_foreign,
             setups,
             skipped,
+            over_limit,
             channels,
         })
     }
@@ -213,10 +211,10 @@ impl PlayPlan {
         &self.play_uri
     }
 
-    /// Whether the session-level `a=control` crossed authorities, so
-    /// [`play_uri`](Self::play_uri) fell back to the request URL.
-    pub fn session_control_foreign(&self) -> bool {
-        self.session_control_foreign
+    /// Positions of accepted media sections with a usable control left out
+    /// because `max_setups` sections were already planned.
+    pub fn over_limit(&self) -> &[usize] {
+        &self.over_limit
     }
 
     /// The interleaved `(RTP, RTCP)` channels of setup `index`: the offered
@@ -450,22 +448,32 @@ mod tests {
     }
 
     #[test]
-    fn a_foreign_session_control_is_refused_or_reported() {
-        assert!(matches!(
-            plan(None, Some("rtsp://other.example/agg"), &["trackID=0"], 0),
-            Err(Error::InvalidUrl { .. })
-        ));
-        let lenient = PlayPlan::from_describe_selecting(
-            &url::Url::parse(REQUEST).unwrap(),
+    fn a_foreign_session_control_leaves_play_on_the_request_url() {
+        let plan = plan(None, Some("rtsp://other.example/agg"), &["trackID=0"], 0).unwrap();
+        assert_eq!(plan.play_uri(), REQUEST);
+        assert_eq!(plan.setups().len(), 1);
+    }
+
+    #[test]
+    fn the_setup_budget_counts_only_planned_tracks() {
+        let controls: Vec<String> = (0..17).map(|n| format!("trackID={n}")).collect();
+        let mut all: Vec<&str> = vec!["rtsp://other.example/x"];
+        all.extend(controls.iter().map(String::as_str));
+        let request = url::Url::parse(REQUEST).unwrap();
+        let plan = PlayPlan::from_describe_selecting(
+            &request,
             None,
             None,
-            &sdp(Some("rtsp://other.example/agg"), &["trackID=0"]),
+            &sdp(None, &all),
             0,
+            16,
             |_, _| true,
         )
         .unwrap();
-        assert!(lenient.session_control_foreign());
-        assert_eq!(lenient.play_uri(), REQUEST);
+        assert_eq!(plan.setups().len(), 16);
+        assert_eq!(plan.setups()[0].media_index, 1);
+        assert_eq!(plan.skipped().len(), 1);
+        assert_eq!(plan.over_limit(), [17]);
     }
 
     #[test]
@@ -477,6 +485,7 @@ mod tests {
             None,
             &sdp(None, &["trackID=0", "trackID=1"]),
             0,
+            usize::MAX,
             |index, _| index == 1,
         )
         .unwrap();

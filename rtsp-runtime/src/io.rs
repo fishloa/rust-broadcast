@@ -384,8 +384,8 @@ where
     /// replaces the last path segment. A media control that crosses
     /// `url`'s authority is not set up and is listed in
     /// [`PlaySession::skipped`]. `PLAY` goes to the session-level `a=control`
-    /// (an absent value or `*` is the aggregate); a session-level control that
-    /// crosses authorities is [`Error::InvalidUrl`].
+    /// (`*` is the base); an absent session-level control, or one on another
+    /// authority, leaves `PLAY` on `url`.
     ///
     /// Each track is offered the interleaved pair `first_channel + 2n` /
     /// `first_channel + 2n + 1`; the channel the server answers with is the one
