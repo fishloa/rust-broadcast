@@ -131,28 +131,6 @@ const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
 /// this is the same accepted convention, not a new fabrication).
 const UNKNOWN_DIMENSION: u16 = 0;
 
-<<<<<<< HEAD
-/// H.264 NAL unit type field mask (ISO/IEC 14496-10 §7.3.1 `nal_unit_type`,
-/// 5 bits).
-const NAL_TYPE_MASK: u8 = 0x1F;
-/// Sequence parameter set NAL unit type (ISO/IEC 14496-10 Table 7-1).
-const NAL_TYPE_SPS: u8 = 7;
-/// Picture parameter set NAL unit type (ISO/IEC 14496-10 Table 7-1).
-const NAL_TYPE_PPS: u8 = 8;
-/// AVCC-style NAL length-prefix width (`length_size_minus_one` = 3, i.e. a
-/// 4-byte length) — matches `transmux::rtp::reassemble_video`'s own encoding
-/// of the AUs [`RtpStreamDepacketiser::push`] emits.
-const NAL_LENGTH_PREFIX: usize = 4;
-
-/// RFC 3550 §5.1 fixed RTP header length (before any CSRC/extension) — used
-/// only to read the payload-type byte before depayloading.
-const RTP_MIN_HEADER_LEN: usize = 12;
-/// Mask for the 7-bit payload-type field (RTP header byte 1, bit 7 is the
-/// marker bit).
-const RTP_PT_MASK: u8 = 0x7F;
-
-=======
->>>>>>> 2a90ec2c7 (refactor(multimux): WHIP ingest reads H.264 parameter sets and RTP headers through transmux and rtp-packet)
 /// Default cap on concurrently admitted WHIP publishers per route, mirroring
 /// [`crate::source::rtmp::DEFAULT_RTMP_MAX_SESSIONS`]'s own reasoning: generous
 /// for one origin's worth of encoders while still bounding a flood of inbound
@@ -1479,12 +1457,10 @@ fn payload_type_of(packet: &[u8]) -> Option<u8> {
 /// header extension is written back (X bit set, `defined by profile`, length
 /// in 32-bit words, data), so RFC 8285 `mid`/`rid`/CVO survive to the
 /// depacketiser.
-fn rebuild_rtp_wire(pkt: &webrtc_runtime::media::DecryptedRtp) -> Vec<u8> {
-<<<<<<< HEAD
-    let wire = rtp_packet::RtpPacket {
-=======
+fn rebuild_rtp_wire(
+    pkt: &webrtc_runtime::media::DecryptedRtp,
+) -> core::result::Result<Vec<u8>, rtp_packet::Error> {
     let packet = rtp_packet::RtpPacket {
->>>>>>> 2a90ec2c7 (refactor(multimux): WHIP ingest reads H.264 parameter sets and RTP headers through transmux and rtp-packet)
         marker: pkt.marker,
         payload_type: pkt.payload_type,
         sequence_number: pkt.sequence_number,
@@ -1501,17 +1477,9 @@ fn rebuild_rtp_wire(pkt: &webrtc_runtime::media::DecryptedRtp) -> Vec<u8> {
         padding: None,
         payload: &pkt.payload,
     };
-<<<<<<< HEAD
-    let mut out = vec![0u8; broadcast_common::Serialize::serialized_len(&wire)];
-    broadcast_common::Serialize::serialize_into(&wire, &mut out)
-        .expect("a parsed RTP packet re-serializes");
-=======
     let mut out = vec![0u8; packet.serialized_len()];
-    if packet.serialize_into(&mut out).is_err() {
-        return Vec::new();
-    }
->>>>>>> 2a90ec2c7 (refactor(multimux): WHIP ingest reads H.264 parameter sets and RTP headers through transmux and rtp-packet)
-    out
+    packet.serialize_into(&mut out)?;
+    Ok(out)
 }
 
 /// What one [`read_one`] call observed — mirrors
@@ -1719,7 +1687,13 @@ fn read_one<S: DatagramIo>(
                             let wire: Vec<Vec<u8>> = events
                                 .into_iter()
                                 .filter_map(|e| match e {
-                                    MediaEvent::Rtp(pkt) => Some(rebuild_rtp_wire(&pkt)),
+                                    MediaEvent::Rtp(pkt) => match rebuild_rtp_wire(&pkt) {
+                                        Ok(wire) => Some(wire),
+                                        Err(e) => {
+                                            tracing::warn!(error = %e, %peer, "whip: decrypted RTP packet does not re-serialize, skipping");
+                                            None
+                                        }
+                                    },
                                     _ => None,
                                 })
                                 .collect();
@@ -2461,7 +2435,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             }),
             payload: vec![0x55],
         };
-        let wire = rebuild_rtp_wire(&pkt);
+        let wire = rebuild_rtp_wire(&pkt).expect("a decrypted packet re-serializes");
         assert_eq!(wire[0], 0x80 | 0x10, "version 2 with the X bit, no CSRC");
         assert_eq!(&wire[12..14], &[0xBE, 0xDE], "defined by profile");
         assert_eq!(&wire[14..16], &[0x00, 0x01], "length = one 32-bit word");
@@ -2481,7 +2455,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             extension: None,
             payload: vec![0xAA, 0xBB, 0xCC],
         };
-        let wire = rebuild_rtp_wire(&pkt);
+        let wire = rebuild_rtp_wire(&pkt).expect("a decrypted packet re-serializes");
         // Version=2, one CSRC.
         assert_eq!(wire[0], 0x80 | 1);
         assert_eq!(wire[1], 0x80 | 96, "marker bit set, PT 96");
