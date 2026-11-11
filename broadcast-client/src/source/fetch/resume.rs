@@ -8,11 +8,6 @@
 //! `Content-Range` (14.4) starts exactly after the received prefix extends it; a `200` (the
 //! resource changed or ranges are ignored) replaces it; anything else drops it and asks for the
 //! whole resource again.
-//!
-//! ```rust
-//! use broadcast_client::fetch::resume::Basis;
-//! assert!(Basis::of(200, &[]).is_none());
-//! ```
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -85,26 +80,21 @@ impl Validator {
 /// What a resumable response said about the representation: the validator, the offset of the
 /// first body byte in the whole representation, and the offset of its last byte when known.
 #[derive(Debug, Clone)]
-pub struct Basis {
+pub(crate) struct Basis {
     validator: Validator,
     start: u64,
     end: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Conditional-GET resumption helper (RFC 9110).
-pub enum Resumed {
-    /// Conditional-GET resumption helper (RFC 9110).
+pub(crate) enum Resumed {
     Continue,
-    /// Conditional-GET resumption helper (RFC 9110).
     Restart,
-    /// Conditional-GET resumption helper (RFC 9110).
     Mismatch,
 }
 
 impl Basis {
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub fn of(status: u16, headers: &[(String, String)]) -> Option<Self> {
+    pub(crate) fn of(status: u16, headers: &[(String, String)]) -> Option<Self> {
         let map = map_of(headers);
         if map.typed_get::<ContentEncoding>().is_some() {
             return None;
@@ -141,7 +131,7 @@ impl Basis {
 
     /// The `Range` and `If-Range` headers asking for everything after the first `received` body
     /// bytes; `None` when nothing was received or nothing is left to ask for.
-    pub fn request_headers(&self, received: u64) -> Option<Vec<(String, String)>> {
+    pub(crate) fn request_headers(&self, received: u64) -> Option<Vec<(String, String)>> {
         if received == 0 {
             return None;
         }
@@ -200,13 +190,9 @@ impl Basis {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-/// Conditional-GET resumption helper (RFC 9110).
-pub enum HeadOutcome {
-    /// Conditional-GET resumption helper (RFC 9110).
+pub(crate) enum HeadOutcome {
     Accepted,
-    /// Conditional-GET resumption helper (RFC 9110).
     Refused,
-    /// Conditional-GET resumption helper (RFC 9110).
     Fallback,
 }
 
@@ -214,7 +200,7 @@ pub enum HeadOutcome {
 /// `resume_from` names the bytes already kept in `body`. `Refused` is a ranged request the
 /// answer does not honour; `Fallback` is a resumed request the answer does not continue, with
 /// `body` emptied so the caller asks for the whole resource again.
-pub fn accept_head(
+pub(crate) fn accept_head(
     body: &mut BodyAcc,
     basis: &mut Option<Basis>,
     resume_from: &mut Option<u64>,
@@ -257,37 +243,24 @@ pub fn accept_head(
 
 /// A closed request's received prefix, kept until the same resource is requested again.
 #[derive(Debug)]
-pub struct Parked {
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub url: String,
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub byte_range: Option<(u64, u64)>,
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub body: BodyAcc,
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub basis: Basis,
+pub(crate) struct Parked {
+    pub(crate) url: String,
+    pub(crate) byte_range: Option<(u64, u64)>,
+    pub(crate) body: BodyAcc,
+    pub(crate) basis: Basis,
 }
 
 #[derive(Debug)]
-/// Conditional-GET resumption helper (RFC 9110).
-pub struct Stash<K> {
+pub(crate) struct Stash<K> {
     items: Vec<(K, Parked)>,
 }
 
-impl<K> Default for Stash<K> {
-    fn default() -> Self {
-        Self { items: Vec::new() }
-    }
-}
-
 impl<K: PartialEq> Stash<K> {
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { items: Vec::new() }
     }
 
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub fn put(&mut self, key: K, parked: Parked) {
+    pub(crate) fn put(&mut self, key: K, parked: Parked) {
         self.items.retain(|(k, _)| *k != key);
         if self.items.len() >= MAX_PARKED {
             self.items.remove(0);
@@ -296,7 +269,7 @@ impl<K: PartialEq> Stash<K> {
     }
 
     /// The prefix kept for `key`, if it was fetched from this `url` and `byte_range`.
-    pub fn take(
+    pub(crate) fn take(
         &mut self,
         key: &K,
         url: &str,
@@ -307,13 +280,11 @@ impl<K: PartialEq> Stash<K> {
         (parked.url == url && parked.byte_range == byte_range).then_some(parked)
     }
 
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub fn discard(&mut self, key: &K) {
+    pub(crate) fn discard(&mut self, key: &K) {
         self.items.retain(|(k, _)| k != key);
     }
 
-    /// Conditional-GET resumption helper (RFC 9110).
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.items.clear();
     }
 

@@ -4,12 +4,6 @@
 //! exactly that range, or with a `200` (the server ignored `Range`), from which the range is
 //! sliced out once the whole body arrived (the cap applies to the whole file). Any other 2xx
 //! answer to a ranged request is a failure.
-//!
-//! ```rust
-//! use broadcast_client::fetch::body::BodyAcc;
-//! let mut body = BodyAcc::new(16);
-//! assert!(body.accept(200, &[], None));
-//! ```
 
 use alloc::vec::Vec;
 
@@ -23,11 +17,10 @@ const HEADER_CONTENT_LENGTH: &str = "content-length";
 
 /// The body would exceed its cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Oversize;
+pub(crate) struct Oversize;
 
 #[derive(Debug)]
-/// Response-body accumulator with Range handling (RFC 9110).
-pub struct BodyAcc {
+pub(crate) struct BodyAcc {
     limit: usize,
     bytes: Vec<u8>,
     expected_len: Option<u64>,
@@ -35,8 +28,7 @@ pub struct BodyAcc {
 }
 
 impl BodyAcc {
-    /// Response-body accumulator with Range handling (RFC 9110).
-    pub fn new(limit: usize) -> Self {
+    pub(crate) fn new(limit: usize) -> Self {
         Self {
             limit,
             bytes: Vec::new(),
@@ -46,7 +38,7 @@ impl BodyAcc {
     }
 
     /// Forgets everything received so the same request can be sent again.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.bytes.clear();
         self.expected_len = None;
         self.slice = None;
@@ -54,7 +46,7 @@ impl BodyAcc {
 
     /// Takes the response head of a 2xx answer: `false` when `byte_range` was requested and the
     /// answer does not honour it. Records the declared `Content-Length` for the truncation check.
-    pub fn accept(
+    pub(crate) fn accept(
         &mut self,
         status: u16,
         headers: &[(String, String)],
@@ -98,25 +90,18 @@ impl BodyAcc {
         }
     }
 
-    /// Response-body accumulator with Range handling (RFC 9110).
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.bytes.len()
-    }
-
-    /// Whether no bytes have been accumulated.
-    pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
     }
 
     /// Declares how many bytes the rest of a resumed transfer carries, so the truncation check
     /// covers the prefix kept from the earlier attempt plus the suffix.
-    pub fn expect_suffix(&mut self, suffix_len: Option<u64>) {
+    pub(crate) fn expect_suffix(&mut self, suffix_len: Option<u64>) {
         let kept = u64::try_from(self.bytes.len()).unwrap_or(u64::MAX);
         self.expected_len = suffix_len.map(|n| n.saturating_add(kept));
     }
 
-    /// Response-body accumulator with Range handling (RFC 9110).
-    pub fn push(&mut self, bytes: &[u8]) -> Result<(), Oversize> {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> Result<(), Oversize> {
         if self.bytes.len().saturating_add(bytes.len()) > self.limit {
             return Err(Oversize);
         }
@@ -125,14 +110,14 @@ impl BodyAcc {
     }
 
     /// The transfer ended short of the declared `Content-Length`.
-    pub fn is_truncated(&self) -> bool {
+    pub(crate) fn is_truncated(&self) -> bool {
         self.expected_len
             .is_some_and(|n| n != u64::try_from(self.bytes.len()).unwrap_or(u64::MAX))
     }
 
     /// Cuts the requested range out of a whole-file `200` body: `false` when the body is too short
     /// to hold it. A body that was not ranged is left as it is.
-    pub fn finish(&mut self) -> bool {
+    pub(crate) fn finish(&mut self) -> bool {
         let Some((start, len)) = self.slice else {
             return true;
         };
@@ -147,33 +132,28 @@ impl BodyAcc {
         true
     }
 
-    /// Response-body accumulator with Range handling (RFC 9110).
-    pub fn as_slice(&self) -> &[u8] {
+    pub(crate) fn as_slice(&self) -> &[u8] {
         &self.bytes
     }
 
-    /// Response-body accumulator with Range handling (RFC 9110).
-    pub fn into_bytes(self) -> Vec<u8> {
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
 }
 
-/// Response-body accumulator with Range handling (RFC 9110).
-pub fn content_range_bytes(headers: &[(String, String)]) -> Option<(u64, u64)> {
+pub(crate) fn content_range_bytes(headers: &[(String, String)]) -> Option<(u64, u64)> {
     map_of(headers)
         .typed_get::<ContentRange>()?
         .bytes_range()
         .filter(|(first, last)| first <= last)
 }
 
-/// Response-body accumulator with Range handling (RFC 9110).
-pub fn content_range_len(headers: &[(String, String)]) -> Option<u64> {
+pub(crate) fn content_range_len(headers: &[(String, String)]) -> Option<u64> {
     let (first, last) = content_range_bytes(headers)?;
     (last - first).checked_add(1)
 }
 
-/// Response-body accumulator with Range handling (RFC 9110).
-pub fn content_range_is(headers: &[(String, String)], start: u64, len: u64) -> bool {
+pub(crate) fn content_range_is(headers: &[(String, String)], start: u64, len: u64) -> bool {
     let Some(last) = len.checked_sub(1).and_then(|l| start.checked_add(l)) else {
         return false;
     };

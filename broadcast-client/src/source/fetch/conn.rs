@@ -1,5 +1,3 @@
-//! Connection-id allocation bookkeeping for fetch adapters (no wire format).
-
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -11,21 +9,21 @@ type LiveIds = Arc<Mutex<BTreeSet<u32>>>;
 
 /// Connection-id allocator shared by every adapter of one session. An id stays reserved while its
 /// [`ConnLease`] lives, so a counter that wraps never hands out an id still in use.
-#[derive(Default, Debug, Clone)]
-pub struct ConnAlloc {
+#[derive(Debug, Clone)]
+pub(crate) struct ConnAlloc {
     next: Arc<AtomicU32>,
     live: LiveIds,
 }
 
 /// A reserved connection id, released on drop.
 #[derive(Debug)]
-pub struct ConnLease {
+pub(crate) struct ConnLease {
     id: u32,
     live: LiveIds,
 }
+
 impl ConnLease {
-    /// Reserved connection id.
-    pub fn id(&self) -> u32 {
+    pub(crate) fn id(&self) -> u32 {
         self.id
     }
 }
@@ -38,17 +36,16 @@ impl Drop for ConnLease {
             .remove(&self.id);
     }
 }
+
 impl ConnAlloc {
-    /// Create a connection-id allocator.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             next: Arc::new(AtomicU32::new(FIRST_CONN_ID)),
             live: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
 
-    /// Reserve a new connection id.
-    pub fn lease(&self) -> ConnLease {
+    pub(crate) fn lease(&self) -> ConnLease {
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         loop {
             let candidate = self

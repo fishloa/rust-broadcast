@@ -1,11 +1,5 @@
 //! Retry pacing: the backoff schedule, the server-requested `Retry-After`, and the gate that holds
 //! the request queue until a backoff has elapsed.
-//!
-//! ```rust
-//! use broadcast_client::fetch::retry::Backoff;
-//! let backoff = Backoff::new(&[1000], 2000);
-//! assert_eq!(backoff.delay_us(1), 1_000_000);
-//! ```
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -30,14 +24,13 @@ const HEADER_DATE: &str = "date";
 /// raised to at least one millisecond, so a zero never produces an unbounded burst of retries at
 /// one instant.
 #[derive(Debug, Clone)]
-pub struct Backoff {
+pub(crate) struct Backoff {
     steps_ms: Vec<u64>,
     cap_ms: u64,
 }
 
 impl Backoff {
-    /// Retry/backoff helper (RFC 9110 10.2.3).
-    pub fn new(steps_ms: &[u64], cap_ms: u64) -> Self {
+    pub(crate) fn new(steps_ms: &[u64], cap_ms: u64) -> Self {
         Self {
             steps_ms: steps_ms
                 .iter()
@@ -47,8 +40,7 @@ impl Backoff {
         }
     }
 
-    /// Retry/backoff helper (RFC 9110 10.2.3).
-    pub fn delay_us(&self, attempt: u64) -> u64 {
+    pub(crate) fn delay_us(&self, attempt: u64) -> u64 {
         let idx = usize::try_from(attempt.saturating_sub(1)).unwrap_or(usize::MAX);
         self.steps_ms
             .get(idx)
@@ -65,7 +57,7 @@ impl Backoff {
 /// An HTTP-date counts from "now" as the host's wall clock reads it (`wall` mapped at `now_us`),
 /// else from the response's own `Date` header (the server's idea of now, so a skewed server clock
 /// cancels out), else it is ignored.
-pub fn retry_after_us(
+pub(crate) fn retry_after_us(
     status: u16,
     headers: &[(String, String)],
     now_us: u64,
@@ -109,18 +101,16 @@ fn header_value<'h>(headers: &'h [(String, String)], name: &str) -> Option<&'h s
 /// Holds the request queue until an instant: the latest hold wins, and the gate lifts itself the
 /// first time it is asked at or after that instant.
 #[derive(Debug, Default)]
-pub struct RetryGate {
+pub(crate) struct RetryGate {
     until: Option<u64>,
 }
 
 impl RetryGate {
-    /// Retry/backoff helper (RFC 9110 10.2.3).
-    pub fn hold_until(&mut self, at: u64) {
+    pub(crate) fn hold_until(&mut self, at: u64) {
         self.until = Some(self.until.map_or(at, |held| held.max(at)));
     }
 
-    /// Retry/backoff helper (RFC 9110 10.2.3).
-    pub fn lifted(&mut self, now: u64) -> bool {
+    pub(crate) fn lifted(&mut self, now: u64) -> bool {
         match self.until {
             Some(until) if now < until => false,
             _ => {
@@ -130,8 +120,7 @@ impl RetryGate {
         }
     }
 
-    /// Retry/backoff helper (RFC 9110 10.2.3).
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.until = None;
     }
 }
@@ -164,7 +153,7 @@ fn is_text_plain_utf8(content_type: &str) -> bool {
 /// A refused (429/503) response being captured so its body can become the reason of the
 /// [`Event::ServerRefused`] emitted when the connection closes.
 #[derive(Debug)]
-pub struct RefusedCapture {
+pub(crate) struct RefusedCapture {
     status: u16,
     retry_after_us: u64,
     content_type: Option<String>,
@@ -174,8 +163,7 @@ pub struct RefusedCapture {
 }
 
 impl RefusedCapture {
-    /// Retry/backoff helper (RFC 9110 10.2.3).
-    pub fn new(status: u16, retry_after_us: u64, headers: &[(String, String)]) -> Self {
+    pub(crate) fn new(status: u16, retry_after_us: u64, headers: &[(String, String)]) -> Self {
         let content_type = headers
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
@@ -195,13 +183,13 @@ impl RefusedCapture {
 
     /// Whether any body byte can still become the reason: a `text/plain` UTF-8 body that is not
     /// declared empty.
-    pub fn wants_body(&self) -> bool {
+    pub(crate) fn wants_body(&self) -> bool {
         self.declared_len != Some(0) && self.content_type.as_deref().is_some_and(is_text_plain_utf8)
     }
 
     /// Append body bytes; `true` once the whole body or the reason cap has been captured and the
     /// connection can be dropped.
-    pub fn push(&mut self, bytes: &[u8]) -> bool {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> bool {
         let room = MAX_SERVER_REFUSED_REASON_BYTES.saturating_sub(self.body.len());
         let take = bytes.len().min(room);
         self.body.extend_from_slice(&bytes[..take]);
@@ -210,8 +198,7 @@ impl RefusedCapture {
             || self.declared_len.is_some_and(|d| self.received >= d)
     }
 
-    /// Retry/backoff helper (RFC 9110 10.2.3).
-    pub fn into_event(self) -> Event {
+    pub(crate) fn into_event(self) -> Event {
         Event::ServerRefused {
             status: self.status,
             retry_after_us: (self.retry_after_us > 0).then_some(self.retry_after_us),

@@ -6,33 +6,28 @@ use alloc::collections::BinaryHeap;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
 
-/// Fetch bookkeeping helper.
-pub const SLACK_FACTOR: usize = 4;
-/// Fetch bookkeeping helper.
-pub const SLACK_FLOOR: usize = 64;
+pub(crate) const SLACK_FACTOR: usize = 4;
+pub(crate) const SLACK_FLOOR: usize = 64;
 
-#[derive(Default, Debug)]
-/// Fetch bookkeeping helper.
-pub struct Deadlines<K> {
+#[derive(Debug)]
+pub(crate) struct Deadlines<K> {
     heap: BinaryHeap<Reverse<(u64, K)>>,
 }
 
 impl<K: Copy + Ord> Deadlines<K> {
-    /// Fetch bookkeeping helper.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             heap: BinaryHeap::new(),
         }
     }
 
-    /// Fetch bookkeeping helper.
-    pub fn arm(&mut self, key: K, deadline: u64) {
+    pub(crate) fn arm(&mut self, key: K, deadline: u64) {
         self.heap.push(Reverse((deadline, key)));
     }
 
     /// Every key whose deadline is at or before `now` and for which `is_live(key, deadline)` holds,
     /// earliest first; entries examined are discarded either way.
-    pub fn expire(&mut self, now: u64, mut is_live: impl FnMut(&K, u64) -> bool) -> Vec<K> {
+    pub(crate) fn expire(&mut self, now: u64, mut is_live: impl FnMut(&K, u64) -> bool) -> Vec<K> {
         let mut expired = Vec::new();
         while let Some(Reverse((deadline, key))) = self.heap.peek().copied() {
             if deadline > now {
@@ -48,7 +43,7 @@ impl<K: Copy + Ord> Deadlines<K> {
 
     /// Rebuilds the heap from `live` (the deadline of every live request) once stale entries
     /// outnumber what `live_len` live requests can account for, keeping it proportional.
-    pub fn compact<I>(&mut self, live_len: usize, live: impl FnOnce() -> I)
+    pub(crate) fn compact<I>(&mut self, live_len: usize, live: impl FnOnce() -> I)
     where
         I: IntoIterator<Item = (u64, K)>,
     {
@@ -61,8 +56,7 @@ impl<K: Copy + Ord> Deadlines<K> {
         self.heap = live().into_iter().map(Reverse).collect();
     }
 
-    /// Fetch bookkeeping helper.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.heap.clear();
     }
 

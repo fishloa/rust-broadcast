@@ -2,7 +2,7 @@
 pub(crate) mod adaptive;
 pub(crate) mod dash;
 pub(crate) mod datagram;
-pub mod fetch;
+pub(crate) mod fetch;
 pub(crate) mod hls;
 pub(crate) mod hls_join;
 pub(crate) mod hls_session;

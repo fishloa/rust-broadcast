@@ -6,40 +6,34 @@ use std::collections::HashMap;
 
 /// The consecutive failures recorded for one resource and the status of the latest one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Failure {
-    /// Fetch bookkeeping helper.
-    pub count: u32,
-    /// Fetch bookkeeping helper.
-    pub status: Option<u16>,
+pub(crate) struct Failure {
+    pub(crate) count: u32,
+    pub(crate) status: Option<u16>,
 }
 
 /// Whether a resource that has failed `count` times in a row is tried again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verdict {
-    /// Fetch bookkeeping helper.
+pub(crate) enum Verdict {
     Retry,
-    /// Fetch bookkeeping helper.
     GiveUp,
 }
 
 /// Consecutive failures per resource. A count is cleared only by [`FailureCounter::clear`] (the
 /// resource was delivered, left the window, or was given up on), never by an unrelated delivery
 /// such as a playlist or manifest refresh.
-#[derive(Default, Debug)]
-pub struct FailureCounter<K> {
+#[derive(Debug)]
+pub(crate) struct FailureCounter<K> {
     failures: HashMap<K, Failure>,
 }
 
 impl<K: Copy + Eq + Hash> FailureCounter<K> {
-    /// Fetch bookkeeping helper.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             failures: HashMap::new(),
         }
     }
 
-    /// Fetch bookkeeping helper.
-    pub fn record(&mut self, key: K, status: Option<u16>) -> Failure {
+    pub(crate) fn record(&mut self, key: K, status: Option<u16>) -> Failure {
         let entry = self.failures.entry(key).or_insert(Failure {
             count: 0,
             status: None,
@@ -49,19 +43,17 @@ impl<K: Copy + Eq + Hash> FailureCounter<K> {
         *entry
     }
 
-    /// Fetch bookkeeping helper.
-    pub fn clear(&mut self, key: &K) {
+    pub(crate) fn clear(&mut self, key: &K) {
         self.failures.remove(key);
     }
 
-    /// Fetch bookkeeping helper.
-    pub fn clear_all(&mut self) {
+    pub(crate) fn clear_all(&mut self) {
         self.failures.clear();
     }
 }
 
 /// `count` is how many failures in a row have been recorded. `max == 0` makes the first failure final; `u32::MAX` never gives up in practice.
-pub fn verdict(count: u64, max: u32) -> Verdict {
+pub(crate) fn verdict(count: u64, max: u32) -> Verdict {
     if count >= u64::from(max) {
         Verdict::GiveUp
     } else {
@@ -71,22 +63,19 @@ pub fn verdict(count: u64, max: u32) -> Verdict {
 
 /// A saturating attempt counter for one retry loop.
 #[derive(Debug, Default)]
-pub struct Attempts(u64);
+pub(crate) struct Attempts(u64);
 
 impl Attempts {
-    /// Fetch bookkeeping helper.
-    pub fn bump(&mut self) -> u64 {
+    pub(crate) fn bump(&mut self) -> u64 {
         self.0 = self.0.saturating_add(1);
         self.0
     }
 
-    /// Fetch bookkeeping helper.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.0 = 0;
     }
 
-    /// Fetch bookkeeping helper.
-    pub fn is_zero(&self) -> bool {
+    pub(crate) fn is_zero(&self) -> bool {
         self.0 == 0
     }
 }
