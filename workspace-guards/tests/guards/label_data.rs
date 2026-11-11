@@ -138,10 +138,12 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-common",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        // `BitError` and `KlvError`: structured errors with a message-bearing
-        // Display, not spec labels. `BerLength`: a serialization-form choice
-        // (`Minimal` vs a preserved on-wire `Fixed` width), not a wire field.
-        skip: &["BitError", "KlvError", "BerLength"],
+        // `BitError`, `KlvError` and `XmlError`: structured errors with a
+        // message-bearing or descriptive variant set, not spec labels.
+        // `BerLength`: a serialization-form choice (`Minimal` vs a preserved
+        // on-wire `Fixed` width), not a wire field. `Frame`: the XML reader's
+        // own traversal stack, not a label.
+        skip: &["BitError", "KlvError", "XmlError", "BerLength", "Frame"],
         expected: None,
         min_enums: None,
     },

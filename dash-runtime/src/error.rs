@@ -65,6 +65,28 @@ impl From<broadcast_common::xml_chars::XmlLimit> for Limit {
     }
 }
 
+impl From<broadcast_common::xml::XmlError> for MpdError {
+    fn from(e: broadcast_common::xml::XmlError) -> Self {
+        use broadcast_common::xml::XmlError;
+        match e {
+            XmlError::InvalidUtf8 { valid_up_to } => Self::InvalidUtf8 { valid_up_to },
+            XmlError::NotWellFormed { position, message } => Self::Xml {
+                pos: position,
+                message,
+            },
+            XmlError::WrongRoot { found } => Self::NotMpd { found },
+            XmlError::Limit(exceeded) => Self::TooLarge {
+                limit: exceeded.limit.into(),
+                max: exceeded.max,
+            },
+            _ => Self::Invalid {
+                what: "document",
+                detail: "unrecognised XML reader failure".to_string(),
+            },
+        }
+    }
+}
+
 /// A feature the 0.1 core recognises but deliberately does not implement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

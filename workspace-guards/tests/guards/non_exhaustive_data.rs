@@ -26,7 +26,14 @@ pub const TABLE: &[Crate] = &[
     plain("atsc3"),
     plain("broadcast-auth"),
     plain("broadcast-client"),
-    plain("broadcast-common"),
+    Crate {
+        name: "broadcast-common",
+        // `xml::Frame`: a private-to-the-module traversal stack that this
+        // lexical scan reads as public because its line follows an
+        // `impl<N: Namespace> Reader` line in the same file.
+        skip: &["Frame"],
+        variants: false,
+    },
     plain("broadcast-hls"),
     plain("broadcast-loudness"),
     plain("buffering-runtime"),

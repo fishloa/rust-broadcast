@@ -5,6 +5,5 @@ pub mod inherit;
 pub mod model;
 mod parse;
 pub mod urls;
-pub(crate) mod xml;
 
 pub use model::*;

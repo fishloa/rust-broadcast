@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use transmux::parse_iso8601_duration;
 
+use broadcast_common::xml::{Elem, Namespace, read_tree};
+
 use super::descriptors::XLINK_RESOLVE_TO_ZERO;
 use super::model::*;
-use super::xml::{Elem, Ns, read_tree};
 use crate::error::{Limit, MpdError, Unsupported};
 use crate::limits::Limits;
 use crate::timing::datetime::parse_xs_datetime;
@@ -17,6 +18,53 @@ const PROFILE_SEPARATOR: char = ',';
 const INFINITY_TOKEN: &str = "INF";
 const NEGATIVE_INFINITY_TOKEN: &str = "-INF";
 const MAX_START_WITH_SAP: u8 = 6;
+const NS_MPD_ROOT: &str = "MPD";
+
+/// ISO/IEC 23009-1 clause 5.3.1 / Annex B: the MPD schema namespace.
+pub const NS_MPD: &str = "urn:mpeg:dash:schema:mpd:2011";
+/// ETSI TS 103 285 clause 10.8.2: DVB DASH extension namespace.
+pub const NS_DVB: &str = "urn:dvb:dash:dash-extensions:2014-1";
+/// ISO/IEC 23001-7: `cenc` attribute namespace (`cenc:default_KID`).
+pub const NS_CENC: &str = "urn:mpeg:cenc:2013";
+/// XLink namespace of `@xlink:href`/`@xlink:actuate` (5.5.3).
+pub const NS_XLINK: &str = "http://www.w3.org/1999/xlink";
+/// ISO/IEC 23009-1 Annex I.2: URL parameter namespace.
+pub const NS_URLPARAM: &str = "urn:mpeg:dash:schema:urlparam:2014";
+
+/// The namespaces the model reads; anything else is [`Ns::Other`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ns {
+    /// No namespace.
+    None,
+    /// The MPD schema namespace ([`NS_MPD`]).
+    Mpd,
+    /// The DVB DASH extensions namespace ([`NS_DVB`]).
+    Dvb,
+    /// The `cenc` attribute namespace ([`NS_CENC`]).
+    Cenc,
+    /// The XLink namespace ([`NS_XLINK`]).
+    Xlink,
+    /// The URL parameter namespace ([`NS_URLPARAM`]).
+    UrlParam,
+    /// Any other namespace.
+    Other,
+}
+
+impl Namespace for Ns {
+    const TARGET: Self = Self::Mpd;
+    const NONE: Self = Self::None;
+
+    fn classify(uri: &str) -> Self {
+        match uri {
+            NS_MPD => Self::Mpd,
+            NS_DVB => Self::Dvb,
+            NS_CENC => Self::Cenc,
+            NS_XLINK => Self::Xlink,
+            NS_URLPARAM => Self::UrlParam,
+            _ => Self::Other,
+        }
+    }
+}
 
 fn invalid(what: &'static str, detail: impl Into<String>) -> MpdError {
     MpdError::Invalid {
@@ -25,11 +73,14 @@ fn invalid(what: &'static str, detail: impl Into<String>) -> MpdError {
     }
 }
 
-fn opt_str(e: &Elem, name: &str) -> Option<String> {
+fn opt_str(e: &Elem<Ns>, name: &str) -> Option<String> {
     e.attr(name).map(str::to_owned)
 }
 
-fn opt_parse<T: core::str::FromStr>(e: &Elem, name: &'static str) -> Result<Option<T>, MpdError> {
+fn opt_parse<T: core::str::FromStr>(
+    e: &Elem<Ns>,
+    name: &'static str,
+) -> Result<Option<T>, MpdError> {
     match e.attr(name) {
         None => Ok(None),
         Some(v) => v
@@ -40,19 +91,19 @@ fn opt_parse<T: core::str::FromStr>(e: &Elem, name: &'static str) -> Result<Opti
     }
 }
 
-fn opt_u64(e: &Elem, name: &'static str) -> Result<Option<u64>, MpdError> {
+fn opt_u64(e: &Elem<Ns>, name: &'static str) -> Result<Option<u64>, MpdError> {
     opt_parse(e, name)
 }
 
-fn opt_u32(e: &Elem, name: &'static str) -> Result<Option<u32>, MpdError> {
+fn opt_u32(e: &Elem<Ns>, name: &'static str) -> Result<Option<u32>, MpdError> {
     opt_parse(e, name)
 }
 
-fn opt_i64(e: &Elem, name: &'static str) -> Result<Option<i64>, MpdError> {
+fn opt_i64(e: &Elem<Ns>, name: &'static str) -> Result<Option<i64>, MpdError> {
     opt_parse(e, name)
 }
 
-fn positive_u64(e: &Elem, name: &'static str) -> Result<Option<u64>, MpdError> {
+fn positive_u64(e: &Elem<Ns>, name: &'static str) -> Result<Option<u64>, MpdError> {
     match opt_u64(e, name)? {
         Some(0) => Err(invalid(name, "must be greater than zero")),
         other => Ok(other),
@@ -67,11 +118,11 @@ fn parse_bool(name: &'static str, v: &str) -> Result<bool, MpdError> {
     }
 }
 
-fn opt_bool(e: &Elem, name: &'static str) -> Result<Option<bool>, MpdError> {
+fn opt_bool(e: &Elem<Ns>, name: &'static str) -> Result<Option<bool>, MpdError> {
     e.attr(name).map(|v| parse_bool(name, v)).transpose()
 }
 
-fn opt_f64(e: &Elem, name: &'static str) -> Result<Option<f64>, MpdError> {
+fn opt_f64(e: &Elem<Ns>, name: &'static str) -> Result<Option<f64>, MpdError> {
     let Some(v) = e.attr(name) else {
         return Ok(None);
     };
@@ -88,13 +139,13 @@ fn opt_f64(e: &Elem, name: &'static str) -> Result<Option<f64>, MpdError> {
     }
 }
 
-fn opt_duration(e: &Elem, name: &'static str) -> Result<Option<Duration>, MpdError> {
+fn opt_duration(e: &Elem<Ns>, name: &'static str) -> Result<Option<Duration>, MpdError> {
     e.attr(name)
         .map(|v| parse_iso8601_duration(v).map_err(|_| invalid(name, v)))
         .transpose()
 }
 
-fn opt_time(e: &Elem, name: &'static str) -> Result<Option<i64>, MpdError> {
+fn opt_time(e: &Elem<Ns>, name: &'static str) -> Result<Option<i64>, MpdError> {
     e.attr(name)
         .map(|v| {
             parse_xs_datetime(v)
@@ -121,11 +172,11 @@ fn parse_range(name: &'static str, v: &str) -> Result<ByteRange, MpdError> {
     Ok(ByteRange { first, last })
 }
 
-fn opt_range(e: &Elem, name: &'static str) -> Result<Option<ByteRange>, MpdError> {
+fn opt_range(e: &Elem<Ns>, name: &'static str) -> Result<Option<ByteRange>, MpdError> {
     e.attr(name).map(|v| parse_range(name, v)).transpose()
 }
 
-fn xlink(e: &Elem) -> Result<Option<Xlink>, MpdError> {
+fn xlink(e: &Elem<Ns>) -> Result<Option<Xlink>, MpdError> {
     let Some(href) = e.attr_in(Ns::Xlink, "href") else {
         return Ok(None);
     };
@@ -157,7 +208,7 @@ fn check_count(count: usize, max: usize, limit: Limit) -> Result<(), MpdError> {
     }
 }
 
-fn descriptor(e: &Elem) -> Result<Descriptor, MpdError> {
+fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
     let scheme_id_uri = e
         .attr("schemeIdUri")
         .ok_or_else(|| invalid("schemeIdUri", format!("missing on {}", e.name)))?
@@ -174,6 +225,7 @@ fn descriptor(e: &Elem) -> Result<Descriptor, MpdError> {
             })
         })
         .transpose()?;
+    let _ = url_query.as_ref();
     Ok(Descriptor {
         scheme_id_uri,
         value: opt_str(e, "value"),
@@ -183,11 +235,11 @@ fn descriptor(e: &Elem) -> Result<Descriptor, MpdError> {
     })
 }
 
-fn descriptors(e: &Elem, name: &str) -> Result<Vec<Descriptor>, MpdError> {
+fn descriptors(e: &Elem<Ns>, name: &str) -> Result<Vec<Descriptor>, MpdError> {
     e.children_named(name).map(descriptor).collect()
 }
 
-fn base_urls(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Vec<BaseUrl>, MpdError> {
+fn base_urls(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Vec<BaseUrl>, MpdError> {
     let mut out = Vec::new();
     for b in e.children_named("BaseURL") {
         check_count(out.len() + 1, ctx.limits.max_base_urls, Limit::BaseUrls)?;
@@ -209,20 +261,20 @@ fn base_urls(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Vec<BaseUrl>, MpdError> {
     Ok(out)
 }
 
-fn dvb_u32(e: &Elem, name: &'static str) -> Result<Option<u32>, MpdError> {
+fn dvb_u32(e: &Elem<Ns>, name: &'static str) -> Result<Option<u32>, MpdError> {
     e.attr_in(Ns::Dvb, name)
         .map(|v| v.trim().parse::<u32>().map_err(|_| invalid(name, v)))
         .transpose()
 }
 
-fn url_type(e: &Elem) -> Result<UrlType, MpdError> {
+fn url_type(e: &Elem<Ns>) -> Result<UrlType, MpdError> {
     Ok(UrlType {
         source_url: opt_str(e, "sourceURL"),
         range: opt_range(e, "range")?,
     })
 }
 
-fn base_info(e: &Elem, ctx: &mut Ctx<'_>) -> Result<BaseInfo, MpdError> {
+fn base_info(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<BaseInfo, MpdError> {
     let ato = opt_f64(e, "availabilityTimeOffset")?;
     let complete = opt_bool(e, "availabilityTimeComplete")?;
     if ato.is_some() || complete == Some(false) {
@@ -244,7 +296,7 @@ fn base_info(e: &Elem, ctx: &mut Ctx<'_>) -> Result<BaseInfo, MpdError> {
     })
 }
 
-fn timeline(e: &Elem, ctx: &Ctx<'_>) -> Result<SegmentTimeline, MpdError> {
+fn timeline(e: &Elem<Ns>, ctx: &Ctx<'_>) -> Result<SegmentTimeline, MpdError> {
     let mut out = SegmentTimeline::default();
     if e.has_child("Pattern") {
         out.unsupported = Some(Unsupported::SegmentSequence);
@@ -274,7 +326,7 @@ fn timeline(e: &Elem, ctx: &Ctx<'_>) -> Result<SegmentTimeline, MpdError> {
     Ok(out)
 }
 
-fn multi_info(e: &Elem, ctx: &mut Ctx<'_>) -> Result<MultiInfo, MpdError> {
+fn multi_info(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<MultiInfo, MpdError> {
     Ok(MultiInfo {
         base: base_info(e, ctx)?,
         duration: positive_u64(e, "duration")?,
@@ -288,7 +340,7 @@ fn multi_info(e: &Elem, ctx: &mut Ctx<'_>) -> Result<MultiInfo, MpdError> {
     })
 }
 
-fn segment_layer(e: &Elem, ctx: &mut Ctx<'_>) -> Result<SegmentLayer, MpdError> {
+fn segment_layer(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<SegmentLayer, MpdError> {
     let mut layer = SegmentLayer::default();
     let count = ["SegmentBase", "SegmentList", "SegmentTemplate"]
         .iter()
@@ -341,7 +393,7 @@ fn segment_layer(e: &Elem, ctx: &mut Ctx<'_>) -> Result<SegmentLayer, MpdError> 
     Ok(layer)
 }
 
-fn common(e: &Elem) -> Result<CommonAttributes, MpdError> {
+fn common(e: &Elem<Ns>) -> Result<CommonAttributes, MpdError> {
     Ok(CommonAttributes {
         profiles: opt_str(e, "profiles"),
         width: opt_u32(e, "width")?,
@@ -355,7 +407,7 @@ fn common(e: &Elem) -> Result<CommonAttributes, MpdError> {
     })
 }
 
-fn representation(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Representation, MpdError> {
+fn representation(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Representation, MpdError> {
     let id = e
         .attr("id")
         .ok_or_else(|| invalid("Representation@id", "missing"))?
@@ -380,7 +432,7 @@ fn representation(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Representation, MpdErro
     })
 }
 
-fn conditional(name: &'static str, e: &Elem) -> Result<bool, MpdError> {
+fn conditional(name: &'static str, e: &Elem<Ns>) -> Result<bool, MpdError> {
     match e.attr(name) {
         None => Ok(false),
         Some(v) => match v.trim() {
@@ -394,7 +446,7 @@ fn conditional(name: &'static str, e: &Elem) -> Result<bool, MpdError> {
     }
 }
 
-fn adaptation_set(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSet>, MpdError> {
+fn adaptation_set(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSet>, MpdError> {
     let link = xlink(e)?;
     if is_resolve_to_zero(&link) {
         ctx.features.xlink_resolve_to_zero = true;
@@ -440,7 +492,7 @@ fn adaptation_set(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSet>, 
     }))
 }
 
-fn period(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
+fn period(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
     let link = xlink(e)?;
     if is_resolve_to_zero(&link) {
         ctx.features.xlink_resolve_to_zero = true;
@@ -474,14 +526,14 @@ fn period(e: &Elem, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
 }
 
 /// `ImportedMPD` (ISO/IEC 23009-1 ed.6 `ImportedMpdType`).
-fn imported_mpd(e: &Elem) -> Result<ImportedMpd, MpdError> {
+fn imported_mpd(e: &Elem<Ns>) -> Result<ImportedMpd, MpdError> {
     Ok(ImportedMpd {
         url: e.text.trim().to_owned(),
         earliest_resolution_time_offset: opt_f64(e, "earliestResolutionTimeOffset")?,
     })
 }
 
-fn scan_features(e: &Elem, f: &mut MpdFeatures) {
+fn scan_features(e: &Elem<Ns>, f: &mut MpdFeatures) {
     if e.ns == Ns::Mpd {
         match e.name.as_str() {
             "PatchLocation" => f.patch_location = true,
@@ -515,7 +567,7 @@ impl Mpd {
     /// # Errors
     /// See [`Mpd::parse`].
     pub fn parse_with(bytes: &[u8], limits: &Limits) -> Result<Self, MpdError> {
-        let root = read_tree(bytes, limits)?;
+        let root = read_tree::<Ns>(bytes, NS_MPD_ROOT, &limits.xml_limits())?;
         let mut ctx = Ctx {
             limits,
             features: MpdFeatures::default(),

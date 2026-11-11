@@ -69,6 +69,8 @@ pub mod timescale;
 pub mod traits;
 pub mod ts_dup;
 #[cfg(feature = "xml")]
+pub mod xml;
+#[cfg(feature = "xml")]
 pub mod xml_chars;
 
 pub use cenc::CencScheme;

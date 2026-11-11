@@ -91,9 +91,8 @@ fn every_fixture_parses_to_the_recorded_model() {
     }
     let want = test_fixtures::read_to_string(GOLDEN);
     let have_private = test_fixtures::private_root().is_some();
-    let keep = |l: &&str| {
-        have_private || l.starts_with(PUBLIC_PREFIX) || !l.starts_with(PRIVATE_PREFIX)
-    };
+    let keep =
+        |l: &&str| have_private || l.starts_with(PUBLIC_PREFIX) || !l.starts_with(PRIVATE_PREFIX);
     let want: Vec<&str> = want.lines().filter(keep).collect();
     let got: Vec<&str> = got.lines().filter(keep).collect();
     assert!(
