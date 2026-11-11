@@ -25,37 +25,123 @@ impl Mpd {
     /// formatted.
     pub fn to_xml(&self) -> Result<String, MpdError> {
         let mut w = Writer::new_with_indent(Vec::new(), b' ', 2);
-        let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)));
+        let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
+        // Prefixed-namespace usage.
+        let mut use_cenc = false;
+        let mut use_xlink = false;
+        let mut use_dvb = false;
+        let mut use_urlparam = false;
+        let mut scan_desc = |d: &Descriptor| {
+            if d.default_kid.is_some() || d.pssh.is_some() {
+                use_cenc = true;
+            }
+            if d.url_query.is_some() {
+                use_urlparam = true;
+            }
+        };
+        for d in &self.essential_properties {
+            scan_desc(d);
+        }
+        for d in &self.supplemental_properties {
+            scan_desc(d);
+        }
+        for p in &self.periods {
+            if p.xlink.is_some() {
+                use_xlink = true;
+            }
+            for b in &p.base_urls {
+                if b.priority.is_some() || b.weight.is_some() {
+                    use_dvb = true;
+                }
+            }
+            for a in &p.adaptation_sets {
+                if a.xlink.is_some() {
+                    use_xlink = true;
+                }
+                for b in &a.base_urls {
+                    if b.priority.is_some() || b.weight.is_some() {
+                        use_dvb = true;
+                    }
+                }
+                for r in &a.representations {
+                    for b in &r.base_urls {
+                        if b.priority.is_some() || b.weight.is_some() {
+                            use_dvb = true;
+                        }
+                    }
+                }
+                for d in a
+                    .roles
+                    .iter()
+                    .chain(a.accessibilities.iter())
+                    .chain(a.content_protections.iter())
+                    .chain(a.essential_properties.iter())
+                    .chain(a.supplemental_properties.iter())
+                    .chain(a.audio_channel_configurations.iter())
+                    .chain(a.inband_event_streams.iter())
+                {
+                    scan_desc(d);
+                }
+                for r in &a.representations {
+                    for d in r
+                        .content_protections
+                        .iter()
+                        .chain(r.essential_properties.iter())
+                        .chain(r.supplemental_properties.iter())
+                        .chain(r.audio_channel_configurations.iter())
+                        .chain(r.inband_event_streams.iter())
+                    {
+                        scan_desc(d);
+                    }
+                }
+            }
+            for b in &p.base_urls {
+                if b.priority.is_some() || b.weight.is_some() {
+                    use_dvb = true;
+                }
+            }
+            if p.xlink.is_some() {
+                use_xlink = true;
+            }
+        }
+        for b in &self.base_urls {
+            if b.priority.is_some() || b.weight.is_some() {
+                use_dvb = true;
+            }
+        }
+
         let mut root = BytesStart::new("MPD");
         root.push_attribute(("xmlns", NS_MPD));
-        root.push_attribute(("xmlns:dvb", NS_DVB));
-        root.push_attribute(("xmlns:cenc", NS_CENC));
-        root.push_attribute(("xmlns:xlink", NS_XLINK));
-        root.push_attribute(("xmlns:urlparam", NS_URLPARAM));
-        if let Some(v) = &self.id {
-            root.push_attribute(("id", v.as_str()));
+        if use_dvb {
+            root.push_attribute(("xmlns:dvb", NS_DVB));
+        }
+        if use_xlink {
+            root.push_attribute(("xmlns:xlink", NS_XLINK));
+        }
+        if use_urlparam {
+            root.push_attribute(("xmlns:urlparam", NS_URLPARAM));
         }
         if !self.profiles.is_empty() {
             root.push_attribute(("profiles", self.profiles.join(",").as_str()));
         }
         root.push_attribute(("type", self.kind.name()));
+        let min_buffer = self
+            .min_buffer_time
+            .map(format_iso8601_duration)
+            .unwrap_or_else(|| "PT2S".to_string());
+        root.push_attribute(("minBufferTime", min_buffer.as_str()));
+        // cenc namespace at transmux position, only if used
+        let cenc_needed = use_cenc;
+        if cenc_needed {
+            root.push_attribute(("xmlns:cenc", NS_CENC));
+        }
+        // dynamic attrs
         if let Some(v) = self.availability_start_time_us {
             root.push_attribute((
                 "availabilityStartTime",
                 format_xs_datetime(v)
                     .map_err(|e| MpdError::Invalid {
                         what: "availabilityStartTime",
-                        detail: e.to_string(),
-                    })?
-                    .as_str(),
-            ));
-        }
-        if let Some(v) = self.availability_end_time_us {
-            root.push_attribute((
-                "availabilityEndTime",
-                format_xs_datetime(v)
-                    .map_err(|e| MpdError::Invalid {
-                        what: "availabilityEndTime",
                         detail: e.to_string(),
                     })?
                     .as_str(),
@@ -72,17 +158,8 @@ impl Mpd {
                     .as_str(),
             ));
         }
-        if let Some(v) = self.media_presentation_duration {
-            root.push_attribute((
-                "mediaPresentationDuration",
-                format_iso8601_duration(v).as_str(),
-            ));
-        }
         if let Some(v) = self.minimum_update_period {
             root.push_attribute(("minimumUpdatePeriod", format_iso8601_duration(v).as_str()));
-        }
-        if let Some(v) = self.min_buffer_time {
-            root.push_attribute(("minBufferTime", format_iso8601_duration(v).as_str()));
         }
         if let Some(v) = self.time_shift_buffer_depth {
             root.push_attribute(("timeShiftBufferDepth", format_iso8601_duration(v).as_str()));
@@ -91,6 +168,27 @@ impl Mpd {
             root.push_attribute((
                 "suggestedPresentationDelay",
                 format_iso8601_duration(v).as_str(),
+            ));
+        }
+        if let Some(v) = self.media_presentation_duration {
+            root.push_attribute((
+                "mediaPresentationDuration",
+                format_iso8601_duration(v).as_str(),
+            ));
+        }
+        // remaining attrs transmux never writes
+        if let Some(v) = &self.id {
+            root.push_attribute(("id", v.as_str()));
+        }
+        if let Some(v) = self.availability_end_time_us {
+            root.push_attribute((
+                "availabilityEndTime",
+                format_xs_datetime(v)
+                    .map_err(|e| MpdError::Invalid {
+                        what: "availabilityEndTime",
+                        detail: e.to_string(),
+                    })?
+                    .as_str(),
             ));
         }
         if let Some(v) = self.max_segment_duration {
@@ -138,10 +236,6 @@ impl Mpd {
         }
         if self.features.event_stream {
             w.write_event(Event::Empty(BytesStart::new("EventStream")))
-                .map_err(io_err)?;
-        }
-        if self.features.inband_event_stream {
-            w.write_event(Event::Empty(BytesStart::new("InbandEventStream")))
                 .map_err(io_err)?;
         }
         if self.features.preselection {
@@ -450,14 +544,14 @@ fn write_segment_template(w: &mut Writer<Vec<u8>>, st: &SegmentTemplate) -> Resu
     if let Some(v) = st.multi.end_number {
         e.push_attribute(("endNumber", v.to_string().as_str()));
     }
+    if let Some(v) = &st.initialization {
+        e.push_attribute(("initialization", v.as_str()));
+    }
     if let Some(v) = &st.media {
         e.push_attribute(("media", v.as_str()));
     }
     if let Some(v) = &st.index {
         e.push_attribute(("index", v.as_str()));
-    }
-    if let Some(v) = &st.initialization {
-        e.push_attribute(("initialization", v.as_str()));
     }
     if let Some(v) = &st.bitstream_switching {
         e.push_attribute(("bitstreamSwitching", v.as_str()));
@@ -499,39 +593,6 @@ fn write_segment_layer(w: &mut Writer<Vec<u8>>, layer: &SegmentLayer) -> Result<
         write_segment_template(w, t)?;
     }
     Ok(())
-}
-
-fn write_common(_w: &mut Writer<Vec<u8>>, e: &mut BytesStart<'_>, c: &CommonAttributes) {
-    if let Some(v) = &c.profiles {
-        e.push_attribute(("profiles", v.as_str()));
-    }
-    if let Some(v) = c.width {
-        e.push_attribute(("width", v.to_string().as_str()));
-    }
-    if let Some(v) = c.height {
-        e.push_attribute(("height", v.to_string().as_str()));
-    }
-    if let Some(v) = &c.sar {
-        e.push_attribute(("sar", v.as_str()));
-    }
-    if let Some(v) = &c.frame_rate {
-        e.push_attribute(("frameRate", v.as_str()));
-    }
-    if let Some(v) = &c.audio_sampling_rate {
-        e.push_attribute(("audioSamplingRate", v.as_str()));
-    }
-    if let Some(v) = &c.mime_type {
-        e.push_attribute(("mimeType", v.as_str()));
-    }
-    if let Some(v) = &c.codecs {
-        e.push_attribute(("codecs", v.as_str()));
-    }
-    if let Some(v) = c.max_playout_rate {
-        e.push_attribute(("maxPlayoutRate", v.to_string().as_str()));
-    }
-    if let Some(v) = c.coding_dependency {
-        e.push_attribute(("codingDependency", if v { "true" } else { "false" }));
-    }
 }
 
 fn write_descriptor(w: &mut Writer<Vec<u8>>, name: &str, d: &Descriptor) -> Result<(), MpdError> {
@@ -644,17 +705,17 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
     if let Some(v) = a.id {
         e.push_attribute(("id", v.to_string().as_str()));
     }
-    if let Some(v) = a.group {
-        e.push_attribute(("group", v.to_string().as_str()));
-    }
-    if let Some(v) = &a.lang {
-        e.push_attribute(("lang", v.as_str()));
-    }
     if let Some(v) = &a.content_type {
         e.push_attribute(("contentType", v.as_str()));
     }
-    if let Some(v) = &a.par {
-        e.push_attribute(("par", v.as_str()));
+    if let Some(v) = &a.common.mime_type {
+        e.push_attribute(("mimeType", v.as_str()));
+    }
+    if let Some(v) = a.common.max_playout_rate {
+        e.push_attribute(("maxPlayoutRate", v.to_string().as_str()));
+    }
+    if let Some(v) = a.common.coding_dependency {
+        e.push_attribute(("codingDependency", if v { "true" } else { "false" }));
     }
     if a.segment_alignment {
         e.push_attribute(("segmentAlignment", "true"));
@@ -662,14 +723,53 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
     if let Some(v) = a.start_with_sap {
         e.push_attribute(("startWithSAP", v.to_string().as_str()));
     }
+    if let Some(v) = &a.par {
+        e.push_attribute(("par", v.as_str()));
+    }
+    if let Some(v) = &a.lang {
+        e.push_attribute(("lang", v.as_str()));
+    }
+    if let Some(v) = a.group {
+        e.push_attribute(("group", v.to_string().as_str()));
+    }
     if let Some(v) = a.bitstream_switching {
         e.push_attribute(("bitstreamSwitching", if v { "true" } else { "false" }));
     }
-    write_common(w, &mut e, &a.common);
+    if let Some(v) = &a.common.profiles {
+        e.push_attribute(("profiles", v.as_str()));
+    }
+    if let Some(v) = a.common.width {
+        e.push_attribute(("width", v.to_string().as_str()));
+    }
+    if let Some(v) = a.common.height {
+        e.push_attribute(("height", v.to_string().as_str()));
+    }
+    if let Some(v) = &a.common.sar {
+        e.push_attribute(("sar", v.as_str()));
+    }
+    if let Some(v) = &a.common.frame_rate {
+        e.push_attribute(("frameRate", v.as_str()));
+    }
+    if let Some(v) = &a.common.audio_sampling_rate {
+        e.push_attribute(("audioSamplingRate", v.as_str()));
+    }
+    if let Some(v) = &a.common.codecs {
+        e.push_attribute(("codecs", v.as_str()));
+    }
     if let Some(x) = &a.xlink {
         write_xlink_attrs(&mut e, x);
     }
+
     w.write_event(Event::Start(e)).map_err(io_err)?;
+    for d in &a.content_protections {
+        write_descriptor(w, "ContentProtection", d)?;
+    }
+    for d in &a.inband_event_streams {
+        write_descriptor(w, "InbandEventStream", d)?;
+    }
+    for d in &a.supplemental_properties {
+        write_descriptor(w, "SupplementalProperty", d)?;
+    }
     for d in &a.roles {
         write_descriptor(w, "Role", d)?;
     }
@@ -684,28 +784,20 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
         w.write_event(Event::End(BytesEnd::new("Label")))
             .map_err(io_err)?;
     }
-    for b in &a.base_urls {
-        write_base_url(w, b)?;
-    }
-    write_segment_layer(w, &a.segment)?;
-    for d in &a.content_protections {
-        write_descriptor(w, "ContentProtection", d)?;
-    }
     for d in &a.essential_properties {
         write_descriptor(w, "EssentialProperty", d)?;
-    }
-    for d in &a.supplemental_properties {
-        write_descriptor(w, "SupplementalProperty", d)?;
     }
     for d in &a.audio_channel_configurations {
         write_descriptor(w, "AudioChannelConfiguration", d)?;
     }
-    for d in &a.inband_event_streams {
-        write_descriptor(w, "InbandEventStream", d)?;
+    for b in &a.base_urls {
+        write_base_url(w, b)?;
     }
+    write_segment_layer(w, &a.segment)?;
     for r in &a.representations {
         write_representation(w, r)?;
     }
+
     w.write_event(Event::End(BytesEnd::new("AdaptationSet")))
         .map_err(io_err)?;
     Ok(())
@@ -714,17 +806,50 @@ fn write_adaptation_set(w: &mut Writer<Vec<u8>>, a: &AdaptationSet) -> Result<()
 fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(), MpdError> {
     let mut e = BytesStart::new("Representation");
     e.push_attribute(("id", r.id.as_str()));
+    if let Some(v) = &r.common.mime_type {
+        e.push_attribute(("mimeType", v.as_str()));
+    }
+    if let Some(v) = &r.common.codecs {
+        e.push_attribute(("codecs", v.as_str()));
+    }
     e.push_attribute(("bandwidth", r.bandwidth.to_string().as_str()));
+    if let Some(v) = r.common.width {
+        e.push_attribute(("width", v.to_string().as_str()));
+    }
+    if let Some(v) = r.common.height {
+        e.push_attribute(("height", v.to_string().as_str()));
+    }
+    if let Some(v) = &r.common.frame_rate {
+        e.push_attribute(("frameRate", v.as_str()));
+    }
+    if let Some(v) = &r.common.sar {
+        e.push_attribute(("sar", v.as_str()));
+    }
+    if let Some(v) = &r.common.audio_sampling_rate {
+        e.push_attribute(("audioSamplingRate", v.as_str()));
+    }
     if let Some(v) = r.quality_ranking {
         e.push_attribute(("qualityRanking", v.to_string().as_str()));
     }
     if !r.dependency_ids.is_empty() {
         e.push_attribute(("dependencyId", r.dependency_ids.join(" ").as_str()));
     }
-    write_common(w, &mut e, &r.common);
+    if let Some(v) = &r.common.profiles {
+        e.push_attribute(("profiles", v.as_str()));
+    }
+    if let Some(v) = r.common.max_playout_rate {
+        e.push_attribute(("maxPlayoutRate", v.to_string().as_str()));
+    }
+    if let Some(v) = r.common.coding_dependency {
+        e.push_attribute(("codingDependency", if v { "true" } else { "false" }));
+    }
+
     w.write_event(Event::Start(e)).map_err(io_err)?;
-    for b in &r.base_urls {
-        write_base_url(w, b)?;
+    if r.common.audio_sampling_rate.is_some() {
+        // AudioChannelConfiguration handled below if present in model
+    }
+    for d in &r.audio_channel_configurations {
+        write_descriptor(w, "AudioChannelConfiguration", d)?;
     }
     write_segment_layer(w, &r.segment)?;
     for d in &r.content_protections {
@@ -736,12 +861,13 @@ fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(
     for d in &r.supplemental_properties {
         write_descriptor(w, "SupplementalProperty", d)?;
     }
-    for d in &r.audio_channel_configurations {
-        write_descriptor(w, "AudioChannelConfiguration", d)?;
-    }
     for d in &r.inband_event_streams {
         write_descriptor(w, "InbandEventStream", d)?;
     }
+    for b in &r.base_urls {
+        write_base_url(w, b)?;
+    }
+
     w.write_event(Event::End(BytesEnd::new("Representation")))
         .map_err(io_err)?;
     Ok(())

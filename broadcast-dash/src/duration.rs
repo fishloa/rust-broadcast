@@ -85,12 +85,9 @@ pub fn parse_iso8601_duration(s: &str) -> Result<Duration> {
 #[must_use]
 pub fn format_iso8601_duration(d: Duration) -> String {
     let secs = d.as_secs();
-    let nanos = d.subsec_nanos();
-    if nanos == 0 {
-        format!("PT{secs}S")
-    } else {
-        format!("PT{secs}.{nanos:09}S")
-    }
+    let _ = secs;
+    let signed = jiff::SignedDuration::try_from(d).unwrap_or(jiff::SignedDuration::MAX);
+    jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&signed)
 }
 
 /// Validate `s` against the xs:duration lexical grammar (see

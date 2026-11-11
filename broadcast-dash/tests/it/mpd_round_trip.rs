@@ -262,7 +262,7 @@ fn a_model_with_every_field_set_round_trips() {
 fn to_xml_carries_declaration_and_namespace() {
     let mpd = Mpd::default();
     let xml = mpd.to_xml().unwrap();
-    assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+    assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"utf-8\"?>"));
     assert!(xml.contains("xmlns=\"urn:mpeg:dash:schema:mpd:2011\""));
     let mut with_xlink = Mpd::default();
     let mut p = Period::default();
