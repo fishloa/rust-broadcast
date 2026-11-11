@@ -263,7 +263,6 @@ pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<i64, DateTimeError> {
 pub fn format_xs_datetime(unix_us: i64) -> Result<String, DateTimeError> {
     let ts = jiff::Timestamp::from_microsecond(unix_us).map_err(|_| DateTimeError::OutOfRange)?;
     let s = ts.strftime("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
-    // Trim trailing zeros in the fractional part, dropping the dot when empty.
     let core = s.trim_end_matches('Z');
     if let Some(dot) = core.rfind('.') {
         let head = &core[..dot];

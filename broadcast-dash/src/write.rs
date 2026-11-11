@@ -26,7 +26,6 @@ impl Mpd {
     pub fn to_xml(&self) -> Result<String, MpdError> {
         let mut w = Writer::new_with_indent(Vec::new(), b' ', 2);
         let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
-        // Prefixed-namespace usage.
         let mut use_cenc = false;
         let mut use_xlink = false;
         let mut use_dvb = false;
@@ -130,12 +129,10 @@ impl Mpd {
             .map(format_iso8601_duration)
             .unwrap_or_else(|| "PT2S".to_string());
         root.push_attribute(("minBufferTime", min_buffer.as_str()));
-        // cenc namespace at transmux position, only if used
         let cenc_needed = use_cenc;
         if cenc_needed {
             root.push_attribute(("xmlns:cenc", NS_CENC));
         }
-        // dynamic attrs
         if let Some(v) = self.availability_start_time_us {
             root.push_attribute((
                 "availabilityStartTime",
@@ -176,7 +173,6 @@ impl Mpd {
                 format_iso8601_duration(v).as_str(),
             ));
         }
-        // remaining attrs transmux never writes
         if let Some(v) = &self.id {
             root.push_attribute(("id", v.as_str()));
         }
@@ -861,9 +857,7 @@ fn write_representation(w: &mut Writer<Vec<u8>>, r: &Representation) -> Result<(
     }
 
     w.write_event(Event::Start(e)).map_err(io_err)?;
-    if r.common.audio_sampling_rate.is_some() {
-        // AudioChannelConfiguration handled below if present in model
-    }
+    if r.common.audio_sampling_rate.is_some() {}
     for d in &r.audio_channel_configurations {
         write_descriptor(w, "AudioChannelConfiguration", d)?;
     }
