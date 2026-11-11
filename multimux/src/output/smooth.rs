@@ -926,11 +926,12 @@ mod tests {
 
     async fn manifest_chunks(
         app: &axum::Router,
-    ) -> (transmux::smooth_parse::StreamIndex, Vec<(u64, u64)>) {
+    ) -> (broadcast_smooth::StreamIndex, Vec<(u64, u64)>) {
         let (status, body) = crate::testutil::get_bytes(app, "/cam/Manifest").await;
         assert_eq!(status, StatusCode::OK);
-        let manifest = transmux::SmoothManifest::parse(&String::from_utf8(body).expect("utf8"))
-            .expect("manifest parses");
+        let manifest =
+            broadcast_smooth::SmoothManifest::parse(&String::from_utf8(body).expect("utf8"))
+                .expect("manifest parses");
         let stream = manifest.streams[0].clone();
         let chunks = stream.enumerate_chunks().expect("chunks");
         (stream, chunks)

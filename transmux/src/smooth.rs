@@ -55,19 +55,12 @@ use crate::movie_fragment::{
 };
 use crate::pipeline::{CodecConfig, Sample};
 use crate::segments::{MediaDataBox, SegmentTypeBox};
-use broadcast_common::xml_chars::{
-    XmlWriter, close_element as close, empty_element as empty, finish_document as finish,
-    new_writer, open_element as open, write_declaration,
-};
+use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
-/// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`).
-pub const SMOOTH_TIMESCALE: u64 = 10_000_000;
-
-/// `SmoothStreamingMedia@MajorVersion` for the manifest this module emits.
-const MAJOR_VERSION: u32 = 2;
-/// `SmoothStreamingMedia@MinorVersion`.
-const MINOR_VERSION: u32 = 0;
+/// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`); the single definition
+/// lives in `broadcast-smooth`, which owns the manifest syntax.
+pub use broadcast_smooth::SMOOTH_TIMESCALE;
 
 /// The `tfxd` `uuid` extended-type — [MS-SSTR] §2.2.4.4
 /// (`6d1d9b05-42d5-44e6-80e2-141daff757b2`).
@@ -100,6 +93,11 @@ pub const SUBTYPE_SUBT: &str = "SUBT";
 
 /// `AudioTag` for raw AAC in the Smooth `QualityLevel` (§2.2.2.5).
 const AUDIO_TAG_AAC: u32 = 255;
+/// The quality-level count every stream this packager emits advertises.
+const STREAM_QUALITY_LEVELS: u32 = 1;
+/// The 1-based ordinal the first stream of a `Type` gets (its `Name` is the
+/// bare `Type`).
+const FIRST_STREAM_ORDINAL: usize = 1;
 /// Bits-per-sample advertised for AAC audio.
 const AAC_BITS_PER_SAMPLE: u16 = 16;
 
@@ -278,6 +276,9 @@ struct StreamInfo {
     /// Audio params.
     sampling_rate: Option<u32>,
     channels: Option<u16>,
+    /// Number of `QualityLevel` elements the manifest advertises for the
+    /// stream — one per track, the fragments of which are served at one rate.
+    qualities: u32,
     /// The track's fragments (index into the output list, resolved at render).
     fragments: Vec<FragmentTiming>,
     /// Sum of fragment durations, in [`SMOOTH_TIMESCALE`] ticks.
@@ -403,6 +404,7 @@ impl SmoothPackager {
             height,
             sampling_rate,
             channels,
+            qualities: STREAM_QUALITY_LEVELS,
             fragments: fragment_timings,
             total_duration,
         })
@@ -458,126 +460,114 @@ impl SmoothPackager {
             data,
         })
     }
+}
 
-    /// Render the Smooth client Manifest XML for the resolved streams.
+impl SmoothPackager {
+    /// Build the Smooth client Manifest for the resolved streams and render
+    /// it with the model's serializer
+    /// ([`broadcast_smooth::SmoothManifest::to_xml`]).
     fn render_manifest(&self, streams: &[StreamInfo]) -> String {
-        let mut writer = new_writer();
-        let w = &mut writer;
-        declaration(w);
-
         let duration = streams.iter().map(|s| s.total_duration).max().unwrap_or(0);
-        open(
-            w,
-            "SmoothStreamingMedia",
-            &[
-                ("MajorVersion", MAJOR_VERSION.to_string()),
-                ("MinorVersion", MINOR_VERSION.to_string()),
-                ("Duration", duration.to_string()),
-                ("TimeScale", SMOOTH_TIMESCALE.to_string()),
-            ],
-        );
-
-        // [MS-SSTR] §2.2.2.3: the Url template names the stream by its `Name`
-        // (falling back to `Type`), so two same-type tracks (e.g. two audio
-        // languages) need distinct names or their fragment URLs collide
-        // (issue #1022). The first of a type keeps the bare type (no `Name` attribute).
         let mut seen: Vec<(SmoothStreamType, usize)> = Vec::new();
-        for s in streams {
-            let ty = s.stream_type.name();
-            let ordinal = match seen.iter_mut().find(|(t, _)| *t == s.stream_type) {
-                Some((_, n)) => {
-                    *n += 1;
-                    *n
-                }
-                None => {
-                    seen.push((s.stream_type, 1));
-                    1
-                }
-            };
-            let name = if ordinal == 1 {
-                ty.to_string()
-            } else {
-                format!("{ty}_{ordinal}")
-            };
-            let url = format!("QualityLevels({{bitrate}})/Fragments({name}={{start time}})");
-            let mut attrs = alloc::vec![("Type", ty.to_string())];
-            // The first stream of a type is addressed by its `Type` (the
-            // `Name` default), so only the 2nd and later need an explicit one.
-            if ordinal > 1 {
-                attrs.push(("Name", name));
-            }
-            // [MS-SSTR] §2.2.2.3: `Subtype` MUST appear on a text stream.
-            let subtype = if s.stream_type == SmoothStreamType::Text {
-                SUBTYPE_SUBT.to_string()
-            } else {
-                String::new()
-            };
-            attrs.extend([
-                ("Subtype", subtype),
-                ("Chunks", s.fragments.len().to_string()),
-                ("QualityLevels", "1".to_string()),
-                ("Url", url),
-            ]);
-            open(w, "StreamIndex", &attrs);
-
-            // QualityLevel
-            let mut ql = alloc::vec![
-                ("Index", "0".to_string()),
-                ("Bitrate", s.bitrate.to_string()),
-                ("FourCC", s.fourcc.to_string()),
-            ];
-            match s.stream_type {
-                SmoothStreamType::Video if let (Some(wd), Some(ht)) = (s.width, s.height) => {
-                    ql.push(("MaxWidth", wd.to_string()));
-                    ql.push(("MaxHeight", ht.to_string()));
-                    ql.push((
-                        "CodecPrivateData",
-                        ::hex::encode_upper(&s.codec_private_data),
-                    ));
-                }
-                SmoothStreamType::Video => {
-                    ql.push((
-                        "CodecPrivateData",
-                        ::hex::encode_upper(&s.codec_private_data),
-                    ));
-                }
-                // A text track needs no further `QualityLevel` attribute
-                // ([MS-SSTR] §2.2.2.5 requires geometry for video and audio
-                // parameters for audio only).
-                SmoothStreamType::Text => {}
-                SmoothStreamType::Audio => {
-                    if let Some(sr) = s.sampling_rate {
-                        ql.push(("SamplingRate", sr.to_string()));
+        let streams = streams
+            .iter()
+            .map(|stream| {
+                let ordinal = match seen.iter_mut().find(|(k, _)| *k == stream.stream_type) {
+                    Some((_, count)) => {
+                        *count += 1;
+                        *count
                     }
-                    if let Some(ch) = s.channels {
-                        ql.push(("Channels", ch.to_string()));
+                    None => {
+                        seen.push((stream.stream_type, FIRST_STREAM_ORDINAL));
+                        FIRST_STREAM_ORDINAL
                     }
-                    ql.push(("BitsPerSample", AAC_BITS_PER_SAMPLE.to_string()));
-                    ql.push(("AudioTag", AUDIO_TAG_AAC.to_string()));
-                    ql.push((
-                        "CodecPrivateData",
-                        ::hex::encode_upper(&s.codec_private_data),
-                    ));
-                }
-            }
-            empty(w, "QualityLevel", &ql);
-
-            // One `c` per fragment: `d` always; `t` on the first only; `n` ordinal.
-            for (i, f) in s.fragments.iter().enumerate() {
-                let mut c = alloc::vec![("n", i.to_string())];
-                if i == 0 {
-                    c.push(("t", f.start_time.to_string()));
-                }
-                c.push(("d", f.duration.to_string()));
-                empty(w, "c", &c);
-            }
-
-            close(w, "StreamIndex");
-        }
-
-        close(w, "SmoothStreamingMedia");
-        finish(writer)
+                };
+                self.stream_manifest_index(stream, ordinal)
+            })
+            .collect();
+        SmoothManifest::new(streams)
+            .with_duration(duration)
+            .to_xml()
     }
+
+    /// The manifest `StreamIndex` for one resolved track; `ordinal` is its
+    /// 1-based position among the streams of the same `Type`.
+    fn stream_manifest_index(&self, stream: &StreamInfo, ordinal: usize) -> StreamIndex {
+        let ty = stream.stream_type.name();
+        let name = if ordinal == FIRST_STREAM_ORDINAL {
+            ty.to_string()
+        } else {
+            format!("{ty}_{ordinal}")
+        };
+        let url = format!("QualityLevels({{bitrate}})/Fragments({name}={{start time}})");
+        let subtype = if stream.stream_type == SmoothStreamType::Text {
+            SUBTYPE_SUBT.to_string()
+        } else {
+            String::new()
+        };
+        let chunks = u32::try_from(stream.fragments.len()).unwrap_or(u32::MAX);
+        let mut index = StreamIndex::new(
+            manifest_stream_type(stream.stream_type),
+            url,
+            alloc::vec![quality_level(stream),],
+        )
+        .with_subtype(subtype)
+        .with_counts(chunks, stream.qualities)
+        .with_chunks(manifest_chunks(stream));
+        if ordinal > FIRST_STREAM_ORDINAL {
+            index = index.with_name(name);
+        }
+        index
+    }
+}
+
+/// The `StreamIndex@Type` token for a packager stream kind.
+fn manifest_stream_type(stream_type: SmoothStreamType) -> broadcast_smooth::StreamType {
+    match stream_type {
+        SmoothStreamType::Video => broadcast_smooth::StreamType::Video,
+        SmoothStreamType::Audio => broadcast_smooth::StreamType::Audio,
+        SmoothStreamType::Text => broadcast_smooth::StreamType::Text,
+    }
+}
+
+/// The single `QualityLevel` a track's fragments are served at, carrying the
+/// geometry (video) or sample parameters (audio) the IR knows.
+fn quality_level(stream: &StreamInfo) -> QualityLevel {
+    let level = QualityLevel::new(
+        stream.fourcc,
+        stream.bitrate,
+        stream.codec_private_data.clone(),
+    );
+    let level = match (stream.width, stream.height) {
+        (Some(width), Some(height)) => level.with_size(width, height),
+        _ => level,
+    };
+    match (stream.sampling_rate, stream.channels) {
+        (Some(rate), Some(channels)) if stream.stream_type == SmoothStreamType::Audio => {
+            level.with_audio(rate, channels, AAC_BITS_PER_SAMPLE, 0, AUDIO_TAG_AAC)
+        }
+        _ => level,
+    }
+    .without_packet_size()
+}
+
+/// One `c` per fragment, numbered from 0 (`c@n`); `t` on the first only, `d`
+/// always.
+fn manifest_chunks(stream: &StreamInfo) -> Vec<C> {
+    stream
+        .fragments
+        .iter()
+        .enumerate()
+        .map(|(i, fragment)| {
+            let ordinal = u32::try_from(i).unwrap_or(u32::MAX);
+            let chunk = C::new(fragment.duration).numbered(ordinal);
+            if i == 0 {
+                chunk.at(fragment.start_time)
+            } else {
+                chunk
+            }
+        })
+        .collect()
 }
 
 impl broadcast_common::Package for SmoothPackager {
@@ -925,51 +915,9 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-// ---------------------------------------------------------------------------
-// quick-xml writer plumbing
-// ---------------------------------------------------------------------------
-
-/// `<?xml version="1.0" encoding="utf-8"?>`.
-fn declaration(w: &mut XmlWriter) {
-    write_declaration(w, "utf-8");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quick_xml::events::{BytesStart, Event};
-
-    /// Every attribute value and text node goes through quick-xml's escaping:
-    /// all five specials, exact output, and the output re-parses to the original.
-    #[test]
-    fn writer_escapes_attributes_and_text() {
-        const SPECIALS: &str = "a&b<c>d\"e'f";
-        let mut writer = new_writer();
-        let w = &mut writer;
-        open(w, "Root", &[("k", SPECIALS.to_string())]);
-        empty(w, "Leaf", &[("v", SPECIALS.to_string())]);
-        let _ = w.write_event(Event::Start(BytesStart::new("T")));
-        let _ = w.write_event(Event::Text(quick_xml::events::BytesText::new(SPECIALS)));
-        close(w, "T");
-        close(w, "Root");
-        let out = finish(writer);
-        assert_eq!(
-            out,
-            concat!(
-                "<Root k=\"a&amp;b&lt;c&gt;d&quot;e&apos;f\">\n",
-                "  <Leaf v=\"a&amp;b&lt;c&gt;d&quot;e&apos;f\"/>\n",
-                "  <T>a&amp;b&lt;c&gt;d&quot;e&apos;f</T>\n",
-                "</Root>\n"
-            )
-        );
-        let parsed = crate::smooth_parse::SmoothManifest::parse(&out);
-        // Not a Smooth manifest, but it must be well-formed XML: the parser
-        // rejects it for its root name, not for syntax.
-        assert!(matches!(
-            parsed,
-            Err(crate::smooth_parse::SmoothParseError::UnexpectedElement { .. })
-        ));
-    }
 
     #[test]
     fn tfxd_round_trip() {

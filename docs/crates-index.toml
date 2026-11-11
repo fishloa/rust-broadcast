@@ -309,6 +309,14 @@ what = "Parses and serializes HLS playlists, including Low-Latency HLS (parts, p
 crates_io = true
 lifecycle = "active"
 
+[crate.broadcast-smooth]
+domain = "containers"
+summary = "Microsoft Smooth Streaming (MS-SSTR) client Manifest: typed model with parse and serialize."
+standards = "MS-SSTR (Microsoft Open Specifications), client Manifest (transcription in the private repo)"
+what = "Parses and serializes the Smooth `SmoothStreamingMedia` client Manifest: streams, quality levels, the `c` fragment timeline, the live/DVR attributes and the `Protection` header; the serializer writes exactly the model. Extracted from `transmux` so a manifest-only consumer does not pull in the muxing hub; the fragment responses and the codec-config glue that synthesises an init segment stay in `transmux`."
+crates_io = true
+lifecycle = "active"
+
 [crate.transmux]
 domain = "containers"
 summary = "Any-to-any container remux hub: TS/fMP4/PS/WebM/FLV/RTMP in, CMAF/MP4/TS/HLS/DASH/LL-*/Smooth out."
