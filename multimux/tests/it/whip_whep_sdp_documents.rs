@@ -86,7 +86,8 @@ fn whip_answer_matches_golden() {
         LOCAL_PWD,
         FINGERPRINT,
         &candidates(),
-    );
+    )
+    .expect("render the answer");
     check("golden/webrtc/whip-answer.golden", answer.as_bytes());
 }
 
@@ -101,7 +102,8 @@ fn whep_answer_matches_golden() {
         &config(),
         FINGERPRINT,
         &candidates(),
-    );
+    )
+    .expect("render the answer");
     check("golden/webrtc/whep-answer.golden", answer.as_bytes());
 }
 

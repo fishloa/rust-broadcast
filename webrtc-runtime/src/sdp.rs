@@ -33,6 +33,14 @@ pub const SESSION_NAME: &str = "-";
 /// §5). SHA-256 is the one hash function RFC 8827 §6.5 makes mandatory.
 const FINGERPRINT_HASH: &str = "sha-256";
 
+/// The media identification attribute (RFC 8843 §9.1) a bundled answer
+/// echoes.
+const MID_ATTRIBUTE: &str = "mid";
+
+/// The `a=mid` an offer without one is answered with: the first bundled
+/// media section (RFC 8843 §9.1).
+pub const DEFAULT_MID: &str = "0";
+
 /// The line terminator every SDP line ends with (RFC 8866 §5).
 const CRLF: &str = "\r\n";
 
@@ -191,6 +199,15 @@ pub fn offer_codec_attributes(media: &Media, payload_type: u8) -> Vec<CodecAttri
         .collect()
 }
 
+/// The `a=mid` the answer echoes: the offer media section's own
+/// [`MID_ATTRIBUTE`], or [`DEFAULT_MID`] when it carries none.
+pub fn offer_mid(media: &Media) -> String {
+    media
+        .get_first_attribute_value(MID_ATTRIBUTE)
+        .flatten()
+        .map_or_else(|| String::from(DEFAULT_MID), String::from)
+}
+
 /// Renders this side's whole SDP answer (RFC 8866 §5) over one media
 /// section.
 ///
@@ -211,6 +228,16 @@ pub fn session_answer(
         local_addr, local, mid, setup, codec, candidates,
     ));
     render_session(&session)
+}
+
+/// The session header lines an ICE fragment is parsed against: a fragment
+/// carries none (RFC 8840 §4.4), so a parser prepends these to its own lines
+/// and parses the result as one session.
+pub fn fragment_prelude() -> Result<String, Error> {
+    render_session(&Session::new(
+        Origin::with_ip_addr("0", 0, FRAGMENT_ORIGIN_ADDRESS),
+        SESSION_NAME,
+    ))
 }
 
 /// Renders the ICE-restart answer fragment (RFC 8840 §4.4): this side's new
