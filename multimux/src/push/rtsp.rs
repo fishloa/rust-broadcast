@@ -381,13 +381,15 @@ pub fn control_url_for_test(url: &str) -> Result<String, String> {
 /// `expect` on a fallible path); writing to a `Vec` and `String::from_utf8`
 /// are effectively infallible, but the error is surfaced anyway.
 fn build_sdp() -> Result<String, RtspPushError> {
-    use sdp_types::{
-        AddrType, Attribute, Connection, Media, MediaType, NetType, Origin, Session, TransportProto,
-    };
+    render_session(vec![push_media()])
+}
 
-    let origin = Origin::new("0", 0, NetType::In, AddrType::Ip4, "0.0.0.0");
-    let mut session = Session::new(origin, "multimux push");
-    session.set_connection(Connection::new(NetType::In, AddrType::Ip4, "0.0.0.0"));
+/// One `m=` section for the whole MPEG-2 TS-muxed stream: RFC 2250 §2's
+/// static MP2T payload type on its fixed 90 kHz clock, and the `control`
+/// attribute matching the one control URL `SETUP` addresses.
+fn push_media() -> sdp_types::Media {
+    use sdp_types::{Attribute, Media, MediaType, TransportProto};
+
     let mut media = Media::new(
         MediaType::Video,
         0,
@@ -399,13 +401,38 @@ fn build_sdp() -> Result<String, RtspPushError> {
         format!("{PT_MP2T} MP2T/{RTP_CLOCK_HZ}"),
     ));
     media.add_attribute(Attribute::with_value("control", "trackID=0"));
-    session.add_media(media);
+    media
+}
+
+/// Render `medias` as a session description with the zero origin and
+/// `0.0.0.0` connection the push announces.
+fn render_session(medias: Vec<sdp_types::Media>) -> Result<String, RtspPushError> {
+    use sdp_types::{AddrType, Connection, NetType, Origin, Session};
+
+    let origin = Origin::new("0", 0, NetType::In, AddrType::Ip4, "0.0.0.0");
+    let mut session = Session::new(origin, "multimux push");
+    session.set_connection(Connection::new(NetType::In, AddrType::Ip4, "0.0.0.0"));
+    session.medias = medias;
 
     let mut out = Vec::new();
     session
         .write(&mut out)
         .map_err(|e| RtspPushError::Protocol(format!("SDP write: {e}")))?;
     String::from_utf8(out).map_err(|e| RtspPushError::Protocol(format!("SDP encoding: {e}")))
+}
+
+/// `#[doc(hidden)]` test seam: the SDP the push announces, so the golden
+/// recorded in `rtsp-runtime`'s tests can reach the private builder.
+#[doc(hidden)]
+pub fn push_sdp_for_test() -> Result<String, RtspPushError> {
+    build_sdp()
+}
+
+/// `#[doc(hidden)]` test seam: the media sections whose `m=` block the push
+/// announces (see [`push_sdp_for_test`]).
+#[doc(hidden)]
+pub fn push_media_for_test() -> Vec<sdp_types::Media> {
+    vec![push_media()]
 }
 
 /// Errors from the RTSP push transport.

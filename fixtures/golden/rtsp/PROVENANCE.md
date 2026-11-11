@@ -155,3 +155,24 @@ Goldens for W1-R-low-a. Generated from `main` at commit 182d03f78bd5 with:
 Compared byte-for-byte by the same test without `GOLDEN_UPDATE`. Only Task 4
 (`transport-header.golden`, parameter order) may regenerate one, after a reviewed diff.
 
+
+## `sdp-transmux-h264-aac.sdp`, `sdp-push-mp2t-media.sdp`, `sdp-push-mp2t-session.sdp`
+
+Recorded on branch `refactor/sdp-session-2357` at commit `05691a890` (issue #2357, before the
+session builder moved into `rtsp_runtime::sdp`), so the move can be checked byte for byte:
+
+- `sdp-transmux-h264-aac.sdp` — transmux's `RtpPacketiser::package` session description for
+  `fixtures/ts/h264-aac.ts` (MTU 1400, SSRC `0x12345678`), i.e. what
+  `RtpOutput::sdp` rendered from `build_sdp`.
+- `sdp-push-mp2t-media.sdp` — the one `m=` block (`+ a=rtpmap`/`a=control`) multimux's RTSP
+  push describes: RFC 2250 §2 MP2T, static payload type 33, 90 kHz.
+- `sdp-push-mp2t-session.sdp` — that block rendered as a session (`o=- 0 0 IN IP4 0.0.0.0`,
+  `s=multimux push`, `c=IN IP4 0.0.0.0`). The push's whole ANNOUNCE body is already pinned by
+  `rtsp-announce.sdp` above and is asserted byte-identical to the media-section golden's host.
+
+Pinned by `rtsp-runtime/tests/it/sdp_session.rs` (the two builders live in host crates that
+may not depend on `rtsp-runtime`; they are dev-dependencies of it instead). Regenerate:
+
+```bash
+GOLDEN_BLESS=fixtures/golden/rtsp cargo test -p rtsp-runtime --locked --test it sdp_session
+```
