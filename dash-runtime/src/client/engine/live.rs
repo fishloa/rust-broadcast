@@ -315,7 +315,9 @@ impl DashClient {
             r.plan.as_ref().is_some_and(|p| {
                 p.len()
                     .and_then(|n| n.checked_sub(1))
-                    .and_then(|last| p.get(last).ok().flatten())
+                    .map_or(Ok(None), |last| p.get(last))
+                    .ok()
+                    .flatten()
                     .is_some_and(|s| {
                         s.start_us
                             .saturating_add(s.duration_us)
@@ -398,7 +400,10 @@ impl DashClient {
                     .filter_map(|r| {
                         let p = r.plan.as_ref()?;
                         let last = p.len()?.checked_sub(1)?;
-                        p.get(last).ok().flatten().map(|s| s.duration_us)
+                        match p.get(last) {
+                            Ok(s) => s.map(|s| s.duration_us),
+                            Err(_) => None,
+                        }
                     })
                     .max()
                     .unwrap_or(0)
@@ -894,14 +899,18 @@ impl DashClient {
                 return Candidate::Idle;
             };
             if !rep.joined {
-                let hint = plan.get(0).ok().flatten().map_or(0, |s| s.duration_us);
+                let hint = match plan.get(0) {
+                    Ok(Some(s)) => s.duration_us,
+                    Ok(None) => 0,
+                    Err(e) => return Candidate::Unaddressable(address_name(&e)),
+                };
                 let delay = self.delay_us(hint);
                 match join_index(plan, utc, delay) {
                     Some(idx) => {
-                        let last = idx
-                            .checked_sub(1)
-                            .and_then(|i| plan.get(i).ok().flatten())
-                            .map(|s| s.time_ticks);
+                        let last = match idx.checked_sub(1).map_or(Ok(None), |i| plan.get(i)) {
+                            Ok(s) => s.map(|s| s.time_ticks),
+                            Err(e) => return Candidate::Unaddressable(address_name(&e)),
+                        };
                         let lane = &mut self.periods[pi].lanes[li];
                         let ri = lane.reps.len() - 1;
                         let rep = &mut lane.reps[ri];
@@ -911,10 +920,11 @@ impl DashClient {
                         continue;
                     }
                     None => {
-                        let first = plan
-                            .get(0)
-                            .ok()
-                            .flatten()
+                        let first = match plan.get(0) {
+                            Ok(s) => s,
+                            Err(e) => return Candidate::Unaddressable(address_name(&e)),
+                        };
+                        let first = first
                             .and_then(|s| s.available_from_us)
                             .map(|a| a.saturating_add(margin));
                         return match first {
@@ -928,8 +938,10 @@ impl DashClient {
                     }
                 }
             }
-            let Some(seg) = plan.get(rep.next_issue).ok().flatten() else {
-                return Candidate::Idle;
+            let seg = match plan.get(rep.next_issue) {
+                Ok(Some(seg)) => seg,
+                Ok(None) => return Candidate::Idle,
+                Err(e) => return Candidate::Unaddressable(address_name(&e)),
             };
             if seg.available_until_us.is_some_and(|u| u < utc) {
                 self.expire_before_request(pi, li, utc);
@@ -964,13 +976,29 @@ impl DashClient {
             Some(o) if o > next && !rejoin => {
                 let ri = lane.reps.len() - 1;
                 lane.reps[ri].next_issue = o;
-                let last = lane.reps[ri]
-                    .plan
-                    .as_ref()
-                    .and_then(|p| o.checked_sub(1).and_then(|i| p.get(i).ok().flatten()))
-                    .map(|s| s.time_ticks);
+                let read = {
+                    let rep = &lane.reps[ri];
+                    rep.plan.as_ref().map(|p| {
+                        let at_o = p.get(o);
+                        let before = o.checked_sub(1).map_or(Ok(None), |i| p.get(i));
+                        (at_o, before)
+                    })
+                };
+                let fail = match &read {
+                    Some((Err(e), _)) | Some((_, Err(e))) => {
+                        Some(DropCause::Addressing(address_name(e)))
+                    }
+                    _ => None,
+                };
+                let last = match &read {
+                    Some((Ok(_), Ok(last))) => last.as_ref().map(|s| s.time_ticks),
+                    _ => None,
+                };
                 lane.reps[ri].last_time = last;
                 push_marker(lane);
+                if let Some(cause) = fail {
+                    self.drop_rep(pi, li, cause);
+                }
             }
             _ => self.rejoin_lane(pi, li),
         }
@@ -1107,12 +1135,21 @@ impl DashClient {
                 Some(o) if o > next && !rejoin => {
                     let ri = lane.reps.len() - 1;
                     lane.reps[ri].next_issue = o;
-                    let last = lane.reps[ri]
+                    let read = lane.reps[ri]
                         .plan
                         .as_ref()
-                        .and_then(|p| o.checked_sub(1).and_then(|i| p.get(i).ok().flatten()))
-                        .map(|s| s.time_ticks);
-                    lane.reps[ri].last_time = last;
+                        .map(|p| o.checked_sub(1).map_or(Ok(None), |i| p.get(i)))
+                        .unwrap_or(Ok(None));
+                    let fail = match read {
+                        Ok(s) => {
+                            lane.reps[ri].last_time = s.map(|s| s.time_ticks);
+                            None
+                        }
+                        Err(e) => Some(DropCause::Addressing(address_name(&e))),
+                    };
+                    if let Some(cause) = fail {
+                        self.drop_rep(pi, li, cause);
+                    }
                 }
                 Some(o) if o <= next && !rejoin => {}
                 _ => self.rejoin_lane(pi, li),
@@ -1390,15 +1427,18 @@ impl DashClient {
                 _ => sel.chosen_audio,
             }
         };
-        let switch_us = {
+        let switch = {
             let lane = &self.periods[pi].lanes[li];
             lane.current()
-                .and_then(|c| {
-                    c.plan
-                        .as_ref()
-                        .and_then(|p| p.get(c.next_issue).ok().flatten())
-                })
-                .map(|s| s.start_us)
+                .and_then(|c| c.plan.as_ref().map(|p| p.get(c.next_issue)))
+        };
+        let switch_us = match switch {
+            Some(Ok(seg)) => seg.map(|s| s.start_us),
+            Some(Err(e)) => {
+                self.drop_rep(pi, li, DropCause::Addressing(address_name(&e)));
+                None
+            }
+            None => None,
         };
         let Some(at) = replacement.filter(|a| a.period == index) else {
             if let Some(rep) = self.periods[pi].lanes[li].reps.last_mut() {
@@ -1409,13 +1449,32 @@ impl DashClient {
         match self.build_rep(at) {
             Ok(mut rep) => {
                 if let (Some(plan), Some(us)) = (rep.plan.as_ref(), switch_us) {
-                    rep.next_issue = plan.index_at_or_before(us).unwrap_or(0);
+                    rep.next_issue = match plan.index_at_or_before(us) {
+                        Ok(Some(i)) => i,
+                        _ => 0,
+                    };
                     rep.joined = true;
-                    rep.last_time = rep
+                    match rep
                         .next_issue
                         .checked_sub(1)
-                        .and_then(|i| plan.get(i).ok().flatten())
-                        .map(|s| s.time_ticks);
+                        .map_or(Ok(None), |i| plan.get(i))
+                    {
+                        Ok(seg) => {
+                            rep.last_time = seg.map(|s| s.time_ticks);
+                        }
+                        Err(e) => {
+                            self.outputs.push_back(Output::TrackDropped {
+                                period: index,
+                                set: at.set,
+                                rep: Some(at.rep),
+                                cause: DropCause::Addressing(address_name(&e)),
+                            });
+                            if let Some(r) = self.periods[pi].lanes[li].reps.last_mut() {
+                                r.dead = true;
+                            }
+                            return;
+                        }
+                    }
                 }
                 let ri = self.periods[pi].lanes[li].reps.len();
                 push_marker(&mut self.periods[pi].lanes[li]);
@@ -1474,7 +1533,10 @@ impl DashClient {
                 if rep.joined {
                     let bound = p.plan.len().unwrap_or(u64::MAX / 2);
                     rep.next_issue = match rep.last_time {
-                        Some(t) => p.plan.leading_true(bound, |s| s.time_ticks <= t),
+                        Some(t) => p
+                            .plan
+                            .leading_true(bound, |s| s.time_ticks <= t)
+                            .unwrap_or(0),
                         None => 0,
                     };
                 }

@@ -1,5 +1,6 @@
 mod availability;
 mod base_url;
+mod client_addressing;
 mod client_config;
 mod client_faults;
 mod client_misc;
