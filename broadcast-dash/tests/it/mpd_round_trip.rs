@@ -253,7 +253,6 @@ fn a_model_with_every_field_set_round_trips() {
     mpd.features.xlink_resolve_to_zero = false;
 
     let xml = mpd.to_xml().unwrap();
-    eprintln!("XML:\n{}", xml);
     let again = Mpd::parse(xml.as_bytes()).unwrap();
     assert_eq!(again, mpd);
 }

@@ -198,6 +198,9 @@ impl Mpd {
             root.push_attribute(("maxSubsegmentDuration", format_iso8601_duration(v).as_str()));
         }
         w.write_event(Event::Start(root)).map_err(io_err)?;
+        for sd in &self.service_descriptions {
+            write_service_description(&mut w, sd)?;
+        }
         for b in &self.base_urls {
             write_base_url(&mut w, b)?;
         }
@@ -209,8 +212,14 @@ impl Mpd {
             w.write_event(Event::End(BytesEnd::new("Location")))
                 .map_err(io_err)?;
         }
-        for sd in &self.service_descriptions {
-            write_service_description(&mut w, sd)?;
+        for d in &self.essential_properties {
+            write_descriptor(&mut w, "EssentialProperty", d)?;
+        }
+        for d in &self.supplemental_properties {
+            write_descriptor(&mut w, "SupplementalProperty", d)?;
+        }
+        for p in &self.periods {
+            write_period(&mut w, p)?;
         }
         for u in &self.utc_timings {
             let mut e = BytesStart::new("UTCTiming");
@@ -220,15 +229,6 @@ impl Mpd {
                 e.push_attribute(("id", v.as_str()));
             }
             w.write_event(Event::Empty(e)).map_err(io_err)?;
-        }
-        for d in &self.essential_properties {
-            write_descriptor(&mut w, "EssentialProperty", d)?;
-        }
-        for d in &self.supplemental_properties {
-            write_descriptor(&mut w, "SupplementalProperty", d)?;
-        }
-        for p in &self.periods {
-            write_period(&mut w, p)?;
         }
         if self.features.patch_location {
             w.write_event(Event::Empty(BytesStart::new("PatchLocation")))
@@ -398,26 +398,22 @@ fn write_base_info(
     if let Some(v) = info.index_range_exact {
         e.push_attribute(("indexRangeExact", if v { "true" } else { "false" }));
     }
-    if let Some(v) = info.availability_time_offset {
-        if v.is_infinite() {
-            if v.is_sign_negative() {
-                e.push_attribute(("availabilityTimeOffset", "-INF"));
-            } else {
-                e.push_attribute(("availabilityTimeOffset", "INF"));
-            }
-        } else {
-            e.push_attribute(("availabilityTimeOffset", v.to_string().as_str()));
-        }
-    }
-    if let Some(v) = info.availability_time_complete {
-        e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
-    }
     Ok(())
 }
 
 fn write_segment_base(w: &mut Writer<Vec<u8>>, sb: &SegmentBase) -> Result<(), MpdError> {
     let mut e = BytesStart::new("SegmentBase");
     write_base_info(w, &mut e, &sb.info)?;
+    if let Some(v) = sb.info.availability_time_offset {
+        if v.fract() == 0.0 {
+            e.push_attribute(("availabilityTimeOffset", format!("{}", v as i64).as_str()));
+        } else {
+            e.push_attribute(("availabilityTimeOffset", v.to_string().as_str()));
+        }
+    }
+    if let Some(v) = sb.info.availability_time_complete {
+        e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
+    }
     let has_init = sb.info.initialization.is_some();
     let has_ri = sb.info.representation_index.is_some();
     if !has_init && !has_ri {
@@ -469,6 +465,16 @@ fn write_timeline(w: &mut Writer<Vec<u8>>, t: &SegmentTimeline) -> Result<(), Mp
 fn write_segment_list(w: &mut Writer<Vec<u8>>, sl: &SegmentList) -> Result<(), MpdError> {
     let mut e = BytesStart::new("SegmentList");
     write_base_info(w, &mut e, &sl.multi.base)?;
+    if let Some(v) = sl.multi.base.availability_time_offset {
+        if v.fract() == 0.0 {
+            e.push_attribute(("availabilityTimeOffset", format!("{}", v as i64).as_str()));
+        } else {
+            e.push_attribute(("availabilityTimeOffset", v.to_string().as_str()));
+        }
+    }
+    if let Some(v) = sl.multi.base.availability_time_complete {
+        e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
+    }
     if let Some(v) = sl.multi.duration {
         e.push_attribute(("duration", v.to_string().as_str()));
     }
@@ -555,6 +561,16 @@ fn write_segment_template(w: &mut Writer<Vec<u8>>, st: &SegmentTemplate) -> Resu
     }
     if let Some(v) = &st.bitstream_switching {
         e.push_attribute(("bitstreamSwitching", v.as_str()));
+    }
+    if let Some(v) = st.multi.base.availability_time_offset {
+        if v.fract() == 0.0 {
+            e.push_attribute(("availabilityTimeOffset", format!("{}", v as i64).as_str()));
+        } else {
+            e.push_attribute(("availabilityTimeOffset", v.to_string().as_str()));
+        }
+    }
+    if let Some(v) = st.multi.base.availability_time_complete {
+        e.push_attribute(("availabilityTimeComplete", if v { "true" } else { "false" }));
     }
     let has_children = st.multi.base.initialization.is_some()
         || st.multi.base.representation_index.is_some()
