@@ -39,7 +39,8 @@ fn whip_answer_matches_golden() {
         "00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:\
          00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff",
         &["0 1 udp 2130706431 127.0.0.1 54321 typ host".to_string()],
-    );
+    )
+    .expect("render the answer");
     let file = "golden/webrtc/whip-answer.golden";
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
         std::fs::create_dir_all(&dir).expect("create golden dir");

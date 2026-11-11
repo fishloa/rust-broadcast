@@ -50,8 +50,10 @@ bytes       = { version = "1",    optional = true }
 # crates themselves, and this is the same minimal RustCrypto crate the
 # feasibility spike used.
 sha2        = { version = "0.11", optional = true }
-# SDP fingerprint via typed attributes (SP4) and `stun:` host formatting (SP3).
-sdp-types   = { workspace = true, optional = true }
+# SDP fingerprint via typed attributes (SP4), `stun:` host formatting (SP3), and
+# the session/media document `sdp` renders. Not optional: the builder is part
+# of the default (non-`media`) build.
+sdp-types   = { workspace = true }
 # Origin comparison (RFC 6454) gating the bearer token to the endpoint it was
 # configured for (issue #1142); also the `stun:` host type in the `media` feature.
 url         = { version = "2" }
@@ -82,7 +84,6 @@ media = [
     "dep:sansio",
     "dep:bytes",
     "dep:sha2",
-    "dep:sdp-types",
     "dep:subtle",
 ]
 
@@ -91,9 +92,6 @@ test-fixtures = { path = "../test-fixtures" }
 tokio = { version = "1", features = ["full"] }
 # The WHIP-lite example's signalling endpoint (Task 10).
 axum  = { workspace = true }
-# The WHIP-lite example reads the offer and writes the answer with `sdp-types`
-# (also the `media` feature's optional dependency; examples resolve dev-deps).
-sdp-types = { workspace = true }
 # Fixture-verification only (tests/it/srtp_rfc3711_vectors.rs): an independent,
 # from-spec-text AES-CM + HMAC-SHA1 implementation used to cross-check
 # rtc-srtp's own output against the RFC 3711 Appendix B test vectors. These

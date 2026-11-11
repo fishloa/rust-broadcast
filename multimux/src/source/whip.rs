@@ -4,12 +4,12 @@
 //! (`application/sdp`), answered with a `201 Created` carrying this side's
 //! SDP answer, after which media flows over ICE + DTLS-SRTP —
 //! [`webrtc_runtime::media::MediaTransport`] is the transport this module
-//! drives; SDP itself (offer parsing, answer construction) is out of that
-//! crate's scope (see its module doc) and is handled here, over
-//! [`sdp_types::Session`] (the same SDP crate `crate::source::sdp` uses for
-//! RTSP DESCRIBE bodies) for structure, plus a small amount of manual line
-//! scanning for the WebRTC-specific attributes (`a=ice-ufrag`, `a=setup`,
-//! `a=candidate`, …) neither `sdp_types` nor `crate::source::sdp` models.
+//! drives. The answer is `webrtc_runtime::sdp`'s: this module parses the
+//! offer over [`sdp_types::Session`] (the same SDP crate
+//! `crate::source::sdp` uses for RTSP DESCRIBE bodies) plus a small amount of
+//! manual line scanning for the WebRTC-specific attributes (`a=ice-ufrag`,
+//! `a=setup`, `a=candidate`, …) neither `sdp_types` nor `crate::source::sdp`
+//! models, then hands it the typed media section to answer.
 //!
 //! # Scope: video (H.264) only in this cut
 //!
@@ -113,6 +113,10 @@ use crate::webrtc_session::{
     ResourceGuard, ResourceTable, SessionControl, ensure_connect_info, ice_attr, single_video_media,
 };
 use axum::response::IntoResponse as _;
+use webrtc_runtime::sdp::{
+    AnswerCodec, AnswerTransport, Direction, LocalMediaIdentity, offer_codec_attributes, offer_mid,
+    session_answer,
+};
 use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
 
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
@@ -671,9 +675,8 @@ pub fn parse_offer_for_test(offer: &str) -> (String, String) {
 
 /// `#[doc(hidden)]` test hook: render a WHIP SDP answer deterministically —
 /// the offer, local address, ICE credentials, fingerprint and candidate lines
-/// are all caller-supplied, so `multimux/tests/it/whip_whep_sdp.rs` can golden
-/// `sdp_types::Session::write`'s line ordering (the review's answer-golden
-/// gap) without the random cert/candidate values.
+/// are all caller-supplied, so `multimux/tests/it/whip_whep_sdp_documents.rs`
+/// can pin the document without the random cert/candidate values.
 #[doc(hidden)]
 #[cfg(feature = "test-hooks")]
 pub fn render_answer_for_test(
@@ -683,8 +686,8 @@ pub fn render_answer_for_test(
     local_ice_pwd: &str,
     fingerprint: &str,
     candidates: &[String],
-) -> String {
-    let parsed = parse_whip_offer(offer).expect("parse offer");
+) -> Option<String> {
+    let parsed = parse_whip_offer(offer).ok()?;
     render_answer(
         &parsed,
         local_addr,
@@ -693,6 +696,7 @@ pub fn render_answer_for_test(
         fingerprint,
         candidates,
     )
+    .ok()
 }
 
 impl Source for WhipRoute {
@@ -749,11 +753,7 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
     let remote_fingerprint = parse_remote_fingerprint(offer).ok_or_else(|| MultimuxError::Sdp {
         reason: "whip: offer has no a=fingerprint".into(),
     })?;
-    let mid = media
-        .get_first_attribute_value("mid")
-        .flatten()
-        .unwrap_or("0")
-        .to_string();
+    let mid = offer_mid(media);
     let candidates = crate::webrtc_session::candidate_lines(media);
 
     let (payload_type, rtpmap) =
@@ -774,20 +774,23 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
     })
 }
 
-/// Builds this side's SDP answer via `sdp-types`' own `Session::write`
-/// (Task 8): [`SetupRole::Passive`] (this route is always the DTLS server),
-/// `a=recvonly` (a WHIP publish endpoint never sends media back),
-/// `a=rtcp-mux` (required — [`MediaTransport`] demuxes RTP/RTCP on one
-/// 5-tuple per RFC 5761 §4, never a separate RTCP port). ICE candidate lines
-/// come from [`MediaTransport::local_candidates`], and the codec attributes
-/// (`a=rtpmap`/`a=fmtp`/`a=rtcp-fb`) are echoed from the offer's typed media.
+/// Builds this side's SDP answer: [`SetupRole::Passive`] (this route is
+/// always the DTLS server), `a=recvonly` (a WHIP publish endpoint never sends
+/// media back), `a=rtcp-mux` (required — [`MediaTransport`] demuxes RTP/RTCP
+/// on one 5-tuple per RFC 5761 §4, never a separate RTCP port). ICE candidate
+/// lines come from [`MediaTransport::local_candidates`], and the codec
+/// attributes (`a=rtpmap`/`a=fmtp`/`a=rtcp-fb`) are echoed from the offer's
+/// typed media.
+///
+/// The document itself is `webrtc_runtime::sdp`'s to render; this module
+/// supplies the offer's media section and the attributes to echo.
 fn build_answer(
     offer: &ParsedOffer,
     media: &MediaTransport,
     local_addr: std::net::SocketAddr,
     local_ice_ufrag: &str,
     local_ice_pwd: &str,
-) -> String {
+) -> Result<String> {
     render_answer(
         offer,
         local_addr,
@@ -799,7 +802,7 @@ fn build_answer(
 }
 
 /// [`build_answer`]'s deterministic core (test-only export): the fingerprint
-/// and candidate lines are parameters, so a golden can pin `Session::write`'s
+/// and candidate lines are parameters, so the goldens pin the document's
 /// line ordering without the random cert/candidate values.
 fn render_answer(
     offer: &ParsedOffer,
@@ -808,63 +811,30 @@ fn render_answer(
     local_ice_pwd: &str,
     fingerprint: &str,
     candidates: &[String],
-) -> String {
-    use sdp_types::{Attribute, Connection, Media, Origin, Session};
-
-    let mut session = Session::new(Origin::with_ip_addr("0", 0, local_addr.ip()), "-");
-
-    // Reconstruct the m= section from the offer's typed media (echo the
-    // negotiated fmt list, RFC 3264 §6.1), with this side's c= line.
-    let mut m = Media {
-        media: offer.media.media.clone(),
-        port: offer.media.port,
-        num_ports: offer.media.num_ports,
-        proto: offer.media.proto.clone(),
-        fmt: offer.payload_type.to_string(),
-        media_title: None,
-        connections: Vec::new(),
-        bandwidths: Vec::new(),
-        key: None,
-        attributes: Vec::new(),
+) -> Result<String> {
+    let codec = AnswerCodec {
+        direction: Direction::Receive,
+        transport: AnswerTransport {
+            offer: offer.media.clone(),
+            payload_type: offer.payload_type,
+        },
+        codec_attributes: offer_codec_attributes(&offer.media, offer.payload_type),
     };
-    m.add_connection(Connection::from_ip_addr(local_addr.ip()));
-    m.add_attribute_with_value("rtcp", "9 IN IP4 0.0.0.0");
-    // Echo the codec attributes naming the chosen payload type.
-    for attr in &offer.media.attributes {
-        if !matches!(attr.attribute.as_str(), "rtpmap" | "fmtp" | "rtcp-fb") {
-            continue;
-        }
-        let names_pt = attr
-            .value
-            .as_deref()
-            .and_then(|v| v.split_whitespace().next())
-            .and_then(|pt| pt.parse::<u8>().ok())
-            == Some(offer.payload_type);
-        if names_pt {
-            m.attributes.push(Attribute {
-                attribute: attr.attribute.clone(),
-                value: attr.value.clone(),
-            });
-        }
-    }
-    m.add_attribute(sdp_types::Attribute::new("recvonly"));
-    m.add_attribute_with_value("mid", &offer.mid);
-    m.add_attribute(sdp_types::Attribute::new("rtcp-mux"));
-    m.add_attribute_with_value("ice-ufrag", local_ice_ufrag);
-    m.add_attribute_with_value("ice-pwd", local_ice_pwd);
-    m.add_attribute_with_value("fingerprint", format!("sha-256 {}", fingerprint));
-    m.add_attribute_with_value("setup", "passive");
-    for cand in candidates {
-        m.add_attribute_with_value("candidate", cand);
-    }
-    m.add_attribute(sdp_types::Attribute::new("end-of-candidates"));
-    session.medias.push(m);
-
-    let mut buf = Vec::new();
-    session
-        .write(&mut buf)
-        .expect("writing an SDP answer to a Vec cannot fail");
-    String::from_utf8(buf).expect("SDP answer is UTF-8")
+    session_answer(
+        local_addr.ip(),
+        LocalMediaIdentity {
+            ice_ufrag: local_ice_ufrag,
+            ice_pwd: local_ice_pwd,
+            fingerprint,
+        },
+        &offer.mid,
+        SetupRole::Passive.name(),
+        &codec,
+        candidates,
+    )
+    .map_err(|e| MultimuxError::Sdp {
+        reason: format!("whip: render the answer: {e}"),
+    })
 }
 
 /// Handles one accepted TCP connection end-to-end: read the POST, parse and
@@ -1067,7 +1037,7 @@ async fn whip_post_inner(
         local_addr,
         &local_ice_ufrag,
         &local_ice_pwd,
-    );
+    )?;
 
     // The typed state machine owns the 201's Location/ETag/Content-Type over
     // `http`/`headers` (SP2.2), not a hand-formatted response string. The
