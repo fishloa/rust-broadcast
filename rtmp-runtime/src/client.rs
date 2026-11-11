@@ -15,7 +15,7 @@ use broadcast_common::{Parse, Serialize};
 use crate::RtmpError;
 use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
-use crate::flv_bridge::{FlvTagWriter, unpack_aggregate};
+use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::{
     EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
 };

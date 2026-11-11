@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The KLV triplet and BER length codec are `broadcast_common::klv`'s (#2341). `st377_1::ber::{BerLength, decode_ber_length, encode_ber_length, ber_length_size}` and `st377_1::klv::{KlvItem, walk_klv_items, collect_klv_items}` are re-exports, so their paths still resolve; MXF items (fill-item keys) stay here.
+- BREAKING: `Error`'s BER/KLV variants (`BerIndefiniteLength`, `BerLengthTooLong`, `FixedBerLengthTooSmall`) are replaced by `Error::Klv(broadcast_common::klv::KlvError)`, which carries the same cases. Match on `Error::Klv(..)` instead.
+- Requires broadcast-common 11.1.0.
 
 ## [0.6.0] - 2026-11-07
 ### Fixed

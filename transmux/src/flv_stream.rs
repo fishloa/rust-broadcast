@@ -366,16 +366,17 @@ impl StreamingFlvDemux {
             let tag_type_byte = remaining[0];
             let data_size =
                 u32::from_be_bytes([0, remaining[1], remaining[2], remaining[3]]) as usize;
-            let ts_lo = u32::from_be_bytes([0, remaining[4], remaining[5], remaining[6]]);
-            let ts_ext = remaining[7] as u32;
-            let timestamp = (ts_ext << 24) | ts_lo;
-            let body_start = TAG_HEADER_LEN;
-            let body_end = body_start + data_size;
-            let total = body_end + PREV_TAG_SIZE_LEN;
+            let total = TAG_HEADER_LEN
+                .saturating_add(data_size)
+                .saturating_add(PREV_TAG_SIZE_LEN);
             if remaining.len() < total {
                 break; // tag body / trailing PreviousTagSize not fully arrived
             }
-            let body = &remaining[body_start..body_end];
+            let Ok(tag) = rtmp_runtime::flv::FlvTag::parse(remaining) else {
+                break; // the full tag is here, so this only fails on a framing bug
+            };
+            let timestamp = tag.timestamp;
+            let body = tag.body;
             // The tag is fully present, so it is consumed either way: advance
             // the cursor *before* parsing, so a structural failure (a corrupt
             // ASC/avcC) is drained along with the bytes before it rather than
@@ -740,6 +741,7 @@ impl Stage for StreamingFlvDemux {
 mod tests {
     use super::*;
     use alloc::vec;
+    use broadcast_common::Serialize;
     use bytes::Bytes;
 
     // --- Synthetic FLV fixture builder (small + deterministic) --------------
@@ -775,17 +777,12 @@ mod tests {
     }
 
     fn write_tag(out: &mut Vec<u8>, tag_type: u8, timestamp: u32, body: &[u8]) {
-        let start = out.len();
-        out.push(tag_type);
-        out.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]); // DataSize UI24
-        out.push((timestamp >> 16) as u8);
-        out.push((timestamp >> 8) as u8);
-        out.push(timestamp as u8);
-        out.push((timestamp >> 24) as u8); // TimestampExtended
-        out.extend_from_slice(&[0, 0, 0]); // StreamID = 0
-        out.extend_from_slice(body);
-        let tag_size = (out.len() - start) as u32;
-        out.extend_from_slice(&tag_size.to_be_bytes()); // PreviousTagSize
+        let tag = rtmp_runtime::flv::FlvTag::new(
+            rtmp_runtime::flv::TagType::from_byte(tag_type),
+            timestamp,
+            body,
+        );
+        out.extend_from_slice(&tag.try_to_bytes().expect("tag framing"));
     }
 
     fn flv_header() -> Vec<u8> {
@@ -795,13 +792,9 @@ mod tests {
     /// An FLV header with an explicit (possibly non-conformant) `DataOffset`,
     /// with its trailing `PreviousTagSize0` always zero.
     fn header_with_data_offset(data_offset: u32) -> Vec<u8> {
-        let mut out = Vec::new();
-        out.extend_from_slice(&FLV_SIGNATURE);
-        out.push(1); // version
-        out.push(0x01); // TypeFlags: video present
-        out.extend_from_slice(&data_offset.to_be_bytes());
-        out.extend_from_slice(&0u32.to_be_bytes()); // PreviousTagSize0
-        out
+        let mut header = rtmp_runtime::flv::FlvHeader::new(false, true);
+        header.data_offset = data_offset;
+        header.try_to_bytes().expect("header framing")
     }
 
     /// Feed `input` then drain every event newly queued by it via

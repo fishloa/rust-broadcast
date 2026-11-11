@@ -342,8 +342,7 @@ pub use ir::{
 };
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
-    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, UniversalLabel,
-    ber_length, ber_oid, checksum_bcc16, encode_ber_length, encode_ber_oid,
+    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UasLocalSet, ber_oid, checksum_bcc16, encode_ber_oid,
 };
 pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, RapKind};
 #[cfg(feature = "std")]

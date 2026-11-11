@@ -31,8 +31,10 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use rtmp_runtime::RtmpError;
 use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE, Message};
+use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use rtmp_runtime::message::{ProtocolControl, msg_type};
 
 use crate::flv::{FlvDemux, FlvError, FlvMux};
@@ -126,39 +128,6 @@ impl From<rtmp_runtime::RtmpError> for RtmpFlvError {
 // FLV bridge: rebuild / split FLV from A/V message bodies
 // ---------------------------------------------------------------------------
 
-/// FLV signature `"FLV"` (Adobe FLV v10.1 §E.2).
-const FLV_SIGNATURE: [u8; 3] = *b"FLV";
-/// FLV file-format version (§E.2).
-const FLV_VERSION: u8 = 1;
-/// FLV header length (§E.2).
-const FLV_HEADER_LEN: u32 = 9;
-/// `TypeFlags` bit: audio present (§E.2).
-const FLV_FLAG_AUDIO: u8 = 0x04;
-/// `TypeFlags` bit: video present (§E.2).
-const FLV_FLAG_VIDEO: u8 = 0x01;
-/// FLV tag header length (§E.4.1).
-const FLV_TAG_HEADER_LEN: usize = 11;
-/// FLV `PreviousTagSize` trailer length (§E.4.1).
-const FLV_PREV_TAG_SIZE_LEN: usize = 4;
-/// FLV tag type: audio (§E.4.1) — matches RTMP [`msg_type::AUDIO`].
-const FLV_TAG_AUDIO: u8 = msg_type::AUDIO;
-/// FLV tag type: video (§E.4.1) — matches RTMP [`msg_type::VIDEO`].
-const FLV_TAG_VIDEO: u8 = msg_type::VIDEO;
-/// FLV tag type: script data (§E.4.1).
-const FLV_TAG_SCRIPT: u8 = msg_type::DATA_AMF0;
-
-/// Write a big-endian unsigned 24-bit integer.
-fn write_u24(out: &mut Vec<u8>, v: u32) {
-    out.push((v >> 16) as u8);
-    out.push((v >> 8) as u8);
-    out.push(v as u8);
-}
-
-/// Read a big-endian unsigned 24-bit integer.
-fn read_u24(b: &[u8]) -> u32 {
-    (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2])
-}
-
 /// Build an FLV byte stream from A/V (and script) tag bodies with timestamps.
 /// `(tag_type, timestamp_ms, body)` — the body is exactly an FLV tag payload
 /// (which for A/V equals the RTMP message body).
@@ -166,74 +135,48 @@ fn read_u24(b: &[u8]) -> u32 {
 /// # Errors
 ///
 /// Returns [`RtmpFlvError::FieldOverflow`] if a tag body is 16 MiB (2^24) or larger —
-/// `DataSize` is a UI24 field (§E.4.1) and cannot represent it.
+/// `DataSize` is a UI24 field (Adobe FLV v10.1 Annex E §E.4.1) and cannot represent it.
 fn build_flv(
-    tags: &[(u8, u32, Vec<u8>)],
+    tags: &[(TagType, u32, Vec<u8>)],
     has_video: bool,
     has_audio: bool,
 ) -> Result<Vec<u8>, RtmpFlvError> {
-    let mut out = Vec::new();
-    out.extend_from_slice(&FLV_SIGNATURE);
-    out.push(FLV_VERSION);
-    let mut flags = 0u8;
-    if has_video {
-        flags |= FLV_FLAG_VIDEO;
-    }
-    if has_audio {
-        flags |= FLV_FLAG_AUDIO;
-    }
-    out.push(flags);
-    out.extend_from_slice(&FLV_HEADER_LEN.to_be_bytes());
-    out.extend_from_slice(&0u32.to_be_bytes()); // PreviousTagSize0 = 0
-    for (tag_type, ts, body) in tags {
-        let start = out.len();
-        out.push(*tag_type);
-        let data_size = broadcast_common::len::fit_u24(body.len(), "DataSize")?;
-        write_u24(&mut out, data_size);
-        // Timestamp UI24 + extended high byte.
-        out.push((*ts >> 16) as u8);
-        out.push((*ts >> 8) as u8);
-        out.push(*ts as u8);
-        out.push((*ts >> 24) as u8);
-        out.extend_from_slice(&[0, 0, 0]); // StreamID = 0
-        out.extend_from_slice(body);
-        let tag_size = (out.len() - start) as u32;
-        out.extend_from_slice(&tag_size.to_be_bytes());
+    let mut out = FlvHeader::new(has_audio, has_video).try_to_bytes()?;
+    for (tag_type, timestamp, body) in tags {
+        let tag = FlvTag::new(*tag_type, *timestamp, body);
+        out.extend_from_slice(&tag.try_to_bytes()?);
     }
     Ok(out)
 }
 
-/// Walk an FLV byte stream into `(tag_type, timestamp_ms, body)` tags (§E.4.1).
-fn split_flv(flv: &[u8]) -> Result<Vec<(u8, u32, Vec<u8>)>, RtmpFlvError> {
-    if flv.len() < FLV_HEADER_LEN as usize + FLV_PREV_TAG_SIZE_LEN {
-        return Err(RtmpFlvError::Truncated {
-            what: "FLV header",
-            need: FLV_HEADER_LEN as usize + FLV_PREV_TAG_SIZE_LEN,
-            have: flv.len(),
-        });
-    }
-    let data_offset = u32::from_be_bytes([flv[5], flv[6], flv[7], flv[8]]) as usize;
-    let mut off = data_offset.max(FLV_HEADER_LEN as usize) + FLV_PREV_TAG_SIZE_LEN;
+/// Walk an FLV byte stream into its tags (§E.4.1).
+fn walk_flv_tags(flv: &[u8]) -> Result<Vec<FlvTag<'_>>, RtmpFlvError> {
+    let header = FlvHeader::parse(flv)?;
     let mut tags = Vec::new();
-    while off + FLV_TAG_HEADER_LEN <= flv.len() {
-        let tag_type = flv[off];
-        let data_size = read_u24(&flv[off + 1..]) as usize;
-        let ts_lo = read_u24(&flv[off + 4..]);
-        let ts_ext = flv[off + 7] as u32;
-        let timestamp = (ts_ext << 24) | ts_lo;
-        let body_start = off + FLV_TAG_HEADER_LEN;
-        let body_end = body_start + data_size;
-        if body_end + FLV_PREV_TAG_SIZE_LEN > flv.len() {
-            return Err(RtmpFlvError::Truncated {
-                what: "FLV tag body",
-                need: body_end + FLV_PREV_TAG_SIZE_LEN,
-                have: flv.len(),
-            });
-        }
-        tags.push((tag_type, timestamp, flv[body_start..body_end].to_vec()));
-        off = body_end + FLV_PREV_TAG_SIZE_LEN;
+    for tag in rtmp_runtime::flv::tags(flv, &header) {
+        add_tag(&mut tags, tag)?;
     }
     Ok(tags)
+}
+
+/// Collect one walked tag, mapping the codec's `BufferTooShort` onto the
+/// bridge's own truncation report.
+fn add_tag<'a>(
+    tags: &mut Vec<FlvTag<'a>>,
+    tag: Result<FlvTag<'a>, RtmpError>,
+) -> Result<(), RtmpFlvError> {
+    match tag {
+        Ok(tag) => {
+            tags.push(tag);
+            Ok(())
+        }
+        Err(RtmpError::BufferTooShort(e)) => Err(RtmpFlvError::Truncated {
+            what: e.what,
+            need: e.need,
+            have: e.have,
+        }),
+        Err(e) => Err(RtmpFlvError::Rtmp(e)),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +216,7 @@ impl<'a> Unpackage for RtmpDemux<'a> {
     fn unpackage(&mut self, input: &'a [u8]) -> Result<Media, RtmpFlvError> {
         let mut assembler = ChunkAssembler::new();
         assembler.feed(input);
-        let mut tags: Vec<(u8, u32, Vec<u8>)> = Vec::new();
+        let mut tags: Vec<(TagType, u32, Vec<u8>)> = Vec::new();
         let mut has_video = false;
         let mut has_audio = false;
         while let Some(m) = assembler.next_message()? {
@@ -287,14 +230,14 @@ impl<'a> Unpackage for RtmpDemux<'a> {
                 }
                 msg_type::AUDIO => {
                     has_audio = true;
-                    tags.push((FLV_TAG_AUDIO, m.timestamp, m.payload));
+                    tags.push((TagType::Audio, m.timestamp, m.payload));
                 }
                 msg_type::VIDEO => {
                     has_video = true;
-                    tags.push((FLV_TAG_VIDEO, m.timestamp, m.payload));
+                    tags.push((TagType::Video, m.timestamp, m.payload));
                 }
                 msg_type::DATA_AMF0 => {
-                    tags.push((FLV_TAG_SCRIPT, m.timestamp, m.payload));
+                    tags.push((TagType::Script, m.timestamp, m.payload));
                 }
                 _ => { /* control / command / user-control — not media */ }
             }
@@ -364,7 +307,7 @@ impl Package for RtmpMux {
             })?;
         let mut flv_mux = FlvMux::new();
         let flv = flv_mux.package(media).map_err(RtmpFlvError::Flv)?;
-        let tags = split_flv(&flv)?;
+        let tags = walk_flv_tags(&flv)?;
 
         let mut writer = ChunkWriter::new();
         let mut out = Vec::new();
@@ -373,19 +316,19 @@ impl Package for RtmpMux {
             out.extend_from_slice(&writer.write(&control)?);
             writer.set_chunk_size(chunk_size);
         }
-        for (tag_type, ts, body) in tags {
-            let (chunk_stream_id, message_type_id) = match tag_type {
-                FLV_TAG_AUDIO => (CSID_AUDIO, msg_type::AUDIO),
-                FLV_TAG_VIDEO => (CSID_VIDEO, msg_type::VIDEO),
-                FLV_TAG_SCRIPT => (CSID_DATA, msg_type::DATA_AMF0),
+        for tag in tags {
+            let (chunk_stream_id, message_type_id) = match tag.tag_type {
+                TagType::Audio => (CSID_AUDIO, msg_type::AUDIO),
+                TagType::Video => (CSID_VIDEO, msg_type::VIDEO),
+                TagType::Script | TagType::Reserved(_) => (CSID_DATA, msg_type::DATA_AMF0),
                 _ => (CSID_DATA, msg_type::DATA_AMF0),
             };
             let message = Message {
                 chunk_stream_id,
-                timestamp: ts,
+                timestamp: tag.timestamp,
                 message_type_id,
                 message_stream_id: self.message_stream_id,
-                payload: body,
+                payload: tag.body.to_vec(),
             };
             out.extend_from_slice(&writer.write(&message)?);
         }
@@ -397,27 +340,21 @@ impl Package for RtmpMux {
 mod tests {
     use super::*;
 
-    #[test]
-    fn u24_round_trip() {
-        let mut out = Vec::new();
-        write_u24(&mut out, 0x123456);
-        assert_eq!(out, [0x12, 0x34, 0x56]);
-        assert_eq!(read_u24(&out), 0x123456);
-    }
-
     /// The same UI24 `DataSize` overflow, via the FLV bridge `build_flv`
     /// (unpackage path).
     #[test]
     fn build_flv_oversized_tag_errors() {
-        let tags = alloc::vec![(FLV_TAG_VIDEO, 0u32, alloc::vec![0u8; 1 << 24])];
+        let tags = alloc::vec![(TagType::Video, 0u32, alloc::vec![0u8; 1 << 24])];
         let err = build_flv(&tags, true, false).unwrap_err();
         assert!(
             matches!(
                 err,
-                RtmpFlvError::FieldOverflow(broadcast_common::len::FieldOverflow {
-                    field: "DataSize",
-                    ..
-                })
+                RtmpFlvError::Rtmp(rtmp_runtime::RtmpError::FieldOverflow(
+                    broadcast_common::len::FieldOverflow {
+                        field: "DataSize",
+                        ..
+                    }
+                ))
             ),
             "expected FieldOverflow for DataSize, got {err:?}"
         );

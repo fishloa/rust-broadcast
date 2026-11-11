@@ -278,6 +278,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "rtmp_flv_tags"
+path = "fuzz_targets/rtmp_flv_tags.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "transmux_smooth_manifest"
 path = "fuzz_targets/transmux_smooth_manifest.rs"
 test = false

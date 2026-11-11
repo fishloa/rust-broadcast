@@ -131,15 +131,17 @@ pub const TABLE: &[Crate] = &[
     // check transitively enforces the whole convention (issue #806).
     //
     // Skip list:
-    // SKIP is empty: this crate's one public enum (`BitError`) already carries a
-    // hand-written `Display` impl (a structured error message), which this
-    // guard's `has_impl` check recognizes directly.
+    // SKIP is empty: both public enums (`BitError`, `klv::KlvError`) already
+    // carry a hand-written `Display` impl (a structured error message), which
+    // this guard's `has_impl` check recognizes directly.
     Crate {
         name: "broadcast-common",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        // `BitError`: structured error with a message-bearing Display, not a spec label.
-        skip: &["BitError"],
+        // `BitError` and `KlvError`: structured errors with a message-bearing
+        // Display, not spec labels. `BerLength`: a serialization-form choice
+        // (`Minimal` vs a preserved on-wire `Fixed` width), not a wire field.
+        skip: &["BitError", "KlvError", "BerLength"],
         expected: None,
         min_enums: None,
     },
