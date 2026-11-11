@@ -32,6 +32,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -387,6 +388,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -573,6 +575,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -935,6 +938,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -1126,6 +1130,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -1420,6 +1425,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -1652,6 +1658,39 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    1,
+                ),
+                latency: Some(
+                    Latency {
+                        target: Some(
+                            3000,
+                        ),
+                        min: Some(
+                            1500,
+                        ),
+                        max: Some(
+                            9000,
+                        ),
+                        reference_id: Some(
+                            1,
+                        ),
+                    },
+                ),
+                playback_rate: Some(
+                    PlaybackRate {
+                        min: Some(
+                            "0.95",
+                        ),
+                        max: Some(
+                            "1.05",
+                        ),
+                    },
+                ),
+            },
+        ],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -1855,6 +1894,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -2054,6 +2094,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -2320,6 +2361,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -2655,6 +2705,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -3036,6 +3095,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -3513,6 +3573,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -4004,6 +4065,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -4485,6 +4547,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -4959,6 +5022,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -5425,6 +5489,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -5813,6 +5886,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -6195,6 +6269,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -6782,6 +6857,7 @@ Ok(
         ),
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -7119,6 +7195,7 @@ Ok(
         ),
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -7452,6 +7529,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -7883,6 +7969,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -8257,6 +8352,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -8617,6 +8713,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -8972,6 +9069,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -9152,6 +9250,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -9340,6 +9439,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -9887,6 +9995,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -10104,6 +10221,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -10643,6 +10769,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -11016,6 +11143,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -11538,6 +11666,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -12282,6 +12411,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -12636,6 +12766,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -13592,6 +13723,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -14459,6 +14591,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -14712,6 +14845,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -15037,6 +15171,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -15419,6 +15554,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -16088,6 +16224,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -16712,6 +16849,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -17051,6 +17189,39 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: Some(
+                    Latency {
+                        target: Some(
+                            6800,
+                        ),
+                        min: Some(
+                            4800,
+                        ),
+                        max: Some(
+                            34800,
+                        ),
+                        reference_id: Some(
+                            7,
+                        ),
+                    },
+                ),
+                playback_rate: Some(
+                    PlaybackRate {
+                        min: Some(
+                            "0.96",
+                        ),
+                        max: Some(
+                            "1.04",
+                        ),
+                    },
+                ),
+            },
+        ],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -17438,6 +17609,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -17868,6 +18040,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -18391,6 +18564,26 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    0,
+                ),
+                latency: Some(
+                    Latency {
+                        target: Some(
+                            3500,
+                        ),
+                        min: None,
+                        max: None,
+                        reference_id: Some(
+                            0,
+                        ),
+                    },
+                ),
+                playback_rate: None,
+            },
+        ],
         utc_timings: [
             UtcTiming {
                 scheme: HttpXsdate,
@@ -18809,6 +19002,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -19401,6 +19595,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -19724,6 +19919,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -19959,6 +20155,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -21464,6 +21661,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -22029,6 +22227,39 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    420,
+                ),
+                latency: Some(
+                    Latency {
+                        target: Some(
+                            1250,
+                        ),
+                        min: Some(
+                            750,
+                        ),
+                        max: Some(
+                            4200,
+                        ),
+                        reference_id: Some(
+                            7,
+                        ),
+                    },
+                ),
+                playback_rate: Some(
+                    PlaybackRate {
+                        min: Some(
+                            "0.96",
+                        ),
+                        max: Some(
+                            "1.04",
+                        ),
+                    },
+                ),
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -22395,6 +22626,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -22631,6 +22863,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -22884,6 +23117,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -23128,6 +23362,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -23372,6 +23607,15 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    420,
+                ),
+                latency: None,
+                playback_rate: None,
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -23626,6 +23870,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [
             Descriptor {
@@ -23904,6 +24149,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -24057,6 +24303,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -24418,6 +24665,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -24623,6 +24871,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -24863,6 +25112,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -25830,6 +26080,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -26146,6 +26397,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -26752,6 +27004,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -27275,6 +27528,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -27830,6 +28084,7 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -28370,6 +28625,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -28700,6 +28956,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -29469,6 +29726,7 @@ Ok(
         max_subsegment_duration: None,
         base_urls: [],
         locations: [],
+        service_descriptions: [],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
@@ -29929,6 +30187,70 @@ Ok(
             },
         ],
         locations: [],
+        service_descriptions: [
+            ServiceDescription {
+                id: Some(
+                    1250,
+                ),
+                latency: Some(
+                    Latency {
+                        target: Some(
+                            1250,
+                        ),
+                        min: Some(
+                            750,
+                        ),
+                        max: Some(
+                            4200,
+                        ),
+                        reference_id: Some(
+                            7,
+                        ),
+                    },
+                ),
+                playback_rate: Some(
+                    PlaybackRate {
+                        min: Some(
+                            "0.96",
+                        ),
+                        max: Some(
+                            "1.04",
+                        ),
+                    },
+                ),
+            },
+            ServiceDescription {
+                id: Some(
+                    2500,
+                ),
+                latency: Some(
+                    Latency {
+                        target: Some(
+                            2500,
+                        ),
+                        min: Some(
+                            750,
+                        ),
+                        max: Some(
+                            4200,
+                        ),
+                        reference_id: Some(
+                            7,
+                        ),
+                    },
+                ),
+                playback_rate: Some(
+                    PlaybackRate {
+                        min: Some(
+                            "0.96",
+                        ),
+                        max: Some(
+                            "1.04",
+                        ),
+                    },
+                ),
+            },
+        ],
         utc_timings: [],
         essential_properties: [],
         supplemental_properties: [],
