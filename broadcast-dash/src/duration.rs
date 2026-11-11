@@ -77,6 +77,22 @@ pub fn parse_iso8601_duration(s: &str) -> Result<Duration> {
     Duration::try_from(signed).map_err(|_| invalid())
 }
 
+/// Format a [`Duration`] as an `xs:duration` string the parser accepts.
+///
+/// The inverse of [`parse_iso8601_duration`]: emits `PT{secs}S`, appending a
+/// nine-digit fractional part only when the duration has sub-second
+/// nanoseconds.
+#[must_use]
+pub fn format_iso8601_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    let nanos = d.subsec_nanos();
+    if nanos == 0 {
+        format!("PT{secs}S")
+    } else {
+        format!("PT{secs}.{nanos:09}S")
+    }
+}
+
 /// Validate `s` against the xs:duration lexical grammar (see
 /// [`parse_iso8601_duration`]) and return it with the seconds fraction
 /// truncated to nine digits; `None` if it is not in the lexical space or is
@@ -221,5 +237,13 @@ mod tests {
             parse_iso8601_duration("P1M"),
             Err(DashParseError::InvalidDuration { .. })
         ));
+    }
+
+    #[test]
+    fn format_round_trips() {
+        for s in ["PT0S", "PT4S", "PT1H2M3.5S", "P1DT2H"] {
+            let d = parse_iso8601_duration(s).unwrap();
+            assert_eq!(parse_iso8601_duration(&format_iso8601_duration(d)).unwrap(), d);
+        }
     }
 }
