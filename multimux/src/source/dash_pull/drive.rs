@@ -463,25 +463,23 @@ pub(super) async fn run<S: RouteSink>(
             Some(FetchOutcome::Ready(fetch, body)) => {
                 feed_response(&mut driver, fetch, &body, now_us);
             }
-            Some(FetchOutcome::Failed(fetch, error) | FetchOutcome::NotReady(fetch, error)) => {
-                match fetch.outcome {
-                    Outcome::Unauthorized => return Err(error),
-                    Outcome::Failed(failure) => {
-                        if fetch.target == FetchTarget::Mpd && !driver.session().mpd_accepted() {
-                            return Err(error);
-                        }
-                        let ts = stamp(now_us);
-                        driver.feed(
-                            DashInput::Failed {
-                                target: fetch.target,
-                                failure,
-                            },
-                            ts,
-                        );
+            Some(FetchOutcome::Failed(fetch, error)) => match fetch.outcome {
+                Outcome::Unauthorized => return Err(error),
+                Outcome::Failed(failure) => {
+                    if fetch.target == FetchTarget::Mpd && !driver.session().mpd_accepted() {
+                        return Err(error);
                     }
-                    _ => return Err(error),
+                    let ts = stamp(now_us);
+                    driver.feed(
+                        DashInput::Failed {
+                            target: fetch.target,
+                            failure,
+                        },
+                        ts,
+                    );
                 }
-            }
+                _ => return Err(error),
+            },
             Some(FetchOutcome::TaskPanic(detail)) => {
                 return Err(MultimuxError::Connect {
                     reason: format!("dash-pull: fetch task failed: {detail}"),

@@ -153,3 +153,52 @@ fn a_live_manifest_is_refetched_repeatedly_while_nothing_new_appears() {
     host.run_for(20 * SECOND_MICROS);
     assert!(host.count_requests("Manifest") >= 4);
 }
+
+const AUDIO_STREAM: &str = r#"<StreamIndex Type="audio" QualityLevels="1" Chunks="3" Url="QualityLevels({bitrate})/Fragments(audio={start time})">"#;
+
+fn two_audio_manifest(fra_chunks: &str) -> Vec<u8> {
+    let named = AUDIO_STREAM.replace("Type=\"audio\"", "Type=\"audio\" Name=\"eng\"");
+    let fra = format!(
+        "<StreamIndex Type=\"audio\" Name=\"fra\" QualityLevels=\"1\" Url=\"fra/QualityLevels({{bitrate}})/Fragments(audio={{start time}})\">\n<QualityLevel Index=\"0\" Bitrate=\"98429\" FourCC=\"AACL\" SamplingRate=\"44100\" Channels=\"1\" BitsPerSample=\"16\" PacketSize=\"4\" AudioTag=\"255\" CodecPrivateData=\"1208\" />\n{fra_chunks}</StreamIndex>\n"
+    );
+    String::from_utf8(live_manifest(""))
+        .expect("utf8")
+        .replace(AUDIO_STREAM, &named)
+        .replace(
+            "</SmoothStreamingMedia>",
+            &format!("{fra}</SmoothStreamingMedia>"),
+        )
+        .into_bytes()
+}
+
+#[test]
+fn a_refresh_matches_each_stream_by_its_own_identity() {
+    let chunks = "<c t=\"0\" d=\"10214580\" />\n";
+    let grown = format!("{chunks}<c d=\"9984581\" />\n");
+    let mut host = live_host("");
+    host.route(
+        "Manifest",
+        vec![
+            Reply::Body(two_audio_manifest(chunks)),
+            Reply::Body(two_audio_manifest(&grown)),
+        ],
+    );
+    let audio = fixture("av/QualityLevels(98429)/Fragments(audio=0)");
+    for path in [
+        "fra/QualityLevels(98429)/Fragments(audio=0)",
+        "fra/QualityLevels(98429)/Fragments(audio=10214580)",
+    ] {
+        host.route(path, vec![Reply::Body(audio.clone())]);
+    }
+    host.run_for(20 * SECOND_MICROS);
+    assert_eq!(
+        host.count_requests("fra/QualityLevels(98429)/Fragments(audio=10214580)"),
+        1,
+        "the stream whose timeline grew fetches its new chunk"
+    );
+    assert_eq!(
+        host.count_requests("QualityLevels(98429)/Fragments(audio=10214580)"),
+        2,
+        "once for eng's own timeline and once for fra's"
+    );
+}

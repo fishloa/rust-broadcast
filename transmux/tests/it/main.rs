@@ -155,6 +155,8 @@ mod smooth;
 #[cfg(feature = "std")]
 mod smooth_fragment_inspect;
 #[cfg(feature = "std")]
+mod smooth_fragment_probe;
+#[cfg(feature = "std")]
 mod smooth_text_roundtrip;
 mod splice;
 mod sps_profile_matrix;

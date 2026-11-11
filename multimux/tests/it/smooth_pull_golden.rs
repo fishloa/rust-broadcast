@@ -4,10 +4,12 @@
 
 use broadcast_common::{Stage, Timestamp};
 use media_plane::ingress::{IngestSession, SessionEvent};
-use multimux::source::smooth_pull::{SmoothAction, SmoothIngestSession, SmoothResourceId};
+use multimux::source::smooth_pull::{SmoothIngestSession, SmoothInput};
+use smooth_runtime::{Action, FetchFailure};
 use url::Url;
 
 const GOLDEN_BLESS_ENV: &str = "SMOOTH_PULL_GOLDEN_BLESS";
+const NOT_FOUND: u16 = 404;
 const ORIGIN: &str = "http://origin.test/";
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -35,7 +37,7 @@ fn percent_decode(s: &str) -> String {
 
 fn sample_trace(fixture: &str) -> String {
     let mut session = SmoothIngestSession::new(Url::parse(&format!("{ORIGIN}Manifest")).unwrap());
-    let now = Timestamp::from_nanos(0);
+    let mut now = Timestamp::from_nanos(0);
     let mut out = String::new();
     loop {
         while let Some(event) = session.poll() {
@@ -60,23 +62,35 @@ fn sample_trace(fixture: &str) -> String {
             }
         }
         let Some(action) = session.poll_transmit() else {
-            break;
+            match session.next_deadline() {
+                Some(deadline) => {
+                    now = deadline;
+                    session.on_deadline(now);
+                    continue;
+                }
+                None => break,
+            }
         };
-        let (id, url) = match action {
-            SmoothAction::FetchManifest { url } => (SmoothResourceId::Manifest, url),
-            SmoothAction::FetchFirstFragment { stream, url } => {
-                (SmoothResourceId::FirstFragment(stream), url)
-            }
-            SmoothAction::FetchFragment { stream, t, url, .. } => {
-                (SmoothResourceId::Fragment(stream, t), url)
-            }
+        let (id, is_manifest, url) = match action {
+            Action::FetchManifest { id, url } => (id, true, url.to_string()),
+            Action::FetchFragment { id, url, .. } => (id, false, url.to_string()),
             _ => panic!("unexpected action"),
         };
-        let Some(bytes) = fixture_bytes(fixture, &url) else {
-            out.push_str(&format!("fetch-failed {url}\n"));
-            return out;
+        let body = fixture_bytes(fixture, &url);
+        let input = match body {
+            None => SmoothInput::Failed(
+                id,
+                FetchFailure {
+                    status: Some(NOT_FOUND),
+                },
+            ),
+            Some(ref bytes) if is_manifest => SmoothInput::Manifest(id, bytes),
+            Some(ref bytes) => SmoothInput::Fragment(id, bytes),
         };
-        session.feed((id, bytes.as_slice()), now).expect("feed");
+        if let Err(e) = session.feed(input, now) {
+            out.push_str(&format!("fatal {e}\n"));
+            return out;
+        }
     }
     assert!(session.ended());
     out.push_str("ended\n");
