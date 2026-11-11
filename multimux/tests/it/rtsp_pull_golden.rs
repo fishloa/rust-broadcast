@@ -7,7 +7,6 @@ use multimux::source::rtsp::{RtspDialer, RtspIngestSession};
 use rtsp_runtime::{InterleavedFrame, TransportSpec};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use transmux::TrackId;
 
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 const RTP_CHANNEL: u8 = 0;
@@ -115,7 +114,6 @@ async fn serve_one_session(sock: TcpStream) -> Vec<String> {
         write_all(&mut sock, &frame).await;
     }
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
     requests
 }
 

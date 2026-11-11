@@ -25,7 +25,6 @@ use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, pars
 const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
 const RTSPS_DEFAULT_PORT: u16 = 322;
-const CONTROL_AGGREGATE: &str = "*";
 const PATH_SEPARATOR: char = '/';
 const FIRST_CONN_ID: u32 = 1;
 const MAX_AUTH_REPLAYS: u32 = 2;
@@ -532,17 +531,6 @@ impl RtspSource {
                 }
                 base
             })
-    }
-
-    fn same_authority(&self, url: &Url) -> bool {
-        let default_port = if self.tls {
-            RTSPS_DEFAULT_PORT
-        } else {
-            RTSP_DEFAULT_PORT
-        };
-        url.scheme() == self.request_url.scheme()
-            && url.host() == self.request_url.host()
-            && url.port().unwrap_or(default_port) == self.port
     }
 
     fn on_client_event(&mut self, event: ClientEvent, now: u64, auth: &mut AuthState) {
