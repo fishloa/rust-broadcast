@@ -1,0 +1,82 @@
+fixtures/dash/annex-g/example-F1.mpd	clean
+fixtures/dash/annex-g/example-F2.mpd	clean
+fixtures/dash/annex-g/example-F3.mpd	clean
+fixtures/dash/annex-g/example-F4.mpd	clean
+fixtures/dash/annex-g/example-F5.mpd	clean
+fixtures/dash/annex-g/example-F6.mpd	clean
+fixtures/dash/annex-g/example-F7.mpd	clean
+fixtures/dash/annex-g/example-F8.mpd	clean
+fixtures/dash/annex-g/example-F9.mpd	clean
+fixtures/dash/live-number/live.mpd	clean
+fixtures/dash/live-timeline/live.mpd	clean
+fixtures/dash/livesim2/segtimeline_time_a.mpd	clean
+fixtures/dash/livesim2/segtimeline_time_b.mpd	clean
+fixtures/dash/livesim2/segtimelinenr_a.mpd	clean
+fixtures/dash/livesim2/segtimelinenr_b.mpd	clean
+fixtures/dash/manifest-inheritance.mpd	clean
+fixtures/dash/manifest.mpd	clean
+fixtures/dash/multiperiod-continuous/multiperiod.mpd	clean
+fixtures/dash/multiperiod-restart/multiperiod.mpd	clean
+fixtures/dash/ondemand-gpac-pto-quirk/ondemand.mpd	clean
+fixtures/dash/ondemand-sidx/ondemand.mpd	clean
+fixtures/dash/segmentlist/list.mpd	clean
+fixtures/dash/timeline-ffmpeg-quirk/manifest.mpd	clean
+fixtures/dash/timeline-gpac/timeline.mpd	clean
+fixtures/scte35/dash/manifest-template.mpd	clean
+fixtures/subtitles/gpac/dash/manifest.mpd	clean
+fixtures/subtitles/mp4box/dash/manifest.mpd	clean
+private/fixtures/candidates/dash-mpd/shaka/10480_dash_0.mpd	clean
+private/fixtures/candidates/dash-mpd/shaka/3675_dash_0.mpd	clean
+private/fixtures/candidates/dash-mpd/shaka/7401_dash_0.mpd	clean
+private/fixtures/candidates/shaka/dash-multi-codec-ec3/dash.mpd	clean
+private/fixtures/dash/qualcomm-multirate-1c-1.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G1.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G10.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G11.mpd	dash-period-no-adaptation-sets	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G12.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G13-1.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G13-2.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G14.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G15.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G16.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G17.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G18.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G19.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G2.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G20.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G21_patch_base.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G22.mpd	dash-segment-timeline-monotonic	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G22.mpd	dash-segment-timeline-monotonic	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G22.mpd	dash-segment-timeline-monotonic	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G23.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G25.mpd	dash-representation-id-duplicate	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G26-1.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G26-2.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G27.mpd	dash-parse-error	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G28-1.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G28-2.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G28-3.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G28-4.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G28-5.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-1.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd	dash-period-no-adaptation-sets	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd	dash-period-no-adaptation-sets	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G29-2.mpd	dash-period-no-adaptation-sets	error
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G3.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G30-1.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G30-2.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G4.mpd	dash-representation-id-duplicate	warning
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G5.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G6.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G7.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G8.mpd	dash-representation-id-duplicate	warning
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G8.mpd	dash-representation-id-duplicate	warning
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G8.mpd	dash-representation-id-duplicate	warning
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G8.mpd	dash-representation-id-duplicate	warning
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G8.mpd	dash-representation-id-duplicate	warning
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G8.mpd	dash-representation-id-duplicate	warning
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_G9.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_H1.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_H2.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_H3.mpd	clean
+private/specs/iso_iec_23009-1_dash_2026_ed6_schema/example_K6.4.mpd	clean
