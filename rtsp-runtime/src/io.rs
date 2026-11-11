@@ -17,9 +17,9 @@
 //! # `rtsp://` vs `rtsps://`
 //!
 //! Plain RTSP (`rtsp://`) is carried over TCP on default port **554**
-//! ([`RTSP_DEFAULT_PORT`]). RTSP-over-TLS (`rtsps://`) wraps the TCP stream in a
+//! ([`crate::RTSP_DEFAULT_PORT`]). RTSP-over-TLS (`rtsps://`) wraps the TCP stream in a
 //! TLS session *before* any RTSP is exchanged and uses default port **322**
-//! ([`RTSPS_DEFAULT_PORT`], per the IANA `rtsps` assignment). The TLS entry
+//! ([`crate::RTSPS_DEFAULT_PORT`], per the IANA `rtsps` assignment). The TLS entry
 //! points ([`AsyncRtspClient::connect_tls`], [`AsyncRtspServer::accept_tls`]) are
 //! gated behind the `tls` feature; everything else is behind `tokio`.
 
@@ -39,8 +39,6 @@ use crate::codec::{ClientCodec, ServerCodec, ServerFrame, bounded};
 use crate::error::{Error, IoContext, Result};
 use crate::server::{ServerEvent, ServerSession};
 use crate::transport::{Transport, TransportSpec};
-
-use crate::{RTSP_DEFAULT_PORT, RTSPS_DEFAULT_PORT};
 
 /// Explicit bounds on every awaited IO of the RTSP adapters (W1 SP1.3): no wait
 /// is unbounded.
