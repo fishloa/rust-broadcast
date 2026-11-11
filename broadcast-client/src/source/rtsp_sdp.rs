@@ -3,17 +3,19 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use sdp_types::{Media, Session};
+use rtsp_runtime::PlayPlan;
+use sdp_types::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::rtpmap_clock_rate;
 use transmux::{TrackId, aac_config_from_fmtp, avc_config_from_fmtp};
+use url::Url;
 
 const AVC_CONFIGURATION_VERSION: u8 = 1;
 const AVC_LENGTH_SIZE_MINUS_ONE: u8 = 3;
 const UNKNOWN_DIMENSION: u16 = 0;
 const DEFAULT_CLOCK_RATE_HZ: u32 = 90_000;
-const CHANNEL_STEP: usize = 2;
+const FIRST_CHANNEL: u8 = 0;
 const MEDIA_VIDEO: &str = "video";
 const MEDIA_AUDIO: &str = "audio";
 const ENCODING_H264: &str = "H264";
@@ -23,7 +25,7 @@ const ENCODING_AAC: &str = "MPEG4-GENERIC";
 pub(crate) const MAX_TRACKS: usize = 16;
 
 pub(crate) struct ParsedSdp {
-    pub(crate) aggregate: Option<String>,
+    pub(crate) plan: PlayPlan,
     pub(crate) tracks: Vec<TrackInit>,
     pub(crate) skipped: Vec<SkippedMedia>,
 }
@@ -55,57 +57,77 @@ pub(crate) struct TrackInit {
 }
 
 /// Parses the SDP into the supported (H.264 video, AAC audio) tracks in media order, at most
-/// [`MAX_TRACKS`], assigning interleaved RTP channels 0, 2, 4, ... (RTCP is the RTP channel plus
-/// one). A media section the client cannot play (another codec or media type, a missing or
-/// unusable fmtp), whose `a=control` `resolve` rejects, or that does not fit the track or channel
-/// budget is reported in [`ParsedSdp::skipped`]; no playable section left is
-/// [`SdpError::NothingPlayable`], and an SDP that does not parse is [`SdpError::Unparsable`]. Of
-/// the payload types a media line lists, the first one whose own `a=rtpmap` and `a=fmtp` describe
-/// a supported codec is the one played. A session-level `a=control` that `resolve` accepts is the
-/// aggregate control URL (RFC 2326 C.1.1).
+/// [`MAX_TRACKS`], planned through [`PlayPlan`] (interleaved RTP channels 0, 2, 4, ..., RTCP the
+/// RTP channel plus one, and the aggregate control URL of RFC 2326 C.1.1). A media section the
+/// client cannot play (another codec or media type, a missing or unusable fmtp), whose
+/// `a=control` is on another authority, or that does not fit the track budget is reported in
+/// [`ParsedSdp::skipped`]; no playable section left is [`SdpError::NothingPlayable`], and an SDP
+/// that does not parse is [`SdpError::Unparsable`]. Of the payload types a media line lists, the
+/// first one whose own `a=rtpmap` and `a=fmtp` describe a supported codec is the one played.
 pub(crate) fn parse_tracks(
     sdp: &[u8],
-    mut resolve: impl FnMut(Option<&str>) -> Option<String>,
+    request_url: &Url,
+    content_base: Option<&str>,
 ) -> Result<ParsedSdp, SdpError> {
-    let session = Session::parse(sdp).map_err(|_| SdpError::Unparsable)?;
-    let aggregate = session
-        .get_first_attribute_value("control")
-        .flatten()
-        .and_then(|control| resolve(Some(control)));
-    let mut tracks: Vec<TrackInit> = Vec::new();
+    let text = core::str::from_utf8(sdp).map_err(|_| SdpError::Unparsable)?;
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut described: Vec<SkippedMedia> = Vec::new();
     let mut skipped: Vec<SkippedMedia> = Vec::new();
-    for (media_index, media) in session.medias.iter().enumerate() {
-        let skip =
-            |skipped: &mut Vec<SkippedMedia>| skipped.push(skipped_media(media_index, media));
-        if tracks.len() >= MAX_TRACKS {
-            skip(&mut skipped);
-            continue;
-        }
-        let Some((kind, config, clock_rate, _ready)) = supported(media) else {
-            skip(&mut skipped);
-            continue;
-        };
-        let control = media.get_first_attribute_value("control").flatten();
-        let Some(setup_uri) = resolve(control) else {
-            skip(&mut skipped);
-            continue;
-        };
-        let channels = tracks
-            .len()
-            .checked_mul(CHANNEL_STEP)
-            .and_then(|c| u8::try_from(c).ok())
-            .and_then(|c| c.checked_add(1).map(|r| (c, r)));
-        let Some((channel, rtcp_channel)) = channels else {
-            skip(&mut skipped);
+    let plan = PlayPlan::from_describe_selecting(
+        request_url,
+        content_base,
+        None,
+        text,
+        FIRST_CHANNEL,
+        |media_index, media| {
+            let info = skipped_media(media_index, media);
+            described.push(info.clone());
+            let playable = if candidates.len() >= MAX_TRACKS {
+                None
+            } else {
+                supported(media)
+            };
+            match playable {
+                Some((kind, config, clock_rate, _ready)) => {
+                    candidates.push(Candidate {
+                        media_index,
+                        kind,
+                        config,
+                        clock_rate,
+                    });
+                    true
+                }
+                None => {
+                    skipped.push(info);
+                    false
+                }
+            }
+        },
+    )
+    .map_err(|_| SdpError::Unparsable)?;
+    skipped.extend(
+        plan.skipped()
+            .iter()
+            .filter_map(|m| described.get(m.media_index).cloned()),
+    );
+    skipped.sort_by_key(|m| m.media_index);
+    let mut tracks: Vec<TrackInit> = Vec::new();
+    for (index, setup) in plan.setups().iter().enumerate() {
+        let (Some(candidate), Some((channel, rtcp_channel))) = (
+            candidates
+                .iter()
+                .find(|c| c.media_index == setup.media_index),
+            plan.channels(index),
+        ) else {
             continue;
         };
         let ordinal = u32::try_from(tracks.len().saturating_add(1)).unwrap_or(u32::MAX);
         tracks.push(TrackInit {
             track_id: TrackId::new(ordinal),
-            kind,
-            config,
-            clock_rate,
-            setup_uri,
+            kind: candidate.kind,
+            config: candidate.config.clone(),
+            clock_rate: candidate.clock_rate,
+            setup_uri: setup.control.clone(),
             channel,
             rtcp_channel,
         });
@@ -114,10 +136,17 @@ pub(crate) fn parse_tracks(
         return Err(SdpError::NothingPlayable { skipped });
     }
     Ok(ParsedSdp {
-        aggregate,
+        plan,
         tracks,
         skipped,
     })
+}
+
+struct Candidate {
+    media_index: usize,
+    kind: RtpMediaKind,
+    config: CodecConfig,
+    clock_rate: u32,
 }
 
 fn skipped_media(media_index: usize, media: &Media) -> SkippedMedia {

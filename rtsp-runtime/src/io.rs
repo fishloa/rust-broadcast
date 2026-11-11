@@ -40,11 +40,7 @@ use crate::error::{Error, IoContext, Result};
 use crate::server::{ServerEvent, ServerSession};
 use crate::transport::{Transport, TransportSpec};
 
-/// Default TCP port for `rtsp://` (RFC 2326 §1 / IANA `rtsp`).
-pub const RTSP_DEFAULT_PORT: u16 = 554;
-
-/// Default TCP port for `rtsps://` (RTSP over TLS; IANA `rtsps`).
-pub const RTSPS_DEFAULT_PORT: u16 = 322;
+use crate::{RTSP_DEFAULT_PORT, RTSPS_DEFAULT_PORT};
 
 /// Explicit bounds on every awaited IO of the RTSP adapters (W1 SP1.3): no wait
 /// is unbounded.
