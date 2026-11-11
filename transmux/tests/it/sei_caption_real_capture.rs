@@ -11,7 +11,7 @@
 //! This test exercises the **full input path** the issue specifies: IR sample
 //! bytes recovered by [`TsDemux`] (unmodified — issue #599 does not touch
 //! `ts_demux.rs`), fed to [`caption_cc_data`]. `timed-metadata`'s
-//! `webvtt_sei_caption_fixture.rs` covers the same capture end-to-end through
+//! `timed_metadata_sei_caption_fixture.rs` covers the same capture end-to-end through
 //! `cc_data::CcData`/`Cea608CueExtractor`; this test stays within `transmux`
 //! (no `cc-data` dependency) and checks the extraction step alone: enough
 //! caption-bearing access units are found, and the demuxer's actual first

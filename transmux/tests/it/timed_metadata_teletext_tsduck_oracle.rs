@@ -27,18 +27,10 @@
 //! (`tsTeletextDemux.cpp::processTeletextPage`, `colStart`/`colStop`) and
 //! this crate display only the text inside the box, so the lines are compared
 //! exactly.
-#![cfg(feature = "teletext")]
-
 use broadcast_common::Unpackage;
 use dvb_vbi::{DataField, DataUnitPayload, TeletextDataField};
-use std::fs;
-use std::path::PathBuf;
 use timed_metadata::webvtt::TeletextCueExtractor;
 use transmux::{CodecConfig, TsDemux};
-
-fn fixtures_dir() -> PathBuf {
-    test_fixtures::path("subtitles")
-}
 
 /// Teletext PID declared in the fixture's PMT (`teletext_descriptor`, tag
 /// `0x56`, `teletext_type` `0x02` subtitle page, magazine 8 / page `0x88`).
@@ -95,11 +87,9 @@ fn oracle_srt_text_lines(srt: &str) -> Vec<&str> {
 
 #[test]
 fn matches_tsduck_teletext_plugin_oracle() {
-    let ts_bytes = fs::read(fixtures_dir().join("teletext-subtitle-boxed.ts"))
-        .expect("read committed TSDuck-oracle Teletext TS fixture");
+    let ts_bytes = test_fixtures::read("subtitles/teletext-subtitle-boxed.ts");
     let oracle_srt =
-        fs::read_to_string(fixtures_dir().join("teletext-subtitle-boxed.tsduck-oracle.srt"))
-            .expect("read committed tsp -P teletext oracle SRT");
+        test_fixtures::read_to_string("subtitles/teletext-subtitle-boxed.tsduck-oracle.srt");
 
     let cues = decode_via_this_crate(&ts_bytes);
     assert!(!cues.is_empty(), "expected at least one cue: {cues:?}");
