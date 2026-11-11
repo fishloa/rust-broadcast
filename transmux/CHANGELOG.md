@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- `FlvDemux`, `StreamingFlvDemux`, `FlvMux` and the RTMP spoke frame FLV tags with `rtmp_runtime::flv` instead of their own header and tag code; the media mapping and the damaged-input resync heuristics are unchanged (#2342).
 
 ## [0.31.0] - 2026-11-10
 ### Changed
