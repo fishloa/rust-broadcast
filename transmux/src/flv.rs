@@ -1563,7 +1563,8 @@ const META_HANDLER_NAME: &str = "onMetaData";
 /// # Errors
 ///
 /// [`FlvError::NoSupportedTrack`] when no track is carryable, and
-/// [`FlvError::FieldOverflow`] when a key exceeds its AMF0 length prefix.
+/// [`FlvError::Codec`] wrapping the AMF0 field overflow when a key exceeds
+/// its length prefix.
 pub fn on_metadata_body(
     media: &Media,
     duration: Option<f64>,

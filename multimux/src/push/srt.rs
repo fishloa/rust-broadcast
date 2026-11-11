@@ -194,7 +194,7 @@ mod tests {
     /// Audit run 7, W17: the query string is parsed off the address, not
     /// passed through as part of it, and only this push's values survive the
     /// policy. The URL grammar itself is `srt_runtime::SrtUrl`'s
-    /// (`srt-runtime/tests/url_table.rs`); the push applies its own rules.
+    /// (`srt-runtime/tests/it/url_table.rs`); the push applies its own rules.
     #[test]
     fn parse_srt_url_separates_address_from_query() {
         let (addr, url) =
