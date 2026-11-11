@@ -7,8 +7,9 @@
 //! [`webrtc_runtime::media::MediaTransport`] is the transport this module
 //! drives, exactly like `crate::source::whip` on the ingest side. **This
 //! module is that module's mirror**: read `crate::source::whip`'s own
-//! module doc first — every structural decision documented there (why SDP
-//! itself is hand-rolled rather than routed through
+//! module doc first — every structural decision documented there (why the
+//! SDP answer comes from `webrtc_runtime::sdp` while the exchange itself is
+//! driven here rather than through
 //! `webrtc_runtime::whep::server::WhepSession`, why the ICE/DTLS/SRTP
 //! machinery lives in this module's own per-session read loop rather than
 //! in a `Stage` impl, the `OPTIONS` CORS preflight handling, the bind-once
@@ -113,6 +114,10 @@ use transmux::{DEFAULT_AUDIO_PT, DEFAULT_MTU, RtpPacketiser, VIDEO_CLOCK_RATE};
 use webrtc_runtime::media::{
     Datagram, MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
     parse_remote_fingerprint,
+};
+use webrtc_runtime::sdp::{
+    AnswerCodec, AnswerTransport, CodecAttribute, CodecAttributeName, Direction,
+    LocalMediaIdentity, offer_mid, session_answer,
 };
 use webrtc_runtime::whep::server::{Event as WhepEvent, WhepSession};
 
@@ -281,11 +286,7 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
     let remote_fingerprint = parse_remote_fingerprint(offer).ok_or_else(|| MultimuxError::Sdp {
         reason: "whep: offer has no a=fingerprint".into(),
     })?;
-    let mid = media
-        .get_first_attribute_value("mid")
-        .flatten()
-        .unwrap_or("0")
-        .to_string();
+    let mid = offer_mid(media);
     let candidates = crate::webrtc_session::candidate_lines(media);
     let setup = media
         .get_first_attribute_value("setup")
@@ -330,6 +331,9 @@ fn choose_setup_role(offer_setup: Option<&str>) -> SetupRole {
 /// `crate::source::whip::build_answer`'s identical note), and the real
 /// codec parameters (`sprop-parameter-sets`/`profile-level-id`) read
 /// straight off the `Trunk`'s own `TrackSpec` — see the module doc.
+///
+/// The document itself is `webrtc_runtime::sdp`'s to render; this module
+/// supplies the track's codec parameters as its codec attributes.
 fn build_whep_answer(
     parsed: &ParsedWhepOffer,
     media: &MediaTransport,
@@ -338,7 +342,7 @@ fn build_whep_answer(
     local_ice_pwd: &str,
     setup_role: SetupRole,
     config: &transmux::AVCDecoderConfigurationRecord,
-) -> String {
+) -> Result<String> {
     render_whep_answer(
         parsed,
         local_addr,
@@ -352,8 +356,8 @@ fn build_whep_answer(
 }
 
 /// [`build_whep_answer`]'s deterministic core (test-only export): fingerprint
-/// and candidate lines are parameters so a golden can pin `Session::write`'s
-/// line ordering without the random cert/candidate values.
+/// and candidate lines are parameters so the goldens pin the document's line
+/// ordering without the random cert/candidate values.
 #[allow(clippy::too_many_arguments)]
 fn render_whep_answer(
     parsed: &ParsedWhepOffer,
@@ -364,9 +368,7 @@ fn render_whep_answer(
     config: &transmux::AVCDecoderConfigurationRecord,
     fingerprint: &str,
     candidates: &[String],
-) -> String {
-    use sdp_types::{Attribute, Connection, Media, Origin, Session};
-
+) -> Result<String> {
     let pt = parsed.payload_type;
     let profile_level_id = format!(
         "{:02X}{:02X}{:02X}",
@@ -386,48 +388,41 @@ fn render_whep_answer(
         sprop.push_str(&transmux::rtp::base64_encode(&pps.0));
     }
 
-    let mut session = Session::new(Origin::with_ip_addr("0", 0, local_addr.ip()), "-");
-
-    let mut m = Media {
-        media: parsed.media.media.clone(),
-        port: parsed.media.port,
-        num_ports: parsed.media.num_ports,
-        proto: parsed.media.proto.clone(),
-        fmt: pt.to_string(),
-        media_title: None,
-        connections: Vec::new(),
-        bandwidths: Vec::new(),
-        key: None,
-        attributes: Vec::new(),
+    let codec = AnswerCodec {
+        direction: Direction::Send,
+        transport: AnswerTransport {
+            offer: parsed.media.clone(),
+            payload_type: pt,
+        },
+        codec_attributes: vec![
+            CodecAttribute::new(
+                CodecAttributeName::Rtpmap,
+                format!("{pt} H264/{VIDEO_CLOCK_RATE}"),
+            ),
+            CodecAttribute::new(
+                CodecAttributeName::Fmtp,
+                format!(
+                    "{pt} packetization-mode=1;profile-level-id={profile_level_id};\
+                     sprop-parameter-sets={sprop}"
+                ),
+            ),
+        ],
     };
-    m.add_connection(Connection::from_ip_addr(local_addr.ip()));
-    m.add_attribute_with_value("rtcp", "9 IN IP4 0.0.0.0");
-    m.add_attribute_with_value("rtpmap", format!("{pt} H264/{VIDEO_CLOCK_RATE}"));
-    m.add_attribute_with_value(
-        "fmtp",
-        format!(
-            "{pt} packetization-mode=1;profile-level-id={profile_level_id};\
-             sprop-parameter-sets={sprop}"
-        ),
-    );
-    m.add_attribute(Attribute::new("sendonly"));
-    m.add_attribute_with_value("mid", &parsed.mid);
-    m.add_attribute(Attribute::new("rtcp-mux"));
-    m.add_attribute_with_value("ice-ufrag", local_ice_ufrag);
-    m.add_attribute_with_value("ice-pwd", local_ice_pwd);
-    m.add_attribute_with_value("fingerprint", format!("sha-256 {}", fingerprint));
-    m.add_attribute_with_value("setup", setup_role.name());
-    for cand in candidates {
-        m.add_attribute_with_value("candidate", cand);
-    }
-    m.add_attribute(Attribute::new("end-of-candidates"));
-    session.medias.push(m);
-
-    let mut buf = Vec::new();
-    session
-        .write(&mut buf)
-        .expect("writing an SDP answer to a Vec cannot fail");
-    String::from_utf8(buf).expect("SDP answer is UTF-8")
+    session_answer(
+        local_addr.ip(),
+        LocalMediaIdentity {
+            ice_ufrag: local_ice_ufrag,
+            ice_pwd: local_ice_pwd,
+            fingerprint,
+        },
+        &parsed.mid,
+        setup_role.name(),
+        &codec,
+        candidates,
+    )
+    .map_err(|e| MultimuxError::Sdp {
+        reason: format!("whep: render the answer: {e}"),
+    })
 }
 
 /// Verifies one request against `output_auth`, exactly mirroring
@@ -541,9 +536,8 @@ pub fn whep_router_for_test(
 
 /// `#[doc(hidden)]` test hook: render a WHEP SDP answer deterministically
 /// (offer, local address, ICE credentials, setup role, codec config,
-/// fingerprint and candidate lines all caller-supplied), so
-/// `multimux/tests/it/whip_whep_sdp.rs` can golden `sdp_types::Session::write`'s line
-/// ordering without the random cert/candidate values.
+/// fingerprint and candidate lines all caller-supplied), so the goldens can
+/// pin the document without the random cert/candidate values.
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "test-hooks")]
@@ -556,8 +550,8 @@ pub fn render_whep_answer_for_test(
     config: &transmux::AVCDecoderConfigurationRecord,
     fingerprint: &str,
     candidates: &[String],
-) -> String {
-    let parsed = parse_whep_offer(offer).expect("parse whep offer");
+) -> Option<String> {
+    let parsed = parse_whep_offer(offer).ok()?;
     render_whep_answer(
         &parsed,
         local_addr,
@@ -568,6 +562,7 @@ pub fn render_whep_answer_for_test(
         fingerprint,
         candidates,
     )
+    .ok()
 }
 
 /// The WHEP output-auth middleware: delegates to
@@ -699,7 +694,7 @@ async fn whep_post_inner(
         &local_ice_pwd,
         setup_role,
         &config.config,
-    );
+    )?;
 
     // The typed state machine builds the 201 (Content-Type, Location, ETag).
     // The `Location` is this session's own resource, so `PATCH`/`DELETE`

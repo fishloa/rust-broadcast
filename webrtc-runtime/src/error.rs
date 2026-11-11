@@ -18,6 +18,18 @@ pub enum Error {
         reason: alloc::string::String,
     },
 
+    /// An SDP document could not be rendered: `what` names the step
+    /// (`"write"`, or `"utf-8"` when the rendered bytes were not UTF-8 —
+    /// reported, never replaced lossily), and `reason` the writer's own
+    /// message.
+    #[error("failed to render the SDP document ({what}): {reason}")]
+    SdpWrite {
+        /// Which step failed.
+        what: &'static str,
+        /// The underlying failure, as the writer describes it.
+        reason: alloc::string::String,
+    },
+
     /// An operation was attempted while the session state machine was in an
     /// incompatible state.
     #[error("wrong session state for {operation}: currently {state}")]

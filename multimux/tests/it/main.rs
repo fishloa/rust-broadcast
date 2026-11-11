@@ -85,5 +85,7 @@ mod whip_http;
 mod whip_session_resource;
 #[cfg(all(feature = "whip", feature = "test-hooks"))]
 mod whip_whep_sdp;
+#[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
+mod whip_whep_sdp_documents;
 #[cfg(all(feature = "whip", feature = "test-hooks"))]
 mod whip_whep_timers;

@@ -1,6 +1,7 @@
 #[cfg(feature = "media")]
 mod dtls_fingerprint;
 mod golden_http;
+mod sdp_builder;
 mod secret_hygiene;
 mod session_state;
 #[cfg(feature = "media")]
