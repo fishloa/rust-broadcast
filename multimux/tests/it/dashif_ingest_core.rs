@@ -234,8 +234,8 @@ fn classify_header_and_segment_number() {
     let mpd = build_mpd();
     let g = ManifestGrouping::from_mpd(mpd.as_bytes()).unwrap();
     let rep = &g.switching_sets[0][0];
-    let init_path = substitute(&g.init_template, rep, None, None, 0);
-    let media_path = substitute(&g.media_template, rep, Some(1), None, 0);
+    let init_path = substitute(&g.init_template, rep, None, None, 0).unwrap();
+    let media_path = substitute(&g.media_template, rep, Some(1), None, 0).unwrap();
     let req = RequestMeta {
         method: IngestMethod::Post,
         path: &init_path,
@@ -276,7 +276,7 @@ fn classify_segment_time() {
     let g = ManifestGrouping::from_mpd(mpd.as_bytes()).unwrap();
     let rep = &g.switching_sets[0][0];
     let time_val = 1000u64;
-    let media_path = substitute(&g.media_template, rep, None, Some(time_val), 0);
+    let media_path = substitute(&g.media_template, rep, None, Some(time_val), 0).unwrap();
     let req = RequestMeta {
         method: IngestMethod::Post,
         path: &media_path,

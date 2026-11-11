@@ -134,8 +134,8 @@ fn recorded(name: &str, text: &str) -> Vec<String> {
 
 #[test]
 fn a_reader_rejection_is_not_recorded_as_clean() {
-    let wrong_root = format!(r#"<MPD xmlns="urn:evil" profiles="p"/>"#);
-    let rows = recorded("fixtures/deliberately-unparseable.mpd", &wrong_root);
+    let wrong_root = r#"<MPD xmlns="urn:evil" profiles="p"/>"#;
+    let rows = recorded("fixtures/deliberately-unparseable.mpd", wrong_root);
     assert!(
         rows.iter().all(|l| !l.ends_with(&format!("\t{CLEAN}"))),
         "a refused MPD must record its rejection, got {rows:?}"
