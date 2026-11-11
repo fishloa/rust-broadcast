@@ -38,10 +38,23 @@ const MIN_SAMPLES: usize = 50;
 const MICROS_PER_NANO_DIVISOR: u128 = 1_000;
 const COMMON_TIMELINE_BOUND_SECONDS: f64 = 0.2;
 const AAC_FRAME_TICKS: i64 = 1024;
+/// AAC-LC rate of `FIXTURE`, per `fixtures/ts/PROVENANCE.md` (`h264-aac.ts`: AAC-LC 44100 Hz 1ch).
+const FIXTURE_AUDIO_RATE_HZ: f64 = 44_100.0;
 const SR_MIN_LEN: usize = 20;
 const RTCP_PT_SR: u8 = 200;
 const NTP_FRACTION: f64 = 4_294_967_296.0;
-const SR_FAITHFUL_SECONDS: f64 = 0.012;
+const SR_FAITHFUL_AAC_FRAMES: f64 = 2.0;
+/// Outer bound only. The server's own Sender Reports jitter with CPU load (idle runs span about
+/// -0.006..0.014 s), so two AAC frames is the tightest bound a real mediamtx+ffmpeg run can hold:
+/// still well inside the frame-or-more mapping error the #1568 fault produces. The precise guard
+/// for audio not being on the SR wallclock video is on is `tests/it/rtsp_avsync.rs`, which pins
+/// that fault hermetically without a network.
+const SR_FAITHFUL_SECONDS: f64 =
+    SR_FAITHFUL_AAC_FRAMES * AAC_FRAME_TICKS as f64 / FIXTURE_AUDIO_RATE_HZ;
+/// A deviation the unit test needs to sit clearly outside `SR_FAITHFUL_SECONDS`.
+const BEYOND_BOUND_FACTOR: f64 = 1.5;
+/// A deviation the unit test needs to sit clearly inside `SR_FAITHFUL_SECONDS`.
+const WITHIN_BOUND_DIVISOR: f64 = 2.0;
 
 struct Tool {
     child: Child,
@@ -880,18 +893,19 @@ fn print_lead_series(label: &str, session: &Session) {
 
 #[test]
 fn sender_report_faithfulness_binds_only_in_sender_report_mode() {
-    let observed_with_rtp_info = -0.0415;
+    let beyond_bound = SR_FAITHFUL_SECONDS * BEYOND_BOUND_FACTOR;
+    let within_bound = SR_FAITHFUL_SECONDS / WITHIN_BOUND_DIVISOR;
     assert_eq!(
-        sr_faithfulness_violation(Some(AvSync::RtpInfo), observed_with_rtp_info),
+        sr_faithfulness_violation(Some(AvSync::RtpInfo), beyond_bound),
         None,
         "an RTP-Info timeline is the server's statement and is not derived from Sender Reports"
     );
     assert_eq!(
-        sr_faithfulness_violation(Some(AvSync::SenderReport), observed_with_rtp_info),
-        Some(observed_with_rtp_info)
+        sr_faithfulness_violation(Some(AvSync::SenderReport), beyond_bound),
+        Some(beyond_bound)
     );
     assert_eq!(
-        sr_faithfulness_violation(Some(AvSync::SenderReport), 0.006),
+        sr_faithfulness_violation(Some(AvSync::SenderReport), within_bound),
         None
     );
 }
