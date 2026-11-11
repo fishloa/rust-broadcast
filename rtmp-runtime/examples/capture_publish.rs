@@ -26,11 +26,12 @@ async fn main() -> std::io::Result<()> {
     let server = AsyncRtmpServer::bind(LISTEN_ADDR, ServerConfig::default()).await?;
     eprintln!("capture_publish: listening on {LISTEN_ADDR}, waiting for one RTMP publish...");
 
-    let mut conn = server.accept().await?;
+    let accepted = server.accept().await?;
     eprintln!(
         "capture_publish: accepted connection from {}",
-        conn.peer_addr()?
+        accepted.peer_addr()
     );
+    let mut conn = accepted.into_connection();
 
     let mut media_count = 0usize;
     while let Some(events) = conn.next_events().await? {

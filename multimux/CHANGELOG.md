@@ -1,7 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `tests/it/ingest_drive_golden.rs` pins the WHIP and RTMP ingest event sequences (`fixtures/golden/ingest/`): the ordered `SessionEvent`s each real publish produces, the program and track specs it lands, and its final health — recorded at the session boundary the #2373 shared drive loop must reproduce. Regenerate with `UPDATE_INGEST_GOLDENS=1`.
+
 ### Changed
+- The WHIP and RTMP ingest loops share one admitted-session driver (`media_plane::ingress::AdmittedDriver`): acceptance, the per-session clock origin, the publish-then-reap sequence and the idle clock are one implementation instead of two copies. The WHIP loop's hand-written idle-clock map is gone (its gauge now reports the driver's live sessions), and the RTMP loop keeps only its own read future and protocol session.
+- The RTMP ingest session's own `RtmpConnection` now drives rtmp-runtime's erased connection (`from_stream_erased`), so the golden tests replay the captured `rtmp/obs-publish.bin` publish through a real connection over an in-memory pipe (rtmp-runtime's `AsyncRtmpServer::accept` now returns the new `AcceptedRtmpConnection`).
 - The UDP-family ingest sources bind through `dvb_stream::udp::bind_standard`, the workspace's one UDP bind, instead of a crate-local `socket2` setup: same options (`SO_REUSEADDR`, `SO_REUSEPORT` where it exists, `SO_RCVBUF` with the 4 MiB default, the IPv4/IPv6 multicast join), and a refused `SO_RCVBUF` is still logged and the bind carried on.
 - The raw RTP-over-UDP source reads the payload type through `rtp_packet::RtpPacket` rather than masking header byte 1, so the RTP header layout has one owner (a packet that is not a valid RTP header is dropped as before); that crate is now a plain dependency instead of being pulled in only by the `whep` feature.
 - The 90 kHz clock rate is named once, from `broadcast_common::clock33::PTS_HZ`; `timed_metadata::PTS_HZ` (a re-export of the same constant) and a local copy are gone.
@@ -23,6 +28,7 @@
 - A media-playlist request (the primary, audio, subtitle and I-frame playlists) made before the route has announced its program is held, up to the blocking-reload timeout (5 s), until the program exists (and then, for the primary playlist, until the first segment closes), instead of an immediate `503`; a give-up is a `503` with `Retry-After: 1`. `Config::hold_cold_playlist = false` keeps the immediate `503`.
 - The DVR polled only when a new segment had closed, so an fMP4 init change with no new closed segment waited for the next close before the period rolled; the poll now also runs when the route's newest init differs from the one the recorder archived.
 ### Added
+- `tests/it/ingest_drive_golden.rs` pins the WHIP and RTMP ingest event sequences (`fixtures/golden/ingest/`): the ordered `SessionEvent`s each real publish produces, the program and track specs it lands, and its final health — recorded at the session boundary the #2373 shared drive loop must reproduce. Regenerate with `UPDATE_INGEST_GOLDENS=1`.
 - `OutputAuthSpec::Forwarded::trusted_proxies`: the IPs and CIDR blocks allowed to set the forwarded-user header. Omitted means loopback only (`127.0.0.0/8` and `::1`).
 - `Config::hold_cold_playlist` (default `true`) and `RouteHandle::with_hold_cold_playlist`.
 - `DvrRecorder::needs_poll_for_init`: `needs_poll` that also reports an init segment the recorder has not archived.
