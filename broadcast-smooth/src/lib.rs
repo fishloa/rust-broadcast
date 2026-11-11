@@ -14,7 +14,6 @@
 extern crate alloc;
 
 mod manifest;
-mod xml_walk;
 
 pub use manifest::{
     C, DEFAULT_MAJOR_VERSION, DEFAULT_MINOR_VERSION, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN,

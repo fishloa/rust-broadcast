@@ -54,9 +54,11 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
 
+use broadcast_common::xml::{Elem, Namespace, XmlError, read_tree};
 use broadcast_common::xml_chars::{
-    NO_ATTRS, XmlLimit, XmlLimits, XmlWriter, close_element as close, empty_element as empty,
-    finish_document, new_writer, open_element as open, text_element, write_declaration,
+    LimitExceeded, NO_ATTRS, XmlLimit, XmlLimits, XmlWriter, close_element as close,
+    empty_element as empty, finish_document, new_writer, open_element as open, text_element,
+    write_declaration,
 };
 
 // ---------------------------------------------------------------------------
@@ -70,21 +72,6 @@ use broadcast_common::xml_chars::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SmoothParseError {
-    /// The input ended before a well-formed document was found (e.g. an
-    /// unclosed root element, or no `SmoothStreamingMedia` element at all).
-    UnexpectedEof,
-    /// A `<...>` tag, `<!--...-->` comment, `<?...?>` declaration, or
-    /// `<!...>` markup declaration was never closed.
-    UnterminatedTag {
-        /// Byte offset (into the input) where the unterminated construct began.
-        pos: usize,
-    },
-    /// An attribute inside a start tag was not well-formed
-    /// (`name="value"`/`name='value'`, XML 1.0 §3.1).
-    MalformedAttribute {
-        /// Byte offset (into the input) of the offending attribute.
-        pos: usize,
-    },
     /// The root element (or an expected child) was not the element name the
     /// grammar requires at that position.
     UnexpectedElement {
@@ -130,14 +117,6 @@ pub enum SmoothParseError {
         /// The offending raw value.
         value: String,
     },
-    /// An end tag's name does not match the element currently open — a
-    /// malformed nesting that would silently truncate the structure.
-    MismatchedEndTag {
-        /// The element name expected to close.
-        expected: String,
-        /// The element name actually found in the closing tag.
-        found: String,
-    },
     /// The manifest exceeds a hostile-input bound
     /// ([`broadcast_common::xml_chars::XmlLimits`] defaults: 4 MiB, depth 32,
     /// 100 000 elements, 8 KiB per attribute value, 256 attributes per
@@ -162,21 +141,6 @@ pub enum SmoothParseError {
 impl fmt::Display for SmoothParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SmoothParseError::UnexpectedEof => {
-                write!(
-                    f,
-                    "unexpected end of input while parsing Smooth manifest XML"
-                )
-            }
-            SmoothParseError::UnterminatedTag { pos } => {
-                write!(
-                    f,
-                    "unterminated XML tag/comment/declaration at byte offset {pos}"
-                )
-            }
-            SmoothParseError::MalformedAttribute { pos } => {
-                write!(f, "malformed XML attribute near byte offset {pos}")
-            }
             SmoothParseError::UnexpectedElement { expected, found } => {
                 if found.is_empty() {
                     write!(f, "expected element <{expected}>, found none")
@@ -209,13 +173,6 @@ impl fmt::Display for SmoothParseError {
             SmoothParseError::InvalidHex { value } => {
                 write!(f, "invalid CodecPrivateData hex {value:?}")
             }
-            SmoothParseError::MismatchedEndTag { expected, found } => {
-                if found.is_empty() {
-                    write!(f, "expected closing tag </{expected}>, found none")
-                } else {
-                    write!(f, "expected closing tag </{expected}>, found </{found}>")
-                }
-            }
             SmoothParseError::TooLarge { limit, max } => {
                 write!(f, "manifest exceeds the {limit} limit of {max}")
             }
@@ -232,43 +189,45 @@ impl std::error::Error for SmoothParseError {}
 /// Crate-local result alias for this module.
 type Result<T> = core::result::Result<T, SmoothParseError>;
 
-impl crate::xml_walk::XmlWalkError for SmoothParseError {
-    fn unterminated_tag(pos: usize) -> Self {
-        Self::UnterminatedTag { pos }
-    }
-    fn mismatched_end_tag(expected: String, found: String) -> Self {
-        Self::MismatchedEndTag { expected, found }
-    }
-    fn ill_formed(pos: usize, message: String) -> Self {
-        Self::Xml { pos, message }
-    }
-    fn malformed_attribute(pos: usize) -> Self {
-        Self::MalformedAttribute { pos }
-    }
-    fn unexpected_eof() -> Self {
-        Self::UnexpectedEof
-    }
-    fn missing_attribute(element: &'static str, attr: &'static str) -> Self {
-        Self::MissingAttribute { element, attr }
-    }
-    fn invalid_attribute_value(element: &'static str, attr: &'static str, value: String) -> Self {
-        Self::InvalidAttributeValue {
-            element,
-            attr,
-            value,
-        }
-    }
-    fn too_large(limit: XmlLimit, max: usize) -> Self {
-        Self::TooLarge { limit, max }
+/// Namespace classes the Smooth reader distinguishes: no namespace (the only one
+/// whose elements and attributes are the manifest's own) and any other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ns {
+    Smooth,
+    Foreign,
+}
+
+impl Namespace for Ns {
+    const TARGET: Self = Ns::Smooth;
+    const NONE: Self = Ns::Smooth;
+
+    fn classify(_uri: &str) -> Self {
+        Ns::Foreign
     }
 }
 
-crate::xml_walk::xml_walk_fns!(SmoothParseError, None);
-
-/// [`crate::xml_walk::finish`] under a name that does not collide with the
-/// writer's `finish_document`.
-fn finish_document_walk(reader: &mut XmlReader<'_>) -> Result<()> {
-    finish(reader)
+impl From<XmlError> for SmoothParseError {
+    fn from(e: XmlError) -> Self {
+        match e {
+            XmlError::NotWellFormed { position, message } => Self::Xml {
+                pos: position,
+                message,
+            },
+            XmlError::WrongRoot { found } => Self::UnexpectedElement {
+                expected: ELEMENT_ROOT,
+                found,
+            },
+            XmlError::Limit(LimitExceeded { limit, max }) => Self::TooLarge { limit, max },
+            XmlError::InvalidUtf8 { valid_up_to } => Self::Xml {
+                pos: valid_up_to,
+                message: String::from("invalid UTF-8"),
+            },
+            _ => Self::Xml {
+                pos: 0,
+                message: String::from("unreadable document"),
+            },
+        }
+    }
 }
 
 /// The input bounds [`SmoothManifest::parse`] applies: the shared
@@ -826,77 +785,28 @@ impl SmoothManifest {
     /// past one fails with [`SmoothParseError::TooLarge`].
     pub fn parse_with_limits(xml: &str, limits: XmlLimits) -> Result<SmoothManifest> {
         const EL: &str = "SmoothStreamingMedia";
-        let mut xml_reader = new_reader_with(xml, limits);
-        let reader = &mut xml_reader;
+        let root = read_tree::<Ns>(xml.as_bytes(), ELEMENT_ROOT, &limits)?;
 
-        let (attrs, self_closing) = match next_tag(reader)? {
-            Some(Tag::Open {
-                name,
-                attrs,
-                self_closing,
-            }) if name == "SmoothStreamingMedia" => (attrs, self_closing),
-            Some(Tag::Open { name, .. }) => {
-                return Err(SmoothParseError::UnexpectedElement {
-                    expected: EL,
-                    found: name.to_string(),
-                });
-            }
-            Some(Tag::Close { .. }) => {
-                return Err(SmoothParseError::UnexpectedElement {
-                    expected: EL,
-                    found: String::new(),
-                });
-            }
-            None => return Err(SmoothParseError::UnexpectedEof),
-        };
-
-        let major_version: u32 = parse_attr(&attrs, "MajorVersion", EL)?.unwrap_or(2);
-        let minor_version: u32 = parse_attr(&attrs, "MinorVersion", EL)?.unwrap_or(0);
-        let timescale: u64 = parse_attr(&attrs, "TimeScale", EL)?.unwrap_or(SMOOTH_TIMESCALE);
-        let duration: Option<u64> = parse_attr(&attrs, "Duration", EL)?;
-        let is_live =
-            attr(&attrs, ATTR_IS_LIVE).is_some_and(|v| v.eq_ignore_ascii_case(IS_LIVE_TRUE));
+        let major_version: u32 = parse_attr(&root, "MajorVersion", EL)?.unwrap_or(2);
+        let minor_version: u32 = parse_attr(&root, "MinorVersion", EL)?.unwrap_or(0);
+        let timescale: u64 = parse_attr(&root, "TimeScale", EL)?.unwrap_or(SMOOTH_TIMESCALE);
+        let duration: Option<u64> = parse_attr(&root, "Duration", EL)?;
+        let is_live = root
+            .attr(ATTR_IS_LIVE)
+            .is_some_and(|v| v.eq_ignore_ascii_case(IS_LIVE_TRUE));
         let look_ahead_fragment_count: Option<u32> =
-            parse_attr(&attrs, "LookAheadFragmentCount", EL)?;
-        let dvr_window_length: Option<u64> = parse_attr(&attrs, "DVRWindowLength", EL)?;
+            parse_attr(&root, "LookAheadFragmentCount", EL)?;
+        let dvr_window_length: Option<u64> = parse_attr(&root, "DVRWindowLength", EL)?;
 
         let mut protection: Option<Protection> = None;
         let mut streams = Vec::new();
-        if !self_closing {
-            loop {
-                match next_tag(reader)? {
-                    Some(Tag::Open {
-                        name,
-                        attrs,
-                        self_closing,
-                    }) if name == ELEMENT_STREAM_INDEX => {
-                        streams.push(parse_stream_index(reader, attrs, self_closing)?)
-                    }
-                    Some(Tag::Open {
-                        name, self_closing, ..
-                    }) if name == ELEMENT_PROTECTION && protection.is_none() => {
-                        protection = Some(parse_protection(reader, self_closing)?);
-                    }
-                    Some(Tag::Open { self_closing, .. }) => {
-                        if !self_closing {
-                            skip_element(reader)?;
-                        }
-                    }
-                    Some(Tag::Close { name }) => {
-                        if name != EL {
-                            return Err(SmoothParseError::MismatchedEndTag {
-                                expected: EL.to_string(),
-                                found: name.to_string(),
-                            });
-                        }
-                        break;
-                    }
-                    None => return Err(SmoothParseError::UnexpectedEof),
-                }
+        for child in root.children.iter().filter(|c| c.ns == Ns::Smooth) {
+            if child.name == ELEMENT_STREAM_INDEX {
+                streams.push(parse_stream_index(child)?);
+            } else if child.name == ELEMENT_PROTECTION && protection.is_none() {
+                protection = Some(parse_protection(child)?);
             }
         }
-
-        finish_document_walk(reader)?;
 
         Ok(SmoothManifest {
             major_version,
@@ -912,48 +822,80 @@ impl SmoothManifest {
     }
 }
 
-fn parse_protection(reader: &mut XmlReader<'_>, self_closing: bool) -> Result<Protection> {
-    if self_closing {
-        return Ok(Protection::default());
-    }
-    let mut protection = Protection::default();
-    loop {
-        match next_tag(reader)? {
-            Some(Tag::Open {
-                name, self_closing, ..
-            }) if name == ELEMENT_PROTECTION_HEADER && protection.header.is_none() => {
-                protection.header = Some(if self_closing {
-                    String::new()
-                } else {
-                    element_text(reader)?
-                });
-            }
-            Some(Tag::Open { self_closing, .. }) => {
-                if !self_closing {
-                    skip_element(reader)?;
-                }
-            }
-            Some(Tag::Close { name }) => {
-                if name != ELEMENT_PROTECTION {
-                    return Err(SmoothParseError::MismatchedEndTag {
-                        expected: ELEMENT_PROTECTION.to_string(),
-                        found: name,
-                    });
-                }
-                return Ok(protection);
-            }
-            None => return Err(SmoothParseError::UnexpectedEof),
+fn attr<'a>(element: &'a Elem<Ns>, key: &str) -> Option<&'a str> {
+    element.attr(key)
+}
+
+fn required_attr_owned(
+    element: &Elem<Ns>,
+    key: &'static str,
+    name: &'static str,
+) -> Result<String> {
+    attr(element, key)
+        .map(String::from)
+        .ok_or(SmoothParseError::MissingAttribute {
+            element: name,
+            attr: key,
+        })
+}
+
+fn parse_attr<T: FromStr>(
+    element: &Elem<Ns>,
+    key: &'static str,
+    name: &'static str,
+) -> Result<Option<T>> {
+    match attr(element, key) {
+        Some(v) => {
+            v.trim()
+                .parse::<T>()
+                .map(Some)
+                .map_err(|_| SmoothParseError::InvalidAttributeValue {
+                    element: name,
+                    attr: key,
+                    value: v.to_string(),
+                })
         }
+        None => Ok(None),
     }
 }
 
-fn parse_stream_index(
-    reader: &mut XmlReader<'_>,
-    attrs: Vec<(String, String)>,
-    self_closing: bool,
-) -> Result<StreamIndex> {
+fn required_attr_parse<T: FromStr>(
+    element: &Elem<Ns>,
+    key: &'static str,
+    name: &'static str,
+) -> Result<T> {
+    let v = attr(element, key).ok_or(SmoothParseError::MissingAttribute {
+        element: name,
+        attr: key,
+    })?;
+    v.trim()
+        .parse::<T>()
+        .map_err(|_| SmoothParseError::InvalidAttributeValue {
+            element: name,
+            attr: key,
+            value: v.to_string(),
+        })
+}
+
+fn parse_protection(element: &Elem<Ns>) -> Result<Protection> {
+    let mut protection = Protection::default();
+    for child in element.children.iter().filter(|c| c.ns == Ns::Smooth) {
+        if child.name == ELEMENT_PROTECTION_HEADER && protection.header.is_none() {
+            if !child.children.is_empty() {
+                return Err(SmoothParseError::Xml {
+                    pos: 0,
+                    message: String::from("child element inside a text-only element"),
+                });
+            }
+            protection.header = Some(child.text().to_string());
+        }
+    }
+    Ok(protection)
+}
+
+fn parse_stream_index(element: &Elem<Ns>) -> Result<StreamIndex> {
     const EL: &str = "StreamIndex";
-    let type_str = required_attr_owned(&attrs, "Type", EL)?;
+    let type_str = required_attr_owned(element, "Type", EL)?;
     let stream_type = match type_str.as_str() {
         "video" => StreamType::Video,
         "audio" => StreamType::Audio,
@@ -966,58 +908,24 @@ fn parse_stream_index(
             });
         }
     };
-    let name = attr_owned(&attrs, "Name");
-    let subtype = attr_owned(&attrs, "Subtype");
-    let chunks: Option<u32> = parse_attr(&attrs, "Chunks", EL)?;
-    let quality_levels: Option<u32> = parse_attr(&attrs, "QualityLevels", EL)?;
-    let timescale: Option<u64> = parse_attr(&attrs, "TimeScale", EL)?;
-    let url = required_attr_owned(&attrs, "Url", EL)?;
+    let name = attr(element, "Name").map(String::from);
+    let subtype = attr(element, "Subtype").map(String::from);
+    let chunks: Option<u32> = parse_attr(element, "Chunks", EL)?;
+    let quality_levels: Option<u32> = parse_attr(element, "QualityLevels", EL)?;
+    let timescale: Option<u64> = parse_attr(element, "TimeScale", EL)?;
+    let url = required_attr_owned(element, "Url", EL)?;
 
     let mut qualities = Vec::new();
     let mut chunks_list = Vec::new();
-    if !self_closing {
-        loop {
-            match next_tag(reader)? {
-                Some(Tag::Open {
-                    name,
-                    attrs,
-                    self_closing,
-                }) if name == "QualityLevel" => {
-                    qualities.push(parse_quality_level(&attrs)?);
-                    if !self_closing {
-                        skip_element(reader)?;
-                    }
-                }
-                Some(Tag::Open {
-                    name,
-                    attrs,
-                    self_closing,
-                }) if name == ELEMENT_C => {
-                    let n: Option<u32> = parse_attr(&attrs, ATTR_N, ELEMENT_C)?;
-                    let t: Option<u64> = parse_attr(&attrs, "t", "c")?;
-                    let d: Option<u64> = parse_attr(&attrs, "d", "c")?;
-                    let r: Option<u32> = parse_attr(&attrs, "r", "c")?;
-                    chunks_list.push(C { n, t, d, r });
-                    if !self_closing {
-                        skip_element(reader)?;
-                    }
-                }
-                Some(Tag::Open { self_closing, .. }) => {
-                    if !self_closing {
-                        skip_element(reader)?;
-                    }
-                }
-                Some(Tag::Close { name }) => {
-                    if name != EL {
-                        return Err(SmoothParseError::MismatchedEndTag {
-                            expected: EL.to_string(),
-                            found: name.to_string(),
-                        });
-                    }
-                    break;
-                }
-                None => return Err(SmoothParseError::UnexpectedEof),
-            }
+    for child in element.children.iter().filter(|c| c.ns == Ns::Smooth) {
+        if child.name == "QualityLevel" {
+            qualities.push(parse_quality_level(child)?);
+        } else if child.name == ELEMENT_C {
+            let n: Option<u32> = parse_attr(child, ATTR_N, ELEMENT_C)?;
+            let t: Option<u64> = parse_attr(child, "t", "c")?;
+            let d: Option<u64> = parse_attr(child, "d", "c")?;
+            let r: Option<u32> = parse_attr(child, "r", "c")?;
+            chunks_list.push(C { n, t, d, r });
         }
     }
 
@@ -1034,22 +942,22 @@ fn parse_stream_index(
     })
 }
 
-fn parse_quality_level(attrs: &[(String, String)]) -> Result<QualityLevel> {
+fn parse_quality_level(element: &Elem<Ns>) -> Result<QualityLevel> {
     const EL: &str = "QualityLevel";
-    let index: u32 = parse_attr(attrs, "Index", EL)?.unwrap_or(0);
-    let bitrate: u64 = required_attr_parse(attrs, "Bitrate", EL)?;
-    let four_cc = required_attr_owned(attrs, "FourCC", EL)?;
-    let codec_private_data = match attr(attrs, "CodecPrivateData") {
+    let index: u32 = parse_attr(element, "Index", EL)?.unwrap_or(0);
+    let bitrate: u64 = required_attr_parse(element, "Bitrate", EL)?;
+    let four_cc = required_attr_owned(element, "FourCC", EL)?;
+    let codec_private_data = match attr(element, "CodecPrivateData") {
         Some(hex) => hex_decode(hex)?,
         None => Vec::new(),
     };
-    let width: Option<u32> = parse_attr(attrs, "MaxWidth", EL)?;
-    let height: Option<u32> = parse_attr(attrs, "MaxHeight", EL)?;
-    let sampling_rate: Option<u32> = parse_attr(attrs, "SamplingRate", EL)?;
-    let channels: Option<u16> = parse_attr(attrs, "Channels", EL)?;
-    let bits_per_sample: Option<u16> = parse_attr(attrs, "BitsPerSample", EL)?;
-    let packet_size: Option<u32> = parse_attr(attrs, "PacketSize", EL)?;
-    let audio_tag: Option<u32> = parse_attr(attrs, "AudioTag", EL)?;
+    let width: Option<u32> = parse_attr(element, "MaxWidth", EL)?;
+    let height: Option<u32> = parse_attr(element, "MaxHeight", EL)?;
+    let sampling_rate: Option<u32> = parse_attr(element, "SamplingRate", EL)?;
+    let channels: Option<u16> = parse_attr(element, "Channels", EL)?;
+    let bits_per_sample: Option<u16> = parse_attr(element, "BitsPerSample", EL)?;
+    let packet_size: Option<u32> = parse_attr(element, "PacketSize", EL)?;
+    let audio_tag: Option<u32> = parse_attr(element, "AudioTag", EL)?;
 
     Ok(QualityLevel {
         index,
@@ -1472,10 +1380,7 @@ mod tests {
     #[test]
     fn unterminated_tag_is_error_not_panic() {
         let err = SmoothManifest::parse("<SmoothStreamingMedia MajorVersion=\"2\"").unwrap_err();
-        assert!(matches!(
-            err,
-            SmoothParseError::UnterminatedTag { .. } | SmoothParseError::UnexpectedEof
-        ));
+        assert!(matches!(err, SmoothParseError::Xml { .. }));
     }
 
     #[test]
@@ -1486,10 +1391,10 @@ mod tests {
 
     #[test]
     fn empty_input_is_error() {
-        assert_eq!(
+        assert!(matches!(
             SmoothManifest::parse("").unwrap_err(),
-            SmoothParseError::UnexpectedEof
-        );
+            SmoothParseError::Xml { .. }
+        ));
     }
 
     #[test]
