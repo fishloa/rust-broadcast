@@ -269,16 +269,12 @@ pub fn match_url(
     ids.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
     ids.dedup();
     let mut solutions: Vec<TemplateMatch> = Vec::new();
-    walk(
-        &parts,
-        template,
-        &ids,
+    let search = Search {
+        parts: &parts,
+        ids: &ids,
         url,
-        0,
-        0,
-        Reading::default(),
-        &mut solutions,
-    );
+    };
+    walk(&search, 0, 0, Reading::default(), &mut solutions);
     if solutions.len() == 1 {
         solutions.pop()
     } else {
@@ -295,16 +291,23 @@ struct Reading {
     bandwidth: bool,
 }
 
+#[derive(Clone, Copy)]
+struct Search<'s, 'p> {
+    parts: &'s [Part<'p>],
+    ids: &'s [&'s str],
+    url: &'s str,
+}
+
 fn walk(
-    parts: &[Part<'_>],
-    template: &str,
-    ids: &[&str],
-    url: &str,
+    s: &Search<'_, '_>,
     pi: usize,
     pos: usize,
     current: Reading,
     solutions: &mut Vec<TemplateMatch>,
 ) {
+    let Search {
+        parts, ids, url, ..
+    } = *s;
     if solutions.len() >= 2 {
         return;
     }
@@ -316,16 +319,16 @@ fn walk(
     };
     let rest = &url[pos..];
     match part {
-        Part::Literal(s) => {
-            if let Some(after) = rest.strip_prefix(*s) {
+        Part::Literal(lit) => {
+            if let Some(after) = rest.strip_prefix(*lit) {
                 let at = url.len() - after.len();
-                walk(parts, template, ids, url, pi + 1, at, current, solutions);
+                walk(s, pi + 1, at, current, solutions);
             }
         }
         Part::Escape => {
             if let Some(after) = rest.strip_prefix(DELIMITER) {
                 let at = url.len() - after.len();
-                walk(parts, template, ids, url, pi + 1, at, current, solutions);
+                walk(s, pi + 1, at, current, solutions);
             }
         }
         Part::RepresentationId => {
@@ -339,60 +342,17 @@ fn walk(
                 let mut next = current.clone();
                 next.id = true;
                 next.matched.representation_id = (*id).to_owned();
-                walk(
-                    parts,
-                    template,
-                    ids,
-                    url,
-                    pi + 1,
-                    url.len() - after.len(),
-                    next,
-                    solutions,
-                );
+                walk(s, pi + 1, url.len() - after.len(), next, solutions);
                 if solutions.len() >= 2 {
                     return;
                 }
             }
         }
-        Part::Number(width) => numeric(
-            parts,
-            template,
-            ids,
-            url,
-            pi,
-            pos,
-            rest,
-            *width,
-            &current,
-            solutions,
-            Field::Number,
-        ),
-        Part::Time(width) => numeric(
-            parts,
-            template,
-            ids,
-            url,
-            pi,
-            pos,
-            rest,
-            *width,
-            &current,
-            solutions,
-            Field::Time,
-        ),
-        Part::Bandwidth(width) => numeric(
-            parts,
-            template,
-            ids,
-            url,
-            pi,
-            pos,
-            rest,
-            *width,
-            &current,
-            solutions,
-            Field::Bandwidth,
-        ),
+        Part::Number(width) => numeric(s, pi, pos, *width, &current, solutions, Field::Number),
+        Part::Time(width) => numeric(s, pi, pos, *width, &current, solutions, Field::Time),
+        Part::Bandwidth(width) => {
+            numeric(s, pi, pos, *width, &current, solutions, Field::Bandwidth)
+        }
     }
 }
 
@@ -445,18 +405,15 @@ pub fn format_width(n: u64, width: usize) -> String {
 }
 
 fn numeric(
-    parts: &[Part<'_>],
-    template: &str,
-    ids: &[&str],
-    url: &str,
+    s: &Search<'_, '_>,
     pi: usize,
     pos: usize,
-    rest: &str,
     width: Option<usize>,
     current: &Reading,
     solutions: &mut Vec<TemplateMatch>,
     field: Field,
 ) {
+    let rest = &s.url[pos..];
     let max_len = digit_run(rest);
     let w = width.map_or(1, |w| w.clamp(1, MAX_FORMAT_WIDTH));
     let min_len = w.min(max_len).max(1);
@@ -477,16 +434,7 @@ fn numeric(
         if next.set(field, value).is_none() {
             continue;
         }
-        walk(
-            parts,
-            template,
-            ids,
-            url,
-            pi + 1,
-            pos + len,
-            next,
-            solutions,
-        );
+        walk(s, pi + 1, pos + len, next, solutions);
         if solutions.len() >= 2 {
             return;
         }
