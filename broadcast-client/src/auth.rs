@@ -1,4 +1,12 @@
 //! Origin-scoped credentials and challenge handling.
+//!
+//! ```rust
+//! use broadcast_client::auth::AuthState;
+//! use url::Url;
+//! let origin = Url::parse("http://example/live.ts").unwrap();
+//! let auth = AuthState::new(origin, vec![]);
+//! assert!(!auth.is_waiting());
+//! ```
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -120,7 +128,9 @@ impl AuthState {
         was_waiting
     }
 
-    /// Request headers for a URL.
+    /// Request headers for a URL: cookies, extra headers on the origin, and the
+    /// `Authorization`/`Proxy-Authorization` value (RFC 7617 Basic, RFC 7616 Digest,
+    /// RFC 6750 Bearer; RFC 9110 §11.6 origin scoping).
     pub fn request_headers(&mut self, url: &Url, now_us: u64) -> Vec<(String, String)> {
         let same_origin = url.origin() == self.origin.origin();
         let mut headers: Vec<(String, String)> = if same_origin {
@@ -160,8 +170,8 @@ impl AuthState {
         headers
     }
 
-    /// Handle 401/407. `stale_replayed` is whether this request lineage already got one stale
-    /// replay.
+    /// Handle a `401`/`407`: decide replay, stale replay or wait for credentials (RFC 7616
+    /// Digest `stale`, RFC 9110 §11.6; RFC 6750 Bearer challenges).
     pub fn handle_unauthorized(
         &mut self,
         status: u16,
