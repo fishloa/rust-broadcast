@@ -31,6 +31,9 @@ const ARRIVAL_SKEW_BOUND_SECONDS: f64 = 0.025;
 const WITHIN_TOLERANCE_SKEW_SECONDS: f64 = 0.060;
 const BEYOND_TOLERANCE_SKEW_SECONDS: f64 = 0.600;
 const RELAY_SR_BIAS_SECONDS: f64 = 0.260;
+const SR_REANCHOR_AT_NUM: usize = 2;
+const SR_REANCHOR_AT_DEN: usize = 5;
+const SR_REANCHOR_MOVE_FRAMES: f64 = 3.0;
 
 struct Lane {
     video: bool,
@@ -83,16 +86,19 @@ struct Outcome {
     audio_timescale: f64,
     video_timescale: f64,
     samples: Vec<(bool, Vec<u8>, f64)>,
+    audio_samples: Vec<(f64, u64)>,
+    last_sr_us: u64,
+    last_audio_skew: f64,
 }
 
-fn send_sender_reports(host: &mut Host, lanes: &[Lane], i: usize, skew: f64) {
+fn send_sender_reports(host: &mut Host, lanes: &[Lane], i: usize, audio_skew: f64) {
     for lane in lanes {
         let ts = lane.packet_ts[i.min(lane.packet_ts.len() - 1)];
         let rel = f64::from(ts.wrapping_sub(lane.base));
         let (rate, offset) = if lane.video {
             (VIDEO_RATE, 0.0)
         } else {
-            (AUDIO_RATE, skew)
+            (AUDIO_RATE, audio_skew)
         };
         let wall = WALL_ORIGIN_SECONDS + rel / rate + offset;
         host.deliver(&sender_report_at(lane.channel + 1, SR_SSRC, wall, ts));
@@ -101,7 +107,11 @@ fn send_sender_reports(host: &mut Host, lanes: &[Lane], i: usize, skew: f64) {
 }
 
 fn run(skew_seconds: Option<f64>) -> Outcome {
-    run_at(&MediaFixture::load(), skew_seconds, SrAt::Third)
+    run_at(
+        &MediaFixture::load(),
+        skew_seconds.map(SrMove::Skew),
+        SrAt::Third,
+    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -112,8 +122,20 @@ enum SrAt {
     AfterFirstVideoAu,
 }
 
-fn run_at(fixture: &MediaFixture, skew_seconds: Option<f64>, when: SrAt) -> Outcome {
-    run_scenario(fixture, skew_seconds, None, when)
+#[derive(Clone, Copy, Debug)]
+enum SrMove {
+    /// An artificial, constant audio-versus-video skew.
+    Skew(f64),
+    /// The publisher's audio clock jumps at the second Sender Report, as a server clock
+    /// adjustment would move that stream's NTP/RTP pairing: no skew before the re-anchor,
+    /// `SR_REANCHOR_MOVE_FRAMES` of AAC afterwards. The early Sender Reports therefore anchor
+    /// the emitted audio away from where the *last* one, whose mapping the test asserts
+    /// against, says it belongs.
+    Reanchor,
+}
+
+fn run_at(fixture: &MediaFixture, sr: Option<SrMove>, when: SrAt) -> Outcome {
+    run_scenario(fixture, sr, None, when)
 }
 
 fn rtp_info_header(lanes: &[Lane], skew: f64) -> String {
@@ -134,7 +156,7 @@ fn rtp_info_header(lanes: &[Lane], skew: f64) -> String {
 
 fn run_scenario(
     fixture: &MediaFixture,
-    skew_seconds: Option<f64>,
+    sr: Option<SrMove>,
     rtp_info_skew: Option<f64>,
     when: SrAt,
 ) -> Outcome {
@@ -161,22 +183,38 @@ fn run_scenario(
         SrAt::AfterFirstVideoAu => first_video_au_end,
     };
     let before_media = matches!(when, SrAt::BeforeFirstSample);
+    let mut last_sr: Option<(u64, f64)> = None;
+    let reanchor_at = longest * SR_REANCHOR_AT_NUM / SR_REANCHOR_AT_DEN;
+    let skew_seconds = match sr {
+        Some(SrMove::Skew(skew)) => Some(skew),
+        Some(SrMove::Reanchor) => Some(0.0),
+        None => None,
+    };
     let mut all = Vec::new();
     for i in 0..longest {
+        let mut drained = 0u64;
         if let (Some(skew), true, true) = (skew_seconds, before_media, i == 0) {
             send_sender_reports(&mut host, &lanes, 0, skew);
+            last_sr = Some((host.now, skew));
         }
         for lane in &lanes {
             if let Some(frame) = lane.frames.get(i) {
                 host.now += FRAME_STEP_US;
                 host.deliver(frame);
                 host.drain();
+                drained = host.now;
             }
         }
         if let (Some(skew), false, true) = (skew_seconds, before_media, i == sr_at) {
             send_sender_reports(&mut host, &lanes, i, skew);
+            last_sr = Some((host.now, skew));
         }
-        all.extend(host.events());
+        if let (Some(SrMove::Reanchor), false, true) = (sr, before_media, i == reanchor_at) {
+            let moved = SR_REANCHOR_MOVE_FRAMES * AAC_FRAME_SECONDS;
+            send_sender_reports(&mut host, &lanes, i, moved);
+            last_sr = Some((host.now, moved));
+        }
+        all.push((host.events(), drained));
     }
 
     let audio_lane = lanes.iter().find(|l| !l.video).expect("audio lane");
@@ -199,45 +237,60 @@ fn run_scenario(
         audio_timescale: 0.0,
         video_timescale: 0.0,
         samples: Vec::new(),
+        audio_samples: Vec::new(),
+        last_sr_us: 0,
+        last_audio_skew: 0.0,
     };
     let mut is_video = BTreeMap::new();
-    for e in &all {
-        match e {
-            Event::Tracks(specs) => {
-                for s in specs {
-                    let video = matches!(s.config, CodecConfig::Avc { .. });
-                    is_video.insert(s.track_id, video);
-                    if video {
-                        out.video_timescale = f64::from(s.timescale);
-                    } else {
-                        out.audio_timescale = f64::from(s.timescale);
+    let mut audio_samples = Vec::new();
+    for (events, drained) in &all {
+        let drained_as_of = *drained;
+        for e in events {
+            match e {
+                Event::Tracks(specs) => {
+                    for s in specs {
+                        let video = matches!(s.config, CodecConfig::Avc { .. });
+                        is_video.insert(s.track_id, video);
+                        if video {
+                            out.video_timescale = f64::from(s.timescale);
+                        } else {
+                            out.audio_timescale = f64::from(s.timescale);
+                        }
                     }
                 }
-            }
-            Event::Sample { track, sample, .. } => {
-                let pts = sample.pts.expect("pts") as f64;
-                let scale = if is_video[track] {
-                    out.video_timescale
-                } else {
-                    out.audio_timescale
-                };
-                out.samples
-                    .push((is_video[track], sample.data.to_vec(), pts / scale));
-                if is_video[track] {
-                    out.video.push(pts);
-                } else {
-                    out.audio.push(pts);
+                Event::Sample { track, sample, .. } => {
+                    let pts = sample.pts.expect("pts") as f64;
+                    let scale = if is_video[track] {
+                        out.video_timescale
+                    } else {
+                        out.audio_timescale
+                    };
+                    out.samples
+                        .push((is_video[track], sample.data.to_vec(), pts / scale));
+                    if !is_video[track] {
+                        audio_samples.push((pts / scale, drained_as_of));
+                    }
+                    if is_video[track] {
+                        out.video.push(pts);
+                    } else {
+                        out.audio.push(pts);
+                    }
                 }
+                Event::AvSync(state) => out.sync.push(*state),
+                Event::Discontinuity => out.discontinuities += 1,
+                _ => {}
             }
-            Event::AvSync(state) => out.sync.push(*state),
-            Event::Discontinuity => out.discontinuities += 1,
-            _ => {}
         }
     }
     assert!(
         out.audio.len() > 40 && out.video.len() > 40,
         "too few samples"
     );
+    out.audio_samples = audio_samples;
+    if let Some((last_sr_us, last_audio_skew)) = last_sr {
+        out.last_sr_us = last_sr_us;
+        out.last_audio_skew = last_audio_skew;
+    }
     assert_eq!(out.audio_timescale, AUDIO_RATE);
     assert_eq!(out.video_timescale, VIDEO_RATE);
     out
@@ -261,6 +314,39 @@ fn assert_audio_on_sender_report_timeline(o: &Outcome, skew: f64) {
         assert!(
             (got - expected).abs() < AAC_FRAME_SECONDS,
             "audio sample {k}: {got} s, sender reports say {expected} s"
+        );
+    }
+}
+
+/// How long after the final Sender Report the emitted audio must follow its mapping. A
+/// designed correction lands one sample after the re-anchor; this allows a few more for the
+/// aligner's slew to converge, still far short of the re-anchor's own distance in the run.
+const SETTLED_SAMPLES: usize = 16;
+
+#[test]
+fn audio_follows_a_later_sender_report_that_moves_its_clock() {
+    let o = run_at(&MediaFixture::load(), Some(SrMove::Reanchor), SrAt::Third);
+    assert_audio_follows_the_last_sender_report("reanchor", &o);
+    assert_monotonic(&o);
+}
+
+fn assert_audio_follows_the_last_sender_report(name: &str, o: &Outcome) {
+    let (last_sr_us, last_audio_skew) = (o.last_sr_us, o.last_audio_skew);
+    let Some(first_after) = o.audio_samples.iter().position(|(_, at)| *at > last_sr_us) else {
+        return;
+    };
+    let settled = (first_after + SETTLED_SAMPLES).min(o.audio_samples.len());
+    assert!(
+        settled < o.audio_samples.len(),
+        "{name}: no audio after the final sender report"
+    );
+    let audio_first = o.audio[0] / o.audio_timescale;
+    for k in settled..o.audio_samples.len() {
+        let (got, _) = o.audio_samples[k];
+        let expected = audio_first + o.audio_rel_seconds[k] + last_audio_skew;
+        assert!(
+            (got - expected).abs() < AAC_FRAME_SECONDS,
+            "{name}: audio sample {k}: {got} s, the last sender reports say {expected} s"
         );
     }
 }
@@ -327,7 +413,7 @@ fn the_final_offset_is_the_true_offset_whenever_the_first_sender_report_arrives(
         BEYOND_TOLERANCE_SKEW_SECONDS,
     ] {
         for when in whens {
-            let o = run_at(&fixture, Some(skew), when);
+            let o = run_at(&fixture, Some(SrMove::Skew(skew)), when);
             assert_audio_on_sender_report_timeline(&o, skew);
             assert_monotonic(&o);
         }
@@ -418,7 +504,7 @@ fn a_three_b_frame_two_second_gop_source_lands_on_the_sender_report_timeline() {
         BEYOND_TOLERANCE_SKEW_SECONDS,
     ] {
         for when in whens {
-            let o = run_at(&fixture, Some(skew), when);
+            let o = run_at(&fixture, Some(SrMove::Skew(skew)), when);
             assert_audio_on_sender_report_timeline(&o, skew);
             assert_monotonic(&o);
             assert_ground_truth_offset(
@@ -477,7 +563,7 @@ fn emitted_samples_keep_their_source_audio_video_offset() {
         BEYOND_TOLERANCE_SKEW_SECONDS,
     ] {
         for when in [SrAt::BeforeFirstSample, SrAt::Packet(14), SrAt::Third] {
-            let o = run_at(&fixture, Some(skew), when);
+            let o = run_at(&fixture, Some(SrMove::Skew(skew)), when);
             assert_ground_truth_offset(
                 &o,
                 &truth,
@@ -497,7 +583,7 @@ fn assert_scenario(
     what: &str,
 ) {
     for when in [SrAt::BeforeFirstSample, SrAt::Packet(14), SrAt::Third] {
-        let o = run_scenario(fixture, sr, info, when);
+        let o = run_scenario(fixture, sr.map(SrMove::Skew), info, when);
         assert_audio_on_sender_report_timeline(&o, expected_skew);
         assert_monotonic(&o);
         assert_ground_truth_offset(
@@ -559,7 +645,7 @@ fn rtp_info_reaches_the_rtp_info_sync_state_and_sender_reports_do_not_displace_i
     let fixture = MediaFixture::load();
     let o = run_scenario(
         &fixture,
-        Some(RELAY_SR_BIAS_SECONDS),
+        Some(SrMove::Skew(RELAY_SR_BIAS_SECONDS)),
         Some(0.0),
         SrAt::Third,
     );
@@ -570,6 +656,11 @@ fn rtp_info_reaches_the_rtp_info_sync_state_and_sender_reports_do_not_displace_i
 #[test]
 fn biased_sender_reports_alone_are_followed_as_they_are() {
     let fixture = MediaFixture::load();
-    let o = run_scenario(&fixture, Some(RELAY_SR_BIAS_SECONDS), None, SrAt::Third);
+    let o = run_scenario(
+        &fixture,
+        Some(SrMove::Skew(RELAY_SR_BIAS_SECONDS)),
+        None,
+        SrAt::Third,
+    );
     assert_audio_on_sender_report_timeline(&o, RELAY_SR_BIAS_SECONDS);
 }
