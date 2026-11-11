@@ -56,11 +56,7 @@ use crate::source::http_auth::{
 };
 use crate::source::pull_target::{PullKind, PullRoute};
 
-#[cfg(test)]
-mod differential;
 mod drive;
-#[cfg(test)]
-mod legacy_plan;
 mod session;
 mod stitch;
 #[cfg(test)]
