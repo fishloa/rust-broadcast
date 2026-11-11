@@ -64,7 +64,6 @@ use transmux::TrackId;
 use bytes::Bytes;
 use rtsp_runtime::auth::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
-use rtsp_runtime::transport::{Transport, TransportSpec};
 use rtsp_runtime::{Method, StatusCode};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
@@ -79,11 +78,7 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{credentials_from_url, resolve_credentials, strip_userinfo};
 use crate::source::pull_target::{PullKind, PullRoute};
-use crate::source::{TrackInit, sdp::parse_tracks_multimux as parse_sdp_tracks};
-
-/// Interleaved channel offset from a media's RTP channel to its paired RTCP
-/// channel (RFC 2326 §10.12: `interleaved=lo-hi` with `hi = lo + 1`).
-const RTCP_CHANNEL_OFFSET: u8 = 1;
+use crate::source::{TrackInit, sdp::plan_tracks};
 
 /// Default port for a bare `rtsp://host/...` URL with no explicit port.
 const RTSP_DEFAULT_PORT: u16 = rtsp_runtime::RTSP_DEFAULT_PORT;
@@ -147,6 +142,7 @@ pub struct RtspIngestSession {
     base_url: Url,
     request_uri: String,
     tracks: Vec<TrackInit>,
+    plan: Option<rtsp_runtime::PlayPlan>,
     depacketiser: Option<transmux::RtpStreamDepacketiser>,
     phase: Phase,
     outbound: VecDeque<Bytes>,
@@ -201,22 +197,16 @@ impl RtspIngestSession {
     }
 
     fn begin_setup(&mut self, index: usize) -> Result<()> {
-        let track = &self.tracks[index];
-        let uri = rtsp_runtime::sdp::resolve_control(
-            &self.base_url,
-            &self.base_url,
-            track.control.as_deref(),
-        )
-        .ok_or_else(|| MultimuxError::Sdp {
-            reason: "control rejected".into(),
-        })?;
-        let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
-            track.channel,
-            track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
-        ));
+        let setup = self
+            .plan
+            .as_ref()
+            .and_then(|plan| plan.setups().get(index))
+            .ok_or_else(|| MultimuxError::Sdp {
+                reason: "no planned SETUP for the track".into(),
+            })?;
         let bytes = self
             .session
-            .setup(&uri, &transport)
+            .setup(&setup.control, &setup.transport)
             .map_err(protocol_err("SETUP"))?;
         self.outbound.push_back(Bytes::from(bytes));
         self.phase = Phase::AwaitSetup(index);
@@ -277,37 +267,36 @@ impl RtspIngestSession {
                 }
                 match (&self.phase, &method) {
                     (Phase::AwaitDescribe, m) if *m == Method::Describe => {
-                        let tracks = parse_sdp_tracks(&body)?;
+                        let (plan, tracks) = plan_tracks(&self.base_url, &body)?;
+                        self.plan = Some(plan);
                         self.tracks = tracks;
-                        if self.tracks.is_empty() {
-                            return Err(MultimuxError::Sdp {
-                                reason: "DESCRIBE: SDP declared no media".into(),
-                            });
-                        }
                         self.begin_setup(0)?;
                     }
                     (Phase::AwaitSetup(index), m) if *m == Method::Setup => {
                         let index = *index;
-                        let spec = self
-                            .session
-                            .negotiated_transport()
-                            .and_then(Transport::first)
-                            .ok_or_else(|| MultimuxError::Protocol {
+                        let negotiated =
+                            self.session
+                                .negotiated_transport()
+                                .cloned()
+                                .ok_or_else(|| MultimuxError::Protocol {
+                                    phase: "SETUP",
+                                    reason: format!(
+                                        "track {}: server did not provide negotiated transport",
+                                        self.tracks[index].track_id
+                                    ),
+                                })?;
+                        let plan = self.plan.as_mut().ok_or_else(|| MultimuxError::Sdp {
+                            reason: "SETUP answered before a plan was made".into(),
+                        })?;
+                        plan.accept_setup(index, Some(&negotiated)).map_err(|e| {
+                            MultimuxError::Protocol {
                                 phase: "SETUP",
-                                reason: format!(
-                                    "track {}: server did not provide negotiated transport",
-                                    self.tracks[index].track_id
-                                ),
-                            })?;
-                        let channel =
-                            interleaved_channel(spec).ok_or_else(|| MultimuxError::Protocol {
-                                phase: "SETUP",
-                                reason: format!(
-                                    "track {}: server did not negotiate interleaved TCP transport",
-                                    self.tracks[index].track_id
-                                ),
-                            })?;
-                        self.tracks[index].channel = channel;
+                                reason: format!("track {}: {e}", self.tracks[index].track_id),
+                            }
+                        })?;
+                        if let Some((channel, _)) = plan.channels(index) {
+                            self.tracks[index].channel = channel;
+                        }
                         let next = index + 1;
                         if next < self.tracks.len() {
                             self.begin_setup(next)?;
@@ -325,10 +314,12 @@ impl RtspIngestSession {
                                     })
                                     .collect(),
                             ));
-                            let bytes = self
-                                .session
-                                .play(&self.request_uri)
-                                .map_err(protocol_err("PLAY"))?;
+                            let play_uri = self
+                                .plan
+                                .as_ref()
+                                .map_or(self.request_uri.as_str(), |plan| plan.play_uri());
+                            let bytes =
+                                self.session.play(play_uri).map_err(protocol_err("PLAY"))?;
                             self.outbound.push_back(Bytes::from(bytes));
                             self.phase = Phase::AwaitPlay;
                         }
@@ -599,6 +590,7 @@ impl Dialer for RtspDialer {
             base_url: request_url,
             request_uri,
             tracks: Vec::new(),
+            plan: None,
             depacketiser: None,
             phase: Phase::AwaitDescribe,
             outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
@@ -640,16 +632,6 @@ fn protocol_err(phase: &'static str) -> impl Fn(rtsp_runtime::error::Error) -> M
     move |e| MultimuxError::Protocol {
         phase,
         reason: e.to_string(),
-    }
-}
-
-/// Extracts the RTP channel from a transport spec if it is TCP-interleaved.
-fn interleaved_channel(spec: &TransportSpec) -> Option<u8> {
-    use rtsp_runtime::transport::LowerTransport;
-    if spec.lower_transport == Some(LowerTransport::Tcp) {
-        spec.interleaved.map(|(lo, _hi)| lo)
-    } else {
-        None
     }
 }
 
@@ -1042,33 +1024,6 @@ mod tests {
     fn rtsp_dialer_sni_server_name_strips_userinfo_and_brackets() {
         let dialer = RtspDialer::new("rtsps://user:pass@[2001:db8::1]:8554/stream", None);
         assert_eq!(dialer.sni_server_name().unwrap(), "2001:db8::1");
-    }
-
-    #[test]
-    fn interleaved_channel_accepts_tcp_with_channels() {
-        use rtsp_runtime::transport::LowerTransport;
-        let mut spec = TransportSpec::default();
-        spec.lower_transport = Some(LowerTransport::Tcp);
-        spec.interleaved = Some((0, 1));
-        assert_eq!(interleaved_channel(&spec), Some(0));
-    }
-
-    #[test]
-    fn interleaved_channel_rejects_udp() {
-        use rtsp_runtime::transport::LowerTransport;
-        let mut spec = TransportSpec::default();
-        spec.lower_transport = Some(LowerTransport::Udp);
-        spec.interleaved = Some((0, 1));
-        assert_eq!(interleaved_channel(&spec), None);
-    }
-
-    #[test]
-    fn interleaved_channel_rejects_missing_interleaved() {
-        use rtsp_runtime::transport::LowerTransport;
-        let mut spec = TransportSpec::default();
-        spec.lower_transport = Some(LowerTransport::Tcp);
-        spec.interleaved = None;
-        assert_eq!(interleaved_channel(&spec), None);
     }
 
     #[test]
