@@ -22,6 +22,10 @@ const MICROS_PER_SEC: u64 = 1_000_000;
 const REFRESH_DIVISOR: u64 = 2;
 const FIRST_TRACK_ID: u32 = 1;
 
+fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Option<u32> {
+    u32::try_from(index.timescale.unwrap_or(manifest.timescale)).ok()
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ManifestCursor {
     Idle,
@@ -355,7 +359,9 @@ impl SmoothClient {
             let Some(quality) = index.qualities.get(pick).cloned() else {
                 continue;
             };
-            let timescale = index.timescale.unwrap_or(manifest.timescale);
+            let Some(timescale) = timescale_of(manifest, index) else {
+                continue;
+            };
             let chunks = index.enumerate_chunks().unwrap_or_default();
             let chunks = if manifest.is_live {
                 live_join(chunks, manifest, self.config.live_join_fragments)
@@ -370,19 +376,22 @@ impl SmoothClient {
     }
 
     fn quality_infos(manifest: &SmoothManifest, index: &StreamIndex) -> Vec<QualityInfo> {
-        let timescale = index.timescale.unwrap_or(manifest.timescale);
+        let timescale = timescale_of(manifest, index);
         index
             .qualities
             .iter()
             .map(|q| {
-                let codecs = track_spec_from_quality_level(
-                    TrackId::new(FIRST_TRACK_ID),
-                    timescale as u32,
-                    index.stream_type,
-                    q,
-                )
-                .ok()
-                .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
+                let codecs = timescale
+                    .and_then(|ts| {
+                        track_spec_from_quality_level(
+                            TrackId::new(FIRST_TRACK_ID),
+                            ts,
+                            index.stream_type,
+                            q,
+                        )
+                        .ok()
+                    })
+                    .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
                 QualityInfo {
                     bitrate: q.bitrate,
                     resolution: q.width.zip(q.height),
@@ -464,7 +473,9 @@ impl SmoothClient {
         }
         let mut specs = Vec::new();
         for (position, &si) in live.iter().enumerate() {
-            let global = TrackId::new(FIRST_TRACK_ID + position as u32);
+            let global = TrackId::new(
+                FIRST_TRACK_ID.saturating_add(u32::try_from(position).unwrap_or(u32::MAX)),
+            );
             let local = self.streams[si].local_track_id.unwrap_or(FIRST_TRACK_ID);
             match self.setup_track(si, local, global) {
                 Ok(spec) => {
@@ -487,7 +498,7 @@ impl SmoothClient {
         let stream = &self.streams[si];
         let mut spec = track_spec_from_quality_level(
             TrackId::new(local),
-            stream.timescale as u32,
+            stream.timescale,
             stream.index.stream_type,
             &stream.quality,
         )
@@ -543,7 +554,7 @@ impl SmoothClient {
                 .map(|c| (c.1, s.timescale))
         });
         let half = last.map_or(self.config.refresh_max_us, |(d, ts)| {
-            d.saturating_mul(MICROS_PER_SEC) / ts.max(1) / REFRESH_DIVISOR
+            d.saturating_mul(MICROS_PER_SEC) / u64::from(ts).max(1) / REFRESH_DIVISOR
         });
         half.clamp(self.config.refresh_min_us, self.config.refresh_max_us)
     }

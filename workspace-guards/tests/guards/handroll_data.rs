@@ -219,6 +219,11 @@ pub const NEEDLE_CRATES: &[Needles] = &[
         allow: &[],
     },
     Needles {
+        name: "smooth-runtime",
+        extra: &["sleep("],
+        allow: &[],
+    },
+    Needles {
         name: "dvb-stream",
         extra: RTSP_RTMP_NEEDLES,
         allow: &[],

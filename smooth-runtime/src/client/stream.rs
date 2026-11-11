@@ -20,7 +20,7 @@ pub(crate) enum Cursor {
 
 pub(crate) struct Stream {
     pub(crate) index: StreamIndex,
-    pub(crate) timescale: u64,
+    pub(crate) timescale: u32,
     pub(crate) quality: QualityLevel,
     pub(crate) plan: VecDeque<Chunk>,
     pub(crate) known_end: u64,
@@ -35,7 +35,7 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(index: StreamIndex, timescale: u64, quality: QualityLevel) -> Self {
+    pub(crate) fn new(index: StreamIndex, timescale: u32, quality: QualityLevel) -> Self {
         Self {
             index,
             timescale,

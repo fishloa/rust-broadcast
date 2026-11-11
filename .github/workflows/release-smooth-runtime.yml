@@ -1,0 +1,27 @@
+name: Release smooth-runtime
+
+# Publishes the smooth-runtime crate to crates.io on a `smooth-runtime-v*` tag.
+# smooth-runtime is versioned and released INDEPENDENTLY (standalone sans-IO
+# crate with its own cadence). CI is the only source of published artifacts —
+# never `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN
+# secret.
+#
+# DEPENDENCY ORDER: smooth-runtime depends on broadcast-common, broadcast-smooth
+# and transmux, all of which must be live (at the versions its manifest names)
+# before this tag is pushed. Downstream, broadcast-client and multimux depend on
+# smooth-runtime, so this must land before they do. `docs/crates-index.toml` keeps
+# `crates_io = false` for smooth-runtime until the publish succeeds.
+
+on:
+  push:
+    tags: ["smooth-runtime-v*"]
+
+jobs:
+  publish:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-crate.yml
+    secrets: inherit
+    with:
+      crate: smooth-runtime
+      build-gate: default

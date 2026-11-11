@@ -22,6 +22,7 @@ pub const EXEMPT: &[&str] = &[
     "ttml-subtitle",
     "broadcast-hls",
     "broadcast-smooth",
+    "smooth-runtime",
     "broadcast-loudness",
     "buffering-runtime",
     "broadcast-client",
