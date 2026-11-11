@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- The RTSP source plans its `SETUP`/`PLAY` through `rtsp_runtime::PlayPlan` (control resolution against `Content-Base`, channel pairs, the RTP/RTCP collision check) instead of its own copy; the wire behaviour is unchanged (#2372).
 - BREAKING: the Smooth source parses the client Manifest with `broadcast-smooth`'s `SmoothManifest` instead of `transmux`'s removed `smooth_parse` module (#2356); `transmux::track_spec_from_quality_level` still builds the track spec.
 ### Fixed
 - A DASH source whose MPD is `MPD@type="list"` (ISO/IEC 23009-1 6th edition) fails with the typed unsupported-addressing error instead of a generic playback-timeline failure (#2340).

@@ -389,7 +389,7 @@ where
     ///
     /// Each track is offered the interleaved pair `first_channel + 2n` /
     /// `first_channel + 2n + 1`; the channel the server answers with is the one
-    /// recorded in [`PlayTrack::channel`].
+    /// recorded in [`crate::PlayTrack::channel`].
     ///
     /// # Errors
     ///
