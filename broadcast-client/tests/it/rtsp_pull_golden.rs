@@ -3,9 +3,7 @@ use crate::support;
 use std::sync::OnceLock;
 
 use broadcast_client::Config;
-use support::rtsp_host::{
-    BASE_URL, Host, MediaFixture, samples_of,
-};
+use support::rtsp_host::{BASE_URL, Host, MediaFixture, samples_of};
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
@@ -45,8 +43,14 @@ fn rtsp_pull_golden() {
         rendered.push_str(&format!(
             "track={} dts={} pts={} sync={} len={} fnv={:016x}\n",
             track,
-            sample.dts.map(|v| v.to_string()).unwrap_or_else(|| "none".to_string()),
-            sample.pts.map(|v| v.to_string()).unwrap_or_else(|| "none".to_string()),
+            sample
+                .dts
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            sample
+                .pts
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".to_string()),
             sample.flags.is_sync,
             sample.data.len(),
             digest

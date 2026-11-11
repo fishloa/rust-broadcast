@@ -180,7 +180,9 @@ async fn rtsp_pull_golden() {
         let samples: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                SessionEvent::Sample { track_id, sample, .. } => Some((*track_id, sample)),
+                SessionEvent::Sample {
+                    track_id, sample, ..
+                } => Some((*track_id, sample)),
                 _ => None,
             })
             .collect();

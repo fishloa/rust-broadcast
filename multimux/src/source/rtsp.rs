@@ -202,7 +202,14 @@ impl RtspIngestSession {
 
     fn begin_setup(&mut self, index: usize) -> Result<()> {
         let track = &self.tracks[index];
-        let uri = rtsp_runtime::sdp::resolve_control(&self.base_url, &self.base_url, track.control.as_deref()).ok_or_else(|| MultimuxError::Sdp { reason: "control rejected".into() })?;
+        let uri = rtsp_runtime::sdp::resolve_control(
+            &self.base_url,
+            &self.base_url,
+            track.control.as_deref(),
+        )
+        .ok_or_else(|| MultimuxError::Sdp {
+            reason: "control rejected".into(),
+        })?;
         let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
             track.channel,
             track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
@@ -242,7 +249,31 @@ impl RtspIngestSession {
                         );
                         return Ok(());
                     }
-                    return Err(if matches!(status, StatusCode::Unauthorized | StatusCode::Forbidden) { MultimuxError::Auth { reason: format!("{}: {status}", match method { Method::Describe=>"DESCRIBE", Method::Setup=>"SETUP", Method::Play=>"PLAY", _=>"recv" }) } } else { MultimuxError::Protocol { phase: match method { Method::Describe=>"DESCRIBE", Method::Setup=>"SETUP", Method::Play=>"PLAY", _=>"recv" }, reason: format!("non-success status {status}") } });
+                    return Err(
+                        if matches!(status, StatusCode::Unauthorized | StatusCode::Forbidden) {
+                            MultimuxError::Auth {
+                                reason: format!(
+                                    "{}: {status}",
+                                    match method {
+                                        Method::Describe => "DESCRIBE",
+                                        Method::Setup => "SETUP",
+                                        Method::Play => "PLAY",
+                                        _ => "recv",
+                                    }
+                                ),
+                            }
+                        } else {
+                            MultimuxError::Protocol {
+                                phase: match method {
+                                    Method::Describe => "DESCRIBE",
+                                    Method::Setup => "SETUP",
+                                    Method::Play => "PLAY",
+                                    _ => "recv",
+                                },
+                                reason: format!("non-success status {status}"),
+                            }
+                        },
+                    );
                 }
                 match (&self.phase, &method) {
                     (Phase::AwaitDescribe, m) if *m == Method::Describe => {

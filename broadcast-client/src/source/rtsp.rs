@@ -709,7 +709,9 @@ impl RtspSource {
 
     fn on_describe_ok(&mut self, body: &[u8]) -> bool {
         let base = self.base_url();
-        let parsed = parse_tracks(body, |control| rtsp_runtime::sdp::resolve_control(&self.request_url, &base, control));
+        let parsed = parse_tracks(body, |control| {
+            rtsp_runtime::sdp::resolve_control(&self.request_url, &base, control)
+        });
         let ParsedSdp {
             aggregate,
             tracks,

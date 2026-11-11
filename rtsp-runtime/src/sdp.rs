@@ -91,11 +91,11 @@ pub fn resolve_control(
         }
     }
     let same_authority = |u: &url::Url| {
-        let rp = request_url.port().unwrap_or(default_port(request_url.scheme()));
+        let rp = request_url
+            .port()
+            .unwrap_or(default_port(request_url.scheme()));
         let up = u.port().unwrap_or(default_port(u.scheme()));
-        u.scheme() == request_url.scheme()
-            && u.host() == request_url.host()
-            && up == rp
+        u.scheme() == request_url.scheme() && u.host() == request_url.host() && up == rp
     };
     match control {
         None => Some(request_url.to_string()),

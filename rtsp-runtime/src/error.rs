@@ -113,6 +113,10 @@ pub enum Error {
         channel: u8,
     },
 
+    /// The interleaved channel pairs for the tracks of a play flow do not fit
+    /// in the `u8` channel space from the requested first channel (§10.12).
+    #[error("interleaved channels exhausted")]
+    InterleavedChannelExhausted,
 
     /// Authentication failed: no credentials were configured, the challenge
     /// could not be parsed, or the digest computation failed (RFC 2326 §14).

@@ -175,6 +175,12 @@ pub struct PlaySession {
     pub skipped: Vec<String>,
 }
 
+/// SDP attribute naming a track's or the session's control URL (RFC 2326 Appendix C.1.1).
+const CONTROL_ATTRIBUTE: &str = "control";
+
+/// Interleaved channels one track consumes: RTP and RTCP (RFC 2326 §12.39).
+const CHANNELS_PER_TRACK: u8 = 2;
+
 impl AsyncRtspClient<TcpStream> {
     /// Connects a plain-TCP (`rtsp://`) client to `addr`.
     ///
@@ -401,20 +407,31 @@ where
     /// write buffer and the connection is dead** — an interleaved frame cannot
     /// be resynchronised mid-flight, so the caller must reconnect rather than
     /// retry. Bytes already read stay buffered.
-    /// Pulls a stream in one call: `DESCRIBE` (RFC 2326 §10.2) for every media
-    /// section, `SETUP` for each kept track (interleaved channel assignment per
-    /// §12.39), then `PLAY` on the aggregate control URI (§C.1.1). Tracks whose
-    /// `a=control` crosses authorities are skipped and reported in
-    /// [`PlaySession::skipped`].
-    pub async fn start_play(
-        &mut self,
-        url: &url::Url,
-        first_channel: u8,
-    ) -> Result<PlaySession> {
-        let uri = url.as_str();
-
-        // DESCRIBE
-        let (status, body) = match self.describe(uri).await? {
+    /// Pulls a stream in one call: `DESCRIBE` (RFC 2326 §10.2), `SETUP` for
+    /// each media section with a usable `a=control` (§10.4), then `PLAY` (§10.5).
+    ///
+    /// Relative `a=control` values resolve against the `Content-Base` of the
+    /// DESCRIBE response, else its `Content-Location`, else `url` (Appendix
+    /// C.1.1), kept with a trailing slash so a value appends rather than
+    /// replaces the last path segment. A media control that crosses
+    /// `url`'s authority is not set up and is listed in
+    /// [`PlaySession::skipped`]. `PLAY` goes to the session-level `a=control`
+    /// (an absent value or `*` is the aggregate); a session-level control that
+    /// crosses authorities is [`Error::InvalidUrl`].
+    ///
+    /// Each track is offered the interleaved pair `first_channel + 2n` /
+    /// `first_channel + 2n + 1`; the channel the server answers with is the one
+    /// recorded in [`PlayTrack::channel`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnexpectedResponse`] for the first non-2xx answer,
+    /// [`Error::InvalidSdp`] when the body is not UTF-8 or not an SDP,
+    /// [`Error::InterleavedChannelExhausted`] when the pairs no longer fit in a
+    /// `u8`, and [`Error::InterleavedChannelCollision`] when the server
+    /// assigns one channel to two tracks.
+    pub async fn start_play(&mut self, url: &url::Url, first_channel: u8) -> Result<PlaySession> {
+        let (status, body) = match self.describe(url.as_str()).await? {
             crate::client::ClientEvent::Response { status, body, .. } => (status, body),
             other => return Err(Error::UnexpectedEvent { event: other }),
         };
@@ -424,45 +441,53 @@ where
                 status,
             });
         }
-        let sdp = String::from_utf8(body.clone())
-            .map_err(|_| Error::InvalidUrl { what: "sdp utf8" })?;
-        let session = sdp_types::Session::parse(sdp.as_bytes())
-            .map_err(|_| Error::InvalidSdp("parse".into()))?;
+        let sdp = String::from_utf8(body).map_err(|e| Error::InvalidSdp(e.to_string()))?;
+        let description = sdp_types::Session::parse(sdp.as_bytes())
+            .map_err(|e| Error::InvalidSdp(e.to_string()))?;
 
-        // base URL: request URL, with a trailing slash so relative control
-        // values append rather than replace (RFC 2326 §C.1.1).
-        let mut base = url.clone();
+        let mut base = self
+            .framed
+            .codec_mut()
+            .session
+            .content_base()
+            .and_then(|b| url::Url::parse(b).ok())
+            .unwrap_or_else(|| url.clone());
         if !base.path().ends_with('/') {
-            let p = format!("{}/", base.path());
-            base.set_path(&p);
+            let slashed = format!("{}/", base.path());
+            base.set_path(&slashed);
         }
 
-        // resolve control per media
+        let control_of = |attributes: &[sdp_types::Attribute]| {
+            attributes
+                .iter()
+                .find(|a| a.attribute == CONTROL_ATTRIBUTE)
+                .and_then(|a| a.value.clone())
+        };
+
+        let play_uri =
+            crate::sdp::resolve_control(url, &base, control_of(&description.attributes).as_deref())
+                .ok_or(Error::InvalidUrl {
+                    what: "session control crosses authorities",
+                })?;
+
         let mut kept: Vec<String> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();
-        for media in &session.medias {
-            let control_attr = media.attributes.iter().find_map(|a| {
-                if a.attribute == "control" { a.value.clone() } else { None }
-            });
-            let ctrl = control_attr.as_deref();
-            match crate::sdp::resolve_control(url, &base, ctrl) {
-                Some(u) => kept.push(u),
-                None => {
-                    if let Some(c) = ctrl {
-                        skipped.push(c.to_string());
-                    }
-                }
+        for media in &description.medias {
+            let control = control_of(&media.attributes);
+            match crate::sdp::resolve_control(url, &base, control.as_deref()) {
+                Some(resolved) => kept.push(resolved),
+                None => skipped.extend(control),
             }
         }
 
-        // SETUP each kept track
         let mut tracks: Vec<PlayTrack> = Vec::new();
-        let mut used: Vec<u8> = Vec::new();
-        for (i, control) in kept.into_iter().enumerate() {
-            let low = first_channel
-                .checked_add((2 * i) as u8)
-                .ok_or(Error::InvalidUrl { what: "channel overflow" })?;
-            let high = low.checked_add(1).ok_or(Error::InvalidUrl { what: "channel overflow" })?;
+        let mut next_low = Some(first_channel);
+        for control in kept {
+            let low = next_low.ok_or(Error::InterleavedChannelExhausted)?;
+            let high = low
+                .checked_add(1)
+                .ok_or(Error::InterleavedChannelExhausted)?;
+            next_low = low.checked_add(CHANNELS_PER_TRACK);
             let transport = crate::Transport::single(
                 crate::transport::TransportSpec::rtp_avp_tcp_interleaved(low, high),
             );
@@ -485,18 +510,17 @@ where
                 .and_then(crate::Transport::first)
                 .and_then(|spec| spec.interleaved.map(|(lo, _)| lo))
                 .unwrap_or(low);
-            if used.contains(&negotiated) {
-                return Err(Error::InterleavedChannelCollision { channel: negotiated });
+            if tracks.iter().any(|t| t.channel == negotiated) {
+                return Err(Error::InterleavedChannelCollision {
+                    channel: negotiated,
+                });
             }
-            used.push(negotiated);
             tracks.push(PlayTrack {
                 control,
                 channel: negotiated,
             });
         }
 
-        // PLAY aggregate
-        let play_uri = url.as_str().to_string();
         match self.play(&play_uri).await? {
             crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
             crate::client::ClientEvent::Response { status, .. } => {
@@ -515,8 +539,23 @@ where
         })
     }
 
-
-    /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`.
+    /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`
+    /// (§10.12) — the mirror of the server's
+    /// [`AsyncRtspServer::send_interleaved`], for an RTSP push that delivers
+    /// media interleaved over the control connection. The frame is built by
+    /// [`crate::interleaved::InterleavedFrame::new`] and the write is bounded
+    /// by [`RtspTimeouts::write`].
+    ///
+    /// Before the write this drives the push keepalive (see
+    /// [`poll_keepalive`](Self::poll_keepalive)) and drains any server→client
+    /// bytes already buffered, so a SEND-ONLY pusher that only ever calls this
+    /// method still refreshes its session and does not let the peer's
+    /// responses/notifications fill the socket buffer (RFC 2326 §12.37).
+    ///
+    /// **A `Timeout`/cancelled write leaves a partial `$` frame in the codec's
+    /// write buffer and the connection is dead** — an interleaved frame cannot
+    /// be resynchronised mid-flight, so the caller must reconnect rather than
+    /// retry. Bytes already read stay buffered.
     pub async fn send_interleaved(&mut self, channel: u8, payload: &[u8]) -> Result<()> {
         self.poll_keepalive().await?;
         self.drain_inbound().await?;
