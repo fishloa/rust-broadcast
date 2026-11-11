@@ -136,7 +136,7 @@ use transmux::TrackId;
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
-use rtmp_runtime::io::{AsyncRtmpServer, RtmpConnection};
+use rtmp_runtime::io::{AcceptedRtmpConnection, AsyncRtmpServer, RtmpConnection};
 use rtmp_runtime::server::{ServerConfig, ServerEvent};
 use tokio::sync::{Mutex as TokioMutex, OnceCell, mpsc};
 use transmux::pipeline::{Sample, TrackSpec};
@@ -188,7 +188,7 @@ struct RtmpInfra {
     /// [`RtmpListener::poll_accept`] — which [`Listener::poll_accept`]
     /// requires to be non-blocking — can `try_recv()` without an executor
     /// bridge.
-    accept_rx: Arc<StdMutex<mpsc::Receiver<RtmpConnection>>>,
+    accept_rx: Arc<StdMutex<mpsc::Receiver<AcceptedRtmpConnection>>>,
     /// Fired whenever the accept pump has queued a connection, so the drive
     /// loop admits it immediately instead of waiting out a fixed poll
     /// interval (defect 2: a steady read load starved the sleep-poll arm).
@@ -378,7 +378,7 @@ impl Source for RtmpRoute {
 /// The non-blocking [`Listener`] bridge over the accept-pump's channel — see
 /// the module doc.
 struct RtmpListener {
-    accept_rx: Arc<StdMutex<mpsc::Receiver<RtmpConnection>>>,
+    accept_rx: Arc<StdMutex<mpsc::Receiver<AcceptedRtmpConnection>>>,
     app: Option<String>,
     max_sessions: usize,
 }
@@ -397,7 +397,10 @@ impl Listener for RtmpListener {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match rx.try_recv() {
-            Ok(conn) => Ok(Some(RtmpIngestSession::new(conn, self.app.clone()))),
+            Ok(conn) => Ok(Some(RtmpIngestSession::new(
+                conn.into_connection(),
+                self.app.clone(),
+            ))),
             Err(mpsc::error::TryRecvError::Empty) => Ok(None),
             Err(mpsc::error::TryRecvError::Disconnected) => Err(MultimuxError::Connect {
                 reason: "rtmp: accept-pump task ended (listen socket failure)".into(),
@@ -433,15 +436,6 @@ struct FlvEvents {
 }
 
 impl RtmpIngestSession {
-    fn new(conn: RtmpConnection, app: Option<String>) -> Self {
-        RtmpIngestSession {
-            conn: Arc::new(TokioMutex::new(conn)),
-            app,
-            demux: StreamingFlvDemux::new(),
-            events: FlvEvents::default(),
-        }
-    }
-
     /// A cheap `Arc` clone of the accepted connection — [`run_rtmp`]'s own
     /// per-session read task uses this to call
     /// [`RtmpConnection::next_events`] concurrently with every other
@@ -449,6 +443,15 @@ impl RtmpIngestSession {
     /// module doc.
     pub fn conn_handle(&self) -> Arc<TokioMutex<RtmpConnection>> {
         Arc::clone(&self.conn)
+    }
+
+    fn new(conn: RtmpConnection, app: Option<String>) -> Self {
+        RtmpIngestSession {
+            conn: Arc::new(TokioMutex::new(conn)),
+            app,
+            demux: StreamingFlvDemux::new(),
+            events: FlvEvents::default(),
+        }
     }
 
     /// Drains every [`DemuxEvent`] the FLV demux has ready, translating it
@@ -462,6 +465,23 @@ impl RtmpIngestSession {
             batch.push(ev);
         }
         self.events.ingest(batch);
+    }
+
+    /// Read the next batch of events off the connection — the read `run_rtmp`
+    /// drives per session — `test-seams` only, so a golden can step a real
+    /// session one protocol read at a time.
+    #[cfg(feature = "test-seams")]
+    pub async fn next_events_for_test(&mut self) -> std::io::Result<Option<Vec<ServerEvent>>> {
+        self.conn.lock().await.next_events().await
+    }
+}
+
+/// A session over an already-established connection — `test-seams` only.
+#[cfg(feature = "test-seams")]
+impl RtmpIngestSession {
+    /// Build the session a just-accepted connection produces.
+    pub fn from_connection(conn: RtmpConnection) -> Self {
+        Self::new(conn, None)
     }
 }
 

@@ -28,6 +28,8 @@ mod heaac_override;
 mod hls_pull_keys;
 mod hls_pull_live;
 mod http2_h2c;
+#[cfg(all(feature = "whip", feature = "test-hooks"))]
+mod ingest_drive_golden;
 #[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
 mod limit_budgets;
 mod master_503;

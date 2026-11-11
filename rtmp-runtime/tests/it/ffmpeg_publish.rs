@@ -60,7 +60,7 @@ async fn ffmpeg_publish_delivers_audio_and_video() {
         .spawn()
         .expect("spawn ffmpeg");
 
-    let mut conn = server.accept().await.expect("accept");
+    let mut conn = server.accept().await.expect("accept").into_connection();
     let (mut audio, mut video, mut published) = (0usize, 0usize, false);
     let drive = async {
         while let Some(batch) = conn.next_events().await.expect("next_events") {

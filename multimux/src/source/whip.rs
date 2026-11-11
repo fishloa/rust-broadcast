@@ -1178,6 +1178,56 @@ pub struct WhipIngestSession {
     _resource: ResourceGuard<WhipSession>,
 }
 
+#[cfg(feature = "test-seams")]
+impl WhipIngestSession {
+    /// Build the session a just-admitted WHIP connection produces for a
+    /// publisher whose `avcC` the offer resolved up front (its SDP names the
+    /// encoder config) rather than one captured from in-band parameter sets
+    /// — `test-seams` only, so a golden can drive a real session from real
+    /// captured access units without a browser handshake.
+    pub fn from_spec(spec: TrackSpec, payload_type: u8) -> Self {
+        let depacketiser = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+            spec.track_id,
+            transmux::rtp::RtpMediaKind::H264,
+            spec.config.clone(),
+            spec.timescale,
+        )]);
+        let control = SessionControl::new();
+        WhipIngestSession {
+            socket: Arc::new(
+                tokio::net::UdpSocket::from_std({
+                    let s = std::net::UdpSocket::bind("127.0.0.1:0").expect("probe socket");
+                    s.set_nonblocking(true).expect("non-blocking probe socket");
+                    s
+                })
+                .expect("wrap probe socket"),
+            ),
+            media: parking_lot::Mutex::new(None),
+            depacketiser,
+            pt_to_track: std::iter::once((payload_type, spec.track_id)).collect(),
+            clock_rate_by_track: std::iter::once((spec.track_id, spec.timescale)).collect(),
+            captured: std::iter::once((
+                spec.track_id,
+                Some(match &spec.config {
+                    CodecConfig::Avc { config, .. } => config.clone(),
+                    _ => panic!("a WHIP session carries an AVC track"),
+                }),
+            ))
+            .collect(),
+            buffered: Vec::new(),
+            announced: false,
+            pending: std::collections::VecDeque::new(),
+            control,
+            _resource: crate::webrtc_session::register_session_for_test(
+                "probe",
+                WhipSession::new("/whip/session/probe".into()),
+                String::new(),
+            )
+            .1,
+        }
+    }
+}
+
 impl WhipIngestSession {
     fn new(admitted: AdmittedWhip) -> Self {
         let mut pt_to_track = HashMap::new();

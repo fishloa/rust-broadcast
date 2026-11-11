@@ -5,7 +5,11 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- **BREAKING**: `RtmpConnection`'s default stream type is now the erased `BoxStream` (a TCP socket, a TLS stream over one, or any other byte stream), so a caller naming one `RtmpConnection` no longer names its transport. `AsyncRtmpServer::accept` returns the new `AcceptedRtmpConnection` (the publisher's address, which an erased stream cannot report, plus the connection) instead of a `RtmpConnection`; call `into_connection()` for the connection itself.
+
 ### Added
+- `io::RtmpStream`, `io::BoxStream` and `RtmpConnection::from_stream_erased`: wrap any connected stream, so a session can be driven over something other than a TCP socket (an in-memory pipe in a test, a TLS stream in a host) without a second connection type.
 - `flv::FlvTagHeader` (`parse`, `total_len`, `Serialize`): the 11-byte FLV tag header on its own, so an incremental reader can size a tag before its body arrives. `FlvTag::parse` and the tolerant walk decode the header through it, and `transmux`'s streaming FLV demuxer uses it instead of hand-rolled `u32::from_be_bytes` reads.
 - `amf0::amf0_values(&[Amf0Value]) -> Result<Vec<u8>>`: encode several bare AMF0 values as one message body (the shape an FLV `onMetaData` script tag has). `transmux`'s FLV muxer writes its script tag through it.
 - `rtmp_runtime::flv`: the Adobe FLV v10.1 Annex E header and tag codec (`FlvHeader`, `TagType`, `FlvTag<'a>`, the strict `tags()` walk, `Parse`/`Serialize` with byte-exact round trips on the committed FLV fixtures), `no_std` + `alloc`. It replaces the crate-private FLV writer the server and client used, and transmux frames FLV through it, so the workspace has one FLV tag codec (#2342). A final tag whose trailing `PreviousTagSize` is cut off is accepted (the field is redundant, §E.4.1); a cut tag body is an error. New fuzz target `rtmp_flv_tags`.
