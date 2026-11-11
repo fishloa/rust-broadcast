@@ -240,3 +240,19 @@ fn a_model_with_every_field_set_round_trips() {
     assert_eq!(again, mpd);
 }
 
+#[test]
+fn to_xml_carries_declaration_and_namespace() {
+    let mpd = Mpd::default();
+    let xml = mpd.to_xml().unwrap();
+    assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+    assert!(xml.contains("xmlns=\"urn:mpeg:dash:schema:mpd:2011\""));
+    let mut with_xlink = Mpd::default();
+    let mut p = Period::default();
+    let mut x = Xlink::default();
+    x.href = "http://x".to_string();
+    x.actuate = Actuate::OnLoad;
+    p.xlink = Some(x);
+    with_xlink.periods.push(p);
+    let xml2 = with_xlink.to_xml().unwrap();
+    assert!(xml2.contains("xmlns:xlink=\"http://www.w3.org/1999/xlink\""));
+}
