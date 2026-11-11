@@ -57,6 +57,7 @@ enum Candidate {
     Ready(i128),
     Wait(i128),
     Idle,
+    Unaddressable(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -716,13 +717,27 @@ impl DashClient {
                     }
                     Candidate::Wait(at_utc_us) => self.note_wake(at_utc_us),
                     Candidate::Idle => {}
+                    Candidate::Unaddressable(reason) => {
+                        self.rep_segment_error(pi, li, reason);
+                        if self.stopped() {
+                            return;
+                        }
+                        match self.lane_candidate(pi, li, utc, now_us) {
+                            Candidate::Ready(start_us) => pick = Some((li, start_us)),
+                            Candidate::Wait(at_utc_us) => self.note_wake(at_utc_us),
+                            Candidate::Idle | Candidate::Unaddressable(_) => {}
+                        }
+                    }
                 }
             }
             let Some((li, _)) = pick else {
                 return;
             };
             if !self.issue_segment(pi, li) {
-                return;
+                if self.stopped() || self.periods[pi].lanes[li].current().is_some() {
+                    return;
+                }
+                continue;
             }
         }
     }
@@ -744,10 +759,11 @@ impl DashClient {
                 let Some(plan) = rep.plan.as_ref() else {
                     return Candidate::Idle;
                 };
-                plan.get(rep.next_issue)
-                    .ok()
-                    .flatten()
-                    .map_or(Candidate::Idle, |s| Candidate::Ready(s.start_us))
+                match plan.get(rep.next_issue) {
+                    Ok(Some(s)) => Candidate::Ready(s.start_us),
+                    Ok(None) => Candidate::Idle,
+                    Err(e) => Candidate::Unaddressable(address_name(&e)),
+                }
             }
         }
     }
@@ -756,12 +772,14 @@ impl DashClient {
         let lane = &mut self.periods[pi].lanes[li];
         let ri = lane.reps.len() - 1;
         let rep = &mut lane.reps[ri];
-        let Some(seg) = rep
-            .plan
-            .as_ref()
-            .and_then(|p| p.get(rep.next_issue).ok().flatten())
-        else {
-            return false;
+        let seg = match rep.plan.as_ref().map(|p| p.get(rep.next_issue)) {
+            Some(Ok(Some(seg))) => seg,
+            Some(Err(e)) => {
+                let reason = address_name(&e);
+                self.rep_segment_error(pi, li, reason);
+                return false;
+            }
+            _ => return false,
         };
         let range = match range_pair(seg.byte_range) {
             Ok(r) => r,
@@ -812,6 +830,45 @@ impl DashClient {
     fn rep_mut(&mut self, id: RepId) -> Option<&mut RepState> {
         let (p, l, r) = *self.rep_loc.get(&id)?;
         self.periods.get_mut(p)?.lanes.get_mut(l)?.reps.get_mut(r)
+    }
+
+    fn rep_segment_error(&mut self, pi: usize, li: usize, reason: &'static str) -> bool {
+        if self.periods[pi].lanes[li].current().is_none() {
+            return false;
+        }
+        self.drop_rep(pi, li, DropCause::Addressing(reason));
+        if self
+            .periods
+            .iter()
+            .all(|p| p.lanes.iter().all(|l| l.current().is_none()))
+        {
+            self.go_fatal(FatalKind::UnsupportedAddressing { reason });
+        }
+        true
+    }
+
+    fn drop_rep(&mut self, pi: usize, li: usize, cause: DropCause) {
+        if let Some(ri) = self.periods[pi].lanes[li].reps.len().checked_sub(1) {
+            self.drop_rep_at(pi, li, ri, cause);
+        }
+        self.note_wake(i128::MIN);
+    }
+
+    fn drop_rep_in(&mut self, rep: RepId, cause: DropCause) {
+        if let Some((pi, li, _)) = self.rep_loc.get(&rep).copied() {
+            self.drop_rep(pi, li, cause);
+        }
+    }
+
+    fn drop_rep_at(&mut self, pi: usize, li: usize, ri: usize, cause: DropCause) {
+        self.periods[pi].lanes[li].reps[ri].dead = true;
+        let at = self.periods[pi].lanes[li].reps[ri].at;
+        self.outputs.push_back(Output::TrackDropped {
+            period: self.periods[pi].index,
+            set: at.set,
+            rep: Some(at.rep),
+            cause,
+        });
     }
 
     fn resolve(
@@ -1094,7 +1151,14 @@ impl DashClient {
             range_pair(Some(ix.range))?;
             self.resolve(&state, "", false)?;
         }
-        if let Some(seg) = state.plan.as_ref().and_then(|p| p.get(0).ok().flatten()) {
+        let first = state
+            .plan
+            .as_ref()
+            .map(|p| p.get(0))
+            .transpose()
+            .map_err(|e| DropCause::Addressing(address_name(&e)))?
+            .flatten();
+        if let Some(seg) = first {
             range_pair(seg.byte_range)?;
             self.resolve(&state, &seg.reference, true)?;
         }
@@ -1407,19 +1471,7 @@ impl DashClient {
                     r.plan = Some(p.plan);
                 }
             }
-            Err(e) => {
-                if let Some(r) = self.rep_mut(rep) {
-                    r.dead = true;
-                }
-                if let Some((pi, _, _)) = self.rep_loc.get(&rep).copied() {
-                    self.outputs.push_back(Output::TrackDropped {
-                        period: self.periods[pi].index,
-                        set: at.set,
-                        rep: Some(at.rep),
-                        cause: DropCause::Addressing(plan_error_name(&e)),
-                    });
-                }
-            }
+            Err(e) => self.drop_rep_in(rep, DropCause::Addressing(plan_error_name(&e))),
         }
         self.drain();
         Ok(())
@@ -2066,21 +2118,28 @@ impl DashClient {
             .iter()
             .position(|l| l.kind == kind && (revive || l.current().is_some()))
             .ok_or(Error::NotSwitchable)?;
-        let (current_at, was_dead, switch_us) = {
+        let read = {
             let lane = &self.periods[pi].lanes[li];
             let cur = lane.reps.last().ok_or(Error::NotSwitchable)?;
             let plan = cur.plan.as_ref().ok_or(Error::NotSwitchable)?;
-            let at_us = match plan.get(cur.next_issue).ok().flatten() {
-                Some(seg) => seg.start_us,
-                None => {
-                    let last = plan.len().and_then(|n| n.checked_sub(1));
-                    let end = last
-                        .and_then(|last| plan.get(last).ok().flatten())
-                        .map(|seg| seg.start_us.saturating_add(seg.duration_us));
-                    end.ok_or(Error::NotSwitchable)?
+            let end = plan
+                .len()
+                .and_then(|n| n.checked_sub(1))
+                .map_or(Ok(None), |last| plan.get(last));
+            (cur.at, cur.dead, plan.get(cur.next_issue), end)
+        };
+        let (current_at, was_dead, current, end) = read;
+        let switch_us = match current {
+            Ok(Some(seg)) => seg.start_us,
+            found => {
+                let end = end.map_err(|_| Error::NotSwitchable)?;
+                let end = end.ok_or(Error::NotSwitchable)?;
+                if let Err(e) = found {
+                    self.rep_segment_error(pi, li, address_name(&e));
+                    return Err(Error::NotSwitchable);
                 }
-            };
-            (cur.at, cur.dead, at_us)
+                end.start_us.saturating_add(end.duration_us)
+            }
         };
         if current_at == at && !was_dead {
             return Ok(());
@@ -2098,12 +2157,7 @@ impl DashClient {
         let mut rep = match self.build_rep(at) {
             Ok(r) => r,
             Err(cause) => {
-                self.outputs.push_back(Output::TrackDropped {
-                    period: self.periods[pi].index,
-                    set: at.set,
-                    rep: Some(at.rep),
-                    cause,
-                });
+                self.drop_rep(pi, li, cause);
                 return Err(Error::NotSwitchable);
             }
         };
@@ -2111,11 +2165,12 @@ impl DashClient {
             Some(plan) => {
                 rep.next_issue = plan.index_at_or_before(switch_us).unwrap_or(0);
                 rep.joined = true;
-                rep.last_time = rep
+                let last = rep
                     .next_issue
                     .checked_sub(1)
-                    .and_then(|i| plan.get(i).ok().flatten())
-                    .map(|s| s.time_ticks);
+                    .map_or(Ok(None), |i| plan.get(i))
+                    .map_err(|_| Error::NotSwitchable)?;
+                rep.last_time = last.map(|s| s.time_ticks);
             }
             None => rep.start_time_us = Some(switch_us),
         }
