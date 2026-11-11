@@ -2403,16 +2403,11 @@ fn flush_one_behind(
 /// a second field merged into the first field's sample must not introduce a
 /// second AUD into the access unit.
 fn annexb_to_length_prefixed_no_aud(annexb: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(annexb.len());
-    for nal in iter_annexb_nals(annexb) {
-        if nal_unit_type(NalCodec::Avc, nal) == Some(crate::slice_header::NAL_AUD) {
-            continue;
-        }
-        let len = u32::try_from(nal.len()).unwrap_or(u32::MAX);
-        out.extend_from_slice(&len.to_be_bytes());
-        out.extend_from_slice(nal);
-    }
-    out
+    crate::annexb::length_prefix(
+        annexb.len(),
+        iter_annexb_nals(annexb)
+            .filter(|nal| nal_unit_type(NalCodec::Avc, nal) != Some(crate::slice_header::NAL_AUD)),
+    )
 }
 
 /// Build a video sample's coded bytes + sync flag from one Annex B (or raw

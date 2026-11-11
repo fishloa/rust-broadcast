@@ -135,8 +135,19 @@ impl<'a> Iterator for AnnexBNalIter<'a> {
 /// Convert an Annex B access unit into length-prefixed form (4-byte big-endian
 /// length before each NAL), suitable for a CMAF `mdat`.
 pub fn annexb_to_length_prefixed(annexb: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(annexb.len());
-    for nal in iter_annexb_nals(annexb) {
+    length_prefix(annexb.len(), iter_annexb_nals(annexb))
+}
+
+/// Write each NAL unit behind a 4-byte big-endian length (ISO/IEC 14496-15:2017
+/// §5.3.3.1.3, `lengthSizeMinusOne = 3`), the one length-prefix writer the
+/// Annex B, RTP and TS paths share. `capacity` is the caller's size bound, so
+/// the output is allocated once.
+pub(crate) fn length_prefix<'a>(
+    capacity: usize,
+    nals: impl IntoIterator<Item = &'a [u8]>,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(capacity);
+    for nal in nals {
         out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
         out.extend_from_slice(nal);
     }

@@ -41,6 +41,7 @@
 //! `no_std` + `alloc`.
 
 use crate::TrackId;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::error::BufferTooShort;
