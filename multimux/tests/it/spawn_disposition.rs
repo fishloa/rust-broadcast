@@ -56,17 +56,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/whip.rs",
-        372,
+        350,
         "WHIP signalling server TaskTracker (WhipInfra)",
     ),
     (
         "source/whip.rs",
-        638,
+        616,
         "WHIP run task; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        653,
+        631,
         "WHIP accept pump; owned by the route supervisor handle",
     ),
     (

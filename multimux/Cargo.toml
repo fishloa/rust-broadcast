@@ -223,7 +223,7 @@ tls         = ["rtsp-runtime/tls", "dep:tokio-rustls", "dep:rustls"]
 # excluded from the `--all-features` lanes and covered by a dedicated CI job.
 # The workspace MSRV is now 1.95.0 (issue #949), so that gap is gone and the
 # feature is opt-in purely on dependency weight.
-whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
+whip        = ["dep:webrtc-runtime", "webrtc-runtime/media", "dep:rtp-packet"]
 # Dependency-free test seams (`Config::prebound`, the `PreboundListeners`
 # hand-in entry points): a caller binds `127.0.0.1:0` and hands the live
 # listener in instead of reserving a port and racing to re-bind it. Deliberately

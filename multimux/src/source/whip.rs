@@ -32,12 +32,14 @@
 //! just the other of its two documented ways to convey parameter sets).
 //! Requiring `sprop-parameter-sets` here would reject a real browser's offer
 //! outright. Instead, [`WhipIngestSession`] depayloads immediately (its
-//! `avcC` config is never consulted by `RtpStreamDepacketiser::push` itself —
-//! only carried through to the caller, per that type's own doc), and defers
-//! announcing [`SessionEvent::NewProgram`] until it has scanned a real IDR's
+//! `avcC` config starts empty and is installed only once real parameter sets
+//! arrive: [`transmux::avc_access_unit_parameter_sets`] walks a real IDR's
 //! length-prefixed NAL units for a genuine SPS (type 7) + PPS (type 8) pair,
-//! from which [`transmux::avc_config_from_sps_pps`] builds the real
-//! [`transmux::AVCConfigurationBox`] — mirrors `crate::source::rtmp`'s own
+//! [`transmux::avc_config_from_sps_pps`] builds the real
+//! [`transmux::AVCConfigurationBox`] from it, and
+//! `RtpStreamDepacketiser::set_track_config` installs it on the track.
+//! [`SessionEvent::NewProgram`] is deferred until that has happened —
+//! mirrors `crate::source::rtmp`'s own
 //! "`Established` gates on the first `Sample`" precedent (see that module's
 //! doc), just gated on "first sample with real parameter sets" rather than
 //! merely "first sample". Every sample observed before that gate fires is
@@ -80,7 +82,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use transmux::TrackId;
 
-use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_common::{Demand, Parse as _, Serialize as _, Stage, Timestamp};
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use tokio::net::{TcpListener, UdpSocket};
@@ -94,8 +96,8 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{
-    AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, RtpStreamDepacketiser,
-    RtpStreamTrack, avc_config_from_sps_pps,
+    AVCConfigurationBox, AVCDecoderConfigurationRecord, RtpStreamDepacketiser, RtpStreamTrack,
+    avc_config_from_sps_pps,
 };
 
 use webrtc_runtime::media::{
@@ -118,12 +120,18 @@ use webrtc_runtime::sdp::{
 };
 use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
 
+/// The `avcC` record's `lengthSizeMinusOne` for the AVCC-style 4-byte NAL
+/// length prefix [`RtpStreamDepacketiser::push`] emits
+/// (ISO/IEC 14496-15 §5.3.4.1.1).
+const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
+
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
 /// all, matching `crate::source::sdp`'s own `UNKNOWN_DIMENSION` placeholder
 /// for `CodecConfig::Avc` (that field genuinely isn't derivable here either;
 /// this is the same accepted convention, not a new fabrication).
 const UNKNOWN_DIMENSION: u16 = 0;
 
+<<<<<<< HEAD
 /// H.264 NAL unit type field mask (ISO/IEC 14496-10 §7.3.1 `nal_unit_type`,
 /// 5 bits).
 const NAL_TYPE_MASK: u8 = 0x1F;
@@ -143,6 +151,8 @@ const RTP_MIN_HEADER_LEN: usize = 12;
 /// marker bit).
 const RTP_PT_MASK: u8 = 0x7F;
 
+=======
+>>>>>>> 2a90ec2c7 (refactor(multimux): WHIP ingest reads H.264 parameter sets and RTP headers through transmux and rtp-packet)
 /// Default cap on concurrently admitted WHIP publishers per route, mirroring
 /// [`crate::source::rtmp::DEFAULT_RTMP_MAX_SESSIONS`]'s own reasoning: generous
 /// for one origin's worth of encoders while still bounding a flood of inbound
@@ -1236,33 +1246,32 @@ impl WhipIngestSession {
             pt_to_track.insert(t.payload_type, t.track_id);
             clock_rate_by_track.insert(t.track_id, t.clock_rate);
             captured.insert(t.track_id, None);
-            // The placeholder handed to `RtpStreamTrack::new` is never
-            // observed externally: `RtpStreamDepacketiser::push` never
-            // consults a track's `config` (only carries it through to
-            // `track_specs()`, which this module deliberately never calls —
-            // see the module doc), and no `TrackSpec` is announced until
-            // `captured` holds every track's real config.
-            let placeholder = CodecConfig::Avc {
-                config: AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
-                    configuration_version: 1,
-                    profile_indication: 0,
-                    profile_compatibility: 0,
-                    level_indication: 0,
-                    length_size_minus_one: 3,
-                    sps: Vec::new(),
-                    pps: Vec::new(),
-                    chroma_format: None,
-                    bit_depth_luma_minus8: None,
-                    bit_depth_chroma_minus8: None,
-                    sps_ext: Vec::new(),
-                }),
-                width: UNKNOWN_DIMENSION,
-                height: UNKNOWN_DIMENSION,
-            };
+            // The track's own config is unknown until its keyframe's in-band
+            // SPS/PPS arrives, so it starts empty — never a fabricated
+            // `avcC`. Nothing observes it until then: the real record is
+            // installed through `set_track_config` the moment it is captured,
+            // and the announced `TrackSpec` is built from that same captured
+            // record (see the module doc).
             tracks.push(RtpStreamTrack::new(
                 t.track_id,
                 transmux::rtp::RtpMediaKind::H264,
-                placeholder,
+                CodecConfig::Avc {
+                    config: AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
+                        configuration_version: 1,
+                        profile_indication: 0,
+                        profile_compatibility: 0,
+                        level_indication: 0,
+                        length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
+                        sps: Vec::new(),
+                        pps: Vec::new(),
+                        chroma_format: None,
+                        bit_depth_luma_minus8: None,
+                        bit_depth_chroma_minus8: None,
+                        sps_ext: Vec::new(),
+                    }),
+                    width: UNKNOWN_DIMENSION,
+                    height: UNKNOWN_DIMENSION,
+                },
                 t.clock_rate,
             ));
         }
@@ -1304,41 +1313,32 @@ impl WhipIngestSession {
         self.media.lock().take()
     }
 
-    /// Scans `sample`'s length-prefixed NAL data (see [`NAL_LENGTH_PREFIX`])
-    /// for a real SPS/PPS pair and, if found, captures the real `avcC` for
-    /// `track_id` — see the module doc.
+    /// Scans `sample`'s length-prefixed NAL data for a real SPS/PPS pair and,
+    /// if found, captures the real `avcC` for `track_id` — see the module
+    /// doc. The walk and the record are transmux's own
+    /// ([`transmux::avc_access_unit_parameter_sets`],
+    /// [`transmux::avc_config_from_sps_pps`]), so a WebRTC keyframe is read by
+    /// exactly the code that reads one out of a TS or fMP4 sample.
     fn try_capture_config(&mut self, track_id: TrackId, sample: &Sample) {
         if self.captured.get(&track_id).cloned().flatten().is_some() {
             return;
         }
-        let mut sps = Vec::new();
-        let mut pps = Vec::new();
-        let data = sample.data.as_ref();
-        let mut off = 0usize;
-        while off + NAL_LENGTH_PREFIX <= data.len() {
-            let len = u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
-                as usize;
-            off += NAL_LENGTH_PREFIX;
-            if off + len > data.len() {
-                break;
-            }
-            let nal = &data[off..off + len];
-            off += len;
-            if nal.is_empty() {
-                continue;
-            }
-            match nal[0] & NAL_TYPE_MASK {
-                NAL_TYPE_SPS => sps.push(AvcSps(nal.to_vec())),
-                NAL_TYPE_PPS => pps.push(AvcPps(nal.to_vec())),
-                _ => {}
-            }
-        }
+        let (sps, pps) = transmux::avc_access_unit_parameter_sets(sample.data.as_ref());
         if sps.is_empty() || pps.is_empty() {
             return;
         }
-        if let Ok(config) = avc_config_from_sps_pps(sps, pps) {
-            self.captured.insert(track_id, Some(config));
-        }
+        let Ok(config) = avc_config_from_sps_pps(sps, pps) else {
+            return;
+        };
+        self.depacketiser.set_track_config(
+            track_id,
+            CodecConfig::Avc {
+                config: config.clone(),
+                width: UNKNOWN_DIMENSION,
+                height: UNKNOWN_DIMENSION,
+            },
+        );
+        self.captured.insert(track_id, Some(config));
     }
 
     /// True once every track this session was constructed with has a
@@ -1461,14 +1461,12 @@ impl IngestSession for WhipIngestSession {
     type Request = std::convert::Infallible;
 }
 
-/// Extracts the RTP payload-type field (RFC 3550 §5.1, header byte 1 bits
-/// `[6:0]`) — see `crate::source::rtp_udp::payload_type_of`'s identical
-/// helper.
+/// The RTP payload-type field (RFC 3550 §5.1, header byte 1 bits `[6:0]`) of
+/// an already-decrypted wire packet, parsed by `rtp-packet`.
 fn payload_type_of(packet: &[u8]) -> Option<u8> {
-    if packet.len() < RTP_MIN_HEADER_LEN {
-        return None;
-    }
-    Some(packet[1] & RTP_PT_MASK)
+    rtp_packet::RtpPacket::parse(packet)
+        .ok()
+        .map(|parsed| parsed.payload_type)
 }
 
 /// Rebuilds a wire-format RTP packet (RFC 3550 §5.1 fixed header, CSRC list,
@@ -1482,7 +1480,11 @@ fn payload_type_of(packet: &[u8]) -> Option<u8> {
 /// in 32-bit words, data), so RFC 8285 `mid`/`rid`/CVO survive to the
 /// depacketiser.
 fn rebuild_rtp_wire(pkt: &webrtc_runtime::media::DecryptedRtp) -> Vec<u8> {
+<<<<<<< HEAD
     let wire = rtp_packet::RtpPacket {
+=======
+    let packet = rtp_packet::RtpPacket {
+>>>>>>> 2a90ec2c7 (refactor(multimux): WHIP ingest reads H.264 parameter sets and RTP headers through transmux and rtp-packet)
         marker: pkt.marker,
         payload_type: pkt.payload_type,
         sequence_number: pkt.sequence_number,
@@ -1499,9 +1501,16 @@ fn rebuild_rtp_wire(pkt: &webrtc_runtime::media::DecryptedRtp) -> Vec<u8> {
         padding: None,
         payload: &pkt.payload,
     };
+<<<<<<< HEAD
     let mut out = vec![0u8; broadcast_common::Serialize::serialized_len(&wire)];
     broadcast_common::Serialize::serialize_into(&wire, &mut out)
         .expect("a parsed RTP packet re-serializes");
+=======
+    let mut out = vec![0u8; packet.serialized_len()];
+    if packet.serialize_into(&mut out).is_err() {
+        return Vec::new();
+    }
+>>>>>>> 2a90ec2c7 (refactor(multimux): WHIP ingest reads H.264 parameter sets and RTP headers through transmux and rtp-packet)
     out
 }
 
