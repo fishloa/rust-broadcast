@@ -11,7 +11,7 @@
 
 use crate::error::BufferTooShort;
 use crate::klv::{BerLength, KlvError};
-use crate::len::{need_in, need_out};
+use crate::len::{fit_u8, need_in, need_out};
 
 /// Result alias for the BER length codec.
 pub type Result<T> = core::result::Result<T, KlvError>;
@@ -26,6 +26,20 @@ pub(crate) const BER_SHORT_FORM_MAX: u64 = 0x7F;
 pub(crate) const BER_MAX_TOKEN_LEN: usize = 9;
 /// Longest long form: the following length bytes of a full-width token.
 pub(crate) const BER_MAX_LONG_FORM_BYTES: usize = BER_MAX_TOKEN_LEN - 1;
+
+/// The short-form length byte for `len`: the caller has already checked
+/// `len <= `[`BER_SHORT_FORM_MAX`], so a value that does not fit the one
+/// length byte is reported instead of being clamped into the wire.
+fn fit_short_form(len: u64) -> Result<u8> {
+    u8::try_from(len).map_err(|_| KlvError::FixedBerLengthTooSmall { len, width: 1 })
+}
+
+/// The low 7 bits of a long-form first byte: the count of following length
+/// bytes, which the 7-bit field always holds.
+fn fit_long_form_count(following: usize) -> Result<u8> {
+    fit_u8(following, "BER long-form length-byte count")
+        .map_err(|_| KlvError::BerLengthTooLong { bytes: following })
+}
 
 /// Decode a BER length token at the start of `bytes`.
 ///
@@ -82,10 +96,10 @@ pub fn encode_ber_length(len: u64, buf: &mut [u8]) -> Result<usize> {
     let size = ber_length_size(len);
     need_out(buf, size)?;
     if len <= BER_SHORT_FORM_MAX {
-        buf[0] = u8::try_from(len).unwrap_or(u8::MAX);
+        buf[0] = fit_short_form(len)?;
     } else {
         let following = size - 1;
-        buf[0] = BER_LONG_FORM_FLAG | u8::try_from(following).unwrap_or(u8::MAX);
+        buf[0] = BER_LONG_FORM_FLAG | fit_long_form_count(following)?;
         let be = len.to_be_bytes();
         buf[1..size].copy_from_slice(&be[8 - following..]);
     }
@@ -134,7 +148,7 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
                         width: n.get(),
                     });
                 }
-                buf[0] = u8::try_from(len).unwrap_or(u8::MAX);
+                buf[0] = fit_short_form(len)?;
             } else {
                 let following = size - 1;
                 if following < BER_MAX_LONG_FORM_BYTES && len >= (1u64 << (following * 8)) {
@@ -143,7 +157,7 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
                         width: n.get(),
                     });
                 }
-                buf[0] = BER_LONG_FORM_FLAG | u8::try_from(following).unwrap_or(u8::MAX);
+                buf[0] = BER_LONG_FORM_FLAG | fit_long_form_count(following)?;
                 let be = len.to_be_bytes();
                 buf[1..size].copy_from_slice(&be[8 - following..]);
             }

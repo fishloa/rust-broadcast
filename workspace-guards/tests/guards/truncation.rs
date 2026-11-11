@@ -48,6 +48,15 @@ fn narrows_len(line: &str) -> bool {
     false
 }
 
+/// A length silently clamped into its length byte (`unwrap_or(u8::MAX)`) is
+/// the same defect as the narrowing cast: an over-range value reaches the wire
+/// as a different one. A `.min(255)` saturator elsewhere is a deliberate
+/// receiver-side policy, not a length write, so only the clamp idiom counts.
+fn clamps_u8(line: &str) -> bool {
+    let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    compact.contains("unwrap_or(u8::MAX)") || compact.contains("unwrap_or(core::u8::MAX)")
+}
+
 /// Does the function text contain a range check?
 fn has_guard(text: &str) -> bool {
     ["fit_", "FieldOverflow", "try_from", "::MAX", "_MAX", "MAX_"]
@@ -63,12 +72,29 @@ fn has_guard(text: &str) -> bool {
 fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
     let mut problems = Vec::new();
     let mut used = vec![false; c.allowlist.len()];
+    let c_name = c.name;
     for (rel, body) in files {
         let prod = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
         let lines: Vec<&str> = prod.lines().collect();
         for (n, line) in lines.iter().enumerate() {
             let t = line.trim();
-            if t.starts_with("//") || !narrows_len(t) {
+            if !t.starts_with("//") && clamps_u8(t) {
+                if let Some(k) = c
+                    .allowlist
+                    .iter()
+                    .position(|(f, l, _)| *f == rel && *l == t)
+                {
+                    used[k] = true;
+                    continue;
+                }
+                problems.push(format!(
+                    "{c_name}: {rel}:{}: silent u8 clamp in a length writer (use broadcast_common::len::fit_u8): {t}",
+                    n + 1
+                ));
+                continue;
+            }
+            let narrowing = narrows_len(t);
+            if t.starts_with("//") || !narrowing {
                 continue;
             }
             if let Some(k) = c
@@ -85,7 +111,7 @@ fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
             }
             if !has_guard(&lines[start..=n].join("\n")) {
                 problems.push(format!(
-                    "{}: {rel}:{}: unchecked length narrowing (use broadcast_common::len::fit_*): {t}",
+                    "{}: {rel}:{}: unchecked length narrowing or silent u8 clamp (use broadcast_common::len::fit_*): {t}",
                     c.name,
                     n + 1
                 ));
@@ -163,6 +189,9 @@ fn guard_detector_bites() {
     assert!(!narrows_len("let n = x.len() as u64;"));
     assert!(!narrows_len("let n = x.len() as usize;"));
     assert!(!has_guard("fn f() { buf[0] = x.len() as u8; }"));
+    assert!(clamps_u8("buf[0] = u8::try_from(len).unwrap_or(u8::MAX);"));
+    assert!(clamps_u8("let n = x.unwrap_or(u8::MAX);"));
+    assert!(!clamps_u8("assert!(IS_PRIVATE < 255);"));
     assert!(has_guard("fn f() { let n = fit_u8(x.len(), \"a\")?; }"));
     assert!(has_guard("fn f() {\n if x.len() > 255 { return; }\n }"));
 }

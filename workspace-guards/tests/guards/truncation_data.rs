@@ -4,7 +4,6 @@
 use crate::truncation::Crate;
 
 pub const EXEMPT: &[&str] = &[
-    "broadcast-common",
     "broadcast-auth",
     "dvb-si",
     "dvb-conformance",
@@ -39,6 +38,10 @@ pub const EXEMPT: &[&str] = &[
 ];
 
 pub const TABLE: &[Crate] = &[
+    Crate {
+        name: "broadcast-common",
+        allowlist: &[],
+    },
     Crate {
         name: "atsc3-route",
         allowlist: &[],
@@ -232,6 +235,41 @@ pub const TABLE: &[Crate] = &[
                 "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
                 "length_prefix_nals: NALs come from RTP depacketisation, bounded by \
                      the reassembler caps (FU-A / STAP-A), never near 4 GiB.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(aspect).unwrap_or(u8::MAX),",
+                "Annex E aspect_ratio_information is a 4-bit code copied through from a parsed sequence header; these builders only re-emit parsed fields.",
+            ),
+            (
+                "src/h262.rs",
+                "debug_assert_eq!(u8::try_from(id).unwrap_or(u8::MAX), SEQUENCE_EXTENSION_ID);",
+                "A debug assertion comparing against a constant, not a length write.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(id).unwrap_or(u8::MAX),",
+                "sequence_extension_id is the fixed 1-byte extension id copied through from a parsed value; the clamp is unreachable.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(p).unwrap_or(u8::MAX),",
+                "Chroma-format flag in the sequence extension; copied through from a parsed value.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(t).unwrap_or(u8::MAX),",
+                "Chroma-format flag in the sequence extension; copied through from a parsed value.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(m).unwrap_or(u8::MAX),",
+                "Chroma-format flag in the sequence extension; copied through from a parsed value.",
+            ),
+            (
+                "src/h262.rs",
+                "video_format: u8::try_from(video_format).unwrap_or(u8::MAX),",
+                "video_format is a 3-bit Annex E code copied through from a parsed sequence header.",
             ),
         ],
     },
