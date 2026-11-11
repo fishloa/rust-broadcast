@@ -30,6 +30,7 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 # produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
 # syntax itself no longer lives in this crate.
 broadcast-hls = { path = "../broadcast-hls", version = "0.7.0", default-features = false }
+broadcast-dash = { path = "../broadcast-dash", version = "0.1.0", optional = true, default-features = false }
 mp4-emsg   = { path = "../mp4-emsg",  version = "0.6.0", default-features = false }
 mpeg-ts    = { path = "../mpeg-ts",  version = "0.7.1", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.7.1", default-features = false }
@@ -88,7 +89,7 @@ required-features = ["std"]
 
 [features]
 default = ["std", "cenc"]
-std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest"]
+std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest", "dep:broadcast-dash"]
 serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc", "dep:zeroize", "dep:subtle"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)
