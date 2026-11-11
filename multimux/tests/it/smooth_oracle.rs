@@ -34,7 +34,7 @@ use multimux::output::OutputKind;
 
 use crate::support::shared_it::fixture_path;
 use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
-use transmux::smooth_parse::SmoothManifest;
+use broadcast_smooth::SmoothManifest;
 
 fn have_oracle(bin: &str) -> bool {
     Command::new(bin)

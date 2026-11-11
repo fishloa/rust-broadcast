@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- The Smooth source and output use `broadcast-smooth`'s manifest model instead of `transmux`'s removed `smooth_parse` module (#2356); transmux keeps the fragments and the codec glue.
 - The RTSP push builds its ANNOUNCE session description with `rtsp_runtime::sdp::session_description` and supplies only its `m=` block, instead of assembling `v=`/`o=`/`s=`/`c=` itself; the body is byte-identical (`fixtures/golden/rtsp/rtsp-announce.sdp`).
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
 

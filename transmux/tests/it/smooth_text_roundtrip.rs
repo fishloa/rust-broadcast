@@ -4,8 +4,8 @@
 //! AVC + `stpp`/TTML).
 
 use broadcast_common::{Package, Unpackage};
+use broadcast_smooth::{SmoothManifest, StreamType};
 use transmux::pipeline::CodecConfig;
-use transmux::smooth_parse::{SmoothManifest, StreamType};
 use transmux::{Fmp4Demux, SmoothPackager};
 
 #[test]
@@ -36,7 +36,7 @@ fn packager_text_stream_parses_back() {
         .count();
     assert_eq!(text.chunks_list.len(), frags, "one <c> per text fragment");
     // ...and the text level resolves to a muxable subtitle TrackSpec.
-    let spec = transmux::smooth_parse::track_spec_from_quality_level(
+    let spec = transmux::track_spec_from_quality_level(
         transmux::TrackId::new(7),
         90_000,
         text.stream_type,

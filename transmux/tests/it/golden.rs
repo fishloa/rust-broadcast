@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use broadcast_common::{Package, Unpackage};
+use broadcast_smooth::SmoothManifest;
 use transmux::dash::{
     Addressing, ContentProtectionSystem, DVB_DASH_PROFILE_PREFIX, DVB_HDR_DMI_SCHEME,
     DVB_HDR_DMI_ST2094_40, DashPackager, HDR_METADATA_SCHEME, HDR_METADATA_SMPTE2094_40,
@@ -19,8 +20,8 @@ use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::ts_demux::TsDemux;
 use transmux::{
-    AspectRatioIdc, Fmp4Demux, Media, MediaKind, Sample, SmoothManifest, SmoothPackager, Track,
-    TrackId, TrackSpec, WvttSampleEntry, playready_wrmheader,
+    AspectRatioIdc, Fmp4Demux, Media, MediaKind, Sample, SmoothPackager, Track, TrackId, TrackSpec,
+    WvttSampleEntry, playready_wrmheader,
 };
 
 fn check(name: &str, actual: &str) {

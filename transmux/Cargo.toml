@@ -50,6 +50,10 @@ memchr     = { version = "2", default-features = false }
 # only XML dependency of the crates that read or write XML (transmux,
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).
 quick-xml  = { workspace = true, optional = true }
+# The Smooth client Manifest model + its parse/serialize (issue #2356): the
+# manifest syntax sits below the container hub, as broadcast-hls does. It does
+# not depend on transmux (no cycle); std, like the XML paths it is used from.
+broadcast-smooth = { path = "../broadcast-smooth", version = "0.1.0" }
 aes        = { version = "0.9", default-features = false, optional = true }
 ctr        = { version = "0.10", default-features = false, optional = true }
 cbc        = { version = "0.2", default-features = false, optional = true }

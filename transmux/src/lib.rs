@@ -13,7 +13,7 @@
 //! It **never encodes or decodes media**: it parses codec *config/parameter
 //! headers* only to build container boxes and derive metadata; coded samples
 //! pass through opaque. `no_std` + `alloc`, except the XML manifest paths
-//! ([`dash`], [`dash_parse`], [`smooth`], [`smooth_parse`], [`LlDashPackager`] and
+//! ([`dash`], [`dash_parse`], [`smooth`], [`LlDashPackager`] and
 //! the PlayReady [`playready_wrmheader`]/[`playready_pro`]/[`playready_pssh`]
 //! builders), which are built on `quick-xml` and need the `std` feature.
 //!
@@ -233,9 +233,10 @@ pub mod slice_header;
 #[cfg(feature = "std")]
 pub mod smooth;
 #[cfg(feature = "std")]
-pub mod smooth_fragment;
 #[cfg(feature = "std")]
-pub mod smooth_parse;
+pub mod smooth_codec;
+#[cfg(feature = "std")]
+pub mod smooth_fragment;
 pub mod splice;
 pub mod sps;
 pub mod subtitle_entries;
@@ -252,8 +253,6 @@ pub mod vp9;
 pub mod vvc_config;
 pub mod webm_demux;
 mod wire_cursor;
-#[cfg(feature = "std")]
-mod xml_walk;
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
@@ -426,9 +425,9 @@ pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothFragment, SmoothOutput, SmoothPackager,
     SmoothStreamType, TFXD_UUID, TfxdBox,
 };
-// Note: `smooth_parse::StreamType` is not re-exported at the crate root — it
-// would collide with `mp4esds::StreamType` (an unrelated ES descriptor
-// field); reach it via `transmux::smooth_parse::StreamType`.
+// Note: `broadcast_smooth::StreamType` (the Smooth `StreamIndex@Type`) is not
+// re-exported at the crate root — it would collide with `mp4esds::StreamType`
+// (an unrelated ES descriptor field); reach it via `broadcast_smooth`.
 #[cfg(feature = "std")]
 pub use base_url::{resolve as resolve_url_reference, resolve_chain as resolve_base_url_chain};
 pub use dovi::{
@@ -441,10 +440,7 @@ pub use hdr10plus::{
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
 };
 #[cfg(feature = "std")]
-pub use smooth_parse::{
-    C, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN, QualityLevel, SmoothManifest,
-    SmoothParseError, StreamIndex, track_spec_from_quality_level,
-};
+pub use smooth_codec::track_spec_from_quality_level;
 pub use splice::{SplicePoint, SpliceResult, concat, snap_to_preceding_sync, splice_insert};
 pub use sps::{
     AvcReorderDepth, AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming,

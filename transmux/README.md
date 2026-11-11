@@ -166,7 +166,7 @@ Input detection uses `container-probe`, which scores structural evidence over th
 - **RTP:** `RtpPacketiser`, `RtpDepacketiser`, `RtpStreamDepacketiser`, `rtp_sdp` helpers, KLV over RTP.
 - **Validation:** `validate_init_segment`, `validate_media_segment`, `validate_cmaf_track` yielding `ConformanceIssue`.
 - **Caption detection:** `CaptionDetector`, `DetectedCaption` (`Cea608(Cea608Channel)` / `Cea708(u8)`), `declared_caption_services` and `DetectedCaption::declared_language` for CEA-608/708 caption discovery from a video track's PMT loop and sample data (issue #1428).
-- **Smooth client helpers:** the `smooth_fragment` module (`manifest_declares_protection`, `fragment_state`, `fragment_track_id`, `fragment_tfxd`) and `smooth_parse::StreamIndex::same_stream` for Smooth Streaming pull sources.
+- **Smooth client helpers:** the `smooth_fragment` module (`manifest_declares_protection`, `fragment_state`, `fragment_track_id`, `fragment_tfxd`) (the client Manifest itself is `broadcast-smooth`'s `SmoothManifest`, including `StreamIndex::same_stream`).
 - **Helpers:** `frag_offsets` (the single `trun`/`tfhd` sample-offset resolver shared by demux, decrypt and validator), NAL conversion Annex B and length-prefixed, `is_keyframe_nal`.
 
 ## Design notes
